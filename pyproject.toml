@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memorymaster"
+version = "1.0.0"
+description = "Production-grade memory reliability system for AI coding agents. Lifecycle-managed claims with citations, conflict detection, steward governance, and MCP integration."
+license = {text = "MIT"}
+authors = [{name = "wolverin0"}]
+keywords = ["memory", "ai-agents", "claims", "lifecycle", "mcp", "sqlite", "postgres", "coding-agents"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.2"]
+security = ["cryptography>=42"]
+dev = ["pytest>=8.2"]
+mcp = ["mcp>=1.2"]
+
+[project.scripts]
+memorymaster = "memorymaster.cli:main"
+memorymaster-mcp = "memorymaster.mcp_server:main"
+memorymaster-dashboard = "memorymaster.dashboard:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.setuptools.package-data]
+memorymaster = ["schema.sql", "schema_postgres.sql"]

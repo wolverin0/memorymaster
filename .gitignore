@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Testing
+.pytest_cache/
+.tmp_cases/
+.tmp_ext/
+.tmp_pytest/
+.trash_db_artifacts/
+htmlcov/
+.coverage
+
+# Databases
+sqlite-*.db
+events-schema-*.db
+reliability-*.db
+tmp-review-*.db
+smoke*.db
+mcp_check.db
+mcp_proof.db
+probe_root.db
+memorymaster_smoke.db
+memorymaster.db
+*.db-wal
+*.db-shm
+
+# Artifacts (generated, not committed)
+artifacts/
+
+# Environment
+.env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

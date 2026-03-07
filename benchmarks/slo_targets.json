@@ -1,0 +1,28 @@
+{
+  "profiles": {
+    "quick": {
+      "ingest_p95_seconds_max": 0.06,
+      "ingest_throughput_min_ops_per_sec": 80.0,
+      "query_p95_seconds_max": 0.25,
+      "query_throughput_min_ops_per_sec": 12.0,
+      "cycle_p95_seconds_max": 3.5,
+      "total_runtime_seconds_max": 20.0
+    },
+    "sustained": {
+      "ingest_p95_seconds_max": 0.09,
+      "ingest_throughput_min_ops_per_sec": 65.0,
+      "query_p95_seconds_max": 0.35,
+      "query_throughput_min_ops_per_sec": 9.0,
+      "cycle_p95_seconds_max": 5.0,
+      "total_runtime_seconds_max": 150.0
+    },
+    "production": {
+      "ingest_p95_seconds_max": 0.12,
+      "ingest_throughput_min_ops_per_sec": 55.0,
+      "query_p95_seconds_max": 0.45,
+      "query_throughput_min_ops_per_sec": 7.5,
+      "cycle_p95_seconds_max": 6.5,
+      "total_runtime_seconds_max": 90.0
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "state_accuracy_min": 0.95,
+  "retrieval_accuracy_min": 0.90,
+  "cycle_accuracy_min": 0.90,
+  "security_accuracy_min": 1.0,
+  "overall_min": 0.93
+}
