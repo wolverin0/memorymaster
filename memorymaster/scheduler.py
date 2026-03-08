@@ -14,18 +14,23 @@ def utc_now() -> str:
 
 
 def get_git_head(workspace_root: Path) -> str | None:
+    resolved = workspace_root.resolve()
     try:
         proc = subprocess.run(
-            ["git", "-C", str(workspace_root), "rev-parse", "HEAD"],
+            ["git", "-C", str(resolved), "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
             check=False,
+            timeout=10,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return None
     if proc.returncode != 0:
         return None
-    return proc.stdout.strip() or None
+    head = proc.stdout.strip()
+    if not head or len(head) != 40 or not all(c in "0123456789abcdef" for c in head):
+        return None
+    return head
 
 
 def run_daemon(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from memorymaster.config import get_config
 from memorymaster.lifecycle import transition_claim
 from memorymaster.models import Claim
 
@@ -29,10 +30,13 @@ def run(
     store,
     limit: int = 200,
     min_citations: int = 1,
-    min_score: float = 0.58,
+    min_score: float | None = None,
     revalidation_claims: list[Claim] | None = None,
     policy_mode: str = "legacy",
 ) -> dict[str, int]:
+    cfg = get_config()
+    if min_score is None:
+        min_score = cfg.validation_threshold
     candidate_claims = store.find_by_status("candidate", limit=limit)
     due_revalidation_claims: list[Claim] = []
     if policy_mode != "legacy":
@@ -107,7 +111,7 @@ def run(
             None,
         )
 
-        if conflict is not None and score <= (conflict.confidence + 0.08):
+        if conflict is not None and score <= (conflict.confidence + cfg.conflict_margin):
             if claim.status != "conflicted":
                 transition_claim(
                     store,

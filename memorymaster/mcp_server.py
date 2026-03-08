@@ -295,6 +295,57 @@ if FastMCP is not None:
         }
 
     @mcp.tool()
+    def query_for_context(
+        query: str,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+        token_budget: int = 4000,
+        output_format: str = "text",
+        limit: int = 100,
+        retrieval_mode: str = "hybrid",
+        include_stale: bool = True,
+        include_conflicted: bool = True,
+        include_candidates: bool = True,
+        allow_sensitive: bool = False,
+        scope_allowlist: str = "",
+    ) -> dict[str, Any]:
+        """Pack the most relevant claims into a token-budgeted context block.
+
+        THE context window optimizer for AI agents. Returns a formatted text
+        block (text, xml, or json) that fits within `token_budget` tokens,
+        ranked by relevance using hybrid search (lexical + vector + freshness).
+
+        Use this instead of query_memory when you need to inject memory
+        directly into a system prompt or context window.
+        """
+        resolve_allow_sensitive_access(
+            allow_sensitive=allow_sensitive,
+            context="mcp.query_for_context",
+        )
+        svc = _service(db, workspace)
+        result = svc.query_for_context(
+            query=query,
+            token_budget=token_budget,
+            output_format=output_format,
+            limit=limit,
+            include_stale=include_stale,
+            include_conflicted=include_conflicted,
+            include_candidates=include_candidates,
+            retrieval_mode=retrieval_mode,
+            allow_sensitive=allow_sensitive,
+            scope_allowlist=_effective_scope_allowlist(scope_allowlist, workspace),
+        )
+        return {
+            "ok": True,
+            "output": result.output,
+            "claims_considered": result.claims_considered,
+            "claims_included": result.claims_included,
+            "tokens_used": result.tokens_used,
+            "token_budget": result.token_budget,
+            "format": result.format,
+        }
+
+    @mcp.tool()
     def list_claims(
         db: str = "memorymaster.db",
         workspace: str = ".",

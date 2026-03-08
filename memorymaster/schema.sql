@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS claims (
     updated_at TEXT NOT NULL,
     last_validated_at TEXT,
     archived_at TEXT,
+    human_id TEXT,
     FOREIGN KEY (supersedes_claim_id) REFERENCES claims(id) ON DELETE SET NULL,
     FOREIGN KEY (replaced_by_claim_id) REFERENCES claims(id) ON DELETE SET NULL
 );
@@ -112,3 +113,4 @@ CREATE INDEX IF NOT EXISTS idx_citations_claim_id ON citations(claim_id);
 CREATE INDEX IF NOT EXISTS idx_events_claim_id ON events(claim_id);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
 CREATE INDEX IF NOT EXISTS idx_embeddings_updated_at ON claim_embeddings(updated_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id);

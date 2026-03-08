@@ -27,6 +27,8 @@ dependencies = []
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2"]
 security = ["cryptography>=42"]
+embeddings = ["sentence-transformers>=3.0"]
+gemini = ["google-genai>=1.0"]
 dev = ["pytest>=8.2"]
 mcp = ["mcp>=1.2"]
 

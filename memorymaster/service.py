@@ -3,10 +3,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-from memorymaster.embeddings import EmbeddingProvider
-from memorymaster.jobs import compactor, decay, deterministic, extractor, validator
-from memorymaster.models import CitationInput, Claim, Event
+from memorymaster.embeddings import EmbeddingProvider, create_best_provider
+from memorymaster.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, validator
+from memorymaster.models import CitationInput, Claim, ClaimLink, Event
 from memorymaster.policy import select_revalidation_candidates
+from memorymaster.context_optimizer import ContextResult, pack_context
 from memorymaster.retrieval import VectorSearchHook, rank_claim_rows
 from memorymaster.security import is_sensitive_claim, resolve_allow_sensitive_access, sanitize_claim_input
 from memorymaster.store_factory import create_store
@@ -19,11 +20,13 @@ class MemoryService:
         workspace_root: str | Path | None = None,
         *,
         policy_config: Mapping[str, object] | None = None,
+        tenant_id: str | None = None,
     ) -> None:
         self.store = create_store(db_target)
         self.workspace_root = Path(workspace_root) if workspace_root else Path.cwd()
-        self.embedding_provider = EmbeddingProvider()
+        self.embedding_provider = create_best_provider()
         self.policy_config = policy_config
+        self.tenant_id = (tenant_id or "").strip() or None
 
     def init_db(self) -> None:
         self.store.init_db()
@@ -69,6 +72,7 @@ class MemoryService:
             scope=scope,
             volatility=volatility,
             confidence=confidence,
+            tenant_id=self.tenant_id,
         )
         if sanitized.is_sensitive:
             self.store.record_event(
@@ -203,6 +207,12 @@ class MemoryService:
             deny_mode=deny_mode,
         )
 
+    def _check_tenant_access(self, claim: Claim) -> None:
+        """Raise ValueError if the service has a tenant_id set and the claim
+        belongs to a different tenant."""
+        if self.tenant_id is not None and claim.tenant_id != self.tenant_id:
+            raise ValueError(f"Claim {claim.id} does not exist.")
+
     def query_rows(
         self,
         query_text: str,
@@ -241,6 +251,7 @@ class MemoryService:
                 include_archived=False,
                 include_citations=True,
                 scope_allowlist=normalized_scopes,
+                tenant_id=self.tenant_id,
             )
             if not include_sensitive:
                 legacy = [claim for claim in legacy if not is_sensitive_claim(claim)]
@@ -272,17 +283,21 @@ class MemoryService:
             include_archived=False,
             include_citations=True,
             scope_allowlist=normalized_scopes,
+            tenant_id=self.tenant_id,
         )
         if not include_sensitive:
             candidates = [claim for claim in candidates if not is_sensitive_claim(claim)]
+        semantic = False
         if vector_hook is None and hasattr(self.store, "vector_scores"):
             vector_hook = lambda text, claims: self.store.vector_scores(text, claims, self.embedding_provider)
+            semantic = self.embedding_provider.is_semantic
         ranked_rows = rank_claim_rows(
             query_text,
             candidates,
             mode=retrieval_mode,
             limit=limit,
             vector_hook=vector_hook,
+            semantic_vectors=semantic,
         )
         return [
             {
@@ -298,15 +313,81 @@ class MemoryService:
             for row in ranked_rows
         ]
 
+    def query_for_context(
+        self,
+        query: str,
+        *,
+        token_budget: int = 4000,
+        output_format: str = "text",
+        limit: int = 100,
+        include_stale: bool = True,
+        include_conflicted: bool = True,
+        include_candidates: bool = False,
+        retrieval_mode: str = "hybrid",
+        allow_sensitive: bool = False,
+        scope_allowlist: list[str] | None = None,
+    ) -> ContextResult:
+        """Return a formatted text block of the most relevant claims packed
+        into *token_budget* using greedy knapsack.
+
+        This is the primary interface for AI agents that need to inject
+        relevant memory into their context window.
+
+        Parameters
+        ----------
+        query:
+            Natural-language query describing what context is needed.
+        token_budget:
+            Maximum tokens for the output (default 4000).
+        output_format:
+            ``"text"`` (human-readable), ``"xml"`` (system-prompt tags),
+            or ``"json"`` (structured).
+        limit:
+            Max candidate claims to rank before packing.
+        retrieval_mode:
+            ``"legacy"`` or ``"hybrid"`` (default).
+        """
+        rows = self.query_rows(
+            query_text=query,
+            limit=limit,
+            include_stale=include_stale,
+            include_conflicted=include_conflicted,
+            include_candidates=include_candidates,
+            retrieval_mode=retrieval_mode,
+            allow_sensitive=allow_sensitive,
+            scope_allowlist=scope_allowlist,
+        )
+        return pack_context(
+            rows,
+            token_budget=token_budget,
+            output_format=output_format,
+        )
+
     def pin(self, claim_id: int, pin: bool = True) -> Claim:
         claim = self.store.get_claim(claim_id, include_citations=False)
         if claim is None:
             raise ValueError(f"Claim {claim_id} does not exist.")
+        self._check_tenant_access(claim)
         self.store.set_pinned(claim_id, pinned=pin, reason="manual pin toggle")
         updated = self.store.get_claim(claim_id)
         if updated is None:
             raise RuntimeError(f"Claim {claim_id} disappeared during pin operation.")
         return updated
+
+    def dedup(
+        self,
+        *,
+        threshold: float = 0.92,
+        min_text_overlap: float = 0.3,
+        dry_run: bool = False,
+    ) -> dict:
+        return dedup.run(
+            self.store,
+            threshold=threshold,
+            min_text_overlap=min_text_overlap,
+            dry_run=dry_run,
+            provider=self.embedding_provider,
+        )
 
     def compact(self, retain_days: int = 30, event_retain_days: int = 60) -> dict[str, int]:
         return compactor.run(
@@ -315,6 +396,45 @@ class MemoryService:
             event_retain_days=event_retain_days,
             artifacts_dir=self.workspace_root / "artifacts" / "compaction",
         )
+
+    def compact_summaries(
+        self,
+        *,
+        provider: str = "gemini",
+        api_key: str = "",
+        model: str = "",
+        base_url: str = "",
+        min_cluster: int = 3,
+        max_cluster: int = 20,
+        similarity_threshold: float = 0.65,
+        dry_run: bool = False,
+        limit: int = 500,
+        api_keys: list[str] | None = None,
+        cooldown_seconds: float = 60.0,
+    ) -> dict:
+        result = compact_summaries.run(
+            self.store,
+            provider=provider,
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            min_cluster=min_cluster,
+            max_cluster=max_cluster,
+            similarity_threshold=similarity_threshold,
+            dry_run=dry_run,
+            limit=limit,
+            api_keys=api_keys,
+            cooldown_seconds=cooldown_seconds,
+            embedding_provider=self.embedding_provider,
+        )
+        return {
+            "clusters_found": result.clusters_found,
+            "summaries_created": result.summaries_created,
+            "source_claims_summarized": result.source_claims_summarized,
+            "errors": result.errors,
+            "dry_run": result.dry_run,
+            "details": result.details,
+        }
 
     def list_claims(
         self,
@@ -334,6 +454,7 @@ class MemoryService:
             limit=limit,
             include_archived=include_archived,
             include_citations=True,
+            tenant_id=self.tenant_id,
         )
         if not include_sensitive:
             claims = [claim for claim in claims if not is_sensitive_claim(claim)]
@@ -351,6 +472,11 @@ class MemoryService:
     ) -> dict[str, object]:
         if claim_id <= 0:
             raise ValueError("claim_id must be positive.")
+        if self.tenant_id is not None:
+            claim = self.store.get_claim(claim_id, include_citations=False)
+            if claim is None:
+                raise ValueError(f"Claim {claim_id} does not exist.")
+            self._check_tenant_access(claim)
         result = self.store.redact_claim_payload(
             claim_id,
             mode=mode,
@@ -375,3 +501,19 @@ class MemoryService:
             limit=limit,
             event_type=event_type,
         )
+
+    def add_claim_link(self, source_id: int, target_id: int, link_type: str) -> ClaimLink:
+        for cid in (source_id, target_id):
+            claim = self.store.get_claim(cid, include_citations=False)
+            if claim is None:
+                raise ValueError(f"Claim {cid} does not exist.")
+        return self.store.add_claim_link(source_id, target_id, link_type)
+
+    def remove_claim_link(self, source_id: int, target_id: int, link_type: str | None = None) -> int:
+        return self.store.remove_claim_link(source_id, target_id, link_type)
+
+    def get_claim_links(self, claim_id: int) -> list[ClaimLink]:
+        return self.store.get_claim_links(claim_id)
+
+    def get_linked_claims(self, claim_id: int, link_type: str | None = None) -> list[ClaimLink]:
+        return self.store.get_linked_claims(claim_id, link_type=link_type)

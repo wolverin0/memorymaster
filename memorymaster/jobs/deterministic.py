@@ -86,7 +86,18 @@ def _is_valid_cidr(value: str) -> bool:
 
 def _is_valid_url(value: str) -> bool:
     parsed = urlparse(value)
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+    host = parsed.hostname or ""
+    if not host:
+        return False
+    # Accept valid IPs or valid hostnames
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    return bool(_HOST_RE.match(host))
 
 
 def _is_valid_email(value: str) -> bool:

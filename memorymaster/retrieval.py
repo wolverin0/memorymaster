@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Mapping
 
+from memorymaster.config import get_config
 from memorymaster.models import Claim
 
 RETRIEVAL_MODES = ("legacy", "hybrid")
@@ -13,11 +14,6 @@ RETRIEVAL_MODES = ("legacy", "hybrid")
 VectorSearchHook = Callable[[str, list[Claim]], Mapping[int, float]]
 
 _TOKEN_RE = re.compile(r"[a-z0-9_]+")
-_FRESHNESS_HALF_LIFE_HOURS = {
-    "low": 168.0,
-    "medium": 72.0,
-    "high": 24.0,
-}
 _STOPWORDS = {
     "a",
     "an",
@@ -98,7 +94,9 @@ def _lexical_score(query_text: str, claim: Claim) -> float:
     contains_phrase = 1.0 if q in body_lower else 0.0
     prefix_bonus = 1.0 if any(tok.startswith(q) for tok in c_tokens) and len(q) >= 3 else 0.0
 
-    score = (0.55 * token_recall) + (0.15 * token_precision) + (0.25 * contains_phrase) + (0.05 * prefix_bonus)
+    cfg = get_config()
+    w_recall, w_precision, w_phrase, w_prefix = cfg.lexical_weights
+    score = (w_recall * token_recall) + (w_precision * token_precision) + (w_phrase * contains_phrase) + (w_prefix * prefix_bonus)
     return max(0.0, min(1.0, score))
 
 
@@ -108,7 +106,9 @@ def _freshness_score(claim: Claim) -> float:
         return 0.5
     now = datetime.now(timezone.utc)
     age_hours = max(0.0, (now - anchor).total_seconds() / 3600.0)
-    half_life = _FRESHNESS_HALF_LIFE_HOURS.get(claim.volatility, _FRESHNESS_HALF_LIFE_HOURS["medium"])
+    cfg = get_config()
+    half_life_hours = cfg.freshness_half_life_hours
+    half_life = half_life_hours.get(claim.volatility, half_life_hours["medium"])
     return max(0.0, min(1.0, math.exp(-age_hours / max(1.0, half_life))))
 
 
@@ -119,8 +119,9 @@ def rank_claims(
     mode: str = "legacy",
     limit: int = 20,
     vector_hook: VectorSearchHook | None = None,
+    semantic_vectors: bool = False,
 ) -> list[Claim]:
-    return [row.claim for row in rank_claim_rows(query_text, claims, mode=mode, limit=limit, vector_hook=vector_hook)]
+    return [row.claim for row in rank_claim_rows(query_text, claims, mode=mode, limit=limit, vector_hook=vector_hook, semantic_vectors=semantic_vectors)]
 
 
 def rank_claim_rows(
@@ -130,6 +131,7 @@ def rank_claim_rows(
     mode: str = "legacy",
     limit: int = 20,
     vector_hook: VectorSearchHook | None = None,
+    semantic_vectors: bool = False,
 ) -> list[RankedClaim]:
     if mode not in RETRIEVAL_MODES:
         raise ValueError(f"Unknown retrieval mode: {mode}")
@@ -141,7 +143,7 @@ def rank_claim_rows(
             lexical = _lexical_score(query_text, claim) if query_text.strip() else 0.0
             confidence = max(0.0, min(1.0, claim.confidence))
             freshness = _freshness_score(claim)
-            score = confidence + (0.03 if claim.pinned else 0.0)
+            score = confidence + (get_config().pinned_bonus if claim.pinned else 0.0)
             rows.append(
                 RankedClaim(
                     claim=claim,
@@ -167,12 +169,19 @@ def rank_claim_rows(
         freshness = _freshness_score(claim)
         vector = max(0.0, min(1.0, float(vector_scores.get(claim.id, 0.0))))
 
-        if vector_enabled:
-            score = (0.45 * lexical) + (0.30 * confidence) + (0.15 * freshness) + (0.10 * vector)
+        cfg = get_config()
+        if vector_enabled and semantic_vectors:
+            # Real semantic embeddings: vector is the primary relevance signal
+            score = (0.30 * lexical) + (0.20 * confidence) + (0.10 * freshness) + (0.40 * vector)
+        elif vector_enabled:
+            # Hash-based vectors: limited semantic value, keep lexical dominant
+            w_l, w_c, w_f, w_v = cfg.retrieval_weights
+            score = (w_l * lexical) + (w_c * confidence) + (w_f * freshness) + (w_v * vector)
         else:
-            score = (0.55 * lexical) + (0.30 * confidence) + (0.15 * freshness)
+            w_l, w_c, w_f = cfg.retrieval_weights_no_vector
+            score = (w_l * lexical) + (w_c * confidence) + (w_f * freshness)
         if claim.pinned:
-            score += 0.03
+            score += cfg.pinned_bonus
 
         ranked.append(
             RankedClaim(
@@ -188,7 +197,15 @@ def rank_claim_rows(
     if query_text.strip():
         max_lexical = max((row.lexical_score for row in ranked), default=0.0)
         if max_lexical > 0.0:
-            ranked = [row for row in ranked if row.lexical_score > 0.0 or row.claim.pinned]
+            if semantic_vectors and vector_enabled:
+                # With real semantic search, keep results that match on vector OR lexical
+                min_vector_threshold = 0.55
+                ranked = [
+                    row for row in ranked
+                    if row.lexical_score > 0.0 or row.vector_score >= min_vector_threshold or row.claim.pinned
+                ]
+            else:
+                ranked = [row for row in ranked if row.lexical_score > 0.0 or row.claim.pinned]
 
     ranked.sort(
         key=lambda row: (

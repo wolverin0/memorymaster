@@ -22,6 +22,8 @@ EVENT_TYPES = (
     "decay",
     "compactor",
     "compaction_run",
+    "dedup",
+    "dedup_run",
     "supersession",
     "confidence",
     "policy_decision",
@@ -31,6 +33,7 @@ EVENT_TYPES = (
     "sync",
     "system",
     "transition",
+    "staleness",
 )
 
 STATUS_TRANSITION_EVENT_TYPES = (
@@ -39,7 +42,9 @@ STATUS_TRANSITION_EVENT_TYPES = (
     "deterministic_validator",
     "decay",
     "compactor",
+    "dedup",
     "supersession",
+    "staleness",
 )
 
 
@@ -231,6 +236,24 @@ class Event:
     created_at: str
 
 
+CLAIM_LINK_TYPES = (
+    "relates_to",
+    "supersedes",
+    "derived_from",
+    "contradicts",
+    "supports",
+)
+
+
+@dataclass(slots=True)
+class ClaimLink:
+    id: int
+    source_id: int
+    target_id: int
+    link_type: str
+    created_at: str
+
+
 @dataclass(slots=True)
 class Claim:
     id: int
@@ -252,4 +275,6 @@ class Claim:
     updated_at: str
     last_validated_at: str | None
     archived_at: str | None
+    human_id: str | None = None
+    tenant_id: str | None = None
     citations: list[Citation] = field(default_factory=list)

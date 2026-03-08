@@ -2,20 +2,18 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from memorymaster.config import get_config
 from memorymaster.lifecycle import transition_claim
-
-DECAY_BY_VOLATILITY = {
-    "low": 0.01,
-    "medium": 0.03,
-    "high": 0.06,
-}
-
 
 def _parse_iso(dt: str) -> datetime:
     return datetime.fromisoformat(dt)
 
 
-def run(store, limit: int = 200, stale_threshold: float = 0.35) -> dict[str, int]:
+def run(store, limit: int = 200, stale_threshold: float | None = None) -> dict[str, int]:
+    cfg = get_config()
+    if stale_threshold is None:
+        stale_threshold = cfg.stale_threshold
+    decay_rates = cfg.decay_rates
     claims = store.find_for_decay(limit=limit)
     now = datetime.now(timezone.utc)
     decayed = 0
@@ -27,7 +25,7 @@ def run(store, limit: int = 200, stale_threshold: float = 0.35) -> dict[str, int
         if age_days <= 0:
             continue
 
-        rate = DECAY_BY_VOLATILITY.get(claim.volatility, DECAY_BY_VOLATILITY["medium"])
+        rate = decay_rates.get(claim.volatility, decay_rates["medium"])
         new_conf = max(0.0, claim.confidence - (rate * age_days))
         store.set_confidence(
             claim.id,

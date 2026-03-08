@@ -102,6 +102,7 @@ class OperatorConfig:
     state_json_path: str | None = "artifacts/operator/operator_state.json"
     queue_state_json_path: str | None = "artifacts/operator/operator_queue_state.json"
     queue_journal_jsonl_path: str | None = "artifacts/operator/operator_queue_journal.jsonl"
+    queue_db_path: str | None = None
 
 
 @dataclass(slots=True)
@@ -405,6 +406,27 @@ class MemoryOperator:
         poll_seconds: float = 1.0,
         max_events: int | None = None,
     ) -> dict[str, object]:
+        # Dispatch to SQLite-backed queue when queue_db_path is configured
+        if self.config.queue_db_path and str(self.config.queue_db_path).strip():
+            return self._run_stream_sqlite(
+                inbox_jsonl,
+                poll_seconds=poll_seconds,
+                max_events=max_events,
+            )
+        return self._run_stream_json(
+            inbox_jsonl,
+            poll_seconds=poll_seconds,
+            max_events=max_events,
+        )
+
+    def _run_stream_json(
+        self,
+        inbox_jsonl: Path,
+        *,
+        poll_seconds: float = 1.0,
+        max_events: int | None = None,
+    ) -> dict[str, object]:
+        """Legacy JSON-file backed stream processing (original implementation)."""
         inbox = Path(inbox_jsonl)
         inbox.parent.mkdir(parents=True, exist_ok=True)
         inbox.touch(exist_ok=True)
@@ -931,6 +953,337 @@ class MemoryOperator:
             },
         )
         return summary
+
+    def _run_stream_sqlite(
+        self,
+        inbox_jsonl: Path,
+        *,
+        poll_seconds: float = 1.0,
+        max_events: int | None = None,
+    ) -> dict[str, object]:
+        """SQLite WAL-backed stream processing -- crash-safe queue."""
+        from memorymaster.operator_queue import OperatorQueue
+
+        inbox = Path(inbox_jsonl)
+        inbox.parent.mkdir(parents=True, exist_ok=True)
+        inbox.touch(exist_ok=True)
+
+        log_path = None
+        if self.config.log_jsonl_path:
+            log_path = Path(self.config.log_jsonl_path)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        def emit(event: str, payload: dict[str, object] | None = None) -> None:
+            if log_path is None:
+                return
+            record = {"ts": _utc_now_iso(), "event": event}
+            if payload:
+                record.update(payload)
+            with log_path.open("a", encoding="utf-8") as out:
+                out.write(json.dumps(record, ensure_ascii=True) + "\n")
+
+        canonical_inbox = str(inbox.resolve())
+
+        # Open / create the SQLite queue
+        queue_db_path = Path(str(self.config.queue_db_path).strip())
+        queue = OperatorQueue(queue_db_path)
+
+        # Migrate from JSON files on first run
+        state_path = None
+        if self.config.state_json_path and str(self.config.state_json_path).strip():
+            state_path = Path(str(self.config.state_json_path).strip())
+        queue_state_path = None
+        if self.config.queue_state_json_path and str(self.config.queue_state_json_path).strip():
+            queue_state_path = Path(str(self.config.queue_state_json_path).strip())
+
+        migrated = queue.migrate_from_json(queue_state_path, state_path, canonical_inbox)
+        if migrated:
+            emit("queue_migrated_to_sqlite", {"queue_db": str(queue_db_path)})
+
+        # Store inbox path in meta for validation on next run
+        stored_inbox = queue.get_meta("inbox_jsonl")
+        if stored_inbox and stored_inbox != canonical_inbox:
+            # Different inbox -- reset state
+            queue.set_meta("inbox_jsonl", canonical_inbox)
+            queue.set_meta_int("read_offset", 0)
+            queue.set_meta_int("acked_offset", 0)
+            queue.set_meta_int("seen_events", 0)
+            queue.set_meta_int("processed_events", 0)
+        elif not stored_inbox:
+            queue.set_meta("inbox_jsonl", canonical_inbox)
+
+        # Recover any entries that were mid-processing when we crashed
+        requeued = queue.requeue_processing()
+        if requeued > 0:
+            emit("queue_requeued_processing", {"count": requeued})
+
+        read_offset = queue.get_meta_int("read_offset", 0)
+        acked_offset = queue.get_meta_int("acked_offset", 0)
+        persisted_seen_events = queue.get_meta_int("seen_events", 0)
+        persisted_processed_events = queue.get_meta_int("processed_events", 0)
+        start_offset = read_offset
+
+        processed_events = 0
+        seen_events = 0
+        processed_turns: list[dict[str, Any]] = []
+        json_errors = 0
+        reconciles = 0
+        started = time.monotonic()
+        last_reconcile = started
+        last_activity = started
+        exit_reason = "stream_stopped"
+        final_offset = read_offset
+
+        emit(
+            "stream_start",
+            {
+                "inbox_jsonl": str(inbox),
+                "max_events": max_events,
+                "poll_seconds": poll_seconds,
+                "max_idle_seconds": self.config.max_idle_seconds,
+                "start_offset": start_offset,
+                "pending_events": queue.pending_count(),
+                "queue_db": str(queue_db_path),
+            },
+        )
+
+        def persist_meta() -> None:
+            queue.set_meta_int("read_offset", max(0, int(read_offset)))
+            queue.set_meta_int("acked_offset", max(0, int(acked_offset)))
+            queue.set_meta_int("seen_events", persisted_seen_events)
+            queue.set_meta_int("processed_events", persisted_processed_events)
+            # Also persist legacy state_json for backward compatibility
+            if state_path is not None:
+                state_payload = {
+                    "inbox_jsonl": canonical_inbox,
+                    "offset": max(0, int(acked_offset)),
+                    "read_offset": max(0, int(read_offset)),
+                    "pending_events": queue.pending_count(),
+                    "seen_events": persisted_seen_events,
+                    "processed_events": persisted_processed_events,
+                    "updated_at": _utc_now_iso(),
+                }
+                try:
+                    state_path.parent.mkdir(parents=True, exist_ok=True)
+                    tmp_path = state_path.with_suffix(f"{state_path.suffix}.tmp")
+                    tmp_path.write_text(
+                        json.dumps(state_payload, ensure_ascii=True) + "\n",
+                        encoding="utf-8",
+                    )
+                    tmp_path.replace(state_path)
+                    emit(
+                        "state_saved",
+                        {
+                            "state_json": str(state_path),
+                            "inbox_jsonl": canonical_inbox,
+                            "offset": state_payload["offset"],
+                            "read_offset": state_payload["read_offset"],
+                            "pending_events": state_payload["pending_events"],
+                            "seen_events": state_payload["seen_events"],
+                            "processed_events": state_payload["processed_events"],
+                        },
+                    )
+                except Exception as exc:
+                    emit(
+                        "state_error",
+                        {
+                            "op": "save",
+                            "state_json": str(state_path),
+                            "error": str(exc),
+                        },
+                    )
+
+        try:
+            with inbox.open("rb") as handle:
+                if read_offset > 0:
+                    try:
+                        file_size = inbox.stat().st_size
+                        if read_offset > file_size:
+                            raise ValueError(f"offset {read_offset} exceeds file size {file_size}")
+                        handle.seek(read_offset)
+                    except Exception as exc:
+                        emit(
+                            "state_error",
+                            {
+                                "op": "seek",
+                                "queue_db": str(queue_db_path),
+                                "error": str(exc),
+                            },
+                        )
+                        start_offset = 0
+                        read_offset = 0
+                        handle.seek(0)
+
+                final_offset = handle.tell()
+
+                while True:
+                    # --- drain pending entries from SQLite queue ---
+                    queue_blocked = False
+                    while True:
+                        entry = queue.dequeue()
+                        if entry is None:
+                            break
+
+                        try:
+                            row = json.loads(entry.payload)
+                        except json.JSONDecodeError as exc:
+                            json_errors += 1
+                            emit(
+                                "json_error",
+                                {
+                                    "entry_id": entry.id,
+                                    "offset": entry.inbox_offset,
+                                    "error_kind": "json_decode",
+                                    "error": str(exc),
+                                    "pending_events": queue.pending_count(),
+                                },
+                            )
+                            queue.fail(entry.id, f"json_decode: {exc}")
+                            continue
+
+                        try:
+                            turn = self._turn_from_row(row)
+                            summary = self.process_turn(turn)
+                        except Exception as exc:
+                            exit_reason = "queue_entry_error"
+                            emit(
+                                "queue_entry_error",
+                                {
+                                    "entry_id": entry.id,
+                                    "offset": entry.inbox_offset,
+                                    "error_kind": "process_turn",
+                                    "error": str(exc),
+                                    "pending_events": queue.pending_count(),
+                                },
+                            )
+                            queue.fail(entry.id, f"process_turn: {exc}")
+                            queue_blocked = True
+                            break
+
+                        queue.ack(entry.id)
+                        acked_offset = max(acked_offset, entry.inbox_offset)
+                        processed_events += 1
+                        persisted_processed_events += 1
+                        processed_turns.append(
+                            {
+                                "turn_id": turn.turn_id,
+                                "retrieval_mode": str(summary.get("retrieval_meta", {}).get("mode", "")),
+                                "retrieval_tier": str(summary.get("retrieval_meta", {}).get("tier_used", "")),
+                                "retrieval_rows": int(summary.get("retrieval_meta", {}).get("rows", 0)),
+                                "extracted": len(summary["extracted"]),
+                                "ingested": len(summary["ingested"]),
+                            }
+                        )
+                        emit(
+                            "turn_processed",
+                            {
+                                "turn_id": turn.turn_id,
+                                "entry_id": entry.id,
+                                "seen_events": seen_events,
+                                "processed_events": processed_events,
+                                "retrieval_mode": str(summary.get("retrieval_meta", {}).get("mode", "")),
+                                "retrieval_tier": str(summary.get("retrieval_meta", {}).get("tier_used", "")),
+                                "retrieval_rows": int(summary.get("retrieval_meta", {}).get("rows", 0)),
+                                "extracted": len(summary["extracted"]),
+                                "ingested": len(summary["ingested"]),
+                                "pending_events": queue.pending_count(),
+                            },
+                        )
+                        persist_meta()
+                        last_activity = time.monotonic()
+
+                    if queue_blocked:
+                        break
+
+                    if max_events is not None and seen_events >= max_events:
+                        exit_reason = "max_events_reached"
+                        break
+
+                    # --- read next line from inbox ---
+                    line = handle.readline()
+                    current_offset = handle.tell()
+                    if line:
+                        last_activity = time.monotonic()
+                        final_offset = current_offset
+                        payload = line.decode("utf-8", errors="replace").strip().lstrip("\ufeff")
+                        read_offset = current_offset
+                        if not payload:
+                            persist_meta()
+                            continue
+
+                        entry_id = queue.enqueue(payload, inbox_offset=current_offset)
+                        seen_events += 1
+                        persisted_seen_events += 1
+                        emit(
+                            "queue_enqueued",
+                            {
+                                "entry_id": entry_id,
+                                "offset": current_offset,
+                                "seen_events": seen_events,
+                                "pending_events": queue.pending_count(),
+                            },
+                        )
+                        persist_meta()
+                        continue
+
+                    final_offset = current_offset
+                    if self.config.reconcile_interval_seconds > 0:
+                        now = time.monotonic()
+                        if (now - last_reconcile) >= self.config.reconcile_interval_seconds:
+                            reconcile_result = self.run_reconcile_once()
+                            reconciles += 1
+                            last_reconcile = now
+                            emit(
+                                "reconcile_run",
+                                {
+                                    "reconciles": reconciles,
+                                    "compacted": reconcile_result.get("compacted") is not None,
+                                },
+                            )
+
+                    if (
+                        self.config.max_idle_seconds is not None
+                        and self.config.max_idle_seconds > 0
+                        and (time.monotonic() - last_activity) >= self.config.max_idle_seconds
+                    ):
+                        exit_reason = "idle_timeout"
+                        break
+                    time.sleep(max(0.05, float(poll_seconds)))
+        finally:
+            persist_meta()
+            queue.close()
+
+        result: dict[str, object] = {
+            "processed_events": processed_events,
+            "seen_events": seen_events,
+            "reconciles": reconciles,
+            "json_errors": json_errors,
+            "exit_reason": exit_reason,
+            "start_offset": start_offset,
+            "final_offset": final_offset,
+            "read_offset": read_offset,
+            "acked_offset": acked_offset,
+            "pending_events": 0,  # queue is closed; count before close is in meta
+            "runtime_seconds": round(time.monotonic() - started, 3),
+            "turns": processed_turns,
+        }
+        if log_path is not None:
+            result["log_jsonl"] = str(log_path)
+        result["queue_db"] = str(queue_db_path)
+        emit(
+            "stream_exit",
+            {
+                "processed_events": processed_events,
+                "seen_events": seen_events,
+                "json_errors": json_errors,
+                "reconciles": reconciles,
+                "exit_reason": exit_reason,
+                "pending_events": 0,
+                "acked_offset": acked_offset,
+                "read_offset": read_offset,
+            },
+        )
+        return result
 
     @staticmethod
     def _turn_from_row(row: dict[str, Any]) -> TurnInput:

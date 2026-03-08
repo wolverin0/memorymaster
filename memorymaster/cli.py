@@ -3,14 +3,19 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict, is_dataclass
 import json
+import os
 from pathlib import Path
+import time
 
-from memorymaster.models import CLAIM_STATUSES, CitationInput, VOLATILITY_LEVELS
+from memorymaster.models import CLAIM_LINK_TYPES, CLAIM_STATUSES, CitationInput, VOLATILITY_LEVELS
 from memorymaster.policy import POLICY_MODES
+from memorymaster.context_optimizer import OUTPUT_FORMATS
 from memorymaster.retrieval import RETRIEVAL_MODES
 from memorymaster.scheduler import run_daemon
 from memorymaster.security import resolve_allow_sensitive_access
 from memorymaster.service import MemoryService
+
+STEALTH_DB_NAME = ".memorymaster-stealth.db"
 
 
 def parse_citation(raw: str) -> CitationInput:
@@ -31,8 +36,46 @@ def parse_scope_allowlist(raw: str | None) -> list[str] | None:
     return values or None
 
 
+def _claim_to_dict(claim) -> dict:
+    """Serialize a Claim dataclass to a plain dict for JSON output."""
+    d = asdict(claim) if is_dataclass(claim) else dict(claim)
+    return d
+
+
+def _json_envelope(data, *, total: int | None = None, query_ms: float) -> str:
+    """Format the standard JSON envelope for --json output."""
+    meta: dict = {"query_ms": round(query_ms, 2)}
+    if total is not None:
+        meta["total"] = total
+    return json.dumps({"ok": True, "data": data, "meta": meta}, indent=2, default=_json_default)
+
+
+def _json_error(message: str) -> str:
+    """Format a JSON error envelope."""
+    return json.dumps({"ok": False, "error": str(message)})
+
+
+def _resolve_claim_id(service: MemoryService, raw: str | int) -> int:
+    """Resolve a CLI claim identifier (numeric or human_id) to an integer ID."""
+    if isinstance(raw, int):
+        return raw
+    text = str(raw).strip()
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    return service.store.resolve_claim_id(text)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="memorymaster", description="Memory reliability MVP CLI")
+    parser.add_argument(
+        "--json", "-j",
+        action="store_true",
+        default=False,
+        dest="json_output",
+        help="Output machine-readable JSON instead of human-readable text",
+    )
     parser.add_argument(
         "--db",
         default="memorymaster.db",
@@ -43,9 +86,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=".",
         help="Workspace root used for deterministic codebase checks and git-triggered scheduling",
     )
+    parser.add_argument(
+        "--stealth",
+        action="store_true",
+        default=False,
+        help="Use local-only stealth DB (.memorymaster-stealth.db) in the current directory",
+    )
+    parser.add_argument(
+        "--tenant",
+        default=None,
+        help="Tenant ID for multi-tenant isolation (only claims with this tenant_id are visible)",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("init-db", help="Create schema in SQLite database")
+
+    sub.add_parser("stealth-status", help="Show whether stealth mode is active and which DB is in use")
 
     ingest = sub.add_parser("ingest", help="Ingest a raw claim with citations")
     ingest.add_argument("--text", required=True, help="Claim text")
@@ -99,12 +155,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated scopes to include (e.g. project,team_x)",
     )
 
+    context = sub.add_parser("context", help="Pack relevant claims into a token-budgeted context block for AI agents")
+    context.add_argument("text", help="Query text describing what context is needed")
+    context.add_argument("--budget", type=int, default=4000, help="Maximum token budget (default: 4000)")
+    context.add_argument(
+        "--format",
+        dest="output_format",
+        choices=list(OUTPUT_FORMATS),
+        default="text",
+        help="Output format: text (human-readable), xml (system prompt), json (structured)",
+    )
+    context.add_argument("--limit", type=int, default=100, help="Max candidate claims to rank")
+    context.add_argument("--exclude-stale", action="store_true", help="Exclude stale claims")
+    context.add_argument("--exclude-conflicted", action="store_true", help="Exclude conflicted claims")
+    context.add_argument("--include-candidates", action="store_true", help="Include candidate (unverified) claims")
+    context.add_argument(
+        "--retrieval-mode",
+        choices=list(RETRIEVAL_MODES),
+        default="hybrid",
+        help="Retrieval mode (default: hybrid)",
+    )
+    context.add_argument("--allow-sensitive", action="store_true", help="Include sensitive claims")
+    context.add_argument("--scope-allowlist", default="", help="Comma-separated scopes to include")
+
     pin = sub.add_parser("pin", help="Pin or unpin a claim")
-    pin.add_argument("claim_id", type=int, help="Claim id")
+    pin.add_argument("claim_id", help="Claim numeric id or human_id (e.g. mm-a3f8)")
     pin.add_argument("--unpin", action="store_true", help="Unpin instead of pinning")
 
     redact_claim = sub.add_parser("redact-claim", help="Non-destructive redact/erase workflow for claim payload")
-    redact_claim.add_argument("claim_id", type=int, help="Claim id")
+    redact_claim.add_argument("claim_id", help="Claim numeric id or human_id (e.g. mm-a3f8)")
     redact_claim.add_argument("--mode", choices=["redact", "erase"], default="redact", help="Workflow mode")
     redact_target = redact_claim.add_mutually_exclusive_group()
     redact_target.add_argument("--claims-only", action="store_true", help="Only scrub claim fields")
@@ -121,6 +200,66 @@ def build_parser() -> argparse.ArgumentParser:
     )
     compact.add_argument("--event-retain-days", type=int, default=60, help="Days to retain event history")
 
+    compact_sum = sub.add_parser(
+        "compact-summaries",
+        help="Summarize groups of archived claims into higher-level summary claims using LLM",
+    )
+    compact_sum.add_argument(
+        "--provider", default="gemini",
+        choices=["gemini", "openai", "anthropic", "ollama", "custom"],
+        help="LLM provider (default: gemini)",
+    )
+    compact_sum.add_argument("--api-key", default="", help="API key for the LLM provider")
+    compact_sum.add_argument(
+        "--api-keys", default="",
+        help="Comma-separated API keys for round-robin rotation",
+    )
+    compact_sum.add_argument("--model", default="", help="Model name (uses provider default if omitted)")
+    compact_sum.add_argument("--base-url", default="", help="Custom API base URL")
+    compact_sum.add_argument(
+        "--min-cluster", type=int, default=3,
+        help="Minimum claims per cluster to trigger summarization (default: 3)",
+    )
+    compact_sum.add_argument(
+        "--max-cluster", type=int, default=20,
+        help="Maximum claims per cluster before splitting (default: 20)",
+    )
+    compact_sum.add_argument(
+        "--similarity-threshold", type=float, default=0.65,
+        help="Cosine similarity threshold for embedding-based clustering (default: 0.65)",
+    )
+    compact_sum.add_argument(
+        "--limit", type=int, default=500,
+        help="Maximum archived claims to consider (default: 500)",
+    )
+    compact_sum.add_argument(
+        "--cooldown", type=float, default=60.0,
+        help="Cooldown seconds for rate-limited keys (default: 60)",
+    )
+    compact_sum.add_argument(
+        "--dry-run", action="store_true",
+        help="Preview clusters without creating summaries",
+    )
+
+    dedup = sub.add_parser("dedup", help="Detect and merge duplicate claims using embedding similarity")
+    dedup.add_argument(
+        "--threshold",
+        type=float,
+        default=0.92,
+        help="Cosine similarity threshold for duplicate detection (default: 0.92)",
+    )
+    dedup.add_argument(
+        "--min-text-overlap",
+        type=float,
+        default=0.3,
+        help="Minimum word-level Jaccard overlap as secondary gate (default: 0.3)",
+    )
+    dedup.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview duplicates without archiving",
+    )
+
     list_claims = sub.add_parser("list-claims", help="List claims")
     list_claims.add_argument("--status", choices=list(CLAIM_STATUSES), help="Filter by claim status")
     list_claims.add_argument("--limit", type=int, default=50, help="Maximum rows")
@@ -135,6 +274,10 @@ def build_parser() -> argparse.ArgumentParser:
     list_events.add_argument("--claim-id", type=int, help="Filter by claim id")
     list_events.add_argument("--event-type", help="Filter by event type")
     list_events.add_argument("--limit", type=int, default=100, help="Maximum rows")
+
+    history = sub.add_parser("history", help="Full audit trail timeline for a single claim")
+    history.add_argument("claim_id", help="Claim numeric id or human_id (e.g. mm-a3f8)")
+    history.add_argument("--limit", type=int, default=50, help="Maximum events to show")
 
     export_metrics = sub.add_parser("export-metrics", help="Export D3 structured metrics from JSONL events")
     export_metrics.add_argument(
@@ -250,6 +393,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="JSONL append-only journal path for durable queue enqueue/ack events (empty disables queue journal)",
     )
     operator.add_argument(
+        "--queue-db",
+        default="",
+        help="SQLite WAL database path for crash-safe pending queue (empty uses legacy JSON persistence)",
+    )
+    operator.add_argument(
         "--no-state",
         action="store_true",
         help="Disable checkpoint and durable queue state load/save",
@@ -345,12 +493,117 @@ def build_parser() -> argparse.ArgumentParser:
         help="When approving, do not apply state transition; only mark proposal approved",
     )
 
+    link_cmd = sub.add_parser("link", help="Create a typed link between two claims")
+    link_cmd.add_argument("source_id", help="Source claim numeric id or human_id")
+    link_cmd.add_argument("target_id", help="Target claim numeric id or human_id")
+    link_cmd.add_argument(
+        "--type",
+        dest="link_type",
+        choices=list(CLAIM_LINK_TYPES),
+        default="relates_to",
+        help="Link type (default: relates_to)",
+    )
+
+    unlink_cmd = sub.add_parser("unlink", help="Remove link(s) between two claims")
+    unlink_cmd.add_argument("source_id", help="Source claim numeric id or human_id")
+    unlink_cmd.add_argument("target_id", help="Target claim numeric id or human_id")
+    unlink_cmd.add_argument(
+        "--type",
+        dest="link_type",
+        choices=list(CLAIM_LINK_TYPES),
+        default=None,
+        help="Remove only this link type (default: remove all links between the pair)",
+    )
+
+    links_cmd = sub.add_parser("links", help="Show all links for a claim")
+    links_cmd.add_argument("claim_id", help="Claim numeric id or human_id")
+    links_cmd.add_argument(
+        "--type",
+        dest="link_type",
+        choices=list(CLAIM_LINK_TYPES),
+        default=None,
+        help="Filter by link type",
+    )
+
+    resolve_conflicts_cmd = sub.add_parser(
+        "resolve-conflicts",
+        help="Detect and auto-resolve conflicting claims (same subject+predicate, different object_value)",
+    )
+    resolve_conflicts_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Detect conflicts but do not apply transitions",
+    )
+    resolve_conflicts_cmd.add_argument(
+        "--limit",
+        type=int,
+        default=500,
+        help="Maximum claims to scan for conflicts",
+    )
+
+    staleness_cmd = sub.add_parser(
+        "check-staleness",
+        help="Detect claims whose cited source files have changed and flag them stale",
+    )
+    staleness_cmd.add_argument(
+        "--mode",
+        choices=["mtime", "git"],
+        default="mtime",
+        help="Detection mode: mtime (file modification time) or git (git log)",
+    )
+    staleness_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Detect stale claims but do not apply transitions",
+    )
+    staleness_cmd.add_argument(
+        "--limit",
+        type=int,
+        default=500,
+        help="Maximum claims to scan per status",
+    )
+
+    # -- Ready detection --
+    ready_cmd = sub.add_parser(
+        "ready",
+        help="Show claims needing attention: stale, conflicted, and low-confidence candidates",
+    )
+    ready_cmd.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Maximum claims per category (default: 10)",
+    )
+    ready_cmd.add_argument(
+        "--confidence-threshold",
+        type=float,
+        default=0.5,
+        help="Confidence threshold for low-confidence candidates (default: 0.5)",
+    )
+
+    # -- Snapshot / versioning commands --
+    snap = sub.add_parser("snapshot", help="Create a versioned snapshot of the claim DB")
+    snap.add_argument("--message", "-m", default="", help="Optional description for this snapshot")
+
+    sub.add_parser("snapshots", help="List all DB snapshots with dates and commit hashes")
+
+    rb = sub.add_parser("rollback", help="Restore the DB from a snapshot (creates a safety backup first)")
+    rb.add_argument("snapshot_id", help="Snapshot ID (or unambiguous prefix)")
+    rb.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+
+    snap_diff = sub.add_parser("diff", help="Show claims added/removed/changed since a snapshot")
+    snap_diff.add_argument("snapshot_id", help="Snapshot ID (or unambiguous prefix)")
+
+    sub.add_parser("install-hook", help="Install a git post-commit hook that auto-snapshots the DB")
+
     return parser
 
 
 def print_claim(claim) -> None:
+    hid = getattr(claim, "human_id", None) or ""
+    hid_display = f" {hid}" if hid else ""
     line = (
-        f"[{claim.id}] {claim.status:<10} conf={claim.confidence:.3f} pin={int(claim.pinned)} "
+        f"[{claim.id}]{hid_display} {claim.status:<10} conf={claim.confidence:.3f} pin={int(claim.pinned)} "
         f"type={claim.claim_type or '-'} tuple=({claim.subject or '-'}, {claim.predicate or '-'}, {claim.object_value or '-'}) "
         f"scope={claim.scope} vol={claim.volatility} updated={claim.updated_at}"
     )
@@ -378,11 +631,68 @@ def _json_default(value):
     return repr(value)
 
 
+def _resolve_db_path(args: argparse.Namespace) -> str:
+    """Resolve the effective DB path, applying stealth mode when requested.
+
+    Stealth mode is activated when:
+    1. ``--stealth`` flag is passed explicitly, OR
+    2. A stealth DB already exists in the cwd and ``--db`` was not overridden.
+    """
+    stealth_path = Path.cwd() / STEALTH_DB_NAME
+    db_was_defaulted = args.db == "memorymaster.db"
+
+    if args.stealth:
+        return str(stealth_path)
+
+    if db_was_defaulted and stealth_path.exists():
+        return str(stealth_path)
+
+    return args.db
+
+
+def _stealth_active(args: argparse.Namespace) -> bool:
+    """Return True if stealth mode is active for the resolved args."""
+    stealth_path = Path.cwd() / STEALTH_DB_NAME
+    if args.stealth:
+        return True
+    if args.db == "memorymaster.db" and stealth_path.exists():
+        return True
+    return False
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    effective_db = _resolve_db_path(args)
+
     try:
+        if args.command == "stealth-status":
+            t0 = time.perf_counter()
+            stealth_path = Path.cwd() / STEALTH_DB_NAME
+            active = _stealth_active(args)
+            db_display = str(Path(effective_db).resolve()) if "://" not in effective_db else effective_db
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            info = {
+                "stealth_active": active,
+                "stealth_db_exists": stealth_path.exists(),
+                "stealth_db_path": str(stealth_path.resolve()),
+                "effective_db": db_display,
+                "gitignore_hint": f"Add '{STEALTH_DB_NAME}' to your .gitignore",
+            }
+            if args.json_output:
+                print(_json_envelope(info, query_ms=elapsed_ms))
+            else:
+                status_label = "ACTIVE" if active else "inactive"
+                print(f"stealth mode: {status_label}")
+                print(f"stealth db exists: {stealth_path.exists()}")
+                print(f"stealth db path: {stealth_path.resolve()}")
+                print(f"effective db: {db_display}")
+                if not active:
+                    print(f"\nTip: run 'memorymaster --stealth init-db' to create a stealth DB here.")
+                print(f"\nRemember to add '{STEALTH_DB_NAME}' to your .gitignore")
+            return 0
+
         if args.command == "export-metrics":
             from memorymaster.metrics_exporter import export_metrics
 
@@ -402,18 +712,27 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(payload, indent=2))
             return 0
 
-        service = MemoryService(args.db, workspace_root=Path(args.workspace))
+        service = MemoryService(
+            effective_db,
+            workspace_root=Path(args.workspace),
+            tenant_id=getattr(args, "tenant", None),
+        )
 
         if args.command == "init-db":
+            t0 = time.perf_counter()
             service.init_db()
-            if "://" in str(args.db):
-                print(f"initialized db: {args.db}")
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            db_path = effective_db if "://" in effective_db else str(Path(effective_db).resolve())
+            stealth_label = " (stealth)" if _stealth_active(args) else ""
+            if args.json_output:
+                print(_json_envelope({"db": db_path, "stealth": _stealth_active(args)}, query_ms=elapsed_ms))
             else:
-                print(f"initialized db: {Path(args.db).resolve()}")
+                print(f"initialized db: {db_path}{stealth_label}")
             return 0
 
         if args.command == "ingest":
             citations = [parse_citation(raw) for raw in args.source]
+            t0 = time.perf_counter()
             claim = service.ingest(
                 text=args.text,
                 citations=citations,
@@ -426,10 +745,17 @@ def main(argv: list[str] | None = None) -> int:
                 volatility=args.volatility,
                 confidence=args.confidence,
             )
-            print(f"ingested claim_id={claim.id} status={claim.status} citations={len(claim.citations)}")
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope(_claim_to_dict(claim), total=1, query_ms=elapsed_ms))
+            else:
+                hid = getattr(claim, "human_id", None) or ""
+                hid_suffix = f" human_id={hid}" if hid else ""
+                print(f"ingested claim_id={claim.id}{hid_suffix} status={claim.status} citations={len(claim.citations)}")
             return 0
 
         if args.command == "run-cycle":
+            t0 = time.perf_counter()
             result = service.run_cycle(
                 run_compactor=args.with_compact,
                 min_citations=args.min_citations,
@@ -437,7 +763,11 @@ def main(argv: list[str] | None = None) -> int:
                 policy_mode=args.policy_mode,
                 policy_limit=args.policy_limit,
             )
-            print(json.dumps(result, indent=2))
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope(result, query_ms=elapsed_ms))
+            else:
+                print(json.dumps(result, indent=2))
             return 0
 
         if args.command == "query":
@@ -445,6 +775,7 @@ def main(argv: list[str] | None = None) -> int:
                 allow_sensitive=args.allow_sensitive,
                 context="cli.query",
             )
+            t0 = time.perf_counter()
             rows_data = service.query_rows(
                 query_text=args.text,
                 limit=args.limit,
@@ -455,33 +786,86 @@ def main(argv: list[str] | None = None) -> int:
                 allow_sensitive=args.allow_sensitive,
                 scope_allowlist=parse_scope_allowlist(args.scope_allowlist),
             )
-            for row in rows_data:
-                claim = row["claim"]
-                print_claim(claim)
-                annotation = row.get("annotation", {})
-                print(
-                    "  retrieval: "
-                    f"score={float(row.get('score', 0.0)):.3f} "
-                    f"lex={float(row.get('lexical_score', 0.0)):.3f} "
-                    f"conf={float(row.get('confidence_score', 0.0)):.3f} "
-                    f"fresh={float(row.get('freshness_score', 0.0)):.3f} "
-                    f"vec={float(row.get('vector_score', 0.0)):.3f} "
-                    f"active={int(bool(annotation.get('active', False)))} "
-                    f"stale={int(bool(annotation.get('stale', False)))} "
-                    f"conflicted={int(bool(annotation.get('conflicted', False)))} "
-                    f"pinned={int(bool(annotation.get('pinned', False)))}"
-                )
-            print(f"rows={len(rows_data)}")
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                json_rows = []
+                for row in rows_data:
+                    entry = {
+                        "claim": _claim_to_dict(row["claim"]),
+                        "score": float(row.get("score", 0.0)),
+                        "lexical_score": float(row.get("lexical_score", 0.0)),
+                        "confidence_score": float(row.get("confidence_score", 0.0)),
+                        "freshness_score": float(row.get("freshness_score", 0.0)),
+                        "vector_score": float(row.get("vector_score", 0.0)),
+                        "annotation": row.get("annotation", {}),
+                    }
+                    json_rows.append(entry)
+                print(_json_envelope(json_rows, total=len(json_rows), query_ms=elapsed_ms))
+            else:
+                for row in rows_data:
+                    claim = row["claim"]
+                    print_claim(claim)
+                    annotation = row.get("annotation", {})
+                    print(
+                        "  retrieval: "
+                        f"score={float(row.get('score', 0.0)):.3f} "
+                        f"lex={float(row.get('lexical_score', 0.0)):.3f} "
+                        f"conf={float(row.get('confidence_score', 0.0)):.3f} "
+                        f"fresh={float(row.get('freshness_score', 0.0)):.3f} "
+                        f"vec={float(row.get('vector_score', 0.0)):.3f} "
+                        f"active={int(bool(annotation.get('active', False)))} "
+                        f"stale={int(bool(annotation.get('stale', False)))} "
+                        f"conflicted={int(bool(annotation.get('conflicted', False)))} "
+                        f"pinned={int(bool(annotation.get('pinned', False)))}"
+                    )
+                print(f"rows={len(rows_data)}")
+            return 0
+
+        if args.command == "context":
+            resolve_allow_sensitive_access(
+                allow_sensitive=args.allow_sensitive,
+                context="cli.context",
+            )
+            t0 = time.perf_counter()
+            result = service.query_for_context(
+                query=args.text,
+                token_budget=args.budget,
+                output_format=args.output_format,
+                limit=args.limit,
+                include_stale=not args.exclude_stale,
+                include_conflicted=not args.exclude_conflicted,
+                include_candidates=getattr(args, "include_candidates", False),
+                retrieval_mode=args.retrieval_mode,
+                allow_sensitive=args.allow_sensitive,
+                scope_allowlist=parse_scope_allowlist(args.scope_allowlist),
+            )
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope(
+                    {
+                        "output": result.output,
+                        "claims_considered": result.claims_considered,
+                        "claims_included": result.claims_included,
+                        "tokens_used": result.tokens_used,
+                        "token_budget": result.token_budget,
+                        "format": result.format,
+                    },
+                    query_ms=elapsed_ms,
+                ))
+            else:
+                print(result.output)
             return 0
 
         if args.command == "pin":
-            claim = service.pin(args.claim_id, pin=not args.unpin)
+            resolved_id = _resolve_claim_id(service, args.claim_id)
+            claim = service.pin(resolved_id, pin=not args.unpin)
             print(f"claim_id={claim.id} status={claim.status} pinned={int(claim.pinned)}")
             return 0
 
         if args.command == "redact-claim":
+            resolved_id = _resolve_claim_id(service, args.claim_id)
             result = service.redact_claim_payload(
-                args.claim_id,
+                resolved_id,
                 mode=args.mode,
                 redact_claim=not args.citations_only,
                 redact_citations=not args.claims_only,
@@ -496,29 +880,181 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result, indent=2))
             return 0
 
+        if args.command == "compact-summaries":
+            from memorymaster.llm_steward import _parse_api_keys
+            resolved_keys = _parse_api_keys(
+                api_key=args.api_key,
+                api_keys=args.api_keys,
+            )
+            t0 = time.perf_counter()
+            result = service.compact_summaries(
+                provider=args.provider,
+                api_key=resolved_keys[0] if len(resolved_keys) == 1 else "",
+                model=args.model,
+                base_url=args.base_url,
+                min_cluster=args.min_cluster,
+                max_cluster=args.max_cluster,
+                similarity_threshold=args.similarity_threshold,
+                dry_run=args.dry_run,
+                limit=args.limit,
+                api_keys=resolved_keys if len(resolved_keys) > 1 else None,
+                cooldown_seconds=args.cooldown,
+            )
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope(result, query_ms=elapsed_ms))
+            else:
+                mode = "DRY RUN" if result["dry_run"] else "APPLIED"
+                print(f"compact-summaries [{mode}]")
+                print(f"  clusters_found:           {result['clusters_found']}")
+                print(f"  summaries_created:        {result['summaries_created']}")
+                print(f"  source_claims_summarized: {result['source_claims_summarized']}")
+                print(f"  errors:                   {result['errors']}")
+                for d in result.get("details", []):
+                    action = d.get("action", "unknown")
+                    ids = d.get("source_claim_ids", [])
+                    subject = d.get("subject_hint", "")
+                    if action == "summarized":
+                        print(f"  [{action}] summary_id={d.get('summary_claim_id')} "
+                              f"from {len(ids)} claims (subject: {subject})")
+                        print(f"    {d.get('summary_text', '')[:120]}")
+                    elif action == "would_summarize":
+                        print(f"  [{action}] {len(ids)} claims (subject: {subject})")
+                    else:
+                        print(f"  [{action}] {len(ids)} claims (subject: {subject}) "
+                              f"{d.get('error', '')[:80]}")
+            return 0
+
+        if args.command == "dedup":
+            t0 = time.perf_counter()
+            result = service.dedup(
+                threshold=args.threshold,
+                min_text_overlap=args.min_text_overlap,
+                dry_run=args.dry_run,
+            )
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope(result, query_ms=elapsed_ms))
+            else:
+                mode = "DRY RUN" if result["dry_run"] else "APPLIED"
+                print(f"dedup [{mode}] scanned={result['scanned']} "
+                      f"duplicates={result['duplicates_found']} "
+                      f"archived={result['claims_archived']} "
+                      f"threshold={result['threshold']}")
+                for pair in result["pairs"]:
+                    print(f"  dup: keep={pair['keep_id']} archive={pair['archive_id']} "
+                          f"sim={pair['similarity']:.4f} overlap={pair['text_overlap']:.4f}")
+                    print(f"    keep:    {pair['keep_text'][:80]}")
+                    print(f"    archive: {pair['archive_text'][:80]}")
+            return 0
+
         if args.command == "list-claims":
             resolve_allow_sensitive_access(
                 allow_sensitive=args.allow_sensitive,
                 context="cli.list-claims",
             )
+            t0 = time.perf_counter()
             claims = service.list_claims(
                 status=args.status,
                 limit=args.limit,
                 include_archived=args.include_archived,
                 allow_sensitive=args.allow_sensitive,
             )
-            for claim in claims:
-                print_claim(claim)
-            print(f"rows={len(claims)}")
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope(
+                    [_claim_to_dict(c) for c in claims],
+                    total=len(claims),
+                    query_ms=elapsed_ms,
+                ))
+            else:
+                for claim in claims:
+                    print_claim(claim)
+                print(f"rows={len(claims)}")
             return 0
 
         if args.command == "list-events":
+            t0 = time.perf_counter()
             events = service.list_events(
                 claim_id=args.claim_id,
                 limit=args.limit,
                 event_type=args.event_type,
             )
-            print(json.dumps({"rows": len(events), "events": events}, indent=2, default=_json_default))
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                serialized = json.loads(json.dumps(events, default=_json_default))
+                print(_json_envelope(serialized, total=len(events), query_ms=elapsed_ms))
+            else:
+                print(json.dumps({"rows": len(events), "events": events}, indent=2, default=_json_default))
+            return 0
+
+        if args.command == "history":
+            t0 = time.perf_counter()
+            resolved_id = _resolve_claim_id(service, args.claim_id)
+            claim = service.store.get_claim(resolved_id, include_citations=False)
+            if claim is None:
+                if args.json_output:
+                    print(_json_error(f"Claim {args.claim_id} not found."))
+                else:
+                    print(f"Error: Claim {args.claim_id} not found.")
+                return 1
+            events = service.list_events(claim_id=resolved_id, limit=args.limit)
+            # Reverse to chronological order (list_events returns newest-first)
+            events.reverse()
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+
+            if args.json_output:
+                timeline = []
+                for ev in events:
+                    entry: dict = {
+                        "id": ev.id,
+                        "timestamp": ev.created_at,
+                        "event_type": ev.event_type,
+                    }
+                    if ev.from_status or ev.to_status:
+                        entry["from_status"] = ev.from_status
+                        entry["to_status"] = ev.to_status
+                    if ev.details:
+                        entry["details"] = ev.details
+                    if ev.payload_json:
+                        try:
+                            payload = json.loads(ev.payload_json)
+                        except (json.JSONDecodeError, TypeError):
+                            payload = ev.payload_json
+                        entry["payload"] = payload
+                    timeline.append(entry)
+                envelope = {
+                    "claim_id": args.claim_id,
+                    "status": claim.status,
+                    "confidence": claim.confidence,
+                    "timeline": timeline,
+                }
+                print(_json_envelope(envelope, total=len(events), query_ms=elapsed_ms))
+            else:
+                print(
+                    f"=== History for claim {claim.id} "
+                    f"[{claim.status} conf={claim.confidence:.3f}] ==="
+                )
+                print(f"  text: {claim.text}")
+                print()
+                for ev in events:
+                    transition = ""
+                    if ev.from_status or ev.to_status:
+                        transition = f"  {ev.from_status or '?'} -> {ev.to_status or '?'}"
+                    details_str = f"  | {ev.details}" if ev.details else ""
+                    payload_str = ""
+                    if ev.payload_json:
+                        try:
+                            payload = json.loads(ev.payload_json)
+                            if isinstance(payload, dict) and "score" in payload:
+                                payload_str = f"  score={payload['score']}"
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    print(
+                        f"  {ev.created_at}  {ev.event_type:<25}"
+                        f"{transition}{payload_str}{details_str}"
+                    )
+                print(f"\n  ({len(events)} events)")
             return 0
 
         if args.command == "review-queue":
@@ -562,7 +1098,7 @@ def main(argv: list[str] | None = None) -> int:
             from memorymaster.dashboard import create_dashboard_server
 
             server = create_dashboard_server(
-                db_target=args.db,
+                db_target=effective_db,
                 workspace_root=args.workspace,
                 host=args.host,
                 port=args.port,
@@ -616,6 +1152,11 @@ def main(argv: list[str] | None = None) -> int:
                     if args.no_state
                     else (args.queue_journal_jsonl.strip() if str(args.queue_journal_jsonl).strip() else None)
                 ),
+                queue_db_path=(
+                    None
+                    if args.no_state
+                    else (args.queue_db.strip() if str(args.queue_db).strip() else None)
+                ),
             )
 
             operator = MemoryOperator(service=service, config=config)
@@ -635,6 +1176,7 @@ def main(argv: list[str] | None = None) -> int:
                 allow_sensitive=args.allow_sensitive,
                 context="cli.run-steward",
             )
+            t0 = time.perf_counter()
             result = run_steward(
                 service,
                 mode=args.mode,
@@ -656,7 +1198,12 @@ def main(argv: list[str] | None = None) -> int:
                 enable_tool_probe=not args.disable_tool_probe,
                 artifact_path=Path(args.artifact_json),
             )
-            print(json.dumps(result, indent=2, default=_json_default))
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                serialized = json.loads(json.dumps(result, default=_json_default))
+                print(_json_envelope(serialized, query_ms=elapsed_ms))
+            else:
+                print(json.dumps(result, indent=2, default=_json_default))
             return 0
 
         if args.command == "steward-proposals":
@@ -685,10 +1232,396 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result, indent=2, default=_json_default))
             return 0
 
+        if args.command == "link":
+            t0 = time.perf_counter()
+            src_id = _resolve_claim_id(service, args.source_id)
+            tgt_id = _resolve_claim_id(service, args.target_id)
+            link = service.add_claim_link(src_id, tgt_id, args.link_type)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            payload = {
+                "id": link.id,
+                "source_id": link.source_id,
+                "target_id": link.target_id,
+                "link_type": link.link_type,
+                "created_at": link.created_at,
+            }
+            if args.json_output:
+                print(_json_envelope(payload, query_ms=elapsed_ms))
+            else:
+                print(
+                    f"linked claim {link.source_id} -> {link.target_id} "
+                    f"({link.link_type}) id={link.id}"
+                )
+            return 0
+
+        if args.command == "unlink":
+            t0 = time.perf_counter()
+            src_id = _resolve_claim_id(service, args.source_id)
+            tgt_id = _resolve_claim_id(service, args.target_id)
+            removed = service.remove_claim_link(src_id, tgt_id, args.link_type)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope({"removed": removed, "source_id": src_id, "target_id": tgt_id}, query_ms=elapsed_ms))
+            else:
+                print(f"removed {removed} link(s) between {src_id} and {tgt_id}")
+            return 0
+
+        if args.command == "links":
+            t0 = time.perf_counter()
+            resolved_id = _resolve_claim_id(service, args.claim_id)
+            links = service.get_claim_links(resolved_id)
+            if args.link_type:
+                links = [lnk for lnk in links if lnk.link_type == args.link_type]
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            items = [
+                {
+                    "id": lnk.id,
+                    "source_id": lnk.source_id,
+                    "target_id": lnk.target_id,
+                    "link_type": lnk.link_type,
+                    "created_at": lnk.created_at,
+                }
+                for lnk in links
+            ]
+            if args.json_output:
+                print(_json_envelope({"rows": len(items), "links": items}, total=len(items), query_ms=elapsed_ms))
+            else:
+                print(json.dumps({"rows": len(items), "links": items}, indent=2))
+            return 0
+
+        if args.command == "ready":
+            from memorymaster.conflict_resolver import detect_conflicts
+
+            t0 = time.perf_counter()
+            limit = args.limit
+
+            # Category 1: Stale claims (previously confirmed, now stale — need re-validation)
+            stale_claims = service.store.list_claims(
+                status="stale",
+                limit=limit,
+                include_archived=False,
+                include_citations=True,
+            )
+
+            # Category 2: Conflicted claims (same subject+predicate, different values)
+            conflict_pairs = detect_conflicts(service.store, limit=500)
+
+            # Category 3: Low-confidence candidates (need more evidence)
+            all_candidates = service.store.list_claims(
+                status="candidate",
+                limit=limit * 3,  # fetch more, then filter
+                include_archived=False,
+            )
+            threshold = args.confidence_threshold
+            low_conf_candidates = [
+                c for c in all_candidates if c.confidence < threshold
+            ][:limit]
+
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+
+            stale_dicts = [_claim_to_dict(c) for c in stale_claims]
+            conflict_dicts = [
+                {
+                    "winner_id": p.winner.id,
+                    "loser_id": p.loser.id,
+                    "reason": p.reason,
+                    "key": list(p.key),
+                    "winner_text": p.winner.text[:120],
+                    "loser_text": p.loser.text[:120],
+                    "winner_confidence": p.winner.confidence,
+                    "loser_confidence": p.loser.confidence,
+                }
+                for p in conflict_pairs[:limit]
+            ]
+            low_conf_dicts = [_claim_to_dict(c) for c in low_conf_candidates]
+
+            payload = {
+                "stale": {"count": len(stale_claims), "claims": stale_dicts},
+                "conflicted": {"count": len(conflict_pairs), "pairs": conflict_dicts},
+                "low_confidence": {"count": len(low_conf_candidates), "claims": low_conf_dicts},
+                "total_attention": len(stale_claims) + len(conflict_pairs) + len(low_conf_candidates),
+            }
+
+            if args.json_output:
+                print(_json_envelope(payload, total=payload["total_attention"], query_ms=elapsed_ms))
+            else:
+                total = payload["total_attention"]
+                if total == 0:
+                    print("Nothing needs attention. All clear.")
+                    return 0
+
+                print(f"=== {total} items need attention ===\n")
+
+                # Stale
+                if stale_claims:
+                    print(f"--- Stale claims ({len(stale_claims)}) ---")
+                    print("  Previously confirmed but source files changed. Need re-validation.")
+                    for c in stale_claims:
+                        hid = getattr(c, "human_id", None) or ""
+                        hid_display = f" {hid}" if hid else ""
+                        print(
+                            f"  [{c.id}]{hid_display} conf={c.confidence:.3f} "
+                            f"scope={c.scope} {c.text[:80]}"
+                        )
+                    print(f'  -> Run `memorymaster check-staleness` to review details\n')
+
+                # Conflicts
+                if conflict_pairs:
+                    shown = conflict_pairs[:limit]
+                    print(f"--- Conflicted pairs ({len(conflict_pairs)}) ---")
+                    print("  Same subject+predicate with different values. Need resolution.")
+                    for p in shown:
+                        print(
+                            f"  winner=[{p.winner.id}] vs loser=[{p.loser.id}] "
+                            f"key=({p.key[0]}, {p.key[1]}) reason={p.reason}"
+                        )
+                    print(f'  -> Run `memorymaster resolve-conflicts` to auto-resolve\n')
+
+                # Low confidence
+                if low_conf_candidates:
+                    print(f"--- Low-confidence candidates ({len(low_conf_candidates)}) ---")
+                    print(f"  Candidates with confidence < {threshold}. Need more evidence or review.")
+                    for c in low_conf_candidates:
+                        hid = getattr(c, "human_id", None) or ""
+                        hid_display = f" {hid}" if hid else ""
+                        print(
+                            f"  [{c.id}]{hid_display} conf={c.confidence:.3f} "
+                            f"scope={c.scope} {c.text[:80]}"
+                        )
+                    print(f'  -> Run `memorymaster run-cycle` to re-evaluate candidates\n')
+
+            return 0
+
+        if args.command == "resolve-conflicts":
+            from memorymaster.conflict_resolver import resolve_conflicts
+
+            t0 = time.perf_counter()
+            result = resolve_conflicts(
+                service,
+                dry_run=args.dry_run,
+                limit=args.limit,
+            )
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            payload = {
+                "pairs_detected": result.pairs_detected,
+                "pairs_resolved": result.pairs_resolved,
+                "pairs_skipped": result.pairs_skipped,
+                "resolutions": result.resolutions,
+            }
+            if args.json_output:
+                print(_json_envelope(payload, query_ms=elapsed_ms))
+            else:
+                if args.dry_run:
+                    print("[DRY RUN] No transitions applied.")
+                print(
+                    f"conflicts detected={result.pairs_detected} "
+                    f"resolved={result.pairs_resolved} "
+                    f"skipped={result.pairs_skipped}"
+                )
+                for res in result.resolutions:
+                    status = "APPLIED" if res.get("applied") else "SKIPPED"
+                    skip = f" ({res['skip_reason']})" if res.get("skip_reason") else ""
+                    print(
+                        f"  [{status}] winner={res['winner_id']} loser={res['loser_id']} "
+                        f"reason={res['reason']}{skip}"
+                    )
+            return 0
+
+        if args.command == "check-staleness":
+            from memorymaster.jobs.staleness import run as run_staleness
+
+            workspace = Path(args.workspace).resolve()
+            t0 = time.perf_counter()
+            result = run_staleness(
+                service.store,
+                workspace,
+                mode=args.mode,
+                dry_run=args.dry_run,
+                limit=args.limit,
+            )
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            payload = {
+                "scanned": result.scanned,
+                "stale_detected": result.stale_detected,
+                "already_stale": result.already_stale,
+                "skipped_no_citations": result.skipped_no_citations,
+                "skipped_pinned": result.skipped_pinned,
+                "details": result.details,
+            }
+            if args.json_output:
+                print(_json_envelope(payload, query_ms=elapsed_ms))
+            else:
+                if args.dry_run:
+                    print("[DRY RUN] No transitions applied.")
+                print(
+                    f"staleness scanned={result.scanned} "
+                    f"stale={result.stale_detected} "
+                    f"already_stale={result.already_stale} "
+                    f"skipped_pinned={result.skipped_pinned} "
+                    f"skipped_no_citations={result.skipped_no_citations}"
+                )
+                for d in result.details:
+                    status = "APPLIED" if d.get("applied") else "DETECTED"
+                    files = ", ".join(
+                        os.path.basename(f) for f in d.get("changed_files", [])[:3]
+                    )
+                    print(f"  [{status}] claim={d['claim_id']} files={files}")
+            return 0
+
+        # -- Snapshot / versioning commands --
+        if args.command == "snapshot":
+            from memorymaster.snapshot import create_snapshot
+
+            t0 = time.perf_counter()
+            db_resolved = Path(effective_db).resolve()
+            info = create_snapshot(
+                db_resolved,
+                workspace_root=Path(args.workspace).resolve(),
+                message=args.message,
+            )
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            payload = {
+                "snapshot_id": info.snapshot_id,
+                "filename": info.filename,
+                "path": info.path,
+                "commit_hash": info.commit_hash,
+                "timestamp": info.timestamp,
+                "message": info.message,
+                "size_bytes": info.size_bytes,
+            }
+            if args.json_output:
+                print(_json_envelope(payload, query_ms=elapsed_ms))
+            else:
+                print(f"snapshot created: {info.snapshot_id}")
+                print(f"  commit: {info.commit_hash or '(no git)'}")
+                print(f"  time:   {info.timestamp}")
+                if info.message:
+                    print(f"  msg:    {info.message}")
+                print(f"  size:   {info.size_bytes} bytes")
+                print(f"  path:   {info.path}")
+            return 0
+
+        if args.command == "snapshots":
+            from memorymaster.snapshot import list_snapshots
+
+            t0 = time.perf_counter()
+            db_resolved = Path(effective_db).resolve()
+            snaps = list_snapshots(db_resolved)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            items = [
+                {
+                    "snapshot_id": s.snapshot_id,
+                    "commit_hash": s.commit_hash,
+                    "timestamp": s.timestamp,
+                    "message": s.message,
+                    "size_bytes": s.size_bytes,
+                }
+                for s in snaps
+            ]
+            if args.json_output:
+                print(_json_envelope(items, total=len(items), query_ms=elapsed_ms))
+            else:
+                if not snaps:
+                    print("no snapshots found")
+                else:
+                    for s in snaps:
+                        commit_str = s.commit_hash[:8] if s.commit_hash else "(no git)"
+                        msg_str = f"  {s.message}" if s.message else ""
+                        print(f"  {s.snapshot_id}  {commit_str}  {s.timestamp}  {s.size_bytes}b{msg_str}")
+                    print(f"\n{len(snaps)} snapshot(s)")
+            return 0
+
+        if args.command == "rollback":
+            from memorymaster.snapshot import rollback
+
+            db_resolved = Path(effective_db).resolve()
+            if not args.yes:
+                try:
+                    answer = input(
+                        f"Restore DB from snapshot '{args.snapshot_id}'? "
+                        "A pre-rollback backup will be created. [y/N] "
+                    )
+                except EOFError:
+                    answer = ""
+                if answer.strip().lower() not in ("y", "yes"):
+                    print("rollback cancelled")
+                    return 0
+            t0 = time.perf_counter()
+            info = rollback(db_resolved, args.snapshot_id)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            payload = {
+                "restored_snapshot_id": info.snapshot_id,
+                "commit_hash": info.commit_hash,
+                "timestamp": info.timestamp,
+                "message": info.message,
+            }
+            if args.json_output:
+                print(_json_envelope(payload, query_ms=elapsed_ms))
+            else:
+                print(f"restored from snapshot: {info.snapshot_id}")
+                print(f"  commit: {info.commit_hash or '(no git)'}")
+                print(f"  time:   {info.timestamp}")
+            return 0
+
+        if args.command == "diff":
+            from memorymaster.snapshot import diff_snapshot
+
+            t0 = time.perf_counter()
+            db_resolved = Path(effective_db).resolve()
+            result = diff_snapshot(db_resolved, args.snapshot_id)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            payload = {
+                "snapshot_id": result.snapshot_id,
+                "summary": result.summary,
+                "added": result.added,
+                "removed": result.removed,
+                "changed": result.changed,
+            }
+            if args.json_output:
+                print(_json_envelope(payload, query_ms=elapsed_ms))
+            else:
+                s = result.summary
+                print(
+                    f"diff vs {result.snapshot_id}: "
+                    f"+{s['added']} added, -{s['removed']} removed, "
+                    f"~{s['changed']} changed, ={s['unchanged']} unchanged"
+                )
+                for item in result.added:
+                    print(f"  + [{item['id']}] {item['status']}: {item['text'][:80]}")
+                for item in result.removed:
+                    print(f"  - [{item['id']}] {item['status']}: {item['text'][:80]}")
+                for item in result.changed:
+                    changes = ", ".join(
+                        f"{k}: {v['old']!r}->{v['new']!r}"
+                        for k, v in item["changes"].items()
+                    )
+                    print(f"  ~ [{item['id']}] {changes}")
+            return 0
+
+        if args.command == "install-hook":
+            from memorymaster.snapshot import install_git_hook
+
+            t0 = time.perf_counter()
+            workspace = Path(args.workspace).resolve()
+            result = install_git_hook(workspace)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope(result, query_ms=elapsed_ms))
+            else:
+                if result["installed"]:
+                    mode = "appended to existing" if result.get("appended") else "created"
+                    print(f"post-commit hook {mode}: {result['path']}")
+                else:
+                    print(f"hook not installed: {result.get('reason', 'unknown')}")
+            return 0
+
         parser.print_help()
         return 1
     except Exception as exc:
-        print(f"error: {exc}")
+        if args.json_output:
+            print(_json_error(str(exc)))
+        else:
+            print(f"error: {exc}")
         return 2
 
 

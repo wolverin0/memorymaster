@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS claims (
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
     last_validated_at TIMESTAMPTZ,
-    archived_at TIMESTAMPTZ
+    archived_at TIMESTAMPTZ,
+    human_id TEXT,
+    tenant_id TEXT
 );
 
 ALTER TABLE claims
@@ -135,6 +137,8 @@ BEGIN
 END
 $$;
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id);
+CREATE INDEX IF NOT EXISTS idx_claims_tenant_id ON claims(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status);
 CREATE INDEX IF NOT EXISTS idx_claims_updated_at ON claims(updated_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_idempotency_key ON claims(idempotency_key);
@@ -143,6 +147,20 @@ CREATE INDEX IF NOT EXISTS idx_claims_replaced_by ON claims(replaced_by_claim_id
 CREATE INDEX IF NOT EXISTS idx_citations_claim_id ON citations(claim_id);
 CREATE INDEX IF NOT EXISTS idx_events_claim_id ON events(claim_id);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
+
+CREATE TABLE IF NOT EXISTS claim_links (
+    id BIGSERIAL PRIMARY KEY,
+    source_id BIGINT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+    target_id BIGINT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+    link_type TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    CHECK (source_id <> target_id),
+    CHECK (link_type IN ('relates_to', 'supersedes', 'derived_from', 'contradicts', 'supports'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_links_unique ON claim_links(source_id, target_id, link_type);
+CREATE INDEX IF NOT EXISTS idx_claim_links_source ON claim_links(source_id);
+CREATE INDEX IF NOT EXISTS idx_claim_links_target ON claim_links(target_id);
 
 DO $$
 BEGIN
@@ -159,6 +177,17 @@ BEGIN
             CREATE INDEX IF NOT EXISTS idx_embeddings_vector
             ON claim_embeddings USING hnsw (embedding vector_cosine_ops)
         ';
+    ELSE
+        EXECUTE '
+            CREATE TABLE IF NOT EXISTS claim_embeddings (
+                claim_id BIGINT PRIMARY KEY REFERENCES claims(id) ON DELETE CASCADE,
+                model TEXT NOT NULL,
+                embedding_json TEXT NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
+            )
+        ';
     END IF;
 END
 $$;
+
+CREATE INDEX IF NOT EXISTS idx_embeddings_updated_at ON claim_embeddings(updated_at);

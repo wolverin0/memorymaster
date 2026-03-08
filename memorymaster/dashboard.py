@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from memorymaster.config import get_config
 from memorymaster.review import build_review_queue, queue_to_dicts
 from memorymaster.security import is_sensitive_claim
 from memorymaster.service import MemoryService
@@ -655,7 +656,8 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
             confidence = max(0.0, min(1.0, float(claim.confidence)))
             freshness = 0.5
             vector = 0.0
-            score = (0.55 * lexical) + (0.30 * confidence) + (0.15 * freshness)
+            _w_l, _w_c, _w_f = get_config().retrieval_weights_no_vector
+            score = (_w_l * lexical) + (_w_c * confidence) + (_w_f * freshness)
             scored = scored_by_claim_id.get(claim_id)
             if isinstance(scored, dict):
                 lexical_raw = scored.get("lexical_score", scored.get("lexical", lexical))

@@ -14,6 +14,9 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("openai_key", re.compile(r"\bsk-[A-Za-z0-9_\-]{12,}\b")),
     ("aws_access_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+    ("jwt_token", re.compile(r"\beyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*\b")),
+    ("github_token", re.compile(r"\b(ghp_[A-Za-z0-9]{36}|gho_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})\b")),
+    ("bearer_token", re.compile(r"\bBearer\s+[A-Za-z0-9_\-\.]{20,}\b")),
     ("password_assignment", re.compile(r"(?i)\b(password|passwd|pwd)\s*[:=]\s*([^\s,;]+)")),
     ("token_assignment", re.compile(r"(?i)\b(token|api[_-]?key|secret)\s*[:=]\s*([^\s,;]+)")),
 ]

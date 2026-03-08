@@ -72,9 +72,9 @@ def test_dashboard_health_and_html() -> None:
             assert response.headers["Content-Type"].startswith("text/html")
             html = response.read().decode("utf-8")
         assert "MemoryMaster Dashboard" in html
-        assert "Claims Table" in html
-        assert "Timeline Feed" in html
-        assert "Conflict Comparisons" in html
+        assert ">Claims<" in html
+        assert ">Timeline<" in html
+        assert ">Conflicts<" in html
         assert "/api/claims?limit=50" in html
         assert "/api/operator/stream" in html
         assert "JSON.stringify(data, null, 2)" not in html

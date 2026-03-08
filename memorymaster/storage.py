@@ -6,19 +6,38 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from memorymaster.retry import connect_with_retry
+
 from memorymaster.embeddings import EmbeddingProvider, cosine_similarity
 from memorymaster.models import (
+    CLAIM_LINK_TYPES,
     CLAIM_STATUSES,
     STATUS_TRANSITION_EVENT_TYPES,
     Citation,
     CitationInput,
     Claim,
+    ClaimLink,
     Event,
     validate_event_payload,
     validate_event_type,
     validate_transition_event_type,
 )
 from memorymaster.schema import load_schema_sql
+
+HUMAN_ID_PREFIX = "mm"
+
+
+def generate_human_id_hash(text: str) -> str:
+    """Generate a 4-hex-char hash from text for human-readable IDs."""
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return digest[:4]
+
+
+def generate_top_level_human_id(subject: str | None, text: str) -> str:
+    """Generate a top-level human_id like ``mm-a3f8``."""
+    seed = (subject or text).strip()
+    return f"{HUMAN_ID_PREFIX}-{generate_human_id_hash(seed)}"
+
 
 EVENT_HASH_ALGO = "sha256-v1"
 SQLITE_EVENTS_APPEND_ONLY_TRIGGERS = (
@@ -40,10 +59,13 @@ class SQLiteStore:
         self.db_path = str(db_path)
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
+        def _open() -> sqlite3.Connection:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            return conn
+
+        return connect_with_retry(_open)
 
     def init_db(self) -> None:
         with self.connect() as conn:
@@ -51,6 +73,10 @@ class SQLiteStore:
             self._ensure_claim_idempotency_schema(conn)
             self._ensure_confirmed_tuple_uniqueness_schema(conn)
             self._ensure_event_integrity_schema(conn)
+            self._ensure_fts5_schema(conn)
+            self._ensure_claim_links_schema(conn)
+            self._ensure_human_id_schema(conn)
+            self._ensure_tenant_id_schema(conn)
             conn.commit()
 
     @staticmethod
@@ -160,6 +186,220 @@ class SQLiteStore:
                 SELECT RAISE(ABORT, 'events table is append-only; DELETE is not allowed');
             END;
             """
+        )
+
+    @staticmethod
+    def _fts5_available(conn: sqlite3.Connection) -> bool:
+        """Check if the FTS5 extension is available in the current SQLite build."""
+        try:
+            conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_probe USING fts5(x)")
+            conn.execute("DROP TABLE IF EXISTS _fts5_probe")
+            return True
+        except sqlite3.OperationalError:
+            return False
+
+    @staticmethod
+    def _ensure_fts5_schema(conn: sqlite3.Connection) -> None:
+        """Create the FTS5 virtual table, sync triggers, and backfill from existing claims."""
+        if not SQLiteStore._fts5_available(conn):
+            return
+
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS claims_fts USING fts5(
+                text,
+                normalized_text,
+                subject,
+                predicate,
+                object_value,
+                content='claims',
+                content_rowid='id'
+            )
+            """
+        )
+
+        conn.executescript(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_claims_fts_insert
+            AFTER INSERT ON claims
+            BEGIN
+                INSERT INTO claims_fts(rowid, text, normalized_text, subject, predicate, object_value)
+                VALUES (
+                    NEW.id,
+                    NEW.text,
+                    COALESCE(NEW.normalized_text, ''),
+                    COALESCE(NEW.subject, ''),
+                    COALESCE(NEW.predicate, ''),
+                    COALESCE(NEW.object_value, '')
+                );
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS trg_claims_fts_update
+            AFTER UPDATE OF text, normalized_text, subject, predicate, object_value ON claims
+            BEGIN
+                INSERT INTO claims_fts(claims_fts, rowid, text, normalized_text, subject, predicate, object_value)
+                VALUES (
+                    'delete',
+                    OLD.id,
+                    OLD.text,
+                    COALESCE(OLD.normalized_text, ''),
+                    COALESCE(OLD.subject, ''),
+                    COALESCE(OLD.predicate, ''),
+                    COALESCE(OLD.object_value, '')
+                );
+                INSERT INTO claims_fts(rowid, text, normalized_text, subject, predicate, object_value)
+                VALUES (
+                    NEW.id,
+                    NEW.text,
+                    COALESCE(NEW.normalized_text, ''),
+                    COALESCE(NEW.subject, ''),
+                    COALESCE(NEW.predicate, ''),
+                    COALESCE(NEW.object_value, '')
+                );
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS trg_claims_fts_delete
+            AFTER DELETE ON claims
+            BEGIN
+                INSERT INTO claims_fts(claims_fts, rowid, text, normalized_text, subject, predicate, object_value)
+                VALUES (
+                    'delete',
+                    OLD.id,
+                    OLD.text,
+                    COALESCE(OLD.normalized_text, ''),
+                    COALESCE(OLD.subject, ''),
+                    COALESCE(OLD.predicate, ''),
+                    COALESCE(OLD.object_value, '')
+                );
+            END;
+            """
+        )
+
+        # Backfill: rebuild FTS index from existing claims data.
+        # The 'rebuild' command re-reads all rows from the content table.
+        conn.execute("INSERT INTO claims_fts(claims_fts) VALUES ('rebuild')")
+
+    @staticmethod
+    def _ensure_claim_links_schema(conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS claim_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id INTEGER NOT NULL,
+                target_id INTEGER NOT NULL,
+                link_type TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (source_id) REFERENCES claims(id) ON DELETE CASCADE,
+                FOREIGN KEY (target_id) REFERENCES claims(id) ON DELETE CASCADE,
+                CHECK (source_id <> target_id),
+                CHECK (link_type IN ('relates_to', 'supersedes', 'derived_from', 'contradicts', 'supports'))
+            )
+            """
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_links_unique ON claim_links(source_id, target_id, link_type)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_claim_links_source ON claim_links(source_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_claim_links_target ON claim_links(target_id)"
+        )
+
+    @staticmethod
+    def _ensure_human_id_schema(conn: sqlite3.Connection) -> None:
+        """Add human_id column if missing and backfill existing claims."""
+        try:
+            conn.execute("ALTER TABLE claims ADD COLUMN human_id TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id)"
+        )
+        SQLiteStore._backfill_human_ids(conn)
+
+    @staticmethod
+    def _backfill_human_ids(conn: sqlite3.Connection) -> int:
+        """Assign human_id to all claims that lack one."""
+        rows = conn.execute(
+            "SELECT id, subject, text FROM claims WHERE human_id IS NULL ORDER BY id ASC"
+        ).fetchall()
+        if not rows:
+            return 0
+        updated = 0
+        for row in rows:
+            claim_id = int(row["id"])
+            subject = row["subject"]
+            text = str(row["text"])
+            human_id = SQLiteStore._allocate_human_id(conn, subject, text, claim_id)
+            conn.execute(
+                "UPDATE claims SET human_id = ? WHERE id = ?",
+                (human_id, claim_id),
+            )
+            updated += 1
+        return updated
+
+    @staticmethod
+    def _allocate_human_id(
+        conn: sqlite3.Connection,
+        subject: str | None,
+        text: str,
+        claim_id: int,
+    ) -> str:
+        """Build a unique human_id, checking for derived_from parent links.
+
+        If the claim has a ``derived_from`` link to a parent that already has a
+        human_id, produce a child id (e.g. ``mm-a3f8.1``).  Otherwise produce a
+        top-level id (e.g. ``mm-a3f8``).  Collisions are resolved by appending a
+        numeric suffix.
+        """
+        parent_row = conn.execute(
+            """
+            SELECT c.human_id
+            FROM claim_links cl
+            JOIN claims c ON c.id = cl.target_id
+            WHERE cl.source_id = ?
+              AND cl.link_type = 'derived_from'
+              AND c.human_id IS NOT NULL
+            LIMIT 1
+            """,
+            (claim_id,),
+        ).fetchone()
+
+        if parent_row and parent_row["human_id"]:
+            parent_hid = str(parent_row["human_id"])
+            child_count = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM claims WHERE human_id LIKE ? AND human_id != ?",
+                (parent_hid + ".%", parent_hid),
+            ).fetchone()
+            next_child = (int(child_count["cnt"]) if child_count else 0) + 1
+            candidate = f"{parent_hid}.{next_child}"
+        else:
+            candidate = generate_top_level_human_id(subject, text)
+
+        # Resolve collisions by appending a numeric suffix.
+        final = candidate
+        suffix = 1
+        while True:
+            existing = conn.execute(
+                "SELECT 1 FROM claims WHERE human_id = ?", (final,)
+            ).fetchone()
+            if existing is None:
+                return final
+            suffix += 1
+            final = f"{candidate}~{suffix}"
+
+    @staticmethod
+    def _ensure_tenant_id_schema(conn: sqlite3.Connection) -> None:
+        """Add tenant_id column if missing, with an index for tenant isolation."""
+        try:
+            conn.execute("ALTER TABLE claims ADD COLUMN tenant_id TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_claims_tenant_id ON claims(tenant_id)"
         )
 
     @staticmethod
@@ -320,10 +560,12 @@ class SQLiteStore:
         scope: str = "project",
         volatility: str = "medium",
         confidence: float = 0.5,
+        tenant_id: str | None = None,
     ) -> Claim:
         if not citations:
             raise ValueError("At least one citation is required.")
         normalized_idempotency_key = (idempotency_key or "").strip() or None
+        normalized_tenant_id = (tenant_id or "").strip() or None
         now = utc_now()
         with self.connect() as conn:
             if normalized_idempotency_key is not None:
@@ -343,8 +585,9 @@ class SQLiteStore:
                     INSERT INTO claims (
                         text, idempotency_key, normalized_text, claim_type, subject, predicate, object_value,
                         scope, volatility, status, confidence, pinned, supersedes_claim_id,
-                        replaced_by_claim_id, created_at, updated_at, last_validated_at, archived_at
-                    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'candidate', ?, 0, NULL, NULL, ?, ?, NULL, NULL)
+                        replaced_by_claim_id, created_at, updated_at, last_validated_at, archived_at,
+                        tenant_id
+                    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'candidate', ?, 0, NULL, NULL, ?, ?, NULL, NULL, ?)
                     """,
                     (
                         text,
@@ -358,6 +601,7 @@ class SQLiteStore:
                         confidence,
                         now,
                         now,
+                        normalized_tenant_id,
                     ),
                 )
             except sqlite3.IntegrityError:
@@ -376,6 +620,16 @@ class SQLiteStore:
                 return existing
 
             claim_id = int(cur.lastrowid)
+            # Assign a human-readable ID.
+            try:
+                human_id = self._allocate_human_id(conn, subject, text, claim_id)
+                conn.execute(
+                    "UPDATE claims SET human_id = ? WHERE id = ?",
+                    (human_id, claim_id),
+                )
+            except sqlite3.OperationalError:
+                # Column may not exist in legacy schemas; skip gracefully.
+                pass
             for cite in citations:
                 conn.execute(
                     """
@@ -431,6 +685,68 @@ class SQLiteStore:
             claim.citations = self.list_citations(claim.id)
         return claim
 
+    def get_claim_by_human_id(self, human_id: str, include_citations: bool = True) -> Claim | None:
+        """Look up a claim by its human-readable ID (e.g. ``mm-a3f8``)."""
+        normalized = human_id.strip()
+        if not normalized:
+            return None
+        with self.connect() as conn:
+            try:
+                row = conn.execute(
+                    "SELECT * FROM claims WHERE human_id = ?",
+                    (normalized,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                # Column may not exist yet.
+                return None
+        if row is None:
+            return None
+        claim = self._row_to_claim(row)
+        if include_citations:
+            claim.citations = self.list_citations(claim.id)
+        return claim
+
+    def resolve_claim_id(self, identifier: str | int) -> int:
+        """Resolve a numeric ID or human_id string to a numeric claim ID.
+
+        Raises ``ValueError`` if the claim cannot be found.
+        """
+        if isinstance(identifier, int):
+            return identifier
+        raw = str(identifier).strip()
+        # Try numeric first.
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+        # Try human_id lookup.
+        claim = self.get_claim_by_human_id(raw, include_citations=False)
+        if claim is not None:
+            return claim.id
+        raise ValueError(f"No claim found for identifier '{raw}'.")
+
+    @staticmethod
+    def _escape_fts5_query(text: str) -> str:
+        """Escape a user query string for safe use in FTS5 MATCH.
+
+        Each token is wrapped in double quotes so that FTS5 special
+        characters (*, :, OR, AND, NOT, etc.) are treated as literals.
+        Tokens are joined with implicit AND semantics.
+        """
+        tokens = text.split()
+        if not tokens:
+            return '""'
+        escaped = ['"' + token.replace('"', '""') + '"' for token in tokens]
+        return " ".join(escaped)
+
+    @staticmethod
+    def _has_fts5_table(conn: sqlite3.Connection) -> bool:
+        """Check if the claims_fts virtual table exists."""
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='claims_fts'"
+        ).fetchone()
+        return row is not None
+
     def list_claims(
         self,
         *,
@@ -441,9 +757,14 @@ class SQLiteStore:
         text_query: str | None = None,
         include_citations: bool = False,
         scope_allowlist: list[str] | None = None,
+        tenant_id: str | None = None,
     ) -> list[Claim]:
         clauses: list[str] = []
         params: list[object] = []
+
+        if tenant_id is not None:
+            clauses.append("tenant_id = ?")
+            params.append(tenant_id)
 
         if status is not None:
             clauses.append("status = ?")
@@ -456,10 +777,10 @@ class SQLiteStore:
         if not include_archived and status != "archived":
             clauses.append("status <> 'archived'")
 
+        use_fts = False
+        fts_query = ""
         if text_query:
-            clauses.append("(LOWER(text) LIKE ? OR LOWER(COALESCE(normalized_text, '')) LIKE ?)")
-            needle = f"%{text_query.lower()}%"
-            params.extend([needle, needle])
+            fts_query = self._escape_fts5_query(text_query)
 
         if scope_allowlist:
             normalized_scopes = [scope.strip() for scope in scope_allowlist if scope and scope.strip()]
@@ -468,17 +789,41 @@ class SQLiteStore:
                 clauses.append(f"scope IN ({placeholders})")
                 params.extend(normalized_scopes)
 
-        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        sql = f"""
-            SELECT * FROM claims
-            {where_sql}
-            ORDER BY pinned DESC, confidence DESC, updated_at DESC, id DESC
-            LIMIT ?
-        """
-        params.append(limit)
-
         with self.connect() as conn:
+            if text_query and self._has_fts5_table(conn):
+                use_fts = True
+                clauses.append("c.id IN (SELECT rowid FROM claims_fts WHERE claims_fts MATCH ?)")
+                params.append(fts_query)
+
+                where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+                sql = f"""
+                    SELECT c.*, bm25(claims_fts) AS _fts_rank
+                    FROM claims c
+                    JOIN claims_fts ON claims_fts.rowid = c.id
+                    {where_sql}
+                    AND claims_fts MATCH ?
+                    ORDER BY _fts_rank ASC, c.pinned DESC, c.confidence DESC, c.updated_at DESC, c.id DESC
+                    LIMIT ?
+                """
+                params.append(fts_query)
+                params.append(limit)
+            else:
+                if text_query:
+                    clauses.append("(LOWER(text) LIKE ? OR LOWER(COALESCE(normalized_text, '')) LIKE ?)")
+                    needle = f"%{text_query.lower()}%"
+                    params.extend([needle, needle])
+
+                where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+                sql = f"""
+                    SELECT * FROM claims
+                    {where_sql}
+                    ORDER BY pinned DESC, confidence DESC, updated_at DESC, id DESC
+                    LIMIT ?
+                """
+                params.append(limit)
+
             rows = conn.execute(sql, params).fetchall()
+
         claims = [self._row_to_claim(row) for row in rows]
         if include_citations:
             for claim in claims:
@@ -1111,6 +1456,8 @@ class SQLiteStore:
     @staticmethod
     def _row_to_claim(row: sqlite3.Row) -> Claim:
         idempotency_key = row["idempotency_key"] if "idempotency_key" in row.keys() else None
+        human_id = row["human_id"] if "human_id" in row.keys() else None
+        tenant_id = row["tenant_id"] if "tenant_id" in row.keys() else None
         return Claim(
             id=int(row["id"]),
             text=str(row["text"]),
@@ -1131,6 +1478,8 @@ class SQLiteStore:
             updated_at=str(row["updated_at"]),
             last_validated_at=row["last_validated_at"],
             archived_at=row["archived_at"],
+            human_id=human_id,
+            tenant_id=tenant_id,
         )
 
     @staticmethod
@@ -1156,3 +1505,98 @@ class SQLiteStore:
             payload_json=row["payload_json"],
             created_at=str(row["created_at"]),
         )
+
+    @staticmethod
+    def _row_to_claim_link(row: sqlite3.Row) -> ClaimLink:
+        return ClaimLink(
+            id=int(row["id"]),
+            source_id=int(row["source_id"]),
+            target_id=int(row["target_id"]),
+            link_type=str(row["link_type"]),
+            created_at=str(row["created_at"]),
+        )
+
+    def add_claim_link(self, source_id: int, target_id: int, link_type: str) -> ClaimLink:
+        if link_type not in CLAIM_LINK_TYPES:
+            allowed = ", ".join(CLAIM_LINK_TYPES)
+            raise ValueError(f"Invalid link_type '{link_type}'. Allowed: {allowed}.")
+        if source_id == target_id:
+            raise ValueError("source_id and target_id must be different.")
+        now = utc_now()
+        with self.connect() as conn:
+            try:
+                cur = conn.execute(
+                    """
+                    INSERT INTO claim_links (source_id, target_id, link_type, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (source_id, target_id, link_type, now),
+                )
+            except sqlite3.IntegrityError as exc:
+                msg = str(exc).lower()
+                if "unique" in msg:
+                    raise ValueError(
+                        f"Link already exists: {source_id} -> {target_id} ({link_type})."
+                    ) from exc
+                if "foreign key" in msg:
+                    raise ValueError(
+                        f"One or both claim ids do not exist: {source_id}, {target_id}."
+                    ) from exc
+                raise
+            conn.commit()
+            return ClaimLink(
+                id=int(cur.lastrowid),
+                source_id=source_id,
+                target_id=target_id,
+                link_type=link_type,
+                created_at=now,
+            )
+
+    def remove_claim_link(self, source_id: int, target_id: int, link_type: str | None = None) -> int:
+        with self.connect() as conn:
+            if link_type is not None:
+                cur = conn.execute(
+                    "DELETE FROM claim_links WHERE source_id = ? AND target_id = ? AND link_type = ?",
+                    (source_id, target_id, link_type),
+                )
+            else:
+                cur = conn.execute(
+                    "DELETE FROM claim_links WHERE source_id = ? AND target_id = ?",
+                    (source_id, target_id),
+                )
+            conn.commit()
+            return cur.rowcount
+
+    def get_claim_links(self, claim_id: int) -> list[ClaimLink]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM claim_links
+                WHERE source_id = ? OR target_id = ?
+                ORDER BY created_at ASC
+                """,
+                (claim_id, claim_id),
+            ).fetchall()
+        return [self._row_to_claim_link(row) for row in rows]
+
+    def get_linked_claims(self, claim_id: int, link_type: str | None = None) -> list[ClaimLink]:
+        with self.connect() as conn:
+            if link_type is not None:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM claim_links
+                    WHERE (source_id = ? OR target_id = ?) AND link_type = ?
+                    ORDER BY created_at ASC
+                    """,
+                    (claim_id, claim_id, link_type),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM claim_links
+                    WHERE source_id = ? OR target_id = ?
+                    ORDER BY created_at ASC
+                    """,
+                    (claim_id, claim_id),
+                ).fetchall()
+        return [self._row_to_claim_link(row) for row in rows]

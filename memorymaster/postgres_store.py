@@ -6,17 +6,20 @@ from datetime import datetime, timedelta, timezone
 
 from memorymaster.embeddings import EmbeddingProvider, cosine_similarity
 from memorymaster.models import (
+    CLAIM_LINK_TYPES,
     CLAIM_STATUSES,
     STATUS_TRANSITION_EVENT_TYPES,
     Citation,
     CitationInput,
     Claim,
+    ClaimLink,
     Event,
     validate_event_payload,
     validate_event_type,
     validate_transition_event_type,
 )
-from memorymaster.storage import EVENT_HASH_ALGO, SQLiteStore
+from memorymaster.retry import connect_with_retry
+from memorymaster.storage import EVENT_HASH_ALGO, SQLiteStore, generate_top_level_human_id
 
 POSTGRES_EVENTS_APPEND_ONLY_TRIGGERS = (
     "trg_events_append_only_update",
@@ -50,7 +53,11 @@ class PostgresStore(SQLiteStore):
 
     def connect(self):
         psycopg, dict_row, _ = self._load_psycopg()
-        return psycopg.connect(self.dsn, row_factory=dict_row)
+
+        def _open():
+            return psycopg.connect(self.dsn, row_factory=dict_row)
+
+        return connect_with_retry(_open)
 
     def init_db(self) -> None:
         from memorymaster.schema import load_schema_postgres_sql
@@ -63,6 +70,9 @@ class PostgresStore(SQLiteStore):
                     cur.execute(statement)
                 self._ensure_confirmed_tuple_uniqueness_schema(conn)
                 self._ensure_event_integrity_schema(conn)
+                self._ensure_claim_links_schema(conn)
+                self._ensure_human_id_schema(conn)
+                self._ensure_tenant_id_schema(conn)
 
     @staticmethod
     def _canonical_payload(payload: object | None) -> str:
@@ -367,10 +377,12 @@ class PostgresStore(SQLiteStore):
         scope: str = "project",
         volatility: str = "medium",
         confidence: float = 0.5,
+        tenant_id: str | None = None,
     ) -> Claim:
         if not citations:
             raise ValueError("At least one citation is required.")
         normalized_idempotency_key = (idempotency_key or "").strip() or None
+        normalized_tenant_id = (tenant_id or "").strip() or None
         now = utc_now()
         with self.connect() as conn:
             with conn.cursor() as cur:
@@ -379,9 +391,11 @@ class PostgresStore(SQLiteStore):
                     INSERT INTO claims (
                         text, idempotency_key, normalized_text, claim_type, subject, predicate, object_value,
                         scope, volatility, status, confidence, pinned, supersedes_claim_id,
-                        replaced_by_claim_id, created_at, updated_at, last_validated_at, archived_at
+                        replaced_by_claim_id, created_at, updated_at, last_validated_at, archived_at,
+                        tenant_id
                     ) VALUES (
-                        %s, %s, NULL, %s, %s, %s, %s, %s, %s, 'candidate', %s, FALSE, NULL, NULL, %s, %s, NULL, NULL
+                        %s, %s, NULL, %s, %s, %s, %s, %s, %s, 'candidate', %s, FALSE, NULL, NULL, %s, %s, NULL, NULL,
+                        %s
                     )
                     ON CONFLICT (idempotency_key) DO NOTHING
                     RETURNING id
@@ -398,6 +412,7 @@ class PostgresStore(SQLiteStore):
                         confidence,
                         now,
                         now,
+                        normalized_tenant_id,
                     ),
                 )
                 claim_row = cur.fetchone()
@@ -417,6 +432,17 @@ class PostgresStore(SQLiteStore):
                         raise RuntimeError("Idempotency key matched missing claim.")
                     return claim
                 claim_id = int(claim_row["id"])
+
+                # Assign a human-readable ID.
+                try:
+                    human_id = self._allocate_human_id(cur, subject, text, claim_id)
+                    cur.execute(
+                        "UPDATE claims SET human_id = %s WHERE id = %s",
+                        (human_id, claim_id),
+                    )
+                except Exception:
+                    # Column may not exist in legacy schemas; skip gracefully.
+                    pass
 
                 for cite in citations:
                     cur.execute(
@@ -487,9 +513,14 @@ class PostgresStore(SQLiteStore):
         text_query: str | None = None,
         include_citations: bool = False,
         scope_allowlist: list[str] | None = None,
+        tenant_id: str | None = None,
     ) -> list[Claim]:
         clauses: list[str] = []
         params: list[object] = []
+
+        if tenant_id is not None:
+            clauses.append("tenant_id = %s")
+            params.append(tenant_id)
 
         if status is not None:
             clauses.append("status = %s")
@@ -1324,6 +1355,8 @@ class PostgresStore(SQLiteStore):
             updated_at=cls._as_iso(row["updated_at"]) or "",
             last_validated_at=cls._as_iso(row["last_validated_at"]),
             archived_at=cls._as_iso(row["archived_at"]),
+            human_id=cls._as_text(row.get("human_id")),
+            tenant_id=cls._as_text(row.get("tenant_id")),
         )
 
     @classmethod
@@ -1357,3 +1390,248 @@ class PostgresStore(SQLiteStore):
             payload_json=payload_json,
             created_at=cls._as_iso(row["created_at"]) or "",
         )
+
+    @classmethod
+    def _row_to_claim_link(cls, row: dict[str, object]) -> ClaimLink:
+        return ClaimLink(
+            id=int(row["id"]),
+            source_id=int(row["source_id"]),
+            target_id=int(row["target_id"]),
+            link_type=str(row["link_type"]),
+            created_at=cls._as_iso(row["created_at"]) or "",
+        )
+
+    def _ensure_claim_links_schema(self, conn) -> None:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS claim_links (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_id BIGINT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+                    target_id BIGINT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+                    link_type TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    CHECK (source_id <> target_id),
+                    CHECK (link_type IN ('relates_to', 'supersedes', 'derived_from', 'contradicts', 'supports'))
+                )
+                """
+            )
+            cur.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_links_unique ON claim_links(source_id, target_id, link_type)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_claim_links_source ON claim_links(source_id)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_claim_links_target ON claim_links(target_id)"
+            )
+
+    def _ensure_human_id_schema(self, conn) -> None:
+        """Add human_id column if missing and backfill existing claims."""
+        with conn.cursor() as cur:
+            cur.execute("ALTER TABLE claims ADD COLUMN IF NOT EXISTS human_id TEXT")
+            cur.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id)"
+            )
+        self._backfill_human_ids(conn)
+
+    def _backfill_human_ids(self, conn) -> int:
+        """Assign human_id to all claims that lack one."""
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, subject, text FROM claims WHERE human_id IS NULL ORDER BY id ASC"
+            )
+            rows = cur.fetchall()
+            if not rows:
+                return 0
+            updated = 0
+            for row in rows:
+                claim_id = int(row["id"])
+                subject = self._as_text(row["subject"])
+                text = str(row["text"])
+                human_id = self._allocate_human_id(cur, subject, text, claim_id)
+                cur.execute(
+                    "UPDATE claims SET human_id = %s WHERE id = %s",
+                    (human_id, claim_id),
+                )
+                updated += 1
+            return updated
+
+    @staticmethod
+    def _allocate_human_id(cur, subject: str | None, text: str, claim_id: int) -> str:
+        """Build a unique human_id, checking for derived_from parent links."""
+        cur.execute(
+            """
+            SELECT c.human_id
+            FROM claim_links cl
+            JOIN claims c ON c.id = cl.target_id
+            WHERE cl.source_id = %s
+              AND cl.link_type = 'derived_from'
+              AND c.human_id IS NOT NULL
+            LIMIT 1
+            """,
+            (claim_id,),
+        )
+        parent_row = cur.fetchone()
+
+        if parent_row and parent_row["human_id"]:
+            parent_hid = str(parent_row["human_id"])
+            cur.execute(
+                "SELECT COUNT(*) AS cnt FROM claims WHERE human_id LIKE %s AND human_id != %s",
+                (parent_hid + ".%", parent_hid),
+            )
+            child_count = cur.fetchone()
+            next_child = (int(child_count["cnt"]) if child_count else 0) + 1
+            candidate = f"{parent_hid}.{next_child}"
+        else:
+            candidate = generate_top_level_human_id(subject, text)
+
+        final = candidate
+        suffix = 1
+        while True:
+            cur.execute("SELECT 1 FROM claims WHERE human_id = %s", (final,))
+            existing = cur.fetchone()
+            if existing is None:
+                return final
+            suffix += 1
+            final = f"{candidate}~{suffix}"
+
+    def _ensure_tenant_id_schema(self, conn) -> None:
+        """Add tenant_id column if missing, with an index for tenant isolation."""
+        with conn.cursor() as cur:
+            cur.execute("ALTER TABLE claims ADD COLUMN IF NOT EXISTS tenant_id TEXT")
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_claims_tenant_id ON claims(tenant_id)"
+            )
+
+    def get_claim_by_human_id(self, human_id: str, include_citations: bool = True) -> Claim | None:
+        """Look up a claim by its human-readable ID (e.g. ``mm-a3f8``)."""
+        normalized = human_id.strip()
+        if not normalized:
+            return None
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute(
+                        "SELECT * FROM claims WHERE human_id = %s",
+                        (normalized,),
+                    )
+                    row = cur.fetchone()
+                except Exception:
+                    # Column may not exist yet.
+                    return None
+        if row is None:
+            return None
+        claim = self._row_to_claim(row)
+        if include_citations:
+            claim.citations = self.list_citations(claim.id)
+        return claim
+
+    def resolve_claim_id(self, identifier: str | int) -> int:
+        """Resolve a numeric ID or human_id string to a numeric claim ID."""
+        if isinstance(identifier, int):
+            return identifier
+        raw = str(identifier).strip()
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+        claim = self.get_claim_by_human_id(raw, include_citations=False)
+        if claim is not None:
+            return claim.id
+        raise ValueError(f"No claim found for identifier '{raw}'.")
+
+    def add_claim_link(self, source_id: int, target_id: int, link_type: str) -> ClaimLink:
+        if link_type not in CLAIM_LINK_TYPES:
+            allowed = ", ".join(CLAIM_LINK_TYPES)
+            raise ValueError(f"Invalid link_type '{link_type}'. Allowed: {allowed}.")
+        if source_id == target_id:
+            raise ValueError("source_id and target_id must be different.")
+        now = utc_now()
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO claim_links (source_id, target_id, link_type, created_at)
+                        VALUES (%s, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        (source_id, target_id, link_type, now),
+                    )
+                    row = cur.fetchone()
+                except Exception as exc:
+                    msg = str(exc).lower()
+                    if "unique" in msg or "duplicate key" in msg or "already exists" in msg:
+                        raise ValueError(
+                            f"Link already exists: {source_id} -> {target_id} ({link_type})."
+                        ) from exc
+                    if "foreign key" in msg or "violates foreign key" in msg or "is not present" in msg:
+                        raise ValueError(
+                            f"One or both claim ids do not exist: {source_id}, {target_id}."
+                        ) from exc
+                    if "check" in msg and "source_id" in msg:
+                        raise ValueError("source_id and target_id must be different.") from exc
+                    raise
+                if row is None:
+                    raise RuntimeError("Failed to insert claim link.")
+                return ClaimLink(
+                    id=int(row["id"]),
+                    source_id=source_id,
+                    target_id=target_id,
+                    link_type=link_type,
+                    created_at=self._as_iso(now) or "",
+                )
+
+    def remove_claim_link(self, source_id: int, target_id: int, link_type: str | None = None) -> int:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                if link_type is not None:
+                    cur.execute(
+                        "DELETE FROM claim_links WHERE source_id = %s AND target_id = %s AND link_type = %s",
+                        (source_id, target_id, link_type),
+                    )
+                else:
+                    cur.execute(
+                        "DELETE FROM claim_links WHERE source_id = %s AND target_id = %s",
+                        (source_id, target_id),
+                    )
+                return cur.rowcount
+
+    def get_claim_links(self, claim_id: int) -> list[ClaimLink]:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT * FROM claim_links
+                    WHERE source_id = %s OR target_id = %s
+                    ORDER BY created_at ASC
+                    """,
+                    (claim_id, claim_id),
+                )
+                rows = cur.fetchall()
+        return [self._row_to_claim_link(row) for row in rows]
+
+    def get_linked_claims(self, claim_id: int, link_type: str | None = None) -> list[ClaimLink]:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                if link_type is not None:
+                    cur.execute(
+                        """
+                        SELECT * FROM claim_links
+                        WHERE (source_id = %s OR target_id = %s) AND link_type = %s
+                        ORDER BY created_at ASC
+                        """,
+                        (claim_id, claim_id, link_type),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT * FROM claim_links
+                        WHERE source_id = %s OR target_id = %s
+                        ORDER BY created_at ASC
+                        """,
+                        (claim_id, claim_id),
+                    )
+                rows = cur.fetchall()
+        return [self._row_to_claim_link(row) for row in rows]

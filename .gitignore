@@ -27,11 +27,18 @@ mcp_proof.db
 probe_root.db
 memorymaster_smoke.db
 memorymaster.db
+.memorymaster-stealth.db
 *.db-wal
 *.db-shm
 
 # Artifacts (generated, not committed)
 artifacts/
+data/
+test_results.txt
+
+# Tool configs
+.claude-flow/
+.serena/
 
 # Environment
 .env

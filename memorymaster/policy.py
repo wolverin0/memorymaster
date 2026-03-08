@@ -3,16 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from memorymaster.config import get_config
 from memorymaster.models import Claim
 
 POLICY_MODES = ("legacy", "cadence")
-
-# Base hours by volatility. Claim-type and state multipliers tune the final cadence.
-_BASE_CADENCE_HOURS = {
-    "low": 168.0,
-    "medium": 72.0,
-    "high": 24.0,
-}
 
 _CLAIM_TYPE_MULTIPLIER = {
     "security_fact": 0.5,
@@ -48,7 +42,8 @@ def _parse_iso(value: str | None) -> datetime | None:
 
 
 def _base_cadence_hours(claim: Claim) -> float:
-    base = _BASE_CADENCE_HOURS.get(claim.volatility, _BASE_CADENCE_HOURS["medium"])
+    cadence = get_config().cadence_hours
+    base = cadence.get(claim.volatility, cadence["medium"])
     type_mult = _CLAIM_TYPE_MULTIPLIER.get(claim.claim_type or "", 1.0)
     state_mult = _STATE_MULTIPLIER.get(claim.status, 1.0)
     return max(1.0, base * type_mult * state_mult)
