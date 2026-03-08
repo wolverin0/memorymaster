@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-03-08
+
+### Added
+
+- **Centralized Config** (`config.py`): Frozen `Config` dataclass with 11 env vars + JSON config file support. All hardcoded weights replaced with configurable values.
+- **Context Optimizer** (`context_optimizer.py`): `query_for_context(budget=4000)` with greedy knapsack packing and 3 output formats (text/xml/json). New `query_for_context` MCP tool (13 total).
+- **Conflict Resolution** (`conflict_resolver.py`): 5-tier auto-resolution (pinned > confidence > recency > citations > id), `contradicts` links, and `policy_decision` audit events.
+- **Deduplication** (`jobs/dedup.py`): Two-gate detection (cosine similarity + text overlap), chain prevention, `supersedes` links, summary events.
+- **Staleness Detection** (`jobs/staleness.py`): File watcher with `mtime` and `git` modes, citation-based path extraction, pinned claim exclusion.
+- **LLM Compaction** (`jobs/compact_summaries.py`): Embedding-based clustering with LLM summarization, `derived_from` links, confirmed summary claims.
+- **Git Versioning** (`snapshot.py`): SQLite `.backup()` API snapshots, rollback with safety backup, field-level diff, post-commit hook installer.
+- **Claim Graph**: `claim_links` table with 5 typed relationships (`supersedes`, `contradicts`, `supports`, `derived_from`, `relates_to`).
+- **Hierarchical IDs**: `mm-{4hex}.{n}.{n}` human-readable IDs derived from `derived_from` links, accepted in all CLI commands.
+- **Multi-tenancy**: Row-level `tenant_id` isolation at service layer with `_check_tenant_access()` enforcement.
+- **Connection Retry** (`retry.py`): Exponential backoff wrapper for SQLite and Postgres connections.
+- **Operator Queue** (`operator_queue.py`): SQLite WAL-backed FIFO with atomic dequeue and crash recovery.
+- **Key Rotation**: Round-robin API key selection with per-key cooldown tracking on 429 errors.
+- **Auto-validate Pipeline**: Chained extraction + deterministic validation after LLM claim extraction.
+- **FTS5 Search**: Content-synced FTS5 virtual table with BM25 ranking and proper query escaping.
+- **Semantic Embeddings**: 3-tier fallback (sentence-transformers MiniLM-L6-v2, Gemini API, hash-v1) with `is_semantic` weight switching.
+- **JSON Output**: Global `--json` flag for all CLI commands with structured envelope format.
+- **Stealth Mode**: `--stealth` flag for local-only experimentation with auto-detection.
+- **New CLI Commands**: `context`, `dedup`, `resolve-conflicts`, `ready`, `history`, `link`/`unlink`/`links`, `check-staleness`, `compact-summaries`, `snapshot`/`snapshots`/`rollback`/`diff`, `install-hook`, `stealth-status`.
+- **Postgres Parity**: 32/32 public method parity with SQLite store including claim links, human IDs, and tenant filtering.
+- **380+ tests** across 40+ test modules (up from 82 tests in v1.0.0).
+
+### Fixed
+
+- Dashboard test assertions updated to match actual HTML output (`">Claims<"` instead of `"Claims Table"`).
+- Steward `_get_git_head()` hardened with timeout, path resolution, and 40-hex output validation.
+- Scheduler `get_git_head()` hardened with same protections.
+- `_is_valid_url()` now validates hostname via IP address or regex (was accepting malformed URLs).
+- Decay module now uses `DECAY_BY_VOLATILITY` constant instead of missing reference.
+- Bearer token redaction pattern lowered minimum from 20 to 8 chars to catch short tokens.
+- Added JWT, GitHub token, hex token, markdown credential, inline credential, and connection string redaction patterns.
+
+### Changed
+
+- Version bump from 1.1.0 to 2.0.0 (major: new public API surface, multi-tenancy, claim graph).
+- Retrieval weights switch automatically based on `is_semantic` embedding provider.
+- All hardcoded weights across 5 modules replaced with `get_config()` lookups.
+- Service layer now uses `create_best_provider()` for automatic embedding tier selection.
+- Added `embeddings` and `gemini` optional dependency groups to `pyproject.toml`.
+
 ## [1.0.0] - 2026-03-07
 
 ### Added

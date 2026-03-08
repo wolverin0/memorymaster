@@ -9,7 +9,7 @@
     <a href="https://pypi.org/project/memorymaster/"><img src="https://img.shields.io/pypi/v/memorymaster?color=green" alt="PyPI"></a>
     <a href="https://github.com/wolverin0/memorymaster/blob/main/LICENSE"><img src="https://img.shields.io/github/license/wolverin0/memorymaster" alt="License"></a>
     <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
-    <img src="https://img.shields.io/badge/tests-82%20passed-brightgreen" alt="Tests">
+    <img src="https://img.shields.io/badge/tests-380%2B%20passed-brightgreen" alt="Tests">
     <img src="https://img.shields.io/badge/coverage-SQLite%20%2B%20Postgres-purple" alt="Backend Coverage">
   </p>
 </p>
@@ -24,13 +24,20 @@ MemoryMaster gives AI coding agents **persistent, verifiable memory** with a ful
 |---------|-------------|
 | **6-State Lifecycle** | `candidate` -> `confirmed` -> `stale` -> `superseded` -> `conflicted` -> `archived` |
 | **Citation Tracking** | Every claim links to source evidence with provenance |
-| **Hybrid Retrieval** | Lexical + vector + freshness + confidence ranking |
-| **Steward Governance** | Multi-probe validators with proposal/approve/reject workflow |
-| **MCP Integration** | 12 tools for Claude Code, Codex, and any MCP-compatible agent |
+| **Hybrid Retrieval** | Real vector search (sentence-transformers/Gemini) + FTS5 + freshness + confidence |
+| **Context Optimizer** | `query_for_context(budget=4000)` — auto-curated memory that fits your token budget |
+| **Steward Governance** | Multi-probe validators with auto-validate pipeline after LLM extraction |
+| **Claim Graph** | Typed relationships (supersedes, contradicts, supports, derived_from, relates_to) |
+| **MCP Integration** | 13 tools for Claude Code, Codex, and any MCP-compatible agent |
 | **Real-time Dashboard** | HTML UI with SSE streaming, conflict view, and triage actions |
-| **Auto-Redaction** | Tokens, keys, and passwords scrubbed at ingest time |
-| **Dual Backend** | SQLite (zero-config) and Postgres (with optional pgvector) |
-| **Incident Drills** | Automated perf + eval + integrity checks with HMAC-signed evidence |
+| **Auto-Redaction** | JWT, GitHub tokens, Bearer, AWS keys, SSH keys + custom patterns |
+| **Deduplication** | Embedding similarity + text overlap detection with auto-merge |
+| **Conflict Resolution** | 5-tier auto-resolution (confidence > freshness > citations > LLM) |
+| **Staleness Detection** | File watcher (mtime + git) auto-flags stale claims |
+| **Git Versioning** | Snapshot/rollback/diff via SQLite backup API |
+| **Multi-tenancy** | Row-level tenant isolation at the service layer |
+| **Dual Backend** | SQLite (zero-config) and Postgres (with full feature parity) |
+| **Configurable** | 11 env vars + JSON config for all tunable weights and thresholds |
 | **10+ Connectors** | Git, Slack, Jira, email, GitHub, and conversation imports |
 
 ## Architecture
@@ -86,7 +93,7 @@ Add to your MCP config:
 }
 ```
 
-**12 MCP tools available:** `init_db`, `ingest_claim`, `run_cycle`, `query_memory`, `list_claims`, `list_events`, `pin_claim`, `compact_memory`, `run_steward`, `list_steward_proposals`, `resolve_steward_proposal`, `open_dashboard`
+**13 MCP tools available:** `init_db`, `ingest_claim`, `run_cycle`, `query_memory`, `query_for_context`, `list_claims`, `list_events`, `pin_claim`, `compact_memory`, `run_steward`, `list_steward_proposals`, `resolve_steward_proposal`, `open_dashboard`
 
 ## Operator Runtime
 
@@ -163,9 +170,48 @@ python scripts/email_live_to_turns.py --input config.json --output turns.jsonl
 python scripts/conversation_importer.py --input chat.json --output turns.jsonl
 ```
 
+## New in v2.0
+
+```bash
+# Context optimizer — THE killer feature for agents
+memorymaster --db memory.db context "auth patterns" --budget 4000 --format xml
+
+# Deduplication
+memorymaster --db memory.db dedup --dry-run
+
+# Conflict resolution
+memorymaster --db memory.db resolve-conflicts
+
+# Claims needing attention
+memorymaster --db memory.db ready
+
+# Claim audit trail
+memorymaster --db memory.db history 42
+
+# Claim relationships
+memorymaster --db memory.db link 10 20 --type supersedes
+memorymaster --db memory.db links 10
+
+# Staleness detection
+memorymaster --db memory.db check-staleness --workspace /path/to/project
+
+# LLM compaction summaries
+memorymaster --db memory.db compact-summaries --provider gemini --api-key $KEY
+
+# Git-backed versioning
+memorymaster --db memory.db snapshot --message "before refactor"
+memorymaster --db memory.db rollback snap_abc123
+
+# Stealth mode (local-only experimentation)
+memorymaster --stealth init-db
+
+# JSON output for all commands
+memorymaster --db memory.db --json list-claims
+```
+
 ## Security
 
-- **Auto-redaction**: Tokens, API keys, passwords, and secrets are scrubbed at ingest time
+- **Auto-redaction**: JWT, GitHub tokens, Bearer, AWS keys, SSH keys, and custom patterns scrubbed at ingest
 - **Policy-gated access**: `--allow-sensitive` requires `MEMORYMASTER_ALLOW_SENSITIVE_BYPASS=1`
 - **Non-destructive redaction**: `redact-claim` scrubs claim/citation data with full audit trail
 - **Encryption**: Optional Fernet encryption for sensitive payloads (`pip install "memorymaster[security]"`)
@@ -215,12 +261,13 @@ python scripts/run_incident_drill.py --dry-run
 
 ## Project Stats
 
-- **22 source modules** (10,000+ lines)
-- **82 tests** across 21 test modules
+- **31 source modules** (20,000+ lines)
+- **380+ tests** across 40+ test modules
 - **24 utility scripts** (connectors, benchmarks, drills)
-- **12 MCP tools** for agent integration
+- **13 MCP tools** for agent integration
 - **6 API endpoints** + SSE streaming
 - **10+ import connectors** (Git, Slack, Jira, email, GitHub, conversations)
+- **11 configurable weights** via env vars or JSON config
 
 ## Documentation
 

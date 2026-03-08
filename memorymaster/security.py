@@ -16,9 +16,19 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("jwt_token", re.compile(r"\beyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*\b")),
     ("github_token", re.compile(r"\b(ghp_[A-Za-z0-9]{36}|gho_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})\b")),
-    ("bearer_token", re.compile(r"\bBearer\s+[A-Za-z0-9_\-\.]{20,}\b")),
+    ("bearer_token", re.compile(r"Bearer\s+[A-Za-z0-9_\-\.]{8,}")),
     ("password_assignment", re.compile(r"(?i)\b(password|passwd|pwd)\s*[:=]\s*([^\s,;]+)")),
     ("token_assignment", re.compile(r"(?i)\b(token|api[_-]?key|secret)\s*[:=]\s*([^\s,;]+)")),
+    # Hex tokens (API keys, session tokens) - standalone 40+ hex chars in backticks or after labels
+    ("hex_token", re.compile(r"`([0-9a-f]{40,})`")),
+    # Hex tokens near keyword context (keyword within 80 chars before hex)
+    ("hex_token_ctx", re.compile(r"(?i)(?:token|key|secret|credential).{0,80}?([0-9a-f]{40,})")),
+    # Markdown credential patterns: **Pass**: value, **Password**: value, etc.
+    ("markdown_credential", re.compile(r"(?i)\*\*(?:pass(?:word)?|pwd|secret|token|key|credential)s?\*\*\s*[:=]\s*`?([^\s`,;\n]+)")),
+    # Inline backtick credentials after label: `TOKEN`: `value` or TOKEN: `value`
+    ("inline_credential", re.compile(r"(?i)(?:_?(?:api_?)?(?:token|key|secret|password|credential)s?_?)`?\s*[:=]\s*`([^`]+)`")),
+    # SSH/connection strings with embedded passwords
+    ("connection_password", re.compile(r"(?i)(?:ssh|ftp|mysql|postgres|redis|mongo).*(?:password|pass|pwd)\s*[:=]\s*([^\s,;]+)")),
 ]
 
 _ENCRYPTION_ENV_VAR = "MEMORYMASTER_ENCRYPTION_KEY"
