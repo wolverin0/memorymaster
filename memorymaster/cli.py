@@ -77,13 +77,7 @@ def _add_cycle_policy_args(p: argparse.ArgumentParser, policy_default: str = "le
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="memorymaster", description="Memory reliability MVP CLI")
-    parser.add_argument(
-        "--json", "-j",
-        action="store_true",
-        default=False,
-        dest="json_output",
-        help="Output machine-readable JSON instead of human-readable text",
-    )
+    parser.add_argument("--json", "-j", action="store_true", dest="json_output", help="Output machine-readable JSON instead of human-readable text")
     parser.add_argument("--db", default="memorymaster.db", help="SQLite path or Postgres DSN (postgresql://...)")
     parser.add_argument("--workspace", default=".", help="Workspace root used for deterministic codebase checks and git-triggered scheduling")
     parser.add_argument("--stealth", action="store_true", help="Use local-only stealth DB (.memorymaster-stealth.db) in the current directory")
@@ -153,11 +147,7 @@ def build_parser() -> argparse.ArgumentParser:
         "compact-summaries",
         help="Summarize groups of archived claims into higher-level summary claims using LLM",
     )
-    compact_sum.add_argument(
-        "--provider", default="gemini",
-        choices=["gemini", "openai", "anthropic", "ollama", "custom"],
-        help="LLM provider (default: gemini)",
-    )
+    compact_sum.add_argument("--provider", default="gemini", choices=["gemini", "openai", "anthropic", "ollama", "custom"], help="LLM provider (default: gemini)")
     compact_sum.add_argument("--api-key", default="", help="API key for the LLM provider")
     compact_sum.add_argument("--api-keys", default="", help="Comma-separated API keys for round-robin rotation")
     compact_sum.add_argument("--model", default="", help="Model name (uses provider default if omitted)")
