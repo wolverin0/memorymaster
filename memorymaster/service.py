@@ -29,10 +29,21 @@ class MemoryService:
     ) -> None:
         self.store = create_store(db_target)
         self.workspace_root = Path(workspace_root) if workspace_root else Path.cwd()
-        self.embedding_provider = create_best_provider()
+        self._embedding_provider = None
         self.policy_config = policy_config
         self.tenant_id = (tenant_id or "").strip() or None
         self.qdrant = self._init_qdrant()
+
+    @property
+    def embedding_provider(self):
+        """Lazy-load embedding provider — avoids 7s startup for commands that don't need it."""
+        if self._embedding_provider is None:
+            self._embedding_provider = create_best_provider()
+        return self._embedding_provider
+
+    @embedding_provider.setter
+    def embedding_provider(self, value):
+        self._embedding_provider = value
 
     @staticmethod
     def _init_qdrant():
