@@ -177,12 +177,7 @@ def build_parser() -> argparse.ArgumentParser:
     redact_claim.add_argument("--actor", default="cli", help="Audit source value")
 
     compact = sub.add_parser("compact", help="Archive stale/superseded/conflicted claims and trim old events")
-    compact.add_argument(
-        "--retain-days",
-        type=int,
-        default=30,
-        help="Days before archiving stale/superseded/conflicted claims",
-    )
+    compact.add_argument("--retain-days", type=int, default=30, help="Days before archiving stale/superseded/conflicted claims")
     compact.add_argument("--event-retain-days", type=int, default=60, help="Days to retain event history")
 
     compact_sum = sub.add_parser(
@@ -227,18 +222,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     dedup = sub.add_parser("dedup", help="Detect and merge duplicate claims using embedding similarity")
-    dedup.add_argument(
-        "--threshold",
-        type=float,
-        default=0.92,
-        help="Cosine similarity threshold for duplicate detection (default: 0.92)",
-    )
-    dedup.add_argument(
-        "--min-text-overlap",
-        type=float,
-        default=0.3,
-        help="Minimum word-level Jaccard overlap as secondary gate (default: 0.3)",
-    )
+    dedup.add_argument("--threshold", type=float, default=0.92, help="Cosine similarity threshold for duplicate detection (default: 0.92)")
+    dedup.add_argument("--min-text-overlap", type=float, default=0.3, help="Minimum word-level Jaccard overlap as secondary gate (default: 0.3)")
     dedup.add_argument("--dry-run", action="store_true", help="Preview duplicates without archiving")
 
     list_claims = sub.add_parser("list-claims", help="List claims")
@@ -289,18 +274,8 @@ def build_parser() -> argparse.ArgumentParser:
     operator.add_argument("--inbox-jsonl", required=True, help="Path to JSONL turn-event inbox")
     operator.add_argument("--poll-seconds", type=float, default=1.0, help="Polling interval for inbox tailing")
     operator.add_argument("--max-events", type=int, help="Exit after processing N turn events")
-    operator.add_argument(
-        "--max-idle-seconds",
-        type=float,
-        default=0.0,
-        help="Exit if no new inbox lines arrive for N seconds (0 disables)",
-    )
-    operator.add_argument(
-        "--reconcile-seconds",
-        type=float,
-        default=300,
-        help="Periodic reconciliation interval for background maintenance",
-    )
+    operator.add_argument("--max-idle-seconds", type=float, default=0.0, help="Exit if no new inbox lines arrive for N seconds (0 disables)")
+    operator.add_argument("--reconcile-seconds", type=float, default=300, help="Periodic reconciliation interval for background maintenance")
     operator.add_argument(
         "--retrieval-mode",
         choices=list(RETRIEVAL_MODES),
@@ -329,46 +304,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Cadence trigger strategy when mode=cadence",
     )
     steward.add_argument("--interval-seconds", type=float, default=30.0, help="Sleep interval between cadence cycles")
-    steward.add_argument(
-        "--git-check-seconds",
-        type=float,
-        default=10.0,
-        help="Git polling interval for commit-triggered cadence",
-    )
-    steward.add_argument(
-        "--commit-every",
-        type=int,
-        default=1,
-        help="Run a stewardship cycle after N observed git head changes",
-    )
+    steward.add_argument("--git-check-seconds", type=float, default=10.0, help="Git polling interval for commit-triggered cadence")
+    steward.add_argument("--commit-every", type=int, default=1, help="Run a stewardship cycle after N observed git head changes")
     steward.add_argument("--max-cycles", type=int, default=1, help="Number of cycles to run")
     steward.add_argument("--max-claims", type=int, default=200, help="Max claims scanned per cycle")
     steward.add_argument("--max-proposals", type=int, default=200, help="Max proposal events emitted per cycle")
     steward.add_argument("--max-probe-files", type=int, default=200, help="Max files scanned for filesystem probe")
-    steward.add_argument(
-        "--max-probe-file-bytes",
-        type=int,
-        default=524288,
-        help="Skip files larger than this byte size during filesystem probe",
-    )
-    steward.add_argument(
-        "--max-tool-probes",
-        type=int,
-        default=200,
-        help="Maximum tool probe executions per cycle",
-    )
-    steward.add_argument(
-        "--probe-timeout-seconds",
-        type=float,
-        default=2.0,
-        help="Per-probe timeout budget in seconds",
-    )
-    steward.add_argument(
-        "--probe-failure-threshold",
-        type=int,
-        default=3,
-        help="Open circuit breaker for a probe type after this many timeout/error failures",
-    )
+    steward.add_argument("--max-probe-file-bytes", type=int, default=524288, help="Skip files larger than this byte size during filesystem probe")
+    steward.add_argument("--max-tool-probes", type=int, default=200, help="Maximum tool probe executions per cycle")
+    steward.add_argument("--probe-timeout-seconds", type=float, default=2.0, help="Per-probe timeout budget in seconds")
+    steward.add_argument("--probe-failure-threshold", type=int, default=3, help="Open circuit breaker for a probe type after this many timeout/error failures")
     steward.add_argument("--disable-semantic-probe", action="store_true", help="Disable semantic retrieval probe in steward planner")
     steward.add_argument("--disable-tool-probe", action="store_true", help="Disable tool/storage probe in steward planner")
     steward.add_argument("--allow-sensitive", action="store_true", help="Include sensitive claims in stewardship scan")
@@ -427,12 +372,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Detect and auto-resolve conflicting claims (same subject+predicate, different object_value)",
     )
     resolve_conflicts_cmd.add_argument("--dry-run", action="store_true", help="Detect conflicts but do not apply transitions")
-    resolve_conflicts_cmd.add_argument(
-        "--limit",
-        type=int,
-        default=500,
-        help="Maximum claims to scan for conflicts",
-    )
+    resolve_conflicts_cmd.add_argument("--limit", type=int, default=500, help="Maximum claims to scan for conflicts")
 
     staleness_cmd = sub.add_parser(
         "check-staleness",
@@ -445,30 +385,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Detection mode: mtime (file modification time) or git (git log)",
     )
     staleness_cmd.add_argument("--dry-run", action="store_true", help="Detect stale claims but do not apply transitions")
-    staleness_cmd.add_argument(
-        "--limit",
-        type=int,
-        default=500,
-        help="Maximum claims to scan per status",
-    )
+    staleness_cmd.add_argument("--limit", type=int, default=500, help="Maximum claims to scan per status")
 
     # -- Ready detection --
     ready_cmd = sub.add_parser(
         "ready",
         help="Show claims needing attention: stale, conflicted, and low-confidence candidates",
     )
-    ready_cmd.add_argument(
-        "--limit",
-        type=int,
-        default=10,
-        help="Maximum claims per category (default: 10)",
-    )
-    ready_cmd.add_argument(
-        "--confidence-threshold",
-        type=float,
-        default=0.5,
-        help="Confidence threshold for low-confidence candidates (default: 0.5)",
-    )
+    ready_cmd.add_argument("--limit", type=int, default=10, help="Maximum claims per category (default: 10)")
+    ready_cmd.add_argument("--confidence-threshold", type=float, default=0.5, help="Confidence threshold for low-confidence candidates (default: 0.5)")
 
     # -- Snapshot / versioning commands --
     snap = sub.add_parser("snapshot", help="Create a versioned snapshot of the claim DB")
