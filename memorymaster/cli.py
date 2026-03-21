@@ -86,12 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--db", default="memorymaster.db", help="SQLite path or Postgres DSN (postgresql://...)")
     parser.add_argument("--workspace", default=".", help="Workspace root used for deterministic codebase checks and git-triggered scheduling")
-    parser.add_argument(
-        "--stealth",
-        action="store_true",
-        default=False,
-        help="Use local-only stealth DB (.memorymaster-stealth.db) in the current directory",
-    )
+    parser.add_argument("--stealth", action="store_true", help="Use local-only stealth DB (.memorymaster-stealth.db) in the current directory")
     parser.add_argument("--tenant", default=None, help="Tenant ID for multi-tenant isolation (only claims with this tenant_id are visible)")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -101,12 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     ingest = sub.add_parser("ingest", help="Ingest a raw claim with citations")
     ingest.add_argument("--text", required=True, help="Claim text")
-    ingest.add_argument(
-        "--source",
-        action="append",
-        default=[],
-        help="Citation in format source|locator|excerpt (repeat for multiple citations)",
-    )
+    ingest.add_argument("--source", action="append", default=[], help="Citation in format source|locator|excerpt (repeat for multiple citations)")
     ingest.add_argument("--claim-type", help="Optional claim type label")
     ingest.add_argument("--subject", help="Optional claim subject")
     ingest.add_argument("--predicate", help="Optional claim predicate")
@@ -133,13 +123,7 @@ def build_parser() -> argparse.ArgumentParser:
     context = sub.add_parser("context", help="Pack relevant claims into a token-budgeted context block for AI agents")
     context.add_argument("text", help="Query text describing what context is needed")
     context.add_argument("--budget", type=int, default=4000, help="Maximum token budget (default: 4000)")
-    context.add_argument(
-        "--format",
-        dest="output_format",
-        choices=list(OUTPUT_FORMATS),
-        default="text",
-        help="Output format: text (human-readable), xml (system prompt), json (structured)",
-    )
+    context.add_argument("--format", dest="output_format", choices=list(OUTPUT_FORMATS), default="text", help="Output format: text (human-readable), xml (system prompt), json (structured)")
     context.add_argument("--limit", type=int, default=100, help="Max candidate claims to rank")
     context.add_argument("--exclude-stale", action="store_true", help="Exclude stale claims")
     context.add_argument("--exclude-conflicted", action="store_true", help="Exclude conflicted claims")
@@ -206,12 +190,7 @@ def build_parser() -> argparse.ArgumentParser:
     history.add_argument("--limit", type=int, default=50, help="Maximum events to show")
 
     export_metrics = sub.add_parser("export-metrics", help="Export D3 structured metrics from JSONL events")
-    export_metrics.add_argument(
-        "--events-jsonl",
-        action="append",
-        required=True,
-        help="Path to JSONL events input (repeat flag for multiple files)",
-    )
+    export_metrics.add_argument("--events-jsonl", action="append", required=True, help="Path to JSONL events input (repeat flag for multiple files)")
     export_metrics.add_argument("--out-prom", default="artifacts/metrics/metrics.prom", help="Output path for Prometheus text metrics")
     export_metrics.add_argument("--out-json", default="artifacts/metrics/metrics_snapshot.json", help="Output path for structured metrics JSON snapshot")
 
@@ -256,12 +235,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     steward = sub.add_parser("run-steward", help="Run claim stewardship probes and proposal generation")
     steward.add_argument("--mode", choices=["manual", "cadence"], default="manual", help="Loop mode")
-    steward.add_argument(
-        "--cadence-trigger",
-        choices=["timer", "commit", "timer_or_commit"],
-        default="timer",
-        help="Cadence trigger strategy when mode=cadence",
-    )
+    steward.add_argument("--cadence-trigger", choices=["timer", "commit", "timer_or_commit"], default="timer", help="Cadence trigger strategy when mode=cadence")
     steward.add_argument("--interval-seconds", type=float, default=30.0, help="Sleep interval between cadence cycles")
     steward.add_argument("--git-check-seconds", type=float, default=10.0, help="Git polling interval for commit-triggered cadence")
     steward.add_argument("--commit-every", type=int, default=1, help="Run a stewardship cycle after N observed git head changes")
@@ -284,12 +258,7 @@ def build_parser() -> argparse.ArgumentParser:
     steward_proposals.add_argument("--include-resolved", action="store_true", help="Include already approved/rejected proposals")
 
     resolve_proposal = sub.add_parser("resolve-proposal", help="Approve or reject steward proposal")
-    resolve_proposal.add_argument(
-        "--action",
-        choices=["approve", "reject"],
-        required=True,
-        help="Resolution action",
-    )
+    resolve_proposal.add_argument("--action", choices=["approve", "reject"], required=True, help="Resolution action")
     resolve_proposal.add_argument("--proposal-event-id", type=int, help="Specific steward proposal event id")
     resolve_proposal.add_argument("--claim-id", type=int, help="Resolve latest pending proposal for claim id")
     resolve_proposal.add_argument("--no-apply", action="store_true", help="When approving, do not apply state transition; only mark proposal approved")
@@ -297,34 +266,16 @@ def build_parser() -> argparse.ArgumentParser:
     link_cmd = sub.add_parser("link", help="Create a typed link between two claims")
     link_cmd.add_argument("source_id", help="Source claim numeric id or human_id")
     link_cmd.add_argument("target_id", help="Target claim numeric id or human_id")
-    link_cmd.add_argument(
-        "--type",
-        dest="link_type",
-        choices=list(CLAIM_LINK_TYPES),
-        default="relates_to",
-        help="Link type (default: relates_to)",
-    )
+    link_cmd.add_argument("--type", dest="link_type", choices=list(CLAIM_LINK_TYPES), default="relates_to", help="Link type (default: relates_to)")
 
     unlink_cmd = sub.add_parser("unlink", help="Remove link(s) between two claims")
     unlink_cmd.add_argument("source_id", help="Source claim numeric id or human_id")
     unlink_cmd.add_argument("target_id", help="Target claim numeric id or human_id")
-    unlink_cmd.add_argument(
-        "--type",
-        dest="link_type",
-        choices=list(CLAIM_LINK_TYPES),
-        default=None,
-        help="Remove only this link type (default: remove all links between the pair)",
-    )
+    unlink_cmd.add_argument("--type", dest="link_type", choices=list(CLAIM_LINK_TYPES), default=None, help="Remove only this link type (default: remove all links between the pair)")
 
     links_cmd = sub.add_parser("links", help="Show all links for a claim")
     links_cmd.add_argument("claim_id", help="Claim numeric id or human_id")
-    links_cmd.add_argument(
-        "--type",
-        dest="link_type",
-        choices=list(CLAIM_LINK_TYPES),
-        default=None,
-        help="Filter by link type",
-    )
+    links_cmd.add_argument("--type", dest="link_type", choices=list(CLAIM_LINK_TYPES), default=None, help="Filter by link type")
 
     resolve_conflicts_cmd = sub.add_parser(
         "resolve-conflicts",
@@ -337,12 +288,7 @@ def build_parser() -> argparse.ArgumentParser:
         "check-staleness",
         help="Detect claims whose cited source files have changed and flag them stale",
     )
-    staleness_cmd.add_argument(
-        "--mode",
-        choices=["mtime", "git"],
-        default="mtime",
-        help="Detection mode: mtime (file modification time) or git (git log)",
-    )
+    staleness_cmd.add_argument("--mode", choices=["mtime", "git"], default="mtime", help="Detection mode: mtime (file modification time) or git (git log)")
     staleness_cmd.add_argument("--dry-run", action="store_true", help="Detect stale claims but do not apply transitions")
     staleness_cmd.add_argument("--limit", type=int, default=500, help="Maximum claims to scan per status")
 
