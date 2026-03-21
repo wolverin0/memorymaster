@@ -349,7 +349,7 @@ class MemoryService:
                 }
                 for row in ranked_rows
             ]
-            self._record_accesses(results)
+            self._record_accesses(results, query_text=query_text)
             return results
 
         candidate_limit = max(limit * 6, 60)
@@ -390,20 +390,32 @@ class MemoryService:
             }
             for row in ranked_rows
         ]
-        self._record_accesses(results)
+        self._record_accesses(results, query_text=query_text)
         return results
 
-    def _record_accesses(self, rows: list[dict[str, object]]) -> None:
-        """Record an access event for each claim returned by a query."""
-        if not hasattr(self.store, "record_access"):
-            return
+    def _record_accesses(self, rows: list[dict[str, object]], query_text: str = "") -> None:
+        """Record access + feedback for each claim returned by a query."""
+        claim_ids = []
         for row in rows:
             claim = row.get("claim")
             if claim is not None:
-                try:
-                    self.store.record_access(claim.id)
-                except Exception:
-                    pass  # best-effort; don't break queries
+                claim_ids.append(claim.id)
+                if hasattr(self.store, "record_access"):
+                    try:
+                        self.store.record_access(claim.id)
+                    except Exception:
+                        pass
+        # Record retrieval feedback for quality scoring
+        if claim_ids and query_text:
+            try:
+                from memorymaster.feedback import FeedbackTracker
+                db_path = str(getattr(self.store, 'db_path', ''))
+                if db_path:
+                    ft = FeedbackTracker(db_path)
+                    ft.ensure_tables()
+                    ft.record_retrieval(claim_ids, query_text)
+            except Exception:
+                pass  # best-effort
 
     def recompute_tiers(self) -> dict[str, int]:
         """Recompute tier assignments for all non-archived claims."""
