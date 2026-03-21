@@ -762,10 +762,7 @@ def _handle_snapshot_commands(
             for item in result.removed:
                 print(f"  - [{item['id']}] {item['status']}: {item['text'][:80]}")
             for item in result.changed:
-                changes = ", ".join(
-                    f"{k}: {v['old']!r}->{v['new']!r}"
-                    for k, v in item["changes"].items()
-                )
+                changes = ", ".join(f"{k}: {v['old']!r}->{v['new']!r}" for k, v in item["changes"].items())
                 print(f"  ~ [{item['id']}] {changes}")
         return 0
 
@@ -949,15 +946,15 @@ def main(argv: list[str] | None = None) -> int:
                 out_prom=Path(args.out_prom),
                 out_json=Path(args.out_json),
             )
-            payload = {
+            c = snapshot.get("counters", {})
+            print(json.dumps({
                 "command": "export-metrics",
-                "events_total": int(snapshot.get("counters", {}).get("events_total", 0)),
-                "transitions_total": int(snapshot.get("counters", {}).get("transitions_total", 0)),
-                "status_total": int(snapshot.get("counters", {}).get("status_total", 0)),
+                "events_total": int(c.get("events_total", 0)),
+                "transitions_total": int(c.get("transitions_total", 0)),
+                "status_total": int(c.get("status_total", 0)),
                 "out_prom": str(Path(args.out_prom)),
                 "out_json": str(Path(args.out_json)),
-            }
-            print(json.dumps(payload, indent=2))
+            }, indent=2))
             return 0
 
         service = MemoryService(
@@ -1153,11 +1150,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(_json_envelope(result, query_ms=elapsed_ms))
             else:
                 mode = "DRY RUN" if result["dry_run"] else "APPLIED"
-                print(f"compact-summaries [{mode}]")
-                print(f"  clusters_found:           {result['clusters_found']}")
-                print(f"  summaries_created:        {result['summaries_created']}")
-                print(f"  source_claims_summarized: {result['source_claims_summarized']}")
-                print(f"  errors:                   {result['errors']}")
+                print(f"compact-summaries [{mode}] clusters={result['clusters_found']} "
+                      f"summaries={result['summaries_created']} "
+                      f"source_claims={result['source_claims_summarized']} "
+                      f"errors={result['errors']}")
                 for d in result.get("details", []):
                     action = d.get("action", "unknown")
                     ids = d.get("source_claim_ids", [])
@@ -1484,16 +1480,10 @@ def main(argv: list[str] | None = None) -> int:
 
             stale_dicts = [_claim_to_dict(c) for c in stale_claims]
             conflict_dicts = [
-                {
-                    "winner_id": p.winner.id,
-                    "loser_id": p.loser.id,
-                    "reason": p.reason,
-                    "key": list(p.key),
-                    "winner_text": p.winner.text[:120],
-                    "loser_text": p.loser.text[:120],
-                    "winner_confidence": p.winner.confidence,
-                    "loser_confidence": p.loser.confidence,
-                }
+                {"winner_id": p.winner.id, "loser_id": p.loser.id, "reason": p.reason,
+                 "key": list(p.key), "winner_text": p.winner.text[:120],
+                 "loser_text": p.loser.text[:120], "winner_confidence": p.winner.confidence,
+                 "loser_confidence": p.loser.confidence}
                 for p in conflict_pairs[:limit]
             ]
             low_conf_dicts = [_claim_to_dict(c) for c in low_conf_candidates]
@@ -1601,9 +1591,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 for d in result.details:
                     status = "APPLIED" if d.get("applied") else "DETECTED"
-                    files = ", ".join(
-                        os.path.basename(f) for f in d.get("changed_files", [])[:3]
-                    )
+                    files = ", ".join(os.path.basename(f) for f in d.get("changed_files", [])[:3])
                     print(f"  [{status}] claim={d['claim_id']} files={files}")
             return 0
 
