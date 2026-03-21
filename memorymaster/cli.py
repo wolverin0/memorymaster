@@ -95,6 +95,9 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--scope", default="project", help="Claim scope (default: project)")
     ingest.add_argument("--volatility", choices=list(VOLATILITY_LEVELS), default="medium")
     ingest.add_argument("--confidence", type=float, default=0.5, help="Initial confidence (0-1)")
+    ingest.add_argument("--event-time", default=None, help="ISO-8601 timestamp: when the fact occurred in the real world")
+    ingest.add_argument("--valid-from", default=None, help="ISO-8601 timestamp: start of the claim validity window")
+    ingest.add_argument("--valid-until", default=None, help="ISO-8601 timestamp: end of the validity window (omit if still current)")
 
     cycle = sub.add_parser("run-cycle", help="Run extractor, validator, decay, and optional compact")
     cycle.add_argument("--with-compact", action="store_true", help="Run compactor at the end of cycle")
@@ -606,6 +609,7 @@ def main(argv: list[str] | None = None) -> int:
                 text=args.text, citations=citations, idempotency_key=args.idempotency_key,
                 claim_type=args.claim_type, subject=args.subject, predicate=args.predicate,
                 object_value=args.object_value, scope=args.scope, volatility=args.volatility, confidence=args.confidence,
+                event_time=args.event_time, valid_from=args.valid_from, valid_until=args.valid_until,
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
             if args.json_output:
@@ -730,10 +734,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"dedup [{'DRY RUN' if result['dry_run'] else 'APPLIED'}] scanned={result['scanned']} "
                       f"duplicates={result['duplicates_found']} archived={result['claims_archived']} threshold={result['threshold']}")
                 for pair in result["pairs"]:
-                    print(f"  dup: keep={pair['keep_id']} archive={pair['archive_id']} "
-                          f"sim={pair['similarity']:.4f} overlap={pair['text_overlap']:.4f}")
-                    print(f"    keep:    {pair['keep_text'][:80]}")
-                    print(f"    archive: {pair['archive_text'][:80]}")
+                    print(f"  dup: keep={pair['keep_id']} archive={pair['archive_id']} sim={pair['similarity']:.4f} overlap={pair['text_overlap']:.4f}\n"
+                          f"    keep:    {pair['keep_text'][:80]}\n    archive: {pair['archive_text'][:80]}")
             return 0
 
         if args.command == "list-claims":
