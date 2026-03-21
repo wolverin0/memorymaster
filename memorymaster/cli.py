@@ -355,11 +355,12 @@ def _json_default(value):
 
 def _handle_snapshot_commands(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     """Handle snapshot, snapshots, rollback, diff, and install-hook subcommands."""
+    db_resolved = Path(effective_db).resolve()
+
     if args.command == "snapshot":
         from memorymaster.snapshot import create_snapshot
 
         t0 = time.perf_counter()
-        db_resolved = Path(effective_db).resolve()
         info = create_snapshot(db_resolved, workspace_root=Path(args.workspace).resolve(), message=args.message)
         elapsed_ms = (time.perf_counter() - t0) * 1000
         if args.json_output:
@@ -378,7 +379,6 @@ def _handle_snapshot_commands(args: argparse.Namespace, service, parser: argpars
         from memorymaster.snapshot import list_snapshots
 
         t0 = time.perf_counter()
-        db_resolved = Path(effective_db).resolve()
         snaps = list_snapshots(db_resolved)
         elapsed_ms = (time.perf_counter() - t0) * 1000
         items = [asdict(s) for s in snaps]
@@ -398,7 +398,6 @@ def _handle_snapshot_commands(args: argparse.Namespace, service, parser: argpars
     if args.command == "rollback":
         from memorymaster.snapshot import rollback
 
-        db_resolved = Path(effective_db).resolve()
         if not args.yes:
             try:
                 answer = input(f"Restore DB from snapshot '{args.snapshot_id}'? A pre-rollback backup will be created. [y/N] ")
@@ -423,7 +422,6 @@ def _handle_snapshot_commands(args: argparse.Namespace, service, parser: argpars
         from memorymaster.snapshot import diff_snapshot
 
         t0 = time.perf_counter()
-        db_resolved = Path(effective_db).resolve()
         result = diff_snapshot(db_resolved, args.snapshot_id)
         elapsed_ms = (time.perf_counter() - t0) * 1000
         if args.json_output:
