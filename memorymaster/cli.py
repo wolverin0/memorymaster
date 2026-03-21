@@ -89,27 +89,15 @@ def build_parser() -> argparse.ArgumentParser:
         dest="json_output",
         help="Output machine-readable JSON instead of human-readable text",
     )
-    parser.add_argument(
-        "--db",
-        default="memorymaster.db",
-        help="SQLite path or Postgres DSN (postgresql://...)",
-    )
-    parser.add_argument(
-        "--workspace",
-        default=".",
-        help="Workspace root used for deterministic codebase checks and git-triggered scheduling",
-    )
+    parser.add_argument("--db", default="memorymaster.db", help="SQLite path or Postgres DSN (postgresql://...)")
+    parser.add_argument("--workspace", default=".", help="Workspace root used for deterministic codebase checks and git-triggered scheduling")
     parser.add_argument(
         "--stealth",
         action="store_true",
         default=False,
         help="Use local-only stealth DB (.memorymaster-stealth.db) in the current directory",
     )
-    parser.add_argument(
-        "--tenant",
-        default=None,
-        help="Tenant ID for multi-tenant isolation (only claims with this tenant_id are visible)",
-    )
+    parser.add_argument("--tenant", default=None, help="Tenant ID for multi-tenant isolation (only claims with this tenant_id are visible)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("init-db", help="Create schema in SQLite database")
@@ -150,11 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Retrieval mode (legacy SQL ordering or hybrid lexical/confidence/freshness ranking)",
     )
     query.add_argument("--allow-sensitive", action="store_true", help="Include claims that look sensitive (default excludes them)")
-    query.add_argument(
-        "--scope-allowlist",
-        default="",
-        help="Comma-separated scopes to include (e.g. project,team_x)",
-    )
+    query.add_argument("--scope-allowlist", default="", help="Comma-separated scopes to include (e.g. project,team_x)")
 
     context = sub.add_parser("context", help="Pack relevant claims into a token-budgeted context block for AI agents")
     context.add_argument("text", help="Query text describing what context is needed")
@@ -279,16 +263,8 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Path to JSONL events input (repeat flag for multiple files)",
     )
-    export_metrics.add_argument(
-        "--out-prom",
-        default="artifacts/metrics/metrics.prom",
-        help="Output path for Prometheus text metrics",
-    )
-    export_metrics.add_argument(
-        "--out-json",
-        default="artifacts/metrics/metrics_snapshot.json",
-        help="Output path for structured metrics JSON snapshot",
-    )
+    export_metrics.add_argument("--out-prom", default="artifacts/metrics/metrics.prom", help="Output path for Prometheus text metrics")
+    export_metrics.add_argument("--out-json", default="artifacts/metrics/metrics_snapshot.json", help="Output path for structured metrics JSON snapshot")
 
     review_queue = sub.add_parser("review-queue", help="Build conflict/stale review queue")
     review_queue.add_argument("--limit", type=int, default=100, help="Maximum claims scanned for queue")
@@ -307,11 +283,7 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard = sub.add_parser("run-dashboard", help="Run read-only HTTP dashboard/API")
     dashboard.add_argument("--host", default="127.0.0.1", help="Bind host")
     dashboard.add_argument("--port", type=int, default=8765, help="Bind port")
-    dashboard.add_argument(
-        "--operator-log-jsonl",
-        default="artifacts/operator/operator_events.jsonl",
-        help="Path consumed by /api/operator/stream",
-    )
+    dashboard.add_argument("--operator-log-jsonl", default="artifacts/operator/operator_events.jsonl", help="Path consumed by /api/operator/stream")
 
     operator = sub.add_parser("run-operator", help="Run pre/post-turn memory maintenance loop from JSONL inbox")
     operator.add_argument("--inbox-jsonl", required=True, help="Path to JSONL turn-event inbox")
@@ -341,31 +313,11 @@ def build_parser() -> argparse.ArgumentParser:
     operator.add_argument("--tier2-limit", type=int, default=8, help="Tier-2 retrieval limit when progressive retrieval falls back")
     _add_cycle_policy_args(operator, policy_default="cadence")
     operator.add_argument("--compact-every", type=int, default=0, help="Run compactor every N processed turns")
-    operator.add_argument(
-        "--log-jsonl",
-        default="artifacts/operator/operator_events.jsonl",
-        help="JSONL path for operator run events (empty disables logging)",
-    )
-    operator.add_argument(
-        "--state-json",
-        default="artifacts/operator/operator_state.json",
-        help="JSON path for operator checkpoint state (empty disables state persistence)",
-    )
-    operator.add_argument(
-        "--queue-state-json",
-        default="artifacts/operator/operator_queue_state.json",
-        help="JSON path for durable pending queue state (empty disables durable queue state persistence)",
-    )
-    operator.add_argument(
-        "--queue-journal-jsonl",
-        default="artifacts/operator/operator_queue_journal.jsonl",
-        help="JSONL append-only journal path for durable queue enqueue/ack events (empty disables queue journal)",
-    )
-    operator.add_argument(
-        "--queue-db",
-        default="",
-        help="SQLite WAL database path for crash-safe pending queue (empty uses legacy JSON persistence)",
-    )
+    operator.add_argument("--log-jsonl", default="artifacts/operator/operator_events.jsonl", help="JSONL path for operator run events (empty disables logging)")
+    operator.add_argument("--state-json", default="artifacts/operator/operator_state.json", help="JSON path for operator checkpoint state (empty disables state persistence)")
+    operator.add_argument("--queue-state-json", default="artifacts/operator/operator_queue_state.json", help="JSON path for durable pending queue state (empty disables durable queue state persistence)")
+    operator.add_argument("--queue-journal-jsonl", default="artifacts/operator/operator_queue_journal.jsonl", help="JSONL append-only journal path for durable queue enqueue/ack events (empty disables queue journal)")
+    operator.add_argument("--queue-db", default="", help="SQLite WAL database path for crash-safe pending queue (empty uses legacy JSON persistence)")
     operator.add_argument("--no-state", action="store_true", help="Disable checkpoint and durable queue state load/save")
 
     steward = sub.add_parser("run-steward", help="Run claim stewardship probes and proposal generation")
@@ -421,11 +373,7 @@ def build_parser() -> argparse.ArgumentParser:
     steward.add_argument("--disable-tool-probe", action="store_true", help="Disable tool/storage probe in steward planner")
     steward.add_argument("--allow-sensitive", action="store_true", help="Include sensitive claims in stewardship scan")
     steward.add_argument("--apply", action="store_true", help="Apply proposed status transitions")
-    steward.add_argument(
-        "--artifact-json",
-        default="artifacts/steward/steward_report.json",
-        help="Path to steward JSON report artifact",
-    )
+    steward.add_argument("--artifact-json", default="artifacts/steward/steward_report.json", help="Path to steward JSON report artifact")
 
     steward_proposals = sub.add_parser("steward-proposals", help="List steward proposal events for human override")
     steward_proposals.add_argument("--limit", type=int, default=100, help="Maximum proposals returned")
