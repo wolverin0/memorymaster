@@ -814,14 +814,11 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "compact-summaries":
             from memorymaster.llm_steward import _parse_api_keys
-            resolved_keys = _parse_api_keys(
-                api_key=args.api_key,
-                api_keys=args.api_keys,
-            )
+            rk = _parse_api_keys(api_key=args.api_key, api_keys=args.api_keys)
             t0 = time.perf_counter()
             result = service.compact_summaries(
                 provider=args.provider,
-                api_key=resolved_keys[0] if len(resolved_keys) == 1 else "",
+                api_key=rk[0] if len(rk) == 1 else "",
                 model=args.model,
                 base_url=args.base_url,
                 min_cluster=args.min_cluster,
@@ -829,7 +826,7 @@ def main(argv: list[str] | None = None) -> int:
                 similarity_threshold=args.similarity_threshold,
                 dry_run=args.dry_run,
                 limit=args.limit,
-                api_keys=resolved_keys if len(resolved_keys) > 1 else None,
+                api_keys=rk if len(rk) > 1 else None,
                 cooldown_seconds=args.cooldown,
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
