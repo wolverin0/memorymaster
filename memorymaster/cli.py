@@ -779,9 +779,9 @@ def main(argv: list[str] | None = None) -> int:
             elapsed_ms = (time.perf_counter() - t0) * 1000
 
             if args.json_output:
-                _tl = [_event_to_timeline_entry(ev) for ev in events]
                 print(_json_envelope({"claim_id": args.claim_id, "status": claim.status,
-                    "confidence": claim.confidence, "timeline": _tl}, total=len(events), query_ms=elapsed_ms))
+                    "confidence": claim.confidence, "timeline": [_event_to_timeline_entry(ev) for ev in events]},
+                    total=len(events), query_ms=elapsed_ms))
             else:
                 print(f"=== History for claim {claim.id} [{claim.status} conf={claim.confidence:.3f}] ===")
                 print(f"  text: {claim.text}")
@@ -796,10 +796,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "review-queue":
             from memorymaster.review import build_review_queue, queue_to_dicts
 
-            include_sensitive = resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.review-queue")
             items = build_review_queue(service, limit=args.limit,
                 include_stale=not args.exclude_stale, include_conflicted=not args.exclude_conflicted,
-                include_sensitive=include_sensitive)
+                include_sensitive=resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.review-queue"))
             print(json.dumps({"rows": len(items), "items": queue_to_dicts(items)}, indent=2))
             return 0
 
@@ -859,12 +858,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "run-steward":
             from memorymaster.steward import run_steward
 
-            allow_sensitive = resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.run-steward")
             t0 = time.perf_counter()
             result = run_steward(
                 service, mode=args.mode, cadence_trigger=args.cadence_trigger,
                 interval_seconds=args.interval_seconds, git_check_seconds=args.git_check_seconds,
-                commit_every=args.commit_every, max_cycles=args.max_cycles, allow_sensitive=allow_sensitive,
+                commit_every=args.commit_every, max_cycles=args.max_cycles,
+                allow_sensitive=resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.run-steward"),
                 apply=args.apply, max_claims=args.max_claims, max_proposals=args.max_proposals,
                 max_probe_files=args.max_probe_files, max_probe_file_bytes=args.max_probe_file_bytes,
                 max_tool_probes=args.max_tool_probes, probe_timeout_seconds=args.probe_timeout_seconds,
