@@ -209,11 +209,18 @@ if FastMCP is not None:
         scope: str = "project",
         volatility: str = "medium",
         confidence: float = 0.5,
+        event_time: str = "",
+        valid_from: str = "",
+        valid_until: str = "",
     ) -> dict[str, Any]:
         """
         Ingest a claim into memory.
 
         `sources_json` is a JSON array of `source|locator|excerpt` strings.
+        Bi-temporal fields (ISO-8601 strings, all optional):
+          - event_time: when the fact occurred in the real world
+          - valid_from: start of the claim validity window
+          - valid_until: end of the validity window (omit if still current)
         """
         svc = _service(db, workspace)
         claim = svc.ingest(
@@ -227,6 +234,9 @@ if FastMCP is not None:
             scope=_effective_ingest_scope(scope, workspace),
             volatility=volatility,
             confidence=confidence,
+            event_time=_empty_to_none(event_time),
+            valid_from=_empty_to_none(valid_from),
+            valid_until=_empty_to_none(valid_until),
         )
         return {"ok": True, "claim": _claim_to_dict(claim)}
 
@@ -306,12 +316,20 @@ if FastMCP is not None:
         return {"ok": True, "result": result}
 
     @mcp.tool()
+    def classify_query(query: str) -> dict[str, Any]:
+        """Classify a query and recommend the best retrieval mode."""
+        from memorymaster.query_classifier import classify_query as _classify, recommended_retrieval_mode
+        qtype = _classify(query)
+        return {"query_type": qtype, "recommended_mode": recommended_retrieval_mode(qtype)}
+
+    @mcp.tool()
     def query_memory(
         query: str,
         db: str = "memorymaster.db",
         workspace: str = ".",
         limit: int = 20,
         retrieval_mode: str = "legacy",
+        auto_classify: bool = False,
         include_stale: bool = True,
         include_conflicted: bool = True,
         include_candidates: bool = True,
@@ -324,15 +342,28 @@ if FastMCP is not None:
           - "legacy" (default, fastest ~0.1s): SQL text search
           - "qdrant" (fast ~0.5s): semantic search via Qdrant+Ollama, requires QDRANT_URL
           - "hybrid" (slow ~8s): local sentence-transformers vector + lexical ranking
+
+        auto_classify: when True and retrieval_mode is "legacy", classify the query
+          automatically and upgrade to the recommended retrieval mode.
         """
+        from memorymaster.query_classifier import classify_query as _classify, recommended_retrieval_mode
+
         resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
             context="mcp.query_memory",
         )
 
+        query_type: str | None = None
+        if auto_classify and retrieval_mode == "legacy":
+            query_type = _classify(query)
+            retrieval_mode = recommended_retrieval_mode(query_type)
+
         # Qdrant retrieval mode: fast semantic search via network Qdrant+Ollama
         if retrieval_mode == "qdrant":
-            return _qdrant_query(query, db, workspace, limit)
+            result = _qdrant_query(query, db, workspace, limit)
+            if query_type is not None:
+                result["query_type"] = query_type
+            return result
 
         svc = _service(db, workspace)
         rows_data = svc.query_rows(
@@ -360,12 +391,15 @@ if FastMCP is not None:
                     "vector_score": row.get("vector_score", 0.0),
                 }
             )
-        return {
+        response: dict[str, Any] = {
             "ok": True,
             "rows": len(claims),
             "claims": [_claim_to_dict(c) for c in claims],
             "rows_data": serialized_rows,
         }
+        if query_type is not None:
+            response["query_type"] = query_type
+        return response
 
     @mcp.tool()
     def query_for_context(

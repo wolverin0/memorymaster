@@ -311,14 +311,11 @@ def print_claim(claim) -> None:
     hid = (getattr(claim, "human_id", None) or "")
     print(f"[{claim.id}]{f' {hid}' if hid else ''} {claim.status:<10} conf={claim.confidence:.3f} pin={int(claim.pinned)} "
           f"type={claim.claim_type or '-'} tuple=({claim.subject or '-'}, {claim.predicate or '-'}, {claim.object_value or '-'}) "
-          f"scope={claim.scope} vol={claim.volatility} updated={claim.updated_at}")
-    print(f"  text: {claim.text}")
+          f"scope={claim.scope} vol={claim.volatility} updated={claim.updated_at}\n  text: {claim.text}")
     if claim.supersedes_claim_id or claim.replaced_by_claim_id:
         print(f"  links: supersedes={claim.supersedes_claim_id or '-'} replaced_by={claim.replaced_by_claim_id or '-'}")
     for citation in claim.citations:
-        locator = f" | {citation.locator}" if citation.locator else ""
-        excerpt = f" | {citation.excerpt}" if citation.excerpt else ""
-        print(f"  - cite: {citation.source}{locator}{excerpt}")
+        print(f"  - cite: {citation.source}{f' | {citation.locator}' if citation.locator else ''}{f' | {citation.excerpt}' if citation.excerpt else ''}")
 
 
 def _print_claim_brief(c) -> None:
