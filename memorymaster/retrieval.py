@@ -112,6 +112,15 @@ def _freshness_score(claim: Claim) -> float:
     return max(0.0, min(1.0, math.exp(-age_hours / max(1.0, half_life))))
 
 
+_TIER_BONUS = {"core": 0.15, "working": 0.0, "peripheral": -0.10}
+
+
+def _tier_bonus(claim: Claim) -> float:
+    """Return a score adjustment based on the claim's memory tier."""
+    tier = getattr(claim, "tier", "working") or "working"
+    return _TIER_BONUS.get(tier, 0.0)
+
+
 def rank_claims(
     query_text: str,
     claims: list[Claim],
@@ -143,7 +152,7 @@ def rank_claim_rows(
             lexical = _lexical_score(query_text, claim) if query_text.strip() else 0.0
             confidence = max(0.0, min(1.0, claim.confidence))
             freshness = _freshness_score(claim)
-            score = confidence + (get_config().pinned_bonus if claim.pinned else 0.0)
+            score = confidence + (get_config().pinned_bonus if claim.pinned else 0.0) + _tier_bonus(claim)
             rows.append(
                 RankedClaim(
                     claim=claim,
@@ -182,6 +191,7 @@ def rank_claim_rows(
             score = (w_l * lexical) + (w_c * confidence) + (w_f * freshness)
         if claim.pinned:
             score += cfg.pinned_bonus
+        score += _tier_bonus(claim)
 
         ranked.append(
             RankedClaim(

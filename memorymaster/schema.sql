@@ -23,6 +23,12 @@ CREATE TABLE IF NOT EXISTS claims (
     last_validated_at TEXT,
     archived_at TEXT,
     human_id TEXT,
+    tier TEXT NOT NULL DEFAULT 'working',
+    access_count INTEGER NOT NULL DEFAULT 0,
+    last_accessed TEXT,
+    event_time TEXT,
+    valid_from TEXT,
+    valid_until TEXT,
     FOREIGN KEY (supersedes_claim_id) REFERENCES claims(id) ON DELETE SET NULL,
     FOREIGN KEY (replaced_by_claim_id) REFERENCES claims(id) ON DELETE SET NULL
 );

@@ -277,4 +277,10 @@ class Claim:
     archived_at: str | None
     human_id: str | None = None
     tenant_id: str | None = None
+    tier: str = "working"
+    access_count: int = 0
+    last_accessed: str | None = None
+    event_time: str | None = None
+    valid_from: str | None = None
+    valid_until: str | None = None
     citations: list[Citation] = field(default_factory=list)

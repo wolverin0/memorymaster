@@ -934,23 +934,20 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"=== {total} items need attention ===\n")
 
                 if stale_claims:
-                    print(f"--- Stale claims ({len(stale_claims)}) ---")
-                    print("  Previously confirmed but source files changed. Need re-validation.")
+                    print(f"--- Stale claims ({len(stale_claims)}) ---\n  Previously confirmed but source files changed. Need re-validation.")
                     for c in stale_claims:
                         _print_claim_brief(c)
                     print('  -> Run `memorymaster check-staleness` to review details\n')
 
                 if conflict_pairs:
-                    print(f"--- Conflicted pairs ({len(conflict_pairs)}) ---")
-                    print("  Same subject+predicate with different values. Need resolution.")
+                    print(f"--- Conflicted pairs ({len(conflict_pairs)}) ---\n  Same subject+predicate with different values. Need resolution.")
                     for p in conflict_pairs[:limit]:
                         print(f"  winner=[{p.winner.id}] vs loser=[{p.loser.id}] "
                               f"key=({p.key[0]}, {p.key[1]}) reason={p.reason}")
                     print('  -> Run `memorymaster resolve-conflicts` to auto-resolve\n')
 
                 if low_conf_candidates:
-                    print(f"--- Low-confidence candidates ({len(low_conf_candidates)}) ---")
-                    print(f"  Candidates with confidence < {threshold}. Need more evidence or review.")
+                    print(f"--- Low-confidence candidates ({len(low_conf_candidates)}) ---\n  Candidates with confidence < {threshold}. Need more evidence or review.")
                     for c in low_conf_candidates:
                         _print_claim_brief(c)
                     print('  -> Run `memorymaster run-cycle` to re-evaluate candidates\n')

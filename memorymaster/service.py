@@ -109,6 +109,9 @@ class MemoryService:
         scope: str = "project",
         volatility: str = "medium",
         confidence: float = 0.5,
+        event_time: str | None = None,
+        valid_from: str | None = None,
+        valid_until: str | None = None,
     ) -> Claim:
         if not text.strip():
             raise ValueError("Claim text cannot be empty.")
@@ -138,6 +141,9 @@ class MemoryService:
             volatility=volatility,
             confidence=confidence,
             tenant_id=self.tenant_id,
+            event_time=event_time,
+            valid_from=valid_from,
+            valid_until=valid_until,
         )
         if sanitized.is_sensitive:
             self.store.record_event(
@@ -330,7 +336,7 @@ class MemoryService:
                 limit=limit,
                 vector_hook=None,
             )
-            return [
+            results = [
                 {
                     "claim": row.claim,
                     "status": row.claim.status,
@@ -343,6 +349,8 @@ class MemoryService:
                 }
                 for row in ranked_rows
             ]
+            self._record_accesses(results)
+            return results
 
         candidate_limit = max(limit * 6, 60)
         candidates = self.store.list_claims(
@@ -369,7 +377,7 @@ class MemoryService:
             vector_hook=vector_hook,
             semantic_vectors=semantic,
         )
-        return [
+        results = [
             {
                 "claim": row.claim,
                 "status": row.claim.status,
@@ -382,6 +390,24 @@ class MemoryService:
             }
             for row in ranked_rows
         ]
+        self._record_accesses(results)
+        return results
+
+    def _record_accesses(self, rows: list[dict[str, object]]) -> None:
+        """Record an access event for each claim returned by a query."""
+        if not hasattr(self.store, "record_access"):
+            return
+        for row in rows:
+            claim = row.get("claim")
+            if claim is not None:
+                try:
+                    self.store.record_access(claim.id)
+                except Exception:
+                    pass  # best-effort; don't break queries
+
+    def recompute_tiers(self) -> dict[str, int]:
+        """Recompute tier assignments for all non-archived claims."""
+        return self.store.recompute_tiers()
 
     def query_for_context(
         self,
