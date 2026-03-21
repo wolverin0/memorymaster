@@ -396,9 +396,7 @@ def _handle_snapshot_commands(args: argparse.Namespace, service, parser: argpars
                 print("no snapshots found")
             else:
                 for s in snaps:
-                    commit_str = s.commit_hash[:8] if s.commit_hash else "(no git)"
-                    msg_str = f"  {s.message}" if s.message else ""
-                    print(f"  {s.snapshot_id}  {commit_str}  {s.timestamp}  {s.size_bytes}b{msg_str}")
+                    print(f"  {s.snapshot_id}  {s.commit_hash[:8] if s.commit_hash else '(no git)'}  {s.timestamp}  {s.size_bytes}b{f'  {s.message}' if s.message else ''}")
                 print(f"\n{len(snaps)} snapshot(s)")
         return 0
 
