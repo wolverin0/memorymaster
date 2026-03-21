@@ -77,6 +77,8 @@ class SQLiteStore:
             self._ensure_claim_links_schema(conn)
             self._ensure_human_id_schema(conn)
             self._ensure_tenant_id_schema(conn)
+            self._ensure_temporal_columns(conn)
+            self._ensure_tiering_columns(conn)
             conn.commit()
 
     @staticmethod
@@ -403,6 +405,37 @@ class SQLiteStore:
         )
 
     @staticmethod
+    def _ensure_temporal_columns(conn) -> None:
+        """Add bi-temporal columns if missing (backward compat for old DBs)."""
+        for col in ("event_time", "valid_from", "valid_until"):
+            try:
+                conn.execute(f"ALTER TABLE claims ADD COLUMN {col} TEXT")
+            except Exception as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_claims_valid_from ON claims(valid_from)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_claims_valid_until ON claims(valid_until)"
+        )
+
+    @staticmethod
+    def _ensure_tiering_columns(conn: sqlite3.Connection) -> None:
+        """Add tier, access_count, last_accessed columns if missing (migration for old DBs)."""
+        for stmt in (
+            "ALTER TABLE claims ADD COLUMN tier TEXT NOT NULL DEFAULT 'working'",
+            "ALTER TABLE claims ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE claims ADD COLUMN last_accessed TEXT",
+        ):
+            try:
+                conn.execute(stmt)
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_claims_tier ON claims(tier)")
+
+    @staticmethod
     def _canonical_payload(payload_json: str | None) -> str:
         if payload_json is None:
             return ""
@@ -561,6 +594,9 @@ class SQLiteStore:
         volatility: str = "medium",
         confidence: float = 0.5,
         tenant_id: str | None = None,
+        event_time: str | None = None,
+        valid_from: str | None = None,
+        valid_until: str | None = None,
     ) -> Claim:
         if not citations:
             raise ValueError("At least one citation is required.")
@@ -586,8 +622,8 @@ class SQLiteStore:
                         text, idempotency_key, normalized_text, claim_type, subject, predicate, object_value,
                         scope, volatility, status, confidence, pinned, supersedes_claim_id,
                         replaced_by_claim_id, created_at, updated_at, last_validated_at, archived_at,
-                        tenant_id
-                    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'candidate', ?, 0, NULL, NULL, ?, ?, NULL, NULL, ?)
+                        tenant_id, event_time, valid_from, valid_until
+                    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'candidate', ?, 0, NULL, NULL, ?, ?, NULL, NULL, ?, ?, ?, ?)
                     """,
                     (
                         text,
@@ -602,6 +638,9 @@ class SQLiteStore:
                         now,
                         now,
                         normalized_tenant_id,
+                        event_time or None,
+                        valid_from or None,
+                        valid_until or None,
                     ),
                 )
             except sqlite3.IntegrityError:
@@ -1500,9 +1539,13 @@ class SQLiteStore:
 
     @staticmethod
     def _row_to_claim(row: sqlite3.Row) -> Claim:
-        idempotency_key = row["idempotency_key"] if "idempotency_key" in row.keys() else None
-        human_id = row["human_id"] if "human_id" in row.keys() else None
-        tenant_id = row["tenant_id"] if "tenant_id" in row.keys() else None
+        keys = row.keys()
+        idempotency_key = row["idempotency_key"] if "idempotency_key" in keys else None
+        human_id = row["human_id"] if "human_id" in keys else None
+        tenant_id = row["tenant_id"] if "tenant_id" in keys else None
+        tier = row["tier"] if "tier" in keys else "working"
+        access_count = int(row["access_count"]) if "access_count" in keys else 0
+        last_accessed_val = row["last_accessed"] if "last_accessed" in keys else None
         return Claim(
             id=int(row["id"]),
             text=str(row["text"]),
@@ -1525,7 +1568,65 @@ class SQLiteStore:
             archived_at=row["archived_at"],
             human_id=human_id,
             tenant_id=tenant_id,
+            tier=str(tier) if tier else "working",
+            access_count=access_count,
+            last_accessed=last_accessed_val,
+            event_time=row["event_time"] if "event_time" in keys else None,
+            valid_from=row["valid_from"] if "valid_from" in keys else None,
+            valid_until=row["valid_until"] if "valid_until" in keys else None,
         )
+
+    def record_access(self, claim_id: int) -> None:
+        """Increment access_count and set last_accessed for a claim."""
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE claims SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
+                (now, claim_id),
+            )
+            conn.commit()
+
+    def recompute_tiers(self) -> dict[str, int]:
+        """Recompute tier for all non-archived claims based on access_count and age.
+
+        Rules:
+          - access_count > 5 OR created less than 7 days ago -> core
+          - access_count = 0 AND created more than 90 days ago -> peripheral
+          - everything else -> working
+        """
+        now = datetime.now(timezone.utc)
+        core_cutoff = (now - timedelta(days=7)).replace(microsecond=0).isoformat()
+        peripheral_cutoff = (now - timedelta(days=90)).replace(microsecond=0).isoformat()
+
+        counts = {"core": 0, "working": 0, "peripheral": 0}
+        with self.connect() as conn:
+            cur = conn.execute(
+                "UPDATE claims SET tier = 'core' "
+                "WHERE status != 'archived' AND tier != 'core' "
+                "AND (access_count > 5 OR created_at > ?)",
+                (core_cutoff,),
+            )
+            counts["core"] = cur.rowcount
+
+            cur = conn.execute(
+                "UPDATE claims SET tier = 'peripheral' "
+                "WHERE status != 'archived' AND tier != 'peripheral' "
+                "AND access_count = 0 AND created_at <= ?",
+                (peripheral_cutoff,),
+            )
+            counts["peripheral"] = cur.rowcount
+
+            cur = conn.execute(
+                "UPDATE claims SET tier = 'working' "
+                "WHERE status != 'archived' AND tier != 'working' "
+                "AND NOT (access_count > 5 OR created_at > ?) "
+                "AND NOT (access_count = 0 AND created_at <= ?)",
+                (core_cutoff, peripheral_cutoff),
+            )
+            counts["working"] = cur.rowcount
+
+            conn.commit()
+        return counts
 
     @staticmethod
     def _row_to_citation(row: sqlite3.Row) -> Citation:
@@ -1665,3 +1766,38 @@ class SQLiteStore:
                     (claim_id, claim_id),
                 ).fetchall()
         return [self._row_to_claim_link(row) for row in rows]
+
+    def query_as_of(self, timestamp: str, *, limit: int = 50) -> list[Claim]:
+        """Return claims whose validity window covers *timestamp*.
+
+        A claim is considered valid at *timestamp* when:
+        - valid_from is NULL or valid_from <= timestamp, AND
+        - valid_until is NULL or valid_until > timestamp.
+
+        Claims without any temporal columns are included (backward compat).
+        """
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT c.* FROM claims c
+                WHERE c.status NOT IN ('archived')
+                  AND (c.valid_from IS NULL OR c.valid_from <= ?)
+                  AND (c.valid_until IS NULL OR c.valid_until > ?)
+                ORDER BY c.updated_at DESC
+                LIMIT ?
+                """,
+                (timestamp, timestamp, limit),
+            ).fetchall()
+        claims = [self._row_to_claim(row) for row in rows]
+        for claim in claims:
+            claim.citations = self._load_citations(claim.id)
+        return claims
+
+    def _load_citations(self, claim_id: int) -> list[Citation]:
+        """Load citations for a single claim."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM citations WHERE claim_id = ? ORDER BY id",
+                (claim_id,),
+            ).fetchall()
+        return [self._row_to_citation(row) for row in rows]
