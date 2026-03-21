@@ -593,11 +593,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "export-metrics":
             from memorymaster.metrics_exporter import export_metrics
 
-            snapshot = export_metrics(
-                events_jsonl=[Path(p) for p in args.events_jsonl],
-                out_prom=Path(args.out_prom),
-                out_json=Path(args.out_json),
-            )
+            snapshot = export_metrics(events_jsonl=[Path(p) for p in args.events_jsonl],
+                out_prom=Path(args.out_prom), out_json=Path(args.out_json))
             c = snapshot.get("counters", {})
             print(json.dumps({"command": "export-metrics",
                 "events_total": int(c.get("events_total", 0)),
@@ -614,11 +611,10 @@ def main(argv: list[str] | None = None) -> int:
             service.init_db()
             elapsed_ms = (time.perf_counter() - t0) * 1000
             db_path = effective_db if "://" in effective_db else str(Path(effective_db).resolve())
-            stealth_label = " (stealth)" if _stealth_active(args) else ""
             if args.json_output:
                 print(_json_envelope({"db": db_path, "stealth": _stealth_active(args)}, query_ms=elapsed_ms))
             else:
-                print(f"initialized db: {db_path}{stealth_label}")
+                print(f"initialized db: {db_path}{' (stealth)' if _stealth_active(args) else ''}")
             return 0
 
         if args.command == "ingest":
@@ -760,10 +756,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(_json_envelope(result, query_ms=elapsed_ms))
             else:
                 mode = "DRY RUN" if result["dry_run"] else "APPLIED"
-                print(f"dedup [{mode}] scanned={result['scanned']} "
-                      f"duplicates={result['duplicates_found']} "
-                      f"archived={result['claims_archived']} "
-                      f"threshold={result['threshold']}")
+                print(f"dedup [{mode}] scanned={result['scanned']} duplicates={result['duplicates_found']} "
+                      f"archived={result['claims_archived']} threshold={result['threshold']}")
                 for pair in result["pairs"]:
                     print(f"  dup: keep={pair['keep_id']} archive={pair['archive_id']} "
                           f"sim={pair['similarity']:.4f} overlap={pair['text_overlap']:.4f}")
@@ -811,10 +805,9 @@ def main(argv: list[str] | None = None) -> int:
             elapsed_ms = (time.perf_counter() - t0) * 1000
 
             if args.json_output:
-                print(_json_envelope(
-                    {"claim_id": args.claim_id, "status": claim.status, "confidence": claim.confidence,
-                     "timeline": [_event_to_timeline_entry(ev) for ev in events]},
-                    total=len(events), query_ms=elapsed_ms))
+                _tl = [_event_to_timeline_entry(ev) for ev in events]
+                print(_json_envelope({"claim_id": args.claim_id, "status": claim.status,
+                    "confidence": claim.confidence, "timeline": _tl}, total=len(events), query_ms=elapsed_ms))
             else:
                 print(f"=== History for claim {claim.id} [{claim.status} conf={claim.confidence:.3f}] ===")
                 print(f"  text: {claim.text}")
