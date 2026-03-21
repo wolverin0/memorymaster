@@ -323,6 +323,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("quality-scores", help="Recompute quality scores for all claims")
 
+    resolve_cmd = sub.add_parser("auto-resolve", help="Use LLM to resolve conflicted claims")
+    resolve_cmd.add_argument("--limit", type=int, default=20, help="Max conflict pairs to evaluate")
+
     return parser
 
 
@@ -1098,6 +1101,17 @@ def main(argv: list[str] | None = None) -> int:
                 print(_json_envelope(result, query_ms=elapsed_ms))
             else:
                 print(f"Quality scores computed for {result['scored']} claims ({elapsed_ms:.0f}ms)")
+            return 0
+
+        if args.command == "auto-resolve":
+            from memorymaster.auto_resolver import auto_resolve_conflicts
+            t0 = time.perf_counter()
+            result = auto_resolve_conflicts(service.store, limit=args.limit)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope(result, query_ms=elapsed_ms))
+            else:
+                print(f"Evaluated {result['pairs_evaluated']} conflict pairs: {result['resolved']} resolved, {result['failed']} failed ({elapsed_ms:.0f}ms)")
             return 0
 
         parser.print_help()
