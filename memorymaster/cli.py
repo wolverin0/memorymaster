@@ -326,6 +326,18 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_cmd = sub.add_parser("auto-resolve", help="Use LLM to resolve conflicted claims")
     resolve_cmd.add_argument("--limit", type=int, default=20, help="Max conflict pairs to evaluate")
 
+    sub.add_parser("train-model", help="Train quality prediction model from feedback data (requires sklearn)")
+
+    extract_claims_cmd = sub.add_parser("extract-claims", help="Extract structured claims from unstructured text using LLM")
+    extract_claims_input = extract_claims_cmd.add_mutually_exclusive_group(required=True)
+    extract_claims_input.add_argument("--input", metavar="FILE_OR_TEXT", help="Path to a text file, or raw text string to extract from")
+    extract_claims_input.add_argument("--stdin", action="store_true", help="Read text from stdin")
+    extract_claims_cmd.add_argument("--source", default="unstructured", help="Citation source label (default: unstructured)")
+    extract_claims_cmd.add_argument("--scope", default="project", help="Claim scope (default: project)")
+    extract_claims_cmd.add_argument("--ingest", action="store_true", help="Ingest extracted claims into the DB (default: dry-run, print only)")
+    extract_claims_cmd.add_argument("--ollama-url", default="", help="Ollama base URL (default: $OLLAMA_URL or http://192.168.100.155:11434)")
+    extract_claims_cmd.add_argument("--model", default="", help="LLM model name (default: deepseek-coder-v2:16b)")
+
     return parser
 
 
@@ -1112,6 +1124,23 @@ def main(argv: list[str] | None = None) -> int:
                 print(_json_envelope(result, query_ms=elapsed_ms))
             else:
                 print(f"Evaluated {result['pairs_evaluated']} conflict pairs: {result['resolved']} resolved, {result['failed']} failed ({elapsed_ms:.0f}ms)")
+            return 0
+
+        if args.command == "train-model":
+            from memorymaster.rl_trainer import train_quality_model
+            t0 = time.perf_counter()
+            result = train_quality_model(str(effective_db))
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope(result, query_ms=elapsed_ms))
+            else:
+                status = result.get("status", "unknown")
+                if status == "trained":
+                    print(f"Model trained: {result['samples']} samples, AUC={result['cv_auc_mean']:.3f}, saved to {result['model_path']}")
+                elif status == "skipped":
+                    print(f"Training skipped: {result.get('reason', '?')} — {result.get('suggestion', '')}")
+                else:
+                    print(f"Training failed: {result.get('reason', '?')}")
             return 0
 
         parser.print_help()
