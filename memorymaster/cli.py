@@ -1462,26 +1462,19 @@ def main(argv: list[str] | None = None) -> int:
                 include_archived=False,
             )
             threshold = args.confidence_threshold
-            low_conf_candidates = [
-                c for c in all_candidates if c.confidence < threshold
-            ][:limit]
-
+            low_conf_candidates = [c for c in all_candidates if c.confidence < threshold][:limit]
             elapsed_ms = (time.perf_counter() - t0) * 1000
 
-            stale_dicts = [_claim_to_dict(c) for c in stale_claims]
-            conflict_dicts = [
-                {"winner_id": p.winner.id, "loser_id": p.loser.id, "reason": p.reason,
-                 "key": list(p.key), "winner_text": p.winner.text[:120],
-                 "loser_text": p.loser.text[:120], "winner_confidence": p.winner.confidence,
-                 "loser_confidence": p.loser.confidence}
-                for p in conflict_pairs[:limit]
-            ]
-            low_conf_dicts = [_claim_to_dict(c) for c in low_conf_candidates]
-
             payload = {
-                "stale": {"count": len(stale_claims), "claims": stale_dicts},
-                "conflicted": {"count": len(conflict_pairs), "pairs": conflict_dicts},
-                "low_confidence": {"count": len(low_conf_candidates), "claims": low_conf_dicts},
+                "stale": {"count": len(stale_claims), "claims": [_claim_to_dict(c) for c in stale_claims]},
+                "conflicted": {"count": len(conflict_pairs), "pairs": [
+                    {"winner_id": p.winner.id, "loser_id": p.loser.id, "reason": p.reason,
+                     "key": list(p.key), "winner_text": p.winner.text[:120],
+                     "loser_text": p.loser.text[:120], "winner_confidence": p.winner.confidence,
+                     "loser_confidence": p.loser.confidence}
+                    for p in conflict_pairs[:limit]
+                ]},
+                "low_confidence": {"count": len(low_conf_candidates), "claims": [_claim_to_dict(c) for c in low_conf_candidates]},
                 "total_attention": len(stale_claims) + len(conflict_pairs) + len(low_conf_candidates),
             }
 
@@ -1505,14 +1498,11 @@ def main(argv: list[str] | None = None) -> int:
 
                 # Conflicts
                 if conflict_pairs:
-                    shown = conflict_pairs[:limit]
                     print(f"--- Conflicted pairs ({len(conflict_pairs)}) ---")
                     print("  Same subject+predicate with different values. Need resolution.")
-                    for p in shown:
-                        print(
-                            f"  winner=[{p.winner.id}] vs loser=[{p.loser.id}] "
-                            f"key=({p.key[0]}, {p.key[1]}) reason={p.reason}"
-                        )
+                    for p in conflict_pairs[:limit]:
+                        print(f"  winner=[{p.winner.id}] vs loser=[{p.loser.id}] "
+                              f"key=({p.key[0]}, {p.key[1]}) reason={p.reason}")
                     print('  -> Run `memorymaster resolve-conflicts` to auto-resolve\n')
 
                 # Low confidence
