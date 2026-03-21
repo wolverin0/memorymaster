@@ -77,7 +77,7 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 - [x] CLI: `extract-entities`, `entity-stats` commands
 - [x] MCP: `extract_entities`, `entity_stats`, `find_related_claims` tools
 - [ ] Batch entity extraction across all confirmed claims
-- [ ] Entity-based retrieval integrated into query pipeline
+- [x] Entity-based retrieval integrated into query pipeline (enrich_with_entities)
 
 ### RL Feedback Loop
 - [x] FeedbackTracker: records which claims returned per query
@@ -85,9 +85,9 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 - [x] Auto-record feedback on every query (wired into service.query_rows)
 - [x] CLI: `feedback-stats`, `quality-scores` commands
 - [x] MCP: `quality_scores` tool
-- [ ] sklearn GradientBoostedTree training when 100+ feedback rows
+- [x] sklearn GradientBoostedTree training when 100+ feedback rows (rl_trainer.py)
 - [ ] Use quality score to influence write policy
-- [ ] CLI: `train-model` command
+- [x] CLI: `train-model` command
 
 ### Query Classification
 - [x] 7 query types: fact_lookup, relational, temporal, constraint_check, preference, verification, open_ended
