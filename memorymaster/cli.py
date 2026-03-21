@@ -631,6 +631,29 @@ def print_claim(claim) -> None:
         print(f"  - cite: {citation.source}{locator}{excerpt}")
 
 
+def _print_claim_brief(c) -> None:
+    """Print a single-line claim summary used in ready/attention output."""
+    hid = getattr(c, "human_id", None) or ""
+    hid_display = f" {hid}" if hid else ""
+    print(f"  [{c.id}]{hid_display} conf={c.confidence:.3f} scope={c.scope} {c.text[:80]}")
+
+
+def _event_to_timeline_entry(ev) -> dict:
+    """Serialize an event into a timeline dict for history JSON output."""
+    entry: dict = {"id": ev.id, "timestamp": ev.created_at, "event_type": ev.event_type}
+    if ev.from_status or ev.to_status:
+        entry["from_status"] = ev.from_status
+        entry["to_status"] = ev.to_status
+    if ev.details:
+        entry["details"] = ev.details
+    if ev.payload_json:
+        try:
+            entry["payload"] = json.loads(ev.payload_json)
+        except (json.JSONDecodeError, TypeError):
+            entry["payload"] = ev.payload_json
+    return entry
+
+
 def _json_default(value):
     if is_dataclass(value):
         return asdict(value)
@@ -1059,9 +1082,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
             if args.json_output:
-                json_rows = []
-                for row in rows_data:
-                    entry = {
+                json_rows = [
+                    {
                         "claim": _claim_to_dict(row["claim"]),
                         "score": float(row.get("score", 0.0)),
                         "lexical_score": float(row.get("lexical_score", 0.0)),
@@ -1070,7 +1092,8 @@ def main(argv: list[str] | None = None) -> int:
                         "vector_score": float(row.get("vector_score", 0.0)),
                         "annotation": row.get("annotation", {}),
                     }
-                    json_rows.append(entry)
+                    for row in rows_data
+                ]
                 print(_json_envelope(json_rows, total=len(json_rows), query_ms=elapsed_ms))
             else:
                 for row in rows_data:
@@ -1275,25 +1298,7 @@ def main(argv: list[str] | None = None) -> int:
             elapsed_ms = (time.perf_counter() - t0) * 1000
 
             if args.json_output:
-                timeline = []
-                for ev in events:
-                    entry: dict = {
-                        "id": ev.id,
-                        "timestamp": ev.created_at,
-                        "event_type": ev.event_type,
-                    }
-                    if ev.from_status or ev.to_status:
-                        entry["from_status"] = ev.from_status
-                        entry["to_status"] = ev.to_status
-                    if ev.details:
-                        entry["details"] = ev.details
-                    if ev.payload_json:
-                        try:
-                            payload = json.loads(ev.payload_json)
-                        except (json.JSONDecodeError, TypeError):
-                            payload = ev.payload_json
-                        entry["payload"] = payload
-                    timeline.append(entry)
+                timeline = [_event_to_timeline_entry(ev) for ev in events]
                 envelope = {
                     "claim_id": args.claim_id,
                     "status": claim.status,
@@ -1561,12 +1566,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"--- Stale claims ({len(stale_claims)}) ---")
                     print("  Previously confirmed but source files changed. Need re-validation.")
                     for c in stale_claims:
-                        hid = getattr(c, "human_id", None) or ""
-                        hid_display = f" {hid}" if hid else ""
-                        print(
-                            f"  [{c.id}]{hid_display} conf={c.confidence:.3f} "
-                            f"scope={c.scope} {c.text[:80]}"
-                        )
+                        _print_claim_brief(c)
                     print('  -> Run `memorymaster check-staleness` to review details\n')
 
                 # Conflicts
@@ -1586,12 +1586,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"--- Low-confidence candidates ({len(low_conf_candidates)}) ---")
                     print(f"  Candidates with confidence < {threshold}. Need more evidence or review.")
                     for c in low_conf_candidates:
-                        hid = getattr(c, "human_id", None) or ""
-                        hid_display = f" {hid}" if hid else ""
-                        print(
-                            f"  [{c.id}]{hid_display} conf={c.confidence:.3f} "
-                            f"scope={c.scope} {c.text[:80]}"
-                        )
+                        _print_claim_brief(c)
                     print('  -> Run `memorymaster run-cycle` to re-evaluate candidates\n')
 
             return 0
