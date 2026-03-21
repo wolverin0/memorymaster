@@ -838,13 +838,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "run-daemon":
-            result = run_daemon(
-                service,
+            result = run_daemon(service,
                 interval_seconds=args.interval_seconds, max_cycles=args.max_cycles,
                 compact_every=args.compact_every, min_citations=args.min_citations,
                 min_score=args.min_score, policy_mode=args.policy_mode, policy_limit=args.policy_limit,
-                git_trigger=args.git_trigger, git_check_seconds=args.git_check_seconds,
-            )
+                git_trigger=args.git_trigger, git_check_seconds=args.git_check_seconds)
             print(json.dumps(result, indent=2))
             return 0
 
@@ -880,7 +878,7 @@ def main(argv: list[str] | None = None) -> int:
                 min_citations=args.min_citations, min_score=args.min_score,
                 policy_mode=args.policy_mode, policy_limit=args.policy_limit,
                 compact_every=args.compact_every,
-                max_idle_seconds=(args.max_idle_seconds if args.max_idle_seconds and args.max_idle_seconds > 0 else None),
+                max_idle_seconds=args.max_idle_seconds if args.max_idle_seconds and args.max_idle_seconds > 0 else None,
                 log_jsonl_path=(args.log_jsonl.strip() or None),
                 state_json_path=_stateful(args.state_json), queue_state_json_path=_stateful(args.queue_state_json),
                 queue_journal_jsonl_path=_stateful(args.queue_journal_jsonl), queue_db_path=_stateful(args.queue_db),
