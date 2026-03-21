@@ -33,8 +33,7 @@ def parse_citation(raw: str) -> CitationInput:
 def parse_scope_allowlist(raw: str | None) -> list[str] | None:
     if raw is None:
         return None
-    values = [part.strip() for part in raw.split(",") if part.strip()]
-    return values or None
+    return [part.strip() for part in raw.split(",") if part.strip()] or None
 
 
 def _claim_to_dict(claim) -> dict:
@@ -44,9 +43,7 @@ def _claim_to_dict(claim) -> dict:
 
 def _json_envelope(data, *, total: int | None = None, query_ms: float) -> str:
     """Format the standard JSON envelope for --json output."""
-    meta: dict = {"query_ms": round(query_ms, 2)}
-    if total is not None:
-        meta["total"] = total
+    meta: dict = {"query_ms": round(query_ms, 2), **({"total": total} if total is not None else {})}
     return json.dumps({"ok": True, "data": data, "meta": meta}, indent=2, default=_json_default)
 
 
@@ -63,8 +60,7 @@ def _resolve_claim_id(service: MemoryService, raw: str | int) -> int:
     try:
         return int(text)
     except ValueError:
-        pass
-    return service.store.resolve_claim_id(text)
+        return service.store.resolve_claim_id(text)
 
 
 def _add_cycle_policy_args(p: argparse.ArgumentParser, policy_default: str = "legacy") -> None:
