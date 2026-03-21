@@ -447,8 +447,7 @@ def _handle_snapshot_commands(args: argparse.Namespace, service, parser: argpars
         from memorymaster.snapshot import install_git_hook
 
         t0 = time.perf_counter()
-        workspace = Path(args.workspace).resolve()
-        result = install_git_hook(workspace)
+        result = install_git_hook(Path(args.workspace).resolve())
         elapsed_ms = (time.perf_counter() - t0) * 1000
         if args.json_output:
             print(_json_envelope(result, query_ms=elapsed_ms))
@@ -855,11 +854,9 @@ def main(argv: list[str] | None = None) -> int:
                 state_json_path=_stateful(args.state_json), queue_state_json_path=_stateful(args.queue_state_json),
                 queue_journal_jsonl_path=_stateful(args.queue_journal_jsonl), queue_db_path=_stateful(args.queue_db),
             )
-
             operator = MemoryOperator(service=service, config=config)
             result = operator.run_stream(inbox_jsonl=Path(args.inbox_jsonl),
                 poll_seconds=args.poll_seconds, max_events=args.max_events)
-
             print(json.dumps(result, indent=2, default=_json_default))
             return 0
 
@@ -988,9 +985,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "check-staleness":
             from memorymaster.jobs.staleness import run as run_staleness
 
-            workspace = Path(args.workspace).resolve()
             t0 = time.perf_counter()
-            result = run_staleness(service.store, workspace, mode=args.mode, dry_run=args.dry_run, limit=args.limit)
+            result = run_staleness(service.store, Path(args.workspace).resolve(), mode=args.mode, dry_run=args.dry_run, limit=args.limit)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             if args.json_output:
                 print(_json_envelope(asdict(result), query_ms=elapsed_ms))
