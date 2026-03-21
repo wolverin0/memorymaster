@@ -1086,17 +1086,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
             if args.json_output:
-                print(_json_envelope(
-                    {
-                        "output": result.output,
-                        "claims_considered": result.claims_considered,
-                        "claims_included": result.claims_included,
-                        "tokens_used": result.tokens_used,
-                        "token_budget": result.token_budget,
-                        "format": result.format,
-                    },
-                    query_ms=elapsed_ms,
-                ))
+                print(_json_envelope(asdict(result), query_ms=elapsed_ms))
             else:
                 print(result.output)
             return 0
