@@ -643,6 +643,68 @@ def _json_default(value):
     return repr(value)
 
 
+def _handle_link_commands(args: argparse.Namespace, service, parser: argparse.ArgumentParser) -> int:
+    """Handle link, unlink, and links subcommands."""
+    if args.command == "link":
+        t0 = time.perf_counter()
+        src_id = _resolve_claim_id(service, args.source_id)
+        tgt_id = _resolve_claim_id(service, args.target_id)
+        link = service.add_claim_link(src_id, tgt_id, args.link_type)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        payload = {
+            "id": link.id,
+            "source_id": link.source_id,
+            "target_id": link.target_id,
+            "link_type": link.link_type,
+            "created_at": link.created_at,
+        }
+        if args.json_output:
+            print(_json_envelope(payload, query_ms=elapsed_ms))
+        else:
+            print(
+                f"linked claim {link.source_id} -> {link.target_id} "
+                f"({link.link_type}) id={link.id}"
+            )
+        return 0
+
+    if args.command == "unlink":
+        t0 = time.perf_counter()
+        src_id = _resolve_claim_id(service, args.source_id)
+        tgt_id = _resolve_claim_id(service, args.target_id)
+        removed = service.remove_claim_link(src_id, tgt_id, args.link_type)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        if args.json_output:
+            print(_json_envelope({"removed": removed, "source_id": src_id, "target_id": tgt_id}, query_ms=elapsed_ms))
+        else:
+            print(f"removed {removed} link(s) between {src_id} and {tgt_id}")
+        return 0
+
+    if args.command == "links":
+        t0 = time.perf_counter()
+        resolved_id = _resolve_claim_id(service, args.claim_id)
+        links = service.get_claim_links(resolved_id)
+        if args.link_type:
+            links = [lnk for lnk in links if lnk.link_type == args.link_type]
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        items = [
+            {
+                "id": lnk.id,
+                "source_id": lnk.source_id,
+                "target_id": lnk.target_id,
+                "link_type": lnk.link_type,
+                "created_at": lnk.created_at,
+            }
+            for lnk in links
+        ]
+        if args.json_output:
+            print(_json_envelope({"rows": len(items), "links": items}, total=len(items), query_ms=elapsed_ms))
+        else:
+            print(json.dumps({"rows": len(items), "links": items}, indent=2))
+        return 0
+
+    return -1  # not handled
+
+
 def _resolve_db_path(args: argparse.Namespace) -> str:
     """Resolve the effective DB path, applying stealth mode when requested.
 
@@ -1244,62 +1306,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result, indent=2, default=_json_default))
             return 0
 
-        if args.command == "link":
-            t0 = time.perf_counter()
-            src_id = _resolve_claim_id(service, args.source_id)
-            tgt_id = _resolve_claim_id(service, args.target_id)
-            link = service.add_claim_link(src_id, tgt_id, args.link_type)
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            payload = {
-                "id": link.id,
-                "source_id": link.source_id,
-                "target_id": link.target_id,
-                "link_type": link.link_type,
-                "created_at": link.created_at,
-            }
-            if args.json_output:
-                print(_json_envelope(payload, query_ms=elapsed_ms))
-            else:
-                print(
-                    f"linked claim {link.source_id} -> {link.target_id} "
-                    f"({link.link_type}) id={link.id}"
-                )
-            return 0
-
-        if args.command == "unlink":
-            t0 = time.perf_counter()
-            src_id = _resolve_claim_id(service, args.source_id)
-            tgt_id = _resolve_claim_id(service, args.target_id)
-            removed = service.remove_claim_link(src_id, tgt_id, args.link_type)
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            if args.json_output:
-                print(_json_envelope({"removed": removed, "source_id": src_id, "target_id": tgt_id}, query_ms=elapsed_ms))
-            else:
-                print(f"removed {removed} link(s) between {src_id} and {tgt_id}")
-            return 0
-
-        if args.command == "links":
-            t0 = time.perf_counter()
-            resolved_id = _resolve_claim_id(service, args.claim_id)
-            links = service.get_claim_links(resolved_id)
-            if args.link_type:
-                links = [lnk for lnk in links if lnk.link_type == args.link_type]
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            items = [
-                {
-                    "id": lnk.id,
-                    "source_id": lnk.source_id,
-                    "target_id": lnk.target_id,
-                    "link_type": lnk.link_type,
-                    "created_at": lnk.created_at,
-                }
-                for lnk in links
-            ]
-            if args.json_output:
-                print(_json_envelope({"rows": len(items), "links": items}, total=len(items), query_ms=elapsed_ms))
-            else:
-                print(json.dumps({"rows": len(items), "links": items}, indent=2))
-            return 0
+        if args.command in ("link", "unlink", "links"):
+            return _handle_link_commands(args, service, parser)
 
         if args.command == "ready":
             from memorymaster.conflict_resolver import detect_conflicts
