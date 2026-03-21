@@ -120,6 +120,68 @@ def _effective_scope_allowlist(raw: str, workspace: str) -> list[str] | None:
     return deduped
 
 
+def _qdrant_query(query: str, db: str, workspace: str, limit: int) -> dict[str, Any]:
+    """Fast semantic search via Qdrant+Ollama (no local model load)."""
+    try:
+        from memorymaster.qdrant_backend import QdrantBackend
+    except ImportError:
+        return {"ok": False, "error": "qdrant mode requires httpx. Install with: pip install 'memorymaster[qdrant]'"}
+    backend = QdrantBackend()
+    results = backend.search(query, limit=limit)
+    backend.close()
+    if not results:
+        return {"ok": True, "rows": 0, "claims": [], "rows_data": []}
+
+    # Enrich with full claim data from the DB
+    svc = _service(db, workspace)
+    enriched_rows: list[dict[str, Any]] = []
+    enriched_claims: list[dict[str, Any]] = []
+    for hit in results:
+        cid = hit.get("claim_id")
+        if cid is None:
+            continue
+        claim = svc.store.get_claim(int(cid), include_citations=True)
+        if claim is None:
+            # Claim may have been archived since last sync — return Qdrant payload
+            enriched_rows.append({
+                "claim": hit.get("payload", {}),
+                "status": hit.get("payload", {}).get("state", "unknown"),
+                "annotation": {},
+                "score": hit.get("score", 0.0),
+                "lexical_score": 0.0,
+                "freshness_score": 0.0,
+                "confidence_score": hit.get("payload", {}).get("confidence", 0.0),
+                "vector_score": hit.get("score", 0.0),
+            })
+            enriched_claims.append(hit.get("payload", {}))
+            continue
+        claim_dict = _claim_to_dict(claim)
+        enriched_claims.append(claim_dict)
+        enriched_rows.append({
+            "claim": claim_dict,
+            "status": claim.status,
+            "annotation": {
+                "status": claim.status,
+                "active": claim.status == "confirmed",
+                "stale": claim.status == "stale",
+                "conflicted": claim.status == "conflicted",
+                "pinned": bool(claim.pinned),
+            },
+            "score": hit.get("score", 0.0),
+            "lexical_score": 0.0,
+            "freshness_score": 0.0,
+            "confidence_score": claim.confidence,
+            "vector_score": hit.get("score", 0.0),
+        })
+    return {
+        "ok": True,
+        "rows": len(enriched_claims),
+        "claims": enriched_claims,
+        "rows_data": enriched_rows,
+        "retrieval_mode": "qdrant",
+    }
+
+
 if FastMCP is not None:
     mcp = FastMCP("memorymaster")
 
@@ -256,11 +318,22 @@ if FastMCP is not None:
         allow_sensitive: bool = False,
         scope_allowlist: str = "",
     ) -> dict[str, Any]:
-        """Query memory for relevant claims. Includes candidates by default for MCP use."""
+        """Query memory for relevant claims. Includes candidates by default for MCP use.
+
+        retrieval_mode options:
+          - "legacy" (default, fastest ~0.1s): SQL text search
+          - "qdrant" (fast ~0.5s): semantic search via Qdrant+Ollama, requires QDRANT_URL
+          - "hybrid" (slow ~8s): local sentence-transformers vector + lexical ranking
+        """
         resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
             context="mcp.query_memory",
         )
+
+        # Qdrant retrieval mode: fast semantic search via network Qdrant+Ollama
+        if retrieval_mode == "qdrant":
+            return _qdrant_query(query, db, workspace, limit)
+
         svc = _service(db, workspace)
         rows_data = svc.query_rows(
             query_text=query,
