@@ -57,7 +57,7 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 - [x] Time-windowed queries (`query_as_of` method)
 - [x] CLI: `--event-time`, `--valid-from`, `--valid-until` on ingest
 - [x] MCP: `ingest_claim` accepts temporal params
-- [ ] CLI: `--as-of` flag for temporal queries on `query` command
+- [x] CLI: `--as-of` flag for temporal queries on `query` command
 
 ### Automatic Tiering (core / working / peripheral)
 - [x] Track `access_count` and `last_accessed` per claim
@@ -66,8 +66,8 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 - [x] Tiered retrieval: core claims get tier bonus in scoring (+0.15/-0.10)
 - [x] CLI: `recompute-tiers` command
 - [x] Auto-record access on every query
-- [ ] MCP: `recompute_tiers` tool
-- [ ] Expose tier in MCP query results
+- [x] MCP: `recompute_tiers` tool
+- [x] Expose tier in MCP query results
 
 ### Entity Extraction (LLM-powered)
 - [x] Port `EntityExtractor` from memoryking (uses Ollama deepseek-coder)
@@ -93,7 +93,7 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 - [x] 7 query types: fact_lookup, relational, temporal, constraint_check, preference, verification, open_ended
 - [x] Rule-based classifier with recommended retrieval mode
 - [x] MCP: `classify_query` tool + `auto_classify` param on `query_memory`
-- [ ] Integrate into CLI `query` command with `--auto-classify` flag
+- [x] Integrate into CLI `query` command with `--auto-classify` flag
 
 ---
 
