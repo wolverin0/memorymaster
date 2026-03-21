@@ -484,13 +484,9 @@ def _handle_qdrant_commands(args: argparse.Namespace, service, parser: argparse.
         if not results:
             print("No results found.")
         for hit in results:
-            cid = hit.get("claim_id", "?")
-            score = hit.get("score", 0.0)
-            payload = hit.get("payload", {})
-            text = payload.get("claim_text", "")[:100]
-            state = payload.get("state", "?")
-            conf = payload.get("confidence", 0.0)
-            print(f"[{cid}] score={score:.3f} state={state} conf={conf:.2f} {text}")
+            _pl = hit.get("payload", {})
+            print(f"[{hit.get('claim_id', '?')}] score={hit.get('score', 0.0):.3f} "
+                  f"state={_pl.get('state', '?')} conf={_pl.get('confidence', 0.0):.2f} {_pl.get('claim_text', '')[:100]}")
     return 0
 
 
@@ -722,18 +718,14 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"compact-summaries [{mode}] clusters={result['clusters_found']} summaries={result['summaries_created']} "
                       f"source_claims={result['source_claims_summarized']} errors={result['errors']}")
                 for d in result.get("details", []):
-                    action = d.get("action", "unknown")
-                    ids = d.get("source_claim_ids", [])
-                    subject = d.get("subject_hint", "")
-                    if action == "summarized":
-                        print(f"  [{action}] summary_id={d.get('summary_claim_id')} "
-                              f"from {len(ids)} claims (subject: {subject})")
+                    _a, _ids, _sub = d.get("action", "unknown"), d.get("source_claim_ids", []), d.get("subject_hint", "")
+                    if _a == "summarized":
+                        print(f"  [{_a}] summary_id={d.get('summary_claim_id')} from {len(_ids)} claims (subject: {_sub})")
                         print(f"    {d.get('summary_text', '')[:120]}")
-                    elif action == "would_summarize":
-                        print(f"  [{action}] {len(ids)} claims (subject: {subject})")
+                    elif _a == "would_summarize":
+                        print(f"  [{_a}] {len(_ids)} claims (subject: {_sub})")
                     else:
-                        print(f"  [{action}] {len(ids)} claims (subject: {subject}) "
-                              f"{d.get('error', '')[:80]}")
+                        print(f"  [{_a}] {len(_ids)} claims (subject: {_sub}) {d.get('error', '')[:80]}")
             return 0
 
         if args.command == "dedup":
@@ -996,8 +988,7 @@ def main(argv: list[str] | None = None) -> int:
                 for res in result.resolutions:
                     status = "APPLIED" if res.get("applied") else "SKIPPED"
                     skip = f" ({res['skip_reason']})" if res.get("skip_reason") else ""
-                    print(f"  [{status}] winner={res['winner_id']} loser={res['loser_id']} "
-                          f"reason={res['reason']}{skip}")
+                    print(f"  [{status}] winner={res['winner_id']} loser={res['loser_id']} reason={res['reason']}{skip}")
             return 0
 
         if args.command == "check-staleness":
@@ -1016,9 +1007,8 @@ def main(argv: list[str] | None = None) -> int:
                       f"already_stale={result.already_stale} skipped_pinned={result.skipped_pinned} "
                       f"skipped_no_citations={result.skipped_no_citations}")
                 for d in result.details:
-                    status = "APPLIED" if d.get("applied") else "DETECTED"
-                    files = ", ".join(os.path.basename(f) for f in d.get("changed_files", [])[:3])
-                    print(f"  [{status}] claim={d['claim_id']} files={files}")
+                    print(f"  [{'APPLIED' if d.get('applied') else 'DETECTED'}] claim={d['claim_id']} "
+                          f"files={', '.join(os.path.basename(f) for f in d.get('changed_files', [])[:3])}")
             return 0
 
         if args.command in ("snapshot", "snapshots", "rollback", "diff", "install-hook"):
