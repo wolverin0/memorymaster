@@ -495,9 +495,7 @@ def _handle_link_commands(args: argparse.Namespace, service, parser: argparse.Ar
     """Handle link, unlink, and links subcommands."""
     if args.command == "link":
         t0 = time.perf_counter()
-        src_id = _resolve_claim_id(service, args.source_id)
-        tgt_id = _resolve_claim_id(service, args.target_id)
-        link = service.add_claim_link(src_id, tgt_id, args.link_type)
+        link = service.add_claim_link(_resolve_claim_id(service, args.source_id), _resolve_claim_id(service, args.target_id), args.link_type)
         elapsed_ms = (time.perf_counter() - t0) * 1000
         if args.json_output:
             print(_json_envelope(asdict(link), query_ms=elapsed_ms))
@@ -676,14 +674,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "pin":
-            resolved_id = _resolve_claim_id(service, args.claim_id)
-            claim = service.pin(resolved_id, pin=not args.unpin)
+            claim = service.pin(_resolve_claim_id(service, args.claim_id), pin=not args.unpin)
             print(f"claim_id={claim.id} status={claim.status} pinned={int(claim.pinned)}")
             return 0
 
         if args.command == "redact-claim":
-            resolved_id = _resolve_claim_id(service, args.claim_id)
-            result = service.redact_claim_payload(resolved_id, mode=args.mode,
+            result = service.redact_claim_payload(_resolve_claim_id(service, args.claim_id), mode=args.mode,
                 redact_claim=not args.citations_only, redact_citations=not args.claims_only,
                 reason=(args.reason.strip() or None), actor=args.actor)
             print(json.dumps(result, indent=2, default=_json_default))
