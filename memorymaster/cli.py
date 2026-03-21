@@ -16,6 +16,7 @@ from memorymaster.security import resolve_allow_sensitive_access
 from memorymaster.service import MemoryService
 
 STEALTH_DB_NAME = ".memorymaster-stealth.db"
+_SCORE_KEYS = ("score", "lexical_score", "confidence_score", "freshness_score", "vector_score")
 
 
 def parse_citation(raw: str) -> CitationInput:
@@ -657,17 +658,16 @@ def main(argv: list[str] | None = None) -> int:
                 scope_allowlist=parse_scope_allowlist(args.scope_allowlist),
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
-            _score_keys = ("score", "lexical_score", "confidence_score", "freshness_score", "vector_score")
             if args.json_output:
                 json_rows = [{"claim": _claim_to_dict(row["claim"]),
-                    **{k: float(row.get(k, 0.0)) for k in _score_keys},
+                    **{k: float(row.get(k, 0.0)) for k in _SCORE_KEYS},
                     "annotation": row.get("annotation", {})} for row in rows_data]
                 print(_json_envelope(json_rows, total=len(json_rows), query_ms=elapsed_ms))
             else:
                 for row in rows_data:
                     print_claim(row["claim"])
                     ann = row.get("annotation", {})
-                    sc = {k: float(row.get(k, 0.0)) for k in _score_keys}
+                    sc = {k: float(row.get(k, 0.0)) for k in _SCORE_KEYS}
                     print(f"  retrieval: score={sc['score']:.3f} lex={sc['lexical_score']:.3f} "
                           f"conf={sc['confidence_score']:.3f} fresh={sc['freshness_score']:.3f} "
                           f"vec={sc['vector_score']:.3f} "
@@ -729,10 +729,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(_json_envelope(result, query_ms=elapsed_ms))
             else:
                 mode = "DRY RUN" if result["dry_run"] else "APPLIED"
-                print(f"compact-summaries [{mode}] clusters={result['clusters_found']} "
-                      f"summaries={result['summaries_created']} "
-                      f"source_claims={result['source_claims_summarized']} "
-                      f"errors={result['errors']}")
+                print(f"compact-summaries [{mode}] clusters={result['clusters_found']} summaries={result['summaries_created']} "
+                      f"source_claims={result['source_claims_summarized']} errors={result['errors']}")
                 for d in result.get("details", []):
                     action = d.get("action", "unknown")
                     ids = d.get("source_claim_ids", [])
