@@ -618,8 +618,7 @@ def main(argv: list[str] | None = None) -> int:
             claim = service.ingest(
                 text=args.text, citations=citations, idempotency_key=args.idempotency_key,
                 claim_type=args.claim_type, subject=args.subject, predicate=args.predicate,
-                object_value=args.object_value, scope=args.scope, volatility=args.volatility,
-                confidence=args.confidence,
+                object_value=args.object_value, scope=args.scope, volatility=args.volatility, confidence=args.confidence,
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
             if args.json_output:
@@ -870,8 +869,7 @@ def main(argv: list[str] | None = None) -> int:
                 progressive_retrieval=not args.disable_progressive_retrieval,
                 tier1_limit=args.tier1_limit, tier2_limit=args.tier2_limit,
                 min_citations=args.min_citations, min_score=args.min_score,
-                policy_mode=args.policy_mode, policy_limit=args.policy_limit,
-                compact_every=args.compact_every,
+                policy_mode=args.policy_mode, policy_limit=args.policy_limit, compact_every=args.compact_every,
                 max_idle_seconds=args.max_idle_seconds if args.max_idle_seconds and args.max_idle_seconds > 0 else None,
                 log_jsonl_path=(args.log_jsonl.strip() or None),
                 state_json_path=_stateful(args.state_json), queue_state_json_path=_stateful(args.queue_state_json),
