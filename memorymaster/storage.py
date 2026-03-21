@@ -1612,6 +1612,26 @@ class SQLiteStore:
             conn.commit()
             return cur.rowcount
 
+    def get_derived_from_target_ids(self, candidate_ids: list[int]) -> set[int]:
+        """Return the subset of *candidate_ids* that are targets of a ``derived_from`` link.
+
+        This is a batch-optimised helper used by compact-summaries to avoid
+        an N+1 query when filtering already-summarized claims.
+        """
+        if not candidate_ids:
+            return set()
+        with self.connect() as conn:
+            placeholders = ",".join("?" for _ in candidate_ids)
+            rows = conn.execute(
+                f"""
+                SELECT DISTINCT target_id FROM claim_links
+                WHERE link_type = 'derived_from'
+                  AND target_id IN ({placeholders})
+                """,
+                candidate_ids,
+            ).fetchall()
+        return {row[0] if isinstance(row, (tuple, list)) else row["target_id"] for row in rows}
+
     def get_claim_links(self, claim_id: int) -> list[ClaimLink]:
         with self.connect() as conn:
             rows = conn.execute(

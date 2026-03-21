@@ -1598,6 +1598,24 @@ class PostgresStore(SQLiteStore):
                     )
                 return cur.rowcount
 
+    def get_derived_from_target_ids(self, candidate_ids: list[int]) -> set[int]:
+        """Return the subset of *candidate_ids* that are targets of a ``derived_from`` link."""
+        if not candidate_ids:
+            return set()
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                placeholders = ",".join("%s" for _ in candidate_ids)
+                cur.execute(
+                    f"""
+                    SELECT DISTINCT target_id FROM claim_links
+                    WHERE link_type = 'derived_from'
+                      AND target_id IN ({placeholders})
+                    """,
+                    candidate_ids,
+                )
+                rows = cur.fetchall()
+        return {row[0] if isinstance(row, (tuple, list)) else row["target_id"] for row in rows}
+
     def get_claim_links(self, claim_id: int) -> list[ClaimLink]:
         with self.connect() as conn:
             with conn.cursor() as cur:

@@ -171,18 +171,11 @@ def _get_unsummarized_archived_claims(store: Any, limit: int = 500) -> list[Any]
     if not all_archived:
         return []
 
-    # Filter out claims that are already targets of derived_from links
-    unsummarized = []
-    for claim in all_archived:
-        links = store.get_claim_links(claim.id)
-        is_summarized = any(
-            link.target_id == claim.id and link.link_type == "derived_from"
-            for link in links
-        )
-        if not is_summarized:
-            unsummarized.append(claim)
+    # Batch-fetch the set of claim IDs that are already derived_from targets
+    all_ids = [claim.id for claim in all_archived]
+    summarized_ids = store.get_derived_from_target_ids(all_ids)
 
-    return unsummarized
+    return [c for c in all_archived if c.id not in summarized_ids]
 
 
 def run(
@@ -228,6 +221,14 @@ def run(
 
     # Build key rotator
     effective_keys = api_keys if api_keys else [api_key] if api_key else [""]
+
+    # Fail fast if a real provider is selected but no API key is supplied
+    if not dry_run and provider != "custom" and all(not k.strip() for k in effective_keys):
+        raise ValueError(
+            f"Provider '{provider}' requires an API key. "
+            "Set --api-key, --api-keys, or MEMORYMASTER_API_KEYS env var."
+        )
+
     key_rotator: KeyRotator | None = None
     if len(effective_keys) > 1:
         key_rotator = KeyRotator(keys=effective_keys, cooldown_seconds=cooldown_seconds)
