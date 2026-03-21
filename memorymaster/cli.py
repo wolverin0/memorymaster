@@ -410,10 +410,7 @@ def _handle_snapshot_commands(args: argparse.Namespace, service, parser: argpars
         db_resolved = Path(effective_db).resolve()
         if not args.yes:
             try:
-                answer = input(
-                    f"Restore DB from snapshot '{args.snapshot_id}'? "
-                    "A pre-rollback backup will be created. [y/N] "
-                )
+                answer = input(f"Restore DB from snapshot '{args.snapshot_id}'? A pre-rollback backup will be created. [y/N] ")
             except EOFError:
                 answer = ""
             if answer.strip().lower() not in ("y", "yes"):
@@ -442,11 +439,8 @@ def _handle_snapshot_commands(args: argparse.Namespace, service, parser: argpars
             print(_json_envelope(asdict(result), query_ms=elapsed_ms))
         else:
             s = result.summary
-            print(
-                f"diff vs {result.snapshot_id}: "
-                f"+{s['added']} added, -{s['removed']} removed, "
-                f"~{s['changed']} changed, ={s['unchanged']} unchanged"
-            )
+            print(f"diff vs {result.snapshot_id}: +{s['added']} added, -{s['removed']} removed, "
+                  f"~{s['changed']} changed, ={s['unchanged']} unchanged")
             for item in result.added:
                 print(f"  + [{item['id']}] {item['status']}: {item['text'][:80]}")
             for item in result.removed:
@@ -478,13 +472,9 @@ def _handle_qdrant_commands(args: argparse.Namespace, service, parser: argparse.
     """Handle qdrant-sync and qdrant-search subcommands."""
     from memorymaster.qdrant_backend import QdrantBackend
 
-    qdrant_kw: dict = {}
     qdrant_url = args.qdrant_url or os.environ.get("QDRANT_URL") or ""
     ollama_url = args.ollama_url or os.environ.get("OLLAMA_URL") or ""
-    if qdrant_url:
-        qdrant_kw["qdrant_url"] = qdrant_url
-    if ollama_url:
-        qdrant_kw["ollama_url"] = ollama_url
+    qdrant_kw = {k: v for k, v in [("qdrant_url", qdrant_url), ("ollama_url", ollama_url)] if v}
     backend = QdrantBackend(**qdrant_kw)
     t0 = time.perf_counter()
 
@@ -499,12 +489,7 @@ def _handle_qdrant_commands(args: argparse.Namespace, service, parser: argparse.
 
     # qdrant-search
     states = [s.strip() for s in args.states.split(",") if s.strip()] or None
-    results = backend.search(
-        args.text,
-        limit=args.limit,
-        min_confidence=args.min_confidence,
-        states=states,
-    )
+    results = backend.search(args.text, limit=args.limit, min_confidence=args.min_confidence, states=states)
     elapsed_ms = (time.perf_counter() - t0) * 1000
     if args.json_output:
         print(_json_envelope({"results": results, "count": len(results)}, query_ms=elapsed_ms))
@@ -533,10 +518,7 @@ def _handle_link_commands(args: argparse.Namespace, service, parser: argparse.Ar
         if args.json_output:
             print(_json_envelope(asdict(link), query_ms=elapsed_ms))
         else:
-            print(
-                f"linked claim {link.source_id} -> {link.target_id} "
-                f"({link.link_type}) id={link.id}"
-            )
+            print(f"linked claim {link.source_id} -> {link.target_id} ({link.link_type}) id={link.id}")
         return 0
 
     if args.command == "unlink":
@@ -899,13 +881,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "run-dashboard":
             from memorymaster.dashboard import create_dashboard_server
 
-            server = create_dashboard_server(
-                db_target=effective_db,
-                workspace_root=args.workspace,
-                host=args.host,
-                port=args.port,
-                operator_log_jsonl=args.operator_log_jsonl,
-            )
+            server = create_dashboard_server(db_target=effective_db, workspace_root=args.workspace,
+                host=args.host, port=args.port, operator_log_jsonl=args.operator_log_jsonl)
             print(f"memorymaster dashboard listening on http://{args.host}:{args.port}/dashboard")
             try:
                 server.serve_forever()
