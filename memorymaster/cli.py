@@ -791,8 +791,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"Error: Claim {args.claim_id} not found.")
                 return 1
             events = service.list_events(claim_id=resolved_id, limit=args.limit)
-            # Reverse to chronological order (list_events returns newest-first)
-            events.reverse()
+            events.reverse()  # list_events returns newest-first
             elapsed_ms = (time.perf_counter() - t0) * 1000
 
             if args.json_output:
@@ -933,13 +932,8 @@ def main(argv: list[str] | None = None) -> int:
             t0 = time.perf_counter()
             limit = args.limit
 
-            # Category 1: Stale claims (previously confirmed, now stale — need re-validation)
             stale_claims = service.store.list_claims(status="stale", limit=limit, include_archived=False, include_citations=True)
-
-            # Category 2: Conflicted claims (same subject+predicate, different values)
             conflict_pairs = detect_conflicts(service.store, limit=500)
-
-            # Category 3: Low-confidence candidates (need more evidence)
             all_candidates = service.store.list_claims(status="candidate", limit=limit * 3, include_archived=False)
             threshold = args.confidence_threshold
             low_conf_candidates = [c for c in all_candidates if c.confidence < threshold][:limit]
@@ -1035,7 +1029,6 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"  [{status}] claim={d['claim_id']} files={files}")
             return 0
 
-        # -- Snapshot / versioning commands --
         if args.command in ("snapshot", "snapshots", "rollback", "diff", "install-hook"):
             return _handle_snapshot_commands(args, service, parser, effective_db)
 
