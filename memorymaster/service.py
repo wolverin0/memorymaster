@@ -112,6 +112,8 @@ class MemoryService:
         event_time: str | None = None,
         valid_from: str | None = None,
         valid_until: str | None = None,
+        source_agent: str | None = None,
+        visibility: str = "public",
     ) -> Claim:
         if not text.strip():
             raise ValueError("Claim text cannot be empty.")
@@ -144,6 +146,8 @@ class MemoryService:
             event_time=event_time,
             valid_from=valid_from,
             valid_until=valid_until,
+            source_agent=source_agent,
+            visibility=visibility,
         )
         if sanitized.is_sensitive:
             self.store.record_event(

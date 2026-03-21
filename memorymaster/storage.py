@@ -79,6 +79,7 @@ class SQLiteStore:
             self._ensure_tenant_id_schema(conn)
             self._ensure_temporal_columns(conn)
             self._ensure_tiering_columns(conn)
+            self._ensure_agent_columns(conn)
             conn.commit()
 
     @staticmethod
@@ -421,6 +422,20 @@ class SQLiteStore:
         )
 
     @staticmethod
+    def _ensure_agent_columns(conn: sqlite3.Connection) -> None:
+        """Add source_agent and visibility columns if missing."""
+        for stmt in (
+            "ALTER TABLE claims ADD COLUMN source_agent TEXT",
+            "ALTER TABLE claims ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public'",
+        ):
+            try:
+                conn.execute(stmt)
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_claims_source_agent ON claims(source_agent)")
+
+    @staticmethod
     def _ensure_tiering_columns(conn: sqlite3.Connection) -> None:
         """Add tier, access_count, last_accessed columns if missing (migration for old DBs)."""
         for stmt in (
@@ -597,6 +612,8 @@ class SQLiteStore:
         event_time: str | None = None,
         valid_from: str | None = None,
         valid_until: str | None = None,
+        source_agent: str | None = None,
+        visibility: str = "public",
     ) -> Claim:
         if not citations:
             raise ValueError("At least one citation is required.")
@@ -622,8 +639,8 @@ class SQLiteStore:
                         text, idempotency_key, normalized_text, claim_type, subject, predicate, object_value,
                         scope, volatility, status, confidence, pinned, supersedes_claim_id,
                         replaced_by_claim_id, created_at, updated_at, last_validated_at, archived_at,
-                        tenant_id, event_time, valid_from, valid_until
-                    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'candidate', ?, 0, NULL, NULL, ?, ?, NULL, NULL, ?, ?, ?, ?)
+                        tenant_id, event_time, valid_from, valid_until, source_agent, visibility
+                    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'candidate', ?, 0, NULL, NULL, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         text,
@@ -641,6 +658,8 @@ class SQLiteStore:
                         event_time or None,
                         valid_from or None,
                         valid_until or None,
+                        source_agent or None,
+                        visibility or "public",
                     ),
                 )
             except sqlite3.IntegrityError:
@@ -1574,6 +1593,8 @@ class SQLiteStore:
             event_time=row["event_time"] if "event_time" in keys else None,
             valid_from=row["valid_from"] if "valid_from" in keys else None,
             valid_until=row["valid_until"] if "valid_until" in keys else None,
+            source_agent=row["source_agent"] if "source_agent" in keys else None,
+            visibility=row["visibility"] if "visibility" in keys else "public",
         )
 
     def record_access(self, claim_id: int) -> None:

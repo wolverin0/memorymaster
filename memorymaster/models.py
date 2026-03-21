@@ -283,4 +283,6 @@ class Claim:
     event_time: str | None = None
     valid_from: str | None = None
     valid_until: str | None = None
+    source_agent: str | None = None
+    visibility: str = "public"
     citations: list[Citation] = field(default_factory=list)
