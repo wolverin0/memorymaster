@@ -700,16 +700,7 @@ def _handle_snapshot_commands(
         db_resolved = Path(effective_db).resolve()
         snaps = list_snapshots(db_resolved)
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        items = [
-            {
-                "snapshot_id": s.snapshot_id,
-                "commit_hash": s.commit_hash,
-                "timestamp": s.timestamp,
-                "message": s.message,
-                "size_bytes": s.size_bytes,
-            }
-            for s in snaps
-        ]
+        items = [asdict(s) for s in snaps]
         if args.json_output:
             print(_json_envelope(items, total=len(items), query_ms=elapsed_ms))
         else:
@@ -852,15 +843,8 @@ def _handle_link_commands(args: argparse.Namespace, service, parser: argparse.Ar
         tgt_id = _resolve_claim_id(service, args.target_id)
         link = service.add_claim_link(src_id, tgt_id, args.link_type)
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        payload = {
-            "id": link.id,
-            "source_id": link.source_id,
-            "target_id": link.target_id,
-            "link_type": link.link_type,
-            "created_at": link.created_at,
-        }
         if args.json_output:
-            print(_json_envelope(payload, query_ms=elapsed_ms))
+            print(_json_envelope(asdict(link), query_ms=elapsed_ms))
         else:
             print(
                 f"linked claim {link.source_id} -> {link.target_id} "
@@ -887,16 +871,7 @@ def _handle_link_commands(args: argparse.Namespace, service, parser: argparse.Ar
         if args.link_type:
             links = [lnk for lnk in links if lnk.link_type == args.link_type]
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        items = [
-            {
-                "id": lnk.id,
-                "source_id": lnk.source_id,
-                "target_id": lnk.target_id,
-                "link_type": lnk.link_type,
-                "created_at": lnk.created_at,
-            }
-            for lnk in links
-        ]
+        items = [asdict(lnk) for lnk in links]
         if args.json_output:
             print(_json_envelope({"rows": len(items), "links": items}, total=len(items), query_ms=elapsed_ms))
         else:
@@ -1580,14 +1555,8 @@ def main(argv: list[str] | None = None) -> int:
                 limit=args.limit,
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
-            payload = {
-                "pairs_detected": result.pairs_detected,
-                "pairs_resolved": result.pairs_resolved,
-                "pairs_skipped": result.pairs_skipped,
-                "resolutions": result.resolutions,
-            }
             if args.json_output:
-                print(_json_envelope(payload, query_ms=elapsed_ms))
+                print(_json_envelope(asdict(result), query_ms=elapsed_ms))
             else:
                 if args.dry_run:
                     print("[DRY RUN] No transitions applied.")
@@ -1618,16 +1587,8 @@ def main(argv: list[str] | None = None) -> int:
                 limit=args.limit,
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
-            payload = {
-                "scanned": result.scanned,
-                "stale_detected": result.stale_detected,
-                "already_stale": result.already_stale,
-                "skipped_no_citations": result.skipped_no_citations,
-                "skipped_pinned": result.skipped_pinned,
-                "details": result.details,
-            }
             if args.json_output:
-                print(_json_envelope(payload, query_ms=elapsed_ms))
+                print(_json_envelope(asdict(result), query_ms=elapsed_ms))
             else:
                 if args.dry_run:
                     print("[DRY RUN] No transitions applied.")
