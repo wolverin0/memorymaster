@@ -131,12 +131,12 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 
 **Theme: Multiple agents sharing and curating memory**
 
-- [ ] Claim ownership / agent attribution (who wrote what)
+- [x] Claim ownership / agent attribution (source_agent field)
+- [x] Visibility: public / private claims per agent
 - [ ] Conflict resolution policies (last-writer-wins, confidence-weighted, quorum)
 - [ ] Cross-agent memory sharing with scope isolation
 - [ ] Agent heartbeat and session tracking
 - [ ] Access control: admin / writer / reader roles (from memoryking models)
-- [ ] Visibility: public / private claims per agent
 
 ---
 
