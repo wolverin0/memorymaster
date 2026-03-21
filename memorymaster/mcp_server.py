@@ -389,6 +389,7 @@ if FastMCP is not None:
                     "freshness_score": row.get("freshness_score", 0.0),
                     "confidence_score": row.get("confidence_score", 0.0),
                     "vector_score": row.get("vector_score", 0.0),
+                    "tier": row["claim"].tier if hasattr(row["claim"], "tier") else "working",
                 }
             )
         response: dict[str, Any] = {
@@ -696,6 +697,13 @@ if FastMCP is not None:
         result = ft.compute_quality_scores()
         stats = ft.get_stats()
         return {"ok": True, **result, **stats}
+
+    @mcp.tool()
+    def recompute_tiers(db: str = "memorymaster.db", workspace: str = ".") -> dict[str, Any]:
+        """Recompute memory tiers (core/working/peripheral) based on access patterns."""
+        svc = _service(db, workspace)
+        result = svc.recompute_tiers()
+        return {"ok": True, **result}
 
 
 def main() -> int:
