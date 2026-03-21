@@ -245,15 +245,39 @@ class QdrantBackend:
             logger.warning("Qdrant search failed: %s", exc)
             return []
 
+    def _batch_upsert(self, points: list[dict[str, Any]]) -> bool:
+        """Upsert a batch of points to Qdrant in a single request."""
+        if not points:
+            return True
+        body = {"points": points}
+        for attempt in range(1 + MAX_RETRIES):
+            try:
+                resp = self._client.put(
+                    f"{self.qdrant_url}/collections/{self.collection}/points",
+                    json=body,
+                )
+                resp.raise_for_status()
+                return True
+            except Exception as exc:
+                if attempt < MAX_RETRIES:
+                    delay = RETRY_BASE_DELAY * (2 ** attempt)
+                    logger.info("Qdrant batch upsert attempt %d failed (%s), retrying in %.1fs", attempt + 1, exc, delay)
+                    time.sleep(delay)
+                else:
+                    logger.warning("Qdrant batch upsert failed after %d attempts: %s", 1 + MAX_RETRIES, exc)
+        return False
+
     def sync_all(self, store, *, batch_size: int = 50) -> dict[str, int]:
-        """Bulk-push all confirmed claims from the store to Qdrant.
+        """Bulk-push all active claims from the store to Qdrant.
+
+        Uses batch upsert for much better throughput than one-by-one.
 
         Parameters
         ----------
         store : SQLiteStore | PostgresStore
             The primary data store.
         batch_size : int
-            How many claims to fetch per page.
+            Points per Qdrant upsert request (default 50).
 
         Returns
         -------
@@ -265,12 +289,31 @@ class QdrantBackend:
         for status in ("confirmed", "stale", "candidate", "conflicted"):
             claims = store.find_by_status(status, limit=10_000, include_citations=False)
             stats["total"] += len(claims)
+
+            batch: list[dict[str, Any]] = []
             for claim in claims:
-                ok = self.upsert_claim(claim)
-                if ok:
-                    stats["synced"] += 1
-                else:
+                vec = self._embed(self._claim_text(claim))
+                if vec is None:
                     stats["errors"] += 1
+                    continue
+                batch.append({
+                    "id": self._point_id(claim.id),
+                    "vector": vec,
+                    "payload": self._claim_payload(claim),
+                })
+                if len(batch) >= batch_size:
+                    if self._batch_upsert(batch):
+                        stats["synced"] += len(batch)
+                    else:
+                        stats["errors"] += len(batch)
+                    batch = []
+
+            # Flush remaining
+            if batch:
+                if self._batch_upsert(batch):
+                    stats["synced"] += len(batch)
+                else:
+                    stats["errors"] += len(batch)
 
         logger.info(
             "Qdrant sync_all complete: %d total, %d synced, %d errors",
