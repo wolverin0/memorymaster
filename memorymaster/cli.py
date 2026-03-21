@@ -67,6 +67,19 @@ def _resolve_claim_id(service: MemoryService, raw: str | int) -> int:
     return service.store.resolve_claim_id(text)
 
 
+def _add_cycle_policy_args(p: argparse.ArgumentParser, policy_default: str = "legacy") -> None:
+    """Add shared --min-citations/--min-score/--policy-mode/--policy-limit args."""
+    p.add_argument("--min-citations", type=int, default=1, help="Minimum citations to confirm candidate")
+    p.add_argument("--min-score", type=float, default=0.58, help="Minimum score to confirm candidate")
+    p.add_argument(
+        "--policy-mode",
+        choices=list(POLICY_MODES),
+        default=policy_default,
+        help="Revalidation policy mode (legacy keeps candidate-only validation)",
+    )
+    p.add_argument("--policy-limit", type=int, default=200, help="Max due claims selected for revalidation")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="memorymaster", description="Memory reliability MVP CLI")
     parser.add_argument(
@@ -122,15 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     cycle = sub.add_parser("run-cycle", help="Run extractor, validator, decay, and optional compact")
     cycle.add_argument("--with-compact", action="store_true", help="Run compactor at the end of cycle")
-    cycle.add_argument("--min-citations", type=int, default=1, help="Minimum citations to confirm candidate")
-    cycle.add_argument("--min-score", type=float, default=0.58, help="Minimum score to confirm candidate")
-    cycle.add_argument(
-        "--policy-mode",
-        choices=list(POLICY_MODES),
-        default="legacy",
-        help="Revalidation policy mode (legacy keeps candidate-only validation)",
-    )
-    cycle.add_argument("--policy-limit", type=int, default=200, help="Max due claims selected for revalidation")
+    _add_cycle_policy_args(cycle)
 
     query = sub.add_parser("query", help="Search claims by text")
     query.add_argument("text", help="Query text")
@@ -311,15 +316,7 @@ def build_parser() -> argparse.ArgumentParser:
     daemon.add_argument("--interval-seconds", type=int, default=3600, help="Timer-based cycle interval")
     daemon.add_argument("--max-cycles", type=int, help="Exit after N cycles")
     daemon.add_argument("--compact-every", type=int, default=0, help="Run compactor every N cycles (0 disables)")
-    daemon.add_argument("--min-citations", type=int, default=1, help="Minimum citations to confirm candidate")
-    daemon.add_argument("--min-score", type=float, default=0.58, help="Minimum score to confirm candidate")
-    daemon.add_argument(
-        "--policy-mode",
-        choices=list(POLICY_MODES),
-        default="legacy",
-        help="Revalidation policy mode (legacy keeps candidate-only validation)",
-    )
-    daemon.add_argument("--policy-limit", type=int, default=200, help="Max due claims selected for revalidation")
+    _add_cycle_policy_args(daemon)
     daemon.add_argument("--git-trigger", action="store_true", help="Run cycle when git HEAD changes")
     daemon.add_argument("--git-check-seconds", type=int, default=10, help="How often to poll git HEAD")
 
@@ -362,15 +359,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     operator.add_argument("--tier1-limit", type=int, default=4, help="Tier-1 retrieval limit when progressive retrieval is enabled")
     operator.add_argument("--tier2-limit", type=int, default=8, help="Tier-2 retrieval limit when progressive retrieval falls back")
-    operator.add_argument("--min-citations", type=int, default=1, help="Minimum citations to confirm candidate")
-    operator.add_argument("--min-score", type=float, default=0.58, help="Minimum score to confirm candidate")
-    operator.add_argument(
-        "--policy-mode",
-        choices=list(POLICY_MODES),
-        default="cadence",
-        help="Revalidation policy mode for post-turn maintenance",
-    )
-    operator.add_argument("--policy-limit", type=int, default=200, help="Max due claims selected for revalidation")
+    _add_cycle_policy_args(operator, policy_default="cadence")
     operator.add_argument("--compact-every", type=int, default=0, help="Run compactor every N processed turns")
     operator.add_argument(
         "--log-jsonl",
@@ -1536,10 +1525,8 @@ def main(argv: list[str] | None = None) -> int:
                 for res in result.resolutions:
                     status = "APPLIED" if res.get("applied") else "SKIPPED"
                     skip = f" ({res['skip_reason']})" if res.get("skip_reason") else ""
-                    print(
-                        f"  [{status}] winner={res['winner_id']} loser={res['loser_id']} "
-                        f"reason={res['reason']}{skip}"
-                    )
+                    print(f"  [{status}] winner={res['winner_id']} loser={res['loser_id']} "
+                          f"reason={res['reason']}{skip}")
             return 0
 
         if args.command == "check-staleness":
