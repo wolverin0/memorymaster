@@ -667,37 +667,22 @@ def main(argv: list[str] | None = None) -> int:
                 scope_allowlist=parse_scope_allowlist(args.scope_allowlist),
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
+            _score_keys = ("score", "lexical_score", "confidence_score", "freshness_score", "vector_score")
             if args.json_output:
-                json_rows = [
-                    {
-                        "claim": _claim_to_dict(row["claim"]),
-                        "score": float(row.get("score", 0.0)),
-                        "lexical_score": float(row.get("lexical_score", 0.0)),
-                        "confidence_score": float(row.get("confidence_score", 0.0)),
-                        "freshness_score": float(row.get("freshness_score", 0.0)),
-                        "vector_score": float(row.get("vector_score", 0.0)),
-                        "annotation": row.get("annotation", {}),
-                    }
-                    for row in rows_data
-                ]
+                json_rows = [{"claim": _claim_to_dict(row["claim"]),
+                    **{k: float(row.get(k, 0.0)) for k in _score_keys},
+                    "annotation": row.get("annotation", {})} for row in rows_data]
                 print(_json_envelope(json_rows, total=len(json_rows), query_ms=elapsed_ms))
             else:
                 for row in rows_data:
-                    claim = row["claim"]
-                    print_claim(claim)
-                    annotation = row.get("annotation", {})
-                    print(
-                        "  retrieval: "
-                        f"score={float(row.get('score', 0.0)):.3f} "
-                        f"lex={float(row.get('lexical_score', 0.0)):.3f} "
-                        f"conf={float(row.get('confidence_score', 0.0)):.3f} "
-                        f"fresh={float(row.get('freshness_score', 0.0)):.3f} "
-                        f"vec={float(row.get('vector_score', 0.0)):.3f} "
-                        f"active={int(bool(annotation.get('active', False)))} "
-                        f"stale={int(bool(annotation.get('stale', False)))} "
-                        f"conflicted={int(bool(annotation.get('conflicted', False)))} "
-                        f"pinned={int(bool(annotation.get('pinned', False)))}"
-                    )
+                    print_claim(row["claim"])
+                    ann = row.get("annotation", {})
+                    sc = {k: float(row.get(k, 0.0)) for k in _score_keys}
+                    print(f"  retrieval: score={sc['score']:.3f} lex={sc['lexical_score']:.3f} "
+                          f"conf={sc['confidence_score']:.3f} fresh={sc['freshness_score']:.3f} "
+                          f"vec={sc['vector_score']:.3f} "
+                          f"active={int(bool(ann.get('active')))} stale={int(bool(ann.get('stale')))} "
+                          f"conflicted={int(bool(ann.get('conflicted')))} pinned={int(bool(ann.get('pinned')))}")
                 print(f"rows={len(rows_data)}")
             return 0
 
