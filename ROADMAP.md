@@ -150,5 +150,5 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 - [ ] Cross-project memory federation
 - [ ] Plugin system for custom validators and probes
 - [ ] Progressive disclosure: summary → detail → full context
-- [ ] Docker image with multi-stage build
+- [x] Docker image with multi-stage build (Dockerfile + docker-compose.yml)
 - [ ] Helm chart for Kubernetes deployment
