@@ -140,14 +140,27 @@ def run(
             continue
 
         if claim.status != "confirmed":
-            transition_claim(
-                store,
-                claim_id=claim.id,
-                to_status="confirmed",
-                reason=f"validated score={score:.3f} citations={citation_count}",
-                event_type="validator",
-            )
-            confirmed += 1
+            try:
+                transition_claim(
+                    store,
+                    claim_id=claim.id,
+                    to_status="confirmed",
+                    reason=f"validated score={score:.3f} citations={citation_count}",
+                    event_type="validator",
+                )
+                confirmed += 1
+            except Exception:
+                # Tuple uniqueness conflict — another confirmed claim has the same
+                # (subject, predicate, scope). Mark as conflicted instead of crashing.
+                if claim.status != "conflicted":
+                    transition_claim(
+                        store,
+                        claim_id=claim.id,
+                        to_status="conflicted",
+                        reason=f"tuple_conflict_on_confirm score={score:.3f}",
+                        event_type="validator",
+                    )
+                conflicted += 1
         else:
             store.record_event(
                 claim_id=claim.id,
