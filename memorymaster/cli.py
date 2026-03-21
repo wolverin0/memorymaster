@@ -269,12 +269,10 @@ def build_parser() -> argparse.ArgumentParser:
     staleness_cmd.add_argument("--dry-run", action="store_true", help="Detect stale claims but do not apply transitions")
     staleness_cmd.add_argument("--limit", type=int, default=500, help="Maximum claims to scan per status")
 
-    # -- Ready detection --
     ready_cmd = sub.add_parser("ready", help="Show claims needing attention: stale, conflicted, and low-confidence candidates")
     ready_cmd.add_argument("--limit", type=int, default=10, help="Maximum claims per category (default: 10)")
     ready_cmd.add_argument("--confidence-threshold", type=float, default=0.5, help="Confidence threshold for low-confidence candidates (default: 0.5)")
 
-    # -- Snapshot / versioning commands --
     snap = sub.add_parser("snapshot", help="Create a versioned snapshot of the claim DB")
     snap.add_argument("--message", "-m", default="", help="Optional description for this snapshot")
 
@@ -538,12 +536,7 @@ def _handle_link_commands(args: argparse.Namespace, service, parser: argparse.Ar
 
 
 def _resolve_db_path(args: argparse.Namespace) -> str:
-    """Resolve the effective DB path, applying stealth mode when requested.
-
-    Stealth mode is activated when:
-    1. ``--stealth`` flag is passed explicitly, OR
-    2. A stealth DB already exists in the cwd and ``--db`` was not overridden.
-    """
+    """Resolve effective DB path; activates stealth if --stealth or stealth DB exists in cwd."""
     stealth_path = Path.cwd() / STEALTH_DB_NAME
     if args.stealth or (args.db == "memorymaster.db" and stealth_path.exists()):
         return str(stealth_path)
