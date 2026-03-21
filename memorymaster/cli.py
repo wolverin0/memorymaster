@@ -681,17 +681,8 @@ def _handle_snapshot_commands(
             message=args.message,
         )
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        payload = {
-            "snapshot_id": info.snapshot_id,
-            "filename": info.filename,
-            "path": info.path,
-            "commit_hash": info.commit_hash,
-            "timestamp": info.timestamp,
-            "message": info.message,
-            "size_bytes": info.size_bytes,
-        }
         if args.json_output:
-            print(_json_envelope(payload, query_ms=elapsed_ms))
+            print(_json_envelope(asdict(info), query_ms=elapsed_ms))
         else:
             print(f"snapshot created: {info.snapshot_id}")
             print(f"  commit: {info.commit_hash or '(no git)'}")
@@ -750,13 +741,8 @@ def _handle_snapshot_commands(
         t0 = time.perf_counter()
         info = rollback(db_resolved, args.snapshot_id)
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        payload = {
-            "restored_snapshot_id": info.snapshot_id,
-            "commit_hash": info.commit_hash,
-            "timestamp": info.timestamp,
-            "message": info.message,
-        }
         if args.json_output:
+            payload = {**asdict(info), "restored_snapshot_id": info.snapshot_id}
             print(_json_envelope(payload, query_ms=elapsed_ms))
         else:
             print(f"restored from snapshot: {info.snapshot_id}")
@@ -771,15 +757,8 @@ def _handle_snapshot_commands(
         db_resolved = Path(effective_db).resolve()
         result = diff_snapshot(db_resolved, args.snapshot_id)
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        payload = {
-            "snapshot_id": result.snapshot_id,
-            "summary": result.summary,
-            "added": result.added,
-            "removed": result.removed,
-            "changed": result.changed,
-        }
         if args.json_output:
-            print(_json_envelope(payload, query_ms=elapsed_ms))
+            print(_json_envelope(asdict(result), query_ms=elapsed_ms))
         else:
             s = result.summary
             print(
