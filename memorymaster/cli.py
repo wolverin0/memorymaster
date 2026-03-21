@@ -779,9 +779,7 @@ def main(argv: list[str] | None = None) -> int:
                     "confidence": claim.confidence, "timeline": [_event_to_timeline_entry(ev) for ev in events]},
                     total=len(events), query_ms=elapsed_ms))
             else:
-                print(f"=== History for claim {claim.id} [{claim.status} conf={claim.confidence:.3f}] ===")
-                print(f"  text: {claim.text}")
-                print()
+                print(f"=== History for claim {claim.id} [{claim.status} conf={claim.confidence:.3f}] ===\n  text: {claim.text}\n")
                 for ev in events:
                     transition = f"  {ev.from_status or '?'} -> {ev.to_status or '?'}" if (ev.from_status or ev.to_status) else ""
                     details_str = f"  | {ev.details}" if ev.details else ""
