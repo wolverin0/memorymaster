@@ -149,11 +149,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="legacy",
         help="Retrieval mode (legacy SQL ordering or hybrid lexical/confidence/freshness ranking)",
     )
-    query.add_argument(
-        "--allow-sensitive",
-        action="store_true",
-        help="Include claims that look sensitive (default excludes them)",
-    )
+    query.add_argument("--allow-sensitive", action="store_true", help="Include claims that look sensitive (default excludes them)")
     query.add_argument(
         "--scope-allowlist",
         default="",
@@ -259,21 +255,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.3,
         help="Minimum word-level Jaccard overlap as secondary gate (default: 0.3)",
     )
-    dedup.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Preview duplicates without archiving",
-    )
+    dedup.add_argument("--dry-run", action="store_true", help="Preview duplicates without archiving")
 
     list_claims = sub.add_parser("list-claims", help="List claims")
     list_claims.add_argument("--status", choices=list(CLAIM_STATUSES), help="Filter by claim status")
     list_claims.add_argument("--limit", type=int, default=50, help="Maximum rows")
     list_claims.add_argument("--include-archived", action="store_true", help="Include archived claims")
-    list_claims.add_argument(
-        "--allow-sensitive",
-        action="store_true",
-        help="Include claims that look sensitive (default excludes them)",
-    )
+    list_claims.add_argument("--allow-sensitive", action="store_true", help="Include claims that look sensitive (default excludes them)")
 
     list_events = sub.add_parser("list-events", help="List events")
     list_events.add_argument("--claim-id", type=int, help="Filter by claim id")
@@ -306,11 +294,7 @@ def build_parser() -> argparse.ArgumentParser:
     review_queue.add_argument("--limit", type=int, default=100, help="Maximum claims scanned for queue")
     review_queue.add_argument("--exclude-stale", action="store_true", help="Exclude stale claims from queue")
     review_queue.add_argument("--exclude-conflicted", action="store_true", help="Exclude conflicted claims from queue")
-    review_queue.add_argument(
-        "--allow-sensitive",
-        action="store_true",
-        help="Include claims that look sensitive (default excludes them)",
-    )
+    review_queue.add_argument("--allow-sensitive", action="store_true", help="Include claims that look sensitive (default excludes them)")
 
     daemon = sub.add_parser("run-daemon", help="Run scheduler loop for periodic/background memory maintenance")
     daemon.add_argument("--interval-seconds", type=int, default=3600, help="Timer-based cycle interval")
@@ -352,11 +336,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Retrieval mode for pre-turn memory query",
     )
     operator.add_argument("--query-limit", type=int, default=8, help="Max claims to fetch during pre-turn retrieval")
-    operator.add_argument(
-        "--disable-progressive-retrieval",
-        action="store_true",
-        help="Use a single retrieval query instead of progressive tiered retrieval",
-    )
+    operator.add_argument("--disable-progressive-retrieval", action="store_true", help="Use a single retrieval query instead of progressive tiered retrieval")
     operator.add_argument("--tier1-limit", type=int, default=4, help="Tier-1 retrieval limit when progressive retrieval is enabled")
     operator.add_argument("--tier2-limit", type=int, default=8, help="Tier-2 retrieval limit when progressive retrieval falls back")
     _add_cycle_policy_args(operator, policy_default="cadence")
@@ -386,11 +366,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="SQLite WAL database path for crash-safe pending queue (empty uses legacy JSON persistence)",
     )
-    operator.add_argument(
-        "--no-state",
-        action="store_true",
-        help="Disable checkpoint and durable queue state load/save",
-    )
+    operator.add_argument("--no-state", action="store_true", help="Disable checkpoint and durable queue state load/save")
 
     steward = sub.add_parser("run-steward", help="Run claim stewardship probes and proposal generation")
     steward.add_argument("--mode", choices=["manual", "cadence"], default="manual", help="Loop mode")
@@ -441,16 +417,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
         help="Open circuit breaker for a probe type after this many timeout/error failures",
     )
-    steward.add_argument(
-        "--disable-semantic-probe",
-        action="store_true",
-        help="Disable semantic retrieval probe in steward planner",
-    )
-    steward.add_argument(
-        "--disable-tool-probe",
-        action="store_true",
-        help="Disable tool/storage probe in steward planner",
-    )
+    steward.add_argument("--disable-semantic-probe", action="store_true", help="Disable semantic retrieval probe in steward planner")
+    steward.add_argument("--disable-tool-probe", action="store_true", help="Disable tool/storage probe in steward planner")
     steward.add_argument("--allow-sensitive", action="store_true", help="Include sensitive claims in stewardship scan")
     steward.add_argument("--apply", action="store_true", help="Apply proposed status transitions")
     steward.add_argument(
@@ -461,11 +429,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     steward_proposals = sub.add_parser("steward-proposals", help="List steward proposal events for human override")
     steward_proposals.add_argument("--limit", type=int, default=100, help="Maximum proposals returned")
-    steward_proposals.add_argument(
-        "--include-resolved",
-        action="store_true",
-        help="Include already approved/rejected proposals",
-    )
+    steward_proposals.add_argument("--include-resolved", action="store_true", help="Include already approved/rejected proposals")
 
     resolve_proposal = sub.add_parser("resolve-proposal", help="Approve or reject steward proposal")
     resolve_proposal.add_argument(
@@ -476,11 +440,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     resolve_proposal.add_argument("--proposal-event-id", type=int, help="Specific steward proposal event id")
     resolve_proposal.add_argument("--claim-id", type=int, help="Resolve latest pending proposal for claim id")
-    resolve_proposal.add_argument(
-        "--no-apply",
-        action="store_true",
-        help="When approving, do not apply state transition; only mark proposal approved",
-    )
+    resolve_proposal.add_argument("--no-apply", action="store_true", help="When approving, do not apply state transition; only mark proposal approved")
 
     link_cmd = sub.add_parser("link", help="Create a typed link between two claims")
     link_cmd.add_argument("source_id", help="Source claim numeric id or human_id")
@@ -518,11 +478,7 @@ def build_parser() -> argparse.ArgumentParser:
         "resolve-conflicts",
         help="Detect and auto-resolve conflicting claims (same subject+predicate, different object_value)",
     )
-    resolve_conflicts_cmd.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Detect conflicts but do not apply transitions",
-    )
+    resolve_conflicts_cmd.add_argument("--dry-run", action="store_true", help="Detect conflicts but do not apply transitions")
     resolve_conflicts_cmd.add_argument(
         "--limit",
         type=int,
@@ -540,11 +496,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="mtime",
         help="Detection mode: mtime (file modification time) or git (git log)",
     )
-    staleness_cmd.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Detect stale claims but do not apply transitions",
-    )
+    staleness_cmd.add_argument("--dry-run", action="store_true", help="Detect stale claims but do not apply transitions")
     staleness_cmd.add_argument(
         "--limit",
         type=int,
