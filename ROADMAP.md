@@ -52,36 +52,48 @@
 Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 
 ### Bi-Temporal Timestamps
-- [ ] Add `valid_from`, `valid_until`, `event_time` columns to claims
-- [ ] Schema migration for existing DBs
-- [ ] Time-windowed queries ("what was true on March 15?")
-- [ ] CLI: `--as-of` flag for temporal queries
+- [x] Add `valid_from`, `valid_until`, `event_time` columns to claims
+- [x] Schema migration for existing DBs
+- [x] Time-windowed queries (`query_as_of` method)
+- [x] CLI: `--event-time`, `--valid-from`, `--valid-until` on ingest
+- [x] MCP: `ingest_claim` accepts temporal params
+- [ ] CLI: `--as-of` flag for temporal queries on `query` command
 
 ### Automatic Tiering (core / working / peripheral)
-- [ ] Track `access_count` and `last_accessed` per claim
-- [ ] Auto-promote: access_count >5 OR age <7d → core
-- [ ] Auto-demote: access_count 0 AND age >90d → peripheral
-- [ ] Tiered retrieval: core claims get priority in context packing
-- [ ] MCP: expose tier in query results
+- [x] Track `access_count` and `last_accessed` per claim
+- [x] Auto-promote: access_count >5 OR age <7d → core
+- [x] Auto-demote: access_count 0 AND age >90d → peripheral
+- [x] Tiered retrieval: core claims get tier bonus in scoring (+0.15/-0.10)
+- [x] CLI: `recompute-tiers` command
+- [x] Auto-record access on every query
+- [ ] MCP: `recompute_tiers` tool
+- [ ] Expose tier in MCP query results
 
 ### Entity Extraction (LLM-powered)
-- [ ] Port `EntityExtractor` from memoryking (Gemini/Ollama)
-- [ ] Extract entities (people, projects, servers, APIs) from claim text
-- [ ] Entity graph: relationships between extracted entities
-- [ ] Entity-based retrieval: "everything about MercadoPago"
-- [ ] CLI: `entity-graph` command for visualization
+- [x] Port `EntityExtractor` from memoryking (uses Ollama deepseek-coder)
+- [x] Extract entities (people, projects, servers, APIs) from claim text
+- [x] Entity graph: SQLite tables for entities, edges, claim links
+- [x] Graph BFS traversal: find related claims via entity connections
+- [x] CLI: `extract-entities`, `entity-stats` commands
+- [x] MCP: `extract_entities`, `entity_stats`, `find_related_claims` tools
+- [ ] Batch entity extraction across all confirmed claims
+- [ ] Entity-based retrieval integrated into query pipeline
 
 ### RL Feedback Loop
-- [ ] Port `RLWriteScorer` + `RLTrainer` from memoryking
-- [ ] Track which claims are accessed (positive signal) vs ignored
-- [ ] Train a lightweight model to predict claim quality
-- [ ] Use RL score to influence write policy (skip low-value ingestion)
-- [ ] CLI: `feedback stats` command
+- [x] FeedbackTracker: records which claims returned per query
+- [x] Quality scoring: retrieval_count + access_count + freshness
+- [x] Auto-record feedback on every query (wired into service.query_rows)
+- [x] CLI: `feedback-stats`, `quality-scores` commands
+- [x] MCP: `quality_scores` tool
+- [ ] sklearn GradientBoostedTree training when 100+ feedback rows
+- [ ] Use quality score to influence write policy
+- [ ] CLI: `train-model` command
 
 ### Query Classification
-- [ ] Port 7 query types from memoryking: fact_lookup, relational, temporal, constraint_check, preference, verification, open_ended
-- [ ] Route to optimal retrieval strategy per type
-- [ ] Classification via LLM or rule-based heuristics
+- [x] 7 query types: fact_lookup, relational, temporal, constraint_check, preference, verification, open_ended
+- [x] Rule-based classifier with recommended retrieval mode
+- [x] MCP: `classify_query` tool + `auto_classify` param on `query_memory`
+- [ ] Integrate into CLI `query` command with `--auto-classify` flag
 
 ---
 
@@ -90,22 +102,25 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 **Theme: Connect to the broader tool ecosystem**
 
 ### Obsidian Vault Export
-- [ ] `memorymaster export-vault --output <path>` CLI command
-- [ ] One `.md` per claim with YAML frontmatter (status, confidence, scope, type)
-- [ ] `[[mm-xxxx]]` wikilinks from claim_links
-- [ ] Group by scope into subdirectories
-- [ ] Incremental export (only changed claims)
-- [ ] Compatible with obsidian-skills (agents can read exported vault)
+- [x] `memorymaster export-vault --output <path>` CLI command
+- [x] One `.md` per claim with YAML frontmatter (status, confidence, scope, type)
+- [x] `[[mm-xxxx]]` wikilinks from claim_links
+- [x] Group by scope into subdirectories
+- [x] Index.md with links to all claims
+- [ ] Incremental export (only changed claims since last export)
+- [x] Compatible with obsidian-skills (agents can read exported vault)
 
 ### GitNexus Bridge
-- [ ] `scripts/gitnexus_to_claims.py` bridge script
-- [ ] Run `npx gitnexus analyze` on projects
-- [ ] Ingest architectural claims: clusters, execution flows, key symbols
+- [x] `scripts/gitnexus_to_claims.py` bridge script
+- [x] Run `npx gitnexus analyze` on projects (9 projects analyzed)
+- [x] Ingest architectural claims: clusters, execution flows, key symbols
+- [x] GitNexus installed globally + configured as MCP peer in `.mcp.json`
 - [ ] Auto-update on code changes (git hook or scheduled)
-- [ ] GitNexus already configured as MCP peer in `.mcp.json`
 
 ### OpenClaw Bidirectional Sync
-- [ ] Cron-based DB sync (scp every 15 min)
+- [x] Cron-based DB sync (scp every 15 min — configured on OpenClaw)
+- [x] memorymaster installed on OpenClaw VM
+- [x] export-vault for OpenClaw workspace (.md files in ~/.openclaw/workspace/)
 - [ ] Webhook on ingest for real-time push
 - [ ] Conflict resolution for simultaneous edits
 - [ ] QMD ↔ memorymaster claim mapping
