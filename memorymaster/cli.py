@@ -1238,14 +1238,12 @@ def main(argv: list[str] | None = None) -> int:
             elapsed_ms = (time.perf_counter() - t0) * 1000
 
             if args.json_output:
-                timeline = [_event_to_timeline_entry(ev) for ev in events]
-                envelope = {
-                    "claim_id": args.claim_id,
-                    "status": claim.status,
-                    "confidence": claim.confidence,
-                    "timeline": timeline,
-                }
-                print(_json_envelope(envelope, total=len(events), query_ms=elapsed_ms))
+                print(_json_envelope(
+                    {"claim_id": args.claim_id, "status": claim.status,
+                     "confidence": claim.confidence,
+                     "timeline": [_event_to_timeline_entry(ev) for ev in events]},
+                    total=len(events), query_ms=elapsed_ms,
+                ))
             else:
                 print(
                     f"=== History for claim {claim.id} "
