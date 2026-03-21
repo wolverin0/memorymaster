@@ -851,16 +851,11 @@ def main(argv: list[str] | None = None) -> int:
 
             if args.json_output:
                 print(_json_envelope(
-                    {"claim_id": args.claim_id, "status": claim.status,
-                     "confidence": claim.confidence,
+                    {"claim_id": args.claim_id, "status": claim.status, "confidence": claim.confidence,
                      "timeline": [_event_to_timeline_entry(ev) for ev in events]},
-                    total=len(events), query_ms=elapsed_ms,
-                ))
+                    total=len(events), query_ms=elapsed_ms))
             else:
-                print(
-                    f"=== History for claim {claim.id} "
-                    f"[{claim.status} conf={claim.confidence:.3f}] ==="
-                )
+                print(f"=== History for claim {claim.id} [{claim.status} conf={claim.confidence:.3f}] ===")
                 print(f"  text: {claim.text}")
                 print()
                 for ev in events:
@@ -876,10 +871,7 @@ def main(argv: list[str] | None = None) -> int:
                                 payload_str = f"  score={_p['score']}"
                         except (json.JSONDecodeError, TypeError):
                             pass
-                    print(
-                        f"  {ev.created_at}  {ev.event_type:<25}"
-                        f"{transition}{payload_str}{details_str}"
-                    )
+                    print(f"  {ev.created_at}  {ev.event_type:<25}{transition}{payload_str}{details_str}")
                 print(f"\n  ({len(events)} events)")
             return 0
 
@@ -1005,22 +997,13 @@ def main(argv: list[str] | None = None) -> int:
             limit = args.limit
 
             # Category 1: Stale claims (previously confirmed, now stale — need re-validation)
-            stale_claims = service.store.list_claims(
-                status="stale",
-                limit=limit,
-                include_archived=False,
-                include_citations=True,
-            )
+            stale_claims = service.store.list_claims(status="stale", limit=limit, include_archived=False, include_citations=True)
 
             # Category 2: Conflicted claims (same subject+predicate, different values)
             conflict_pairs = detect_conflicts(service.store, limit=500)
 
             # Category 3: Low-confidence candidates (need more evidence)
-            all_candidates = service.store.list_claims(
-                status="candidate",
-                limit=limit * 3,  # fetch more, then filter
-                include_archived=False,
-            )
+            all_candidates = service.store.list_claims(status="candidate", limit=limit * 3, include_archived=False)
             threshold = args.confidence_threshold
             low_conf_candidates = [c for c in all_candidates if c.confidence < threshold][:limit]
             elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -1086,11 +1069,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 if args.dry_run:
                     print("[DRY RUN] No transitions applied.")
-                print(
-                    f"conflicts detected={result.pairs_detected} "
-                    f"resolved={result.pairs_resolved} "
-                    f"skipped={result.pairs_skipped}"
-                )
+                print(f"conflicts detected={result.pairs_detected} resolved={result.pairs_resolved} skipped={result.pairs_skipped}")
                 for res in result.resolutions:
                     status = "APPLIED" if res.get("applied") else "SKIPPED"
                     skip = f" ({res['skip_reason']})" if res.get("skip_reason") else ""
@@ -1110,13 +1089,9 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 if args.dry_run:
                     print("[DRY RUN] No transitions applied.")
-                print(
-                    f"staleness scanned={result.scanned} "
-                    f"stale={result.stale_detected} "
-                    f"already_stale={result.already_stale} "
-                    f"skipped_pinned={result.skipped_pinned} "
-                    f"skipped_no_citations={result.skipped_no_citations}"
-                )
+                print(f"staleness scanned={result.scanned} stale={result.stale_detected} "
+                      f"already_stale={result.already_stale} skipped_pinned={result.skipped_pinned} "
+                      f"skipped_no_citations={result.skipped_no_citations}")
                 for d in result.details:
                     status = "APPLIED" if d.get("applied") else "DETECTED"
                     files = ", ".join(os.path.basename(f) for f in d.get("changed_files", [])[:3])
