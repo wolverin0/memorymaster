@@ -310,17 +310,12 @@ def build_parser() -> argparse.ArgumentParser:
 def print_claim(claim) -> None:
     hid = getattr(claim, "human_id", None) or ""
     hid_display = f" {hid}" if hid else ""
-    line = (
-        f"[{claim.id}]{hid_display} {claim.status:<10} conf={claim.confidence:.3f} pin={int(claim.pinned)} "
-        f"type={claim.claim_type or '-'} tuple=({claim.subject or '-'}, {claim.predicate or '-'}, {claim.object_value or '-'}) "
-        f"scope={claim.scope} vol={claim.volatility} updated={claim.updated_at}"
-    )
-    print(line)
+    print(f"[{claim.id}]{hid_display} {claim.status:<10} conf={claim.confidence:.3f} pin={int(claim.pinned)} "
+          f"type={claim.claim_type or '-'} tuple=({claim.subject or '-'}, {claim.predicate or '-'}, {claim.object_value or '-'}) "
+          f"scope={claim.scope} vol={claim.volatility} updated={claim.updated_at}")
     print(f"  text: {claim.text}")
     if claim.supersedes_claim_id or claim.replaced_by_claim_id:
-        print(
-            f"  links: supersedes={claim.supersedes_claim_id or '-'} replaced_by={claim.replaced_by_claim_id or '-'}"
-        )
+        print(f"  links: supersedes={claim.supersedes_claim_id or '-'} replaced_by={claim.replaced_by_claim_id or '-'}")
     for citation in claim.citations:
         locator = f" | {citation.locator}" if citation.locator else ""
         excerpt = f" | {citation.excerpt}" if citation.excerpt else ""
@@ -338,8 +333,7 @@ def _event_to_timeline_entry(ev) -> dict:
     """Serialize an event into a timeline dict for history JSON output."""
     entry: dict = {"id": ev.id, "timestamp": ev.created_at, "event_type": ev.event_type}
     if ev.from_status or ev.to_status:
-        entry["from_status"] = ev.from_status
-        entry["to_status"] = ev.to_status
+        entry.update({"from_status": ev.from_status, "to_status": ev.to_status})
     if ev.details:
         entry["details"] = ev.details
     if ev.payload_json:
