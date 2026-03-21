@@ -8,10 +8,8 @@ via ``derived_from`` claim links.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any
 
 from memorymaster.embeddings import EmbeddingProvider, cosine_similarity
@@ -19,7 +17,6 @@ from memorymaster.llm_steward import (
     KeyRotator,
     PROVIDERS,
     _call_llm,
-    _parse_api_keys,
     _parse_extractions,
 )
 from memorymaster.models import CitationInput

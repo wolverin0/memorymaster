@@ -419,7 +419,7 @@ def _parse_extractions(raw: str) -> list[dict]:
     text = raw.strip()
     if text.startswith("```"):
         lines = text.split("\n")
-        lines = [l for l in lines if not l.strip().startswith("```")]
+        lines = [line for line in lines if not line.strip().startswith("```")]
         text = "\n".join(lines)
     try:
         result = json.loads(text)
@@ -828,7 +828,7 @@ Examples:
     print(f"Errors:     {stats['errors']}")
     av = stats.get("auto_validation")
     if av and not av.get("error"):
-        print(f"\nAuto-validation:")
+        print("\nAuto-validation:")
         print(f"  Checked:        {av.get('checked', 0)}")
         print(f"  Boosted:        {av.get('boosted', 0)}")
         print(f"  Dropped:        {av.get('dropped', 0)}")

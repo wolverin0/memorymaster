@@ -596,6 +596,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("install-hook", help="Install a git post-commit hook that auto-snapshots the DB")
 
+    qdrant_sync = sub.add_parser("qdrant-sync", help="Bulk-sync all active claims to Qdrant vector store")
+    qdrant_sync.add_argument("--qdrant-url", default="", help="Qdrant endpoint (default: $QDRANT_URL or 192.168.100.186:6333)")
+    qdrant_sync.add_argument("--ollama-url", default="", help="Ollama endpoint (default: $OLLAMA_URL or 192.168.100.155:11434)")
+
     return parser
 
 
@@ -689,7 +693,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"stealth db path: {stealth_path.resolve()}")
                 print(f"effective db: {db_display}")
                 if not active:
-                    print(f"\nTip: run 'memorymaster --stealth init-db' to create a stealth DB here.")
+                    print("\nTip: run 'memorymaster --stealth init-db' to create a stealth DB here.")
                 print(f"\nRemember to add '{STEALTH_DB_NAME}' to your .gitignore")
             return 0
 
@@ -1363,7 +1367,7 @@ def main(argv: list[str] | None = None) -> int:
                             f"  [{c.id}]{hid_display} conf={c.confidence:.3f} "
                             f"scope={c.scope} {c.text[:80]}"
                         )
-                    print(f'  -> Run `memorymaster check-staleness` to review details\n')
+                    print('  -> Run `memorymaster check-staleness` to review details\n')
 
                 # Conflicts
                 if conflict_pairs:
@@ -1375,7 +1379,7 @@ def main(argv: list[str] | None = None) -> int:
                             f"  winner=[{p.winner.id}] vs loser=[{p.loser.id}] "
                             f"key=({p.key[0]}, {p.key[1]}) reason={p.reason}"
                         )
-                    print(f'  -> Run `memorymaster resolve-conflicts` to auto-resolve\n')
+                    print('  -> Run `memorymaster resolve-conflicts` to auto-resolve\n')
 
                 # Low confidence
                 if low_conf_candidates:
@@ -1388,7 +1392,7 @@ def main(argv: list[str] | None = None) -> int:
                             f"  [{c.id}]{hid_display} conf={c.confidence:.3f} "
                             f"scope={c.scope} {c.text[:80]}"
                         )
-                    print(f'  -> Run `memorymaster run-cycle` to re-evaluate candidates\n')
+                    print('  -> Run `memorymaster run-cycle` to re-evaluate candidates\n')
 
             return 0
 
@@ -1613,6 +1617,26 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"post-commit hook {mode}: {result['path']}")
                 else:
                     print(f"hook not installed: {result.get('reason', 'unknown')}")
+            return 0
+
+        if args.command == "qdrant-sync":
+            from memorymaster.qdrant_backend import QdrantBackend
+
+            t0 = time.perf_counter()
+            qdrant_url = args.qdrant_url or os.environ.get("QDRANT_URL") or ""
+            ollama_url = args.ollama_url or os.environ.get("OLLAMA_URL") or ""
+            kwargs = {}
+            if qdrant_url:
+                kwargs["qdrant_url"] = qdrant_url
+            if ollama_url:
+                kwargs["ollama_url"] = ollama_url
+            backend = QdrantBackend(**kwargs)
+            result = backend.sync_all(service.store)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope(result, query_ms=elapsed_ms))
+            else:
+                print(f"Qdrant sync: {result['synced']}/{result['total']} synced, {result['errors']} errors ({elapsed_ms:.0f}ms)")
             return 0
 
         parser.print_help()

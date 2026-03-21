@@ -3,7 +3,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-from memorymaster.embeddings import EmbeddingProvider, create_best_provider
+import logging
+import os
+
+from memorymaster.embeddings import create_best_provider
 from memorymaster.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, validator
 from memorymaster.models import CitationInput, Claim, ClaimLink, Event
 from memorymaster.policy import select_revalidation_candidates
@@ -11,6 +14,8 @@ from memorymaster.context_optimizer import ContextResult, pack_context
 from memorymaster.retrieval import VectorSearchHook, rank_claim_rows
 from memorymaster.security import is_sensitive_claim, resolve_allow_sensitive_access, sanitize_claim_input
 from memorymaster.store_factory import create_store
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryService:
@@ -27,6 +32,47 @@ class MemoryService:
         self.embedding_provider = create_best_provider()
         self.policy_config = policy_config
         self.tenant_id = (tenant_id or "").strip() or None
+        self.qdrant = self._init_qdrant()
+
+    @staticmethod
+    def _init_qdrant():
+        """Lazily create a QdrantBackend if QDRANT_URL is set or reachable."""
+        qdrant_url = os.environ.get("QDRANT_URL", "")
+        if not qdrant_url:
+            return None
+        try:
+            from memorymaster.qdrant_backend import QdrantBackend
+            backend = QdrantBackend(qdrant_url=qdrant_url)
+            backend.ensure_collection()
+            logger.info("Qdrant backend enabled at %s", backend.qdrant_url)
+            return backend
+        except Exception as exc:
+            logger.warning("Qdrant backend unavailable, continuing without it: %s", exc)
+            return None
+
+    def _qdrant_sync(self, claim: Claim) -> None:
+        """Fire-and-forget upsert to Qdrant after a claim state change."""
+        if self.qdrant is None:
+            return
+        try:
+            if claim.status == "archived":
+                self.qdrant.delete_claim(claim.id)
+            else:
+                self.qdrant.upsert_claim(claim)
+        except Exception as exc:
+            logger.warning("Qdrant sync failed for claim %d: %s", claim.id, exc)
+
+    def _qdrant_post_cycle_sync(self) -> None:
+        """After a lifecycle cycle, push recently-changed claims to Qdrant."""
+        if self.qdrant is None:
+            return
+        try:
+            for status in ("confirmed", "stale", "conflicted"):
+                claims = self.store.find_by_status(status, limit=200, include_citations=False)
+                for claim in claims:
+                    self.qdrant.upsert_claim(claim)
+        except Exception as exc:
+            logger.warning("Qdrant post-cycle sync failed: %s", exc)
 
     def init_db(self) -> None:
         self.store.init_db()
@@ -88,6 +134,7 @@ class MemoryService:
                     details="sensitive_payload_encrypted",
                     payload={"ciphertext_b64": sanitized.encrypted_payload},
                 )
+        self._qdrant_sync(claim)
         return claim
 
     def run_cycle(
@@ -127,7 +174,7 @@ class MemoryService:
             if run_compactor
             else {"archived_claims": 0, "deleted_events": 0}
         )
-        return {
+        result = {
             "policy": {
                 "mode": policy_selection.mode,
                 "considered": policy_selection.considered,
@@ -140,6 +187,8 @@ class MemoryService:
             "decay": decay_res,
             "compactor": compact_res,
         }
+        self._qdrant_post_cycle_sync()
+        return result
 
     def query(
         self,
@@ -289,7 +338,9 @@ class MemoryService:
             candidates = [claim for claim in candidates if not is_sensitive_claim(claim)]
         semantic = False
         if vector_hook is None and hasattr(self.store, "vector_scores"):
-            vector_hook = lambda text, claims: self.store.vector_scores(text, claims, self.embedding_provider)
+            def _vector_hook(text, claims):
+                return self.store.vector_scores(text, claims, self.embedding_provider)
+            vector_hook = _vector_hook
             semantic = self.embedding_provider.is_semantic
         ranked_rows = rank_claim_rows(
             query_text,

@@ -1,8 +1,6 @@
 """Git-backed DB versioning: snapshot, list, rollback, diff."""
 from __future__ import annotations
 
-import os
-import shutil
 import sqlite3
 import subprocess
 from dataclasses import dataclass, field

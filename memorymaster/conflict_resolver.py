@@ -13,13 +13,12 @@ The loser is transitioned to 'superseded' with a full audit trail.
 
 from __future__ import annotations
 
-import json
 import logging
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from memorymaster.lifecycle import can_transition, transition_claim
+from memorymaster.lifecycle import can_transition
 from memorymaster.models import Claim
 
 logger = logging.getLogger(__name__)

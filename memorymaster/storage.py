@@ -777,7 +777,6 @@ class SQLiteStore:
         if not include_archived and status != "archived":
             clauses.append("status <> 'archived'")
 
-        use_fts = False
         fts_query = ""
         if text_query:
             fts_query = self._escape_fts5_query(text_query)
@@ -791,7 +790,6 @@ class SQLiteStore:
 
         with self.connect() as conn:
             if text_query and self._has_fts5_table(conn):
-                use_fts = True
                 clauses.append("c.id IN (SELECT rowid FROM claims_fts WHERE claims_fts MATCH ?)")
                 params.append(fts_query)
 
