@@ -457,8 +457,7 @@ def _handle_snapshot_commands(args: argparse.Namespace, service, parser: argpars
             print(_json_envelope(result, query_ms=elapsed_ms))
         else:
             if result["installed"]:
-                mode = "appended to existing" if result.get("appended") else "created"
-                print(f"post-commit hook {mode}: {result['path']}")
+                print(f"post-commit hook {'appended to existing' if result.get('appended') else 'created'}: {result['path']}")
             else:
                 print(f"hook not installed: {result.get('reason', 'unknown')}")
         return 0
@@ -577,8 +576,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.json_output:
                 print(_json_envelope(info, query_ms=elapsed_ms))
             else:
-                status_label = "ACTIVE" if active else "inactive"
-                print(f"stealth mode: {status_label}")
+                print(f"stealth mode: {'ACTIVE' if active else 'inactive'}")
                 print(f"stealth db exists: {stealth_path.exists()}")
                 print(f"stealth db path: {stealth_path.resolve()}")
                 print(f"effective db: {db_display}")
@@ -627,8 +625,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(_json_envelope(_claim_to_dict(claim), total=1, query_ms=elapsed_ms))
             else:
                 hid = getattr(claim, "human_id", None) or ""
-                hid_suffix = f" human_id={hid}" if hid else ""
-                print(f"ingested claim_id={claim.id}{hid_suffix} status={claim.status} citations={len(claim.citations)}")
+                print(f"ingested claim_id={claim.id}{f' human_id={hid}' if hid else ''} status={claim.status} citations={len(claim.citations)}")
             return 0
 
         if args.command == "run-cycle":
@@ -723,9 +720,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.json_output:
                 print(_json_envelope(result, query_ms=elapsed_ms))
             else:
-                mode = "DRY RUN" if result["dry_run"] else "APPLIED"
-                print(f"compact-summaries [{mode}] clusters={result['clusters_found']} summaries={result['summaries_created']} "
-                      f"source_claims={result['source_claims_summarized']} errors={result['errors']}")
+                print(f"compact-summaries [{'DRY RUN' if result['dry_run'] else 'APPLIED'}] clusters={result['clusters_found']} "
+                      f"summaries={result['summaries_created']} source_claims={result['source_claims_summarized']} errors={result['errors']}")
                 for d in result.get("details", []):
                     _a, _ids, _sub = d.get("action", "unknown"), d.get("source_claim_ids", []), d.get("subject_hint", "")
                     if _a == "summarized":
@@ -744,9 +740,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.json_output:
                 print(_json_envelope(result, query_ms=elapsed_ms))
             else:
-                mode = "DRY RUN" if result["dry_run"] else "APPLIED"
-                print(f"dedup [{mode}] scanned={result['scanned']} duplicates={result['duplicates_found']} "
-                      f"archived={result['claims_archived']} threshold={result['threshold']}")
+                print(f"dedup [{'DRY RUN' if result['dry_run'] else 'APPLIED'}] scanned={result['scanned']} "
+                      f"duplicates={result['duplicates_found']} archived={result['claims_archived']} threshold={result['threshold']}")
                 for pair in result["pairs"]:
                     print(f"  dup: keep={pair['keep_id']} archive={pair['archive_id']} "
                           f"sim={pair['similarity']:.4f} overlap={pair['text_overlap']:.4f}")
