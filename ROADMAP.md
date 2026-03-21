@@ -133,10 +133,10 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 
 - [x] Claim ownership / agent attribution (source_agent field)
 - [x] Visibility: public / private claims per agent
-- [ ] Conflict resolution policies (last-writer-wins, confidence-weighted, quorum)
+- [x] Conflict resolution policies (LLM-powered auto-resolver with evidence evaluation)
 - [ ] Cross-agent memory sharing with scope isolation
 - [ ] Agent heartbeat and session tracking
-- [ ] Access control: admin / writer / reader roles (from memoryking models)
+- [x] Access control: admin / writer / reader roles (access_control.py)
 
 ---
 
@@ -144,7 +144,7 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 
 **Theme: Self-organizing, self-healing memory**
 
-- [ ] LLM-powered conflict resolution with human approval gates
+- [x] LLM-powered conflict resolution with human approval gates (auto_resolver.py + existing steward proposals)
 - [ ] Automatic claim extraction from unstructured text (NER + relation extraction)
 - [ ] Knowledge graph visualization (web UI)
 - [ ] Cross-project memory federation
