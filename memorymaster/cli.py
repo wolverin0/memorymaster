@@ -578,10 +578,9 @@ def main(argv: list[str] | None = None) -> int:
                 out_prom=Path(args.out_prom), out_json=Path(args.out_json))
             c = snapshot.get("counters", {})
             print(json.dumps({"command": "export-metrics",
-                "events_total": int(c.get("events_total", 0)),
-                "transitions_total": int(c.get("transitions_total", 0)),
+                "events_total": int(c.get("events_total", 0)), "transitions_total": int(c.get("transitions_total", 0)),
                 "status_total": int(c.get("status_total", 0)),
-                "out_prom": str(Path(args.out_prom)), "out_json": str(Path(args.out_json))}, indent=2))
+                "out_prom": args.out_prom, "out_json": args.out_json}, indent=2))
             return 0
 
         service = MemoryService(effective_db, workspace_root=Path(args.workspace),
@@ -710,8 +709,7 @@ def main(argv: list[str] | None = None) -> int:
                 for d in result.get("details", []):
                     _a, _ids, _sub = d.get("action", "unknown"), d.get("source_claim_ids", []), d.get("subject_hint", "")
                     if _a == "summarized":
-                        print(f"  [{_a}] summary_id={d.get('summary_claim_id')} from {len(_ids)} claims (subject: {_sub})")
-                        print(f"    {d.get('summary_text', '')[:120]}")
+                        print(f"  [{_a}] summary_id={d.get('summary_claim_id')} from {len(_ids)} claims (subject: {_sub})\n    {d.get('summary_text', '')[:120]}")
                     elif _a == "would_summarize":
                         print(f"  [{_a}] {len(_ids)} claims (subject: {_sub})")
                     else:
