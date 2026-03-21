@@ -324,6 +324,15 @@ def _print_claim_brief(c) -> None:
     print(f"  [{c.id}]{f' {hid}' if hid else ''} conf={c.confidence:.3f} scope={c.scope} {c.text[:80]}")
 
 
+def _score_str_from_payload(payload_json: str | None) -> str:
+    """Extract score from event payload_json for history display, or ''."""
+    try:
+        p = json.loads(payload_json) if payload_json else None
+        return f"  score={p['score']}" if isinstance(p, dict) and "score" in p else ""
+    except (json.JSONDecodeError, TypeError):
+        return ""
+
+
 def _event_to_timeline_entry(ev) -> dict:
     """Serialize an event into a timeline dict for history JSON output."""
     entry: dict = {"id": ev.id, "timestamp": ev.created_at, "event_type": ev.event_type}
@@ -794,15 +803,7 @@ def main(argv: list[str] | None = None) -> int:
                 for ev in events:
                     transition = f"  {ev.from_status or '?'} -> {ev.to_status or '?'}" if (ev.from_status or ev.to_status) else ""
                     details_str = f"  | {ev.details}" if ev.details else ""
-                    payload_str = ""
-                    if ev.payload_json:
-                        try:
-                            _p = json.loads(ev.payload_json)
-                            if isinstance(_p, dict) and "score" in _p:
-                                payload_str = f"  score={_p['score']}"
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-                    print(f"  {ev.created_at}  {ev.event_type:<25}{transition}{payload_str}{details_str}")
+                    print(f"  {ev.created_at}  {ev.event_type:<25}{transition}{_score_str_from_payload(ev.payload_json)}{details_str}")
                 print(f"\n  ({len(events)} events)")
             return 0
 
