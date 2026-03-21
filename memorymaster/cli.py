@@ -362,20 +362,14 @@ def _json_default(value):
     return repr(value)
 
 
-def _handle_snapshot_commands(
-    args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str
-) -> int:
+def _handle_snapshot_commands(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     """Handle snapshot, snapshots, rollback, diff, and install-hook subcommands."""
     if args.command == "snapshot":
         from memorymaster.snapshot import create_snapshot
 
         t0 = time.perf_counter()
         db_resolved = Path(effective_db).resolve()
-        info = create_snapshot(
-            db_resolved,
-            workspace_root=Path(args.workspace).resolve(),
-            message=args.message,
-        )
+        info = create_snapshot(db_resolved, workspace_root=Path(args.workspace).resolve(), message=args.message)
         elapsed_ms = (time.perf_counter() - t0) * 1000
         if args.json_output:
             print(_json_envelope(asdict(info), query_ms=elapsed_ms))
@@ -580,25 +574,15 @@ def _resolve_db_path(args: argparse.Namespace) -> str:
     2. A stealth DB already exists in the cwd and ``--db`` was not overridden.
     """
     stealth_path = Path.cwd() / STEALTH_DB_NAME
-    db_was_defaulted = args.db == "memorymaster.db"
-
-    if args.stealth:
+    if args.stealth or (args.db == "memorymaster.db" and stealth_path.exists()):
         return str(stealth_path)
-
-    if db_was_defaulted and stealth_path.exists():
-        return str(stealth_path)
-
     return args.db
 
 
 def _stealth_active(args: argparse.Namespace) -> bool:
     """Return True if stealth mode is active for the resolved args."""
     stealth_path = Path.cwd() / STEALTH_DB_NAME
-    if args.stealth:
-        return True
-    if args.db == "memorymaster.db" and stealth_path.exists():
-        return True
-    return False
+    return bool(args.stealth or (args.db == "memorymaster.db" and stealth_path.exists()))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -646,11 +630,8 @@ def main(argv: list[str] | None = None) -> int:
                 "out_prom": str(Path(args.out_prom)), "out_json": str(Path(args.out_json))}, indent=2))
             return 0
 
-        service = MemoryService(
-            effective_db,
-            workspace_root=Path(args.workspace),
-            tenant_id=getattr(args, "tenant", None),
-        )
+        service = MemoryService(effective_db, workspace_root=Path(args.workspace),
+            tenant_id=getattr(args, "tenant", None))
 
         if args.command == "init-db":
             t0 = time.perf_counter()
@@ -780,17 +761,11 @@ def main(argv: list[str] | None = None) -> int:
             rk = _parse_api_keys(api_key=args.api_key, api_keys=args.api_keys)
             t0 = time.perf_counter()
             result = service.compact_summaries(
-                provider=args.provider,
-                api_key=rk[0] if len(rk) == 1 else "",
-                model=args.model,
-                base_url=args.base_url,
-                min_cluster=args.min_cluster,
-                max_cluster=args.max_cluster,
-                similarity_threshold=args.similarity_threshold,
-                dry_run=args.dry_run,
-                limit=args.limit,
-                api_keys=rk if len(rk) > 1 else None,
-                cooldown_seconds=args.cooldown,
+                provider=args.provider, api_key=rk[0] if len(rk) == 1 else "",
+                model=args.model, base_url=args.base_url, min_cluster=args.min_cluster,
+                max_cluster=args.max_cluster, similarity_threshold=args.similarity_threshold,
+                dry_run=args.dry_run, limit=args.limit,
+                api_keys=rk if len(rk) > 1 else None, cooldown_seconds=args.cooldown,
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
             if args.json_output:
@@ -960,22 +935,16 @@ def main(argv: list[str] | None = None) -> int:
 
             config = OperatorConfig(
                 reconcile_interval_seconds=args.reconcile_seconds,
-                retrieval_mode=args.retrieval_mode,
-                retrieval_limit=args.query_limit,
+                retrieval_mode=args.retrieval_mode, retrieval_limit=args.query_limit,
                 progressive_retrieval=not args.disable_progressive_retrieval,
-                tier1_limit=args.tier1_limit,
-                tier2_limit=args.tier2_limit,
-                min_citations=args.min_citations,
-                min_score=args.min_score,
-                policy_mode=args.policy_mode,
-                policy_limit=args.policy_limit,
+                tier1_limit=args.tier1_limit, tier2_limit=args.tier2_limit,
+                min_citations=args.min_citations, min_score=args.min_score,
+                policy_mode=args.policy_mode, policy_limit=args.policy_limit,
                 compact_every=args.compact_every,
                 max_idle_seconds=(args.max_idle_seconds if args.max_idle_seconds and args.max_idle_seconds > 0 else None),
                 log_jsonl_path=(args.log_jsonl.strip() or None),
-                state_json_path=_stateful(args.state_json),
-                queue_state_json_path=_stateful(args.queue_state_json),
-                queue_journal_jsonl_path=_stateful(args.queue_journal_jsonl),
-                queue_db_path=_stateful(args.queue_db),
+                state_json_path=_stateful(args.state_json), queue_state_json_path=_stateful(args.queue_state_json),
+                queue_journal_jsonl_path=_stateful(args.queue_journal_jsonl), queue_db_path=_stateful(args.queue_db),
             )
 
             operator = MemoryOperator(service=service, config=config)
