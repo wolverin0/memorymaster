@@ -637,6 +637,66 @@ if FastMCP is not None:
         )
         return {"ok": True, "result": result}
 
+    @mcp.tool()
+    def extract_entities(
+        claim_id: int,
+        text: str = "",
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Extract entities from a claim's text and link them to the knowledge graph."""
+        from memorymaster.entity_graph import EntityGraph
+        svc = _service(db, workspace)
+        if not text:
+            claim = svc.store.get_claim(claim_id, include_citations=False)
+            if claim is None:
+                return {"ok": False, "error": f"Claim {claim_id} not found"}
+            text = claim.text
+        eg = EntityGraph(_resolve_db(db))
+        eg.ensure_tables()
+        names = eg.extract_and_link(claim_id, text)
+        return {"ok": True, "entities": names, "count": len(names)}
+
+    @mcp.tool()
+    def entity_stats(
+        db: str = "memorymaster.db",
+    ) -> dict[str, Any]:
+        """Get entity knowledge graph statistics."""
+        from memorymaster.entity_graph import EntityGraph
+        eg = EntityGraph(_resolve_db(db))
+        eg.ensure_tables()
+        return {"ok": True, **eg.get_stats()}
+
+    @mcp.tool()
+    def find_related_claims(
+        entity_names: str,
+        db: str = "memorymaster.db",
+        hops: int = 2,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Find claims related to entities via knowledge graph traversal.
+
+        entity_names: comma-separated entity names to search from.
+        """
+        from memorymaster.entity_graph import EntityGraph
+        eg = EntityGraph(_resolve_db(db))
+        eg.ensure_tables()
+        names = [n.strip() for n in entity_names.split(",") if n.strip()]
+        claim_ids = eg.find_related_claims(names, hops=hops, limit=limit)
+        return {"ok": True, "claim_ids": claim_ids, "count": len(claim_ids)}
+
+    @mcp.tool()
+    def quality_scores(
+        db: str = "memorymaster.db",
+    ) -> dict[str, Any]:
+        """Recompute quality scores for all claims based on usage feedback."""
+        from memorymaster.feedback import FeedbackTracker
+        ft = FeedbackTracker(_resolve_db(db))
+        ft.ensure_tables()
+        result = ft.compute_quality_scores()
+        stats = ft.get_stats()
+        return {"ok": True, **result, **stats}
+
 
 def main() -> int:
     if FastMCP is None:  # pragma: no cover
