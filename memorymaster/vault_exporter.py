@@ -89,6 +89,7 @@ def export_vault(
     scope_filter: str | None = None,
     confirmed_only: bool = False,
     include_archived: bool = False,
+    incremental: bool = False,
 ) -> dict[str, int]:
     """Export claims as Obsidian-compatible .md files.
 
@@ -97,6 +98,7 @@ def export_vault(
     store : SQLiteStore | PostgresStore
     output_dir : path to write .md files
     scope_filter : only export claims matching this scope prefix
+    incremental : only export claims updated since last export
     confirmed_only : only export confirmed claims
     include_archived : include archived claims
 
@@ -109,6 +111,12 @@ def export_vault(
 
     stats = {"exported": 0, "skipped": 0, "directories_created": 0}
     seen_dirs: set[str] = set()
+
+    # Incremental: read last export timestamp
+    last_export_file = output / ".last_export"
+    last_export_ts: str | None = None
+    if incremental and last_export_file.exists():
+        last_export_ts = last_export_file.read_text(encoding="utf-8").strip()
 
     # Fetch all claims
     status_filter = "confirmed" if confirmed_only else None
@@ -128,6 +136,11 @@ def export_vault(
     for claim in claims:
         # Scope filter
         if scope_filter and not claim.scope.startswith(scope_filter):
+            stats["skipped"] += 1
+            continue
+
+        # Incremental filter: skip claims not updated since last export
+        if last_export_ts and claim.updated_at and claim.updated_at <= last_export_ts:
             stats["skipped"] += 1
             continue
 
@@ -162,6 +175,9 @@ def export_vault(
 
     # Write index
     _write_index(output, claims, human_id_map, scope_filter)
+
+    # Save export timestamp for incremental mode
+    last_export_file.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
 
     logger.info(
         "Vault export: %d exported, %d skipped, %d dirs",

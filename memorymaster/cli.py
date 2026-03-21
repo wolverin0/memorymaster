@@ -112,6 +112,8 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--retrieval-mode", choices=list(RETRIEVAL_MODES), default="legacy", help="Retrieval mode (legacy SQL ordering or hybrid lexical/confidence/freshness ranking)")
     query.add_argument("--allow-sensitive", action="store_true", help="Include claims that look sensitive (default excludes them)")
     query.add_argument("--scope-allowlist", default="", help="Comma-separated scopes to include (e.g. project,team_x)")
+    query.add_argument("--as-of", default="", help="Temporal query: show claims valid at this ISO timestamp")
+    query.add_argument("--auto-classify", action="store_true", help="Auto-classify query type and use optimal retrieval mode")
 
     context = sub.add_parser("context", help="Pack relevant claims into a token-budgeted context block for AI agents")
     context.add_argument("text", help="Query text describing what context is needed")
@@ -309,6 +311,7 @@ def build_parser() -> argparse.ArgumentParser:
     vault.add_argument("--scope", default="", help="Only export claims matching this scope prefix")
     vault.add_argument("--confirmed-only", action="store_true", help="Only export confirmed claims")
     vault.add_argument("--include-archived", action="store_true", help="Include archived claims")
+    vault.add_argument("--incremental", action="store_true", help="Only export claims changed since last export")
 
     entity_cmd = sub.add_parser("extract-entities", help="Run entity extraction on claims via LLM")
     entity_cmd.add_argument("--limit", type=int, default=100, help="Max claims to process")
@@ -643,6 +646,23 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "query":
             resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.query")
+            if getattr(args, "as_of", ""):
+                t0 = time.perf_counter()
+                claims = service.store.query_as_of(args.as_of)
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                if args.json_output:
+                    print(_json_envelope([_claim_to_dict(c) for c in claims], total=len(claims), query_ms=elapsed_ms))
+                else:
+                    for c in claims:
+                        print_claim(c)
+                    print(f"rows={len(claims)}")
+                return 0
+            if getattr(args, "auto_classify", False):
+                from memorymaster.query_classifier import classify_query, recommended_retrieval_mode
+                qtype = classify_query(args.text)
+                retrieval_mode = recommended_retrieval_mode(qtype)
+                print(f"query classified as: {qtype} → using {retrieval_mode} mode")
+                args.retrieval_mode = retrieval_mode
             t0 = time.perf_counter()
             rows_data = service.query_rows(
                 query_text=args.text, limit=args.limit,
@@ -1014,7 +1034,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "export-vault":
             from memorymaster.vault_exporter import export_vault
             t0 = time.perf_counter()
-            result = export_vault(service.store, output_dir=args.output, scope_filter=args.scope or None, confirmed_only=args.confirmed_only, include_archived=args.include_archived)
+            result = export_vault(service.store, output_dir=args.output, scope_filter=args.scope or None, confirmed_only=args.confirmed_only, include_archived=args.include_archived, incremental=args.incremental)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             if args.json_output:
                 print(_json_envelope(result, query_ms=elapsed_ms))
