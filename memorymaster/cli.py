@@ -143,10 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
     compact.add_argument("--retain-days", type=int, default=30, help="Days before archiving stale/superseded/conflicted claims")
     compact.add_argument("--event-retain-days", type=int, default=60, help="Days to retain event history")
 
-    compact_sum = sub.add_parser(
-        "compact-summaries",
-        help="Summarize groups of archived claims into higher-level summary claims using LLM",
-    )
+    compact_sum = sub.add_parser("compact-summaries", help="Summarize groups of archived claims into higher-level summary claims using LLM")
     compact_sum.add_argument("--provider", default="gemini", choices=["gemini", "openai", "anthropic", "ollama", "custom"], help="LLM provider (default: gemini)")
     compact_sum.add_argument("--api-key", default="", help="API key for the LLM provider")
     compact_sum.add_argument("--api-keys", default="", help="Comma-separated API keys for round-robin rotation")
@@ -267,26 +264,17 @@ def build_parser() -> argparse.ArgumentParser:
     links_cmd.add_argument("claim_id", help="Claim numeric id or human_id")
     links_cmd.add_argument("--type", dest="link_type", choices=list(CLAIM_LINK_TYPES), default=None, help="Filter by link type")
 
-    resolve_conflicts_cmd = sub.add_parser(
-        "resolve-conflicts",
-        help="Detect and auto-resolve conflicting claims (same subject+predicate, different object_value)",
-    )
+    resolve_conflicts_cmd = sub.add_parser("resolve-conflicts", help="Detect and auto-resolve conflicting claims (same subject+predicate, different object_value)")
     resolve_conflicts_cmd.add_argument("--dry-run", action="store_true", help="Detect conflicts but do not apply transitions")
     resolve_conflicts_cmd.add_argument("--limit", type=int, default=500, help="Maximum claims to scan for conflicts")
 
-    staleness_cmd = sub.add_parser(
-        "check-staleness",
-        help="Detect claims whose cited source files have changed and flag them stale",
-    )
+    staleness_cmd = sub.add_parser("check-staleness", help="Detect claims whose cited source files have changed and flag them stale")
     staleness_cmd.add_argument("--mode", choices=["mtime", "git"], default="mtime", help="Detection mode: mtime (file modification time) or git (git log)")
     staleness_cmd.add_argument("--dry-run", action="store_true", help="Detect stale claims but do not apply transitions")
     staleness_cmd.add_argument("--limit", type=int, default=500, help="Maximum claims to scan per status")
 
     # -- Ready detection --
-    ready_cmd = sub.add_parser(
-        "ready",
-        help="Show claims needing attention: stale, conflicted, and low-confidence candidates",
-    )
+    ready_cmd = sub.add_parser("ready", help="Show claims needing attention: stale, conflicted, and low-confidence candidates")
     ready_cmd.add_argument("--limit", type=int, default=10, help="Maximum claims per category (default: 10)")
     ready_cmd.add_argument("--confidence-threshold", type=float, default=0.5, help="Confidence threshold for low-confidence candidates (default: 0.5)")
 
