@@ -305,9 +305,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def print_claim(claim) -> None:
-    hid = getattr(claim, "human_id", None) or ""
-    hid_display = f" {hid}" if hid else ""
-    print(f"[{claim.id}]{hid_display} {claim.status:<10} conf={claim.confidence:.3f} pin={int(claim.pinned)} "
+    hid = (getattr(claim, "human_id", None) or "")
+    print(f"[{claim.id}]{f' {hid}' if hid else ''} {claim.status:<10} conf={claim.confidence:.3f} pin={int(claim.pinned)} "
           f"type={claim.claim_type or '-'} tuple=({claim.subject or '-'}, {claim.predicate or '-'}, {claim.object_value or '-'}) "
           f"scope={claim.scope} vol={claim.volatility} updated={claim.updated_at}")
     print(f"  text: {claim.text}")
@@ -321,9 +320,8 @@ def print_claim(claim) -> None:
 
 def _print_claim_brief(c) -> None:
     """Print a single-line claim summary used in ready/attention output."""
-    hid = getattr(c, "human_id", None) or ""
-    hid_display = f" {hid}" if hid else ""
-    print(f"  [{c.id}]{hid_display} conf={c.confidence:.3f} scope={c.scope} {c.text[:80]}")
+    hid = (getattr(c, "human_id", None) or "")
+    print(f"  [{c.id}]{f' {hid}' if hid else ''} conf={c.confidence:.3f} scope={c.scope} {c.text[:80]}")
 
 
 def _event_to_timeline_entry(ev) -> dict:
@@ -552,8 +550,7 @@ def _resolve_db_path(args: argparse.Namespace) -> str:
 
 def _stealth_active(args: argparse.Namespace) -> bool:
     """Return True if stealth mode is active for the resolved args."""
-    stealth_path = Path.cwd() / STEALTH_DB_NAME
-    return bool(args.stealth or (args.db == "memorymaster.db" and stealth_path.exists()))
+    return _resolve_db_path(args) != args.db or args.stealth
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -803,9 +800,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  text: {claim.text}")
                 print()
                 for ev in events:
-                    transition = ""
-                    if ev.from_status or ev.to_status:
-                        transition = f"  {ev.from_status or '?'} -> {ev.to_status or '?'}"
+                    transition = f"  {ev.from_status or '?'} -> {ev.to_status or '?'}" if (ev.from_status or ev.to_status) else ""
                     details_str = f"  | {ev.details}" if ev.details else ""
                     payload_str = ""
                     if ev.payload_json:
@@ -962,7 +957,6 @@ def main(argv: list[str] | None = None) -> int:
 
                 print(f"=== {total} items need attention ===\n")
 
-                # Stale
                 if stale_claims:
                     print(f"--- Stale claims ({len(stale_claims)}) ---")
                     print("  Previously confirmed but source files changed. Need re-validation.")
@@ -970,7 +964,6 @@ def main(argv: list[str] | None = None) -> int:
                         _print_claim_brief(c)
                     print('  -> Run `memorymaster check-staleness` to review details\n')
 
-                # Conflicts
                 if conflict_pairs:
                     print(f"--- Conflicted pairs ({len(conflict_pairs)}) ---")
                     print("  Same subject+predicate with different values. Need resolution.")
@@ -979,7 +972,6 @@ def main(argv: list[str] | None = None) -> int:
                               f"key=({p.key[0]}, {p.key[1]}) reason={p.reason}")
                     print('  -> Run `memorymaster resolve-conflicts` to auto-resolve\n')
 
-                # Low confidence
                 if low_conf_candidates:
                     print(f"--- Low-confidence candidates ({len(low_conf_candidates)}) ---")
                     print(f"  Candidates with confidence < {threshold}. Need more evidence or review.")
