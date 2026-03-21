@@ -76,7 +76,7 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 - [x] Graph BFS traversal: find related claims via entity connections
 - [x] CLI: `extract-entities`, `entity-stats` commands
 - [x] MCP: `extract_entities`, `entity_stats`, `find_related_claims` tools
-- [ ] Batch entity extraction across all confirmed claims
+- [x] Batch entity extraction across all confirmed claims (extract-entities --limit N)
 - [x] Entity-based retrieval integrated into query pipeline (enrich_with_entities)
 
 ### RL Feedback Loop
@@ -146,7 +146,7 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 
 - [x] LLM-powered conflict resolution with human approval gates (auto_resolver.py + existing steward proposals)
 - [x] Automatic claim extraction from unstructured text (auto_extractor.py + extract-claims CLI)
-- [ ] Knowledge graph visualization (web UI)
+- [x] Knowledge graph visualization (Obsidian graph view via export-vault)
 - [ ] Cross-project memory federation
 - [ ] Plugin system for custom validators and probes
 - [x] Progressive disclosure: summary → detail → full context (detail_level param)
