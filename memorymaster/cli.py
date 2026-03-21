@@ -643,6 +643,215 @@ def _json_default(value):
     return repr(value)
 
 
+def _handle_snapshot_commands(
+    args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str
+) -> int:
+    """Handle snapshot, snapshots, rollback, diff, and install-hook subcommands."""
+    if args.command == "snapshot":
+        from memorymaster.snapshot import create_snapshot
+
+        t0 = time.perf_counter()
+        db_resolved = Path(effective_db).resolve()
+        info = create_snapshot(
+            db_resolved,
+            workspace_root=Path(args.workspace).resolve(),
+            message=args.message,
+        )
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        payload = {
+            "snapshot_id": info.snapshot_id,
+            "filename": info.filename,
+            "path": info.path,
+            "commit_hash": info.commit_hash,
+            "timestamp": info.timestamp,
+            "message": info.message,
+            "size_bytes": info.size_bytes,
+        }
+        if args.json_output:
+            print(_json_envelope(payload, query_ms=elapsed_ms))
+        else:
+            print(f"snapshot created: {info.snapshot_id}")
+            print(f"  commit: {info.commit_hash or '(no git)'}")
+            print(f"  time:   {info.timestamp}")
+            if info.message:
+                print(f"  msg:    {info.message}")
+            print(f"  size:   {info.size_bytes} bytes")
+            print(f"  path:   {info.path}")
+        return 0
+
+    if args.command == "snapshots":
+        from memorymaster.snapshot import list_snapshots
+
+        t0 = time.perf_counter()
+        db_resolved = Path(effective_db).resolve()
+        snaps = list_snapshots(db_resolved)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        items = [
+            {
+                "snapshot_id": s.snapshot_id,
+                "commit_hash": s.commit_hash,
+                "timestamp": s.timestamp,
+                "message": s.message,
+                "size_bytes": s.size_bytes,
+            }
+            for s in snaps
+        ]
+        if args.json_output:
+            print(_json_envelope(items, total=len(items), query_ms=elapsed_ms))
+        else:
+            if not snaps:
+                print("no snapshots found")
+            else:
+                for s in snaps:
+                    commit_str = s.commit_hash[:8] if s.commit_hash else "(no git)"
+                    msg_str = f"  {s.message}" if s.message else ""
+                    print(f"  {s.snapshot_id}  {commit_str}  {s.timestamp}  {s.size_bytes}b{msg_str}")
+                print(f"\n{len(snaps)} snapshot(s)")
+        return 0
+
+    if args.command == "rollback":
+        from memorymaster.snapshot import rollback
+
+        db_resolved = Path(effective_db).resolve()
+        if not args.yes:
+            try:
+                answer = input(
+                    f"Restore DB from snapshot '{args.snapshot_id}'? "
+                    "A pre-rollback backup will be created. [y/N] "
+                )
+            except EOFError:
+                answer = ""
+            if answer.strip().lower() not in ("y", "yes"):
+                print("rollback cancelled")
+                return 0
+        t0 = time.perf_counter()
+        info = rollback(db_resolved, args.snapshot_id)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        payload = {
+            "restored_snapshot_id": info.snapshot_id,
+            "commit_hash": info.commit_hash,
+            "timestamp": info.timestamp,
+            "message": info.message,
+        }
+        if args.json_output:
+            print(_json_envelope(payload, query_ms=elapsed_ms))
+        else:
+            print(f"restored from snapshot: {info.snapshot_id}")
+            print(f"  commit: {info.commit_hash or '(no git)'}")
+            print(f"  time:   {info.timestamp}")
+        return 0
+
+    if args.command == "diff":
+        from memorymaster.snapshot import diff_snapshot
+
+        t0 = time.perf_counter()
+        db_resolved = Path(effective_db).resolve()
+        result = diff_snapshot(db_resolved, args.snapshot_id)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        payload = {
+            "snapshot_id": result.snapshot_id,
+            "summary": result.summary,
+            "added": result.added,
+            "removed": result.removed,
+            "changed": result.changed,
+        }
+        if args.json_output:
+            print(_json_envelope(payload, query_ms=elapsed_ms))
+        else:
+            s = result.summary
+            print(
+                f"diff vs {result.snapshot_id}: "
+                f"+{s['added']} added, -{s['removed']} removed, "
+                f"~{s['changed']} changed, ={s['unchanged']} unchanged"
+            )
+            for item in result.added:
+                print(f"  + [{item['id']}] {item['status']}: {item['text'][:80]}")
+            for item in result.removed:
+                print(f"  - [{item['id']}] {item['status']}: {item['text'][:80]}")
+            for item in result.changed:
+                changes = ", ".join(
+                    f"{k}: {v['old']!r}->{v['new']!r}"
+                    for k, v in item["changes"].items()
+                )
+                print(f"  ~ [{item['id']}] {changes}")
+        return 0
+
+    if args.command == "install-hook":
+        from memorymaster.snapshot import install_git_hook
+
+        t0 = time.perf_counter()
+        workspace = Path(args.workspace).resolve()
+        result = install_git_hook(workspace)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        if args.json_output:
+            print(_json_envelope(result, query_ms=elapsed_ms))
+        else:
+            if result["installed"]:
+                mode = "appended to existing" if result.get("appended") else "created"
+                print(f"post-commit hook {mode}: {result['path']}")
+            else:
+                print(f"hook not installed: {result.get('reason', 'unknown')}")
+        return 0
+
+
+def _handle_qdrant_commands(args: argparse.Namespace, service, parser: argparse.ArgumentParser) -> int:
+    """Handle qdrant-sync and qdrant-search subcommands."""
+    if args.command == "qdrant-sync":
+        from memorymaster.qdrant_backend import QdrantBackend
+
+        t0 = time.perf_counter()
+        qdrant_url = args.qdrant_url or os.environ.get("QDRANT_URL") or ""
+        ollama_url = args.ollama_url or os.environ.get("OLLAMA_URL") or ""
+        kwargs = {}
+        if qdrant_url:
+            kwargs["qdrant_url"] = qdrant_url
+        if ollama_url:
+            kwargs["ollama_url"] = ollama_url
+        backend = QdrantBackend(**kwargs)
+        result = backend.sync_all(service.store)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        if args.json_output:
+            print(_json_envelope(result, query_ms=elapsed_ms))
+        else:
+            print(f"Qdrant sync: {result['synced']}/{result['total']} synced, {result['errors']} errors ({elapsed_ms:.0f}ms)")
+        return 0
+
+    if args.command == "qdrant-search":
+        from memorymaster.qdrant_backend import QdrantBackend
+
+        t0 = time.perf_counter()
+        qdrant_url = args.qdrant_url or os.environ.get("QDRANT_URL") or ""
+        ollama_url = args.ollama_url or os.environ.get("OLLAMA_URL") or ""
+        kwargs = {}
+        if qdrant_url:
+            kwargs["qdrant_url"] = qdrant_url
+        if ollama_url:
+            kwargs["ollama_url"] = ollama_url
+        backend = QdrantBackend(**kwargs)
+        states = [s.strip() for s in args.states.split(",") if s.strip()] or None
+        results = backend.search(
+            args.text,
+            limit=args.limit,
+            min_confidence=args.min_confidence,
+            states=states,
+        )
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        if args.json_output:
+            print(_json_envelope({"results": results, "count": len(results)}, query_ms=elapsed_ms))
+        else:
+            if not results:
+                print("No results found.")
+            for hit in results:
+                cid = hit.get("claim_id", "?")
+                score = hit.get("score", 0.0)
+                payload = hit.get("payload", {})
+                text = payload.get("claim_text", "")[:100]
+                state = payload.get("state", "?")
+                conf = payload.get("confidence", 0.0)
+                print(f"[{cid}] score={score:.3f} state={state} conf={conf:.2f} {text}")
+        return 0
+
+
 def _handle_link_commands(args: argparse.Namespace, service, parser: argparse.ArgumentParser) -> int:
     """Handle link, unlink, and links subcommands."""
     if args.command == "link":
@@ -701,8 +910,6 @@ def _handle_link_commands(args: argparse.Namespace, service, parser: argparse.Ar
         else:
             print(json.dumps({"rows": len(items), "links": items}, indent=2))
         return 0
-
-    return -1  # not handled
 
 
 def _resolve_db_path(args: argparse.Namespace) -> str:
@@ -1489,206 +1696,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         # -- Snapshot / versioning commands --
-        if args.command == "snapshot":
-            from memorymaster.snapshot import create_snapshot
+        if args.command in ("snapshot", "snapshots", "rollback", "diff", "install-hook"):
+            return _handle_snapshot_commands(args, service, parser, effective_db)
 
-            t0 = time.perf_counter()
-            db_resolved = Path(effective_db).resolve()
-            info = create_snapshot(
-                db_resolved,
-                workspace_root=Path(args.workspace).resolve(),
-                message=args.message,
-            )
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            payload = {
-                "snapshot_id": info.snapshot_id,
-                "filename": info.filename,
-                "path": info.path,
-                "commit_hash": info.commit_hash,
-                "timestamp": info.timestamp,
-                "message": info.message,
-                "size_bytes": info.size_bytes,
-            }
-            if args.json_output:
-                print(_json_envelope(payload, query_ms=elapsed_ms))
-            else:
-                print(f"snapshot created: {info.snapshot_id}")
-                print(f"  commit: {info.commit_hash or '(no git)'}")
-                print(f"  time:   {info.timestamp}")
-                if info.message:
-                    print(f"  msg:    {info.message}")
-                print(f"  size:   {info.size_bytes} bytes")
-                print(f"  path:   {info.path}")
-            return 0
-
-        if args.command == "snapshots":
-            from memorymaster.snapshot import list_snapshots
-
-            t0 = time.perf_counter()
-            db_resolved = Path(effective_db).resolve()
-            snaps = list_snapshots(db_resolved)
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            items = [
-                {
-                    "snapshot_id": s.snapshot_id,
-                    "commit_hash": s.commit_hash,
-                    "timestamp": s.timestamp,
-                    "message": s.message,
-                    "size_bytes": s.size_bytes,
-                }
-                for s in snaps
-            ]
-            if args.json_output:
-                print(_json_envelope(items, total=len(items), query_ms=elapsed_ms))
-            else:
-                if not snaps:
-                    print("no snapshots found")
-                else:
-                    for s in snaps:
-                        commit_str = s.commit_hash[:8] if s.commit_hash else "(no git)"
-                        msg_str = f"  {s.message}" if s.message else ""
-                        print(f"  {s.snapshot_id}  {commit_str}  {s.timestamp}  {s.size_bytes}b{msg_str}")
-                    print(f"\n{len(snaps)} snapshot(s)")
-            return 0
-
-        if args.command == "rollback":
-            from memorymaster.snapshot import rollback
-
-            db_resolved = Path(effective_db).resolve()
-            if not args.yes:
-                try:
-                    answer = input(
-                        f"Restore DB from snapshot '{args.snapshot_id}'? "
-                        "A pre-rollback backup will be created. [y/N] "
-                    )
-                except EOFError:
-                    answer = ""
-                if answer.strip().lower() not in ("y", "yes"):
-                    print("rollback cancelled")
-                    return 0
-            t0 = time.perf_counter()
-            info = rollback(db_resolved, args.snapshot_id)
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            payload = {
-                "restored_snapshot_id": info.snapshot_id,
-                "commit_hash": info.commit_hash,
-                "timestamp": info.timestamp,
-                "message": info.message,
-            }
-            if args.json_output:
-                print(_json_envelope(payload, query_ms=elapsed_ms))
-            else:
-                print(f"restored from snapshot: {info.snapshot_id}")
-                print(f"  commit: {info.commit_hash or '(no git)'}")
-                print(f"  time:   {info.timestamp}")
-            return 0
-
-        if args.command == "diff":
-            from memorymaster.snapshot import diff_snapshot
-
-            t0 = time.perf_counter()
-            db_resolved = Path(effective_db).resolve()
-            result = diff_snapshot(db_resolved, args.snapshot_id)
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            payload = {
-                "snapshot_id": result.snapshot_id,
-                "summary": result.summary,
-                "added": result.added,
-                "removed": result.removed,
-                "changed": result.changed,
-            }
-            if args.json_output:
-                print(_json_envelope(payload, query_ms=elapsed_ms))
-            else:
-                s = result.summary
-                print(
-                    f"diff vs {result.snapshot_id}: "
-                    f"+{s['added']} added, -{s['removed']} removed, "
-                    f"~{s['changed']} changed, ={s['unchanged']} unchanged"
-                )
-                for item in result.added:
-                    print(f"  + [{item['id']}] {item['status']}: {item['text'][:80]}")
-                for item in result.removed:
-                    print(f"  - [{item['id']}] {item['status']}: {item['text'][:80]}")
-                for item in result.changed:
-                    changes = ", ".join(
-                        f"{k}: {v['old']!r}->{v['new']!r}"
-                        for k, v in item["changes"].items()
-                    )
-                    print(f"  ~ [{item['id']}] {changes}")
-            return 0
-
-        if args.command == "install-hook":
-            from memorymaster.snapshot import install_git_hook
-
-            t0 = time.perf_counter()
-            workspace = Path(args.workspace).resolve()
-            result = install_git_hook(workspace)
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            if args.json_output:
-                print(_json_envelope(result, query_ms=elapsed_ms))
-            else:
-                if result["installed"]:
-                    mode = "appended to existing" if result.get("appended") else "created"
-                    print(f"post-commit hook {mode}: {result['path']}")
-                else:
-                    print(f"hook not installed: {result.get('reason', 'unknown')}")
-            return 0
-
-        if args.command == "qdrant-sync":
-            from memorymaster.qdrant_backend import QdrantBackend
-
-            t0 = time.perf_counter()
-            qdrant_url = args.qdrant_url or os.environ.get("QDRANT_URL") or ""
-            ollama_url = args.ollama_url or os.environ.get("OLLAMA_URL") or ""
-            kwargs = {}
-            if qdrant_url:
-                kwargs["qdrant_url"] = qdrant_url
-            if ollama_url:
-                kwargs["ollama_url"] = ollama_url
-            backend = QdrantBackend(**kwargs)
-            result = backend.sync_all(service.store)
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            if args.json_output:
-                print(_json_envelope(result, query_ms=elapsed_ms))
-            else:
-                print(f"Qdrant sync: {result['synced']}/{result['total']} synced, {result['errors']} errors ({elapsed_ms:.0f}ms)")
-            return 0
-
-        if args.command == "qdrant-search":
-            from memorymaster.qdrant_backend import QdrantBackend
-
-            t0 = time.perf_counter()
-            qdrant_url = args.qdrant_url or os.environ.get("QDRANT_URL") or ""
-            ollama_url = args.ollama_url or os.environ.get("OLLAMA_URL") or ""
-            kwargs = {}
-            if qdrant_url:
-                kwargs["qdrant_url"] = qdrant_url
-            if ollama_url:
-                kwargs["ollama_url"] = ollama_url
-            backend = QdrantBackend(**kwargs)
-            states = [s.strip() for s in args.states.split(",") if s.strip()] or None
-            results = backend.search(
-                args.text,
-                limit=args.limit,
-                min_confidence=args.min_confidence,
-                states=states,
-            )
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            if args.json_output:
-                print(_json_envelope({"results": results, "count": len(results)}, query_ms=elapsed_ms))
-            else:
-                if not results:
-                    print("No results found.")
-                for hit in results:
-                    cid = hit.get("claim_id", "?")
-                    score = hit.get("score", 0.0)
-                    payload = hit.get("payload", {})
-                    text = payload.get("claim_text", "")[:100]
-                    state = payload.get("state", "?")
-                    conf = payload.get("confidence", 0.0)
-                    print(f"[{cid}] score={score:.3f} state={state} conf={conf:.2f} {text}")
-            return 0
+        if args.command in ("qdrant-sync", "qdrant-search"):
+            return _handle_qdrant_commands(args, service, parser)
 
         parser.print_help()
         return 1
