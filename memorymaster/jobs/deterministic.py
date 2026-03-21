@@ -85,7 +85,10 @@ def _is_valid_cidr(value: str) -> bool:
 
 
 def _is_valid_url(value: str) -> bool:
-    parsed = urlparse(value)
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return False
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return False
     host = parsed.hostname or ""
