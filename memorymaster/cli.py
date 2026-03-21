@@ -600,6 +600,14 @@ def build_parser() -> argparse.ArgumentParser:
     qdrant_sync.add_argument("--qdrant-url", default="", help="Qdrant endpoint (default: $QDRANT_URL or 192.168.100.186:6333)")
     qdrant_sync.add_argument("--ollama-url", default="", help="Ollama endpoint (default: $OLLAMA_URL or 192.168.100.155:11434)")
 
+    qdrant_search = sub.add_parser("qdrant-search", help="Semantic search via Qdrant vector store")
+    qdrant_search.add_argument("text", help="Query text for semantic search")
+    qdrant_search.add_argument("--limit", type=int, default=5, help="Max results (default: 5)")
+    qdrant_search.add_argument("--min-confidence", type=float, default=0.0, help="Minimum confidence filter")
+    qdrant_search.add_argument("--states", default="", help="Comma-separated state filter (e.g. confirmed,stale)")
+    qdrant_search.add_argument("--qdrant-url", default="", help="Qdrant endpoint")
+    qdrant_search.add_argument("--ollama-url", default="", help="Ollama endpoint")
+
     return parser
 
 
@@ -1637,6 +1645,41 @@ def main(argv: list[str] | None = None) -> int:
                 print(_json_envelope(result, query_ms=elapsed_ms))
             else:
                 print(f"Qdrant sync: {result['synced']}/{result['total']} synced, {result['errors']} errors ({elapsed_ms:.0f}ms)")
+            return 0
+
+        if args.command == "qdrant-search":
+            from memorymaster.qdrant_backend import QdrantBackend
+
+            t0 = time.perf_counter()
+            qdrant_url = args.qdrant_url or os.environ.get("QDRANT_URL") or ""
+            ollama_url = args.ollama_url or os.environ.get("OLLAMA_URL") or ""
+            kwargs = {}
+            if qdrant_url:
+                kwargs["qdrant_url"] = qdrant_url
+            if ollama_url:
+                kwargs["ollama_url"] = ollama_url
+            backend = QdrantBackend(**kwargs)
+            states = [s.strip() for s in args.states.split(",") if s.strip()] or None
+            results = backend.search(
+                args.text,
+                limit=args.limit,
+                min_confidence=args.min_confidence,
+                states=states,
+            )
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope({"results": results, "count": len(results)}, query_ms=elapsed_ms))
+            else:
+                if not results:
+                    print("No results found.")
+                for hit in results:
+                    cid = hit.get("claim_id", "?")
+                    score = hit.get("score", 0.0)
+                    payload = hit.get("payload", {})
+                    text = payload.get("claim_text", "")[:100]
+                    state = payload.get("state", "?")
+                    conf = payload.get("confidence", 0.0)
+                    print(f"[{cid}] score={score:.3f} state={state} conf={conf:.2f} {text}")
             return 0
 
         parser.print_help()
