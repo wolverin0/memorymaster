@@ -71,12 +71,7 @@ def _add_cycle_policy_args(p: argparse.ArgumentParser, policy_default: str = "le
     """Add shared --min-citations/--min-score/--policy-mode/--policy-limit args."""
     p.add_argument("--min-citations", type=int, default=1, help="Minimum citations to confirm candidate")
     p.add_argument("--min-score", type=float, default=0.58, help="Minimum score to confirm candidate")
-    p.add_argument(
-        "--policy-mode",
-        choices=list(POLICY_MODES),
-        default=policy_default,
-        help="Revalidation policy mode (legacy keeps candidate-only validation)",
-    )
+    p.add_argument("--policy-mode", choices=list(POLICY_MODES), default=policy_default, help="Revalidation policy mode (legacy keeps candidate-only validation)")
     p.add_argument("--policy-limit", type=int, default=200, help="Max due claims selected for revalidation")
 
 
@@ -131,12 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--exclude-stale", action="store_true", help="Only return confirmed/conflicted")
     query.add_argument("--exclude-conflicted", action="store_true", help="Only return confirmed/stale")
     query.add_argument("--include-candidates", action="store_true", help="Also search candidate (unverified) claims")
-    query.add_argument(
-        "--retrieval-mode",
-        choices=list(RETRIEVAL_MODES),
-        default="legacy",
-        help="Retrieval mode (legacy SQL ordering or hybrid lexical/confidence/freshness ranking)",
-    )
+    query.add_argument("--retrieval-mode", choices=list(RETRIEVAL_MODES), default="legacy", help="Retrieval mode (legacy SQL ordering or hybrid lexical/confidence/freshness ranking)")
     query.add_argument("--allow-sensitive", action="store_true", help="Include claims that look sensitive (default excludes them)")
     query.add_argument("--scope-allowlist", default="", help="Comma-separated scopes to include (e.g. project,team_x)")
 
@@ -154,12 +144,7 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("--exclude-stale", action="store_true", help="Exclude stale claims")
     context.add_argument("--exclude-conflicted", action="store_true", help="Exclude conflicted claims")
     context.add_argument("--include-candidates", action="store_true", help="Include candidate (unverified) claims")
-    context.add_argument(
-        "--retrieval-mode",
-        choices=list(RETRIEVAL_MODES),
-        default="hybrid",
-        help="Retrieval mode (default: hybrid)",
-    )
+    context.add_argument("--retrieval-mode", choices=list(RETRIEVAL_MODES), default="hybrid", help="Retrieval mode (default: hybrid)")
     context.add_argument("--allow-sensitive", action="store_true", help="Include sensitive claims")
     context.add_argument("--scope-allowlist", default="", help="Comma-separated scopes to include")
 
@@ -190,36 +175,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="LLM provider (default: gemini)",
     )
     compact_sum.add_argument("--api-key", default="", help="API key for the LLM provider")
-    compact_sum.add_argument(
-        "--api-keys", default="",
-        help="Comma-separated API keys for round-robin rotation",
-    )
+    compact_sum.add_argument("--api-keys", default="", help="Comma-separated API keys for round-robin rotation")
     compact_sum.add_argument("--model", default="", help="Model name (uses provider default if omitted)")
     compact_sum.add_argument("--base-url", default="", help="Custom API base URL")
-    compact_sum.add_argument(
-        "--min-cluster", type=int, default=3,
-        help="Minimum claims per cluster to trigger summarization (default: 3)",
-    )
-    compact_sum.add_argument(
-        "--max-cluster", type=int, default=20,
-        help="Maximum claims per cluster before splitting (default: 20)",
-    )
-    compact_sum.add_argument(
-        "--similarity-threshold", type=float, default=0.65,
-        help="Cosine similarity threshold for embedding-based clustering (default: 0.65)",
-    )
-    compact_sum.add_argument(
-        "--limit", type=int, default=500,
-        help="Maximum archived claims to consider (default: 500)",
-    )
-    compact_sum.add_argument(
-        "--cooldown", type=float, default=60.0,
-        help="Cooldown seconds for rate-limited keys (default: 60)",
-    )
-    compact_sum.add_argument(
-        "--dry-run", action="store_true",
-        help="Preview clusters without creating summaries",
-    )
+    compact_sum.add_argument("--min-cluster", type=int, default=3, help="Minimum claims per cluster to trigger summarization (default: 3)")
+    compact_sum.add_argument("--max-cluster", type=int, default=20, help="Maximum claims per cluster before splitting (default: 20)")
+    compact_sum.add_argument("--similarity-threshold", type=float, default=0.65, help="Cosine similarity threshold for embedding-based clustering (default: 0.65)")
+    compact_sum.add_argument("--limit", type=int, default=500, help="Maximum archived claims to consider (default: 500)")
+    compact_sum.add_argument("--cooldown", type=float, default=60.0, help="Cooldown seconds for rate-limited keys (default: 60)")
+    compact_sum.add_argument("--dry-run", action="store_true", help="Preview clusters without creating summaries")
 
     dedup = sub.add_parser("dedup", help="Detect and merge duplicate claims using embedding similarity")
     dedup.add_argument("--threshold", type=float, default=0.92, help="Cosine similarity threshold for duplicate detection (default: 0.92)")
@@ -276,12 +240,7 @@ def build_parser() -> argparse.ArgumentParser:
     operator.add_argument("--max-events", type=int, help="Exit after processing N turn events")
     operator.add_argument("--max-idle-seconds", type=float, default=0.0, help="Exit if no new inbox lines arrive for N seconds (0 disables)")
     operator.add_argument("--reconcile-seconds", type=float, default=300, help="Periodic reconciliation interval for background maintenance")
-    operator.add_argument(
-        "--retrieval-mode",
-        choices=list(RETRIEVAL_MODES),
-        default="hybrid",
-        help="Retrieval mode for pre-turn memory query",
-    )
+    operator.add_argument("--retrieval-mode", choices=list(RETRIEVAL_MODES), default="hybrid", help="Retrieval mode for pre-turn memory query")
     operator.add_argument("--query-limit", type=int, default=8, help="Max claims to fetch during pre-turn retrieval")
     operator.add_argument("--disable-progressive-retrieval", action="store_true", help="Use a single retrieval query instead of progressive tiered retrieval")
     operator.add_argument("--tier1-limit", type=int, default=4, help="Tier-1 retrieval limit when progressive retrieval is enabled")
