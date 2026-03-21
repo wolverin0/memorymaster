@@ -304,6 +304,22 @@ def build_parser() -> argparse.ArgumentParser:
     qdrant_search.add_argument("--qdrant-url", default="", help="Qdrant endpoint")
     qdrant_search.add_argument("--ollama-url", default="", help="Ollama endpoint")
 
+    vault = sub.add_parser("export-vault", help="Export claims as Obsidian-compatible .md files")
+    vault.add_argument("--output", required=True, help="Output directory for .md files")
+    vault.add_argument("--scope", default="", help="Only export claims matching this scope prefix")
+    vault.add_argument("--confirmed-only", action="store_true", help="Only export confirmed claims")
+    vault.add_argument("--include-archived", action="store_true", help="Include archived claims")
+
+    entity_cmd = sub.add_parser("extract-entities", help="Run entity extraction on claims via LLM")
+    entity_cmd.add_argument("--limit", type=int, default=100, help="Max claims to process")
+    entity_cmd.add_argument("--status", default="confirmed", help="Only process claims with this status")
+
+    sub.add_parser("entity-stats", help="Show entity graph statistics")
+
+    sub.add_parser("feedback-stats", help="Show feedback tracking and quality score statistics")
+
+    sub.add_parser("quality-scores", help="Recompute quality scores for all claims")
+
     return parser
 
 
@@ -994,6 +1010,75 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command in ("qdrant-sync", "qdrant-search"):
             return _handle_qdrant_commands(args, service, parser)
+
+        if args.command == "export-vault":
+            from memorymaster.vault_exporter import export_vault
+            t0 = time.perf_counter()
+            result = export_vault(service.store, output_dir=args.output, scope_filter=args.scope or None, confirmed_only=args.confirmed_only, include_archived=args.include_archived)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope(result, query_ms=elapsed_ms))
+            else:
+                print(f"Exported {result['exported']} claims to {args.output} ({result['directories_created']} dirs, {elapsed_ms:.0f}ms)")
+            return 0
+
+        if args.command == "extract-entities":
+            from memorymaster.entity_graph import EntityGraph
+            t0 = time.perf_counter()
+            eg = EntityGraph(str(effective_db))
+            eg.ensure_tables()
+            claims = service.store.find_by_status(args.status, limit=args.limit, include_citations=False)
+            total_entities = 0
+            for claim in claims:
+                names = eg.extract_and_link(claim.id, claim.text)
+                total_entities += len(names)
+                if names:
+                    print(f"  [{claim.id}] {', '.join(names)}")
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            stats = eg.get_stats()
+            if args.json_output:
+                print(_json_envelope({"extracted": total_entities, "claims_processed": len(claims), **stats}, query_ms=elapsed_ms))
+            else:
+                print(f"Extracted {total_entities} entities from {len(claims)} claims ({elapsed_ms:.0f}ms)")
+                print(f"Graph: {stats['entities']} entities, {stats['edges']} edges, {stats['claim_links']} links")
+            return 0
+
+        if args.command == "entity-stats":
+            from memorymaster.entity_graph import EntityGraph
+            eg = EntityGraph(str(effective_db))
+            eg.ensure_tables()
+            stats = eg.get_stats()
+            if args.json_output:
+                print(_json_envelope(stats))
+            else:
+                print(f"Entities: {stats['entities']}, Edges: {stats['edges']}, Claim links: {stats['claim_links']}")
+                for t, c in stats.get('by_type', {}).items():
+                    print(f"  {t}: {c}")
+            return 0
+
+        if args.command == "feedback-stats":
+            from memorymaster.feedback import FeedbackTracker
+            ft = FeedbackTracker(str(effective_db))
+            ft.ensure_tables()
+            stats = ft.get_stats()
+            if args.json_output:
+                print(_json_envelope(stats))
+            else:
+                print(f"Feedback rows: {stats['feedback_rows']}, Claims scored: {stats['claims_scored']}, Avg quality: {stats['avg_quality']}")
+            return 0
+
+        if args.command == "quality-scores":
+            from memorymaster.feedback import FeedbackTracker
+            t0 = time.perf_counter()
+            ft = FeedbackTracker(str(effective_db))
+            ft.ensure_tables()
+            result = ft.compute_quality_scores()
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope(result, query_ms=elapsed_ms))
+            else:
+                print(f"Quality scores computed for {result['scored']} claims ({elapsed_ms:.0f}ms)")
+            return 0
 
         parser.print_help()
         return 1
