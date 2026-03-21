@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  memorymaster:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: memorymaster:latest
+    container_name: memorymaster
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./data:/data
+    environment:
+      - MEMORYMASTER_DEFAULT_DB=/data/memorymaster.db
+      - MEMORYMASTER_WORKSPACE=/data
+      - QDRANT_URL=http://192.168.100.186:6333
+      - OLLAMA_URL=http://192.168.100.155:11434
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "memorymaster", "--version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
