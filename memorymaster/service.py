@@ -66,13 +66,21 @@ class MemoryService:
         """After a lifecycle cycle, push recently-changed claims to Qdrant."""
         if self.qdrant is None:
             return
-        try:
-            for status in ("confirmed", "stale", "conflicted"):
+        failed = 0
+        for status in ("confirmed", "stale", "conflicted"):
+            try:
                 claims = self.store.find_by_status(status, limit=200, include_citations=False)
-                for claim in claims:
+            except Exception as exc:
+                logger.warning("Qdrant post-cycle sync: failed to fetch %s claims: %s", status, exc)
+                continue
+            for claim in claims:
+                try:
                     self.qdrant.upsert_claim(claim)
-        except Exception as exc:
-            logger.warning("Qdrant post-cycle sync failed: %s", exc)
+                except Exception as exc:
+                    failed += 1
+                    logger.warning("Qdrant post-cycle sync failed for claim %d: %s", claim.id, exc)
+        if failed:
+            logger.warning("Qdrant post-cycle sync: %d claims failed", failed)
 
     def init_db(self) -> None:
         self.store.init_db()

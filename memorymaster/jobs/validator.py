@@ -54,9 +54,16 @@ def run(
     staled = 0
     revalidated_healthy = 0
 
+    # Batch-fetch citation counts to avoid N+1 queries
+    citation_counts = (
+        store.count_citations_batch([c.id for c in claims])
+        if hasattr(store, "count_citations_batch")
+        else {c.id: store.count_citations(c.id) for c in claims}
+    )
+
     for claim in claims:
         is_revalidation = claim.status in {"confirmed", "stale", "conflicted"}
-        citation_count = store.count_citations(claim.id)
+        citation_count = citation_counts.get(claim.id, 0)
         score = validation_score(claim, citation_count, prior_confidence=claim.confidence)
         store.set_confidence(claim.id, score, details=f"validator_score={score:.3f};citations={citation_count}")
 

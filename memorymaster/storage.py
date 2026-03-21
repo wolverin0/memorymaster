@@ -823,9 +823,10 @@ class SQLiteStore:
             rows = conn.execute(sql, params).fetchall()
 
         claims = [self._row_to_claim(row) for row in rows]
-        if include_citations:
+        if include_citations and claims:
+            cit_map = self.list_citations_batch([c.id for c in claims])
             for claim in claims:
-                claim.citations = self.list_citations(claim.id)
+                claim.citations = cit_map.get(claim.id, [])
         return claims
 
     def list_citations(self, claim_id: int) -> list[Citation]:
@@ -835,6 +836,31 @@ class SQLiteStore:
                 (claim_id,),
             ).fetchall()
         return [self._row_to_citation(row) for row in rows]
+
+    def list_citations_batch(self, claim_ids: list[int]) -> dict[int, list[Citation]]:
+        """Fetch citations for multiple claims in a single query.
+
+        Returns a dict mapping claim_id -> list of citations.
+        Much faster than calling list_citations() in a loop.
+        """
+        if not claim_ids:
+            return {}
+        result: dict[int, list[Citation]] = {cid: [] for cid in claim_ids}
+        # SQLite has a variable limit (~999), so batch in chunks
+        chunk_size = 900
+        for i in range(0, len(claim_ids), chunk_size):
+            chunk = claim_ids[i:i + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            with self.connect() as conn:
+                rows = conn.execute(
+                    f"SELECT * FROM citations WHERE claim_id IN ({placeholders}) ORDER BY claim_id, id ASC",
+                    chunk,
+                ).fetchall()
+            for row in rows:
+                cid = int(row["claim_id"])
+                if cid in result:
+                    result[cid].append(self._row_to_citation(row))
+        return result
 
     def list_events(
         self,
@@ -864,6 +890,24 @@ class SQLiteStore:
         with self.connect() as conn:
             row = conn.execute("SELECT COUNT(*) AS c FROM citations WHERE claim_id = ?", (claim_id,)).fetchone()
         return int(row["c"]) if row is not None else 0
+
+    def count_citations_batch(self, claim_ids: list[int]) -> dict[int, int]:
+        """Count citations for multiple claims in a single query."""
+        if not claim_ids:
+            return {}
+        result = {cid: 0 for cid in claim_ids}
+        chunk_size = 900
+        for i in range(0, len(claim_ids), chunk_size):
+            chunk = claim_ids[i:i + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            with self.connect() as conn:
+                rows = conn.execute(
+                    f"SELECT claim_id, COUNT(*) AS c FROM citations WHERE claim_id IN ({placeholders}) GROUP BY claim_id",
+                    chunk,
+                ).fetchall()
+            for row in rows:
+                result[int(row["claim_id"])] = int(row["c"])
+        return result
 
     def set_normalized_text(self, claim_id: int, normalized_text: str) -> None:
         now = utc_now()
