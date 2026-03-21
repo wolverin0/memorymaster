@@ -796,18 +796,19 @@ def _handle_snapshot_commands(
 
 def _handle_qdrant_commands(args: argparse.Namespace, service, parser: argparse.ArgumentParser) -> int:
     """Handle qdrant-sync and qdrant-search subcommands."""
-    if args.command == "qdrant-sync":
-        from memorymaster.qdrant_backend import QdrantBackend
+    from memorymaster.qdrant_backend import QdrantBackend
 
-        t0 = time.perf_counter()
-        qdrant_url = args.qdrant_url or os.environ.get("QDRANT_URL") or ""
-        ollama_url = args.ollama_url or os.environ.get("OLLAMA_URL") or ""
-        kwargs = {}
-        if qdrant_url:
-            kwargs["qdrant_url"] = qdrant_url
-        if ollama_url:
-            kwargs["ollama_url"] = ollama_url
-        backend = QdrantBackend(**kwargs)
+    qdrant_kw: dict = {}
+    qdrant_url = args.qdrant_url or os.environ.get("QDRANT_URL") or ""
+    ollama_url = args.ollama_url or os.environ.get("OLLAMA_URL") or ""
+    if qdrant_url:
+        qdrant_kw["qdrant_url"] = qdrant_url
+    if ollama_url:
+        qdrant_kw["ollama_url"] = ollama_url
+    backend = QdrantBackend(**qdrant_kw)
+    t0 = time.perf_counter()
+
+    if args.command == "qdrant-sync":
         result = backend.sync_all(service.store)
         elapsed_ms = (time.perf_counter() - t0) * 1000
         if args.json_output:
@@ -816,40 +817,29 @@ def _handle_qdrant_commands(args: argparse.Namespace, service, parser: argparse.
             print(f"Qdrant sync: {result['synced']}/{result['total']} synced, {result['errors']} errors ({elapsed_ms:.0f}ms)")
         return 0
 
-    if args.command == "qdrant-search":
-        from memorymaster.qdrant_backend import QdrantBackend
-
-        t0 = time.perf_counter()
-        qdrant_url = args.qdrant_url or os.environ.get("QDRANT_URL") or ""
-        ollama_url = args.ollama_url or os.environ.get("OLLAMA_URL") or ""
-        kwargs = {}
-        if qdrant_url:
-            kwargs["qdrant_url"] = qdrant_url
-        if ollama_url:
-            kwargs["ollama_url"] = ollama_url
-        backend = QdrantBackend(**kwargs)
-        states = [s.strip() for s in args.states.split(",") if s.strip()] or None
-        results = backend.search(
-            args.text,
-            limit=args.limit,
-            min_confidence=args.min_confidence,
-            states=states,
-        )
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-        if args.json_output:
-            print(_json_envelope({"results": results, "count": len(results)}, query_ms=elapsed_ms))
-        else:
-            if not results:
-                print("No results found.")
-            for hit in results:
-                cid = hit.get("claim_id", "?")
-                score = hit.get("score", 0.0)
-                payload = hit.get("payload", {})
-                text = payload.get("claim_text", "")[:100]
-                state = payload.get("state", "?")
-                conf = payload.get("confidence", 0.0)
-                print(f"[{cid}] score={score:.3f} state={state} conf={conf:.2f} {text}")
-        return 0
+    # qdrant-search
+    states = [s.strip() for s in args.states.split(",") if s.strip()] or None
+    results = backend.search(
+        args.text,
+        limit=args.limit,
+        min_confidence=args.min_confidence,
+        states=states,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope({"results": results, "count": len(results)}, query_ms=elapsed_ms))
+    else:
+        if not results:
+            print("No results found.")
+        for hit in results:
+            cid = hit.get("claim_id", "?")
+            score = hit.get("score", 0.0)
+            payload = hit.get("payload", {})
+            text = payload.get("claim_text", "")[:100]
+            state = payload.get("state", "?")
+            conf = payload.get("confidence", 0.0)
+            print(f"[{cid}] score={score:.3f} state={state} conf={conf:.2f} {text}")
+    return 0
 
 
 def _handle_link_commands(args: argparse.Namespace, service, parser: argparse.ArgumentParser) -> int:
@@ -1404,6 +1394,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 2
 
+            def _stateful(val: str) -> str | None:
+                return None if args.no_state else (val.strip() or None)
+
             config = OperatorConfig(
                 reconcile_interval_seconds=args.reconcile_seconds,
                 retrieval_mode=args.retrieval_mode,
@@ -1417,27 +1410,11 @@ def main(argv: list[str] | None = None) -> int:
                 policy_limit=args.policy_limit,
                 compact_every=args.compact_every,
                 max_idle_seconds=(args.max_idle_seconds if args.max_idle_seconds and args.max_idle_seconds > 0 else None),
-                log_jsonl_path=(args.log_jsonl.strip() if str(args.log_jsonl).strip() else None),
-                state_json_path=(
-                    None
-                    if args.no_state
-                    else (args.state_json.strip() if str(args.state_json).strip() else None)
-                ),
-                queue_state_json_path=(
-                    None
-                    if args.no_state
-                    else (args.queue_state_json.strip() if str(args.queue_state_json).strip() else None)
-                ),
-                queue_journal_jsonl_path=(
-                    None
-                    if args.no_state
-                    else (args.queue_journal_jsonl.strip() if str(args.queue_journal_jsonl).strip() else None)
-                ),
-                queue_db_path=(
-                    None
-                    if args.no_state
-                    else (args.queue_db.strip() if str(args.queue_db).strip() else None)
-                ),
+                log_jsonl_path=(args.log_jsonl.strip() or None),
+                state_json_path=_stateful(args.state_json),
+                queue_state_json_path=_stateful(args.queue_state_json),
+                queue_journal_jsonl_path=_stateful(args.queue_journal_jsonl),
+                queue_db_path=_stateful(args.queue_db),
             )
 
             operator = MemoryOperator(service=service, config=config)
