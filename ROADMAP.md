@@ -86,7 +86,7 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 - [x] CLI: `feedback-stats`, `quality-scores` commands
 - [x] MCP: `quality_scores` tool
 - [x] sklearn GradientBoostedTree training when 100+ feedback rows (rl_trainer.py)
-- [ ] Use quality score to influence write policy
+- [x] Use quality score to influence write policy (quality_scores integration)
 - [x] CLI: `train-model` command
 
 ### Query Classification
@@ -145,10 +145,10 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 **Theme: Self-organizing, self-healing memory**
 
 - [x] LLM-powered conflict resolution with human approval gates (auto_resolver.py + existing steward proposals)
-- [ ] Automatic claim extraction from unstructured text (NER + relation extraction)
+- [x] Automatic claim extraction from unstructured text (auto_extractor.py + extract-claims CLI)
 - [ ] Knowledge graph visualization (web UI)
 - [ ] Cross-project memory federation
 - [ ] Plugin system for custom validators and probes
-- [ ] Progressive disclosure: summary → detail → full context
+- [x] Progressive disclosure: summary → detail → full context (detail_level param)
 - [x] Docker image with multi-stage build (Dockerfile + docker-compose.yml)
 - [ ] Helm chart for Kubernetes deployment
