@@ -160,6 +160,8 @@ def build_parser() -> argparse.ArgumentParser:
     dedup.add_argument("--min-text-overlap", type=float, default=0.3, help="Minimum word-level Jaccard overlap as secondary gate (default: 0.3)")
     dedup.add_argument("--dry-run", action="store_true", help="Preview duplicates without archiving")
 
+    sub.add_parser("recompute-tiers", help="Recompute memory tiers (core/working/peripheral) for all claims")
+
     list_claims = sub.add_parser("list-claims", help="List claims")
     list_claims.add_argument("--status", choices=list(CLAIM_STATUSES), help="Filter by claim status")
     list_claims.add_argument("--limit", type=int, default=50, help="Maximum rows")
@@ -736,6 +738,16 @@ def main(argv: list[str] | None = None) -> int:
                 for pair in result["pairs"]:
                     print(f"  dup: keep={pair['keep_id']} archive={pair['archive_id']} sim={pair['similarity']:.4f} overlap={pair['text_overlap']:.4f}\n"
                           f"    keep:    {pair['keep_text'][:80]}\n    archive: {pair['archive_text'][:80]}")
+            return 0
+
+        if args.command == "recompute-tiers":
+            t0 = time.perf_counter()
+            counts = service.recompute_tiers()
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope(counts, query_ms=elapsed_ms))
+            else:
+                print(f"recompute-tiers: core={counts['core']} working={counts['working']} peripheral={counts['peripheral']}")
             return 0
 
         if args.command == "list-claims":
