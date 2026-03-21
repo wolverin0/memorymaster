@@ -371,13 +371,11 @@ def _handle_snapshot_commands(args: argparse.Namespace, service, parser: argpars
         if args.json_output:
             print(_json_envelope(asdict(info), query_ms=elapsed_ms))
         else:
-            print(f"snapshot created: {info.snapshot_id}")
-            print(f"  commit: {info.commit_hash or '(no git)'}")
-            print(f"  time:   {info.timestamp}")
-            if info.message:
-                print(f"  msg:    {info.message}")
-            print(f"  size:   {info.size_bytes} bytes")
-            print(f"  path:   {info.path}")
+            print(f"snapshot created: {info.snapshot_id}\n"
+                  f"  commit: {info.commit_hash or '(no git)'}\n"
+                  f"  time:   {info.timestamp}"
+                  + (f"\n  msg:    {info.message}" if info.message else "")
+                  + f"\n  size:   {info.size_bytes} bytes\n  path:   {info.path}")
         return 0
 
     if args.command == "snapshots":
@@ -416,9 +414,7 @@ def _handle_snapshot_commands(args: argparse.Namespace, service, parser: argpars
             payload = {**asdict(info), "restored_snapshot_id": info.snapshot_id}
             print(_json_envelope(payload, query_ms=elapsed_ms))
         else:
-            print(f"restored from snapshot: {info.snapshot_id}")
-            print(f"  commit: {info.commit_hash or '(no git)'}")
-            print(f"  time:   {info.timestamp}")
+            print(f"restored from snapshot: {info.snapshot_id}\n  commit: {info.commit_hash or '(no git)'}\n  time:   {info.timestamp}")
         return 0
 
     if args.command == "diff":
@@ -567,10 +563,10 @@ def main(argv: list[str] | None = None) -> int:
             if args.json_output:
                 print(_json_envelope(info, query_ms=elapsed_ms))
             else:
-                print(f"stealth mode: {'ACTIVE' if active else 'inactive'}")
-                print(f"stealth db exists: {stealth_path.exists()}")
-                print(f"stealth db path: {stealth_path.resolve()}")
-                print(f"effective db: {db_display}")
+                print(f"stealth mode: {'ACTIVE' if active else 'inactive'}\n"
+                      f"stealth db exists: {stealth_path.exists()}\n"
+                      f"stealth db path: {stealth_path.resolve()}\n"
+                      f"effective db: {db_display}")
                 if not active:
                     print("\nTip: run 'memorymaster --stealth init-db' to create a stealth DB here.")
                 print(f"\nRemember to add '{STEALTH_DB_NAME}' to your .gitignore")
