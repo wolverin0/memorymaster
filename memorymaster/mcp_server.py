@@ -322,6 +322,25 @@ if FastMCP is not None:
         qtype = _classify(query)
         return {"query_type": qtype, "recommended_mode": recommended_retrieval_mode(qtype)}
 
+    def _apply_detail_level(claim_dict: dict[str, Any], detail_level: str) -> dict[str, Any]:
+        """Filter claim dict fields based on requested detail level.
+
+        - "summary": claim_id, human_id, status, confidence, score, text[:80]
+        - "standard": full claim dict (current behaviour)
+        - "full": full claim dict (citations already included by caller)
+        """
+        if detail_level == "summary":
+            return {
+                "claim_id": claim_dict.get("id"),
+                "human_id": claim_dict.get("human_id"),
+                "status": claim_dict.get("status"),
+                "confidence": claim_dict.get("confidence"),
+                "text": (claim_dict.get("text") or "")[:80],
+            }
+        # "standard" and "full" return the full dict — caller is responsible for
+        # including citations when detail_level == "full".
+        return claim_dict
+
     @mcp.tool()
     def query_memory(
         query: str,
@@ -335,6 +354,7 @@ if FastMCP is not None:
         include_candidates: bool = True,
         allow_sensitive: bool = False,
         scope_allowlist: str = "",
+        detail_level: str = "standard",
     ) -> dict[str, Any]:
         """Query memory for relevant claims. Includes candidates by default for MCP use.
 
@@ -345,6 +365,11 @@ if FastMCP is not None:
 
         auto_classify: when True and retrieval_mode is "legacy", classify the query
           automatically and upgrade to the recommended retrieval mode.
+
+        detail_level options:
+          - "summary": claim_id, human_id, status, confidence, text[:80]
+          - "standard" (default): full claim dict
+          - "full": full claim dict with citations inlined
         """
         from memorymaster.query_classifier import classify_query as _classify, recommended_retrieval_mode
 
@@ -363,6 +388,8 @@ if FastMCP is not None:
             result = _qdrant_query(query, db, workspace, limit)
             if query_type is not None:
                 result["query_type"] = query_type
+            if detail_level != "standard":
+                result["claims"] = [_apply_detail_level(c, detail_level) for c in result.get("claims", [])]
             return result
 
         svc = _service(db, workspace)
@@ -376,12 +403,25 @@ if FastMCP is not None:
             allow_sensitive=allow_sensitive,
             scope_allowlist=_effective_scope_allowlist(scope_allowlist, workspace),
         )
+        # For "full" detail level, re-fetch each claim with citations inline.
+        if detail_level == "full":
+            enriched: list[dict[str, Any]] = []
+            for row in rows_data:
+                claim_obj = row["claim"]
+                cid = getattr(claim_obj, "id", None)
+                if cid is not None:
+                    full_claim = svc.store.get_claim(int(cid), include_citations=True)
+                    if full_claim is not None:
+                        claim_obj = full_claim
+                enriched.append({**row, "claim": claim_obj})
+            rows_data = enriched
+
         claims = [row["claim"] for row in rows_data]
         serialized_rows: list[dict[str, Any]] = []
         for row in rows_data:
             serialized_rows.append(
                 {
-                    "claim": _claim_to_dict(row["claim"]),
+                    "claim": _apply_detail_level(_claim_to_dict(row["claim"]), detail_level),
                     "status": row.get("status"),
                     "annotation": row.get("annotation", {}),
                     "score": row.get("score", 0.0),
@@ -395,7 +435,7 @@ if FastMCP is not None:
         response: dict[str, Any] = {
             "ok": True,
             "rows": len(claims),
-            "claims": [_claim_to_dict(c) for c in claims],
+            "claims": [_apply_detail_level(_claim_to_dict(c), detail_level) for c in claims],
             "rows_data": serialized_rows,
         }
         if query_type is not None:
@@ -416,6 +456,7 @@ if FastMCP is not None:
         include_candidates: bool = True,
         allow_sensitive: bool = False,
         scope_allowlist: str = "",
+        detail_level: str = "standard",
     ) -> dict[str, Any]:
         """Pack the most relevant claims into a token-budgeted context block.
 
@@ -425,6 +466,11 @@ if FastMCP is not None:
 
         Use this instead of query_memory when you need to inject memory
         directly into a system prompt or context window.
+
+        detail_level options (applied to the structured claims list in the response):
+          - "summary": claim_id, human_id, status, confidence, text[:80]
+          - "standard" (default): full claim dict
+          - "full": full claim dict with citations inlined
         """
         resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
@@ -443,7 +489,7 @@ if FastMCP is not None:
             allow_sensitive=allow_sensitive,
             scope_allowlist=_effective_scope_allowlist(scope_allowlist, workspace),
         )
-        return {
+        response: dict[str, Any] = {
             "ok": True,
             "output": result.output,
             "claims_considered": result.claims_considered,
@@ -452,6 +498,36 @@ if FastMCP is not None:
             "token_budget": result.token_budget,
             "format": result.format,
         }
+        if detail_level != "standard":
+            # Attach filtered claim list as a convenience for callers who want
+            # structured data alongside the formatted output block.
+            rows_data = svc.query_rows(
+                query_text=query,
+                limit=limit,
+                retrieval_mode=retrieval_mode,
+                include_stale=include_stale,
+                include_conflicted=include_conflicted,
+                include_candidates=include_candidates,
+                allow_sensitive=allow_sensitive,
+                scope_allowlist=_effective_scope_allowlist(scope_allowlist, workspace),
+            )
+            if detail_level == "full":
+                filtered_claims = []
+                for row in rows_data:
+                    cid = getattr(row["claim"], "id", None)
+                    claim_obj = row["claim"]
+                    if cid is not None:
+                        full_claim = svc.store.get_claim(int(cid), include_citations=True)
+                        if full_claim is not None:
+                            claim_obj = full_claim
+                    filtered_claims.append(_apply_detail_level(_claim_to_dict(claim_obj), detail_level))
+            else:
+                filtered_claims = [
+                    _apply_detail_level(_claim_to_dict(row["claim"]), detail_level)
+                    for row in rows_data
+                ]
+            response["claims"] = filtered_claims
+        return response
 
     @mcp.tool()
     def list_claims(

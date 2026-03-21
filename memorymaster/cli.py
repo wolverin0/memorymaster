@@ -1143,6 +1143,61 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"Training failed: {result.get('reason', '?')}")
             return 0
 
+        if args.command == "extract-claims":
+            import sys
+            from memorymaster.auto_extractor import extract_claims_from_text
+
+            # Resolve input text
+            if getattr(args, "stdin", False):
+                raw_text = sys.stdin.read()
+            else:
+                input_val = args.input or ""
+                input_path = Path(input_val)
+                if input_path.is_file():
+                    raw_text = input_path.read_text(encoding="utf-8", errors="replace")
+                else:
+                    raw_text = input_val
+
+            t0 = time.perf_counter()
+            extracted = extract_claims_from_text(
+                text=raw_text,
+                source=args.source,
+                scope=args.scope,
+                base_url=args.ollama_url,
+                model=args.model,
+            )
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+
+            if args.ingest:
+                ingested_ids: list[int] = []
+                for item in extracted:
+                    claim = service.ingest(
+                        text=item["text"],
+                        citations=[CitationInput(source=item["source"])],
+                        claim_type=item.get("claim_type"),
+                        subject=item.get("subject"),
+                        predicate=item.get("predicate"),
+                        object_value=item.get("object_value"),
+                        scope=item["scope"],
+                    )
+                    ingested_ids.append(claim.id)
+                if args.json_output:
+                    print(_json_envelope({"extracted": len(extracted), "ingested": len(ingested_ids), "claim_ids": ingested_ids}, total=len(ingested_ids), query_ms=elapsed_ms))
+                else:
+                    print(f"Extracted {len(extracted)} claims, ingested {len(ingested_ids)} ({elapsed_ms:.0f}ms)")
+                    for cid, item in zip(ingested_ids, extracted):
+                        print(f"  [{cid}] {item['text'][:100]}")
+            else:
+                if args.json_output:
+                    print(_json_envelope({"extracted": len(extracted), "claims": extracted}, total=len(extracted), query_ms=elapsed_ms))
+                else:
+                    print(f"Extracted {len(extracted)} claims [DRY RUN — use --ingest to persist] ({elapsed_ms:.0f}ms)")
+                    for i, item in enumerate(extracted, 1):
+                        print(f"  [{i}] ({item['claim_type']}) {item['text'][:100]}")
+                        if item.get("subject"):
+                            print(f"       tuple=({item['subject']}, {item.get('predicate', '-')}, {item.get('object_value', '-')})")
+            return 0
+
         parser.print_help()
         return 1
     except Exception as exc:
