@@ -38,8 +38,7 @@ def parse_scope_allowlist(raw: str | None) -> list[str] | None:
 
 def _claim_to_dict(claim) -> dict:
     """Serialize a Claim dataclass to a plain dict for JSON output."""
-    d = asdict(claim) if is_dataclass(claim) else dict(claim)
-    return d
+    return asdict(claim) if is_dataclass(claim) else dict(claim)
 
 
 def _json_envelope(data, *, total: int | None = None, query_ms: float) -> str:
@@ -615,13 +614,9 @@ def main(argv: list[str] | None = None) -> int:
             active = _stealth_active(args)
             db_display = str(Path(effective_db).resolve()) if "://" not in effective_db else effective_db
             elapsed_ms = (time.perf_counter() - t0) * 1000
-            info = {
-                "stealth_active": active,
-                "stealth_db_exists": stealth_path.exists(),
-                "stealth_db_path": str(stealth_path.resolve()),
-                "effective_db": db_display,
-                "gitignore_hint": f"Add '{STEALTH_DB_NAME}' to your .gitignore",
-            }
+            info = {"stealth_active": active, "stealth_db_exists": stealth_path.exists(),
+                    "stealth_db_path": str(stealth_path.resolve()), "effective_db": db_display,
+                    "gitignore_hint": f"Add '{STEALTH_DB_NAME}' to your .gitignore"}
             if args.json_output:
                 print(_json_envelope(info, query_ms=elapsed_ms))
             else:
@@ -639,19 +634,16 @@ def main(argv: list[str] | None = None) -> int:
             from memorymaster.metrics_exporter import export_metrics
 
             snapshot = export_metrics(
-                events_jsonl=[Path(path) for path in args.events_jsonl],
+                events_jsonl=[Path(p) for p in args.events_jsonl],
                 out_prom=Path(args.out_prom),
                 out_json=Path(args.out_json),
             )
             c = snapshot.get("counters", {})
-            print(json.dumps({
-                "command": "export-metrics",
+            print(json.dumps({"command": "export-metrics",
                 "events_total": int(c.get("events_total", 0)),
                 "transitions_total": int(c.get("transitions_total", 0)),
                 "status_total": int(c.get("status_total", 0)),
-                "out_prom": str(Path(args.out_prom)),
-                "out_json": str(Path(args.out_json)),
-            }, indent=2))
+                "out_prom": str(Path(args.out_prom)), "out_json": str(Path(args.out_json))}, indent=2))
             return 0
 
         service = MemoryService(
@@ -676,15 +668,9 @@ def main(argv: list[str] | None = None) -> int:
             citations = [parse_citation(raw) for raw in args.source]
             t0 = time.perf_counter()
             claim = service.ingest(
-                text=args.text,
-                citations=citations,
-                idempotency_key=args.idempotency_key,
-                claim_type=args.claim_type,
-                subject=args.subject,
-                predicate=args.predicate,
-                object_value=args.object_value,
-                scope=args.scope,
-                volatility=args.volatility,
+                text=args.text, citations=citations, idempotency_key=args.idempotency_key,
+                claim_type=args.claim_type, subject=args.subject, predicate=args.predicate,
+                object_value=args.object_value, scope=args.scope, volatility=args.volatility,
                 confidence=args.confidence,
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -698,13 +684,8 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "run-cycle":
             t0 = time.perf_counter()
-            result = service.run_cycle(
-                run_compactor=args.with_compact,
-                min_citations=args.min_citations,
-                min_score=args.min_score,
-                policy_mode=args.policy_mode,
-                policy_limit=args.policy_limit,
-            )
+            result = service.run_cycle(run_compactor=args.with_compact, min_citations=args.min_citations,
+                min_score=args.min_score, policy_mode=args.policy_mode, policy_limit=args.policy_limit)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             if args.json_output:
                 print(_json_envelope(result, query_ms=elapsed_ms))
@@ -713,19 +694,13 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "query":
-            resolve_allow_sensitive_access(
-                allow_sensitive=args.allow_sensitive,
-                context="cli.query",
-            )
+            resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.query")
             t0 = time.perf_counter()
             rows_data = service.query_rows(
-                query_text=args.text,
-                limit=args.limit,
-                include_stale=not args.exclude_stale,
-                include_conflicted=not args.exclude_conflicted,
+                query_text=args.text, limit=args.limit,
+                include_stale=not args.exclude_stale, include_conflicted=not args.exclude_conflicted,
                 include_candidates=getattr(args, "include_candidates", False),
-                retrieval_mode=args.retrieval_mode,
-                allow_sensitive=args.allow_sensitive,
+                retrieval_mode=args.retrieval_mode, allow_sensitive=args.allow_sensitive,
                 scope_allowlist=parse_scope_allowlist(args.scope_allowlist),
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -764,21 +739,14 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "context":
-            resolve_allow_sensitive_access(
-                allow_sensitive=args.allow_sensitive,
-                context="cli.context",
-            )
+            resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.context")
             t0 = time.perf_counter()
             result = service.query_for_context(
-                query=args.text,
-                token_budget=args.budget,
-                output_format=args.output_format,
-                limit=args.limit,
-                include_stale=not args.exclude_stale,
+                query=args.text, token_budget=args.budget, output_format=args.output_format,
+                limit=args.limit, include_stale=not args.exclude_stale,
                 include_conflicted=not args.exclude_conflicted,
                 include_candidates=getattr(args, "include_candidates", False),
-                retrieval_mode=args.retrieval_mode,
-                allow_sensitive=args.allow_sensitive,
+                retrieval_mode=args.retrieval_mode, allow_sensitive=args.allow_sensitive,
                 scope_allowlist=parse_scope_allowlist(args.scope_allowlist),
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -796,14 +764,9 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "redact-claim":
             resolved_id = _resolve_claim_id(service, args.claim_id)
-            result = service.redact_claim_payload(
-                resolved_id,
-                mode=args.mode,
-                redact_claim=not args.citations_only,
-                redact_citations=not args.claims_only,
-                reason=(args.reason.strip() or None),
-                actor=args.actor,
-            )
+            result = service.redact_claim_payload(resolved_id, mode=args.mode,
+                redact_claim=not args.citations_only, redact_citations=not args.claims_only,
+                reason=(args.reason.strip() or None), actor=args.actor)
             print(json.dumps(result, indent=2, default=_json_default))
             return 0
 
@@ -855,11 +818,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "dedup":
             t0 = time.perf_counter()
-            result = service.dedup(
-                threshold=args.threshold,
-                min_text_overlap=args.min_text_overlap,
-                dry_run=args.dry_run,
-            )
+            result = service.dedup(threshold=args.threshold, min_text_overlap=args.min_text_overlap, dry_run=args.dry_run)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             if args.json_output:
                 print(_json_envelope(result, query_ms=elapsed_ms))
@@ -877,24 +836,13 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "list-claims":
-            resolve_allow_sensitive_access(
-                allow_sensitive=args.allow_sensitive,
-                context="cli.list-claims",
-            )
+            resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.list-claims")
             t0 = time.perf_counter()
-            claims = service.list_claims(
-                status=args.status,
-                limit=args.limit,
-                include_archived=args.include_archived,
-                allow_sensitive=args.allow_sensitive,
-            )
+            claims = service.list_claims(status=args.status, limit=args.limit,
+                include_archived=args.include_archived, allow_sensitive=args.allow_sensitive)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             if args.json_output:
-                print(_json_envelope(
-                    [_claim_to_dict(c) for c in claims],
-                    total=len(claims),
-                    query_ms=elapsed_ms,
-                ))
+                print(_json_envelope([_claim_to_dict(c) for c in claims], total=len(claims), query_ms=elapsed_ms))
             else:
                 for claim in claims:
                     print_claim(claim)
@@ -903,15 +851,10 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "list-events":
             t0 = time.perf_counter()
-            events = service.list_events(
-                claim_id=args.claim_id,
-                limit=args.limit,
-                event_type=args.event_type,
-            )
+            events = service.list_events(claim_id=args.claim_id, limit=args.limit, event_type=args.event_type)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             if args.json_output:
-                serialized = json.loads(json.dumps(events, default=_json_default))
-                print(_json_envelope(serialized, total=len(events), query_ms=elapsed_ms))
+                print(_json_envelope(json.loads(json.dumps(events, default=_json_default)), total=len(events), query_ms=elapsed_ms))
             else:
                 print(json.dumps({"rows": len(events), "events": events}, indent=2, default=_json_default))
             return 0
@@ -953,9 +896,9 @@ def main(argv: list[str] | None = None) -> int:
                     payload_str = ""
                     if ev.payload_json:
                         try:
-                            payload = json.loads(ev.payload_json)
-                            if isinstance(payload, dict) and "score" in payload:
-                                payload_str = f"  score={payload['score']}"
+                            _p = json.loads(ev.payload_json)
+                            if isinstance(_p, dict) and "score" in _p:
+                                payload_str = f"  score={_p['score']}"
                         except (json.JSONDecodeError, TypeError):
                             pass
                     print(
@@ -968,36 +911,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "review-queue":
             from memorymaster.review import build_review_queue, queue_to_dicts
 
-            include_sensitive = resolve_allow_sensitive_access(
-                allow_sensitive=args.allow_sensitive,
-                context="cli.review-queue",
-            )
-            items = build_review_queue(
-                service,
-                limit=args.limit,
-                include_stale=not args.exclude_stale,
-                include_conflicted=not args.exclude_conflicted,
-                include_sensitive=include_sensitive,
-            )
-            payload = {
-                "rows": len(items),
-                "items": queue_to_dicts(items),
-            }
-            print(json.dumps(payload, indent=2))
+            include_sensitive = resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.review-queue")
+            items = build_review_queue(service, limit=args.limit,
+                include_stale=not args.exclude_stale, include_conflicted=not args.exclude_conflicted,
+                include_sensitive=include_sensitive)
+            print(json.dumps({"rows": len(items), "items": queue_to_dicts(items)}, indent=2))
             return 0
 
         if args.command == "run-daemon":
             result = run_daemon(
                 service,
-                interval_seconds=args.interval_seconds,
-                max_cycles=args.max_cycles,
-                compact_every=args.compact_every,
-                min_citations=args.min_citations,
-                min_score=args.min_score,
-                policy_mode=args.policy_mode,
-                policy_limit=args.policy_limit,
-                git_trigger=args.git_trigger,
-                git_check_seconds=args.git_check_seconds,
+                interval_seconds=args.interval_seconds, max_cycles=args.max_cycles,
+                compact_every=args.compact_every, min_citations=args.min_citations,
+                min_score=args.min_score, policy_mode=args.policy_mode, policy_limit=args.policy_limit,
+                git_trigger=args.git_trigger, git_check_seconds=args.git_check_seconds,
             )
             print(json.dumps(result, indent=2))
             return 0
@@ -1025,10 +952,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 from memorymaster.operator import MemoryOperator, OperatorConfig
             except Exception as exc:
-                print(
-                    "error: run-operator unavailable: could not import memorymaster.operator "
-                    f"({exc})"
-                )
+                print(f"error: run-operator unavailable: could not import memorymaster.operator ({exc})")
                 return 2
 
             def _stateful(val: str) -> str | None:
@@ -1055,11 +979,8 @@ def main(argv: list[str] | None = None) -> int:
             )
 
             operator = MemoryOperator(service=service, config=config)
-            result = operator.run_stream(
-                inbox_jsonl=Path(args.inbox_jsonl),
-                poll_seconds=args.poll_seconds,
-                max_events=args.max_events,
-            )
+            result = operator.run_stream(inbox_jsonl=Path(args.inbox_jsonl),
+                poll_seconds=args.poll_seconds, max_events=args.max_events)
 
             print(json.dumps(result, indent=2, default=_json_default))
             return 0
@@ -1067,27 +988,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "run-steward":
             from memorymaster.steward import run_steward
 
-            allow_sensitive = resolve_allow_sensitive_access(
-                allow_sensitive=args.allow_sensitive,
-                context="cli.run-steward",
-            )
+            allow_sensitive = resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.run-steward")
             t0 = time.perf_counter()
             result = run_steward(
-                service,
-                mode=args.mode,
-                cadence_trigger=args.cadence_trigger,
-                interval_seconds=args.interval_seconds,
-                git_check_seconds=args.git_check_seconds,
-                commit_every=args.commit_every,
-                max_cycles=args.max_cycles,
-                allow_sensitive=allow_sensitive,
-                apply=args.apply,
-                max_claims=args.max_claims,
-                max_proposals=args.max_proposals,
-                max_probe_files=args.max_probe_files,
-                max_probe_file_bytes=args.max_probe_file_bytes,
-                max_tool_probes=args.max_tool_probes,
-                probe_timeout_seconds=args.probe_timeout_seconds,
+                service, mode=args.mode, cadence_trigger=args.cadence_trigger,
+                interval_seconds=args.interval_seconds, git_check_seconds=args.git_check_seconds,
+                commit_every=args.commit_every, max_cycles=args.max_cycles, allow_sensitive=allow_sensitive,
+                apply=args.apply, max_claims=args.max_claims, max_proposals=args.max_proposals,
+                max_probe_files=args.max_probe_files, max_probe_file_bytes=args.max_probe_file_bytes,
+                max_tool_probes=args.max_tool_probes, probe_timeout_seconds=args.probe_timeout_seconds,
                 probe_failure_threshold=args.probe_failure_threshold,
                 enable_semantic_probe=not args.disable_semantic_probe,
                 enable_tool_probe=not args.disable_tool_probe,
@@ -1095,8 +1004,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
             if args.json_output:
-                serialized = json.loads(json.dumps(result, default=_json_default))
-                print(_json_envelope(serialized, query_ms=elapsed_ms))
+                print(_json_envelope(json.loads(json.dumps(result, default=_json_default)), query_ms=elapsed_ms))
             else:
                 print(json.dumps(result, indent=2, default=_json_default))
             return 0
@@ -1104,11 +1012,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "steward-proposals":
             from memorymaster.steward import list_steward_proposals
 
-            rows = list_steward_proposals(
-                service,
-                limit=args.limit,
-                include_resolved=args.include_resolved,
-            )
+            rows = list_steward_proposals(service, limit=args.limit, include_resolved=args.include_resolved)
             print(json.dumps({"rows": len(rows), "proposals": rows}, indent=2, default=_json_default))
             return 0
 
@@ -1117,13 +1021,8 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("resolve-proposal requires --proposal-event-id or --claim-id")
             from memorymaster.steward import resolve_steward_proposal
 
-            result = resolve_steward_proposal(
-                service,
-                action=args.action,
-                proposal_event_id=args.proposal_event_id,
-                claim_id=args.claim_id,
-                apply_on_approve=not args.no_apply,
-            )
+            result = resolve_steward_proposal(service, action=args.action,
+                proposal_event_id=args.proposal_event_id, claim_id=args.claim_id, apply_on_approve=not args.no_apply)
             print(json.dumps(result, indent=2, default=_json_default))
             return 0
 
@@ -1211,11 +1110,7 @@ def main(argv: list[str] | None = None) -> int:
             from memorymaster.conflict_resolver import resolve_conflicts
 
             t0 = time.perf_counter()
-            result = resolve_conflicts(
-                service,
-                dry_run=args.dry_run,
-                limit=args.limit,
-            )
+            result = resolve_conflicts(service, dry_run=args.dry_run, limit=args.limit)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             if args.json_output:
                 print(_json_envelope(asdict(result), query_ms=elapsed_ms))
@@ -1239,13 +1134,7 @@ def main(argv: list[str] | None = None) -> int:
 
             workspace = Path(args.workspace).resolve()
             t0 = time.perf_counter()
-            result = run_staleness(
-                service.store,
-                workspace,
-                mode=args.mode,
-                dry_run=args.dry_run,
-                limit=args.limit,
-            )
+            result = run_staleness(service.store, workspace, mode=args.mode, dry_run=args.dry_run, limit=args.limit)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             if args.json_output:
                 print(_json_envelope(asdict(result), query_ms=elapsed_ms))
