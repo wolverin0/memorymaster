@@ -1047,13 +1047,16 @@ class SQLiteStore:
         bounded = max(0.0, min(1.0, confidence))
         now = utc_now()
         with self.connect() as conn:
+            # Read status BEFORE update to avoid race condition in event audit trail
+            current_status = None
+            if details:
+                status_row = conn.execute("SELECT status FROM claims WHERE id = ?", (claim_id,)).fetchone()
+                current_status = str(status_row["status"]) if status_row else None
             conn.execute(
                 "UPDATE claims SET confidence = ?, updated_at = ? WHERE id = ?",
                 (bounded, now, claim_id),
             )
             if details:
-                status_row = conn.execute("SELECT status FROM claims WHERE id = ?", (claim_id,)).fetchone()
-                current_status = str(status_row["status"]) if status_row else None
                 self._insert_event_row(
                     conn,
                     claim_id=claim_id,
