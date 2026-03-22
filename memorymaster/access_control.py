@@ -76,26 +76,40 @@ def _load_roles() -> None:
 
 
 def get_role(agent_id: str | None) -> Role:
-    """Get the role for an agent. Returns DEFAULT_ROLE if not configured."""
+    """Get the role for an agent. Returns DEFAULT_ROLE if not configured or None."""
     _load_roles()
-    if not agent_id:
+    if not agent_id or not isinstance(agent_id, str):
+        logger.debug("get_role: agent_id is None or invalid, returning DEFAULT_ROLE")
         return DEFAULT_ROLE
     return _agent_roles.get(agent_id.lower(), DEFAULT_ROLE)
 
 
 def check_permission(agent_id: str | None, action: str) -> bool:
-    """Check if an agent has permission for an action. Returns True/False."""
+    """Check if an agent has permission for an action. Returns True/False.
+
+    Handles None agent_id gracefully (treats as DEFAULT_ROLE).
+    """
+    if not action or not isinstance(action, str):
+        logger.warning("check_permission: action is None or invalid")
+        return False
     role = get_role(agent_id)
     return action in ROLE_PERMISSIONS.get(role, set())
 
 
 def require_permission(agent_id: str | None, action: str) -> None:
-    """Raise PermissionError if agent lacks permission for action."""
+    """Raise PermissionError if agent lacks permission for action.
+
+    Error message includes action name for debugging.
+    Handles None agent_id gracefully.
+    """
     if not check_permission(agent_id, action):
         role = get_role(agent_id)
+        agent_name = agent_id or "unknown"
+        action_name = action or "unknown_action"
         raise PermissionError(
-            f"Agent '{agent_id or 'unknown'}' (role={role.value}) "
-            f"does not have '{action}' permission."
+            f"Agent '{agent_name}' (role={role.value}) "
+            f"does not have '{action_name}' permission. "
+            f"Required permissions for {action_name}: {ROLE_PERMISSIONS.get(Role.ADMIN, set())}"
         )
 
 

@@ -47,7 +47,10 @@ Return JSON only: {{"winner": "A" or "B", "reason": "brief explanation"}}"""
 
 
 def _llm_evaluate(prompt: str, model: str = "", base_url: str = "") -> dict:
-    """Call LLM and parse JSON response."""
+    """Call LLM and parse JSON response.
+
+    Returns empty dict {} if LLM returns invalid JSON or connection fails.
+    """
     url = (base_url or os.environ.get("OLLAMA_URL") or DEFAULT_OLLAMA_URL).rstrip("/")
     mdl = model or os.environ.get("RESOLVER_LLM_MODEL") or DEFAULT_MODEL
 
@@ -74,7 +77,15 @@ def _llm_evaluate(prompt: str, model: str = "", base_url: str = "") -> dict:
                 lines = text.split("\n")
                 lines = [line for line in lines if not line.strip().startswith("```")]
                 text = "\n".join(lines)
-            return json.loads(text)
+            try:
+                parsed = json.loads(text)
+                if not isinstance(parsed, dict):
+                    logger.warning("LLM returned non-dict JSON: %s", type(parsed))
+                    return {}
+                return parsed
+            except json.JSONDecodeError as exc:
+                logger.warning("LLM returned invalid JSON: %s (text: %s)", exc, text[:100])
+                return {}
     except Exception as exc:
         logger.warning("LLM conflict evaluation failed: %s", exc)
         return {}
@@ -174,9 +185,17 @@ def auto_resolve_conflicts(store, *, limit: int = 50) -> dict[str, int]:
 
     Groups conflicted claims by (subject, predicate, scope) tuple,
     then asks the LLM to pick a winner in each group.
+
+    Returns immediately with empty counts if no conflicted claims found.
     """
-    conflicted = store.find_by_status("conflicted", limit=limit * 2, include_citations=True)
+    try:
+        conflicted = store.find_by_status("conflicted", limit=limit * 2, include_citations=True)
+    except Exception as exc:
+        logger.error("Failed to find conflicted claims: %s", exc)
+        return {"pairs_evaluated": 0, "resolved": 0, "failed": 0}
+
     if not conflicted:
+        logger.debug("auto_resolve_conflicts: no conflicted claims found")
         return {"pairs_evaluated": 0, "resolved": 0, "failed": 0}
 
     # Group by tuple

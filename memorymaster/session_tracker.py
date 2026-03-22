@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import time
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -47,18 +49,30 @@ class SessionTracker:
     # ------------------------------------------------------------------
 
     def start_session(self, agent_id: str) -> int:
-        """Create a new session for *agent_id* and return the session_id."""
+        """Create a new session for *agent_id* and return the session_id.
+
+        Each concurrent session from the same agent gets a unique session_id.
+        """
+        if not agent_id or not isinstance(agent_id, str):
+            raise ValueError("agent_id must be a non-empty string")
+
         now = time.time()
         with self._connect() as conn:
             cursor = conn.execute(
                 "INSERT INTO agent_sessions (agent_id, session_start, last_activity) VALUES (?, ?, ?)",
-                (agent_id, now, now),
+                (agent_id.strip(), now, now),
             )
             conn.commit()
             return cursor.lastrowid  # type: ignore[return-value]
 
     def record_activity(self, session_id: int, activity_type: str) -> None:
-        """Update *last_activity* and increment the matching counter."""
+        """Update *last_activity* and increment the matching counter.
+
+        Validates session_id and activity_type before recording.
+        """
+        if not isinstance(session_id, int) or session_id <= 0:
+            raise ValueError("session_id must be a positive integer")
+
         now = time.time()
         if activity_type == "ingest":
             sql = "UPDATE agent_sessions SET last_activity=?, claims_ingested=claims_ingested+1 WHERE id=?"
@@ -66,19 +80,30 @@ class SessionTracker:
             sql = "UPDATE agent_sessions SET last_activity=?, queries_made=queries_made+1 WHERE id=?"
         else:
             sql = "UPDATE agent_sessions SET last_activity=? WHERE id=?"
+
         with self._connect() as conn:
-            conn.execute(sql, (now, session_id))
+            cursor = conn.execute(sql, (now, session_id))
             conn.commit()
+            if cursor.rowcount == 0:
+                # Session doesn't exist, silently skip (already closed or invalid)
+                pass
 
     def get_active_sessions(self) -> list[dict]:
-        """Return sessions with activity within the last hour."""
-        cutoff = time.time() - _ACTIVE_WINDOW_SECONDS
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM agent_sessions WHERE last_activity >= ? ORDER BY last_activity DESC",
-                (cutoff,),
-            ).fetchall()
-        return [dict(row) for row in rows]
+        """Return sessions with activity within the last hour.
+
+        Returns empty list if no active sessions or DB is empty.
+        """
+        try:
+            cutoff = time.time() - _ACTIVE_WINDOW_SECONDS
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM agent_sessions WHERE last_activity >= ? ORDER BY last_activity DESC",
+                    (cutoff,),
+                ).fetchall()
+            return [dict(row) for row in rows]
+        except sqlite3.OperationalError:
+            # Table doesn't exist yet (empty DB)
+            return []
 
     def get_session_stats(self, agent_id: str) -> dict:
         """Return aggregate stats for *agent_id* across all sessions."""

@@ -58,12 +58,34 @@ class FeedbackTracker:
             conn.close()
 
     def record_retrieval(self, claim_ids: list[int], query_text: str) -> int:
-        """Record that these claims were returned for a query."""
+        """Record that these claims were returned for a query.
+
+        Returns 0 if claim_ids is empty or None.
+        """
         if not claim_ids:
             return 0
+
+        if not isinstance(claim_ids, list):
+            logger.warning("record_retrieval: claim_ids is not a list, converting")
+            try:
+                claim_ids = list(claim_ids)
+            except TypeError:
+                return 0
+
+        # Filter out None/invalid claim IDs
+        claim_ids = [cid for cid in claim_ids if cid is not None and isinstance(cid, int) and cid > 0]
+        if not claim_ids:
+            return 0
+
+        try:
+            self.ensure_tables()
+        except sqlite3.OperationalError as exc:
+            logger.error("Failed to ensure feedback tables: %s", exc)
+            return 0
+
         now = datetime.now(timezone.utc).isoformat()
         rows = [
-            (str(uuid.uuid4()), cid, query_text[:500], now, 1, None)
+            (str(uuid.uuid4()), cid, query_text[:500] if query_text else "", now, 1, None)
             for cid in claim_ids
         ]
         conn = self._connect()
@@ -74,6 +96,10 @@ class FeedbackTracker:
             )
             conn.commit()
             return len(rows)
+        except sqlite3.OperationalError as exc:
+            logger.error("Failed to record retrieval: %s", exc)
+            conn.rollback()
+            return 0
         finally:
             conn.close()
 
@@ -87,23 +113,44 @@ class FeedbackTracker:
           + freshness: 0.1 if accessed in last 7 days
           - staleness: -0.1 if never accessed and older than 30 days
 
-        Returns dict with scored/updated counts.
+        Returns dict with scored/updated counts. Returns {"scored": 0} for empty DB.
         """
         conn = self._connect()
         try:
+            # Ensure tables exist
+            try:
+                conn.execute("SELECT 1 FROM quality_scores LIMIT 1")
+            except sqlite3.OperationalError:
+                try:
+                    self.ensure_tables()
+                except sqlite3.OperationalError as exc:
+                    logger.error("Failed to ensure quality_scores table: %s", exc)
+                    return {"scored": 0}
+
             now = datetime.now(timezone.utc).isoformat()
 
             # Get retrieval counts per claim
             retrieval_counts = {}
-            for row in conn.execute(
-                "SELECT claim_id, COUNT(*) as cnt FROM usage_feedback GROUP BY claim_id"
-            ).fetchall():
-                retrieval_counts[int(row["claim_id"])] = int(row["cnt"])
+            try:
+                for row in conn.execute(
+                    "SELECT claim_id, COUNT(*) as cnt FROM usage_feedback GROUP BY claim_id"
+                ).fetchall():
+                    retrieval_counts[int(row["claim_id"])] = int(row["cnt"])
+            except sqlite3.OperationalError:
+                logger.debug("usage_feedback table doesn't exist yet")
 
             # Get all active claims with their access data
-            claims = conn.execute(
-                "SELECT id, access_count, last_accessed, created_at, confidence FROM claims WHERE status != 'archived'"
-            ).fetchall()
+            try:
+                claims = conn.execute(
+                    "SELECT id, access_count, last_accessed, created_at, confidence FROM claims WHERE status != 'archived'"
+                ).fetchall()
+            except sqlite3.OperationalError:
+                logger.warning("claims table missing or inaccessible")
+                return {"scored": 0}
+
+            if not claims:
+                logger.debug("compute_quality_scores: no active claims found")
+                return {"scored": 0}
 
             scored = 0
             for claim in claims:

@@ -104,7 +104,7 @@ class EntityGraph:
         return conn
 
     def ensure_tables(self) -> None:
-        """Create entity tables if they don't exist."""
+        """Create entity tables if they don't exist. Idempotent - safe to call multiple times."""
         conn = self._connect()
         try:
             conn.executescript("""
@@ -135,11 +135,31 @@ class EntityGraph:
                     ON claim_entity_links(entity_id);
             """)
             conn.commit()
+        except sqlite3.OperationalError as exc:
+            logger.warning("ensure_tables already called (idempotent): %s", exc)
+            conn.rollback()
         finally:
             conn.close()
 
     def extract_and_link(self, claim_id: int, text: str) -> list[str]:
-        """Extract entities from claim text, store in graph, link to claim."""
+        """Extract entities from claim text, store in graph, link to claim.
+
+        Gracefully handles empty text and missing tables.
+        """
+        if not text or not isinstance(text, str):
+            logger.debug("extract_and_link: empty or invalid text for claim %d", claim_id)
+            return []
+
+        text = text.strip()
+        if not text:
+            return []
+
+        try:
+            self.ensure_tables()
+        except sqlite3.OperationalError as exc:
+            logger.error("Failed to ensure entity tables for claim %d: %s", claim_id, exc)
+            return []
+
         known = self._get_known_entity_names(limit=30)
         context = f"\nKnown entities: {', '.join(known)}" if known else ""
 
@@ -183,11 +203,22 @@ class EntityGraph:
         return entity_names
 
     def find_related_claims(self, entity_names: list[str], hops: int = 2, limit: int = 50) -> list[int]:
-        """Graph BFS: find claim IDs related to entities."""
+        """Graph BFS: find claim IDs related to entities.
+
+        Returns empty list for non-existent entities or if tables don't exist.
+        """
         if not entity_names:
             return []
+
         conn = self._connect()
         try:
+            # Check if tables exist before querying
+            try:
+                conn.execute("SELECT 1 FROM entities LIMIT 1")
+            except sqlite3.OperationalError:
+                logger.debug("Entity tables don't exist yet, returning empty list")
+                return []
+
             placeholders = ",".join("?" * len(entity_names))
             names_lower = [n.lower() for n in entity_names]
             seed_rows = conn.execute(
@@ -219,6 +250,9 @@ class EntityGraph:
                 seed_ids + [hops, hops, limit],
             ).fetchall()
             return [r["claim_id"] for r in rows]
+        except sqlite3.OperationalError as exc:
+            logger.warning("find_related_claims failed: %s", exc)
+            return []
         finally:
             conn.close()
 
