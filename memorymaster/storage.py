@@ -634,6 +634,22 @@ class SQLiteStore:
             )
             return int(cur.lastrowid)
 
+    def _check_idempotency(self, conn: sqlite3.Connection, idempotency_key: str | None) -> Claim | None:
+        """Check if a claim with this idempotency key already exists. Returns existing claim or None."""
+        normalized_key = (idempotency_key or "").strip() or None
+        if normalized_key is None:
+            return None
+        existing_row = conn.execute(
+            "SELECT id FROM claims WHERE idempotency_key = ?",
+            (normalized_key,),
+        ).fetchone()
+        if existing_row is not None:
+            existing = self.get_claim(int(existing_row["id"]))
+            if existing is None:
+                raise RuntimeError("Idempotency key matched missing claim.")
+            return existing
+        return None
+
     def create_claim(
         self,
         text: str,
@@ -660,16 +676,9 @@ class SQLiteStore:
         normalized_tenant_id = (tenant_id or "").strip() or None
         now = utc_now()
         with self.connect() as conn:
-            if normalized_idempotency_key is not None:
-                existing_row = conn.execute(
-                    "SELECT id FROM claims WHERE idempotency_key = ?",
-                    (normalized_idempotency_key,),
-                ).fetchone()
-                if existing_row is not None:
-                    existing = self.get_claim(int(existing_row["id"]))
-                    if existing is None:
-                        raise RuntimeError("Idempotency key matched missing claim.")
-                    return existing
+            existing = self._check_idempotency(conn, idempotency_key)
+            if existing is not None:
+                return existing
 
             try:
                 cur = conn.execute(
