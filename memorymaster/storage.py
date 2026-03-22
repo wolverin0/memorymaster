@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -89,11 +90,8 @@ class SQLiteStore:
                 schema_sql = load_schema_sql()
                 statements = [stmt.strip() for stmt in schema_sql.split(';') if stmt.strip()]
                 for stmt in statements:
-                    try:
+                    with contextlib.suppress(sqlite3.OperationalError):
                         conn.execute(stmt)
-                    except sqlite3.OperationalError:
-                        # Table/index/trigger might already exist, which is fine
-                        pass
                 conn.commit()
 
             self._ensure_claim_idempotency_schema(conn)

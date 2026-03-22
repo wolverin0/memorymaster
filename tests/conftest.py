@@ -30,6 +30,8 @@ def _prune_case_root(root: Path) -> None:
 @pytest.fixture(autouse=True)
 def _cleanup_case_artifacts() -> None:
     _CASE_ROOT.mkdir(parents=True, exist_ok=True)
-    _prune_case_root(_CASE_ROOT)
+    # Don't prune before the test - files might be locked from previous tests
+    # which causes database corruption when mkstemp reuses the path
     yield
+    # Only prune after the test to clean up this test's artifacts
     _prune_case_root(_CASE_ROOT)
