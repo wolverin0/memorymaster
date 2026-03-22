@@ -293,7 +293,7 @@ class QdrantBackend:
                 logger.info("Syncing %d %s claims to Qdrant...", len(claims), status)
 
             batch: list[dict[str, Any]] = []
-            for idx, claim in enumerate(claims):
+            for _idx, claim in enumerate(claims):
                 vec = self._embed(self._claim_text(claim))
                 if vec is None:
                     stats["errors"] += 1

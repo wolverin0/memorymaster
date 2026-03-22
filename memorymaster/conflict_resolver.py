@@ -161,7 +161,7 @@ def detect_conflicts(
     groups = _build_conflict_groups(claims)
     pairs: list[ConflictPair] = []
 
-    for key, group in groups.items():
+    for _key, group in groups.items():
         # Sort by confidence desc, then freshness desc, then id desc
         sorted_group = sorted(
             group,

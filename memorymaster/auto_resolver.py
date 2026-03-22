@@ -161,7 +161,7 @@ def auto_resolve_conflicts(store, *, limit: int = 50) -> dict[str, int]:
     resolved = 0
     failed = 0
 
-    for key, claims in groups.items():
+    for _key, claims in groups.items():
         if len(claims) < 2:
             continue
         if evaluated >= limit:
