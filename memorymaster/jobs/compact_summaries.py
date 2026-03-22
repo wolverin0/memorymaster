@@ -83,6 +83,57 @@ def _cluster_by_subject(claims: list[Any]) -> dict[str, list[Any]]:
     return clusters
 
 
+def _assign_claims_to_embedding_clusters(
+    claim_embeddings: dict[int, list[float]],
+    claim_by_id: dict[int, Any],
+    similarity_threshold: float = 0.65,
+) -> tuple[list[list[Any]], list[list[float]]]:
+    """Assign claims with embeddings to similarity-based clusters."""
+    clusters: list[list[Any]] = []
+    cluster_centroids: list[list[float]] = []
+
+    for claim_id, embedding in claim_embeddings.items():
+        assigned = False
+        for idx, centroid in enumerate(cluster_centroids):
+            if cosine_similarity(embedding, centroid) >= similarity_threshold:
+                clusters[idx].append(claim_by_id[claim_id])
+                # Update centroid as running average
+                n = len(clusters[idx])
+                cluster_centroids[idx] = [
+                    (c * (n - 1) + e) / n
+                    for c, e in zip(centroid, embedding, strict=True)
+                ]
+                assigned = True
+                break
+        if not assigned:
+            clusters.append([claim_by_id[claim_id]])
+            cluster_centroids.append(list(embedding))
+
+    return clusters, cluster_centroids
+
+
+def _place_unembedded_claims(
+    claims: list[Any],
+    clusters: list[list[Any]],
+    embedded_ids: set[int],
+) -> None:
+    """Place claims without embeddings into existing clusters by subject or as singletons."""
+    for claim in claims:
+        if claim.id not in embedded_ids:
+            placed = False
+            for cluster in clusters:
+                if any(
+                    c.subject and claim.subject
+                    and c.subject.strip().lower() == claim.subject.strip().lower()
+                    for c in cluster
+                ):
+                    cluster.append(claim)
+                    placed = True
+                    break
+            if not placed:
+                clusters.append([claim])
+
+
 def _cluster_by_embedding(
     claims: list[Any],
     store: Any,
@@ -115,44 +166,14 @@ def _cluster_by_embedding(
     if not claim_embeddings:
         return [claims] if claims else []
 
-    # Greedy clustering: assign each claim to the first cluster it's similar to
-    clusters: list[list[Any]] = []
-    cluster_centroids: list[list[float]] = []
     claim_by_id = {c.id: c for c in claims}
-
-    for claim_id, embedding in claim_embeddings.items():
-        assigned = False
-        for idx, centroid in enumerate(cluster_centroids):
-            if cosine_similarity(embedding, centroid) >= similarity_threshold:
-                clusters[idx].append(claim_by_id[claim_id])
-                # Update centroid as running average
-                n = len(clusters[idx])
-                cluster_centroids[idx] = [
-                    (c * (n - 1) + e) / n
-                    for c, e in zip(centroid, embedding, strict=True)
-                ]
-                assigned = True
-                break
-        if not assigned:
-            clusters.append([claim_by_id[claim_id]])
-            cluster_centroids.append(list(embedding))
+    clusters, _ = _assign_claims_to_embedding_clusters(
+        claim_embeddings, claim_by_id, similarity_threshold
+    )
 
     # Add claims without embeddings to existing clusters by subject, or as singletons
     embedded_ids = set(claim_embeddings.keys())
-    for claim in claims:
-        if claim.id not in embedded_ids:
-            placed = False
-            for cluster in clusters:
-                if any(
-                    c.subject and claim.subject
-                    and c.subject.strip().lower() == claim.subject.strip().lower()
-                    for c in cluster
-                ):
-                    cluster.append(claim)
-                    placed = True
-                    break
-            if not placed:
-                clusters.append([claim])
+    _place_unembedded_claims(claims, clusters, embedded_ids)
 
     return clusters
 
