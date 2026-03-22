@@ -103,6 +103,43 @@ class FeedbackTracker:
         finally:
             conn.close()
 
+    def _score_claim(self, claim, retrieval_counts: dict, now: str) -> tuple[float, str]:
+        """Compute quality score for a single claim."""
+        cid = int(claim["id"])
+        access_count = int(claim["access_count"] or 0)
+        retrieval_count = retrieval_counts.get(cid, 0)
+
+        # Compute quality score
+        base = 0.5
+        retrieval_bonus = min(retrieval_count * 0.05, 0.3)
+        access_bonus = min(access_count * 0.03, 0.2)
+
+        # Freshness from last_accessed
+        freshness = 0.0
+        last_acc = claim["last_accessed"]
+        if last_acc:
+            try:
+                days_since = (datetime.fromisoformat(now) - datetime.fromisoformat(last_acc)).days
+                freshness = 0.1 if days_since < 7 else 0.0
+            except (ValueError, TypeError):
+                pass
+
+        # Staleness penalty
+        staleness = 0.0
+        if access_count == 0 and retrieval_count == 0:
+            try:
+                created = claim["created_at"]
+                if created:
+                    age_days = (datetime.fromisoformat(now) - datetime.fromisoformat(created)).days
+                    if age_days > 30:
+                        staleness = -0.1
+            except (ValueError, TypeError):
+                pass
+
+        quality = max(0.0, min(1.0, base + retrieval_bonus + access_bonus + freshness + staleness))
+        factors = f"ret={retrieval_count},acc={access_count},fresh={freshness:.1f},stale={staleness:.1f}"
+        return quality, factors
+
     def compute_quality_scores(self) -> dict[str, int]:
         """Recompute quality scores for all claims based on usage patterns.
 
@@ -155,39 +192,9 @@ class FeedbackTracker:
             scored = 0
             for claim in claims:
                 cid = int(claim["id"])
-                access_count = int(claim["access_count"] or 0)
                 retrieval_count = retrieval_counts.get(cid, 0)
 
-                # Compute quality score
-                base = 0.5
-                retrieval_bonus = min(retrieval_count * 0.05, 0.3)
-                access_bonus = min(access_count * 0.03, 0.2)
-
-                # Freshness from last_accessed
-                freshness = 0.0
-                last_acc = claim["last_accessed"]
-                if last_acc:
-                    try:
-                        days_since = (datetime.fromisoformat(now) - datetime.fromisoformat(last_acc)).days
-                        freshness = 0.1 if days_since < 7 else 0.0
-                    except (ValueError, TypeError):
-                        pass
-
-                # Staleness penalty
-                staleness = 0.0
-                if access_count == 0 and retrieval_count == 0:
-                    try:
-                        created = claim["created_at"]
-                        if created:
-                            age_days = (datetime.fromisoformat(now) - datetime.fromisoformat(created)).days
-                            if age_days > 30:
-                                staleness = -0.1
-                    except (ValueError, TypeError):
-                        pass
-
-                quality = max(0.0, min(1.0, base + retrieval_bonus + access_bonus + freshness + staleness))
-
-                factors = f"ret={retrieval_count},acc={access_count},fresh={freshness:.1f},stale={staleness:.1f}"
+                quality, factors = self._score_claim(claim, retrieval_counts, now)
 
                 conn.execute(
                     """INSERT INTO quality_scores (claim_id, quality_score, retrieval_count, last_scored, factors)

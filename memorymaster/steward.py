@@ -816,7 +816,7 @@ def _emit_proposal_event(service: MemoryService, claim: Any, decision: Decision,
     )
 
 
-def _make_circuit_open_result(probe: ProbeConfig, probe_type: str, probe_failure_threshold: int, probe_failures: dict[str, int]) -> ProbeResult:
+def _make_circuit_open_result(probe: ProbeSpec, probe_type: str, probe_failure_threshold: int, probe_failures: dict[str, int]) -> ProbeResult:
     """Create a skipped probe result due to open circuit breaker."""
     return ProbeResult(
         probe_type=probe_type,
