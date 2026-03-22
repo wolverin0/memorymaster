@@ -910,23 +910,8 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
             return False
         return True
 
-    def _handle_operator_stream(self, query_string: str) -> None:
-        query = parse_qs(query_string)
-        last = _parse_int(_first_query_value(query, "last"), default=20, minimum=0, maximum=2000)
-        follow = _parse_bool(_first_query_value(query, "follow"), default=True)
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.send_header("X-Accel-Buffering", "no")
-        self.end_headers()
-
-        log_path = self._server.operator_log_jsonl
-        for event in _tail_events_from_jsonl(log_path, last):
-            if not self._send_sse_event(event):
-                return
-        if not follow:
-            return
+    def _follow_stream(self, log_path: Path) -> None:
+        """Follow new events from the log file and send them to the client."""
         offset = log_path.stat().st_size if log_path.exists() else 0
         while True:
             if log_path.exists():
@@ -947,6 +932,25 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
                         if isinstance(record, dict) and not self._send_sse_event(record):
                             return
             time.sleep(0.25)
+
+    def _handle_operator_stream(self, query_string: str) -> None:
+        query = parse_qs(query_string)
+        last = _parse_int(_first_query_value(query, "last"), default=20, minimum=0, maximum=2000)
+        follow = _parse_bool(_first_query_value(query, "follow"), default=True)
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        log_path = self._server.operator_log_jsonl
+        for event in _tail_events_from_jsonl(log_path, last):
+            if not self._send_sse_event(event):
+                return
+        if not follow:
+            return
+        self._follow_stream(log_path)
 
 
 def create_dashboard_server(

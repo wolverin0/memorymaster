@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from memorymaster.retry import connect_with_retry
-
 from memorymaster.embeddings import EmbeddingProvider, cosine_similarity
 from memorymaster.models import (
     CLAIM_LINK_TYPES,
@@ -23,6 +23,8 @@ from memorymaster.models import (
     validate_transition_event_type,
 )
 from memorymaster.schema import load_schema_sql
+
+logger = logging.getLogger(__name__)
 
 HUMAN_ID_PREFIX = "mm"
 
@@ -1600,19 +1602,45 @@ class SQLiteStore:
             )
             embedding = provider.embed(text)
             rows.append((claim.id, provider.model, json.dumps(embedding), now))
-        with self.connect() as conn:
-            conn.executemany(
-                """
-                INSERT INTO claim_embeddings (claim_id, model, embedding_json, updated_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(claim_id) DO UPDATE SET
-                    model = excluded.model,
-                    embedding_json = excluded.embedding_json,
-                    updated_at = excluded.updated_at
-                """,
-                rows,
-            )
-            conn.commit()
+
+        try:
+            with self.connect() as conn:
+                conn.executemany(
+                    """
+                    INSERT INTO claim_embeddings (claim_id, model, embedding_json, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(claim_id) DO UPDATE SET
+                        model = excluded.model,
+                        embedding_json = excluded.embedding_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    rows,
+                )
+                conn.commit()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                logger.warning("claim_embeddings table missing, recreating: %s", exc)
+                try:
+                    self._ensure_embeddings_schema(self.connect())
+                    # Retry the insert
+                    with self.connect() as conn:
+                        conn.executemany(
+                            """
+                            INSERT INTO claim_embeddings (claim_id, model, embedding_json, updated_at)
+                            VALUES (?, ?, ?, ?)
+                            ON CONFLICT(claim_id) DO UPDATE SET
+                                model = excluded.model,
+                                embedding_json = excluded.embedding_json,
+                                updated_at = excluded.updated_at
+                            """,
+                            rows,
+                        )
+                        conn.commit()
+                except Exception as retry_exc:
+                    logger.error("Failed to recreate claim_embeddings: %s", retry_exc)
+                    return 0
+            else:
+                raise
         return len(rows)
 
     def vector_scores(
