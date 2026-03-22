@@ -6,6 +6,7 @@ import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+import contextlib
 
 
 SNAPSHOTS_DIR_NAME = "snapshots"
@@ -328,10 +329,8 @@ def install_git_hook(workspace_root: Path) -> dict:
         hook_path.write_text(_POST_COMMIT_HOOK, encoding="utf-8")
 
     # Make executable on Unix
-    try:
+    with contextlib.suppress(OSError):
         hook_path.chmod(0o755)
-    except OSError:
-        pass
 
     return {
         "installed": True,

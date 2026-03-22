@@ -14,6 +14,7 @@ from memorymaster.context_optimizer import ContextResult, pack_context
 from memorymaster.retrieval import VectorSearchHook, rank_claim_rows
 from memorymaster.security import is_sensitive_claim, resolve_allow_sensitive_access, sanitize_claim_input
 from memorymaster.store_factory import create_store
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -465,17 +466,13 @@ class MemoryService:
 
         # Batch record accesses in a single transaction if possible
         if claim_ids and hasattr(self.store, "record_accesses_batch"):
-            try:
+            with contextlib.suppress(Exception):
                 self.store.record_accesses_batch(claim_ids)
-            except Exception:
-                pass
         elif claim_ids and hasattr(self.store, "record_access"):
             # Fallback to individual calls if batch method not available
             for cid in claim_ids:
-                try:
+                with contextlib.suppress(Exception):
                     self.store.record_access(cid)
-                except Exception:
-                    pass
 
         # Record retrieval feedback for quality scoring
         if claim_ids and query_text:

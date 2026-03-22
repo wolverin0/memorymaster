@@ -12,6 +12,7 @@ from typing import Any, Literal
 from memorymaster.lifecycle import transition_claim
 from memorymaster.security import is_sensitive_claim
 from memorymaster.service import MemoryService
+import contextlib
 
 StewardMode = Literal["manual", "cadence"]
 CadenceTrigger = Literal["timer", "commit", "timer_or_commit"]
@@ -396,10 +397,8 @@ def _run_deterministic_citation_locator_probe(*, claim: Any, workspace_root: Pat
                 continue
             candidate_count += 1
             resolved = candidate if candidate.is_absolute() else (workspace_root / candidate)
-            try:
+            with contextlib.suppress(OSError):
                 resolved = resolved.resolve(strict=False)
-            except OSError:
-                pass
             display = _workspace_display_path(resolved, workspace_root)
             if resolved.exists():
                 existing_count += 1

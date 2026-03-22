@@ -13,6 +13,7 @@ The loser is transitioned to 'superseded' with a full audit trail.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -266,10 +267,9 @@ def resolve_conflicts(
 
             # Add a 'contradicts' link if the store supports it
             if hasattr(service.store, "add_claim_link"):
-                try:
+                # Link already exists or other non-critical error
+                with contextlib.suppress(Exception):
                     service.store.add_claim_link(pair.winner.id, pair.loser.id, "contradicts")
-                except Exception:
-                    pass  # Link already exists or other non-critical error
 
             resolution_record["applied"] = True
             result.pairs_resolved += 1

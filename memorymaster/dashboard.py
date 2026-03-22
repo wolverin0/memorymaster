@@ -17,6 +17,7 @@ from memorymaster.config import get_config
 from memorymaster.review import build_review_queue, queue_to_dicts
 from memorymaster.security import is_sensitive_claim
 from memorymaster.service import MemoryService
+import contextlib
 
 
 def _first_query_value(query: dict[str, list[str]], key: str) -> str | None:
@@ -665,26 +666,16 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
                 freshness_raw = scored.get("freshness_score", scored.get("freshness", freshness))
                 vector_raw = scored.get("vector_score", scored.get("vector", vector))
                 score_raw = scored.get("score", score)
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     lexical = float(lexical_raw)
-                except (TypeError, ValueError):
-                    pass
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     confidence = float(confidence_raw)
-                except (TypeError, ValueError):
-                    pass
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     freshness = float(freshness_raw)
-                except (TypeError, ValueError):
-                    pass
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     vector = float(vector_raw)
-                except (TypeError, ValueError):
-                    pass
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     score = float(score_raw)
-                except (TypeError, ValueError):
-                    pass
             triage = triage_flags.get(claim_id, {"reviewed": False, "suppressed": False})
             annotation_parts: list[str] = []
             normalized_status = str(claim.status or "").strip().lower()

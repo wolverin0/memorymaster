@@ -19,6 +19,7 @@ import logging
 import os
 from enum import Enum
 from pathlib import Path
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +71,8 @@ def _load_roles() -> None:
     for key, value in os.environ.items():
         if key.startswith("MEMORYMASTER_ROLE_"):
             agent_id = key[len("MEMORYMASTER_ROLE_"):].lower().replace("_", "-")
-            try:
+            with contextlib.suppress(ValueError):
                 _agent_roles[agent_id] = Role(value.lower())
-            except ValueError:
-                pass
 
 
 def get_role(agent_id: str | None) -> Role:

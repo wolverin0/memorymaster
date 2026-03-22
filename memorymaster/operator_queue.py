@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import contextlib
 
 
 def _utc_now_iso() -> str:
@@ -304,10 +305,8 @@ class OperatorQueue:
         return cur.rowcount
 
     def close(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self._conn.close()
-        except Exception:
-            pass
 
     def __del__(self) -> None:
         self.close()
