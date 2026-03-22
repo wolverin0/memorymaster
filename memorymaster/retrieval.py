@@ -133,6 +133,25 @@ def rank_claims(
     return [row.claim for row in rank_claim_rows(query_text, claims, mode=mode, limit=limit, vector_hook=vector_hook, semantic_vectors=semantic_vectors)]
 
 
+def _compute_claim_score(claim: Claim, lexical: float, confidence: float, freshness: float, vector: float, vector_enabled: bool, semantic_vectors: bool) -> float:
+    """Compute relevance score for a claim."""
+    cfg = get_config()
+    if vector_enabled and semantic_vectors:
+        # Real semantic embeddings: vector is the primary relevance signal
+        score = (0.30 * lexical) + (0.20 * confidence) + (0.10 * freshness) + (0.40 * vector)
+    elif vector_enabled:
+        # Hash-based vectors: limited semantic value, keep lexical dominant
+        w_l, w_c, w_f, w_v = cfg.retrieval_weights
+        score = (w_l * lexical) + (w_c * confidence) + (w_f * freshness) + (w_v * vector)
+    else:
+        w_l, w_c, w_f = cfg.retrieval_weights_no_vector
+        score = (w_l * lexical) + (w_c * confidence) + (w_f * freshness)
+    if claim.pinned:
+        score += cfg.pinned_bonus
+    score += _tier_bonus(claim)
+    return score
+
+
 def rank_claim_rows(
     query_text: str,
     claims: list[Claim],
@@ -178,20 +197,7 @@ def rank_claim_rows(
         freshness = _freshness_score(claim)
         vector = max(0.0, min(1.0, float(vector_scores.get(claim.id, 0.0))))
 
-        cfg = get_config()
-        if vector_enabled and semantic_vectors:
-            # Real semantic embeddings: vector is the primary relevance signal
-            score = (0.30 * lexical) + (0.20 * confidence) + (0.10 * freshness) + (0.40 * vector)
-        elif vector_enabled:
-            # Hash-based vectors: limited semantic value, keep lexical dominant
-            w_l, w_c, w_f, w_v = cfg.retrieval_weights
-            score = (w_l * lexical) + (w_c * confidence) + (w_f * freshness) + (w_v * vector)
-        else:
-            w_l, w_c, w_f = cfg.retrieval_weights_no_vector
-            score = (w_l * lexical) + (w_c * confidence) + (w_f * freshness)
-        if claim.pinned:
-            score += cfg.pinned_bonus
-        score += _tier_bonus(claim)
+        score = _compute_claim_score(claim, lexical, confidence, freshness, vector, vector_enabled, semantic_vectors)
 
         ranked.append(
             RankedClaim(
