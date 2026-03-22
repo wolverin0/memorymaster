@@ -629,7 +629,7 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
                     if claim_obj is None:
                         continue
                     try:
-                        claim_id = int(getattr(claim_obj, "id"))
+                        claim_id = int(claim_obj.id)
                     except Exception:
                         continue
                     claims.append(claim_obj)
