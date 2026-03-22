@@ -462,11 +462,21 @@ class MemoryService:
             claim = row.get("claim")
             if claim is not None:
                 claim_ids.append(claim.id)
-                if hasattr(self.store, "record_access"):
-                    try:
-                        self.store.record_access(claim.id)
-                    except Exception:
-                        pass
+
+        # Batch record accesses in a single transaction if possible
+        if claim_ids and hasattr(self.store, "record_accesses_batch"):
+            try:
+                self.store.record_accesses_batch(claim_ids)
+            except Exception:
+                pass
+        elif claim_ids and hasattr(self.store, "record_access"):
+            # Fallback to individual calls if batch method not available
+            for cid in claim_ids:
+                try:
+                    self.store.record_access(cid)
+                except Exception:
+                    pass
+
         # Record retrieval feedback for quality scoring
         if claim_ids and query_text:
             try:

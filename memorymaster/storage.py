@@ -74,6 +74,7 @@ class SQLiteStore:
     def init_db(self) -> None:
         with self.connect() as conn:
             conn.executescript(load_schema_sql())
+            conn.commit()
             self._ensure_claim_idempotency_schema(conn)
             self._ensure_confirmed_tuple_uniqueness_schema(conn)
             self._ensure_event_integrity_schema(conn)
@@ -85,6 +86,7 @@ class SQLiteStore:
             self._ensure_tiering_columns(conn)
             self._ensure_agent_columns(conn)
             self._ensure_version_column(conn)
+            self._ensure_embeddings_schema(conn)
             conn.commit()
 
     @staticmethod
@@ -95,6 +97,24 @@ class SQLiteStore:
         except sqlite3.OperationalError as exc:
             if "duplicate column name" not in str(exc).lower():
                 raise
+
+    @staticmethod
+    def _ensure_embeddings_schema(conn: sqlite3.Connection) -> None:
+        """Ensure claim_embeddings table exists for vector search."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS claim_embeddings (
+                claim_id INTEGER PRIMARY KEY,
+                model TEXT NOT NULL,
+                embedding_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_embeddings_updated_at ON claim_embeddings(updated_at)"
+        )
 
     @staticmethod
     def _ensure_claim_idempotency_schema(conn: sqlite3.Connection) -> None:
