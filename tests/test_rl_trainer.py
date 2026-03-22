@@ -106,15 +106,19 @@ class TestTrainQualityModel:
         assert result["feedback_rows"] < MIN_SAMPLES
         assert result["min_required"] == MIN_SAMPLES
 
-    @patch("memorymaster.rl_trainer.FeedbackTracker")
-    def test_train_skips_with_insufficient_scored_claims(self, mock_ft_class: MagicMock) -> None:
-        """Training should skip when not enough claims have quality scores."""
+    def test_train_skips_when_no_quality_scores(self) -> None:
+        """Training should skip when there are no quality scores despite feedback rows."""
         db_path = _make_db("rl-insufficient-scores")
 
-        # Mock FeedbackTracker
-        mock_ft = MagicMock()
-        mock_ft_class.return_value = mock_ft
-        mock_ft.get_stats.return_value = {"feedback_rows": MIN_SAMPLES + 10}
+        # Insert claim but no quality scores
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            """INSERT INTO claims (text, status, confidence, access_count, tier, claim_type, created_at, updated_at)
+               VALUES (?, 'confirmed', 0.5, 0, 'core', 'fact', datetime('now'), datetime('now'))""",
+            (f"test claim",),
+        )
+        conn.commit()
+        conn.close()
 
         result = train_quality_model(db_path)
 
