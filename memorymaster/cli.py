@@ -358,6 +358,9 @@ def build_parser() -> argparse.ArgumentParser:
     observe_cmd.add_argument("--force", action="store_true", help="Ingest even if no pattern match")
     observe_cmd.add_argument("--llm", action="store_true", help="Use LLM for deeper extraction (slower)")
 
+    merge_cmd = sub.add_parser("merge-db", help="Merge claims from a remote memorymaster DB (bidirectional sync)")
+    merge_cmd.add_argument("--source", required=True, help="Path to source DB file to merge from")
+
     return parser
 
 
@@ -1358,6 +1361,17 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"Observed: [{result['claim_type']}] claim_id={result['claim_id']}")
                     else:
                         print(f"Skipped: {result.get('reason', 'not memorable')}")
+            return 0
+
+        if args.command == "merge-db":
+            from memorymaster.db_merge import merge_databases
+            t0 = time.perf_counter()
+            result = merge_databases(str(effective_db), args.source)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope(result, query_ms=elapsed_ms))
+            else:
+                print(f"Merged: {result['merged']} new claims from {args.source} ({result['skipped']} skipped, {result['errors']} errors, {elapsed_ms:.0f}ms)")
             return 0
 
         parser.print_help()
