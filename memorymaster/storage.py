@@ -780,8 +780,17 @@ class SQLiteStore:
         return claim
 
     def get_claim(self, claim_id: int, include_citations: bool = True) -> Claim | None:
-        with self.connect() as conn:
-            row = conn.execute("SELECT * FROM claims WHERE id = ?", (claim_id,)).fetchone()
+        try:
+            with self.connect() as conn:
+                row = conn.execute("SELECT * FROM claims WHERE id = ?", (claim_id,)).fetchone()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                # Recreate schema and try again
+                logger.warning("claims table missing, reinitializing: %s", exc)
+                self.init_db()
+                # Recursively call get_claim to try again
+                return self.get_claim(claim_id, include_citations)
+            raise
         if row is None:
             return None
         claim = self._row_to_claim(row)
@@ -957,8 +966,18 @@ class SQLiteStore:
                 rows = conn.execute(sql, params).fetchall()
             except sqlite3.OperationalError as exc:
                 if "no such table" in str(exc).lower():
-                    # Database schema was lost (possibly from concurrent cleanup).
-                    # Return empty list instead of failing.
+                    # If claims table is missing, check if db file exists
+                    # If not, this is a real error (db not initialized)
+                    # If yes, return empty (schema was lost, restore it later)
+                    from pathlib import Path
+                    db_path_obj = Path(self.db_path)
+                    db_exists = db_path_obj.exists()
+                    db_size = db_path_obj.stat().st_size if db_exists else -1
+                    logger.warning(f"claims table missing: db_exists={db_exists}, db_size={db_size}, propagating error")
+                    if not db_exists or db_size == 0:
+                        # Database file doesn't exist or is empty - propagate the error
+                        raise
+                    # Database exists but table is missing - return empty
                     logger.warning("claims table missing in list_claims, returning empty: %s", exc)
                     return []
                 raise
