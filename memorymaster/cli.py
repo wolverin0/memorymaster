@@ -414,100 +414,125 @@ def _json_default(value):
     return repr(value)
 
 
+def _handle_create_snapshot(args: argparse.Namespace, db_resolved: Path) -> int:
+    """Handle snapshot creation."""
+    from memorymaster.snapshot import create_snapshot
+
+    t0 = time.perf_counter()
+    info = create_snapshot(db_resolved, workspace_root=Path(args.workspace).resolve(), message=args.message)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(asdict(info), query_ms=elapsed_ms))
+    else:
+        print(f"snapshot created: {info.snapshot_id}\n"
+              f"  commit: {info.commit_hash or '(no git)'}\n"
+              f"  time:   {info.timestamp}"
+              + (f"\n  msg:    {info.message}" if info.message else "")
+              + f"\n  size:   {info.size_bytes} bytes\n  path:   {info.path}")
+    return 0
+
+
+def _handle_list_snapshots(db_resolved: Path, args: argparse.Namespace) -> int:
+    """Handle listing snapshots."""
+    from memorymaster.snapshot import list_snapshots
+
+    t0 = time.perf_counter()
+    snaps = list_snapshots(db_resolved)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    items = [asdict(s) for s in snaps]
+    if args.json_output:
+        print(_json_envelope(items, total=len(items), query_ms=elapsed_ms))
+    else:
+        if not snaps:
+            print("no snapshots found")
+        else:
+            for s in snaps:
+                print(f"  {s.snapshot_id}  {s.commit_hash[:8] if s.commit_hash else '(no git)'}  {s.timestamp}  {s.size_bytes}b{f'  {s.message}' if s.message else ''}")
+            print(f"\n{len(snaps)} snapshot(s)")
+    return 0
+
+
+def _handle_rollback(args: argparse.Namespace, db_resolved: Path) -> int:
+    """Handle snapshot rollback."""
+    from memorymaster.snapshot import rollback
+
+    if not args.yes:
+        try:
+            answer = input(f"Restore DB from snapshot '{args.snapshot_id}'? A pre-rollback backup will be created. [y/N] ")
+        except EOFError:
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            print("rollback cancelled")
+            return 0
+    t0 = time.perf_counter()
+    info = rollback(db_resolved, args.snapshot_id)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        payload = {**asdict(info), "restored_snapshot_id": info.snapshot_id}
+        print(_json_envelope(payload, query_ms=elapsed_ms))
+    else:
+        print(f"restored from snapshot: {info.snapshot_id}\n  commit: {info.commit_hash or '(no git)'}\n  time:   {info.timestamp}")
+    return 0
+
+
+def _handle_diff(args: argparse.Namespace, db_resolved: Path) -> int:
+    """Handle snapshot diff."""
+    from memorymaster.snapshot import diff_snapshot
+
+    t0 = time.perf_counter()
+    result = diff_snapshot(db_resolved, args.snapshot_id)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(asdict(result), query_ms=elapsed_ms))
+    else:
+        s = result.summary
+        print(f"diff vs {result.snapshot_id}: +{s['added']} added, -{s['removed']} removed, "
+              f"~{s['changed']} changed, ={s['unchanged']} unchanged")
+        for item in result.added:
+            print(f"  + [{item['id']}] {item['status']}: {item['text'][:80]}")
+        for item in result.removed:
+            print(f"  - [{item['id']}] {item['status']}: {item['text'][:80]}")
+        for item in result.changed:
+            changes = ", ".join(f"{k}: {v['old']!r}->{v['new']!r}" for k, v in item["changes"].items())
+            print(f"  ~ [{item['id']}] {changes}")
+    return 0
+
+
+def _handle_install_hook(args: argparse.Namespace) -> int:
+    """Handle git hook installation."""
+    from memorymaster.snapshot import install_git_hook
+
+    t0 = time.perf_counter()
+    result = install_git_hook(Path(args.workspace).resolve())
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        if result["installed"]:
+            print(f"post-commit hook {'appended to existing' if result.get('appended') else 'created'}: {result['path']}")
+        else:
+            print(f"hook not installed: {result.get('reason', 'unknown')}")
+    return 0
+
+
 def _handle_snapshot_commands(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     """Handle snapshot, snapshots, rollback, diff, and install-hook subcommands."""
     db_resolved = Path(effective_db).resolve()
 
     if args.command == "snapshot":
-        from memorymaster.snapshot import create_snapshot
-
-        t0 = time.perf_counter()
-        info = create_snapshot(db_resolved, workspace_root=Path(args.workspace).resolve(), message=args.message)
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-        if args.json_output:
-            print(_json_envelope(asdict(info), query_ms=elapsed_ms))
-        else:
-            print(f"snapshot created: {info.snapshot_id}\n"
-                  f"  commit: {info.commit_hash or '(no git)'}\n"
-                  f"  time:   {info.timestamp}"
-                  + (f"\n  msg:    {info.message}" if info.message else "")
-                  + f"\n  size:   {info.size_bytes} bytes\n  path:   {info.path}")
-        return 0
+        return _handle_create_snapshot(args, db_resolved)
 
     if args.command == "snapshots":
-        from memorymaster.snapshot import list_snapshots
-
-        t0 = time.perf_counter()
-        snaps = list_snapshots(db_resolved)
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-        items = [asdict(s) for s in snaps]
-        if args.json_output:
-            print(_json_envelope(items, total=len(items), query_ms=elapsed_ms))
-        else:
-            if not snaps:
-                print("no snapshots found")
-            else:
-                for s in snaps:
-                    print(f"  {s.snapshot_id}  {s.commit_hash[:8] if s.commit_hash else '(no git)'}  {s.timestamp}  {s.size_bytes}b{f'  {s.message}' if s.message else ''}")
-                print(f"\n{len(snaps)} snapshot(s)")
-        return 0
+        return _handle_list_snapshots(db_resolved, args)
 
     if args.command == "rollback":
-        from memorymaster.snapshot import rollback
-
-        if not args.yes:
-            try:
-                answer = input(f"Restore DB from snapshot '{args.snapshot_id}'? A pre-rollback backup will be created. [y/N] ")
-            except EOFError:
-                answer = ""
-            if answer.strip().lower() not in ("y", "yes"):
-                print("rollback cancelled")
-                return 0
-        t0 = time.perf_counter()
-        info = rollback(db_resolved, args.snapshot_id)
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-        if args.json_output:
-            payload = {**asdict(info), "restored_snapshot_id": info.snapshot_id}
-            print(_json_envelope(payload, query_ms=elapsed_ms))
-        else:
-            print(f"restored from snapshot: {info.snapshot_id}\n  commit: {info.commit_hash or '(no git)'}\n  time:   {info.timestamp}")
-        return 0
+        return _handle_rollback(args, db_resolved)
 
     if args.command == "diff":
-        from memorymaster.snapshot import diff_snapshot
-
-        t0 = time.perf_counter()
-        result = diff_snapshot(db_resolved, args.snapshot_id)
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-        if args.json_output:
-            print(_json_envelope(asdict(result), query_ms=elapsed_ms))
-        else:
-            s = result.summary
-            print(f"diff vs {result.snapshot_id}: +{s['added']} added, -{s['removed']} removed, "
-                  f"~{s['changed']} changed, ={s['unchanged']} unchanged")
-            for item in result.added:
-                print(f"  + [{item['id']}] {item['status']}: {item['text'][:80]}")
-            for item in result.removed:
-                print(f"  - [{item['id']}] {item['status']}: {item['text'][:80]}")
-            for item in result.changed:
-                changes = ", ".join(f"{k}: {v['old']!r}->{v['new']!r}" for k, v in item["changes"].items())
-                print(f"  ~ [{item['id']}] {changes}")
-        return 0
+        return _handle_diff(args, db_resolved)
 
     if args.command == "install-hook":
-        from memorymaster.snapshot import install_git_hook
-
-        t0 = time.perf_counter()
-        result = install_git_hook(Path(args.workspace).resolve())
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-        if args.json_output:
-            print(_json_envelope(result, query_ms=elapsed_ms))
-        else:
-            if result["installed"]:
-                print(f"post-commit hook {'appended to existing' if result.get('appended') else 'created'}: {result['path']}")
-            else:
-                print(f"hook not installed: {result.get('reason', 'unknown')}")
-        return 0
+        return _handle_install_hook(args)
 
 
 def _handle_qdrant_commands(args: argparse.Namespace, service, parser: argparse.ArgumentParser) -> int:
