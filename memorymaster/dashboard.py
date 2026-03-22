@@ -900,6 +900,16 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
             return
         raise ValueError("action must be start or stop")
 
+    def _send_sse_event(self, record: dict[str, Any]) -> bool:
+        """Send a server-sent event record. Returns False if connection is closed."""
+        chunk = f"event: {str(record.get('event') or 'message')}\ndata: {json.dumps(record, ensure_ascii=True)}\n\n".encode("utf-8")
+        try:
+            self.wfile.write(chunk)
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+            return False
+        return True
+
     def _handle_operator_stream(self, query_string: str) -> None:
         query = parse_qs(query_string)
         last = _parse_int(_first_query_value(query, "last"), default=20, minimum=0, maximum=2000)
@@ -911,18 +921,9 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
         self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
 
-        def send(record: dict[str, Any]) -> bool:
-            chunk = f"event: {str(record.get('event') or 'message')}\ndata: {json.dumps(record, ensure_ascii=True)}\n\n".encode("utf-8")
-            try:
-                self.wfile.write(chunk)
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError, TimeoutError):
-                return False
-            return True
-
         log_path = self._server.operator_log_jsonl
         for event in _tail_events_from_jsonl(log_path, last):
-            if not send(event):
+            if not self._send_sse_event(event):
                 return
         if not follow:
             return
@@ -943,7 +944,7 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
                             record = json.loads(line)
                         except json.JSONDecodeError:
                             continue
-                        if isinstance(record, dict) and not send(record):
+                        if isinstance(record, dict) and not self._send_sse_event(record):
                             return
             time.sleep(0.25)
 
