@@ -141,8 +141,8 @@ class EntityGraph:
         finally:
             conn.close()
 
-    def _process_entities(self, data: dict, conn) -> dict[str, str]:
-        """Process extracted entities and return name->id mapping."""
+    def _process_entities(self, data: dict, conn) -> tuple[dict[str, str], list[str]]:
+        """Process extracted entities and return (name->id mapping, original names)."""
         entity_names = []
         entity_id_map: dict[str, str] = {}
 
@@ -158,7 +158,7 @@ class EntityGraph:
             for alias in aliases:
                 entity_id_map[alias.lower()] = ent_id
 
-        return entity_id_map
+        return entity_id_map, entity_names
 
     def extract_and_link(self, claim_id: int, text: str) -> list[str]:
         """Extract entities from claim text, store in graph, link to claim.
@@ -189,8 +189,7 @@ class EntityGraph:
 
         conn = self._connect()
         try:
-            entity_id_map = self._process_entities(data, conn)
-            entity_names = list(entity_id_map.keys())
+            entity_id_map, entity_names = self._process_entities(data, conn)
 
             for rel in data.get("relations", []):
                 src = entity_id_map.get((rel.get("source") or "").lower())

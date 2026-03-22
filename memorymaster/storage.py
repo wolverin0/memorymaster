@@ -966,20 +966,21 @@ class SQLiteStore:
                 rows = conn.execute(sql, params).fetchall()
             except sqlite3.OperationalError as exc:
                 if "no such table" in str(exc).lower():
-                    # If claims table is missing, check if db file exists
-                    # If not, this is a real error (db not initialized)
-                    # If yes, return empty (schema was lost, restore it later)
-                    from pathlib import Path
-                    db_path_obj = Path(self.db_path)
-                    db_exists = db_path_obj.exists()
-                    db_size = db_path_obj.stat().st_size if db_exists else -1
-                    logger.warning(f"claims table missing: db_exists={db_exists}, db_size={db_size}, propagating error")
-                    if not db_exists or db_size == 0:
-                        # Database file doesn't exist or is empty - propagate the error
-                        raise
-                    # Database exists but table is missing - return empty
-                    logger.warning("claims table missing in list_claims, returning empty: %s", exc)
-                    return []
+                    # Claims table is missing - this could be due to schema loss or db corruption
+                    # Reinitialize the database
+                    logger.warning("claims table missing in list_claims, reinitializing: %s", exc)
+                    self.init_db()
+                    # Recursively call list_claims to try again
+                    return self.list_claims(
+                        status=status,
+                        status_in=status_in,
+                        limit=limit,
+                        include_archived=include_archived,
+                        text_query=text_query,
+                        include_citations=include_citations,
+                        scope_allowlist=scope_allowlist,
+                        tenant_id=tenant_id,
+                    )
                 raise
 
         claims = [self._row_to_claim(row) for row in rows]
