@@ -213,10 +213,7 @@ def pack_context(
 
     # Assemble final output.
     if output_format == "text":
-        if not included:
-            body = "(no claims fit within token budget)"
-        else:
-            body = "\n\n".join(block for block, _ in included)
+        body = "(no claims fit within token budget)" if not included else "\n\n".join(block for block, _ in included)
         footer = footer_template.format(
             included=len(included),
             considered=claims_considered,

@@ -622,11 +622,7 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
             rows_data = _call_retrieval_method(query_rows_fn, with_scope=True)
             if isinstance(rows_data, list):
                 for row in rows_data:
-                    claim_obj = None
-                    if isinstance(row, dict):
-                        claim_obj = row.get("claim")
-                    else:
-                        claim_obj = getattr(row, "claim", None)
+                    claim_obj = row.get("claim") if isinstance(row, dict) else getattr(row, "claim", None)
                     if claim_obj is None:
                         continue
                     try:

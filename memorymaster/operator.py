@@ -547,10 +547,7 @@ class MemoryOperator:
                             continue
                         entry_offset = max(0, int(raw_entry.get("offset", 0)))
                         entry_id_raw = raw_entry.get("entry_id")
-                        if entry_id_raw is None:
-                            entry_id = next_queue_id + idx
-                        else:
-                            entry_id = max(1, int(entry_id_raw))
+                        entry_id = next_queue_id + idx if entry_id_raw is None else max(1, int(entry_id_raw))
                         max_entry_id = max(max_entry_id, entry_id)
                         pending_queue.append(
                             {
