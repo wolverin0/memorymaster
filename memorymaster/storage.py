@@ -997,7 +997,7 @@ class SQLiteStore:
 
                     if table_count == 0:
                         # Database file exists but is empty/not initialized - raise error
-                        logger.error(f"Database has 0 tables, raising error")
+                        logger.error("Database has 0 tables, raising error")
                         raise
                     else:
                         # Database has tables but claims is missing - return empty
