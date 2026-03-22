@@ -141,6 +141,25 @@ class EntityGraph:
         finally:
             conn.close()
 
+    def _process_entities(self, data: dict, conn) -> dict[str, str]:
+        """Process extracted entities and return name->id mapping."""
+        entity_names = []
+        entity_id_map: dict[str, str] = {}
+
+        for ent in data.get("entities", []):
+            name = (ent.get("name") or "").strip()
+            if not name or len(name) < 2:
+                continue
+            ent_type = ent.get("type", "concept")
+            aliases = ent.get("aliases", [])
+            ent_id = self._upsert_entity(conn, name, ent_type, aliases)
+            entity_id_map[name.lower()] = ent_id
+            entity_names.append(name)
+            for alias in aliases:
+                entity_id_map[alias.lower()] = ent_id
+
+        return entity_id_map
+
     def extract_and_link(self, claim_id: int, text: str) -> list[str]:
         """Extract entities from claim text, store in graph, link to claim.
 
@@ -168,21 +187,10 @@ class EntityGraph:
             return []
         data = _parse_json(raw)
 
-        entity_names = []
-        entity_id_map: dict[str, str] = {}
         conn = self._connect()
         try:
-            for ent in data.get("entities", []):
-                name = (ent.get("name") or "").strip()
-                if not name or len(name) < 2:
-                    continue
-                ent_type = ent.get("type", "concept")
-                aliases = ent.get("aliases", [])
-                ent_id = self._upsert_entity(conn, name, ent_type, aliases)
-                entity_id_map[name.lower()] = ent_id
-                entity_names.append(name)
-                for alias in aliases:
-                    entity_id_map[alias.lower()] = ent_id
+            entity_id_map = self._process_entities(data, conn)
+            entity_names = list(entity_id_map.keys())
 
             for rel in data.get("relations", []):
                 src = entity_id_map.get((rel.get("source") or "").lower())
