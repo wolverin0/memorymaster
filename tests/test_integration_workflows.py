@@ -206,7 +206,7 @@ class TestFeedbackLoop:
         claim_id = claim_obj.id
 
         # Query to trigger any feedback mechanisms
-        results = service.query("SSL certificate expiration", limit=10)
+        service.query("SSL certificate expiration", limit=10)
 
         # Verify claim still exists and is accessible
         all_claims = service.list_claims(limit=100)
@@ -282,10 +282,9 @@ class TestVaultExportRoundtrip:
 
             # Export to vault
             result = export_vault(
-                service=service,
+                store=service.store,
                 output_dir=vault_dir,
                 confirmed_only=False,
-                scope_allowlist=None,
             )
 
             # Verify export function completes without error
@@ -315,10 +314,10 @@ class TestVaultExportRoundtrip:
 
             # Export only project-a
             result = export_vault(
-                service=service,
+                store=service.store,
                 output_dir=vault_dir,
                 confirmed_only=False,
-                scope_allowlist=["project:project-a"],
+                scope_filter="project:project-a",
             )
 
             assert result is not None
@@ -354,16 +353,15 @@ class TestTemporalQuery:
         past_iso = past.isoformat()
 
         # Ingest claim that's already expired
-        claim_obj = service.ingest(
+        service.ingest(
             text="Old API version no longer supported",
             citations=[CitationInput(source="changelog.md")],
             scope="api",
             valid_until=past_iso,
         )
-        claim_id = claim_obj.id
 
         # Query should still find it (depends on implementation)
-        results = service.query("API version", limit=10)
+        service.query("API version", limit=10)
         # Behavior depends on whether query_as_of filters expired claims
 
     def test_query_as_of_respects_valid_dates(self, service: MemoryService) -> None:
@@ -371,7 +369,7 @@ class TestTemporalQuery:
         now = datetime.now(timezone.utc)
 
         # Ingest two claims with different validity windows
-        obj1 = service.ingest(
+        service.ingest(
             text="Service A is active",
             citations=[CitationInput(source="a.txt")],
             scope="services",
@@ -379,7 +377,7 @@ class TestTemporalQuery:
             valid_until=(now + timedelta(days=10)).isoformat(),
         )
 
-        obj2 = service.ingest(
+        service.ingest(
             text="Service B will launch soon",
             citations=[CitationInput(source="b.txt")],
             scope="services",

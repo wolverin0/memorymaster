@@ -673,16 +673,8 @@ def _priority_for_decision(decision: DecisionType, confidence: float) -> float:
     return round(base + (1.0 - bounded) * 0.1, 6)
 
 
-def _decision_for_claim(
-    *,
-    claim: Any,
-    probe_results: list[ProbeResult],
-    relation_index: dict[tuple[str, str, str], list[Any]],
-) -> Decision:
-    reasons: list[Reason] = []
-    for result in probe_results:
-        reasons.extend(result.reasons)
-
+def _find_replacement_or_conflict(claim: Any, relation_index: dict[tuple[str, str, str], list[Any]]) -> tuple[Any | None, bool]:
+    """Check for conflicting or superseding claims. Returns (replacement_claim, has_conflict)."""
     key = _claim_key(claim)
     replacement: Any | None = None
     has_conflict = False
@@ -697,6 +689,20 @@ def _decision_for_claim(
                 if _is_newer(peer, claim):
                     replacement = peer
                     break
+    return replacement, has_conflict
+
+
+def _decision_for_claim(
+    *,
+    claim: Any,
+    probe_results: list[ProbeResult],
+    relation_index: dict[tuple[str, str, str], list[Any]],
+) -> Decision:
+    reasons: list[Reason] = []
+    for result in probe_results:
+        reasons.extend(result.reasons)
+
+    replacement, has_conflict = _find_replacement_or_conflict(claim, relation_index)
 
     decision: DecisionType = "keep"
     proposed_status: str | None = None
