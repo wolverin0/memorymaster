@@ -788,26 +788,25 @@ class PostgresStore(SQLiteStore):
         archived_at = now if to_status == "archived" else None
         next_replaced_by = replaced_by_claim_id if replaced_by_claim_id is not None else claim.replaced_by_claim_id
 
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE claims
-                    SET status = %s, updated_at = %s, last_validated_at = %s, archived_at = %s, replaced_by_claim_id = %s
-                    WHERE id = %s
-                    """,
-                    (to_status, now, last_validated_at, archived_at, next_replaced_by, claim.id),
-                )
-                self._insert_event_row(
-                    conn,
-                    claim_id=claim.id,
-                    event_type=validated_event_type,
-                    from_status=claim.status,
-                    to_status=to_status,
-                    details=reason,
-                    payload={"replaced_by_claim_id": replaced_by_claim_id} if replaced_by_claim_id else None,
-                    created_at=now,
-                )
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE claims
+                SET status = %s, updated_at = %s, last_validated_at = %s, archived_at = %s, replaced_by_claim_id = %s
+                WHERE id = %s
+                """,
+                (to_status, now, last_validated_at, archived_at, next_replaced_by, claim.id),
+            )
+            self._insert_event_row(
+                conn,
+                claim_id=claim.id,
+                event_type=validated_event_type,
+                from_status=claim.status,
+                to_status=to_status,
+                details=reason,
+                payload={"replaced_by_claim_id": replaced_by_claim_id} if replaced_by_claim_id else None,
+                created_at=now,
+            )
 
         updated = self.get_claim(claim.id)
         if updated is None:

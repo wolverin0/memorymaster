@@ -69,6 +69,7 @@ def recall(
         query=query,
         token_budget=budget,
         output_format=format,
+        retrieval_mode="legacy",  # Force legacy for speed (<0.2s vs 8s for hybrid)
     )
 
     if result.claims_included == 0:

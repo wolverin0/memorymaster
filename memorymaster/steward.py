@@ -157,11 +157,10 @@ def _extract_workspace_path_candidate(raw: str | None) -> Path | None:
     elif "://" in text:
         return None
     text = text.split("?", 1)[0].split("#", 1)[0].strip()
-    if ":" in text:
-        if not (len(text) > 1 and text[1] == ":" and ("/" in text or "\\" in text)):
-            head, tail = text.rsplit(":", 1)
-            if tail.isdigit():
-                text = head
+    if ":" in text and not (len(text) > 1 and text[1] == ":" and ("/" in text or "\\" in text)):
+        head, tail = text.rsplit(":", 1)
+        if tail.isdigit():
+            text = head
     if not text:
         return None
     looks_path = (
