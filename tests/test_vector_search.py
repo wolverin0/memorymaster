@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import math
-import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -23,7 +22,7 @@ from memorymaster.embeddings import (
     normalize,
 )
 from memorymaster.models import Claim
-from memorymaster.retrieval import RankedClaim, rank_claim_rows
+from memorymaster.retrieval import rank_claim_rows
 from memorymaster.storage import SQLiteStore
 
 

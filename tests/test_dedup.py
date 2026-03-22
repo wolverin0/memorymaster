@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from memorymaster.embeddings import EmbeddingProvider, cosine_similarity
+from memorymaster.embeddings import EmbeddingProvider
 from memorymaster.jobs.dedup import (
-    DuplicatePair,
     _pick_survivor,
     _subject_predicate_match,
     _text_overlap,
     find_duplicates,
-    run,
 )
 from memorymaster.models import Claim
 from memorymaster.service import MemoryService

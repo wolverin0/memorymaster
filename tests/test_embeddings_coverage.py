@@ -13,8 +13,6 @@ from memorymaster.embeddings import (
     _load_transformer,
     cosine_similarity,
     create_best_provider,
-    create_gemini_provider,
-    hash_embed,
     normalize,
 )
 

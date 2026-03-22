@@ -7,9 +7,7 @@ import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
 
-import pytest
 
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService

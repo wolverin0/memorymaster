@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from memorymaster.qmd_bridge import claims_to_qmd, qmd_to_claims
 

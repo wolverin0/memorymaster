@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 
-from memorymaster.models import Claim, Citation, CitationInput
+from memorymaster.models import Claim
 from memorymaster.vault_exporter import _claim_to_markdown, _safe_dirname, export_vault
 
 

@@ -2,18 +2,17 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
 from memorymaster.jobs.compact_summaries import (
-    CompactSummaryResult,
     _build_claim_text_block,
     _cluster_by_subject,
     _get_unsummarized_archived_claims,
     run,
 )
-from memorymaster.models import CitationInput, ClaimLink
+from memorymaster.models import CitationInput
 from memorymaster.storage import SQLiteStore
 
 

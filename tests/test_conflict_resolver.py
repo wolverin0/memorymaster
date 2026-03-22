@@ -5,13 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 
 from memorymaster.models import Claim, Citation
 from memorymaster.service import MemoryService
 from memorymaster.conflict_resolver import (
-    ConflictPair,
-    ResolutionResult,
     _build_conflict_groups,
     _pick_winner,
     detect_conflicts,

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from memorymaster.auto_resolver import _cite_summary, _llm_evaluate, resolve_conflict_pair
 

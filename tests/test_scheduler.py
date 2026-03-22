@@ -7,7 +7,6 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from memorymaster.scheduler import get_git_head, run_daemon, utc_now
 

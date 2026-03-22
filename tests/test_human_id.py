@@ -1,7 +1,6 @@
 """Tests for hierarchical human-readable claim IDs (P4 feature #21)."""
 from __future__ import annotations
 
-import sqlite3
 import tempfile
 import os
 from pathlib import Path

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from memorymaster.query_classifier import QUERY_TYPES, classify_query, recommended_retrieval_mode
 

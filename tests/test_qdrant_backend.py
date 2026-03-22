@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from memorymaster.models import Claim
 from memorymaster.qdrant_backend import QdrantBackend, EMBEDDING_DIMS

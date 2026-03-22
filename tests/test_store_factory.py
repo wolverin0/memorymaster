@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
-import pytest
 
 from memorymaster.store_factory import create_store, is_postgres_dsn
 from memorymaster.storage import SQLiteStore

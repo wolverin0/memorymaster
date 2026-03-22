@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from memorymaster.models import CitationInput, Claim
+from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
 
 

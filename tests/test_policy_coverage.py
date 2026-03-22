@@ -10,7 +10,6 @@ import pytest
 from memorymaster.policy import (
     _age_seconds,
     _parse_iso,
-    _priority_score,
     select_revalidation_candidates,
 )
 
