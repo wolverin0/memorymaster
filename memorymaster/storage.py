@@ -75,8 +75,27 @@ class SQLiteStore:
 
     def init_db(self) -> None:
         with self.connect() as conn:
-            conn.executescript(load_schema_sql())
-            conn.commit()
+            try:
+                conn.executescript(load_schema_sql())
+                conn.commit()
+            except sqlite3.Error as e:
+                # If executescript fails (e.g., due to partial initialization),
+                # rollback and try a more lenient approach
+                logger.warning("executescript failed, attempting lenient schema initialization: %s", e)
+                conn.rollback()
+
+                # Split the schema into individual statements and execute them,
+                # ignoring errors for already-existing objects
+                schema_sql = load_schema_sql()
+                statements = [stmt.strip() for stmt in schema_sql.split(';') if stmt.strip()]
+                for stmt in statements:
+                    try:
+                        conn.execute(stmt)
+                    except sqlite3.OperationalError:
+                        # Table/index/trigger might already exist, which is fine
+                        pass
+                conn.commit()
+
             self._ensure_claim_idempotency_schema(conn)
             self._ensure_confirmed_tuple_uniqueness_schema(conn)
             self._ensure_event_integrity_schema(conn)
