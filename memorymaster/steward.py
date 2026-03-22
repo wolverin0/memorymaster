@@ -1208,6 +1208,69 @@ def list_steward_proposals(
     return out
 
 
+def _find_target_proposal(
+    proposals: list[dict[str, Any]],
+    proposal_event_id: int | None,
+    claim_id: int | None,
+) -> dict[str, Any] | None:
+    """Find target proposal by event_id or claim_id with fallback logic."""
+    if proposal_event_id is not None:
+        return next((item for item in proposals if int(item["proposal_event_id"]) == int(proposal_event_id)), None)
+
+    # Try pending proposals for this claim first
+    pending_for_claim = [
+        item for item in proposals if item["claim_id"] == claim_id and str(item.get("status")) == "pending"
+    ]
+    if pending_for_claim:
+        return sorted(pending_for_claim, key=lambda item: int(item["proposal_event_id"]), reverse=True)[0]
+
+    # Fallback to any proposal for this claim
+    any_for_claim = [item for item in proposals if item["claim_id"] == claim_id]
+    if any_for_claim:
+        return sorted(any_for_claim, key=lambda item: int(item["proposal_event_id"]), reverse=True)[0]
+
+    return None
+
+
+def _apply_steward_approval(
+    service: MemoryService,
+    target_claim_id: int,
+    decision: str,
+    proposed_status: str,
+    replaced_by_claim_id: Any,
+) -> tuple[bool, str | None]:
+    """Apply approval action, return (applied, error)."""
+    applied = False
+    apply_error: str | None = None
+
+    claim = service.store.get_claim(target_claim_id, include_citations=False)
+    if claim is None:
+        raise ValueError(f"Claim {target_claim_id} does not exist.")
+
+    try:
+        if decision == "superseded_candidate" and isinstance(replaced_by_claim_id, int):
+            service.store.mark_superseded(
+                old_claim_id=target_claim_id,
+                new_claim_id=int(replaced_by_claim_id),
+                reason="steward_human_override:approve",
+            )
+            applied = True
+        elif proposed_status in {"stale", "conflicted", "superseded"}:
+            transition_claim(
+                service.store,
+                claim_id=target_claim_id,
+                to_status=proposed_status,  # type: ignore[arg-type]
+                reason="steward_human_override:approve",
+                event_type="transition",
+                replaced_by_claim_id=(int(replaced_by_claim_id) if isinstance(replaced_by_claim_id, int) else None),
+            )
+            applied = True
+    except Exception as exc:  # pragma: no cover
+        apply_error = str(exc)
+
+    return applied, apply_error
+
+
 def resolve_steward_proposal(
     service: MemoryService,
     *,
@@ -1222,19 +1285,7 @@ def resolve_steward_proposal(
         raise ValueError("proposal_event_id or claim_id is required")
 
     proposals = list_steward_proposals(service, limit=2000, include_resolved=True)
-    target: dict[str, Any] | None = None
-    if proposal_event_id is not None:
-        target = next((item for item in proposals if int(item["proposal_event_id"]) == int(proposal_event_id)), None)
-    else:
-        pending_for_claim = [
-            item for item in proposals if item["claim_id"] == claim_id and str(item.get("status")) == "pending"
-        ]
-        if pending_for_claim:
-            target = sorted(pending_for_claim, key=lambda item: int(item["proposal_event_id"]), reverse=True)[0]
-        else:
-            any_for_claim = [item for item in proposals if item["claim_id"] == claim_id]
-            if any_for_claim:
-                target = sorted(any_for_claim, key=lambda item: int(item["proposal_event_id"]), reverse=True)[0]
+    target = _find_target_proposal(proposals, proposal_event_id, claim_id)
     if target is None:
         raise ValueError("No steward proposal found for requested selector.")
 
@@ -1258,29 +1309,9 @@ def resolve_steward_proposal(
     apply_error: str | None = None
 
     if action == "approve" and apply_on_approve:
-        claim = service.store.get_claim(target_claim_id, include_citations=False)
-        if claim is None:
-            raise ValueError(f"Claim {target_claim_id} does not exist.")
-        try:
-            if decision == "superseded_candidate" and isinstance(replaced_by_claim_id, int):
-                service.store.mark_superseded(
-                    old_claim_id=target_claim_id,
-                    new_claim_id=int(replaced_by_claim_id),
-                    reason="steward_human_override:approve",
-                )
-                applied = True
-            elif proposed_status in {"stale", "conflicted", "superseded"}:
-                transition_claim(
-                    service.store,
-                    claim_id=target_claim_id,
-                    to_status=proposed_status,  # type: ignore[arg-type]
-                    reason="steward_human_override:approve",
-                    event_type="transition",
-                    replaced_by_claim_id=(int(replaced_by_claim_id) if isinstance(replaced_by_claim_id, int) else None),
-                )
-                applied = True
-        except Exception as exc:  # pragma: no cover
-            apply_error = str(exc)
+        applied, apply_error = _apply_steward_approval(
+            service, target_claim_id, decision, proposed_status, replaced_by_claim_id
+        )
 
     audit_details = "steward_proposal_approved" if action == "approve" else "steward_proposal_rejected"
     audit_payload: dict[str, Any] = {
