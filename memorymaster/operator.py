@@ -419,6 +419,131 @@ class MemoryOperator:
             max_events=max_events,
         )
 
+    def _parse_pending_queue(self, raw_pending, next_queue_id: int) -> tuple[list[dict[str, Any]], int]:
+        """Parse pending queue entries from raw state."""
+        pending_queue: list[dict[str, Any]] = []
+        max_entry_id = 0
+
+        if not isinstance(raw_pending, list):
+            raise ValueError("queue_state pending field is not a list")
+
+        for idx, raw_entry in enumerate(raw_pending):
+            if not isinstance(raw_entry, dict):
+                raise ValueError("queue_state pending entry is not an object")
+            payload = str(raw_entry.get("payload", "")).strip().lstrip("\ufeff")
+            if not payload:
+                continue
+            entry_offset = max(0, int(raw_entry.get("offset", 0)))
+            entry_id_raw = raw_entry.get("entry_id")
+            entry_id = next_queue_id + idx if entry_id_raw is None else max(1, int(entry_id_raw))
+            max_entry_id = max(max_entry_id, entry_id)
+            pending_queue.append({
+                "entry_id": entry_id,
+                "offset": entry_offset,
+                "payload": payload,
+            })
+
+        final_queue_id = max(next_queue_id, max_entry_id + 1) if max_entry_id >= next_queue_id else next_queue_id
+        return pending_queue, final_queue_id
+
+    def _load_legacy_state(self, state_path: Path | None, canonical_inbox: str, emit) -> dict[str, int] | None:
+        """Load legacy state from file."""
+        if state_path is None or not state_path.exists():
+            return None
+
+        try:
+            raw_state = json.loads(state_path.read_text(encoding="utf-8"))
+            if not isinstance(raw_state, dict):
+                raise ValueError("state_json is not an object")
+            state_inbox_raw = str(raw_state.get("inbox_jsonl", "")).strip()
+            state_inbox = str(Path(state_inbox_raw).resolve()) if state_inbox_raw else ""
+            if state_inbox and state_inbox == canonical_inbox:
+                legacy_state = {
+                    "offset": max(0, int(raw_state.get("offset", 0))),
+                    "seen_events": max(0, int(raw_state.get("seen_events", 0))),
+                    "processed_events": max(0, int(raw_state.get("processed_events", 0))),
+                }
+                emit(
+                    "state_loaded",
+                    {
+                        "state_json": str(state_path),
+                        "inbox_jsonl": canonical_inbox,
+                        "offset": legacy_state["offset"],
+                        "seen_events": legacy_state["seen_events"],
+                        "processed_events": legacy_state["processed_events"],
+                    },
+                )
+                return legacy_state
+        except Exception as exc:
+            emit(
+                "state_error",
+                {
+                    "op": "load",
+                    "state_json": str(state_path),
+                    "error": str(exc),
+                },
+            )
+        return None
+
+    def _load_queue_state(self, queue_state_path: Path | None, canonical_inbox: str, emit) -> tuple[int, int, int, int, int, list[dict[str, Any]], bool]:
+        """Load queue state from file. Returns (start_offset, read_offset, acked_offset, seen_events, processed_events, pending_queue, loaded)."""
+        start_offset = 0
+        read_offset = 0
+        acked_offset = 0
+        persisted_seen_events = 0
+        persisted_processed_events = 0
+        next_queue_id = 1
+        pending_queue: list[dict[str, Any]] = []
+        queue_state_loaded = False
+
+        if queue_state_path is None or not queue_state_path.exists():
+            return start_offset, read_offset, acked_offset, persisted_seen_events, persisted_processed_events, pending_queue, queue_state_loaded
+
+        try:
+            raw_queue_state = json.loads(queue_state_path.read_text(encoding="utf-8"))
+            if not isinstance(raw_queue_state, dict):
+                raise ValueError("queue_state_json is not an object")
+            queue_inbox_raw = str(raw_queue_state.get("inbox_jsonl", "")).strip()
+            queue_inbox = str(Path(queue_inbox_raw).resolve()) if queue_inbox_raw else ""
+            if not (queue_inbox and queue_inbox == canonical_inbox):
+                return start_offset, read_offset, acked_offset, persisted_seen_events, persisted_processed_events, pending_queue, queue_state_loaded
+
+            start_offset = max(0, int(raw_queue_state.get("read_offset", raw_queue_state.get("offset", 0))))
+            read_offset = start_offset
+            acked_offset = max(0, int(raw_queue_state.get("acked_offset", raw_queue_state.get("offset", read_offset))))
+            persisted_seen_events = max(0, int(raw_queue_state.get("seen_events", 0)))
+            persisted_processed_events = max(0, int(raw_queue_state.get("processed_events", 0)))
+            next_queue_id = max(1, int(raw_queue_state.get("next_queue_id", 1)))
+
+            raw_pending = raw_queue_state.get("pending", [])
+            pending_queue, next_queue_id = self._parse_pending_queue(raw_pending, next_queue_id)
+
+            queue_state_loaded = True
+            emit(
+                "queue_state_loaded",
+                {
+                    "queue_state_json": str(queue_state_path),
+                    "inbox_jsonl": canonical_inbox,
+                    "read_offset": read_offset,
+                    "acked_offset": acked_offset,
+                    "pending_events": len(pending_queue),
+                    "seen_events": persisted_seen_events,
+                    "processed_events": persisted_processed_events,
+                },
+            )
+        except Exception as exc:
+            emit(
+                "state_error",
+                {
+                    "op": "load_queue_state",
+                    "queue_state_json": str(queue_state_path),
+                    "error": str(exc),
+                },
+            )
+            queue_state_loaded = False
+
+        return start_offset, read_offset, acked_offset, persisted_seen_events, persisted_processed_events, pending_queue, queue_state_loaded
+
     def _run_stream_json(
         self,
         inbox_jsonl: Path,
@@ -482,112 +607,12 @@ class MemoryOperator:
                     },
                 )
 
-        legacy_state: dict[str, int] | None = None
-        if state_path is not None and state_path.exists():
-            try:
-                raw_state = json.loads(state_path.read_text(encoding="utf-8"))
-                if not isinstance(raw_state, dict):
-                    raise ValueError("state_json is not an object")
-                state_inbox_raw = str(raw_state.get("inbox_jsonl", "")).strip()
-                state_inbox = str(Path(state_inbox_raw).resolve()) if state_inbox_raw else ""
-                if state_inbox and state_inbox == canonical_inbox:
-                    legacy_state = {
-                        "offset": max(0, int(raw_state.get("offset", 0))),
-                        "seen_events": max(0, int(raw_state.get("seen_events", 0))),
-                        "processed_events": max(0, int(raw_state.get("processed_events", 0))),
-                    }
-                    emit(
-                        "state_loaded",
-                        {
-                            "state_json": str(state_path),
-                            "inbox_jsonl": canonical_inbox,
-                            "offset": legacy_state["offset"],
-                            "seen_events": legacy_state["seen_events"],
-                            "processed_events": legacy_state["processed_events"],
-                        },
-                    )
-            except Exception as exc:
-                emit(
-                    "state_error",
-                    {
-                        "op": "load",
-                        "state_json": str(state_path),
-                        "error": str(exc),
-                    },
-                )
-                legacy_state = None
+        legacy_state = self._load_legacy_state(state_path, canonical_inbox, emit)
 
-        queue_state_loaded = False
-        if queue_state_path is not None and queue_state_path.exists():
-            try:
-                raw_queue_state = json.loads(queue_state_path.read_text(encoding="utf-8"))
-                if not isinstance(raw_queue_state, dict):
-                    raise ValueError("queue_state_json is not an object")
-                queue_inbox_raw = str(raw_queue_state.get("inbox_jsonl", "")).strip()
-                queue_inbox = str(Path(queue_inbox_raw).resolve()) if queue_inbox_raw else ""
-                if queue_inbox and queue_inbox == canonical_inbox:
-                    start_offset = max(0, int(raw_queue_state.get("read_offset", raw_queue_state.get("offset", 0))))
-                    read_offset = start_offset
-                    acked_offset = max(
-                        0,
-                        int(raw_queue_state.get("acked_offset", raw_queue_state.get("offset", read_offset))),
-                    )
-                    persisted_seen_events = max(0, int(raw_queue_state.get("seen_events", 0)))
-                    persisted_processed_events = max(0, int(raw_queue_state.get("processed_events", 0)))
-                    next_queue_id = max(1, int(raw_queue_state.get("next_queue_id", 1)))
-                    raw_pending = raw_queue_state.get("pending", [])
-                    if not isinstance(raw_pending, list):
-                        raise ValueError("queue_state pending field is not a list")
-                    max_entry_id = 0
-                    for idx, raw_entry in enumerate(raw_pending):
-                        if not isinstance(raw_entry, dict):
-                            raise ValueError("queue_state pending entry is not an object")
-                        payload = str(raw_entry.get("payload", "")).strip().lstrip("\ufeff")
-                        if not payload:
-                            continue
-                        entry_offset = max(0, int(raw_entry.get("offset", 0)))
-                        entry_id_raw = raw_entry.get("entry_id")
-                        entry_id = next_queue_id + idx if entry_id_raw is None else max(1, int(entry_id_raw))
-                        max_entry_id = max(max_entry_id, entry_id)
-                        pending_queue.append(
-                            {
-                                "entry_id": entry_id,
-                                "offset": entry_offset,
-                                "payload": payload,
-                            }
-                        )
-                    if max_entry_id >= next_queue_id:
-                        next_queue_id = max_entry_id + 1
-                    queue_state_loaded = True
-                    emit(
-                        "queue_state_loaded",
-                        {
-                            "queue_state_json": str(queue_state_path),
-                            "inbox_jsonl": canonical_inbox,
-                            "read_offset": read_offset,
-                            "acked_offset": acked_offset,
-                            "pending_events": len(pending_queue),
-                            "seen_events": persisted_seen_events,
-                            "processed_events": persisted_processed_events,
-                        },
-                    )
-            except Exception as exc:
-                emit(
-                    "state_error",
-                    {
-                        "op": "load_queue_state",
-                        "queue_state_json": str(queue_state_path),
-                        "error": str(exc),
-                    },
-                )
-                queue_state_loaded = False
-                start_offset = 0
-                read_offset = 0
-                acked_offset = 0
-                pending_queue = []
-                next_queue_id = 1
-                persisted_seen_events = 0
-                persisted_processed_events = 0
+        start_offset, read_offset, acked_offset, persisted_seen_events, persisted_processed_events, pending_queue, queue_state_loaded = (
+            self._load_queue_state(queue_state_path, canonical_inbox, emit)
+        )
+        next_queue_id = max(1, max((e.get("entry_id", 0) for e in pending_queue), default=0) + 1) if pending_queue else 1
 
         if not queue_state_loaded and legacy_state is not None:
             start_offset = legacy_state["offset"]

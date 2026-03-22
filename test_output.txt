@@ -1,0 +1,180 @@
+........................................................................ [  7%]
+..F..................................................................... [ 14%]
+........................................................................ [ 22%]
+........................................................................ [ 29%]
+..............................F......................................... [ 36%]
+........................................................................ [ 44%]
+........................................................................ [ 51%]
+...............FF.....................................ssssssssssssssssss [ 59%]
+sssssssssssssssssssss................................................... [ 66%]
+........................................................................ [ 73%]
+........................................................................ [ 81%]
+.....................................................F.................. [ 88%]
+..............FFF.F.F................................................... [ 96%]
+...........................F.....FF...                                   [100%]
+================================== FAILURES ===================================
+_________ TestClaimLinksStorage.test_get_linked_claims_filter_by_type _________
+tests\test_claim_links.py:136: in test_get_linked_claims_filter_by_type
+    svc = _make_service()
+          ^^^^^^^^^^^^^^^
+tests\test_claim_links.py:24: in _make_service
+    service.init_db()
+memorymaster\service.py:98: in init_db
+    self.store.init_db()
+memorymaster\storage.py:83: in init_db
+    self._ensure_fts5_schema(conn)
+memorymaster\storage.py:260: in _ensure_fts5_schema
+    conn.executescript(
+E   sqlite3.OperationalError: disk I/O error
+___________________ test_record_event_rejects_invalid_type ____________________
+tests\test_events_schema.py:40: in test_record_event_rejects_invalid_type
+    service.init_db()
+memorymaster\service.py:98: in init_db
+    self.store.init_db()
+memorymaster\storage.py:78: in init_db
+    conn.executescript(load_schema_sql())
+E   sqlite3.OperationalError: disk I/O error
+______________ TestMigration.test_migrate_from_legacy_state_json ______________
+tests\test_operator_queue.py:272: in test_migrate_from_legacy_state_json
+    assert result is True
+E   assert False is True
+______________ TestRunStreamSqlite.test_basic_stream_processing _______________
+tests\test_operator_queue.py:291: in test_basic_stream_processing
+    service.init_db()
+memorymaster\service.py:98: in init_db
+    self.store.init_db()
+memorymaster\storage.py:78: in init_db
+    conn.executescript(load_schema_sql())
+E   sqlite3.OperationalError: disk I/O error
+_________________ test_sensitive_redaction_and_access_control _________________
+tests\test_sqlite_core.py:81: in test_sensitive_redaction_and_access_control
+    visible = service.query("token", retrieval_mode="hybrid", limit=10, allow_sensitive=True, include_candidates=True)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+memorymaster\service.py:245: in query
+    rows = self.query_rows(
+memorymaster\service.py:381: in query_rows
+    candidates = self.store.list_claims(
+memorymaster\storage.py:956: in list_claims
+    rows = conn.execute(sql, params).fetchall()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   sqlite3.OperationalError: no such table: claims
+____ test_run_steward_manual_non_destructive_emits_proposals_and_artifact _____
+tests\test_steward.py:71: in test_run_steward_manual_non_destructive_emits_proposals_and_artifact
+    report = run_steward(
+memorymaster\steward.py:1503: in run_steward
+    cycle_payload = _run_cycle(
+memorymaster\steward.py:1027: in _run_cycle
+    after = _status_snapshot(service, allow_sensitive=allow_sensitive)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+memorymaster\steward.py:117: in _status_snapshot
+    claims = service.store.list_claims(limit=limit, include_archived=True, include_citations=False)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+memorymaster\storage.py:956: in list_claims
+    rows = conn.execute(sql, params).fetchall()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   sqlite3.OperationalError: no such table: claims
+_______________ test_run_steward_apply_can_transition_to_stale ________________
+tests\test_steward.py:116: in test_run_steward_apply_can_transition_to_stale
+    report = run_steward(
+memorymaster\steward.py:1503: in run_steward
+    cycle_payload = _run_cycle(
+memorymaster\steward.py:1027: in _run_cycle
+    after = _status_snapshot(service, allow_sensitive=allow_sensitive)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+memorymaster\steward.py:117: in _status_snapshot
+    claims = service.store.list_claims(limit=limit, include_archived=True, include_citations=False)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+memorymaster\storage.py:956: in list_claims
+    rows = conn.execute(sql, params).fetchall()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   sqlite3.OperationalError: no such table: claims
+------------------------------ Captured log call ------------------------------
+WARNING  memorymaster.storage:storage.py:1634 claim_embeddings table missing, recreating: no such table: claim_embeddings
+ERROR    memorymaster.storage:storage.py:1652 Failed to recreate claim_embeddings: no such table: main.claims
+_____________ test_run_steward_cadence_respects_budget_guardrails _____________
+tests\test_steward.py:160: in test_run_steward_cadence_respects_budget_guardrails
+    report = run_steward(
+memorymaster\steward.py:1503: in run_steward
+    cycle_payload = _run_cycle(
+memorymaster\steward.py:1027: in _run_cycle
+    after = _status_snapshot(service, allow_sensitive=allow_sensitive)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+memorymaster\steward.py:117: in _status_snapshot
+    claims = service.store.list_claims(limit=limit, include_archived=True, include_citations=False)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+memorymaster\storage.py:956: in list_claims
+    rows = conn.execute(sql, params).fetchall()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   sqlite3.OperationalError: no such table: claims
+------------------------------ Captured log call ------------------------------
+WARNING  memorymaster.storage:storage.py:1634 claim_embeddings table missing, recreating: no such table: claim_embeddings
+ERROR    memorymaster.storage:storage.py:1652 Failed to recreate claim_embeddings: no such table: main.claims
+___________ test_steward_proposal_resolve_approve_and_reject_paths ____________
+tests\test_steward.py:248: in test_steward_proposal_resolve_approve_and_reject_paths
+    run_steward(
+memorymaster\steward.py:1503: in run_steward
+    cycle_payload = _run_cycle(
+memorymaster\steward.py:1027: in _run_cycle
+    after = _status_snapshot(service, allow_sensitive=allow_sensitive)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+memorymaster\steward.py:117: in _status_snapshot
+    claims = service.store.list_claims(limit=limit, include_archived=True, include_citations=False)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+memorymaster\storage.py:956: in list_claims
+    rows = conn.execute(sql, params).fetchall()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   sqlite3.OperationalError: no such table: claims
+_____________________ test_proposal_resolution_cli_parity _____________________
+tests\test_steward_resolution_parity.py:127: in test_proposal_resolution_cli_parity
+    proposal_event_id = _seed_proposal(service, db, workspace)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_steward_resolution_parity.py:71: in _seed_proposal
+    run_steward(
+memorymaster\steward.py:1503: in run_steward
+    cycle_payload = _run_cycle(
+memorymaster\steward.py:1027: in _run_cycle
+    after = _status_snapshot(service, allow_sensitive=allow_sensitive)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+memorymaster\steward.py:117: in _status_snapshot
+    claims = service.store.list_claims(limit=limit, include_archived=True, include_citations=False)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+memorymaster\storage.py:956: in list_claims
+    rows = conn.execute(sql, params).fetchall()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   sqlite3.OperationalError: no such table: claims
+------------------------------ Captured log call ------------------------------
+WARNING  memorymaster.storage:storage.py:1634 claim_embeddings table missing, recreating: no such table: claim_embeddings
+ERROR    memorymaster.storage:storage.py:1652 Failed to recreate claim_embeddings: no such table: main.claims
+__________________ TestFireWebhook.test_fire_webhook_success __________________
+tests\test_webhook.py:38: in test_fire_webhook_success
+    assert result is True
+E   assert False is True
+------------------------------ Captured log call ------------------------------
+WARNING  memorymaster.webhook:webhook.py:57 Webhook failed: '>=' not supported between instances of 'MagicMock' and 'int'
+_______________ TestFireWebhook.test_fire_webhook_empty_payload _______________
+tests\test_webhook.py:108: in test_fire_webhook_empty_payload
+    assert result is True
+E   assert False is True
+------------------------------ Captured log call ------------------------------
+WARNING  memorymaster.webhook:webhook.py:57 Webhook failed: '>=' not supported between instances of 'MagicMock' and 'int'
+___________________ TestFireWebhook.test_fire_webhook_https ___________________
+tests\test_webhook.py:118: in test_fire_webhook_https
+    assert result is True
+E   assert False is True
+------------------------------ Captured log call ------------------------------
+WARNING  memorymaster.webhook:webhook.py:57 Webhook failed: '>=' not supported between instances of 'MagicMock' and 'int'
+=========================== short test summary info ===========================
+FAILED tests/test_claim_links.py::TestClaimLinksStorage::test_get_linked_claims_filter_by_type
+FAILED tests/test_events_schema.py::test_record_event_rejects_invalid_type - ...
+FAILED tests/test_operator_queue.py::TestMigration::test_migrate_from_legacy_state_json
+FAILED tests/test_operator_queue.py::TestRunStreamSqlite::test_basic_stream_processing
+FAILED tests/test_sqlite_core.py::test_sensitive_redaction_and_access_control
+FAILED tests/test_steward.py::test_run_steward_manual_non_destructive_emits_proposals_and_artifact
+FAILED tests/test_steward.py::test_run_steward_apply_can_transition_to_stale
+FAILED tests/test_steward.py::test_run_steward_cadence_respects_budget_guardrails
+FAILED tests/test_steward.py::test_steward_proposal_resolve_approve_and_reject_paths
+FAILED tests/test_steward_resolution_parity.py::test_proposal_resolution_cli_parity
+FAILED tests/test_webhook.py::TestFireWebhook::test_fire_webhook_success - as...
+FAILED tests/test_webhook.py::TestFireWebhook::test_fire_webhook_empty_payload
+FAILED tests/test_webhook.py::TestFireWebhook::test_fire_webhook_https - asse...
+13 failed, 922 passed, 39 skipped in 188.77s (0:03:08)

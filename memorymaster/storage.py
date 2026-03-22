@@ -1633,7 +1633,10 @@ class SQLiteStore:
             if "no such table" in str(exc).lower():
                 logger.warning("claim_embeddings table missing, recreating: %s", exc)
                 try:
-                    self._ensure_embeddings_schema(self.connect())
+                    # Create the table and ensure it's committed before retrying
+                    with self.connect() as create_conn:
+                        self._ensure_embeddings_schema(create_conn)
+                        create_conn.commit()
                     # Retry the insert
                     with self.connect() as conn:
                         conn.executemany(
