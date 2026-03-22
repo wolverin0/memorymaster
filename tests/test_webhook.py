@@ -31,7 +31,9 @@ class TestFireWebhook:
     @patch.dict(os.environ, {"MEMORYMASTER_WEBHOOK_URL": "http://example.com/webhook"})
     def test_fire_webhook_success(self, mock_urlopen):
         """fire_webhook returns True on success."""
-        mock_urlopen.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_urlopen.return_value.__enter__ = MagicMock(return_value=mock_resp)
         mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
 
         result = fire_webhook("claim_created", {"claim_id": 42})
@@ -101,7 +103,9 @@ class TestFireWebhook:
     @patch.dict(os.environ, {"MEMORYMASTER_WEBHOOK_URL": "http://example.com/webhook"})
     def test_fire_webhook_empty_payload(self, mock_urlopen):
         """fire_webhook handles empty payload."""
-        mock_urlopen.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_urlopen.return_value.__enter__ = MagicMock(return_value=mock_resp)
         mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
 
         result = fire_webhook("event", {})
@@ -111,7 +115,9 @@ class TestFireWebhook:
     @patch.dict(os.environ, {"MEMORYMASTER_WEBHOOK_URL": "https://secure.example.com/webhook"})
     def test_fire_webhook_https(self, mock_urlopen):
         """fire_webhook works with HTTPS URLs."""
-        mock_urlopen.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_urlopen.return_value.__enter__ = MagicMock(return_value=mock_resp)
         mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
 
         result = fire_webhook("event", {})
