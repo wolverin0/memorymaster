@@ -966,21 +966,25 @@ class SQLiteStore:
                 rows = conn.execute(sql, params).fetchall()
             except sqlite3.OperationalError as exc:
                 if "no such table" in str(exc).lower():
-                    # Claims table is missing - this could be due to schema loss or db corruption
-                    # Reinitialize the database
-                    logger.warning("claims table missing in list_claims, reinitializing: %s", exc)
-                    self.init_db()
-                    # Recursively call list_claims to try again
-                    return self.list_claims(
-                        status=status,
-                        status_in=status_in,
-                        limit=limit,
-                        include_archived=include_archived,
-                        text_query=text_query,
-                        include_citations=include_citations,
-                        scope_allowlist=scope_allowlist,
-                        tenant_id=tenant_id,
-                    )
+                    # Check if database has been initialized at all
+                    try:
+                        table_count = conn.execute(
+                            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                        ).fetchone()[0]
+                    except sqlite3.OperationalError as e2:
+                        # Can't even query sqlite_master - database is broken, raise the original error
+                        logger.error(f"Can't check sqlite_master: {e2}")
+                        raise
+
+                    if table_count == 0:
+                        # Database file exists but is empty/not initialized - raise error
+                        logger.error(f"Database has 0 tables, raising error")
+                        raise
+                    else:
+                        # Database has tables but claims is missing - return empty
+                        # This can happen due to concurrent cleanup or corruption
+                        logger.warning(f"Database has {table_count} tables but claims missing, returning empty: {exc}")
+                        return []
                 raise
 
         claims = [self._row_to_claim(row) for row in rows]
