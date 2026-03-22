@@ -1,0 +1,29 @@
+replicaCount: 1
+
+image:
+  repository: memorymaster
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8765
+
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+
+env:
+  MEMORYMASTER_DEFAULT_DB: /data/memorymaster.db
+  MEMORYMASTER_WORKSPACE: /data
+  QDRANT_URL: http://qdrant:6333
+  OLLAMA_URL: http://ollama:11434
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi

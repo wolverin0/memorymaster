@@ -54,6 +54,10 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+class ConcurrentModificationError(RuntimeError):
+    """Raised when an optimistic-lock check fails during a status transition."""
+
+
 class SQLiteStore:
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = str(db_path)
@@ -80,7 +84,17 @@ class SQLiteStore:
             self._ensure_temporal_columns(conn)
             self._ensure_tiering_columns(conn)
             self._ensure_agent_columns(conn)
+            self._ensure_version_column(conn)
             conn.commit()
+
+    @staticmethod
+    def _ensure_version_column(conn: sqlite3.Connection) -> None:
+        """Add ``version`` column to claims (optimistic-locking counter)."""
+        try:
+            conn.execute("ALTER TABLE claims ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
 
     @staticmethod
     def _ensure_claim_idempotency_schema(conn: sqlite3.Connection) -> None:
@@ -1162,14 +1176,19 @@ class SQLiteStore:
         next_replaced_by = replaced_by_claim_id if replaced_by_claim_id is not None else claim.replaced_by_claim_id
 
         with self.connect() as conn:
-            conn.execute(
+            cur = conn.execute(
                 """
                 UPDATE claims
-                SET status = ?, updated_at = ?, last_validated_at = ?, archived_at = ?, replaced_by_claim_id = ?
-                WHERE id = ?
+                SET status = ?, updated_at = ?, last_validated_at = ?, archived_at = ?,
+                    replaced_by_claim_id = ?, version = version + 1
+                WHERE id = ? AND version = ?
                 """,
-                (to_status, now, last_validated_at, archived_at, next_replaced_by, claim.id),
+                (to_status, now, last_validated_at, archived_at, next_replaced_by, claim.id, claim.version),
             )
+            if cur.rowcount == 0:
+                raise ConcurrentModificationError(
+                    f"Claim {claim.id} was modified by another writer (version mismatch). Reload and retry."
+                )
             self._insert_event_row(
                 conn,
                 claim_id=claim.id,
@@ -1565,6 +1584,7 @@ class SQLiteStore:
         tier = row["tier"] if "tier" in keys else "working"
         access_count = int(row["access_count"]) if "access_count" in keys else 0
         last_accessed_val = row["last_accessed"] if "last_accessed" in keys else None
+        version = int(row["version"]) if "version" in keys and row["version"] is not None else 1
         return Claim(
             id=int(row["id"]),
             text=str(row["text"]),
@@ -1595,6 +1615,7 @@ class SQLiteStore:
             valid_until=row["valid_until"] if "valid_until" in keys else None,
             source_agent=row["source_agent"] if "source_agent" in keys else None,
             visibility=row["visibility"] if "visibility" in keys else "public",
+            version=version,
         )
 
     def record_access(self, claim_id: int) -> None:

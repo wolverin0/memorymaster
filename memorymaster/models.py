@@ -285,4 +285,5 @@ class Claim:
     valid_until: str | None = None
     source_agent: str | None = None
     visibility: str = "public"
+    version: int = 1
     citations: list[Citation] = field(default_factory=list)
