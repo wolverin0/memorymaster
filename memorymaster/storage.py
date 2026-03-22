@@ -539,8 +539,8 @@ class SQLiteStore:
         prev_hash: str | None = None
         updated = 0
         for row in rows:
-            row_hash = row["event_hash"] if "event_hash" in row else None
-            row_algo = row["hash_algo"] if "hash_algo" in row else None
+            row_hash = row.get("event_hash")
+            row_algo = row.get("hash_algo")
             if row_hash and not rebuild_all:
                 prev_hash = str(row_hash)
                 continue
