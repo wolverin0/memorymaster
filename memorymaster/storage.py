@@ -853,18 +853,15 @@ class SQLiteStore:
         ).fetchone()
         return row is not None
 
-    def list_claims(
+    def _build_list_clauses(
         self,
-        *,
-        status: str | None = None,
-        status_in: list[str] | None = None,
-        limit: int = 50,
-        include_archived: bool = False,
-        text_query: str | None = None,
-        include_citations: bool = False,
-        scope_allowlist: list[str] | None = None,
-        tenant_id: str | None = None,
-    ) -> list[Claim]:
+        status: str | None,
+        status_in: list[str] | None,
+        include_archived: bool,
+        scope_allowlist: list[str] | None,
+        tenant_id: str | None,
+    ) -> tuple[list[str], list[object]]:
+        """Build WHERE clauses and parameters for list_claims."""
         clauses: list[str] = []
         params: list[object] = []
 
@@ -883,16 +880,32 @@ class SQLiteStore:
         if not include_archived and status != "archived":
             clauses.append("status <> 'archived'")
 
-        fts_query = ""
-        if text_query:
-            fts_query = self._escape_fts5_query(text_query)
-
         if scope_allowlist:
             normalized_scopes = [scope.strip() for scope in scope_allowlist if scope and scope.strip()]
             if normalized_scopes:
                 placeholders = ",".join("?" for _ in normalized_scopes)
                 clauses.append(f"scope IN ({placeholders})")
                 params.extend(normalized_scopes)
+
+        return clauses, params
+
+    def list_claims(
+        self,
+        *,
+        status: str | None = None,
+        status_in: list[str] | None = None,
+        limit: int = 50,
+        include_archived: bool = False,
+        text_query: str | None = None,
+        include_citations: bool = False,
+        scope_allowlist: list[str] | None = None,
+        tenant_id: str | None = None,
+    ) -> list[Claim]:
+        clauses, params = self._build_list_clauses(status, status_in, include_archived, scope_allowlist, tenant_id)
+
+        fts_query = ""
+        if text_query:
+            fts_query = self._escape_fts5_query(text_query)
 
         with self.connect() as conn:
             if text_query and self._has_fts5_table(conn):
