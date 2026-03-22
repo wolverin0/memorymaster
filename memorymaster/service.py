@@ -301,6 +301,17 @@ class MemoryService:
         if self.tenant_id is not None and claim.tenant_id != self.tenant_id:
             raise ValueError(f"Claim {claim.id} does not exist.")
 
+    def _build_query_statuses(self, include_stale: bool, include_conflicted: bool, include_candidates: bool) -> list[str]:
+        """Build list of claim statuses to include in query."""
+        statuses = ["confirmed"]
+        if include_stale:
+            statuses.append("stale")
+        if include_conflicted:
+            statuses.append("conflicted")
+        if include_candidates:
+            statuses.append("candidate")
+        return statuses
+
     def _query_legacy_mode(self, query_text: str, limit: int, statuses: list[str], normalized_scopes: list[str] | None, include_sensitive: bool, requesting_agent: str | None) -> list[dict[str, object]]:
         """Query using legacy retrieval mode."""
         legacy = self.store.list_claims(
@@ -369,13 +380,7 @@ class MemoryService:
             deny_mode="filter",
         )
 
-        statuses = ["confirmed"]
-        if include_stale:
-            statuses.append("stale")
-        if include_conflicted:
-            statuses.append("conflicted")
-        if include_candidates:
-            statuses.append("candidate")
+        statuses = self._build_query_statuses(include_stale, include_conflicted, include_candidates)
         normalized_scopes = self._normalize_scope_allowlist(scope_allowlist)
 
         if retrieval_mode == "legacy":
