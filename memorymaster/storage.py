@@ -539,8 +539,9 @@ class SQLiteStore:
         prev_hash: str | None = None
         updated = 0
         for row in rows:
-            row_hash = row.get("event_hash")
-            row_algo = row.get("hash_algo")
+            keys = row.keys()
+            row_hash = row["event_hash"] if "event_hash" in keys else None
+            row_algo = row["hash_algo"] if "hash_algo" in keys else None
             if row_hash and not rebuild_all:
                 prev_hash = str(row_hash)
                 continue
@@ -579,9 +580,12 @@ class SQLiteStore:
         payload_json: str | None,
         created_at: str,
     ) -> int:
-        prev_row = conn.execute(
-            "SELECT event_hash FROM events WHERE event_hash IS NOT NULL ORDER BY id DESC LIMIT 1"
-        ).fetchone()
+        try:
+            prev_row = conn.execute(
+                "SELECT event_hash FROM events WHERE event_hash IS NOT NULL ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        except sqlite3.OperationalError:
+            prev_row = None
         prev_event_hash = str(prev_row["event_hash"]) if prev_row and prev_row["event_hash"] is not None else None
         event_hash = SQLiteStore._compute_event_hash(
             claim_id=claim_id,
@@ -618,7 +622,8 @@ class SQLiteStore:
             )
             return int(cur.lastrowid)
         except sqlite3.OperationalError as exc:
-            if "no column named" not in str(exc).lower():
+            exc_str = str(exc).lower()
+            if "no column named" not in exc_str and "no such table" not in exc_str:
                 raise
             cur = conn.execute(
                 """
