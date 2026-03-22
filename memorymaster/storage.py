@@ -688,7 +688,7 @@ class SQLiteStore:
                     raise
                 existing = self.get_claim(int(existing_row["id"]))
                 if existing is None:
-                    raise RuntimeError("Idempotency key matched missing claim.")
+                    raise RuntimeError("Idempotency key matched missing claim.") from None
                 return existing
 
             claim_id = int(cur.lastrowid)
@@ -988,6 +988,23 @@ class SQLiteStore:
                 "UPDATE claims SET normalized_text = ?, updated_at = ? WHERE id = ?",
                 (normalized_text, now, claim_id),
             )
+            conn.commit()
+
+    def set_normalized_texts_batch(self, updates: dict[int, str]) -> None:
+        """Batch update normalized_text for multiple claims in a single transaction.
+
+        Args:
+            updates: dict mapping claim_id -> normalized_text
+        """
+        if not updates:
+            return
+        now = utc_now()
+        with self.connect() as conn:
+            for claim_id, normalized_text in updates.items():
+                conn.execute(
+                    "UPDATE claims SET normalized_text = ?, updated_at = ? WHERE id = ?",
+                    (normalized_text, now, claim_id),
+                )
             conn.commit()
 
     def redact_claim_payload(
@@ -1625,6 +1642,23 @@ class SQLiteStore:
             conn.execute(
                 "UPDATE claims SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
                 (now, claim_id),
+            )
+            conn.commit()
+
+    def record_accesses_batch(self, claim_ids: list[int]) -> None:
+        """Batch update access_count and last_accessed for multiple claims in a single transaction.
+
+        Much faster than calling record_access() in a loop when there are many claims.
+        """
+        if not claim_ids:
+            return
+        now = utc_now()
+        with self.connect() as conn:
+            # Use a single UPDATE statement with IN clause
+            placeholders = ",".join("?" * len(claim_ids))
+            conn.execute(
+                f"UPDATE claims SET access_count = access_count + 1, last_accessed = ? WHERE id IN ({placeholders})",
+                [now] + claim_ids,
             )
             conn.commit()
 

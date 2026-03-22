@@ -117,12 +117,12 @@ def _load_transformer(model: str) -> Any:
     try:
         from sentence_transformers import SentenceTransformer
         return SentenceTransformer(model)
-    except ImportError:
+    except ImportError as e:
         raise ImportError(
             "sentence-transformers is required for semantic embeddings. "
             "Install with: pip install sentence-transformers\n"
             "Or use the default hash-v1 model (no dependencies, but not semantic)."
-        )
+        ) from e
 
 
 def _load_gemini_client(api_key: str | None = None) -> Any:
@@ -135,11 +135,11 @@ def _load_gemini_client(api_key: str | None = None) -> Any:
     try:
         from google import genai
         return genai.Client(api_key=resolved_key)
-    except ImportError:
+    except ImportError as e:
         raise ImportError(
             "google-genai is required for Gemini embeddings. "
             "Install with: pip install google-genai"
-        )
+        ) from e
 
 
 def hash_embed(text: str, dims: int = 1536) -> list[float]:

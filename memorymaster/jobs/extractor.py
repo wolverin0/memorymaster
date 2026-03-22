@@ -37,11 +37,23 @@ def run(store, limit: int = 200) -> dict[str, int]:
     normalized = 0
     structured = 0
 
+    # Batch normalize texts
+    normalized_texts = {}
     for claim in claims:
         clean = normalize_claim_text(claim.text)
-        store.set_normalized_text(claim.id, clean)
+        normalized_texts[claim.id] = clean
         normalized += 1
 
+    if normalized_texts:
+        if hasattr(store, "set_normalized_texts_batch"):
+            store.set_normalized_texts_batch(normalized_texts)
+        else:
+            # Fallback for stores without batch method
+            for claim_id, clean in normalized_texts.items():
+                store.set_normalized_text(claim_id, clean)
+
+    # Process structure inference
+    for claim in claims:
         claim_type, subject, predicate, object_value = infer_structure(claim.text)
         if any([claim_type, subject, predicate, object_value]):
             store.update_claim_structure(
