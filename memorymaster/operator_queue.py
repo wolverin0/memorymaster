@@ -218,42 +218,50 @@ class OperatorQueue:
         if self.get_meta("migrated_from_json") == "true":
             return False
 
-        migrated = False
-
-        # Try queue_state_json first (newer format)
-        if queue_state_path and queue_state_path.exists():
-            try:
-                raw = json.loads(queue_state_path.read_text(encoding="utf-8"))
-                if isinstance(raw, dict):
-                    queue_inbox_raw = str(raw.get("inbox_jsonl", "")).strip()
-                    queue_inbox = (
-                        str(Path(queue_inbox_raw).resolve()) if queue_inbox_raw else ""
-                    )
-                    if queue_inbox == canonical_inbox:
-                        self._import_queue_state(raw)
-                        migrated = True
-            except Exception:
-                pass
-
-        # Fall back to legacy state_json
-        if not migrated and state_path and state_path.exists():
-            try:
-                raw = json.loads(state_path.read_text(encoding="utf-8"))
-                if isinstance(raw, dict):
-                    state_inbox_raw = str(raw.get("inbox_jsonl", "")).strip()
-                    state_inbox = (
-                        str(Path(state_inbox_raw).resolve()) if state_inbox_raw else ""
-                    )
-                    if state_inbox == canonical_inbox:
-                        self._import_legacy_state(raw)
-                        migrated = True
-            except Exception:
-                pass
+        migrated = self._try_migrate_queue_state(queue_state_path, canonical_inbox)
+        if not migrated:
+            migrated = self._try_migrate_legacy_state(state_path, canonical_inbox)
 
         if migrated:
             self.set_meta("migrated_from_json", "true")
 
         return migrated
+
+    def _try_migrate_queue_state(self, queue_state_path: Path | None, canonical_inbox: str) -> bool:
+        """Try to migrate from queue_state_json (newer format)."""
+        if not queue_state_path or not queue_state_path.exists():
+            return False
+        try:
+            raw = json.loads(queue_state_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                queue_inbox_raw = str(raw.get("inbox_jsonl", "")).strip()
+                queue_inbox = (
+                    str(Path(queue_inbox_raw).resolve()) if queue_inbox_raw else ""
+                )
+                if queue_inbox == canonical_inbox:
+                    self._import_queue_state(raw)
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _try_migrate_legacy_state(self, state_path: Path | None, canonical_inbox: str) -> bool:
+        """Try to migrate from state_json (legacy format)."""
+        if not state_path or not state_path.exists():
+            return False
+        try:
+            raw = json.loads(state_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                state_inbox_raw = str(raw.get("inbox_jsonl", "")).strip()
+                state_inbox = (
+                    str(Path(state_inbox_raw).resolve()) if state_inbox_raw else ""
+                )
+                if state_inbox == canonical_inbox:
+                    self._import_legacy_state(raw)
+                    return True
+        except Exception:
+            pass
+        return False
 
     def _import_queue_state(self, raw: dict[str, Any]) -> None:
         """Import from the queue_state_json format."""
