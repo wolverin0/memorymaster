@@ -816,6 +816,27 @@ def _emit_proposal_event(service: MemoryService, claim: Any, decision: Decision,
     )
 
 
+def _make_circuit_open_result(probe: ProbeConfig, probe_type: str, probe_failure_threshold: int, probe_failures: dict[str, int]) -> ProbeResult:
+    """Create a skipped probe result due to open circuit breaker."""
+    return ProbeResult(
+        probe_type=probe_type,
+        passed=False,
+        metrics={"circuit_open": True, "timed_out": False, "duration_ms": 0.0},
+        reasons=[
+            Reason(
+                code="probe.circuit_open",
+                probe_type=probe_type,
+                severity="low",
+                detail="Probe skipped because circuit breaker is open.",
+                evidence={
+                    "failure_threshold": probe_failure_threshold,
+                    "failures": probe_failures.get(probe_type, 0),
+                },
+            )
+        ],
+    )
+
+
 def _run_cycle(
     service: MemoryService,
     *,
@@ -886,23 +907,7 @@ def _run_cycle(
                 circuit_open_count += 1
                 _probe_stats_row(probe.probe_type)["skipped_circuit_open"] += 1
                 probe_results.append(
-                    ProbeResult(
-                        probe_type=probe.probe_type,
-                        passed=False,
-                        metrics={"circuit_open": True, "timed_out": False, "duration_ms": 0.0},
-                        reasons=[
-                            Reason(
-                                code="probe.circuit_open",
-                                probe_type=probe.probe_type,
-                                severity="low",
-                                detail="Probe skipped because circuit breaker is open.",
-                                evidence={
-                                    "failure_threshold": probe_failure_threshold,
-                                    "failures": probe_failures.get(probe.probe_type, 0),
-                                },
-                            )
-                        ],
-                    )
+                    _make_circuit_open_result(probe, probe.probe_type, probe_failure_threshold, probe_failures)
                 )
                 continue
 
