@@ -74,38 +74,52 @@ def _pick_winner(a: Claim, b: Claim) -> ConflictPair:
     key = (a.subject or "", a.predicate or "", a.scope)
 
     # Pinned always wins
-    if a.pinned and not b.pinned:
-        return ConflictPair(winner=a, loser=b, reason="pinned_wins", key=key)
-    if b.pinned and not a.pinned:
-        return ConflictPair(winner=b, loser=a, reason="pinned_wins", key=key)
+    if a.pinned != b.pinned:
+        return ConflictPair(
+            winner=a if a.pinned else b,
+            loser=b if a.pinned else a,
+            reason="pinned_wins",
+            key=key,
+        )
 
     # Higher confidence
-    if a.confidence > b.confidence:
-        return ConflictPair(winner=a, loser=b, reason="higher_confidence", key=key)
-    if b.confidence > a.confidence:
-        return ConflictPair(winner=b, loser=a, reason="higher_confidence", key=key)
+    if a.confidence != b.confidence:
+        return ConflictPair(
+            winner=a if a.confidence > b.confidence else b,
+            loser=b if a.confidence > b.confidence else a,
+            reason="higher_confidence",
+            key=key,
+        )
 
     # More recent
     a_ts = _parse_iso(a.updated_at)
     b_ts = _parse_iso(b.updated_at)
-    if a_ts and b_ts:
-        if a_ts > b_ts:
-            return ConflictPair(winner=a, loser=b, reason="more_recent", key=key)
-        if b_ts > a_ts:
-            return ConflictPair(winner=b, loser=a, reason="more_recent", key=key)
+    if a_ts and b_ts and a_ts != b_ts:
+        return ConflictPair(
+            winner=a if a_ts > b_ts else b,
+            loser=b if a_ts > b_ts else a,
+            reason="more_recent",
+            key=key,
+        )
 
     # More citations
     a_cites = _citation_count(a)
     b_cites = _citation_count(b)
-    if a_cites > b_cites:
-        return ConflictPair(winner=a, loser=b, reason="more_citations", key=key)
-    if b_cites > a_cites:
-        return ConflictPair(winner=b, loser=a, reason="more_citations", key=key)
+    if a_cites != b_cites:
+        return ConflictPair(
+            winner=a if a_cites > b_cites else b,
+            loser=b if a_cites > b_cites else a,
+            reason="more_citations",
+            key=key,
+        )
 
     # Deterministic tiebreaker: higher id wins (most recently created)
-    if a.id > b.id:
-        return ConflictPair(winner=a, loser=b, reason="higher_id_tiebreaker", key=key)
-    return ConflictPair(winner=b, loser=a, reason="higher_id_tiebreaker", key=key)
+    return ConflictPair(
+        winner=a if a.id > b.id else b,
+        loser=b if a.id > b.id else a,
+        reason="higher_id_tiebreaker",
+        key=key,
+    )
 
 
 def _normalize_value(value: str | None) -> str:
