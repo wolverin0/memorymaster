@@ -107,7 +107,7 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 - [x] `[[mm-xxxx]]` wikilinks from claim_links
 - [x] Group by scope into subdirectories
 - [x] Index.md with links to all claims
-- [ ] Incremental export (only changed claims since last export)
+- [x] Incremental export (--incremental flag with .last_export timestamp)
 - [x] Compatible with obsidian-skills (agents can read exported vault)
 
 ### GitNexus Bridge
@@ -147,7 +147,7 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 - [x] LLM-powered conflict resolution with human approval gates (auto_resolver.py + existing steward proposals)
 - [x] Automatic claim extraction from unstructured text (auto_extractor.py + extract-claims CLI)
 - [x] Knowledge graph visualization (Obsidian graph view via export-vault)
-- [ ] Cross-project memory federation
+- [x] Cross-project memory federation (federated_query in service + MCP)
 - [x] Plugin system for custom validators and probes (plugins.py + entry points)
 - [x] Progressive disclosure: summary → detail → full context (detail_level param)
 - [x] Docker image with multi-stage build (Dockerfile + docker-compose.yml)
