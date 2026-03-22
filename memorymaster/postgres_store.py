@@ -1247,6 +1247,56 @@ class PostgresStore(SQLiteStore):
         return str(value)
 
     @staticmethod
+    def _handle_dollar_quote(
+        sql: str,
+        i: int,
+        current: list[str],
+        dollar_quote_tag: str | None,
+    ) -> tuple[int, str | None]:
+        """Handle dollar-quoted string transitions."""
+        if dollar_quote_tag is not None:
+            if sql.startswith(dollar_quote_tag, i):
+                current.append(dollar_quote_tag)
+                return i + len(dollar_quote_tag), None
+            current.append(sql[i])
+            return i + 1, dollar_quote_tag
+
+        # Check if starting a new dollar quote
+        if sql[i] == "$":
+            j = i + 1
+            while j < len(sql) and (sql[j].isalnum() or sql[j] == "_"):
+                j += 1
+            if j < len(sql) and sql[j] == "$":
+                tag = sql[i : j + 1]
+                current.append(tag)
+                return j + 1, tag
+
+        return i, dollar_quote_tag
+
+    @staticmethod
+    def _handle_single_quote(
+        sql: str,
+        i: int,
+        current: list[str],
+        in_single_quote: bool,
+    ) -> tuple[int, bool]:
+        """Handle single-quoted string transitions."""
+        if in_single_quote:
+            current.append(sql[i])
+            if sql[i] == "'":
+                if i + 1 < len(sql) and sql[i + 1] == "'":
+                    current.append("'")
+                    return i + 2, True
+                return i + 1, False
+            return i + 1, True
+
+        if sql[i] == "'":
+            current.append(sql[i])
+            return i + 1, True
+
+        return i, in_single_quote
+
+    @staticmethod
     def _split_sql_statements(sql: str) -> list[str]:
         statements: list[str] = []
         current: list[str] = []
@@ -1258,44 +1308,21 @@ class PostgresStore(SQLiteStore):
         while i < n:
             ch = sql[i]
 
-            if dollar_quote_tag is not None:
-                if sql.startswith(dollar_quote_tag, i):
-                    current.append(dollar_quote_tag)
-                    i += len(dollar_quote_tag)
-                    dollar_quote_tag = None
-                    continue
-                current.append(ch)
-                i += 1
+            # Handle dollar-quoted strings
+            new_i, new_tag = PostgresStore._handle_dollar_quote(sql, i, current, dollar_quote_tag)
+            if new_i != i:
+                i = new_i
+                dollar_quote_tag = new_tag
                 continue
 
-            if in_single_quote:
-                current.append(ch)
-                if ch == "'":
-                    if i + 1 < n and sql[i + 1] == "'":
-                        current.append("'")
-                        i += 2
-                        continue
-                    in_single_quote = False
-                i += 1
+            # Handle single-quoted strings
+            new_i, new_in_quote = PostgresStore._handle_single_quote(sql, i, current, in_single_quote)
+            if new_i != i or new_in_quote != in_single_quote:
+                i = new_i
+                in_single_quote = new_in_quote
                 continue
 
-            if ch == "'":
-                in_single_quote = True
-                current.append(ch)
-                i += 1
-                continue
-
-            if ch == "$":
-                j = i + 1
-                while j < n and (sql[j].isalnum() or sql[j] == "_"):
-                    j += 1
-                if j < n and sql[j] == "$":
-                    tag = sql[i : j + 1]
-                    dollar_quote_tag = tag
-                    current.append(tag)
-                    i = j + 1
-                    continue
-
+            # Handle statement terminator
             if ch == ";":
                 statement = "".join(current).strip()
                 if statement:
