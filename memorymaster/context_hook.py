@@ -65,16 +65,34 @@ def recall(
     db = db_path or os.environ.get("MEMORYMASTER_DEFAULT_DB") or "memorymaster.db"
     svc = MemoryService(db_target=db, workspace_root=Path.cwd())
 
+    # Try fast legacy search first (0.1s)
     result = svc.query_for_context(
         query=query,
         token_budget=budget,
         output_format=format,
-        retrieval_mode="legacy",  # Force legacy for speed (<0.2s vs 8s for hybrid)
+        retrieval_mode="legacy",
         include_candidates=True,
-        scope_allowlist=None,  # Search ALL scopes — cross-project recall
+        scope_allowlist=None,
     )
 
+    # If legacy found nothing, try Qdrant semantic search (0.5s)
     if result.claims_included == 0:
+        try:
+            from memorymaster.qdrant_backend import QdrantBackend
+            backend = QdrantBackend()
+            hits = backend.search(query, limit=5)
+            backend.close()
+            if hits:
+                lines = ["# Memory Context (semantic search)", ""]
+                for hit in hits:
+                    p = hit.get("payload", {})
+                    text = p.get("claim_text", "")[:200]
+                    conf = p.get("confidence", 0)
+                    state = p.get("state", "?")
+                    lines.append(f"- {text} [{state}, conf={conf:.2f}]")
+                return "\n".join(lines).encode("ascii", errors="replace").decode("ascii")
+        except Exception:
+            pass
         return ""
 
     # Sanitize for Windows console encoding
