@@ -272,7 +272,7 @@ def _apply_env_floats(
     if not raw:
         return
     values = _parse_floats(raw, count)
-    for key, val in zip(keys, values):
+    for key, val in zip(keys, values, strict=True):
         overrides[key] = val
 
 

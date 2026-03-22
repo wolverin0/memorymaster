@@ -115,7 +115,7 @@ def train_quality_model(db_path: str) -> dict:
         joblib.dump(model, model_path)
 
         feature_names = ["confidence", "access_count", "retrieval_count", "text_length", "tier_score"]
-        importances = dict(zip(feature_names, model.feature_importances_))
+        importances = dict(zip(feature_names, model.feature_importances_, strict=True))
 
         return {
             "status": "trained",

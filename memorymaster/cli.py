@@ -1205,7 +1205,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(_json_envelope({"extracted": len(extracted), "ingested": len(ingested_ids), "claim_ids": ingested_ids}, total=len(ingested_ids), query_ms=elapsed_ms))
                 else:
                     print(f"Extracted {len(extracted)} claims, ingested {len(ingested_ids)} ({elapsed_ms:.0f}ms)")
-                    for cid, item in zip(ingested_ids, extracted):
+                    for cid, item in zip(ingested_ids, extracted, strict=True):
                         print(f"  [{cid}] {item['text'][:100]}")
             else:
                 if args.json_output:

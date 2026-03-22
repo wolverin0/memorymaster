@@ -176,6 +176,6 @@ def normalize(vec: list[float]) -> list[float]:
 def cosine_similarity(a: list[float], b: list[float]) -> float:
     if len(a) != len(b):
         raise ValueError("vectors must have same dimension")
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
     # vectors are normalized, but clamp for numeric safety.
     return max(-1.0, min(1.0, dot))

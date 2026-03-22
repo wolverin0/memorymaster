@@ -129,7 +129,7 @@ def _cluster_by_embedding(
                 n = len(clusters[idx])
                 cluster_centroids[idx] = [
                     (c * (n - 1) + e) / n
-                    for c, e in zip(centroid, embedding)
+                    for c, e in zip(centroid, embedding, strict=True)
                 ]
                 assigned = True
                 break
