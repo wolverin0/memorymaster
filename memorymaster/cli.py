@@ -346,6 +346,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("install-gitnexus-hook", help="Install GitNexus post-commit hook that re-analyzes the project after each commit")
 
+    recall_cmd = sub.add_parser("recall", help="Query memory for relevant context (for pre-turn injection)")
+    recall_cmd.add_argument("query", help="What context do you need?")
+    recall_cmd.add_argument("--budget", type=int, default=2000, help="Token budget for context")
+    recall_cmd.add_argument("--format", dest="output_format", default="text", choices=["text", "xml", "json"], help="Output format")
+
+    observe_cmd = sub.add_parser("observe", help="Extract and ingest observations from text (for post-turn learning)")
+    observe_cmd.add_argument("--text", required=True, help="Text to observe and potentially ingest")
+    observe_cmd.add_argument("--source", default="session", help="Source label")
+    observe_cmd.add_argument("--scope", default="project", help="Claim scope")
+    observe_cmd.add_argument("--force", action="store_true", help="Ingest even if no pattern match")
+    observe_cmd.add_argument("--llm", action="store_true", help="Use LLM for deeper extraction (slower)")
+
     return parser
 
 
@@ -1293,6 +1305,34 @@ def main(argv: list[str] | None = None) -> int:
                 print(_json_envelope({"installed": True, "path": str(hook_dst)}, query_ms=elapsed_ms))
             else:
                 print(f"GitNexus post-commit hook installed: {hook_dst}")
+            return 0
+
+        if args.command == "recall":
+            from memorymaster.context_hook import recall as _recall
+            output = _recall(args.query, db_path=str(effective_db), budget=args.budget, format=args.output_format)
+            if output:
+                print(output)
+            else:
+                print("(no relevant context found)")
+            return 0
+
+        if args.command == "observe":
+            from memorymaster.context_hook import observe as _observe, observe_llm
+            if args.llm:
+                result = observe_llm(args.text, source=args.source, db_path=str(effective_db), scope=args.scope)
+                if args.json_output:
+                    print(_json_envelope(result))
+                else:
+                    print(f"LLM extracted {result['extracted']} claims, ingested {result['ingested']}")
+            else:
+                result = _observe(args.text, source=args.source, db_path=str(effective_db), scope=args.scope, force=args.force)
+                if args.json_output:
+                    print(_json_envelope(result))
+                else:
+                    if result['ingested']:
+                        print(f"Observed: [{result['claim_type']}] claim_id={result['claim_id']}")
+                    else:
+                        print(f"Skipped: {result.get('reason', 'not memorable')}")
             return 0
 
         parser.print_help()
