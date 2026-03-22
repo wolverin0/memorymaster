@@ -301,6 +301,45 @@ class MemoryService:
         if self.tenant_id is not None and claim.tenant_id != self.tenant_id:
             raise ValueError(f"Claim {claim.id} does not exist.")
 
+    def _query_legacy_mode(self, query_text: str, limit: int, statuses: list[str], normalized_scopes: list[str] | None, include_sensitive: bool, requesting_agent: str | None) -> list[dict[str, object]]:
+        """Query using legacy retrieval mode."""
+        legacy = self.store.list_claims(
+            limit=limit,
+            text_query=query_text,
+            status_in=statuses,
+            include_archived=False,
+            include_citations=True,
+            scope_allowlist=normalized_scopes,
+            tenant_id=self.tenant_id,
+        )
+        if not include_sensitive:
+            legacy = [claim for claim in legacy if not is_sensitive_claim(claim)]
+        # Visibility: filter out private claims from other agents
+        if requesting_agent:
+            legacy = [c for c in legacy if getattr(c, 'visibility', 'public') == 'public' or getattr(c, 'source_agent', None) == requesting_agent]
+        ranked_rows = rank_claim_rows(
+            query_text,
+            legacy,
+            mode="legacy",
+            limit=limit,
+            vector_hook=None,
+        )
+        results = [
+            {
+                "claim": row.claim,
+                "status": row.claim.status,
+                "annotation": self._annotation_for_claim(row.claim),
+                "score": row.score,
+                "lexical_score": row.lexical_score,
+                "freshness_score": row.freshness_score,
+                "confidence_score": row.confidence_score,
+                "vector_score": row.vector_score,
+            }
+            for row in ranked_rows
+        ]
+        self._record_accesses(results, query_text=query_text)
+        return results
+
     def query_rows(
         self,
         query_text: str,
@@ -340,42 +379,7 @@ class MemoryService:
         normalized_scopes = self._normalize_scope_allowlist(scope_allowlist)
 
         if retrieval_mode == "legacy":
-            legacy = self.store.list_claims(
-                limit=limit,
-                text_query=query_text,
-                status_in=statuses,
-                include_archived=False,
-                include_citations=True,
-                scope_allowlist=normalized_scopes,
-                tenant_id=self.tenant_id,
-            )
-            if not include_sensitive:
-                legacy = [claim for claim in legacy if not is_sensitive_claim(claim)]
-            # Visibility: filter out private claims from other agents
-            if requesting_agent:
-                legacy = [c for c in legacy if getattr(c, 'visibility', 'public') == 'public' or getattr(c, 'source_agent', None) == requesting_agent]
-            ranked_rows = rank_claim_rows(
-                query_text,
-                legacy,
-                mode="legacy",
-                limit=limit,
-                vector_hook=None,
-            )
-            results = [
-                {
-                    "claim": row.claim,
-                    "status": row.claim.status,
-                    "annotation": self._annotation_for_claim(row.claim),
-                    "score": row.score,
-                    "lexical_score": row.lexical_score,
-                    "freshness_score": row.freshness_score,
-                    "confidence_score": row.confidence_score,
-                    "vector_score": row.vector_score,
-                }
-                for row in ranked_rows
-            ]
-            self._record_accesses(results, query_text=query_text)
-            return results
+            return self._query_legacy_mode(query_text, limit, statuses, normalized_scopes, include_sensitive, requesting_agent)
 
         candidate_limit = max(limit * 6, 60)
         candidates = self.store.list_claims(
