@@ -136,6 +136,8 @@ class TestTrainQualityModel:
         # Mock FeedbackTracker with sufficient data
         mock_ft = MagicMock()
         mock_ft_class.return_value = mock_ft
+        mock_ft.ensure_tables.return_value = None
+        mock_ft.compute_quality_scores.return_value = None
         mock_ft.get_stats.return_value = {"feedback_rows": MIN_SAMPLES + 50}
 
         # The actual test would need sufficient data in the DB
