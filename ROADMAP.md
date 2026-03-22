@@ -121,9 +121,9 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 - [x] Cron-based DB sync (scp every 15 min — configured on OpenClaw)
 - [x] memorymaster installed on OpenClaw VM
 - [x] export-vault for OpenClaw workspace (.md files in ~/.openclaw/workspace/)
-- [ ] Webhook on ingest for real-time push
+- [x] Webhook on ingest for real-time push (webhook.py)
 - [ ] Conflict resolution for simultaneous edits
-- [ ] QMD ↔ memorymaster claim mapping
+- [x] QMD ↔ memorymaster claim mapping (qmd_bridge.py)
 
 ---
 
@@ -134,7 +134,7 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 - [x] Claim ownership / agent attribution (source_agent field)
 - [x] Visibility: public / private claims per agent
 - [x] Conflict resolution policies (LLM-powered auto-resolver with evidence evaluation)
-- [ ] Cross-agent memory sharing with scope isolation
+- [x] Cross-agent memory sharing with scope isolation (visibility + RBAC filtering)
 - [ ] Agent heartbeat and session tracking
 - [x] Access control: admin / writer / reader roles (access_control.py)
 
@@ -148,7 +148,7 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 - [x] Automatic claim extraction from unstructured text (auto_extractor.py + extract-claims CLI)
 - [x] Knowledge graph visualization (Obsidian graph view via export-vault)
 - [ ] Cross-project memory federation
-- [ ] Plugin system for custom validators and probes
+- [x] Plugin system for custom validators and probes (plugins.py + entry points)
 - [x] Progressive disclosure: summary → detail → full context (detail_level param)
 - [x] Docker image with multi-stage build (Dockerfile + docker-compose.yml)
-- [ ] Helm chart for Kubernetes deployment
+- [x] Helm chart for Kubernetes deployment (helm/memorymaster/)
