@@ -17,12 +17,15 @@ from memorymaster.rl_trainer import MIN_SAMPLES, train_quality_model
 
 def _make_db(prefix: str) -> str:
     """Create a temporary SQLite DB with the full schema."""
-    fd, path = tempfile.mkstemp(prefix=f"{prefix}-", suffix=".db", dir=".tmp_cases")
+    import uuid
+    unique_suffix = str(uuid.uuid4())[:8]
+    fd, path = tempfile.mkstemp(prefix=f"{prefix}-{unique_suffix}-", suffix=".db", dir=".tmp_cases")
     os.close(fd)
     Path(path).unlink(missing_ok=True)
 
     # Create minimal schema for testing
     conn = sqlite3.connect(path)
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("""
         CREATE TABLE claims (
             id INTEGER PRIMARY KEY,
@@ -115,7 +118,7 @@ class TestTrainQualityModel:
         conn.execute(
             """INSERT INTO claims (text, status, confidence, access_count, tier, claim_type, created_at, updated_at)
                VALUES (?, 'confirmed', 0.5, 0, 'core', 'fact', datetime('now'), datetime('now'))""",
-            (f"test claim",),
+            ("test claim",),
         )
         conn.commit()
         conn.close()

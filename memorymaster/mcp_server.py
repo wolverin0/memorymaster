@@ -341,6 +341,19 @@ if FastMCP is not None:
         # including citations when detail_level == "full".
         return claim_dict
 
+    def _enrich_claims_with_citations(svc: Any, rows_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Enrich claims with citations for 'full' detail level."""
+        enriched: list[dict[str, Any]] = []
+        for row in rows_data:
+            claim_obj = row["claim"]
+            cid = getattr(claim_obj, "id", None)
+            if cid is not None:
+                full_claim = svc.store.get_claim(int(cid), include_citations=True)
+                if full_claim is not None:
+                    claim_obj = full_claim
+            enriched.append({**row, "claim": claim_obj})
+        return enriched
+
     @mcp.tool()
     def query_memory(
         query: str,
@@ -405,16 +418,7 @@ if FastMCP is not None:
         )
         # For "full" detail level, re-fetch each claim with citations inline.
         if detail_level == "full":
-            enriched: list[dict[str, Any]] = []
-            for row in rows_data:
-                claim_obj = row["claim"]
-                cid = getattr(claim_obj, "id", None)
-                if cid is not None:
-                    full_claim = svc.store.get_claim(int(cid), include_citations=True)
-                    if full_claim is not None:
-                        claim_obj = full_claim
-                enriched.append({**row, "claim": claim_obj})
-            rows_data = enriched
+            rows_data = _enrich_claims_with_citations(svc, rows_data)
 
         claims = [row["claim"] for row in rows_data]
         serialized_rows: list[dict[str, Any]] = []
