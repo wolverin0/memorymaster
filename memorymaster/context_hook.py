@@ -74,7 +74,8 @@ def recall(
     if result.claims_included == 0:
         return ""
 
-    return result.output
+    # Sanitize for Windows console encoding
+    return result.output.encode("ascii", errors="replace").decode("ascii")
 
 
 def observe(

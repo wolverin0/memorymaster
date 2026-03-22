@@ -75,7 +75,7 @@ def _ensure_payload_dict(event_type: str, payload: dict[str, object] | None) -> 
         raise ValueError(f"event_type '{event_type}' requires payload object.")
     if not isinstance(payload, dict):
         raise ValueError(f"event_type '{event_type}' payload must be a JSON object.")
-    for key in payload.keys():
+    for key in payload:
         if not isinstance(key, str):
             raise ValueError(f"event_type '{event_type}' payload keys must be strings.")
     return payload
