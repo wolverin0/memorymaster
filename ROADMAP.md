@@ -115,14 +115,14 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 - [x] Run `npx gitnexus analyze` on projects (9 projects analyzed)
 - [x] Ingest architectural claims: clusters, execution flows, key symbols
 - [x] GitNexus installed globally + configured as MCP peer in `.mcp.json`
-- [ ] Auto-update on code changes (git hook or scheduled)
+- [x] Auto-update on code changes (post-commit-gitnexus.sh + install-gitnexus-hook CLI)
 
 ### OpenClaw Bidirectional Sync
 - [x] Cron-based DB sync (scp every 15 min — configured on OpenClaw)
 - [x] memorymaster installed on OpenClaw VM
 - [x] export-vault for OpenClaw workspace (.md files in ~/.openclaw/workspace/)
 - [x] Webhook on ingest for real-time push (webhook.py)
-- [ ] Conflict resolution for simultaneous edits
+- [x] Conflict resolution for simultaneous edits (optimistic locking with version counter)
 - [x] QMD ↔ memorymaster claim mapping (qmd_bridge.py)
 
 ---
@@ -135,7 +135,7 @@ Source: `G:\_OneDrive\OneDrive\Desktop\Py Apps\memoryking\src\memoryking\`
 - [x] Visibility: public / private claims per agent
 - [x] Conflict resolution policies (LLM-powered auto-resolver with evidence evaluation)
 - [x] Cross-agent memory sharing with scope isolation (visibility + RBAC filtering)
-- [ ] Agent heartbeat and session tracking
+- [x] Agent heartbeat and session tracking (session_tracker.py + sessions CLI)
 - [x] Access control: admin / writer / reader roles (access_control.py)
 
 ---
