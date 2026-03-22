@@ -953,7 +953,15 @@ class SQLiteStore:
                 """
                 params.append(limit)
 
-            rows = conn.execute(sql, params).fetchall()
+            try:
+                rows = conn.execute(sql, params).fetchall()
+            except sqlite3.OperationalError as exc:
+                if "no such table" in str(exc).lower():
+                    # Database schema was lost (possibly from concurrent cleanup).
+                    # Return empty list instead of failing.
+                    logger.warning("claims table missing in list_claims, returning empty: %s", exc)
+                    return []
+                raise
 
         claims = [self._row_to_claim(row) for row in rows]
         if include_citations and claims:
