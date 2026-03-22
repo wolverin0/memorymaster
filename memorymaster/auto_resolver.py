@@ -140,6 +140,35 @@ def resolve_conflict_pair(
         return {"resolved": False, "reason": str(exc)}
 
 
+def _resolve_group_pairs(store, claims: list[Claim], limit: int) -> tuple[int, int, int]:
+    """Resolve all pairs within a conflict group. Returns (evaluated, resolved, failed)."""
+    evaluated = 0
+    resolved = 0
+    failed = 0
+
+    for i in range(len(claims) - 1):
+        if evaluated >= limit:
+            break
+        # Re-fetch to check if still conflicted (might have been resolved in earlier pair)
+        a = store.get_claim(claims[i].id, include_citations=True)
+        b = store.get_claim(claims[i + 1].id, include_citations=True)
+        if a is None or b is None or a.status != "conflicted" or b.status != "conflicted":
+            continue
+
+        result = resolve_conflict_pair(store, a, b)
+        evaluated += 1
+        if result.get("resolved"):
+            resolved += 1
+            logger.info(
+                "Resolved conflict: winner=%d, loser=%d (%s)",
+                result["winner_id"], result["loser_id"], result["reason"],
+            )
+        else:
+            failed += 1
+
+    return evaluated, resolved, failed
+
+
 def auto_resolve_conflicts(store, *, limit: int = 50) -> dict[str, int]:
     """Find and resolve conflicted claims using LLM evaluation.
 
@@ -162,30 +191,11 @@ def auto_resolve_conflicts(store, *, limit: int = 50) -> dict[str, int]:
     failed = 0
 
     for _key, claims in groups.items():
-        if len(claims) < 2:
+        if len(claims) < 2 or evaluated >= limit:
             continue
-        if evaluated >= limit:
-            break
-
-        # Compare pairs within the group
-        for i in range(len(claims) - 1):
-            if evaluated >= limit:
-                break
-            # Re-fetch to check if still conflicted (might have been resolved in earlier pair)
-            a = store.get_claim(claims[i].id, include_citations=True)
-            b = store.get_claim(claims[i + 1].id, include_citations=True)
-            if a is None or b is None or a.status != "conflicted" or b.status != "conflicted":
-                continue
-
-            result = resolve_conflict_pair(store, a, b)
-            evaluated += 1
-            if result.get("resolved"):
-                resolved += 1
-                logger.info(
-                    "Resolved conflict: winner=%d, loser=%d (%s)",
-                    result["winner_id"], result["loser_id"], result["reason"],
-                )
-            else:
-                failed += 1
+        group_eval, group_res, group_fail = _resolve_group_pairs(store, claims, limit - evaluated)
+        evaluated += group_eval
+        resolved += group_res
+        failed += group_fail
 
     return {"pairs_evaluated": evaluated, "resolved": resolved, "failed": failed}

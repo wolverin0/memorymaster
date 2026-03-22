@@ -70,6 +70,8 @@ def recall(
         token_budget=budget,
         output_format=format,
         retrieval_mode="legacy",  # Force legacy for speed (<0.2s vs 8s for hybrid)
+        include_candidates=True,
+        scope_allowlist=None,  # Search ALL scopes — cross-project recall
     )
 
     if result.claims_included == 0:
