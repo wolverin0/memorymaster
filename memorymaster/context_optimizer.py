@@ -146,6 +146,23 @@ def _xml_escape(text: str | None) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
+def _get_format_overhead(output_format: str) -> tuple[str, str, int]:
+    """Get header, footer_template, and overhead token count for the given format."""
+    if output_format == "text":
+        header = "# Relevant Memory Claims\n\n"
+        footer_template = "\n---\n{included}/{considered} claims | {tokens}/{budget} tokens"
+        overhead = estimate_tokens(header) + estimate_tokens(footer_template) + 10
+    elif output_format == "xml":
+        header = "<memory-context>\n"
+        footer_template = "</memory-context>"
+        overhead = estimate_tokens(header) + estimate_tokens(footer_template) + 5
+    else:  # JSON
+        header = ""
+        footer_template = ""
+        overhead = 30  # for {"claims":[], "meta":{...}}
+    return header, footer_template, overhead
+
+
 def pack_context(
     ranked_rows: list[dict[str, Any]],
     *,
@@ -176,19 +193,7 @@ def pack_context(
     claims_considered = len(ranked_rows)
 
     # Reserve tokens for header/footer framing.
-    if output_format == "text":
-        header = "# Relevant Memory Claims\n\n"
-        footer_template = "\n---\n{included}/{considered} claims | {tokens}/{budget} tokens"
-        overhead = estimate_tokens(header) + estimate_tokens(footer_template) + 10
-    elif output_format == "xml":
-        header = "<memory-context>\n"
-        footer_template = "</memory-context>"
-        overhead = estimate_tokens(header) + estimate_tokens(footer_template) + 5
-    else:
-        # JSON: we build a dict, overhead for wrapper keys.
-        header = ""
-        footer_template = ""
-        overhead = 30  # for {"claims":[], "meta":{...}}
+    header, footer_template, overhead = _get_format_overhead(output_format)
 
     available = max(1, token_budget - overhead)
     used = 0
@@ -211,7 +216,7 @@ def pack_context(
         included.append((block, row))
         used += block_tokens
 
-    # Assemble final output.
+    # Assemble final output based on format
     if output_format == "text":
         body = "(no claims fit within token budget)" if not included else "\n\n".join(block for block, _ in included)
         footer = footer_template.format(
@@ -221,23 +226,13 @@ def pack_context(
             budget=token_budget,
         )
         output = f"{header}{body}{footer}"
-
     elif output_format == "xml":
-        if not included:
-            inner = "  <!-- no claims fit within token budget -->\n"
-        else:
-            inner = "\n".join(block for block, _ in included) + "\n"
-        meta = (
-            f'<meta claims_included="{len(included)}" '
-            f'claims_considered="{claims_considered}" '
-            f'tokens_used="{used + overhead}" '
-            f'token_budget="{token_budget}" />\n'
-        )
+        inner = "  <!-- no claims fit within token budget -->\n" if not included else "\n".join(block for block, _ in included) + "\n"
+        meta = f'<meta claims_included="{len(included)}" claims_considered="{claims_considered}" tokens_used="{used + overhead}" token_budget="{token_budget}" />\n'
         output = f"{header}{meta}{inner}{footer_template}"
-
-    else:
+    else:  # JSON
         entries = [_claim_json_entry(row["claim"], float(row.get("score", 0.0))) for _, row in included]
-        envelope: dict[str, Any] = {
+        output = json.dumps({
             "claims": entries,
             "meta": {
                 "claims_included": len(included),
@@ -245,8 +240,7 @@ def pack_context(
                 "tokens_used": used + overhead,
                 "token_budget": token_budget,
             },
-        }
-        output = json.dumps(envelope, indent=2)
+        }, indent=2)
 
     total_tokens = used + overhead
     return ContextResult(
