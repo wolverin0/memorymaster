@@ -64,15 +64,14 @@ class PostgresStore(SQLiteStore):
 
         sql = load_schema_postgres_sql()
         statements = self._split_sql_statements(sql)
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                for statement in statements:
-                    cur.execute(statement)
-                self._ensure_confirmed_tuple_uniqueness_schema(conn)
-                self._ensure_event_integrity_schema(conn)
-                self._ensure_claim_links_schema(conn)
-                self._ensure_human_id_schema(conn)
-                self._ensure_tenant_id_schema(conn)
+        with self.connect() as conn, conn.cursor() as cur:
+            for statement in statements:
+                cur.execute(statement)
+            self._ensure_confirmed_tuple_uniqueness_schema(conn)
+            self._ensure_event_integrity_schema(conn)
+            self._ensure_claim_links_schema(conn)
+            self._ensure_human_id_schema(conn)
+            self._ensure_tenant_id_schema(conn)
 
     @staticmethod
     def _canonical_payload(payload: object | None) -> str:
@@ -384,10 +383,9 @@ class PostgresStore(SQLiteStore):
         normalized_idempotency_key = (idempotency_key or "").strip() or None
         normalized_tenant_id = (tenant_id or "").strip() or None
         now = utc_now()
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
                     INSERT INTO claims (
                         text, idempotency_key, normalized_text, claim_type, subject, predicate, object_value,
                         scope, volatility, status, confidence, pinned, supersedes_claim_id,
@@ -400,73 +398,73 @@ class PostgresStore(SQLiteStore):
                     ON CONFLICT (idempotency_key) DO NOTHING
                     RETURNING id
                     """,
-                    (
-                        text,
-                        normalized_idempotency_key,
-                        claim_type,
-                        subject,
-                        predicate,
-                        object_value,
-                        scope,
-                        volatility,
-                        confidence,
-                        now,
-                        now,
-                        normalized_tenant_id,
-                    ),
+                (
+                    text,
+                    normalized_idempotency_key,
+                    claim_type,
+                    subject,
+                    predicate,
+                    object_value,
+                    scope,
+                    volatility,
+                    confidence,
+                    now,
+                    now,
+                    normalized_tenant_id,
+                ),
+            )
+            claim_row = cur.fetchone()
+            if claim_row is None:
+                if normalized_idempotency_key is None:
+                    raise RuntimeError("Failed to create claim.")
+                cur.execute(
+                    "SELECT id FROM claims WHERE idempotency_key = %s",
+                    (normalized_idempotency_key,),
                 )
-                claim_row = cur.fetchone()
-                if claim_row is None:
-                    if normalized_idempotency_key is None:
-                        raise RuntimeError("Failed to create claim.")
-                    cur.execute(
-                        "SELECT id FROM claims WHERE idempotency_key = %s",
-                        (normalized_idempotency_key,),
-                    )
-                    existing_row = cur.fetchone()
-                    if existing_row is None:
-                        raise RuntimeError("Idempotency key matched missing claim.")
-                    claim_id = int(existing_row["id"])
-                    claim = self.get_claim(claim_id)
-                    if claim is None:
-                        raise RuntimeError("Idempotency key matched missing claim.")
-                    return claim
-                claim_id = int(claim_row["id"])
+                existing_row = cur.fetchone()
+                if existing_row is None:
+                    raise RuntimeError("Idempotency key matched missing claim.")
+                claim_id = int(existing_row["id"])
+                claim = self.get_claim(claim_id)
+                if claim is None:
+                    raise RuntimeError("Idempotency key matched missing claim.")
+                return claim
+            claim_id = int(claim_row["id"])
 
-                # Assign a human-readable ID.
-                try:
-                    human_id = self._allocate_human_id(cur, subject, text, claim_id)
-                    cur.execute(
-                        "UPDATE claims SET human_id = %s WHERE id = %s",
-                        (human_id, claim_id),
-                    )
-                except Exception:
-                    # Column may not exist in legacy schemas; skip gracefully.
-                    pass
+            # Assign a human-readable ID.
+            try:
+                human_id = self._allocate_human_id(cur, subject, text, claim_id)
+                cur.execute(
+                    "UPDATE claims SET human_id = %s WHERE id = %s",
+                    (human_id, claim_id),
+                )
+            except Exception:
+                # Column may not exist in legacy schemas; skip gracefully.
+                pass
 
-                for cite in citations:
-                    cur.execute(
-                        """
+            for cite in citations:
+                cur.execute(
+                    """
                         INSERT INTO citations (claim_id, source, locator, excerpt, created_at)
                         VALUES (%s, %s, %s, %s, %s)
                         """,
-                        (claim_id, cite.source, cite.locator, cite.excerpt, now),
-                    )
-                ingest_payload = validate_event_payload(
-                    "ingest",
-                    {"citation_count": len(citations)},
-                    details="claim_ingested",
+                    (claim_id, cite.source, cite.locator, cite.excerpt, now),
                 )
-                self._insert_event_row(
-                    conn,
-                    claim_id=claim_id,
-                    event_type="ingest",
-                    from_status=None,
-                    to_status="candidate",
-                    details="claim_ingested",
-                    payload=ingest_payload,
-                    created_at=now,
-                )
+            ingest_payload = validate_event_payload(
+                "ingest",
+                {"citation_count": len(citations)},
+                details="claim_ingested",
+            )
+            self._insert_event_row(
+                conn,
+                claim_id=claim_id,
+                event_type="ingest",
+                from_status=None,
+                to_status="candidate",
+                details="claim_ingested",
+                payload=ingest_payload,
+                created_at=now,
+            )
 
         claim = self.get_claim(claim_id)
         if claim is None:
@@ -474,10 +472,9 @@ class PostgresStore(SQLiteStore):
         return claim
 
     def get_claim(self, claim_id: int, include_citations: bool = True) -> Claim | None:
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM claims WHERE id = %s", (claim_id,))
-                row = cur.fetchone()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM claims WHERE id = %s", (claim_id,))
+            row = cur.fetchone()
         if row is None:
             return None
         claim = self._row_to_claim(row)
@@ -489,13 +486,12 @@ class PostgresStore(SQLiteStore):
         normalized_idempotency_key = idempotency_key.strip()
         if not normalized_idempotency_key:
             return None
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT * FROM claims WHERE idempotency_key = %s",
-                    (normalized_idempotency_key,),
-                )
-                row = cur.fetchone()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM claims WHERE idempotency_key = %s",
+                (normalized_idempotency_key,),
+            )
+            row = cur.fetchone()
         if row is None:
             return None
         claim = self._row_to_claim(row)
@@ -554,10 +550,9 @@ class PostgresStore(SQLiteStore):
         """
         params.append(limit)
 
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, params)
-                rows = cur.fetchall()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
 
         claims = [self._row_to_claim(row) for row in rows]
         if include_citations:
@@ -566,13 +561,12 @@ class PostgresStore(SQLiteStore):
         return claims
 
     def list_citations(self, claim_id: int) -> list[Citation]:
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT * FROM citations WHERE claim_id = %s ORDER BY id ASC",
-                    (claim_id,),
-                )
-                rows = cur.fetchall()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM citations WHERE claim_id = %s ORDER BY id ASC",
+                (claim_id,),
+            )
+            rows = cur.fetchall()
         return [self._row_to_citation(row) for row in rows]
 
     def list_events(
@@ -595,27 +589,24 @@ class PostgresStore(SQLiteStore):
         sql = f"SELECT * FROM events {where_sql} ORDER BY created_at DESC, id DESC LIMIT %s"
         params.append(limit)
 
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, params)
-                rows = cur.fetchall()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
         return [self._row_to_event(row) for row in rows]
 
     def count_citations(self, claim_id: int) -> int:
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) AS c FROM citations WHERE claim_id = %s", (claim_id,))
-                row = cur.fetchone()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS c FROM citations WHERE claim_id = %s", (claim_id,))
+            row = cur.fetchone()
         return int(row["c"]) if row is not None else 0
 
     def set_normalized_text(self, claim_id: int, normalized_text: str) -> None:
         now = utc_now()
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE claims SET normalized_text = %s, updated_at = %s WHERE id = %s",
-                    (normalized_text, now, claim_id),
-                )
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE claims SET normalized_text = %s, updated_at = %s WHERE id = %s",
+                (normalized_text, now, claim_id),
+            )
 
     def redact_claim_payload(
         self,
@@ -643,20 +634,19 @@ class PostgresStore(SQLiteStore):
         citation_locator = "[REDACTED_LOCATOR]" if normalized_mode == "redact" else None
         citation_excerpt = "[REDACTED_EXCERPT]" if normalized_mode == "redact" else None
 
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT status FROM claims WHERE id = %s", (claim_id,))
-                status_row = cur.fetchone()
-                if status_row is None:
-                    raise ValueError(f"Claim {claim_id} does not exist.")
-                current_status = str(status_row["status"]) if status_row["status"] is not None else None
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT status FROM claims WHERE id = %s", (claim_id,))
+            status_row = cur.fetchone()
+            if status_row is None:
+                raise ValueError(f"Claim {claim_id} does not exist.")
+            current_status = str(status_row["status"]) if status_row["status"] is not None else None
 
-                claim_rows = 0
-                citation_rows = 0
+            claim_rows = 0
+            citation_rows = 0
 
-                if redact_claim:
-                    cur.execute(
-                        """
+            if redact_claim:
+                cur.execute(
+                    """
                         UPDATE claims
                         SET text = %s,
                             normalized_text = NULL,
@@ -666,47 +656,47 @@ class PostgresStore(SQLiteStore):
                             updated_at = %s
                         WHERE id = %s
                         """,
-                        (claim_text, subject_value, predicate_value, object_value, now, claim_id),
-                    )
-                    claim_rows = int(cur.rowcount)
+                    (claim_text, subject_value, predicate_value, object_value, now, claim_id),
+                )
+                claim_rows = int(cur.rowcount)
 
-                if redact_citations:
-                    cur.execute(
-                        """
+            if redact_citations:
+                cur.execute(
+                    """
                         UPDATE citations
                         SET source = %s, locator = %s, excerpt = %s
                         WHERE claim_id = %s
                         """,
-                        (citation_source, citation_locator, citation_excerpt, claim_id),
-                    )
-                    citation_rows = int(cur.rowcount)
-                    if not redact_claim:
-                        cur.execute(
-                            "UPDATE claims SET updated_at = %s WHERE id = %s",
-                            (now, claim_id),
-                        )
-
-                payload: dict[str, object] = {
-                    "source": str(actor or "system"),
-                    "mode": normalized_mode,
-                    "redact_claim": bool(redact_claim),
-                    "redact_citations": bool(redact_citations),
-                    "claim_rows": claim_rows,
-                    "citation_rows": citation_rows,
-                }
-                if reason and reason.strip():
-                    payload["reason"] = reason.strip()
-                validated_payload = validate_event_payload("audit", payload, details=details)
-                self._insert_event_row(
-                    conn,
-                    claim_id=claim_id,
-                    event_type="audit",
-                    from_status=current_status,
-                    to_status=current_status,
-                    details=details,
-                    payload=validated_payload,
-                    created_at=now,
+                    (citation_source, citation_locator, citation_excerpt, claim_id),
                 )
+                citation_rows = int(cur.rowcount)
+                if not redact_claim:
+                    cur.execute(
+                        "UPDATE claims SET updated_at = %s WHERE id = %s",
+                        (now, claim_id),
+                    )
+
+            payload: dict[str, object] = {
+                "source": str(actor or "system"),
+                "mode": normalized_mode,
+                "redact_claim": bool(redact_claim),
+                "redact_citations": bool(redact_citations),
+                "claim_rows": claim_rows,
+                "citation_rows": citation_rows,
+            }
+            if reason and reason.strip():
+                payload["reason"] = reason.strip()
+            validated_payload = validate_event_payload("audit", payload, details=details)
+            self._insert_event_row(
+                conn,
+                claim_id=claim_id,
+                event_type="audit",
+                from_status=current_status,
+                to_status=current_status,
+                details=details,
+                payload=validated_payload,
+                created_at=now,
+            )
 
         return {
             "claim_id": claim_id,
@@ -728,10 +718,9 @@ class PostgresStore(SQLiteStore):
         object_value: str | None = None,
     ) -> None:
         now = utc_now()
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
                     UPDATE claims
                     SET claim_type = COALESCE(claim_type, %s),
                         subject = COALESCE(subject, %s),
@@ -740,51 +729,49 @@ class PostgresStore(SQLiteStore):
                         updated_at = %s
                     WHERE id = %s
                     """,
-                    (claim_type, subject, predicate, object_value, now, claim_id),
-                )
+                (claim_type, subject, predicate, object_value, now, claim_id),
+            )
 
     def set_confidence(self, claim_id: int, confidence: float, details: str | None = None) -> None:
         bounded = max(0.0, min(1.0, confidence))
         now = utc_now()
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE claims SET confidence = %s, updated_at = %s WHERE id = %s",
-                    (bounded, now, claim_id),
-                )
-                if details:
-                    cur.execute("SELECT status FROM claims WHERE id = %s", (claim_id,))
-                    status_row = cur.fetchone()
-                    current_status = str(status_row["status"]) if status_row else None
-                    self._insert_event_row(
-                        conn,
-                        claim_id=claim_id,
-                        event_type="confidence",
-                        from_status=current_status,
-                        to_status=current_status,
-                        details=details,
-                        payload=None,
-                        created_at=now,
-                    )
-
-    def set_pinned(self, claim_id: int, pinned: bool, reason: str) -> None:
-        now = utc_now()
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE claims SET pinned = %s, updated_at = %s WHERE id = %s",
-                    (pinned, now, claim_id),
-                )
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE claims SET confidence = %s, updated_at = %s WHERE id = %s",
+                (bounded, now, claim_id),
+            )
+            if details:
+                cur.execute("SELECT status FROM claims WHERE id = %s", (claim_id,))
+                status_row = cur.fetchone()
+                current_status = str(status_row["status"]) if status_row else None
                 self._insert_event_row(
                     conn,
                     claim_id=claim_id,
-                    event_type="pin" if pinned else "unpin",
-                    from_status=None,
-                    to_status=None,
-                    details=reason,
+                    event_type="confidence",
+                    from_status=current_status,
+                    to_status=current_status,
+                    details=details,
                     payload=None,
                     created_at=now,
                 )
+
+    def set_pinned(self, claim_id: int, pinned: bool, reason: str) -> None:
+        now = utc_now()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE claims SET pinned = %s, updated_at = %s WHERE id = %s",
+                (pinned, now, claim_id),
+            )
+            self._insert_event_row(
+                conn,
+                claim_id=claim_id,
+                event_type="pin" if pinned else "unpin",
+                from_status=None,
+                to_status=None,
+                details=reason,
+                payload=None,
+                created_at=now,
+            )
 
     def apply_status_transition(
         self,
@@ -829,16 +816,15 @@ class PostgresStore(SQLiteStore):
 
     def set_supersedes(self, claim_id: int, supersedes_claim_id: int) -> None:
         now = utc_now()
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
                     UPDATE claims
                     SET supersedes_claim_id = %s, updated_at = %s
                     WHERE id = %s
                     """,
-                    (supersedes_claim_id, now, claim_id),
-                )
+                (supersedes_claim_id, now, claim_id),
+            )
 
     def mark_superseded(self, old_claim_id: int, new_claim_id: int, reason: str) -> None:
         old_claim = self.get_claim(old_claim_id, include_citations=False)
@@ -862,27 +848,25 @@ class PostgresStore(SQLiteStore):
         )
 
     def find_for_decay(self, limit: int = 200) -> list[Claim]:
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
                     SELECT * FROM claims
                     WHERE status = 'confirmed'
                       AND pinned = FALSE
                     ORDER BY updated_at ASC, id ASC
                     LIMIT %s
                     """,
-                    (limit,),
-                )
-                rows = cur.fetchall()
+                (limit,),
+            )
+            rows = cur.fetchall()
         return [self._row_to_claim(row) for row in rows]
 
     def find_for_compaction(self, retain_days: int, limit: int = 500) -> list[Claim]:
         cutoff = utc_now() - timedelta(days=retain_days)
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
                     SELECT * FROM claims
                     WHERE status IN ('stale', 'superseded', 'conflicted')
                       AND pinned = FALSE
@@ -890,9 +874,9 @@ class PostgresStore(SQLiteStore):
                     ORDER BY updated_at ASC, id ASC
                     LIMIT %s
                     """,
-                    (cutoff, limit),
-                )
-                rows = cur.fetchall()
+                (cutoff, limit),
+            )
+            rows = cur.fetchall()
         return [self._row_to_claim(row) for row in rows]
 
     def find_confirmed_by_tuple(
@@ -917,10 +901,9 @@ class PostgresStore(SQLiteStore):
             WHERE {' AND '.join(clauses)}
             ORDER BY confidence DESC, updated_at DESC
         """
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, params)
-                rows = cur.fetchall()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
         return [self._row_to_claim(row) for row in rows]
 
     def delete_old_events(self, retain_days: int) -> int:
@@ -1153,18 +1136,17 @@ class PostgresStore(SQLiteStore):
     def _has_vector_table(self) -> bool:
         if self._vector_table_available is not None:
             return self._vector_table_available
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
                     SELECT EXISTS (
                       SELECT 1
                       FROM information_schema.tables
                       WHERE table_schema = 'public' AND table_name = 'claim_embeddings'
                     ) AS ok
                     """
-                )
-                row = cur.fetchone()
+            )
+            row = cur.fetchone()
         self._vector_table_available = bool(row["ok"]) if row is not None else False
         return self._vector_table_available
 
@@ -1188,10 +1170,9 @@ class PostgresStore(SQLiteStore):
             emb = provider.embed(text)
             rows.append((claim.id, provider.model, self._vector_literal(emb), now))
 
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.executemany(
-                    """
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.executemany(
+                """
                     INSERT INTO claim_embeddings (claim_id, model, embedding, updated_at)
                     VALUES (%s, %s, %s::vector, %s)
                     ON CONFLICT (claim_id) DO UPDATE SET
@@ -1199,8 +1180,8 @@ class PostgresStore(SQLiteStore):
                       embedding = EXCLUDED.embedding,
                       updated_at = EXCLUDED.updated_at
                     """,
-                    rows,
-                )
+                rows,
+            )
         return len(rows)
 
     def vector_scores(
@@ -1217,17 +1198,16 @@ class PostgresStore(SQLiteStore):
         self.upsert_embeddings(claims, provider)
         query_vec = self._vector_literal(provider.embed(query_text))
         ids = [c.id for c in claims]
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
                     SELECT claim_id, 1 - (embedding <=> %s::vector) AS sim
                     FROM claim_embeddings
                     WHERE claim_id = ANY(%s)
                     """,
-                    (query_vec, ids),
-                )
-                rows = cur.fetchall()
+                (query_vec, ids),
+            )
+            rows = cur.fetchall()
         out: dict[int, float] = {}
         for row in rows:
             sim = float(row["sim"])
@@ -1509,17 +1489,16 @@ class PostgresStore(SQLiteStore):
         normalized = human_id.strip()
         if not normalized:
             return None
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                try:
-                    cur.execute(
-                        "SELECT * FROM claims WHERE human_id = %s",
-                        (normalized,),
-                    )
-                    row = cur.fetchone()
-                except Exception:
-                    # Column may not exist yet.
-                    return None
+        with self.connect() as conn, conn.cursor() as cur:
+            try:
+                cur.execute(
+                    "SELECT * FROM claims WHERE human_id = %s",
+                    (normalized,),
+                )
+                row = cur.fetchone()
+            except Exception:
+                # Column may not exist yet.
+                return None
         if row is None:
             return None
         claim = self._row_to_claim(row)
@@ -1548,108 +1527,103 @@ class PostgresStore(SQLiteStore):
         if source_id == target_id:
             raise ValueError("source_id and target_id must be different.")
         now = utc_now()
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                try:
-                    cur.execute(
-                        """
+        with self.connect() as conn, conn.cursor() as cur:
+            try:
+                cur.execute(
+                    """
                         INSERT INTO claim_links (source_id, target_id, link_type, created_at)
                         VALUES (%s, %s, %s, %s)
                         RETURNING id
                         """,
-                        (source_id, target_id, link_type, now),
-                    )
-                    row = cur.fetchone()
-                except Exception as exc:
-                    msg = str(exc).lower()
-                    if "unique" in msg or "duplicate key" in msg or "already exists" in msg:
-                        raise ValueError(
-                            f"Link already exists: {source_id} -> {target_id} ({link_type})."
-                        ) from exc
-                    if "foreign key" in msg or "violates foreign key" in msg or "is not present" in msg:
-                        raise ValueError(
-                            f"One or both claim ids do not exist: {source_id}, {target_id}."
-                        ) from exc
-                    if "check" in msg and "source_id" in msg:
-                        raise ValueError("source_id and target_id must be different.") from exc
-                    raise
-                if row is None:
-                    raise RuntimeError("Failed to insert claim link.")
-                return ClaimLink(
-                    id=int(row["id"]),
-                    source_id=source_id,
-                    target_id=target_id,
-                    link_type=link_type,
-                    created_at=self._as_iso(now) or "",
+                    (source_id, target_id, link_type, now),
                 )
+                row = cur.fetchone()
+            except Exception as exc:
+                msg = str(exc).lower()
+                if "unique" in msg or "duplicate key" in msg or "already exists" in msg:
+                    raise ValueError(
+                        f"Link already exists: {source_id} -> {target_id} ({link_type})."
+                    ) from exc
+                if "foreign key" in msg or "violates foreign key" in msg or "is not present" in msg:
+                    raise ValueError(
+                        f"One or both claim ids do not exist: {source_id}, {target_id}."
+                    ) from exc
+                if "check" in msg and "source_id" in msg:
+                    raise ValueError("source_id and target_id must be different.") from exc
+                raise
+            if row is None:
+                raise RuntimeError("Failed to insert claim link.")
+            return ClaimLink(
+                id=int(row["id"]),
+                source_id=source_id,
+                target_id=target_id,
+                link_type=link_type,
+                created_at=self._as_iso(now) or "",
+            )
 
     def remove_claim_link(self, source_id: int, target_id: int, link_type: str | None = None) -> int:
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                if link_type is not None:
-                    cur.execute(
-                        "DELETE FROM claim_links WHERE source_id = %s AND target_id = %s AND link_type = %s",
-                        (source_id, target_id, link_type),
-                    )
-                else:
-                    cur.execute(
-                        "DELETE FROM claim_links WHERE source_id = %s AND target_id = %s",
-                        (source_id, target_id),
-                    )
-                return cur.rowcount
+        with self.connect() as conn, conn.cursor() as cur:
+            if link_type is not None:
+                cur.execute(
+                    "DELETE FROM claim_links WHERE source_id = %s AND target_id = %s AND link_type = %s",
+                    (source_id, target_id, link_type),
+                )
+            else:
+                cur.execute(
+                    "DELETE FROM claim_links WHERE source_id = %s AND target_id = %s",
+                    (source_id, target_id),
+                )
+            return cur.rowcount
 
     def get_derived_from_target_ids(self, candidate_ids: list[int]) -> set[int]:
         """Return the subset of *candidate_ids* that are targets of a ``derived_from`` link."""
         if not candidate_ids:
             return set()
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                placeholders = ",".join("%s" for _ in candidate_ids)
-                cur.execute(
-                    f"""
+        with self.connect() as conn, conn.cursor() as cur:
+            placeholders = ",".join("%s" for _ in candidate_ids)
+            cur.execute(
+                f"""
                     SELECT DISTINCT target_id FROM claim_links
                     WHERE link_type = 'derived_from'
                       AND target_id IN ({placeholders})
                     """,
-                    candidate_ids,
-                )
-                rows = cur.fetchall()
+                candidate_ids,
+            )
+            rows = cur.fetchall()
         return {row[0] if isinstance(row, (tuple, list)) else row["target_id"] for row in rows}
 
     def get_claim_links(self, claim_id: int) -> list[ClaimLink]:
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
                     SELECT * FROM claim_links
                     WHERE source_id = %s OR target_id = %s
                     ORDER BY created_at ASC
                     """,
-                    (claim_id, claim_id),
-                )
-                rows = cur.fetchall()
+                (claim_id, claim_id),
+            )
+            rows = cur.fetchall()
         return [self._row_to_claim_link(row) for row in rows]
 
     def get_linked_claims(self, claim_id: int, link_type: str | None = None) -> list[ClaimLink]:
-        with self.connect() as conn:
-            with conn.cursor() as cur:
-                if link_type is not None:
-                    cur.execute(
-                        """
+        with self.connect() as conn, conn.cursor() as cur:
+            if link_type is not None:
+                cur.execute(
+                    """
                         SELECT * FROM claim_links
                         WHERE (source_id = %s OR target_id = %s) AND link_type = %s
                         ORDER BY created_at ASC
                         """,
-                        (claim_id, claim_id, link_type),
-                    )
-                else:
-                    cur.execute(
-                        """
+                    (claim_id, claim_id, link_type),
+                )
+            else:
+                cur.execute(
+                    """
                         SELECT * FROM claim_links
                         WHERE source_id = %s OR target_id = %s
                         ORDER BY created_at ASC
                         """,
-                        (claim_id, claim_id),
-                    )
-                rows = cur.fetchall()
+                    (claim_id, claim_id),
+                )
+            rows = cur.fetchall()
         return [self._row_to_claim_link(row) for row in rows]

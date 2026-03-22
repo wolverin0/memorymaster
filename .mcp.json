@@ -1,0 +1,25 @@
+{
+  "mcpServers": {
+    "memorymaster": {
+      "command": "memorymaster-mcp",
+      "env": {
+        "MEMORYMASTER_DEFAULT_DB": "G:\\_OneDrive\\OneDrive\\Desktop\\Py Apps\\memorymaster\\memorymaster.db",
+        "MEMORYMASTER_WORKSPACE": "G:\\_OneDrive\\OneDrive\\Desktop\\Py Apps\\memorymaster",
+        "QDRANT_URL": "http://192.168.100.186:6333",
+        "OLLAMA_URL": "http://192.168.100.155:11434"
+      }
+    },
+    "gitnexus": {
+      "command": "npx",
+      "args": ["-y", "gitnexus@latest", "mcp"]
+    },
+    "qdrant": {
+      "command": "uvx",
+      "args": ["mcp-server-qdrant"],
+      "env": {
+        "QDRANT_URL": "http://192.168.100.186:6333",
+        "COLLECTION_NAME": "agent-memories"
+      }
+    }
+  }
+}
