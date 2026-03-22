@@ -350,6 +350,9 @@ class MemoryService:
             )
             if not include_sensitive:
                 legacy = [claim for claim in legacy if not is_sensitive_claim(claim)]
+            # Visibility: filter out private claims from other agents
+            if requesting_agent:
+                legacy = [c for c in legacy if getattr(c, 'visibility', 'public') == 'public' or getattr(c, 'source_agent', None) == requesting_agent]
             ranked_rows = rank_claim_rows(
                 query_text,
                 legacy,
