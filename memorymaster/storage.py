@@ -627,6 +627,18 @@ class SQLiteStore:
             exc_str = str(exc).lower()
             if "no column named" not in exc_str and "no such table" not in exc_str:
                 raise
+            if "no such table" in exc_str:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        claim_id INTEGER,
+                        event_type TEXT NOT NULL,
+                        from_status TEXT, to_status TEXT,
+                        details TEXT, payload_json TEXT,
+                        created_at TEXT NOT NULL,
+                        prev_event_hash TEXT, event_hash TEXT, hash_algo TEXT
+                    )
+                """)
             cur = conn.execute(
                 """
                 INSERT INTO events (claim_id, event_type, from_status, to_status, details, payload_json, created_at)
