@@ -338,6 +338,14 @@ def build_parser() -> argparse.ArgumentParser:
     extract_claims_cmd.add_argument("--ollama-url", default="", help="Ollama base URL (default: $OLLAMA_URL or http://192.168.100.155:11434)")
     extract_claims_cmd.add_argument("--model", default="", help="LLM model name (default: deepseek-coder-v2:16b)")
 
+    fed_query = sub.add_parser("federated-query", help="Query across ALL scopes — cross-project federation")
+    fed_query.add_argument("text", help="Query text")
+    fed_query.add_argument("--limit", type=int, default=20, help="Maximum rows (default: 20)")
+
+    sub.add_parser("sessions", help="List active and recent agent sessions")
+
+    sub.add_parser("install-gitnexus-hook", help="Install GitNexus post-commit hook that re-analyzes the project after each commit")
+
     return parser
 
 
@@ -1196,6 +1204,95 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"  [{i}] ({item['claim_type']}) {item['text'][:100]}")
                         if item.get("subject"):
                             print(f"       tuple=({item['subject']}, {item.get('predicate', '-')}, {item.get('object_value', '-')})")
+            return 0
+
+        if args.command == "federated-query":
+            t0 = time.perf_counter()
+            rows_data = service.federated_query(query_text=args.text, limit=args.limit)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                json_rows = [
+                    {
+                        "claim": _claim_to_dict(row["claim"]),
+                        **{k: float(row.get(k, 0.0)) for k in _SCORE_KEYS},
+                        "annotation": row.get("annotation", {}),
+                    }
+                    for row in rows_data
+                ]
+                print(_json_envelope(json_rows, total=len(json_rows), query_ms=elapsed_ms))
+            else:
+                for row in rows_data:
+                    print_claim(row["claim"])
+                    sc = {k: float(row.get(k, 0.0)) for k in _SCORE_KEYS}
+                    ann = row.get("annotation", {})
+                    print(
+                        f"  retrieval: score={sc['score']:.3f} lex={sc['lexical_score']:.3f} "
+                        f"conf={sc['confidence_score']:.3f} fresh={sc['freshness_score']:.3f} "
+                        f"vec={sc['vector_score']:.3f} "
+                        f"active={int(bool(ann.get('active')))} stale={int(bool(ann.get('stale')))} "
+                        f"conflicted={int(bool(ann.get('conflicted')))} pinned={int(bool(ann.get('pinned')))}"
+                    )
+                print(f"rows={len(rows_data)}")
+            return 0
+
+        if args.command == "sessions":
+            from memorymaster.session_tracker import SessionTracker
+
+            t0 = time.perf_counter()
+            tracker = SessionTracker(effective_db)
+            sessions = tracker.get_active_sessions()
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope(sessions, total=len(sessions), query_ms=elapsed_ms))
+            else:
+                if not sessions:
+                    print("No active sessions in the last hour.")
+                else:
+                    print(f"Active sessions ({len(sessions)}):")
+                    for s in sessions:
+                        import datetime
+                        started = datetime.datetime.fromtimestamp(s["session_start"]).strftime("%Y-%m-%d %H:%M:%S")
+                        last_act = datetime.datetime.fromtimestamp(s["last_activity"]).strftime("%H:%M:%S")
+                        print(
+                            f"  [{s['id']}] agent={s['agent_id']} started={started} "
+                            f"last_activity={last_act} "
+                            f"ingested={s['claims_ingested']} queries={s['queries_made']}"
+                        )
+            return 0
+
+        if args.command == "install-gitnexus-hook":
+            import shutil
+
+            t0 = time.perf_counter()
+            workspace_path = Path(args.workspace).resolve()
+            hook_src = workspace_path / "scripts" / "post-commit-gitnexus.sh"
+            hooks_dir = workspace_path / ".git" / "hooks"
+            hook_dst = hooks_dir / "post-commit"
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+
+            if not hook_src.exists():
+                msg = f"hook source not found: {hook_src}"
+                if args.json_output:
+                    print(_json_error(msg))
+                else:
+                    print(f"error: {msg}")
+                return 1
+
+            if not hooks_dir.is_dir():
+                msg = f"not a git repository (no .git/hooks at {workspace_path})"
+                if args.json_output:
+                    print(_json_error(msg))
+                else:
+                    print(f"error: {msg}")
+                return 1
+
+            shutil.copy2(str(hook_src), str(hook_dst))
+            hook_dst.chmod(hook_dst.stat().st_mode | 0o111)
+
+            if args.json_output:
+                print(_json_envelope({"installed": True, "path": str(hook_dst)}, query_ms=elapsed_ms))
+            else:
+                print(f"GitNexus post-commit hook installed: {hook_dst}")
             return 0
 
         parser.print_help()

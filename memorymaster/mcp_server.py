@@ -781,6 +781,42 @@ if FastMCP is not None:
         result = svc.recompute_tiers()
         return {"ok": True, **result}
 
+    @mcp.tool()
+    def federated_query(
+        query: str,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """Query across ALL scopes — cross-project federation.
+
+        Unlike query_memory which restricts results to the current project scope,
+        this tool searches every claim regardless of scope, enabling cross-project
+        memory retrieval. Returns claims sorted by relevance.
+        """
+        svc = _service(db, workspace)
+        rows_data = svc.federated_query(query_text=query, limit=limit)
+        claims = [row["claim"] for row in rows_data]
+        serialized_rows: list[dict[str, Any]] = [
+            {
+                "claim": _claim_to_dict(row["claim"]),
+                "status": row.get("status"),
+                "annotation": row.get("annotation", {}),
+                "score": row.get("score", 0.0),
+                "lexical_score": row.get("lexical_score", 0.0),
+                "freshness_score": row.get("freshness_score", 0.0),
+                "confidence_score": row.get("confidence_score", 0.0),
+                "vector_score": row.get("vector_score", 0.0),
+            }
+            for row in rows_data
+        ]
+        return {
+            "ok": True,
+            "rows": len(claims),
+            "claims": [_claim_to_dict(c) for c in claims],
+            "rows_data": serialized_rows,
+        }
+
 
 def main() -> int:
     if FastMCP is None:  # pragma: no cover

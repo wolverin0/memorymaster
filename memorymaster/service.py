@@ -164,6 +164,15 @@ class MemoryService:
                     payload={"ciphertext_b64": sanitized.encrypted_payload},
                 )
         self._qdrant_sync(claim)
+        try:
+            from memorymaster.webhook import fire_webhook
+
+            fire_webhook(
+                "claim_ingested",
+                {"claim_id": claim.id, "text": claim.text[:200], "status": claim.status},
+            )
+        except Exception:
+            pass
         return claim
 
     def run_cycle(
@@ -304,9 +313,16 @@ class MemoryService:
         allow_sensitive: bool = False,
         scope_allowlist: list[str] | None = None,
         enrich_with_entities: bool = False,
+        requesting_agent: str | None = None,
     ) -> list[dict[str, object]]:
         if limit <= 0:
             return []
+
+        # RBAC check
+        if requesting_agent:
+            from memorymaster.access_control import require_permission
+            require_permission(requesting_agent, "query")
+
         include_sensitive = self._allow_sensitive(
             allow_sensitive=allow_sensitive,
             context="service.query_rows",
@@ -668,3 +684,17 @@ class MemoryService:
 
     def get_linked_claims(self, claim_id: int, link_type: str | None = None) -> list[ClaimLink]:
         return self.store.get_linked_claims(claim_id, link_type=link_type)
+
+    def federated_query(self, query_text: str, *, limit: int = 20) -> list[dict]:
+        """Query across ALL scopes — cross-project federation.
+
+        Returns claims from all projects, sorted by relevance.
+        Unlike regular query which filters by scope_allowlist, this
+        searches everything.
+        """
+        return self.query_rows(
+            query_text=query_text,
+            limit=limit,
+            scope_allowlist=None,  # no scope filter = all projects
+            include_candidates=True,
+        )
