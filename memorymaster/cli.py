@@ -538,7 +538,7 @@ def _handle_snapshot_commands(args: argparse.Namespace, service, parser: argpars
         return _handle_install_hook(args)
 
 
-def _handle_qdrant_commands(args: argparse.Namespace, service, parser: argparse.ArgumentParser) -> int:
+def _handle_qdrant_commands(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str = "") -> int:
     """Handle qdrant-sync and qdrant-search subcommands."""
     from memorymaster.qdrant_backend import QdrantBackend
 
@@ -573,7 +573,7 @@ def _handle_qdrant_commands(args: argparse.Namespace, service, parser: argparse.
     return 0
 
 
-def _handle_link_commands(args: argparse.Namespace, service, parser: argparse.ArgumentParser) -> int:
+def _handle_link_commands(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str = "") -> int:
     """Handle link, unlink, and links subcommands."""
     if args.command == "link":
         t0 = time.perf_counter()
@@ -892,6 +892,494 @@ def _handle_review_queue(args: argparse.Namespace, service, parser: argparse.Arg
     return 0
 
 
+def _handle_run_daemon(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    result = run_daemon(service,
+        interval_seconds=args.interval_seconds, max_cycles=args.max_cycles,
+        compact_every=args.compact_every, min_citations=args.min_citations,
+        min_score=args.min_score, policy_mode=args.policy_mode, policy_limit=args.policy_limit,
+        git_trigger=args.git_trigger, git_check_seconds=args.git_check_seconds)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def _handle_run_dashboard(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.dashboard import create_dashboard_server
+
+    server = create_dashboard_server(db_target=effective_db, workspace_root=args.workspace,
+        host=args.host, port=args.port, operator_log_jsonl=args.operator_log_jsonl)
+    print(f"memorymaster dashboard listening on http://{args.host}:{args.port}/dashboard")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+def _handle_run_operator(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    try:
+        from memorymaster.operator import MemoryOperator, OperatorConfig
+    except Exception as exc:
+        print(f"error: run-operator unavailable: could not import memorymaster.operator ({exc})")
+        return 2
+
+    def _stateful(val: str) -> str | None:
+        return None if args.no_state else (val.strip() or None)
+
+    config = OperatorConfig(
+        reconcile_interval_seconds=args.reconcile_seconds,
+        retrieval_mode=args.retrieval_mode, retrieval_limit=args.query_limit,
+        progressive_retrieval=not args.disable_progressive_retrieval,
+        tier1_limit=args.tier1_limit, tier2_limit=args.tier2_limit,
+        min_citations=args.min_citations, min_score=args.min_score,
+        policy_mode=args.policy_mode, policy_limit=args.policy_limit, compact_every=args.compact_every,
+        max_idle_seconds=args.max_idle_seconds if args.max_idle_seconds and args.max_idle_seconds > 0 else None,
+        log_jsonl_path=(args.log_jsonl.strip() or None),
+        state_json_path=_stateful(args.state_json), queue_state_json_path=_stateful(args.queue_state_json),
+        queue_journal_jsonl_path=_stateful(args.queue_journal_jsonl), queue_db_path=_stateful(args.queue_db),
+    )
+    operator = MemoryOperator(service=service, config=config)
+    result = operator.run_stream(inbox_jsonl=Path(args.inbox_jsonl),
+        poll_seconds=args.poll_seconds, max_events=args.max_events)
+    print(json.dumps(result, indent=2, default=_json_default))
+    return 0
+
+
+def _handle_run_steward(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.steward import run_steward
+
+    t0 = time.perf_counter()
+    result = run_steward(
+        service, mode=args.mode, cadence_trigger=args.cadence_trigger,
+        interval_seconds=args.interval_seconds, git_check_seconds=args.git_check_seconds,
+        commit_every=args.commit_every, max_cycles=args.max_cycles,
+        allow_sensitive=resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.run-steward"),
+        apply=args.apply, max_claims=args.max_claims, max_proposals=args.max_proposals,
+        max_probe_files=args.max_probe_files, max_probe_file_bytes=args.max_probe_file_bytes,
+        max_tool_probes=args.max_tool_probes, probe_timeout_seconds=args.probe_timeout_seconds,
+        probe_failure_threshold=args.probe_failure_threshold,
+        enable_semantic_probe=not args.disable_semantic_probe,
+        enable_tool_probe=not args.disable_tool_probe,
+        artifact_path=Path(args.artifact_json),
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(json.loads(json.dumps(result, default=_json_default)), query_ms=elapsed_ms))
+    else:
+        print(json.dumps(result, indent=2, default=_json_default))
+    return 0
+
+
+def _handle_steward_proposals(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.steward import list_steward_proposals
+
+    rows = list_steward_proposals(service, limit=args.limit, include_resolved=args.include_resolved)
+    print(json.dumps({"rows": len(rows), "proposals": rows}, indent=2, default=_json_default))
+    return 0
+
+
+def _handle_resolve_proposal(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    if args.proposal_event_id is None and args.claim_id is None:
+        raise ValueError("resolve-proposal requires --proposal-event-id or --claim-id")
+    from memorymaster.steward import resolve_steward_proposal
+
+    result = resolve_steward_proposal(service, action=args.action,
+        proposal_event_id=args.proposal_event_id, claim_id=args.claim_id, apply_on_approve=not args.no_apply)
+    print(json.dumps(result, indent=2, default=_json_default))
+    return 0
+
+
+def _handle_ready(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.conflict_resolver import detect_conflicts
+
+    t0 = time.perf_counter()
+    limit = args.limit
+
+    stale_claims = service.store.list_claims(status="stale", limit=limit, include_archived=False, include_citations=True)
+    conflict_pairs = detect_conflicts(service.store, limit=500)
+    all_candidates = service.store.list_claims(status="candidate", limit=limit * 3, include_archived=False)
+    threshold = args.confidence_threshold
+    low_conf_candidates = [c for c in all_candidates if c.confidence < threshold][:limit]
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    payload = {
+        "stale": {"count": len(stale_claims), "claims": [_claim_to_dict(c) for c in stale_claims]},
+        "conflicted": {"count": len(conflict_pairs), "pairs": [
+            {"winner_id": p.winner.id, "loser_id": p.loser.id, "reason": p.reason,
+             "key": list(p.key), "winner_text": p.winner.text[:120],
+             "loser_text": p.loser.text[:120], "winner_confidence": p.winner.confidence,
+             "loser_confidence": p.loser.confidence}
+            for p in conflict_pairs[:limit]
+        ]},
+        "low_confidence": {"count": len(low_conf_candidates), "claims": [_claim_to_dict(c) for c in low_conf_candidates]},
+        "total_attention": len(stale_claims) + len(conflict_pairs) + len(low_conf_candidates),
+    }
+
+    if args.json_output:
+        print(_json_envelope(payload, total=payload["total_attention"], query_ms=elapsed_ms))
+    else:
+        total = payload["total_attention"]
+        if total == 0:
+            print("Nothing needs attention. All clear.")
+            return 0
+
+        print(f"=== {total} items need attention ===\n")
+
+        if stale_claims:
+            print(f"--- Stale claims ({len(stale_claims)}) ---\n  Previously confirmed but source files changed. Need re-validation.")
+            for c in stale_claims:
+                _print_claim_brief(c)
+            print('  -> Run `memorymaster check-staleness` to review details\n')
+
+        if conflict_pairs:
+            print(f"--- Conflicted pairs ({len(conflict_pairs)}) ---\n  Same subject+predicate with different values. Need resolution.")
+            for p in conflict_pairs[:limit]:
+                print(f"  winner=[{p.winner.id}] vs loser=[{p.loser.id}] "
+                      f"key=({p.key[0]}, {p.key[1]}) reason={p.reason}")
+            print('  -> Run `memorymaster resolve-conflicts` to auto-resolve\n')
+
+        if low_conf_candidates:
+            print(f"--- Low-confidence candidates ({len(low_conf_candidates)}) ---\n  Candidates with confidence < {threshold}. Need more evidence or review.")
+            for c in low_conf_candidates:
+                _print_claim_brief(c)
+            print('  -> Run `memorymaster run-cycle` to re-evaluate candidates\n')
+
+    return 0
+
+
+def _handle_resolve_conflicts(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.conflict_resolver import resolve_conflicts
+
+    t0 = time.perf_counter()
+    result = resolve_conflicts(service, dry_run=args.dry_run, limit=args.limit)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(asdict(result), query_ms=elapsed_ms))
+    else:
+        if args.dry_run:
+            print("[DRY RUN] No transitions applied.")
+        print(f"conflicts detected={result.pairs_detected} resolved={result.pairs_resolved} skipped={result.pairs_skipped}")
+        for res in result.resolutions:
+            status = "APPLIED" if res.get("applied") else "SKIPPED"
+            skip = f" ({res['skip_reason']})" if res.get("skip_reason") else ""
+            print(f"  [{status}] winner={res['winner_id']} loser={res['loser_id']} reason={res['reason']}{skip}")
+    return 0
+
+
+def _handle_check_staleness(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.jobs.staleness import run as run_staleness
+
+    t0 = time.perf_counter()
+    result = run_staleness(service.store, Path(args.workspace).resolve(), mode=args.mode, dry_run=args.dry_run, limit=args.limit)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(asdict(result), query_ms=elapsed_ms))
+    else:
+        if args.dry_run:
+            print("[DRY RUN] No transitions applied.")
+        print(f"staleness scanned={result.scanned} stale={result.stale_detected} "
+              f"already_stale={result.already_stale} skipped_pinned={result.skipped_pinned} "
+              f"skipped_no_citations={result.skipped_no_citations}")
+        for d in result.details:
+            print(f"  [{'APPLIED' if d.get('applied') else 'DETECTED'}] claim={d['claim_id']} "
+                  f"files={', '.join(os.path.basename(f) for f in d.get('changed_files', [])[:3])}")
+    return 0
+
+
+def _handle_export_vault(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.vault_exporter import export_vault
+    t0 = time.perf_counter()
+    result = export_vault(service.store, output_dir=args.output, scope_filter=args.scope or None, confirmed_only=args.confirmed_only, include_archived=args.include_archived, incremental=args.incremental)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        print(f"Exported {result['exported']} claims to {args.output} ({result['directories_created']} dirs, {elapsed_ms:.0f}ms)")
+    return 0
+
+
+def _handle_extract_entities(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.entity_graph import EntityGraph
+    t0 = time.perf_counter()
+    eg = EntityGraph(str(effective_db))
+    eg.ensure_tables()
+    claims = service.store.find_by_status(args.status, limit=args.limit, include_citations=False)
+    total_entities = 0
+    for claim in claims:
+        names = eg.extract_and_link(claim.id, claim.text)
+        total_entities += len(names)
+        if names:
+            print(f"  [{claim.id}] {', '.join(names)}")
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    stats = eg.get_stats()
+    if args.json_output:
+        print(_json_envelope({"extracted": total_entities, "claims_processed": len(claims), **stats}, query_ms=elapsed_ms))
+    else:
+        print(f"Extracted {total_entities} entities from {len(claims)} claims ({elapsed_ms:.0f}ms)")
+        print(f"Graph: {stats['entities']} entities, {stats['edges']} edges, {stats['claim_links']} links")
+    return 0
+
+
+def _handle_entity_stats(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.entity_graph import EntityGraph
+    eg = EntityGraph(str(effective_db))
+    eg.ensure_tables()
+    stats = eg.get_stats()
+    if args.json_output:
+        print(_json_envelope(stats))
+    else:
+        print(f"Entities: {stats['entities']}, Edges: {stats['edges']}, Claim links: {stats['claim_links']}")
+        for t, c in stats.get('by_type', {}).items():
+            print(f"  {t}: {c}")
+    return 0
+
+
+def _handle_feedback_stats(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.feedback import FeedbackTracker
+    ft = FeedbackTracker(str(effective_db))
+    ft.ensure_tables()
+    stats = ft.get_stats()
+    if args.json_output:
+        print(_json_envelope(stats))
+    else:
+        print(f"Feedback rows: {stats['feedback_rows']}, Claims scored: {stats['claims_scored']}, Avg quality: {stats['avg_quality']}")
+    return 0
+
+
+def _handle_quality_scores(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.feedback import FeedbackTracker
+    t0 = time.perf_counter()
+    ft = FeedbackTracker(str(effective_db))
+    ft.ensure_tables()
+    result = ft.compute_quality_scores()
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        print(f"Quality scores computed for {result['scored']} claims ({elapsed_ms:.0f}ms)")
+    return 0
+
+
+def _handle_auto_resolve(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.auto_resolver import auto_resolve_conflicts
+    t0 = time.perf_counter()
+    result = auto_resolve_conflicts(service.store, limit=args.limit)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        print(f"Evaluated {result['pairs_evaluated']} conflict pairs: {result['resolved']} resolved, {result['failed']} failed ({elapsed_ms:.0f}ms)")
+    return 0
+
+
+def _handle_train_model(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.rl_trainer import train_quality_model
+    t0 = time.perf_counter()
+    result = train_quality_model(str(effective_db))
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        status = result.get("status", "unknown")
+        if status == "trained":
+            print(f"Model trained: {result['samples']} samples, AUC={result['cv_auc_mean']:.3f}, saved to {result['model_path']}")
+        elif status == "skipped":
+            print(f"Training skipped: {result.get('reason', '?')} — {result.get('suggestion', '')}")
+        else:
+            print(f"Training failed: {result.get('reason', '?')}")
+    return 0
+
+
+def _handle_extract_claims(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    import sys
+    from memorymaster.auto_extractor import extract_claims_from_text
+
+    if getattr(args, "stdin", False):
+        raw_text = sys.stdin.read()
+    else:
+        input_val = args.input or ""
+        input_path = Path(input_val)
+        if input_path.is_file():
+            raw_text = input_path.read_text(encoding="utf-8", errors="replace")
+        else:
+            raw_text = input_val
+
+    t0 = time.perf_counter()
+    extracted = extract_claims_from_text(
+        text=raw_text,
+        source=args.source,
+        scope=args.scope,
+        base_url=args.ollama_url,
+        model=args.model,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    if args.ingest:
+        ingested_ids: list[int] = []
+        for item in extracted:
+            claim = service.ingest(
+                text=item["text"],
+                citations=[CitationInput(source=item["source"])],
+                claim_type=item.get("claim_type"),
+                subject=item.get("subject"),
+                predicate=item.get("predicate"),
+                object_value=item.get("object_value"),
+                scope=item["scope"],
+            )
+            ingested_ids.append(claim.id)
+        if args.json_output:
+            print(_json_envelope({"extracted": len(extracted), "ingested": len(ingested_ids), "claim_ids": ingested_ids}, total=len(ingested_ids), query_ms=elapsed_ms))
+        else:
+            print(f"Extracted {len(extracted)} claims, ingested {len(ingested_ids)} ({elapsed_ms:.0f}ms)")
+            for cid, item in zip(ingested_ids, extracted, strict=True):
+                print(f"  [{cid}] {item['text'][:100]}")
+    else:
+        if args.json_output:
+            print(_json_envelope({"extracted": len(extracted), "claims": extracted}, total=len(extracted), query_ms=elapsed_ms))
+        else:
+            print(f"Extracted {len(extracted)} claims [DRY RUN — use --ingest to persist] ({elapsed_ms:.0f}ms)")
+            for i, item in enumerate(extracted, 1):
+                print(f"  [{i}] ({item['claim_type']}) {item['text'][:100]}")
+                if item.get("subject"):
+                    print(f"       tuple=({item['subject']}, {item.get('predicate', '-')}, {item.get('object_value', '-')})")
+    return 0
+
+
+def _handle_federated_query(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    t0 = time.perf_counter()
+    rows_data = service.federated_query(query_text=args.text, limit=args.limit)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        json_rows = [
+            {
+                "claim": _claim_to_dict(row["claim"]),
+                **{k: float(row.get(k, 0.0)) for k in _SCORE_KEYS},
+                "annotation": row.get("annotation", {}),
+            }
+            for row in rows_data
+        ]
+        print(_json_envelope(json_rows, total=len(json_rows), query_ms=elapsed_ms))
+    else:
+        for row in rows_data:
+            print_claim(row["claim"])
+            sc = {k: float(row.get(k, 0.0)) for k in _SCORE_KEYS}
+            ann = row.get("annotation", {})
+            print(
+                f"  retrieval: score={sc['score']:.3f} lex={sc['lexical_score']:.3f} "
+                f"conf={sc['confidence_score']:.3f} fresh={sc['freshness_score']:.3f} "
+                f"vec={sc['vector_score']:.3f} "
+                f"active={int(bool(ann.get('active')))} stale={int(bool(ann.get('stale')))} "
+                f"conflicted={int(bool(ann.get('conflicted')))} pinned={int(bool(ann.get('pinned')))}"
+            )
+        print(f"rows={len(rows_data)}")
+    return 0
+
+
+def _handle_sessions(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    import datetime
+    from memorymaster.session_tracker import SessionTracker
+
+    t0 = time.perf_counter()
+    tracker = SessionTracker(effective_db)
+    sessions = tracker.get_active_sessions()
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(sessions, total=len(sessions), query_ms=elapsed_ms))
+    else:
+        if not sessions:
+            print("No active sessions in the last hour.")
+        else:
+            print(f"Active sessions ({len(sessions)}):")
+            for s in sessions:
+                started = datetime.datetime.fromtimestamp(s["session_start"]).strftime("%Y-%m-%d %H:%M:%S")
+                last_act = datetime.datetime.fromtimestamp(s["last_activity"]).strftime("%H:%M:%S")
+                print(
+                    f"  [{s['id']}] agent={s['agent_id']} started={started} "
+                    f"last_activity={last_act} "
+                    f"ingested={s['claims_ingested']} queries={s['queries_made']}"
+                )
+    return 0
+
+
+def _handle_install_gitnexus_hook(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    import shutil
+
+    t0 = time.perf_counter()
+    workspace_path = Path(args.workspace).resolve()
+    hook_src = workspace_path / "scripts" / "post-commit-gitnexus.sh"
+    hooks_dir = workspace_path / ".git" / "hooks"
+    hook_dst = hooks_dir / "post-commit"
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    if not hook_src.exists():
+        msg = f"hook source not found: {hook_src}"
+        if args.json_output:
+            print(_json_error(msg))
+        else:
+            print(f"error: {msg}")
+        return 1
+
+    if not hooks_dir.is_dir():
+        msg = f"not a git repository (no .git/hooks at {workspace_path})"
+        if args.json_output:
+            print(_json_error(msg))
+        else:
+            print(f"error: {msg}")
+        return 1
+
+    shutil.copy2(str(hook_src), str(hook_dst))
+    hook_dst.chmod(hook_dst.stat().st_mode | 0o111)
+
+    if args.json_output:
+        print(_json_envelope({"installed": True, "path": str(hook_dst)}, query_ms=elapsed_ms))
+    else:
+        print(f"GitNexus post-commit hook installed: {hook_dst}")
+    return 0
+
+
+def _handle_recall(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.context_hook import recall as _recall
+    output = _recall(args.query, db_path=str(effective_db), budget=args.budget, format=args.output_format)
+    if output:
+        print(output)
+    else:
+        print("(no relevant context found)")
+    return 0
+
+
+def _handle_observe(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.context_hook import observe as _observe, observe_llm
+    if args.llm:
+        result = observe_llm(args.text, source=args.source, db_path=str(effective_db), scope=args.scope)
+        if args.json_output:
+            print(_json_envelope(result))
+        else:
+            print(f"LLM extracted {result['extracted']} claims, ingested {result['ingested']}")
+    else:
+        result = _observe(args.text, source=args.source, db_path=str(effective_db), scope=args.scope, force=args.force)
+        if args.json_output:
+            print(_json_envelope(result))
+        else:
+            if result['ingested']:
+                print(f"Observed: [{result['claim_type']}] claim_id={result['claim_id']}")
+            else:
+                print(f"Skipped: {result.get('reason', 'not memorable')}")
+    return 0
+
+
+def _handle_merge_db(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.db_merge import merge_databases
+    t0 = time.perf_counter()
+    result = merge_databases(str(effective_db), args.source)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        print(f"Merged: {result['merged']} new claims from {args.source} ({result['skipped']} skipped, {result['errors']} errors, {elapsed_ms:.0f}ms)")
+    return 0
+
+
 def _resolve_db_path(args: argparse.Namespace) -> str:
     """Resolve effective DB path; activates stealth if --stealth or stealth DB exists in cwd."""
     stealth_path = Path.cwd() / STEALTH_DB_NAME
@@ -903,6 +1391,62 @@ def _resolve_db_path(args: argparse.Namespace) -> str:
 def _stealth_active(args: argparse.Namespace) -> bool:
     """Return True if stealth mode is active for the resolved args."""
     return _resolve_db_path(args) != args.db or args.stealth
+
+
+# Dispatch table: maps subcommand name -> handler(args, service, parser, effective_db) -> int
+# Commands that run before MemoryService is constructed are handled first in main().
+COMMAND_HANDLERS: dict[str, object] = {
+    "stealth-status": _handle_stealth_status,
+    "export-metrics": _handle_export_metrics,
+    "init-db": _handle_init_db,
+    "ingest": _handle_ingest,
+    "run-cycle": _handle_run_cycle,
+    "query": _handle_query,
+    "context": _handle_context,
+    "pin": _handle_pin,
+    "redact-claim": _handle_redact_claim,
+    "compact": _handle_compact,
+    "compact-summaries": _handle_compact_summaries,
+    "dedup": _handle_dedup,
+    "recompute-tiers": _handle_recompute_tiers,
+    "list-claims": _handle_list_claims,
+    "list-events": _handle_list_events,
+    "history": _handle_history,
+    "review-queue": _handle_review_queue,
+    "run-daemon": _handle_run_daemon,
+    "run-dashboard": _handle_run_dashboard,
+    "run-operator": _handle_run_operator,
+    "run-steward": _handle_run_steward,
+    "steward-proposals": _handle_steward_proposals,
+    "resolve-proposal": _handle_resolve_proposal,
+    "ready": _handle_ready,
+    "resolve-conflicts": _handle_resolve_conflicts,
+    "check-staleness": _handle_check_staleness,
+    "link": _handle_link_commands,
+    "unlink": _handle_link_commands,
+    "links": _handle_link_commands,
+    "snapshot": _handle_snapshot_commands,
+    "snapshots": _handle_snapshot_commands,
+    "rollback": _handle_snapshot_commands,
+    "diff": _handle_snapshot_commands,
+    "install-hook": _handle_snapshot_commands,
+    "qdrant-sync": _handle_qdrant_commands,
+    "qdrant-search": _handle_qdrant_commands,
+    "export-vault": _handle_export_vault,
+    "extract-entities": _handle_extract_entities,
+    "entity-stats": _handle_entity_stats,
+    "feedback-stats": _handle_feedback_stats,
+    "quality-scores": _handle_quality_scores,
+    "auto-resolve": _handle_auto_resolve,
+    "train-model": _handle_train_model,
+    "extract-claims": _handle_extract_claims,
+    "federated-query": _handle_federated_query,
+    "sessions": _handle_sessions,
+    "install-gitnexus-hook": _handle_install_gitnexus_hook,
+    "recall": _handle_recall,
+    "observe": _handle_observe,
+    "merge-db": _handle_merge_db,
+}
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -610,6 +610,136 @@ class MemoryOperator:
                 handle.seek(0)
         return start_offset, read_offset
 
+    def _handle_queue_json_error(self, entry_id: int, entry_offset: int, exc: Exception, emit, append_queue_journal) -> None:
+        """Handle JSON decode error for a queue entry."""
+        emit(
+            "json_error",
+            {
+                "entry_id": entry_id,
+                "offset": entry_offset,
+                "error_kind": "json_decode",
+                "error": str(exc),
+            },
+        )
+        append_queue_journal(
+            "failed",
+            {
+                "entry_id": entry_id,
+                "offset": entry_offset,
+                "error_kind": "json_decode",
+                "error": str(exc),
+            },
+        )
+
+    def _handle_queue_process_error(self, entry_id: int, entry_offset: int, exc: Exception, emit, append_queue_journal) -> None:
+        """Handle process turn error for a queue entry."""
+        emit(
+            "queue_entry_error",
+            {
+                "entry_id": entry_id,
+                "offset": entry_offset,
+                "error_kind": "process_turn",
+                "error": str(exc),
+            },
+        )
+        append_queue_journal(
+            "failed",
+            {
+                "entry_id": entry_id,
+                "offset": entry_offset,
+                "error_kind": "process_turn",
+                "error": str(exc),
+            },
+        )
+
+    def _record_turn_processed(
+        self,
+        turn,
+        summary: dict[str, object],
+        entry_id: int,
+        entry_offset: int,
+        seen_events: int,
+        processed_events: int,
+        processed_turns: list[dict[str, Any]],
+        pending_queue: list[dict[str, Any]],
+        emit,
+        append_queue_journal,
+    ) -> None:
+        """Record processed turn in stats and emit/journal events."""
+        processed_turns.append(
+            {
+                "turn_id": turn.turn_id,
+                "retrieval_mode": str(summary.get("retrieval_meta", {}).get("mode", "")),
+                "retrieval_tier": str(summary.get("retrieval_meta", {}).get("tier_used", "")),
+                "retrieval_rows": int(summary.get("retrieval_meta", {}).get("rows", 0)),
+                "extracted": len(summary["extracted"]),
+                "ingested": len(summary["ingested"]),
+            }
+        )
+        emit(
+            "turn_processed",
+            {
+                "turn_id": turn.turn_id,
+                "entry_id": entry_id,
+                "seen_events": seen_events,
+                "processed_events": processed_events,
+                "retrieval_mode": str(summary.get("retrieval_meta", {}).get("mode", "")),
+                "retrieval_tier": str(summary.get("retrieval_meta", {}).get("tier_used", "")),
+                "retrieval_rows": int(summary.get("retrieval_meta", {}).get("rows", 0)),
+                "extracted": len(summary["extracted"]),
+                "ingested": len(summary["ingested"]),
+                "pending_events": len(pending_queue),
+            },
+        )
+        append_queue_journal(
+            "ack",
+            {
+                "entry_id": entry_id,
+                "offset": entry_offset,
+                "turn_id": turn.turn_id,
+                "pending_events": len(pending_queue),
+            },
+        )
+
+    def _enqueue_new_event(
+        self,
+        payload: str,
+        next_queue_id: int,
+        current_offset: int,
+        seen_events: int,
+        pending_queue: list[dict[str, Any]],
+        emit,
+        append_queue_journal,
+    ) -> int:
+        """Enqueue a new event. Returns updated next_queue_id."""
+        entry_id = next_queue_id
+        next_queue_id += 1
+        pending_queue.append(
+            {
+                "entry_id": entry_id,
+                "offset": current_offset,
+                "payload": payload,
+            }
+        )
+        emit(
+            "queue_enqueued",
+            {
+                "entry_id": entry_id,
+                "offset": current_offset,
+                "seen_events": seen_events,
+                "pending_events": len(pending_queue),
+            },
+        )
+        append_queue_journal(
+            "enqueue",
+            {
+                "entry_id": entry_id,
+                "offset": current_offset,
+                "pending_events": len(pending_queue),
+            },
+        )
+        return next_queue_id
+
     def _run_stream_json(
         self,
         inbox_jsonl: Path,
@@ -818,25 +948,7 @@ class MemoryOperator:
                         row = json.loads(payload)
                     except json.JSONDecodeError as exc:
                         json_errors += 1
-                        emit(
-                            "json_error",
-                            {
-                                "entry_id": entry_id,
-                                "offset": entry_offset,
-                                "error_kind": "json_decode",
-                                "error": str(exc),
-                                "pending_events": len(pending_queue),
-                            },
-                        )
-                        append_queue_journal(
-                            "failed",
-                            {
-                                "entry_id": entry_id,
-                                "offset": entry_offset,
-                                "error_kind": "json_decode",
-                                "error": str(exc),
-                            },
-                        )
+                        self._handle_queue_json_error(entry_id, entry_offset, exc, emit, append_queue_journal)
                         pending_queue.pop(0)
                         continue
 
@@ -845,25 +957,7 @@ class MemoryOperator:
                         summary = self.process_turn(turn)
                     except Exception as exc:
                         exit_reason = "queue_entry_error"
-                        emit(
-                            "queue_entry_error",
-                            {
-                                "entry_id": entry_id,
-                                "offset": entry_offset,
-                                "error_kind": "process_turn",
-                                "error": str(exc),
-                                "pending_events": len(pending_queue),
-                            },
-                        )
-                        append_queue_journal(
-                            "failed",
-                            {
-                                "entry_id": entry_id,
-                                "offset": entry_offset,
-                                "error_kind": "process_turn",
-                                "error": str(exc),
-                            },
-                        )
+                        self._handle_queue_process_error(entry_id, entry_offset, exc, emit, append_queue_journal)
                         queue_blocked = True
                         break
 
@@ -871,39 +965,10 @@ class MemoryOperator:
                     acked_offset = max(acked_offset, entry_offset)
                     processed_events += 1
                     persisted_processed_events += 1
-                    processed_turns.append(
-                        {
-                            "turn_id": turn.turn_id,
-                            "retrieval_mode": str(summary.get("retrieval_meta", {}).get("mode", "")),
-                            "retrieval_tier": str(summary.get("retrieval_meta", {}).get("tier_used", "")),
-                            "retrieval_rows": int(summary.get("retrieval_meta", {}).get("rows", 0)),
-                            "extracted": len(summary["extracted"]),
-                            "ingested": len(summary["ingested"]),
-                        }
-                    )
-                    emit(
-                        "turn_processed",
-                        {
-                            "turn_id": turn.turn_id,
-                            "entry_id": entry_id,
-                            "seen_events": seen_events,
-                            "processed_events": processed_events,
-                            "retrieval_mode": str(summary.get("retrieval_meta", {}).get("mode", "")),
-                            "retrieval_tier": str(summary.get("retrieval_meta", {}).get("tier_used", "")),
-                            "retrieval_rows": int(summary.get("retrieval_meta", {}).get("rows", 0)),
-                            "extracted": len(summary["extracted"]),
-                            "ingested": len(summary["ingested"]),
-                            "pending_events": len(pending_queue),
-                        },
-                    )
-                    append_queue_journal(
-                        "ack",
-                        {
-                            "entry_id": entry_id,
-                            "offset": entry_offset,
-                            "turn_id": turn.turn_id,
-                            "pending_events": len(pending_queue),
-                        },
+                    self._record_turn_processed(
+                        turn, summary, entry_id, entry_offset,
+                        seen_events, processed_events, processed_turns,
+                        pending_queue, emit, append_queue_journal
                     )
                     persist_durability_state()
                     last_activity = time.monotonic()
@@ -926,33 +991,11 @@ class MemoryOperator:
                         persist_durability_state()
                         continue
 
-                    entry_id = next_queue_id
-                    next_queue_id += 1
-                    pending_queue.append(
-                        {
-                            "entry_id": entry_id,
-                            "offset": current_offset,
-                            "payload": payload,
-                        }
-                    )
                     seen_events += 1
                     persisted_seen_events += 1
-                    emit(
-                        "queue_enqueued",
-                        {
-                            "entry_id": entry_id,
-                            "offset": current_offset,
-                            "seen_events": seen_events,
-                            "pending_events": len(pending_queue),
-                        },
-                    )
-                    append_queue_journal(
-                        "enqueue",
-                        {
-                            "entry_id": entry_id,
-                            "offset": current_offset,
-                            "pending_events": len(pending_queue),
-                        },
+                    next_queue_id = self._enqueue_new_event(
+                        payload, next_queue_id, current_offset,
+                        seen_events, pending_queue, emit, append_queue_journal
                     )
                     persist_durability_state()
                     continue
