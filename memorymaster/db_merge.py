@@ -23,6 +23,64 @@ def _text_hash(text: str) -> str:
     return hashlib.sha256(text.strip().lower().encode("utf-8")).hexdigest()[:16]
 
 
+def _build_insert_values(
+    row: sqlite3.Row, common_cols: list[str], ikey: str
+) -> tuple[list[str], list[object]]:
+    """Build column names and values for claim insertion."""
+    cols_to_insert = []
+    values = []
+    for col in common_cols:
+        if col == "idempotency_key":
+            values.append(ikey)
+        else:
+            values.append(row[col] if col in row.keys() else None)
+        cols_to_insert.append(col)
+    return cols_to_insert, values
+
+
+def _copy_claim_citations(src: sqlite3.Connection, tgt: sqlite3.Connection, old_id: int, new_id: int) -> None:
+    """Copy citations from source claim to target claim."""
+    try:
+        cites = src.execute(
+            "SELECT source, locator, excerpt, created_at FROM citations WHERE claim_id = ?",
+            (old_id,),
+        ).fetchall()
+        for cite in cites:
+            tgt.execute(
+                "INSERT INTO citations (claim_id, source, locator, excerpt, created_at) VALUES (?, ?, ?, ?, ?)",
+                (new_id, cite["source"], cite["locator"], cite["excerpt"], cite["created_at"]),
+            )
+    except sqlite3.OperationalError:
+        pass  # citations table might differ
+
+
+def _insert_claim_into_target(
+    row: sqlite3.Row,
+    common_cols: list[str],
+    ikey: str,
+    text: str,
+    src: sqlite3.Connection,
+    tgt: sqlite3.Connection,
+) -> bool:
+    """Insert a single claim into target DB and copy citations. Returns True if successful."""
+    try:
+        cols_to_insert, values = _build_insert_values(row, common_cols, ikey)
+        placeholders = ",".join("?" for _ in cols_to_insert)
+        col_names = ",".join(cols_to_insert)
+
+        tgt.execute(
+            f"INSERT INTO claims ({col_names}) VALUES ({placeholders})",
+            values,
+        )
+        new_id = tgt.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+        _copy_claim_citations(src, tgt, row["id"], new_id)
+        return True
+    except Exception as exc:
+        logger.warning("Failed to merge claim: %s", exc)
+        return False
+
+
 def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
     """Merge claims from source_db into target_db.
 
@@ -73,52 +131,17 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
                 stats["skipped"] += 1
                 continue
 
+            # Build idempotency key if missing
+            if not ikey:
+                ikey = f"merge-{_text_hash(text)}"
+
             # Insert into target
-            try:
-                # Build idempotency key if missing
-                if not ikey:
-                    ikey = f"merge-{_text_hash(text)}"
-
-                values = []
-                cols_to_insert = []
-                for col in common_cols:
-                    if col == "idempotency_key":
-                        values.append(ikey)
-                    else:
-                        values.append(row[col] if col in row.keys() else None)
-                    cols_to_insert.append(col)
-
-                placeholders = ",".join("?" for _ in cols_to_insert)
-                col_names = ",".join(cols_to_insert)
-
-                tgt.execute(
-                    f"INSERT INTO claims ({col_names}) VALUES ({placeholders})",
-                    values,
-                )
-                new_id = tgt.execute("SELECT last_insert_rowid()").fetchone()[0]
-
-                # Copy citations for this claim
-                old_id = row["id"]
-                try:
-                    cites = src.execute(
-                        "SELECT source, locator, excerpt, created_at FROM citations WHERE claim_id = ?",
-                        (old_id,),
-                    ).fetchall()
-                    for cite in cites:
-                        tgt.execute(
-                            "INSERT INTO citations (claim_id, source, locator, excerpt, created_at) VALUES (?, ?, ?, ?, ?)",
-                            (new_id, cite["source"], cite["locator"], cite["excerpt"], cite["created_at"]),
-                        )
-                except sqlite3.OperationalError:
-                    pass  # citations table might differ
-
+            if _insert_claim_into_target(row, common_cols, ikey, text, src, tgt):
                 existing_keys.add(ikey)
                 existing_hashes.add(_text_hash(text))
                 stats["merged"] += 1
-
-            except Exception as exc:
+            else:
                 stats["errors"] += 1
-                logger.warning("Failed to merge claim: %s", exc)
 
         tgt.commit()
 
