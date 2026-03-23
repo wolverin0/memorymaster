@@ -24,7 +24,9 @@ def infer_structure(text: str) -> tuple[str | None, str | None, str | None, str 
 
     path_match = _WIN_PATH_RE.search(text) or _UNIX_PATH_RE.search(text)
     if path_match:
-        return ("filesystem_fact", "workspace", "path", path_match.group(0))
+        # Use None instead of generic "workspace"/"path" to avoid mass conflicts
+        # Claims with file paths don't need tuple-based conflict detection
+        return ("filesystem_fact", None, None, None)
 
     if "credential" in text.lower() or "secret" in text.lower():
         return ("security_fact", "auth", "location_hint", text.strip())
