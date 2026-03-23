@@ -116,6 +116,167 @@ def _event_to_dict(event: Any) -> dict[str, Any]:
     return payload
 
 
+def _build_retrieval_method_attempts(
+    limit: int,
+    include_stale: bool,
+    include_conflicted: bool,
+    mode: str,
+    allow_sensitive: bool,
+    scope_allowlist: list[str],
+    with_scope: bool,
+) -> list[dict[str, Any]]:
+    """Build fallback attempts for retrieval method kwargs."""
+    kwargs: dict[str, Any] = {
+        "limit": limit,
+        "include_stale": include_stale,
+        "include_conflicted": include_conflicted,
+        "retrieval_mode": mode,
+        "allow_sensitive": allow_sensitive,
+    }
+    if with_scope and scope_allowlist:
+        kwargs["scope_allowlist"] = scope_allowlist
+    attempts: list[dict[str, Any]] = [kwargs]
+    if "scope_allowlist" in kwargs:
+        fallback = dict(kwargs)
+        fallback.pop("scope_allowlist", None)
+        attempts.append(fallback)
+    if "allow_sensitive" in kwargs:
+        fallback = dict(attempts[-1])
+        fallback.pop("allow_sensitive", None)
+        attempts.append(fallback)
+    return attempts
+
+
+def _call_retrieval_method_with_fallback(method: Any, text: str, attempts: list[dict[str, Any]]) -> Any:
+    """Call retrieval method with fallback attempts."""
+    last_error: TypeError | None = None
+    for attempt in attempts:
+        try:
+            return method(text, **attempt)
+        except TypeError as exc:
+            last_error = exc
+            if "unexpected keyword argument" not in str(exc):
+                raise
+    if last_error is not None:
+        raise last_error
+    return []
+
+
+def _parse_retrieval_query_params(query_string: str) -> dict[str, Any]:
+    """Parse and validate query parameters for retrieval."""
+    query = parse_qs(query_string)
+    text = _first_query_value(query, "query") or ""
+    mode = (_first_query_value(query, "mode") or "hybrid").strip().lower()
+    mode = mode if mode in {"legacy", "hybrid"} else "hybrid"
+    limit = _parse_int(_first_query_value(query, "limit"), default=10, minimum=1, maximum=100)
+    include_stale = _parse_bool(_first_query_value(query, "include_stale"), default=True)
+    include_conflicted = _parse_bool(_first_query_value(query, "include_conflicted"), default=True)
+    allow_sensitive = _parse_bool(_first_query_value(query, "allow_sensitive"), default=False)
+
+    scope_raw = _first_query_value(query, "scope_allowlist")
+    scope_allowlist: list[str] = []
+    if scope_raw:
+        dedupe: set[str] = set()
+        for token in scope_raw.split(","):
+            normalized = token.strip()
+            if normalized and normalized not in dedupe:
+                dedupe.add(normalized)
+                scope_allowlist.append(normalized)
+
+    return {
+        "text": text,
+        "mode": mode,
+        "limit": limit,
+        "include_stale": include_stale,
+        "include_conflicted": include_conflicted,
+        "allow_sensitive": allow_sensitive,
+        "scope_allowlist": scope_allowlist,
+    }
+
+
+def _extract_claims_from_rows(rows_data: Any) -> tuple[list[Any], dict[int, dict[str, Any]]]:
+    """Extract claims and scores from query_rows result."""
+    claims: list[Any] = []
+    scored_by_claim_id: dict[int, dict[str, Any]] = {}
+
+    if not isinstance(rows_data, list):
+        return claims, scored_by_claim_id
+
+    for row in rows_data:
+        claim_obj = row.get("claim") if isinstance(row, dict) else getattr(row, "claim", None)
+        if claim_obj is None:
+            continue
+        try:
+            claim_id = int(claim_obj.id)
+        except Exception:
+            continue
+        claims.append(claim_obj)
+        if isinstance(row, dict):
+            scored_by_claim_id[claim_id] = row
+        else:
+            scored_by_claim_id[claim_id] = {
+                "score": getattr(row, "score", None),
+                "lexical_score": getattr(row, "lexical_score", None),
+                "confidence_score": getattr(row, "confidence_score", None),
+                "freshness_score": getattr(row, "freshness_score", None),
+                "vector_score": getattr(row, "vector_score", None),
+            }
+
+    return claims, scored_by_claim_id
+
+
+def _compute_claim_row(claim: Any, query_tokens: set[str], scored_by_claim_id: dict[int, dict[str, Any]], triage_flags: dict[int, dict[str, bool]]) -> dict[str, Any]:
+    """Compute a single claim row with scores and annotations."""
+    claim_id = int(claim.id)
+    c_tokens = set(str(claim.text or "").lower().split())
+    lexical = (len(query_tokens & c_tokens) / max(1, len(query_tokens))) if query_tokens else 0.0
+    confidence = max(0.0, min(1.0, float(claim.confidence)))
+    freshness = 0.5
+    vector = 0.0
+    _w_l, _w_c, _w_f = get_config().retrieval_weights_no_vector
+    score = (_w_l * lexical) + (_w_c * confidence) + (_w_f * freshness)
+
+    scored = scored_by_claim_id.get(claim_id)
+    if isinstance(scored, dict):
+        with contextlib.suppress(TypeError, ValueError):
+            lexical = float(scored.get("lexical_score", scored.get("lexical", lexical)))
+        with contextlib.suppress(TypeError, ValueError):
+            confidence = float(scored.get("confidence_score", scored.get("confidence", confidence)))
+        with contextlib.suppress(TypeError, ValueError):
+            freshness = float(scored.get("freshness_score", scored.get("freshness", freshness)))
+        with contextlib.suppress(TypeError, ValueError):
+            vector = float(scored.get("vector_score", scored.get("vector", vector)))
+        with contextlib.suppress(TypeError, ValueError):
+            score = float(scored.get("score", score))
+
+    triage = triage_flags.get(claim_id, {"reviewed": False, "suppressed": False})
+    annotation_parts: list[str] = []
+    normalized_status = str(claim.status or "").strip().lower()
+    if normalized_status == "stale":
+        annotation_parts.append("stale: refresh or re-validate")
+    if normalized_status == "conflicted":
+        annotation_parts.append("conflicted: compare competing values")
+    if bool(triage["reviewed"]):
+        annotation_parts.append("triage reviewed")
+    if bool(triage["suppressed"]):
+        annotation_parts.append("triage suppressed")
+    if bool(getattr(claim, "pinned", False)):
+        annotation_parts.append("pinned")
+
+    return {
+        "claim": _claim_to_dict(claim),
+        "status": str(claim.status or ""),
+        "annotation": ", ".join(annotation_parts) if annotation_parts else "active",
+        "triage_reviewed": bool(triage["reviewed"]),
+        "triage_suppressed": bool(triage["suppressed"]),
+        "score": float(score),
+        "lexical_score": float(lexical),
+        "confidence_score": float(confidence),
+        "freshness_score": float(freshness),
+        "vector_score": float(vector),
+    }
+
+
 class DashboardHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -566,139 +727,37 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
         self._write_json({"ok": True, "rows": len(out), "items": out})
 
     def _handle_retrieval(self, query_string: str) -> None:
-        query = parse_qs(query_string)
-        text = _first_query_value(query, "query") or ""
-        mode = (_first_query_value(query, "mode") or "hybrid").strip().lower()
-        mode = mode if mode in {"legacy", "hybrid"} else "hybrid"
-        limit = _parse_int(_first_query_value(query, "limit"), default=10, minimum=1, maximum=100)
-        include_stale = _parse_bool(_first_query_value(query, "include_stale"), default=True)
-        include_conflicted = _parse_bool(_first_query_value(query, "include_conflicted"), default=True)
-        allow_sensitive = _parse_bool(_first_query_value(query, "allow_sensitive"), default=False)
-        scope_raw = _first_query_value(query, "scope_allowlist")
-        scope_allowlist: list[str] = []
-        if scope_raw:
-            dedupe: set[str] = set()
-            for token in scope_raw.split(","):
-                normalized = token.strip()
-                if normalized and normalized not in dedupe:
-                    dedupe.add(normalized)
-                    scope_allowlist.append(normalized)
+        params = _parse_retrieval_query_params(query_string)
+        text = params["text"]
+        mode = params["mode"]
+        limit = params["limit"]
+        include_stale = params["include_stale"]
+        include_conflicted = params["include_conflicted"]
+        allow_sensitive = params["allow_sensitive"]
+        scope_allowlist = params["scope_allowlist"]
 
-        def _call_retrieval_method(method: Any, *, with_scope: bool) -> Any:
-            kwargs: dict[str, Any] = {
-                "limit": limit,
-                "include_stale": include_stale,
-                "include_conflicted": include_conflicted,
-                "retrieval_mode": mode,
-                "allow_sensitive": allow_sensitive,
-            }
-            if with_scope and scope_allowlist:
-                kwargs["scope_allowlist"] = scope_allowlist
-            attempts: list[dict[str, Any]] = [kwargs]
-            if "scope_allowlist" in kwargs:
-                fallback = dict(kwargs)
-                fallback.pop("scope_allowlist", None)
-                attempts.append(fallback)
-            if "allow_sensitive" in kwargs:
-                fallback = dict(attempts[-1])
-                fallback.pop("allow_sensitive", None)
-                attempts.append(fallback)
-            last_error: TypeError | None = None
-            for attempt in attempts:
-                try:
-                    return method(text, **attempt)
-                except TypeError as exc:
-                    last_error = exc
-                    if "unexpected keyword argument" not in str(exc):
-                        raise
-            if last_error is not None:
-                raise last_error
-            return []
+        attempts_with_scope = _build_retrieval_method_attempts(
+            limit, include_stale, include_conflicted, mode, allow_sensitive, scope_allowlist, with_scope=True
+        )
+        attempts_no_scope = _build_retrieval_method_attempts(
+            limit, include_stale, include_conflicted, mode, allow_sensitive, [], with_scope=False
+        )
 
         query_rows_fn = getattr(self._server.service, "query_rows", None)
         claims: list[Any] = []
         scored_by_claim_id: dict[int, dict[str, Any]] = {}
         if callable(query_rows_fn):
-            rows_data = _call_retrieval_method(query_rows_fn, with_scope=True)
-            if isinstance(rows_data, list):
-                for row in rows_data:
-                    claim_obj = row.get("claim") if isinstance(row, dict) else getattr(row, "claim", None)
-                    if claim_obj is None:
-                        continue
-                    try:
-                        claim_id = int(claim_obj.id)
-                    except Exception:
-                        continue
-                    claims.append(claim_obj)
-                    if isinstance(row, dict):
-                        scored_by_claim_id[claim_id] = row
-                    else:
-                        scored_by_claim_id[claim_id] = {
-                            "score": getattr(row, "score", None),
-                            "lexical_score": getattr(row, "lexical_score", None),
-                            "confidence_score": getattr(row, "confidence_score", None),
-                            "freshness_score": getattr(row, "freshness_score", None),
-                            "vector_score": getattr(row, "vector_score", None),
-                        }
+            rows_data = _call_retrieval_method_with_fallback(query_rows_fn, text, attempts_with_scope)
+            claims, scored_by_claim_id = _extract_claims_from_rows(rows_data)
 
         if not claims:
-            claims = _call_retrieval_method(self._server.service.query, with_scope=True)
+            claims = _call_retrieval_method_with_fallback(self._server.service.query, text, attempts_no_scope)
         triage_flags = self._triage_flags(max(limit * 30, 200))
         q_tokens = {token for token in text.lower().split() if token.strip()}
-        rows: list[dict[str, Any]] = []
-        for claim in claims:
-            claim_id = int(claim.id)
-            c_tokens = set(str(claim.text or "").lower().split())
-            lexical = (len(q_tokens & c_tokens) / max(1, len(q_tokens))) if q_tokens else 0.0
-            confidence = max(0.0, min(1.0, float(claim.confidence)))
-            freshness = 0.5
-            vector = 0.0
-            _w_l, _w_c, _w_f = get_config().retrieval_weights_no_vector
-            score = (_w_l * lexical) + (_w_c * confidence) + (_w_f * freshness)
-            scored = scored_by_claim_id.get(claim_id)
-            if isinstance(scored, dict):
-                lexical_raw = scored.get("lexical_score", scored.get("lexical", lexical))
-                confidence_raw = scored.get("confidence_score", scored.get("confidence", confidence))
-                freshness_raw = scored.get("freshness_score", scored.get("freshness", freshness))
-                vector_raw = scored.get("vector_score", scored.get("vector", vector))
-                score_raw = scored.get("score", score)
-                with contextlib.suppress(TypeError, ValueError):
-                    lexical = float(lexical_raw)
-                with contextlib.suppress(TypeError, ValueError):
-                    confidence = float(confidence_raw)
-                with contextlib.suppress(TypeError, ValueError):
-                    freshness = float(freshness_raw)
-                with contextlib.suppress(TypeError, ValueError):
-                    vector = float(vector_raw)
-                with contextlib.suppress(TypeError, ValueError):
-                    score = float(score_raw)
-            triage = triage_flags.get(claim_id, {"reviewed": False, "suppressed": False})
-            annotation_parts: list[str] = []
-            normalized_status = str(claim.status or "").strip().lower()
-            if normalized_status == "stale":
-                annotation_parts.append("stale: refresh or re-validate")
-            if normalized_status == "conflicted":
-                annotation_parts.append("conflicted: compare competing values")
-            if bool(triage["reviewed"]):
-                annotation_parts.append("triage reviewed")
-            if bool(triage["suppressed"]):
-                annotation_parts.append("triage suppressed")
-            if bool(getattr(claim, "pinned", False)):
-                annotation_parts.append("pinned")
-            rows.append(
-                {
-                    "claim": _claim_to_dict(claim),
-                    "status": str(claim.status or ""),
-                    "annotation": ", ".join(annotation_parts) if annotation_parts else "active",
-                    "triage_reviewed": bool(triage["reviewed"]),
-                    "triage_suppressed": bool(triage["suppressed"]),
-                    "score": float(score),
-                    "lexical_score": float(lexical),
-                    "confidence_score": float(confidence),
-                    "freshness_score": float(freshness),
-                    "vector_score": float(vector),
-                }
-            )
+        rows: list[dict[str, Any]] = [
+            _compute_claim_row(claim, q_tokens, scored_by_claim_id, triage_flags)
+            for claim in claims
+        ]
         self._write_json({"ok": True, "rows": len(rows), "rows_data": rows, "query": text, "mode": mode, "scope_allowlist": scope_allowlist})
 
     def _handle_audit(self, query_string: str) -> None:
