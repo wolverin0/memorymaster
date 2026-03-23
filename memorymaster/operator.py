@@ -740,6 +740,59 @@ class MemoryOperator:
         )
         return next_queue_id
 
+    def _persist_legacy_state_file(
+        self,
+        state_path: Path | None,
+        canonical_inbox: str,
+        read_offset: int,
+        acked_offset: int,
+        persisted_seen_events: int,
+        persisted_processed_events: int,
+        queue,
+        emit,
+    ) -> None:
+        """Persist legacy state JSON file for backward compatibility."""
+        if state_path is None:
+            return
+        state_payload = {
+            "inbox_jsonl": canonical_inbox,
+            "offset": max(0, int(acked_offset)),
+            "read_offset": max(0, int(read_offset)),
+            "pending_events": queue.pending_count(),
+            "seen_events": persisted_seen_events,
+            "processed_events": persisted_processed_events,
+            "updated_at": _utc_now_iso(),
+        }
+        try:
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = state_path.with_suffix(f"{state_path.suffix}.tmp")
+            tmp_path.write_text(
+                json.dumps(state_payload, ensure_ascii=True) + "\n",
+                encoding="utf-8",
+            )
+            tmp_path.replace(state_path)
+            emit(
+                "state_saved",
+                {
+                    "state_json": str(state_path),
+                    "inbox_jsonl": canonical_inbox,
+                    "offset": state_payload["offset"],
+                    "read_offset": state_payload["read_offset"],
+                    "pending_events": state_payload["pending_events"],
+                    "seen_events": state_payload["seen_events"],
+                    "processed_events": state_payload["processed_events"],
+                },
+            )
+        except Exception as exc:
+            emit(
+                "state_error",
+                {
+                    "op": "save",
+                    "state_json": str(state_path),
+                    "error": str(exc),
+                },
+            )
+
     def _run_stream_json(
         self,
         inbox_jsonl: Path,
@@ -1158,45 +1211,12 @@ class MemoryOperator:
             queue.set_meta_int("seen_events", persisted_seen_events)
             queue.set_meta_int("processed_events", persisted_processed_events)
             # Also persist legacy state_json for backward compatibility
-            if state_path is not None:
-                state_payload = {
-                    "inbox_jsonl": canonical_inbox,
-                    "offset": max(0, int(acked_offset)),
-                    "read_offset": max(0, int(read_offset)),
-                    "pending_events": queue.pending_count(),
-                    "seen_events": persisted_seen_events,
-                    "processed_events": persisted_processed_events,
-                    "updated_at": _utc_now_iso(),
-                }
-                try:
-                    state_path.parent.mkdir(parents=True, exist_ok=True)
-                    tmp_path = state_path.with_suffix(f"{state_path.suffix}.tmp")
-                    tmp_path.write_text(
-                        json.dumps(state_payload, ensure_ascii=True) + "\n",
-                        encoding="utf-8",
-                    )
-                    tmp_path.replace(state_path)
-                    emit(
-                        "state_saved",
-                        {
-                            "state_json": str(state_path),
-                            "inbox_jsonl": canonical_inbox,
-                            "offset": state_payload["offset"],
-                            "read_offset": state_payload["read_offset"],
-                            "pending_events": state_payload["pending_events"],
-                            "seen_events": state_payload["seen_events"],
-                            "processed_events": state_payload["processed_events"],
-                        },
-                    )
-                except Exception as exc:
-                    emit(
-                        "state_error",
-                        {
-                            "op": "save",
-                            "state_json": str(state_path),
-                            "error": str(exc),
-                        },
-                    )
+            self._persist_legacy_state_file(
+                state_path, canonical_inbox,
+                read_offset, acked_offset,
+                persisted_seen_events, persisted_processed_events,
+                queue, emit
+            )
 
         try:
             with inbox.open("rb") as handle:
