@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from memorymaster.service import MemoryService
 from memorymaster.models import CitationInput
 
-PROJECTS_ROOT = Path(r"G:\_OneDrive\OneDrive\Desktop\Py Apps")
+PROJECTS_ROOT = Path(os.environ.get("PROJECTS_ROOT", "."))
 DB_PATH = Path(__file__).resolve().parent.parent / "memorymaster.db"
 
 # Dirs/files to skip

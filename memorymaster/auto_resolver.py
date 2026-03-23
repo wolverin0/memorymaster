@@ -21,7 +21,7 @@ from memorymaster.models import Claim
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_OLLAMA_URL = "http://192.168.100.155:11434"
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_MODEL = "deepseek-coder-v2:16b"
 
 RESOLUTION_PROMPT = """You are a memory quality evaluator. Two claims contradict each other.

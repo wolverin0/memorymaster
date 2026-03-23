@@ -4,14 +4,14 @@
  * Add this alongside the existing ruflo indexing in your memory-bridge.cjs.
  * For each .md file read from the VM, after chunking by ## headers:
  *
- *   1. Embed via qwen3-embedding:8b (Ollama at 192.168.100.155:11434)
- *   2. Upsert to Qdrant collection "agent-memories" at 192.168.100.186:6333
+ *   1. Embed via qwen3-embedding:8b (Ollama at localhost:11434)
+ *   2. Upsert to Qdrant collection "agent-memories" at localhost:6333
  *
  * This makes the bridge push to BOTH ruflo (local, fast) and Qdrant (shared network).
  */
 
-const OLLAMA_URL = process.env.OLLAMA_URL || "http://192.168.100.155:11434";
-const QDRANT_URL = process.env.QDRANT_URL || "http://192.168.100.186:6333";
+const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434";
+const QDRANT_URL = process.env.QDRANT_URL || "http://localhost:6333";
 const QDRANT_COLLECTION = "agent-memories";
 const EMBED_MODEL = "qwen3-embedding:8b";
 const EMBED_TIMEOUT_MS = 120_000;

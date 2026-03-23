@@ -56,3 +56,12 @@ venv/
 Thumbs.db
 obsidian-vault/
 .gitnexus
+
+# Sensitive / generated (never commit)
+.mcp.json
+memory.db
+.memorymaster/
+cloned/
+quality_model.pkl
+autoresearch*.log
+*.jsonl

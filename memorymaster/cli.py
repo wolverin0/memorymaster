@@ -295,8 +295,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("install-hook", help="Install a git post-commit hook that auto-snapshots the DB")
 
     qdrant_sync = sub.add_parser("qdrant-sync", help="Bulk-sync all active claims to Qdrant vector store")
-    qdrant_sync.add_argument("--qdrant-url", default="", help="Qdrant endpoint (default: $QDRANT_URL or 192.168.100.186:6333)")
-    qdrant_sync.add_argument("--ollama-url", default="", help="Ollama endpoint (default: $OLLAMA_URL or 192.168.100.155:11434)")
+    qdrant_sync.add_argument("--qdrant-url", default="", help="Qdrant endpoint (default: $QDRANT_URL or localhost:6333)")
+    qdrant_sync.add_argument("--ollama-url", default="", help="Ollama endpoint (default: $OLLAMA_URL or localhost:11434)")
 
     qdrant_search = sub.add_parser("qdrant-search", help="Semantic search via Qdrant vector store")
     qdrant_search.add_argument("text", help="Query text for semantic search")
@@ -335,7 +335,7 @@ def build_parser() -> argparse.ArgumentParser:
     extract_claims_cmd.add_argument("--source", default="unstructured", help="Citation source label (default: unstructured)")
     extract_claims_cmd.add_argument("--scope", default="project", help="Claim scope (default: project)")
     extract_claims_cmd.add_argument("--ingest", action="store_true", help="Ingest extracted claims into the DB (default: dry-run, print only)")
-    extract_claims_cmd.add_argument("--ollama-url", default="", help="Ollama base URL (default: $OLLAMA_URL or http://192.168.100.155:11434)")
+    extract_claims_cmd.add_argument("--ollama-url", default="", help="Ollama base URL (default: $OLLAMA_URL or http://localhost:11434)")
     extract_claims_cmd.add_argument("--model", default="", help="LLM model name (default: deepseek-coder-v2:16b)")
 
     fed_query = sub.add_parser("federated-query", help="Query across ALL scopes — cross-project federation")

@@ -22,7 +22,7 @@ import urllib.request
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_OLLAMA_URL = "http://192.168.100.155:11434"
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_MODEL = "deepseek-coder-v2:16b"
 
 EVOLUTION_PROMPT = """Analyze these conversation patterns from a memory system and extract PROCEDURAL SKILLS — reusable lessons about how to do things better.

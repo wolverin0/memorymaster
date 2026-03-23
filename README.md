@@ -1,22 +1,65 @@
-<p align="center">
-  <h1 align="center">MemoryMaster</h1>
-  <p align="center">
-    <strong>Production-grade memory reliability for AI coding agents</strong>
-  </p>
-  <p align="center">
-    <a href="https://github.com/wolverin0/memorymaster/actions/workflows/ci.yml"><img src="https://github.com/wolverin0/memorymaster/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-    <a href="https://github.com/wolverin0/memorymaster/releases"><img src="https://img.shields.io/github/v/release/wolverin0/memorymaster?color=blue" alt="Release"></a>
-    <a href="https://pypi.org/project/memorymaster/"><img src="https://img.shields.io/pypi/v/memorymaster?color=green" alt="PyPI"></a>
-    <a href="https://github.com/wolverin0/memorymaster/blob/main/LICENSE"><img src="https://img.shields.io/github/license/wolverin0/memorymaster" alt="License"></a>
-    <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
-    <img src="https://img.shields.io/badge/tests-380%2B%20passed-brightgreen" alt="Tests">
-    <img src="https://img.shields.io/badge/coverage-SQLite%20%2B%20Postgres-purple" alt="Backend Coverage">
-  </p>
-</p>
+# MemoryMaster
+
+**Production-grade memory reliability system for AI coding agents.**
+
+Lifecycle-managed claims with citations, conflict detection, steward governance, hybrid retrieval, and MCP integration. Give your AI agents persistent, trustworthy memory.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Tests](https://img.shields.io/badge/tests-932-green.svg)]()
+[![MCP Tools](https://img.shields.io/badge/MCP%20tools-21-purple.svg)]()
+[![CLI Commands](https://img.shields.io/badge/CLI%20commands-50%2B-orange.svg)]()
 
 ---
 
 MemoryMaster gives AI coding agents **persistent, verifiable memory** with a full claim lifecycle, citation tracking, conflict detection, and human-in-the-loop governance. It prevents the #1 problem with agent memory: **drift, stale assumptions, and unsafe disclosure**.
+
+## Stats
+
+| Metric | Count |
+|--------|-------|
+| Source modules | 35+ (20,000+ lines) |
+| Tests | 932 across 66 test modules |
+| MCP tools | 21 |
+| CLI commands | 50+ |
+| Import connectors | 10+ (Git, Slack, Jira, email, GitHub, conversations) |
+| Utility scripts | 30+ (connectors, benchmarks, drills) |
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Agent Runtime                            │
+│  (Claude Code / Codex / any MCP-compatible agent)               │
+└────────────┬────────────────────────────────┬───────────────────┘
+             │ MCP (21 tools)                 │ CLI (50+ commands)
+             v                                v
+┌─────────────────────────────────────────────────────────────────┐
+│                      MemoryMaster Core                          │
+│                                                                 │
+│  ┌──────────┐  ┌───────────┐  ┌──────────┐  ┌───────────────┐  │
+│  │ Ingestor │  │ Extractor │  │ Validator │  │ State Engine  │  │
+│  │ (events) │->│ (claims)  │->│ (probes)  │->│ (6-state FSM) │  │
+│  └──────────┘  └───────────┘  └──────────┘  └───────────────┘  │
+│                                                                 │
+│  ┌──────────┐  ┌───────────┐  ┌──────────┐  ┌───────────────┐  │
+│  │ Retrieval│  │ Compactor │  │ Steward  │  │  Dashboard    │  │
+│  │ (hybrid) │  │ (archive) │  │ (govern) │  │  (HTML+SSE)   │  │
+│  └──────────┘  └───────────┘  └──────────┘  └───────────────┘  │
+│                                                                 │
+│  ┌──────────┐  ┌───────────┐  ┌──────────┐  ┌───────────────┐  │
+│  │ Entity   │  │  Skill    │  │ Daily    │  │  Vault        │  │
+│  │ Graph    │  │ Evolver   │  │ Notes    │  │  Exporter     │  │
+│  └──────────┘  └───────────┘  └──────────┘  └───────────────┘  │
+└────────┬──────────────┬──────────────┬──────────────┬───────────┘
+         │              │              │              │
+         v              v              v              v
+┌──────────────┐ ┌───────────┐ ┌───────────┐ ┌──────────────────┐
+│ SQLite /     │ │  Qdrant   │ │  Ollama   │ │ Obsidian Vault   │
+│ Postgres     │ │ (vectors) │ │  (LLM)    │ │ (My-Brain-Is-    │
+│              │ │           │ │           │ │  Full-Crew)       │
+└──────────────┘ └───────────┘ └───────────┘ └──────────────────┘
+```
 
 ## Key Features
 
@@ -24,76 +67,81 @@ MemoryMaster gives AI coding agents **persistent, verifiable memory** with a ful
 |---------|-------------|
 | **6-State Lifecycle** | `candidate` -> `confirmed` -> `stale` -> `superseded` -> `conflicted` -> `archived` |
 | **Citation Tracking** | Every claim links to source evidence with provenance |
-| **Hybrid Retrieval** | Real vector search (sentence-transformers/Gemini) + FTS5 + freshness + confidence |
-| **Context Optimizer** | `query_for_context(budget=4000)` — auto-curated memory that fits your token budget |
-| **Steward Governance** | Multi-probe validators with auto-validate pipeline after LLM extraction |
-| **Claim Graph** | Typed relationships (supersedes, contradicts, supports, derived_from, relates_to) |
-| **MCP Integration** | 13 tools for Claude Code, Codex, and any MCP-compatible agent |
-| **Real-time Dashboard** | HTML UI with SSE streaming, conflict view, and triage actions |
-| **Auto-Redaction** | JWT, GitHub tokens, Bearer, AWS keys, SSH keys + custom patterns |
-| **Deduplication** | Embedding similarity + text overlap detection with auto-merge |
-| **Conflict Resolution** | 5-tier auto-resolution (confidence > freshness > citations > LLM) |
-| **Staleness Detection** | File watcher (mtime + git) auto-flags stale claims |
+| **Hybrid Retrieval** | Vector search (sentence-transformers/Gemini) + FTS5 + freshness + confidence ranking |
+| **Context Optimizer** | `query_for_context(budget=4000)` -- auto-curated memory that fits your token budget |
+| **Claims Engine** | Structured extraction from unstructured text with deduplication and conflict detection |
+| **Entity Graph** | LLM-powered entity extraction with typed relationships between claims |
+| **Skill Evolution** | Track and evolve agent skills based on accumulated knowledge patterns |
+| **Steward Governance** | Multi-probe validators (filesystem, format, citation, semantic, tool) with proposal review |
+| **LLM Steward** | Automated claim validation using configurable LLM providers with round-robin key rotation |
+| **Conflict Resolution** | 5-tier auto-resolution: confidence > freshness > citations > LLM > manual |
+| **Auto-Redaction** | JWT, GitHub tokens, Bearer, AWS keys, SSH keys + custom patterns scrubbed at ingest |
+| **Daily Notes** | Automatic session summarization with ghost note detection (second brain pattern) |
+| **Obsidian Export** | Export claims as linked Markdown files for use with My-Brain-Is-Full-Crew |
 | **Git Versioning** | Snapshot/rollback/diff via SQLite backup API |
 | **Multi-tenancy** | Row-level tenant isolation at the service layer |
-| **Dual Backend** | SQLite (zero-config) and Postgres (with full feature parity) |
-| **Configurable** | 11 env vars + JSON config for all tunable weights and thresholds |
+| **Dual Backend** | SQLite (zero-config) and Postgres (full feature parity with pgvector) |
 | **10+ Connectors** | Git, Slack, Jira, email, GitHub, and conversation imports |
-
-## Architecture
-
-```
-Agent Runtime
-  -> Event Ingestor -> Event Log (append-only)
-                      -> Claim Extractor -> Claims Store
-                      -> State Engine (6-state lifecycle)
-Steward Loop -> Multi-Probe Validators -> Proposals -> Human Review
-Operator Runtime -> JSONL Inbox -> Progressive Retrieval -> Maintenance
-Query Path -> Hybrid Ranker -> Response Context Builder
-Compactor -> Summaries + Citation Graph -> Archive
-```
+| **Real-time Dashboard** | HTML UI with SSE streaming, conflict view, and triage actions |
+| **Federated Query** | Cross-project querying across multiple memory databases |
 
 ## Quick Start
 
 ```bash
+# Install
 pip install memorymaster
-```
 
-```bash
 # Initialize database
 memorymaster --db memory.db init-db
 
 # Ingest a claim with citation
 memorymaster --db memory.db ingest \
-  --text "Server IP is 10.0.0.2" \
-  --source "session://chat|turn-1|user confirmed"
+  --text "Server uses PostgreSQL 16" \
+  --source "session://chat|turn-3|user confirmed"
 
 # Run validation cycle
 memorymaster --db memory.db run-cycle
 
-# Query memory
-memorymaster --db memory.db query "server ip" --retrieval-mode hybrid
+# Query memory (hybrid retrieval)
+memorymaster --db memory.db query "database version" --retrieval-mode hybrid
+
+# Context optimizer -- THE killer feature for agents
+memorymaster --db memory.db context "auth patterns" --budget 4000 --format xml
 ```
 
-## MCP Server (Claude Code / Codex)
+### Docker Compose
+
+Run the full stack (MemoryMaster + Qdrant + Ollama) with one command:
+
+```bash
+docker compose up -d
+```
+
+See [INSTALLATION.md](INSTALLATION.md) for detailed setup options including Kubernetes/Helm.
+
+### MCP Server (Claude Code / Codex)
 
 ```bash
 pip install "memorymaster[mcp]"
 ```
 
-Add to your MCP config:
+Add to your `.mcp.json` (see [`.mcp.json.example`](.mcp.json.example)):
 
 ```json
 {
   "mcpServers": {
     "memorymaster": {
-      "command": "memorymaster-mcp"
+      "command": "memorymaster-mcp",
+      "env": {
+        "MEMORYMASTER_DEFAULT_DB": "/path/to/memorymaster.db",
+        "MEMORYMASTER_WORKSPACE": "/path/to/your/project"
+      }
     }
   }
 }
 ```
 
-**13 MCP tools available:** `init_db`, `ingest_claim`, `run_cycle`, `query_memory`, `query_for_context`, `list_claims`, `list_events`, `pin_claim`, `compact_memory`, `run_steward`, `list_steward_proposals`, `resolve_steward_proposal`, `open_dashboard`
+**21 MCP tools:** `init_db`, `ingest_claim`, `run_cycle`, `run_steward`, `classify_query`, `query_memory`, `query_for_context`, `list_claims`, `redact_claim_payload`, `pin_claim`, `compact_memory`, `list_events`, `open_dashboard`, `list_steward_proposals`, `resolve_steward_proposal`, `extract_entities`, `entity_stats`, `find_related_claims`, `quality_scores`, `recompute_tiers`, `federated_query`
 
 ## Operator Runtime
 
@@ -160,22 +208,44 @@ python scripts/git_to_turns.py --input export.json --output turns.jsonl
 # Slack messages
 python scripts/slack_live_to_turns.py --input config.json --output turns.jsonl
 
-# Jira issues
+# Jira / GitHub / Email / Conversations
 python scripts/jira_live_to_turns.py --input config.json --output turns.jsonl
-
-# Email (IMAP)
+python scripts/github_live_to_turns.py --input config.json --output turns.jsonl
 python scripts/email_live_to_turns.py --input config.json --output turns.jsonl
-
-# Generic AI conversations (OpenAI/Claude/Gemini)
 python scripts/conversation_importer.py --input chat.json --output turns.jsonl
+```
+
+## Obsidian Integration (My-Brain-Is-Full-Crew)
+
+Export claims as linked Obsidian-compatible Markdown files:
+
+```bash
+memorymaster --db memory.db export-vault --output ./obsidian-vault/
+memorymaster --db memory.db export-vault --output ./vault/ --scope project:myapp --confirmed-only
+```
+
+Use with [My-Brain-Is-Full-Crew](https://github.com/wolverin0/My-Brain-Is-Full-Crew) for Obsidian vault management, daily notes, and ghost note detection.
+
+```bash
+# Daily activity summary
+memorymaster --db memory.db daily-note
+
+# Find knowledge gaps (topics queried but underexplored)
+memorymaster --db memory.db ghost-notes
+```
+
+## OpenClaw Integration
+
+MemoryMaster integrates with [OpenClaw](https://github.com/wolverin0/openclaw) for multi-agent orchestration. Claims, entities, and memory context flow between MemoryMaster and the OpenClaw task board via the `federated-query` command and the `openclaw2claude` MCP bridge.
+
+```bash
+# Quick install via OpenClaw installer
+curl -sSL https://raw.githubusercontent.com/wolverin0/memorymaster/main/scripts/openclaw-install.sh | bash
 ```
 
 ## New in v2.0
 
 ```bash
-# Context optimizer — THE killer feature for agents
-memorymaster --db memory.db context "auth patterns" --budget 4000 --format xml
-
 # Deduplication
 memorymaster --db memory.db dedup --dry-run
 
@@ -215,6 +285,7 @@ memorymaster --db memory.db --json list-claims
 - **Policy-gated access**: `--allow-sensitive` requires `MEMORYMASTER_ALLOW_SENSITIVE_BYPASS=1`
 - **Non-destructive redaction**: `redact-claim` scrubs claim/citation data with full audit trail
 - **Encryption**: Optional Fernet encryption for sensitive payloads (`pip install "memorymaster[security]"`)
+- **RBAC**: Role-based access control with per-agent role overrides via env vars
 
 ## Performance
 
@@ -233,6 +304,16 @@ SLO-driven benchmarks with configurable profiles:
 python benchmarks/perf_smoke.py --slo-config benchmarks/slo_targets.json
 ```
 
+## Configuration
+
+All behavior is tunable via environment variables or a JSON config file. See [`.env.example`](.env.example) for the complete list.
+
+Key config groups:
+- **Retrieval weights**: Lexical, confidence, freshness, vector balance
+- **Decay rates**: Per-volatility daily decay
+- **Thresholds**: Validation, staleness, conflict margin
+- **LLM models**: Extractor, resolver, entity extraction model overrides
+
 ## Backends
 
 | Backend | Install | Use case |
@@ -243,41 +324,38 @@ python benchmarks/perf_smoke.py --slo-config benchmarks/slo_targets.json
 ## Development
 
 ```bash
-# Install with dev dependencies
-pip install -e ".[dev,mcp,security]"
+# Install with all dev dependencies
+pip install -e ".[dev,mcp,security,embeddings,qdrant]"
 
-# Run tests
+# Run tests (932 tests)
 pytest tests/ -q
 
-# Run performance benchmarks
+# Lint and format
+ruff check memorymaster/ && ruff format memorymaster/
+
+# Performance benchmarks
 python benchmarks/perf_smoke.py
 
-# Run evaluation suite
+# Evaluation suite
 python scripts/eval_memorymaster.py --strict
 
-# Run incident drill
+# Incident drill
 python scripts/run_incident_drill.py --dry-run
 ```
 
-## Project Stats
-
-- **31 source modules** (20,000+ lines)
-- **380+ tests** across 40+ test modules
-- **24 utility scripts** (connectors, benchmarks, drills)
-- **13 MCP tools** for agent integration
-- **6 API endpoints** + SSE streaming
-- **10+ import connectors** (Git, Slack, Jira, email, GitHub, conversations)
-- **11 configurable weights** via env vars or JSON config
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development workflow.
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
+| [INSTALLATION.md](INSTALLATION.md) | Setup guide: pip, Docker, Helm, MCP config |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Dev setup, testing, PR workflow |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design and subsystem details |
-| [ROADMAP.md](ROADMAP.md) | Release plan and future tracks |
+| [USER_GUIDE.md](USER_GUIDE.md) | Usage, MCP integration, troubleshooting |
 | [CHANGELOG.md](CHANGELOG.md) | Version history and release notes |
-| [USER_GUIDE.md](USER_GUIDE.md) | Setup, usage, MCP integration, troubleshooting |
+| [ROADMAP.md](ROADMAP.md) | Release plan and future tracks |
 
 ## License
 
-[MIT](LICENSE) - Built by [wolverin0](https://github.com/wolverin0)
+[MIT](LICENSE) -- Built by [wolverin0](https://github.com/wolverin0)

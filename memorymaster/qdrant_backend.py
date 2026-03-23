@@ -5,8 +5,8 @@ the primary SQLite/Postgres store.  Embeddings come from Ollama
 (qwen3-embedding:8b, 4096-dim) via HTTP.
 
 Environment variables / constructor params:
-    QDRANT_URL          – default http://192.168.100.186:6333
-    OLLAMA_URL          – default http://192.168.100.155:11434
+    QDRANT_URL          – default http://localhost:6333
+    OLLAMA_URL          – default http://localhost:11434
     QDRANT_COLLECTION   – default "agent-memories"
     OLLAMA_EMBED_MODEL  – default "qwen3-embedding:8b"
 """
@@ -25,8 +25,8 @@ from memorymaster.models import Claim
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_QDRANT_URL = "http://192.168.100.186:6333"
-DEFAULT_OLLAMA_URL = "http://192.168.100.155:11434"
+DEFAULT_QDRANT_URL = "http://localhost:6333"
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_COLLECTION = "agent-memories"
 DEFAULT_EMBED_MODEL = "qwen3-embedding:8b"
 EMBEDDING_DIMS = 4096
