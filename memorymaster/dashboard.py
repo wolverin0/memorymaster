@@ -147,6 +147,36 @@ def _build_retrieval_method_attempts(
     return attempts
 
 
+def _build_get_route_map(handler: Any) -> dict[str, callable]:
+    """Build a mapping of routes to handler callables."""
+    return {
+        "/health": lambda qs: handler._write_json({"ok": True, "service": "memorymaster-dashboard"}),
+        "/": handler._write_dashboard,
+        "/dashboard": handler._write_dashboard,
+        "/api/claims": lambda qs: handler._handle_claims(qs),
+        "/api/events": lambda qs: handler._handle_events(qs),
+        "/api/timeline": lambda qs: handler._handle_timeline(qs),
+        "/api/conflicts": lambda qs: handler._handle_conflicts(qs),
+        "/api/review-queue": lambda qs: handler._handle_review_queue(qs),
+        "/api/retrieval": lambda qs: handler._handle_retrieval(qs),
+        "/api/audit": lambda qs: handler._handle_audit(qs),
+        "/api/namespaces": lambda qs: handler._handle_namespaces(qs),
+        "/api/session-stats": lambda qs: handler._handle_session_stats(qs),
+        "/api/observability": lambda qs: handler._handle_observability(qs),
+        "/api/operator/status": lambda qs: handler._write_json({"ok": True, **handler._server.operator_status()}),
+        "/api/operator/stream": lambda qs: handler._handle_operator_stream(qs),
+    }
+
+
+def _route_get_request(handler: Any, route: str, query_string: str) -> bool:
+    """Route a GET request to the appropriate handler. Returns True if routed."""
+    route_map = _build_get_route_map(handler)
+    if route not in route_map:
+        return False
+    route_map[route](query_string)
+    return True
+
+
 def _call_retrieval_method_with_fallback(method: Any, text: str, attempts: list[dict[str, Any]]) -> Any:
     """Call retrieval method with fallback attempts."""
     last_error: TypeError | None = None
@@ -374,47 +404,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         route = parsed.path
         try:
-            if route == "/health":
-                self._write_json({"ok": True, "service": "memorymaster-dashboard"})
-                return
-            if route in {"/", "/dashboard"}:
-                self._write_dashboard()
-                return
-            if route == "/api/claims":
-                self._handle_claims(parsed.query)
-                return
-            if route == "/api/events":
-                self._handle_events(parsed.query)
-                return
-            if route == "/api/timeline":
-                self._handle_timeline(parsed.query)
-                return
-            if route == "/api/conflicts":
-                self._handle_conflicts(parsed.query)
-                return
-            if route == "/api/review-queue":
-                self._handle_review_queue(parsed.query)
-                return
-            if route == "/api/retrieval":
-                self._handle_retrieval(parsed.query)
-                return
-            if route == "/api/audit":
-                self._handle_audit(parsed.query)
-                return
-            if route == "/api/namespaces":
-                self._handle_namespaces(parsed.query)
-                return
-            if route == "/api/session-stats":
-                self._handle_session_stats(parsed.query)
-                return
-            if route == "/api/observability":
-                self._handle_observability(parsed.query)
-                return
-            if route == "/api/operator/status":
-                self._write_json({"ok": True, **self._server.operator_status()})
-                return
-            if route == "/api/operator/stream":
-                self._handle_operator_stream(parsed.query)
+            if _route_get_request(self, route, parsed.query):
                 return
             self._write_json({"ok": False, "error": "Not found"}, status=HTTPStatus.NOT_FOUND)
         except ValueError as exc:
