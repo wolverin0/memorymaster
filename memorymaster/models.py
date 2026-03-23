@@ -128,6 +128,81 @@ def _is_json_scalar(value: Any) -> bool:
     return value is None or isinstance(value, (str, int, float, bool))
 
 
+def _validate_extractor_payload(p: dict[str, object]) -> dict[str, object]:
+    """Validate extractor event payload."""
+    _require_keys("extractor", p, ("claim_type", "subject", "predicate", "object_value"))
+    return p
+
+
+def _validate_ingest_payload(p: dict[str, object]) -> dict[str, object]:
+    """Validate ingest event payload."""
+    _require_keys("ingest", p, ("citation_count",))
+    _as_int("ingest", p, "citation_count", minimum=1)
+    return p
+
+
+def _validate_compaction_run_payload(p: dict[str, object]) -> dict[str, object]:
+    """Validate compaction_run event payload."""
+    _require_keys("compaction_run", p, ("retain_days", "event_retain_days", "archived_claims", "deleted_events", "artifacts"))
+    _as_int("compaction_run", p, "retain_days", minimum=0)
+    _as_int("compaction_run", p, "event_retain_days", minimum=0)
+    _as_int("compaction_run", p, "archived_claims", minimum=0)
+    _as_int("compaction_run", p, "deleted_events", minimum=0)
+    artifacts = p.get("artifacts")
+    if not isinstance(artifacts, dict):
+        raise ValueError("event_type 'compaction_run' payload key 'artifacts' must be object.")
+    for key in ("summary_graph", "traceability"):
+        value = artifacts.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"event_type 'compaction_run' artifacts.{key} must be non-empty string.")
+    return p
+
+
+def _validate_validator_payload(p: dict[str, object] | None, details: str | None) -> dict[str, object] | None:
+    """Validate validator event payload."""
+    if p is None:
+        if str(details or "") in {"validation_pending_more_evidence", "revalidation_passed"}:
+            raise ValueError("event_type 'validator' requires payload for validation details.")
+        return None
+    p = _ensure_payload_dict("validator", p)
+    _require_keys("validator", p, ("score", "citation_count"))
+    _as_number("validator", p, "score", minimum=0.0, maximum=1.0)
+    _as_int("validator", p, "citation_count", minimum=0)
+    if "revalidation" in p:
+        _as_bool("validator", p, "revalidation")
+    return p
+
+
+def _validate_deterministic_validator_payload(p: dict[str, object] | None) -> dict[str, object] | None:
+    """Validate deterministic_validator event payload."""
+    if p is None:
+        return None
+    p = _ensure_payload_dict("deterministic_validator", p)
+    for key, value in p.items():
+        if not _is_json_scalar(value):
+            raise ValueError(
+                f"event_type 'deterministic_validator' payload key '{key}' must be JSON scalar."
+            )
+    return p
+
+
+def _validate_policy_decision_payload(p: dict[str, object]) -> dict[str, object]:
+    """Validate policy_decision event payload."""
+    if not p:
+        raise ValueError("event_type 'policy_decision' payload cannot be empty.")
+    return p
+
+
+def _validate_audit_payload(p: dict[str, object] | None, details: str | None) -> dict[str, object] | None:
+    """Validate audit event payload."""
+    if p is None:
+        return None
+    p = _ensure_payload_dict("audit", p)
+    if str(details or "").startswith("triage_"):
+        _as_str("audit", p, "source")
+    return p
+
+
 def validate_event_payload(
     event_type: str,
     payload: dict[str, object] | None,
@@ -138,68 +213,28 @@ def validate_event_payload(
 
     if normalized == "extractor":
         p = _ensure_payload_dict(normalized, payload)
-        _require_keys(normalized, p, ("claim_type", "subject", "predicate", "object_value"))
-        return p
+        return _validate_extractor_payload(p)
 
     if normalized == "ingest":
         p = _ensure_payload_dict(normalized, payload)
-        _require_keys(normalized, p, ("citation_count",))
-        _as_int(normalized, p, "citation_count", minimum=1)
-        return p
+        return _validate_ingest_payload(p)
 
     if normalized == "compaction_run":
         p = _ensure_payload_dict(normalized, payload)
-        _require_keys(normalized, p, ("retain_days", "event_retain_days", "archived_claims", "deleted_events", "artifacts"))
-        _as_int(normalized, p, "retain_days", minimum=0)
-        _as_int(normalized, p, "event_retain_days", minimum=0)
-        _as_int(normalized, p, "archived_claims", minimum=0)
-        _as_int(normalized, p, "deleted_events", minimum=0)
-        artifacts = p.get("artifacts")
-        if not isinstance(artifacts, dict):
-            raise ValueError("event_type 'compaction_run' payload key 'artifacts' must be object.")
-        for key in ("summary_graph", "traceability"):
-            value = artifacts.get(key)
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError(f"event_type 'compaction_run' artifacts.{key} must be non-empty string.")
-        return p
+        return _validate_compaction_run_payload(p)
 
     if normalized == "validator":
-        if payload is None:
-            if str(details or "") in {"validation_pending_more_evidence", "revalidation_passed"}:
-                raise ValueError("event_type 'validator' requires payload for validation details.")
-            return None
-        p = _ensure_payload_dict(normalized, payload)
-        _require_keys(normalized, p, ("score", "citation_count"))
-        _as_number(normalized, p, "score", minimum=0.0, maximum=1.0)
-        _as_int(normalized, p, "citation_count", minimum=0)
-        if "revalidation" in p:
-            _as_bool(normalized, p, "revalidation")
-        return p
+        return _validate_validator_payload(payload, details)
 
     if normalized == "deterministic_validator":
-        if payload is None:
-            return None
-        p = _ensure_payload_dict(normalized, payload)
-        for key, value in p.items():
-            if not _is_json_scalar(value):
-                raise ValueError(
-                    f"event_type 'deterministic_validator' payload key '{key}' must be JSON scalar."
-                )
-        return p
+        return _validate_deterministic_validator_payload(payload)
 
     if normalized == "policy_decision":
         p = _ensure_payload_dict(normalized, payload)
-        if not p:
-            raise ValueError("event_type 'policy_decision' payload cannot be empty.")
-        return p
+        return _validate_policy_decision_payload(p)
 
     if normalized == "audit":
-        if payload is None:
-            return None
-        p = _ensure_payload_dict(normalized, payload)
-        if str(details or "").startswith("triage_"):
-            _as_str(normalized, p, "source")
-        return p
+        return _validate_audit_payload(payload, details)
 
     # Other event types allow null/any-object payload.
     if payload is None:
