@@ -612,6 +612,286 @@ def _handle_link_commands(args: argparse.Namespace, service, parser: argparse.Ar
         return 0
 
 
+def _handle_stealth_status(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    t0 = time.perf_counter()
+    stealth_path = Path.cwd() / STEALTH_DB_NAME
+    active = _stealth_active(args)
+    db_display = str(Path(effective_db).resolve()) if "://" not in effective_db else effective_db
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    info = {"stealth_active": active, "stealth_db_exists": stealth_path.exists(),
+            "stealth_db_path": str(stealth_path.resolve()), "effective_db": db_display,
+            "gitignore_hint": f"Add '{STEALTH_DB_NAME}' to your .gitignore"}
+    if args.json_output:
+        print(_json_envelope(info, query_ms=elapsed_ms))
+    else:
+        print(f"stealth mode: {'ACTIVE' if active else 'inactive'}\n"
+              f"stealth db exists: {stealth_path.exists()}\n"
+              f"stealth db path: {stealth_path.resolve()}\n"
+              f"effective db: {db_display}")
+        if not active:
+            print("\nTip: run 'memorymaster --stealth init-db' to create a stealth DB here.")
+        print(f"\nRemember to add '{STEALTH_DB_NAME}' to your .gitignore")
+    return 0
+
+
+def _handle_export_metrics(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.metrics_exporter import export_metrics
+
+    snapshot = export_metrics(events_jsonl=[Path(p) for p in args.events_jsonl],
+        out_prom=Path(args.out_prom), out_json=Path(args.out_json))
+    c = snapshot.get("counters", {})
+    print(json.dumps({"command": "export-metrics",
+        "events_total": int(c.get("events_total", 0)), "transitions_total": int(c.get("transitions_total", 0)),
+        "status_total": int(c.get("status_total", 0)),
+        "out_prom": args.out_prom, "out_json": args.out_json}, indent=2))
+    return 0
+
+
+def _handle_init_db(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    t0 = time.perf_counter()
+    service.init_db()
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    db_path = effective_db if "://" in effective_db else str(Path(effective_db).resolve())
+    if args.json_output:
+        print(_json_envelope({"db": db_path, "stealth": _stealth_active(args)}, query_ms=elapsed_ms))
+    else:
+        print(f"initialized db: {db_path}{' (stealth)' if _stealth_active(args) else ''}")
+    return 0
+
+
+def _handle_ingest(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    citations = [parse_citation(raw) for raw in args.source]
+    t0 = time.perf_counter()
+    claim = service.ingest(
+        text=args.text, citations=citations, idempotency_key=args.idempotency_key,
+        claim_type=args.claim_type, subject=args.subject, predicate=args.predicate,
+        object_value=args.object_value, scope=args.scope, volatility=args.volatility, confidence=args.confidence,
+        event_time=args.event_time, valid_from=args.valid_from, valid_until=args.valid_until,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(_claim_to_dict(claim), total=1, query_ms=elapsed_ms))
+    else:
+        hid = getattr(claim, "human_id", None) or ""
+        print(f"ingested claim_id={claim.id}{f' human_id={hid}' if hid else ''} status={claim.status} citations={len(claim.citations)}")
+    return 0
+
+
+def _handle_run_cycle(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    t0 = time.perf_counter()
+    result = service.run_cycle(run_compactor=args.with_compact, min_citations=args.min_citations,
+        min_score=args.min_score, policy_mode=args.policy_mode, policy_limit=args.policy_limit)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        print(json.dumps(result, indent=2))
+    return 0
+
+
+def _handle_query(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.query")
+    if getattr(args, "as_of", ""):
+        t0 = time.perf_counter()
+        claims = service.store.query_as_of(args.as_of)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        if args.json_output:
+            print(_json_envelope([_claim_to_dict(c) for c in claims], total=len(claims), query_ms=elapsed_ms))
+        else:
+            for c in claims:
+                print_claim(c)
+            print(f"rows={len(claims)}")
+        return 0
+    if getattr(args, "auto_classify", False):
+        from memorymaster.query_classifier import classify_query, recommended_retrieval_mode
+        qtype = classify_query(args.text)
+        retrieval_mode = recommended_retrieval_mode(qtype)
+        print(f"query classified as: {qtype} → using {retrieval_mode} mode")
+        args.retrieval_mode = retrieval_mode
+    t0 = time.perf_counter()
+    rows_data = service.query_rows(
+        query_text=args.text, limit=args.limit,
+        include_stale=not args.exclude_stale, include_conflicted=not args.exclude_conflicted,
+        include_candidates=getattr(args, "include_candidates", False),
+        retrieval_mode=args.retrieval_mode, allow_sensitive=args.allow_sensitive,
+        scope_allowlist=parse_scope_allowlist(args.scope_allowlist),
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        json_rows = [{"claim": _claim_to_dict(row["claim"]),
+            **{k: float(row.get(k, 0.0)) for k in _SCORE_KEYS},
+            "annotation": row.get("annotation", {})} for row in rows_data]
+        print(_json_envelope(json_rows, total=len(json_rows), query_ms=elapsed_ms))
+    else:
+        for row in rows_data:
+            print_claim(row["claim"])
+            ann = row.get("annotation", {})
+            sc = {k: float(row.get(k, 0.0)) for k in _SCORE_KEYS}
+            print(f"  retrieval: score={sc['score']:.3f} lex={sc['lexical_score']:.3f} "
+                  f"conf={sc['confidence_score']:.3f} fresh={sc['freshness_score']:.3f} "
+                  f"vec={sc['vector_score']:.3f} "
+                  f"active={int(bool(ann.get('active')))} stale={int(bool(ann.get('stale')))} "
+                  f"conflicted={int(bool(ann.get('conflicted')))} pinned={int(bool(ann.get('pinned')))}")
+        print(f"rows={len(rows_data)}")
+    return 0
+
+
+def _handle_context(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.context")
+    t0 = time.perf_counter()
+    result = service.query_for_context(
+        query=args.text, token_budget=args.budget, output_format=args.output_format,
+        limit=args.limit, include_stale=not args.exclude_stale,
+        include_conflicted=not args.exclude_conflicted,
+        include_candidates=getattr(args, "include_candidates", False),
+        retrieval_mode=args.retrieval_mode, allow_sensitive=args.allow_sensitive,
+        scope_allowlist=parse_scope_allowlist(args.scope_allowlist),
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(asdict(result), query_ms=elapsed_ms))
+    else:
+        print(result.output)
+    return 0
+
+
+def _handle_pin(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    claim = service.pin(_resolve_claim_id(service, args.claim_id), pin=not args.unpin)
+    print(f"claim_id={claim.id} status={claim.status} pinned={int(claim.pinned)}")
+    return 0
+
+
+def _handle_redact_claim(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    result = service.redact_claim_payload(_resolve_claim_id(service, args.claim_id), mode=args.mode,
+        redact_claim=not args.citations_only, redact_citations=not args.claims_only,
+        reason=(args.reason.strip() or None), actor=args.actor)
+    print(json.dumps(result, indent=2, default=_json_default))
+    return 0
+
+
+def _handle_compact(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    result = service.compact(retain_days=args.retain_days, event_retain_days=args.event_retain_days)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def _handle_compact_summaries(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.llm_steward import _parse_api_keys
+    rk = _parse_api_keys(api_key=args.api_key, api_keys=args.api_keys)
+    t0 = time.perf_counter()
+    result = service.compact_summaries(
+        provider=args.provider, api_key=rk[0] if len(rk) == 1 else "",
+        model=args.model, base_url=args.base_url, min_cluster=args.min_cluster,
+        max_cluster=args.max_cluster, similarity_threshold=args.similarity_threshold,
+        dry_run=args.dry_run, limit=args.limit,
+        api_keys=rk if len(rk) > 1 else None, cooldown_seconds=args.cooldown,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        print(f"compact-summaries [{'DRY RUN' if result['dry_run'] else 'APPLIED'}] clusters={result['clusters_found']} "
+              f"summaries={result['summaries_created']} source_claims={result['source_claims_summarized']} errors={result['errors']}")
+        for d in result.get("details", []):
+            _a, _ids, _sub = d.get("action", "unknown"), d.get("source_claim_ids", []), d.get("subject_hint", "")
+            if _a == "summarized":
+                print(f"  [{_a}] summary_id={d.get('summary_claim_id')} from {len(_ids)} claims (subject: {_sub})\n    {d.get('summary_text', '')[:120]}")
+            elif _a == "would_summarize":
+                print(f"  [{_a}] {len(_ids)} claims (subject: {_sub})")
+            else:
+                print(f"  [{_a}] {len(_ids)} claims (subject: {_sub}) {d.get('error', '')[:80]}")
+    return 0
+
+
+def _handle_dedup(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    t0 = time.perf_counter()
+    result = service.dedup(threshold=args.threshold, min_text_overlap=args.min_text_overlap, dry_run=args.dry_run)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        print(f"dedup [{'DRY RUN' if result['dry_run'] else 'APPLIED'}] scanned={result['scanned']} "
+              f"duplicates={result['duplicates_found']} archived={result['claims_archived']} threshold={result['threshold']}")
+        for pair in result["pairs"]:
+            print(f"  dup: keep={pair['keep_id']} archive={pair['archive_id']} sim={pair['similarity']:.4f} overlap={pair['text_overlap']:.4f}\n"
+                  f"    keep:    {pair['keep_text'][:80]}\n    archive: {pair['archive_text'][:80]}")
+    return 0
+
+
+def _handle_recompute_tiers(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    t0 = time.perf_counter()
+    counts = service.recompute_tiers()
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(counts, query_ms=elapsed_ms))
+    else:
+        print(f"recompute-tiers: core={counts['core']} working={counts['working']} peripheral={counts['peripheral']}")
+    return 0
+
+
+def _handle_list_claims(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.list-claims")
+    t0 = time.perf_counter()
+    claims = service.list_claims(status=args.status, limit=args.limit,
+        include_archived=args.include_archived, allow_sensitive=args.allow_sensitive)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope([_claim_to_dict(c) for c in claims], total=len(claims), query_ms=elapsed_ms))
+    else:
+        for claim in claims:
+            print_claim(claim)
+        print(f"rows={len(claims)}")
+    return 0
+
+
+def _handle_list_events(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    t0 = time.perf_counter()
+    events = service.list_events(claim_id=args.claim_id, limit=args.limit, event_type=args.event_type)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(json.loads(json.dumps(events, default=_json_default)), total=len(events), query_ms=elapsed_ms))
+    else:
+        print(json.dumps({"rows": len(events), "events": events}, indent=2, default=_json_default))
+    return 0
+
+
+def _handle_history(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    t0 = time.perf_counter()
+    resolved_id = _resolve_claim_id(service, args.claim_id)
+    claim = service.store.get_claim(resolved_id, include_citations=False)
+    if claim is None:
+        if args.json_output:
+            print(_json_error(f"Claim {args.claim_id} not found."))
+        else:
+            print(f"Error: Claim {args.claim_id} not found.")
+        return 1
+    events = service.list_events(claim_id=resolved_id, limit=args.limit)
+    events.reverse()  # list_events returns newest-first
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope({"claim_id": args.claim_id, "status": claim.status,
+            "confidence": claim.confidence, "timeline": [_event_to_timeline_entry(ev) for ev in events]},
+            total=len(events), query_ms=elapsed_ms))
+    else:
+        print(f"=== History for claim {claim.id} [{claim.status} conf={claim.confidence:.3f}] ===\n  text: {claim.text}\n")
+        for ev in events:
+            transition = f"  {ev.from_status or '?'} -> {ev.to_status or '?'}" if (ev.from_status or ev.to_status) else ""
+            details_str = f"  | {ev.details}" if ev.details else ""
+            print(f"  {ev.created_at}  {ev.event_type:<25}{transition}{_score_str_from_payload(ev.payload_json)}{details_str}")
+        print(f"\n  ({len(events)} events)")
+    return 0
+
+
+def _handle_review_queue(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.review import build_review_queue, queue_to_dicts
+
+    items = build_review_queue(service, limit=args.limit,
+        include_stale=not args.exclude_stale, include_conflicted=not args.exclude_conflicted,
+        include_sensitive=resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.review-queue"))
+    print(json.dumps({"rows": len(items), "items": queue_to_dicts(items)}, indent=2))
+    return 0
+
+
 def _resolve_db_path(args: argparse.Namespace) -> str:
     """Resolve effective DB path; activates stealth if --stealth or stealth DB exists in cwd."""
     stealth_path = Path.cwd() / STEALTH_DB_NAME

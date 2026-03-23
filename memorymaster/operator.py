@@ -578,6 +578,38 @@ class MemoryOperator:
 
         return start_offset, read_offset, acked_offset, persisted_seen_events, persisted_processed_events
 
+    def _seek_to_offset(
+        self,
+        handle,
+        inbox: Path,
+        read_offset: int,
+        state_path: Path | None,
+        queue_state_path: Path | None,
+        emit,
+    ) -> tuple[int, int]:
+        """Seek file handle to read_offset, handling errors. Returns (start_offset, read_offset)."""
+        start_offset = 0
+        if read_offset > 0:
+            try:
+                file_size = inbox.stat().st_size
+                if read_offset > file_size:
+                    raise ValueError(f"offset {read_offset} exceeds file size {file_size}")
+                handle.seek(read_offset)
+            except Exception as exc:
+                emit(
+                    "state_error",
+                    {
+                        "op": "seek",
+                        "state_json": str(state_path) if state_path is not None else None,
+                        "queue_state_json": str(queue_state_path) if queue_state_path is not None else None,
+                        "error": str(exc),
+                    },
+                )
+                start_offset = 0
+                read_offset = 0
+                handle.seek(0)
+        return start_offset, read_offset
+
     def _run_stream_json(
         self,
         inbox_jsonl: Path,
@@ -771,25 +803,9 @@ class MemoryOperator:
         )
 
         with inbox.open("rb") as handle:
-            if read_offset > 0:
-                try:
-                    file_size = inbox.stat().st_size
-                    if read_offset > file_size:
-                        raise ValueError(f"offset {read_offset} exceeds file size {file_size}")
-                    handle.seek(read_offset)
-                except Exception as exc:
-                    emit(
-                        "state_error",
-                        {
-                            "op": "seek",
-                            "state_json": str(state_path) if state_path is not None else None,
-                            "queue_state_json": str(queue_state_path) if queue_state_path is not None else None,
-                            "error": str(exc),
-                        },
-                    )
-                    start_offset = 0
-                    read_offset = 0
-                    handle.seek(0)
+            start_offset, read_offset = self._seek_to_offset(
+                handle, inbox, read_offset, state_path, queue_state_path, emit
+            )
             final_offset = handle.tell()
             while True:
                 queue_blocked = False
