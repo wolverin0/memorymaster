@@ -544,6 +544,40 @@ class MemoryOperator:
 
         return start_offset, read_offset, acked_offset, persisted_seen_events, persisted_processed_events, pending_queue, queue_state_loaded
 
+    def _initialize_queue_state_from_legacy(
+        self,
+        queue_state_loaded: bool,
+        legacy_state: dict[str, int] | None,
+        start_offset: int,
+        read_offset: int,
+        acked_offset: int,
+        persisted_seen_events: int,
+        persisted_processed_events: int,
+        state_path: Path | None,
+        canonical_inbox: str,
+        emit,
+    ) -> tuple[int, int, int, int, int]:
+        """Initialize queue state from legacy state if needed. Returns (start_offset, read_offset, acked_offset, seen_events, processed_events)."""
+        if not queue_state_loaded and legacy_state is not None:
+            start_offset = legacy_state["offset"]
+            read_offset = start_offset
+            acked_offset = start_offset
+            persisted_seen_events = legacy_state["seen_events"]
+            persisted_processed_events = legacy_state["processed_events"]
+            emit(
+                "queue_state_bootstrap_legacy",
+                {
+                    "state_json": str(state_path) if state_path is not None else None,
+                    "inbox_jsonl": canonical_inbox,
+                    "offset": start_offset,
+                },
+            )
+        elif not queue_state_loaded and legacy_state is None:
+            read_offset = start_offset
+            acked_offset = start_offset
+
+        return start_offset, read_offset, acked_offset, persisted_seen_events, persisted_processed_events
+
     def _run_stream_json(
         self,
         inbox_jsonl: Path,
@@ -614,23 +648,13 @@ class MemoryOperator:
         )
         next_queue_id = max(1, max((e.get("entry_id", 0) for e in pending_queue), default=0) + 1) if pending_queue else 1
 
-        if not queue_state_loaded and legacy_state is not None:
-            start_offset = legacy_state["offset"]
-            read_offset = start_offset
-            acked_offset = start_offset
-            persisted_seen_events = legacy_state["seen_events"]
-            persisted_processed_events = legacy_state["processed_events"]
-            emit(
-                "queue_state_bootstrap_legacy",
-                {
-                    "state_json": str(state_path) if state_path is not None else None,
-                    "inbox_jsonl": canonical_inbox,
-                    "offset": start_offset,
-                },
+        start_offset, read_offset, acked_offset, persisted_seen_events, persisted_processed_events = (
+            self._initialize_queue_state_from_legacy(
+                queue_state_loaded, legacy_state,
+                start_offset, read_offset, acked_offset, persisted_seen_events, persisted_processed_events,
+                state_path, canonical_inbox, emit
             )
-        if not queue_state_loaded and legacy_state is None:
-            read_offset = start_offset
-            acked_offset = start_offset
+        )
 
         def persist_queue_state() -> None:
             if queue_state_path is None:

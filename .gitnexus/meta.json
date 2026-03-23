@@ -1,13 +1,13 @@
 {
   "repoPath": "G:\\_OneDrive\\OneDrive\\Desktop\\Py Apps\\memorymaster",
-  "lastCommit": "630373ce6348417044c1ff5d6f05b65cfd7e118d",
-  "indexedAt": "2026-03-23T02:26:16.672Z",
+  "lastCommit": "4bc3231bddcd072aeef00db7de05941d3a925011",
+  "indexedAt": "2026-03-23T02:27:29.990Z",
   "stats": {
     "files": 315,
-    "nodes": 4625,
-    "edges": 12652,
-    "communities": 296,
-    "processes": 298,
+    "nodes": 4636,
+    "edges": 12687,
+    "communities": 298,
+    "processes": 300,
     "embeddings": 0
   }
 }
