@@ -361,6 +361,12 @@ def build_parser() -> argparse.ArgumentParser:
     merge_cmd = sub.add_parser("merge-db", help="Merge claims from a remote memorymaster DB (bidirectional sync)")
     merge_cmd.add_argument("--source", required=True, help="Path to source DB file to merge from")
 
+    daily = sub.add_parser("daily-note", help="Generate a daily note summarizing today's activity")
+    daily.add_argument("--date", default="", help="Date to generate for (YYYY-MM-DD, default: today)")
+    daily.add_argument("--output", default="", help="Directory to save .md file (default: print to stdout)")
+
+    sub.add_parser("ghost-notes", help="Find knowledge gaps — topics queried often but with few claims")
+
     return parser
 
 
@@ -1447,6 +1453,44 @@ COMMAND_HANDLERS: dict[str, object] = {
     "observe": _handle_observe,
     "merge-db": _handle_merge_db,
 }
+
+
+def _handle_daily_note(args, service, parser, effective_db) -> int:
+    from memorymaster.daily_notes import generate_daily_note, export_daily_note_md
+    date = args.date or None
+    if args.output:
+        path = export_daily_note_md(str(effective_db), args.output, date)
+        if args.json_output:
+            print(_json_envelope({"path": path}))
+        else:
+            print(f"Daily note saved: {path}")
+    else:
+        result = generate_daily_note(str(effective_db), date)
+        if args.json_output:
+            print(_json_envelope(result))
+        else:
+            print(result["note"])
+    return 0
+
+
+def _handle_ghost_notes(args, service, parser, effective_db) -> int:
+    from memorymaster.daily_notes import find_ghost_notes
+    ghosts = find_ghost_notes(str(effective_db))
+    if args.json_output:
+        print(_json_envelope({"ghost_notes": ghosts, "count": len(ghosts)}))
+    else:
+        if not ghosts:
+            print("No ghost notes found (all queried topics have sufficient claims)")
+        else:
+            print(f"Ghost Notes ({len(ghosts)} knowledge gaps):")
+            for g in ghosts:
+                icon = "?" if g["status"] == "ghost" else "~"
+                print(f"  {icon} [[{g['topic']}]] — queried {g['query_references']}x, {g['existing_claims']} claims ({g['status']})")
+    return 0
+
+
+COMMAND_HANDLERS["daily-note"] = _handle_daily_note
+COMMAND_HANDLERS["ghost-notes"] = _handle_ghost_notes
 
 
 def main(argv: list[str] | None = None) -> int:
