@@ -59,44 +59,77 @@ def recall(
     budget: int = 2000,
     format: str = "text",
 ) -> str:
-    """Query memorymaster for relevant context. Returns formatted text."""
+    """Query memorymaster for relevant context with quality ranking."""
     from memorymaster.service import MemoryService
 
     db = db_path or os.environ.get("MEMORYMASTER_DEFAULT_DB") or "memorymaster.db"
     svc = MemoryService(db_target=db, workspace_root=Path.cwd())
 
-    # Try fast legacy search first (0.1s)
-    result = svc.query_for_context(
-        query=query,
-        token_budget=budget,
-        output_format=format,
+    # Get ranked results with lexical scoring
+    rows = svc.query_rows(
+        query_text=query,
+        limit=8,
         retrieval_mode="legacy",
         include_candidates=True,
         scope_allowlist=None,
     )
 
-    # If legacy found nothing, try Qdrant semantic search (0.5s)
-    if result.claims_included == 0:
+    if not rows:
+        # Fallback to Qdrant semantic search
         try:
             from memorymaster.qdrant_backend import QdrantBackend
             backend = QdrantBackend()
             hits = backend.search(query, limit=5)
             backend.close()
             if hits:
-                lines = ["# Memory Context (semantic search)", ""]
+                lines = ["# Memory Context (semantic)", ""]
                 for hit in hits:
                     p = hit.get("payload", {})
                     text = p.get("claim_text", "")[:200]
-                    conf = p.get("confidence", 0)
-                    state = p.get("state", "?")
-                    lines.append(f"- {text} [{state}, conf={conf:.2f}]")
+                    lines.append(f"- {text}")
                 return "\n".join(lines).encode("ascii", errors="replace").decode("ascii")
         except Exception:
             pass
         return ""
 
-    # Sanitize for Windows console encoding
-    return result.output.encode("ascii", errors="replace").decode("ascii")
+    # Re-rank by lexical relevance — claims with more query words score higher
+    query_words = set(query.lower().split())
+
+    def _relevance(row):
+        claim = row.get("claim")
+        text = (claim.text if hasattr(claim, "text") else "").lower()
+        # Count how many query words appear in the claim
+        matches = sum(1 for w in query_words if w in text and len(w) > 2)
+        # Bonus: full query phrase appears in text
+        phrase_bonus = 1.0 if query.lower() in text else 0.0
+        # Bonus: ALL query words present (not just some)
+        all_present = 1.0 if matches == len([w for w in query_words if len(w) > 2]) else 0.0
+        lexical = row.get("lexical_score", 0)
+        conf = row.get("confidence_score", 0)
+        return matches * 0.3 + phrase_bonus * 0.3 + all_present * 0.2 + lexical * 0.1 + conf * 0.1
+
+    ranked = sorted(rows, key=_relevance, reverse=True)
+
+    # Build output — top claims within budget
+    lines = ["# Memory Context", ""]
+    tokens_used = 0
+    chars_per_token = 4
+    for row in ranked:
+        claim = row.get("claim")
+        if not hasattr(claim, "text"):
+            continue
+        text = claim.text[:300]
+        chunk = f"- {text}"
+        chunk_tokens = len(chunk) // chars_per_token
+        if tokens_used + chunk_tokens > budget:
+            break
+        lines.append(chunk)
+        tokens_used += chunk_tokens
+
+    if len(lines) <= 2:
+        return ""
+
+    return "\n".join(lines).encode("ascii", errors="replace").decode("ascii")
 
 
 def observe(
