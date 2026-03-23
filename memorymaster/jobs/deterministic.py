@@ -186,6 +186,78 @@ def _merge_claims(primary: list[Claim], secondary: list[Claim]) -> list[Claim]:
     return merged
 
 
+# Predicate validation mapping: (predicate_names, validator_func, payload_key, boost_delta, drop_delta, hard_fail_on_invalid)
+_PREDICATE_VALIDATORS = [
+    ({"path"}, _path_exists, "path_exists", 0.12, -0.10, False),
+    ({"ip_address"}, _is_valid_ipv4, "ip_valid", 0.10, -0.35, True),
+    ({"ipv6", "ip_v6_address"}, _is_valid_ipv6, "ipv6_valid", 0.10, -0.35, True),
+    ({"cidr", "network_cidr"}, _is_valid_cidr, "cidr_valid", 0.08, -0.30, True),
+    ({"url"}, _is_valid_url, "url_valid", 0.10, -0.35, True),
+    ({"email", "support_email", "contact_email"}, _is_valid_email, "email_valid", 0.08, -0.25, True),
+    ({"hostname", "host"}, _is_valid_hostname, "host_valid", 0.08, -0.20, True),
+    ({"port"}, _is_valid_port, "port_valid", 0.06, -0.25, True),
+    ({"deadline", "date"}, _is_valid_iso_date, "date_valid", 0.05, -0.18, False),
+    ({"version", "semver"}, _is_semver, "semver_valid", 0.05, -0.10, False),
+    ({"sha256", "file_hash"}, _is_sha256, "sha256_valid", 0.08, -0.18, True),
+    ({"uuid", "uuid_v4", "object_id"}, _is_uuid, "uuid_valid", 0.06, -0.22, True),
+    ({"phone", "phone_number"}, _is_phone_e164ish, "phone_valid", 0.05, -0.20, True),
+    ({"country_code", "iso_country_code"}, _is_iso2, "country_code_valid", 0.04, -0.10, False),
+]
+
+# Predicate to check counter mapping
+_PREDICATE_CHECK_COUNTERS = {
+    "ip_address": "ipv4_checked",
+    "ipv6": "ipv6_checked",
+    "ip_v6_address": "ipv6_checked",
+    "cidr": "cidr_checked",
+    "network_cidr": "cidr_checked",
+    "url": "url_checked",
+    "email": "email_checked",
+    "support_email": "email_checked",
+    "contact_email": "email_checked",
+    "hostname": "host_checked",
+    "host": "host_checked",
+    "port": "port_checked",
+    "deadline": "date_checked",
+    "date": "date_checked",
+    "version": "semver_checked",
+    "semver": "semver_checked",
+    "sha256": "sha256_checked",
+    "file_hash": "sha256_checked",
+    "uuid": "uuid_checked",
+    "uuid_v4": "uuid_checked",
+    "object_id": "uuid_checked",
+    "phone": "phone_checked",
+    "phone_number": "phone_checked",
+    "country_code": "country_code_checked",
+    "iso_country_code": "country_code_checked",
+}
+
+
+def _validate_claim_predicate(claim, object_value: str) -> tuple[dict[str, object], float, bool]:
+    """Validate a single claim predicate. Returns (payload, confidence_delta, hard_fail)."""
+    payload: dict[str, object] = {}
+    confidence_delta = 0.0
+    hard_fail = False
+
+    for predicate_names, validator_func, payload_key, boost_delta, drop_delta, hard_fail_on_invalid in _PREDICATE_VALIDATORS:
+        if claim.predicate in predicate_names and object_value:
+            valid = validator_func(object_value)
+            payload[payload_key] = valid
+            confidence_delta += boost_delta if valid else drop_delta
+            hard_fail = hard_fail or (hard_fail_on_invalid and not valid)
+            break
+
+    return payload, confidence_delta, hard_fail
+
+
+def _update_predicate_checks(claim, predicate_checks: dict[str, int]) -> None:
+    """Update predicate_checks counters for validated predicates."""
+    counter_key = _PREDICATE_CHECK_COUNTERS.get(claim.predicate)
+    if counter_key:
+        predicate_checks[counter_key] += 1
+
+
 def run(
     store,
     workspace_root: Path,
@@ -240,102 +312,13 @@ def run(
         if claim.status in {"confirmed", "stale", "conflicted"}:
             revalidation_checked += 1
         confidence = claim.confidence
-        payload: dict[str, object] = {}
-        hard_fail = False
         object_value = claim.object_value or ""
 
-        if claim.predicate == "path" and object_value:
-            exists = _path_exists(object_value)
-            payload["path_exists"] = exists
-            confidence += 0.12 if exists else -0.10
+        payload, confidence_delta, hard_fail = _validate_claim_predicate(claim, object_value)
+        confidence += confidence_delta
 
-        if claim.predicate == "ip_address" and object_value:
-            predicate_checks["ipv4_checked"] += 1
-            valid = _is_valid_ipv4(object_value)
-            payload["ip_valid"] = valid
-            confidence += 0.10 if valid else -0.35
-            hard_fail = hard_fail or (not valid)
-
-        if claim.predicate in {"ipv6", "ip_v6_address"} and object_value:
-            predicate_checks["ipv6_checked"] += 1
-            valid = _is_valid_ipv6(object_value)
-            payload["ipv6_valid"] = valid
-            confidence += 0.10 if valid else -0.35
-            hard_fail = hard_fail or (not valid)
-
-        if claim.predicate in {"cidr", "network_cidr"} and object_value:
-            predicate_checks["cidr_checked"] += 1
-            valid = _is_valid_cidr(object_value)
-            payload["cidr_valid"] = valid
-            confidence += 0.08 if valid else -0.30
-            hard_fail = hard_fail or (not valid)
-
-        if claim.predicate == "url" and object_value:
-            predicate_checks["url_checked"] += 1
-            valid = _is_valid_url(object_value)
-            payload["url_valid"] = valid
-            confidence += 0.10 if valid else -0.35
-            hard_fail = hard_fail or (not valid)
-
-        if claim.predicate in {"email", "support_email", "contact_email"} and object_value:
-            predicate_checks["email_checked"] += 1
-            valid = _is_valid_email(object_value)
-            payload["email_valid"] = valid
-            confidence += 0.08 if valid else -0.25
-            hard_fail = hard_fail or (not valid)
-
-        if claim.predicate in {"hostname", "host"} and object_value:
-            predicate_checks["host_checked"] += 1
-            valid = _is_valid_hostname(object_value)
-            payload["host_valid"] = valid
-            confidence += 0.08 if valid else -0.20
-            hard_fail = hard_fail or (not valid)
-
-        if claim.predicate == "port" and object_value:
-            predicate_checks["port_checked"] += 1
-            valid = _is_valid_port(object_value)
-            payload["port_valid"] = valid
-            confidence += 0.06 if valid else -0.25
-            hard_fail = hard_fail or (not valid)
-
-        if claim.predicate in {"deadline", "date"} and object_value:
-            predicate_checks["date_checked"] += 1
-            valid = _is_valid_iso_date(object_value)
-            payload["date_valid"] = valid
-            confidence += 0.05 if valid else -0.18
-
-        if claim.predicate in {"version", "semver"} and object_value:
-            predicate_checks["semver_checked"] += 1
-            valid = _is_semver(object_value)
-            payload["semver_valid"] = valid
-            confidence += 0.05 if valid else -0.10
-
-        if claim.predicate in {"sha256", "file_hash"} and object_value:
-            predicate_checks["sha256_checked"] += 1
-            valid = _is_sha256(object_value)
-            payload["sha256_valid"] = valid
-            confidence += 0.08 if valid else -0.18
-            hard_fail = hard_fail or (not valid)
-
-        if claim.predicate in {"uuid", "uuid_v4", "object_id"} and object_value:
-            predicate_checks["uuid_checked"] += 1
-            valid = _is_uuid(object_value)
-            payload["uuid_valid"] = valid
-            confidence += 0.06 if valid else -0.22
-            hard_fail = hard_fail or (not valid)
-
-        if claim.predicate in {"phone", "phone_number"} and object_value:
-            predicate_checks["phone_checked"] += 1
-            valid = _is_phone_e164ish(object_value)
-            payload["phone_valid"] = valid
-            confidence += 0.05 if valid else -0.20
-            hard_fail = hard_fail or (not valid)
-
-        if claim.predicate in {"country_code", "iso_country_code"} and object_value:
-            predicate_checks["country_code_checked"] += 1
-            valid = _is_iso2(object_value)
-            payload["country_code_valid"] = valid
-            confidence += 0.04 if valid else -0.10
+        # Track which predicates were actually checked
+        _update_predicate_checks(claim, predicate_checks)
 
         # Keep workspace lexical probes limited to technical predicates.
         # For planning/contact style predicates (email/deadline/address, etc.),
