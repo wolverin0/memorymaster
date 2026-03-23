@@ -116,6 +116,115 @@ class TurnInput:
     timestamp: str
 
 
+def _extract_token_claims(raw: str, add_claim) -> None:
+    """Extract token= security facts from text."""
+    for match in _TOKEN_RE.finditer(raw):
+        token_value = _clean_chunk(match.group(1))
+        if not token_value:
+            continue
+        add_claim(
+            claim_text=f"token={token_value}",
+            subject="auth",
+            predicate="token",
+            object_value=token_value,
+            claim_type="security_fact",
+            volatility="high",
+            confidence=0.96,
+        )
+
+
+def _extract_email_claims(raw: str, add_claim) -> None:
+    """Extract email contact facts from text."""
+    for match in _EMAIL_RE.finditer(raw):
+        subject = _to_identifier(match.group(1), fallback="contact")
+        email_value = _clean_chunk(match.group(2)).lower()
+        add_claim(
+            claim_text=match.group(0),
+            subject=subject,
+            predicate="email",
+            object_value=email_value,
+            claim_type="contact_fact",
+            volatility="medium",
+            confidence=0.86,
+        )
+
+
+def _extract_deadline_claims(raw: str, add_claim) -> None:
+    """Extract deadline schedule facts from text."""
+    for match in _DEADLINE_RE.finditer(raw):
+        subject = _to_identifier(match.group(1), fallback="project")
+        add_claim(
+            claim_text=match.group(0),
+            subject=subject,
+            predicate="deadline",
+            object_value=match.group(2),
+            claim_type="schedule_fact",
+            volatility="high",
+            confidence=0.84,
+        )
+
+
+def _extract_address_claims(raw: str, add_claim) -> None:
+    """Extract address contact facts from text."""
+    for match in _ADDRESS_RE.finditer(raw):
+        subject = _to_identifier(match.group(1), fallback="contact")
+        add_claim(
+            claim_text=match.group(0),
+            subject=subject,
+            predicate="address",
+            object_value=match.group(2),
+            claim_type="contact_fact",
+            volatility="low",
+            confidence=0.80,
+        )
+
+
+def _extract_path_claims(raw: str, add_claim) -> None:
+    """Extract filesystem facts from text."""
+    for match in _PATH_RE.finditer(raw):
+        subject = _to_identifier(match.group(1), fallback="workspace")
+        add_claim(
+            claim_text=match.group(0),
+            subject=subject,
+            predicate="path",
+            object_value=match.group(2),
+            claim_type="filesystem_fact",
+            volatility="medium",
+            confidence=0.86,
+        )
+
+
+def _extract_generic_claims(raw: str, add_claim) -> None:
+    """Extract generic 'is' facts from text."""
+    for match in _GENERIC_IS_RE.finditer(raw):
+        lhs = _clean_chunk(match.group(1))
+        rhs = _clean_chunk(match.group(2))
+        lhs_lower = lhs.lower()
+        if not lhs or not rhs:
+            continue
+        if any(token in lhs_lower for token in (" email", " deadline", " address", " path")):
+            continue
+        if "token=" in rhs.lower():
+            continue
+
+        words = [w for w in lhs_lower.split() if w]
+        if len(words) >= 2:
+            subject = _to_identifier(" ".join(words[:-1]), fallback=words[0])
+            predicate = _to_identifier(words[-1], fallback="value")
+        else:
+            subject = _to_identifier(lhs_lower, fallback="entity")
+            predicate = "value"
+        add_claim(
+            claim_text=match.group(0),
+            subject=subject,
+            predicate=predicate,
+            object_value=rhs,
+            claim_type="generic_fact",
+            volatility="medium",
+            confidence=0.62,
+        )
+
+
 class HeuristicClaimExtractor:
     def extract(self, text: str) -> list[dict[str, object]]:
         raw = text.strip()
@@ -155,96 +264,12 @@ class HeuristicClaimExtractor:
                 }
             )
 
-        for match in _TOKEN_RE.finditer(raw):
-            token_value = _clean_chunk(match.group(1))
-            if not token_value:
-                continue
-            add_claim(
-                claim_text=f"token={token_value}",
-                subject="auth",
-                predicate="token",
-                object_value=token_value,
-                claim_type="security_fact",
-                volatility="high",
-                confidence=0.96,
-            )
-
-        for match in _EMAIL_RE.finditer(raw):
-            subject = _to_identifier(match.group(1), fallback="contact")
-            email_value = _clean_chunk(match.group(2)).lower()
-            add_claim(
-                claim_text=match.group(0),
-                subject=subject,
-                predicate="email",
-                object_value=email_value,
-                claim_type="contact_fact",
-                volatility="medium",
-                confidence=0.86,
-            )
-
-        for match in _DEADLINE_RE.finditer(raw):
-            subject = _to_identifier(match.group(1), fallback="project")
-            add_claim(
-                claim_text=match.group(0),
-                subject=subject,
-                predicate="deadline",
-                object_value=match.group(2),
-                claim_type="schedule_fact",
-                volatility="high",
-                confidence=0.84,
-            )
-
-        for match in _ADDRESS_RE.finditer(raw):
-            subject = _to_identifier(match.group(1), fallback="contact")
-            add_claim(
-                claim_text=match.group(0),
-                subject=subject,
-                predicate="address",
-                object_value=match.group(2),
-                claim_type="contact_fact",
-                volatility="low",
-                confidence=0.80,
-            )
-
-        for match in _PATH_RE.finditer(raw):
-            subject = _to_identifier(match.group(1), fallback="workspace")
-            add_claim(
-                claim_text=match.group(0),
-                subject=subject,
-                predicate="path",
-                object_value=match.group(2),
-                claim_type="filesystem_fact",
-                volatility="medium",
-                confidence=0.86,
-            )
-
-        for match in _GENERIC_IS_RE.finditer(raw):
-            lhs = _clean_chunk(match.group(1))
-            rhs = _clean_chunk(match.group(2))
-            lhs_lower = lhs.lower()
-            if not lhs or not rhs:
-                continue
-            if any(token in lhs_lower for token in (" email", " deadline", " address", " path")):
-                continue
-            if "token=" in rhs.lower():
-                continue
-
-            words = [w for w in lhs_lower.split() if w]
-            if len(words) >= 2:
-                subject = _to_identifier(" ".join(words[:-1]), fallback=words[0])
-                predicate = _to_identifier(words[-1], fallback="value")
-            else:
-                subject = _to_identifier(lhs_lower, fallback="entity")
-                predicate = "value"
-            add_claim(
-                claim_text=match.group(0),
-                subject=subject,
-                predicate=predicate,
-                object_value=rhs,
-                claim_type="generic_fact",
-                volatility="medium",
-                confidence=0.62,
-            )
+        _extract_token_claims(raw, add_claim)
+        _extract_email_claims(raw, add_claim)
+        _extract_deadline_claims(raw, add_claim)
+        _extract_address_claims(raw, add_claim)
+        _extract_path_claims(raw, add_claim)
+        _extract_generic_claims(raw, add_claim)
 
         return claims
 
