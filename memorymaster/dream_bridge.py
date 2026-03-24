@@ -32,12 +32,72 @@ _SENSITIVE_PATTERNS = re.compile(
     r"|sk-[A-Za-z0-9]{20,}"
     r"|ghp_[A-Za-z0-9]{20,}"
     r"|AIzaSy[A-Za-z0-9\-_]{30,}"
+    # Private/internal IPs (anywhere in text, including URLs)
+    r"|192\.168\.\d{1,3}\.\d{1,3}"
+    r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+    # Personal/user-specific paths
+    r"|[A-Z]:\\.*\\(?:OneDrive|Users\\[a-z])"
+    r"|/home/\w+"
+    # SSH/SCP commands with hosts or passwords
+    r"|ssh\s+\w+@"
+    r"|sshpass\b"
+    r"|scp\s+.*@"
+    # Raw credential patterns
+    r"|cat\s*>\s*/tmp/.*(?:pw|pass|key|cred)"
+    r"|ENDPW"
+    r"|esxi_pass"
+)
+
+# Claims that are just code snippets or deployment scripts are not useful memories
+_NOISE_PATTERNS = re.compile(
+    r"(?i)"
+    # Bash/shell code blocks dominating the text
+    r"^```(?:bash|sh|shell)"
+    # Step-by-step deployment instructions (not conceptual knowledge)
+    r"|^##\s*(?:Step\s+\d|OR MANUALLY|Build and deploy|Testing Workflow)"
+    # Bare URLs without context
+    r"|^(?:https?://\S+)$"
+    # Session artifacts
+    r"|^##\s*SESSION\s*START"
 )
 
 
 def _is_sensitive(text: str) -> bool:
-    """Return True if text looks like it contains credentials or redacted data."""
-    return bool(_SENSITIVE_PATTERNS.search(text or ""))
+    """Return True if text contains credentials, private IPs, or is just noise."""
+    if not text:
+        return False
+    if _SENSITIVE_PATTERNS.search(text):
+        return True
+    if _NOISE_PATTERNS.search(text.strip()):
+        return True
+    # Reject texts that are mostly code (>60% lines start with common code chars)
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if len(lines) >= 3:
+        code_lines = sum(1 for l in lines if l.startswith(("$", "#!", "cd ", "pip ", "npm ",
+                         "curl ", "docker ", "git ", "scp ", "rsync ", "cat ", "echo ",
+                         "sudo ", "chmod ", "mkdir ", "wget ")))
+        if code_lines / len(lines) > 0.5:
+            return True
+    return False
+
+
+def _is_near_duplicate(text: str, seen_texts: list[str], threshold: float = 0.7) -> bool:
+    """Return True if text is too similar to something already exported."""
+    if not text or not seen_texts:
+        return False
+    text_words = set(text.lower().split())
+    if not text_words:
+        return False
+    for seen in seen_texts:
+        seen_words = set(seen.lower().split())
+        if not seen_words:
+            continue
+        overlap = len(text_words & seen_words)
+        similarity = overlap / max(len(text_words), len(seen_words))
+        if similarity >= threshold:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -411,10 +471,15 @@ def dream_seed(
     seeded = 0
     skipped = 0
     new_index_lines: list[str] = []
+    seen_texts: list[str] = []
 
     for claim in claims:
         text = claim.get("text") or ""
         if _is_sensitive(text):
+            skipped += 1
+            continue
+
+        if _is_near_duplicate(text, seen_texts):
             skipped += 1
             continue
 
@@ -423,6 +488,7 @@ def dream_seed(
         if filename in already_seeded:
             # Still add to index for consistency
             new_index_lines.append(index_line)
+            seen_texts.append(text)
             skipped += 1
             continue
 
@@ -431,6 +497,7 @@ def dream_seed(
             file_path.write_text(content, encoding="utf-8")
 
         new_index_lines.append(index_line)
+        seen_texts.append(text)
         seeded += 1
 
     # Rebuild MEMORY.md: preserve non-mm entries, add mm entries
