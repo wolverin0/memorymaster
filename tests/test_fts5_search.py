@@ -51,12 +51,12 @@ class TestFTS5TableCreation:
 
 class TestFTS5Search:
     def test_basic_text_match(self, store: SQLiteStore) -> None:
-        store.create_claim("Server IP is 192.168.100.186", _cite(), subject="server", predicate="ip")
+        store.create_claim("Server IP is 10.0.0.1", _cite(), subject="server", predicate="ip")
         store.create_claim("Database runs on port 5432", _cite(), subject="db", predicate="port")
 
         results = store.list_claims(text_query="server IP")
         assert len(results) == 1
-        assert "192.168" in results[0].text
+        assert "10.0.0.1" in results[0].text
 
     def test_single_token_match(self, store: SQLiteStore) -> None:
         store.create_claim("The authentication token expires daily", _cite())

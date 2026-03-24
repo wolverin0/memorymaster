@@ -1,2 +1,0 @@
-{"ts": "2026-03-22T00:57:35.045305+00:00", "mode": "validation", "iteration": 1, "action": "cycle_failed", "result": "The system cannot find the path specified.", "metric_before": "", "metric_after": ""}
-{"ts": "2026-03-22T00:57:35.045305+00:00", "mode": "validation", "iteration": 1, "action": "error", "result": "'charmap' codec can't encode character '\\u2192' in position 28: character maps to <undefined>", "metric_before": "", "metric_after": ""}

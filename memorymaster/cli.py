@@ -101,6 +101,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     cycle = sub.add_parser("run-cycle", help="Run extractor, validator, decay, and optional compact")
     cycle.add_argument("--with-compact", action="store_true", help="Run compactor at the end of cycle")
+    cycle.add_argument("--with-dream-sync", action="store_true", help="Sync claims with Claude Code Auto Dream after cycle")
+    cycle.add_argument("--dream-project", default=None, help="Project path for Auto Dream sync (or set CLAUDE_MEMORY_DIR)")
     _add_cycle_policy_args(cycle)
 
     query = sub.add_parser("query", help="Search claims by text")
@@ -295,8 +297,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("install-hook", help="Install a git post-commit hook that auto-snapshots the DB")
 
     qdrant_sync = sub.add_parser("qdrant-sync", help="Bulk-sync all active claims to Qdrant vector store")
-    qdrant_sync.add_argument("--qdrant-url", default="", help="Qdrant endpoint (default: $QDRANT_URL or 192.168.100.186:6333)")
-    qdrant_sync.add_argument("--ollama-url", default="", help="Ollama endpoint (default: $OLLAMA_URL or 192.168.100.155:11434)")
+    qdrant_sync.add_argument("--qdrant-url", default="", help="Qdrant endpoint (default: $QDRANT_URL or localhost:6333)")
+    qdrant_sync.add_argument("--ollama-url", default="", help="Ollama endpoint (default: $OLLAMA_URL or localhost:11434)")
 
     qdrant_search = sub.add_parser("qdrant-search", help="Semantic search via Qdrant vector store")
     qdrant_search.add_argument("text", help="Query text for semantic search")
@@ -335,7 +337,7 @@ def build_parser() -> argparse.ArgumentParser:
     extract_claims_cmd.add_argument("--source", default="unstructured", help="Citation source label (default: unstructured)")
     extract_claims_cmd.add_argument("--scope", default="project", help="Claim scope (default: project)")
     extract_claims_cmd.add_argument("--ingest", action="store_true", help="Ingest extracted claims into the DB (default: dry-run, print only)")
-    extract_claims_cmd.add_argument("--ollama-url", default="", help="Ollama base URL (default: $OLLAMA_URL or http://192.168.100.155:11434)")
+    extract_claims_cmd.add_argument("--ollama-url", default="", help="Ollama base URL (default: $OLLAMA_URL or http://localhost:11434)")
     extract_claims_cmd.add_argument("--model", default="", help="LLM model name (default: deepseek-coder-v2:16b)")
 
     fed_query = sub.add_parser("federated-query", help="Query across ALL scopes — cross-project federation")
@@ -366,6 +368,26 @@ def build_parser() -> argparse.ArgumentParser:
     daily.add_argument("--output", default="", help="Directory to save .md file (default: print to stdout)")
 
     sub.add_parser("ghost-notes", help="Find knowledge gaps — topics queried often but with few claims")
+
+    dream_seed = sub.add_parser("dream-seed", help="Export MemoryMaster claims into Claude Code Auto Dream memory files")
+    dream_seed.add_argument("--project", default=None, help="Project path to compute Claude Code memory dir slug")
+    dream_seed.add_argument("--min-tier", type=int, default=2, help="Minimum tier to export (1=core, 2=working, 3=peripheral; default: 2)")
+    dream_seed.add_argument("--min-quality", type=float, default=0.5, help="Minimum quality score to export (default: 0.5)")
+    dream_seed.add_argument("--max", type=int, default=50, help="Maximum memory files to create (default: 50)")
+    dream_seed.add_argument("--dry-run", action="store_true", help="Preview what would be exported without writing files")
+
+    dream_ingest_cmd = sub.add_parser("dream-ingest", help="Import Auto Dream memories back into MemoryMaster")
+    dream_ingest_cmd.add_argument("--project", default=None, help="Project path to compute Claude Code memory dir slug")
+
+    dream_sync_cmd = sub.add_parser("dream-sync", help="Bidirectional sync between MemoryMaster and Auto Dream")
+    dream_sync_cmd.add_argument("--project", default=None, help="Project path to compute Claude Code memory dir slug")
+    dream_sync_cmd.add_argument("--min-tier", type=int, default=2, help="Minimum tier to export (default: 2)")
+    dream_sync_cmd.add_argument("--min-quality", type=float, default=0.5, help="Minimum quality score to export (default: 0.5)")
+    dream_sync_cmd.add_argument("--max", type=int, default=50, help="Maximum memory files to create (default: 50)")
+
+    dream_clean_cmd = sub.add_parser("dream-clean", help="Remove all mm_-prefixed files from Claude Code memory dir")
+    dream_clean_cmd.add_argument("--project", default=None, help="Project path to compute Claude Code memory dir slug")
+    dream_clean_cmd.add_argument("--dry-run", action="store_true", help="Preview what would be removed without deleting files")
 
     return parser
 
@@ -692,6 +714,17 @@ def _handle_run_cycle(args: argparse.Namespace, service, parser: argparse.Argume
         print(_json_envelope(result, query_ms=elapsed_ms))
     else:
         print(json.dumps(result, indent=2))
+
+    if getattr(args, "with_dream_sync", False):
+        from memorymaster.dream_bridge import dream_sync
+        try:
+            sync_result = dream_sync(effective_db, project_path=args.dream_project)
+            print(f"\ndream-sync: ingested={sync_result.get('ingested', 0)} "
+                  f"seeded={sync_result.get('seeded', 0)} "
+                  f"skipped={sync_result.get('skipped', 0)}")
+        except (FileNotFoundError, RuntimeError) as exc:
+            print(f"\ndream-sync skipped: {exc}")
+
     return 0
 
 
@@ -1491,6 +1524,87 @@ def _handle_ghost_notes(args, service, parser, effective_db) -> int:
 
 COMMAND_HANDLERS["daily-note"] = _handle_daily_note
 COMMAND_HANDLERS["ghost-notes"] = _handle_ghost_notes
+
+
+def _handle_dream_seed(args, service, parser, effective_db) -> int:
+    from memorymaster.dream_bridge import dream_seed
+    t0 = time.perf_counter()
+    result = dream_seed(
+        db_path=str(effective_db),
+        project_path=args.project,
+        min_tier=args.min_tier,
+        min_quality=args.min_quality,
+        max_memories=getattr(args, "max", 50),
+        dry_run=args.dry_run,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        if result.get("error"):
+            print(f"Error: {result['error']}")
+            return 1
+        tag = "DRY RUN" if result.get("dry_run") else "APPLIED"
+        print(f"dream-seed [{tag}]: seeded={result['seeded']} skipped={result['skipped']} "
+              f"total_claims={result['total_claims']}\n  memory_dir: {result['memory_dir']}")
+    return 0
+
+
+def _handle_dream_ingest(args, service, parser, effective_db) -> int:
+    from memorymaster.dream_bridge import dream_ingest
+    t0 = time.perf_counter()
+    result = dream_ingest(db_path=str(effective_db), project_path=args.project)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        print(f"dream-ingest: ingested={result['ingested']} skipped={result['skipped']}\n"
+              f"  memory_dir: {result['memory_dir']}")
+    return 0
+
+
+def _handle_dream_sync(args, service, parser, effective_db) -> int:
+    from memorymaster.dream_bridge import dream_sync
+    t0 = time.perf_counter()
+    result = dream_sync(
+        db_path=str(effective_db),
+        project_path=args.project,
+        min_tier=args.min_tier,
+        min_quality=args.min_quality,
+        max_memories=getattr(args, "max", 50),
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        ingest = result["ingest"]
+        seed = result["seed"]
+        print(f"dream-sync complete:\n"
+              f"  ingest: ingested={ingest['ingested']} skipped={ingest['skipped']}\n"
+              f"  seed:   seeded={seed['seeded']} skipped={seed['skipped']} total={seed['total_claims']}\n"
+              f"  memory_dir: {seed.get('memory_dir', ingest.get('memory_dir', '?'))}")
+    return 0
+
+
+def _handle_dream_clean(args, service, parser, effective_db) -> int:
+    from memorymaster.dream_bridge import dream_clean
+    t0 = time.perf_counter()
+    result = dream_clean(project_path=args.project, dry_run=args.dry_run)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        tag = "DRY RUN" if result.get("dry_run") else "APPLIED"
+        print(f"dream-clean [{tag}]: removed={result['removed']}\n  memory_dir: {result['memory_dir']}")
+        for fname in result.get("files", []):
+            print(f"  - {fname}")
+    return 0
+
+
+COMMAND_HANDLERS["dream-seed"] = _handle_dream_seed
+COMMAND_HANDLERS["dream-ingest"] = _handle_dream_ingest
+COMMAND_HANDLERS["dream-sync"] = _handle_dream_sync
+COMMAND_HANDLERS["dream-clean"] = _handle_dream_clean
 
 
 def main(argv: list[str] | None = None) -> int:

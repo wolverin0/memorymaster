@@ -40,7 +40,7 @@ QUERY_ENTITY_PROMPT = (
     "Return empty array if no entities."
 )
 
-DEFAULT_OLLAMA_URL = "http://192.168.100.155:11434"
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_MODEL = "deepseek-coder-v2:16b"
 
 

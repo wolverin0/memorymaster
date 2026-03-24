@@ -179,7 +179,7 @@ class TestClaimLinksStorage:
 
 
 class TestClaimLinksCLI:
-    """CLI integration tests using tmp_path to avoid OneDrive sync issues."""
+    """CLI integration tests using tmp_path to avoid cloud sync issues."""
 
     @pytest.fixture()
     def cli_db(self, tmp_path: Path) -> Path:

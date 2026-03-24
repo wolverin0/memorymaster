@@ -187,7 +187,7 @@ Given a raw memory text, extract structured knowledge claims.
 For each distinct fact/decision/learning in the text, output a JSON object with:
 - "subject": the entity (e.g. "ClawTrol API", "memorymaster", "SSH access")
 - "predicate": the relationship (e.g. "runs_on", "requires", "is_located_at", "learned")
-- "object_value": the specific value (e.g. "port 4001", "Python 3.10+", "192.168.100.186")
+- "object_value": the specific value (e.g. "port 4001", "Python 3.10+", "10.0.0.1")
 - "confidence": 0.0-1.0 how certain this fact is (1.0 = explicit statement, 0.5 = inferred, 0.2 = speculative)
 - "action": "confirm" if this is a solid fact, "archive" if it's noise/chatter/duplicate/not useful
 

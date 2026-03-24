@@ -465,11 +465,11 @@ def test_postgres_smoke_parity():
     _cleanup_tables(service)
 
     service.ingest(
-        text="Server IP is 192.168.100.186",
+        text="Server IP is 10.0.0.1",
         citations=[CitationInput(source="session://chat", locator="turn-1", excerpt="old")],
         subject="server",
         predicate="ip_address",
-        object_value="192.168.100.186",
+        object_value="10.0.0.1",
     )
     service.ingest(
         text="Server IP is 10.0.0.2",

@@ -3,7 +3,7 @@
 Takes raw text (conversation logs, docs, notes) and extracts
 individual facts as separate claims with proper typing.
 
-Uses Ollama at http://192.168.100.155:11434 with deepseek-coder-v2:16b
+Uses Ollama at http://localhost:11434 with deepseek-coder-v2:16b
 (same endpoint as auto_resolver.py).
 """
 
@@ -18,7 +18,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_OLLAMA_URL = "http://192.168.100.155:11434"
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_MODEL = "deepseek-coder-v2:16b"
 
 _EXTRACTION_PROMPT = """\

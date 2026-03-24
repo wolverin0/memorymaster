@@ -24,11 +24,11 @@ def test_sqlite_cycle_and_hybrid_retrieval():
     service.init_db()
 
     service.ingest(
-        text="Server IP is 192.168.100.186",
+        text="Server IP is 10.0.0.1",
         citations=[CitationInput(source="session://chat", locator="turn-1", excerpt="first ip")],
         subject="server",
         predicate="ip_address",
-        object_value="192.168.100.186",
+        object_value="10.0.0.1",
         volatility="high",
     )
     service.ingest(

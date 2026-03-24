@@ -79,7 +79,7 @@ def test_auto_validate_runs_deterministic_on_confirmed_claims() -> None:
         "INSERT INTO claims (text, subject, predicate, object_value, status, confidence, "
         "created_at, updated_at) "
         "VALUES (?, ?, ?, ?, 'confirmed', 0.6, datetime('now'), datetime('now'))",
-        ("Server IP is 192.168.1.1", "server", "ip_address", "192.168.1.1"),
+        ("Server IP is 10.0.0.1", "server", "ip_address", "10.0.0.1"),
     )
     conn.commit()
     claim_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]

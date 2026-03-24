@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "memorymaster": {
+      "command": "memorymaster-mcp",
+      "args": [],
+      "env": {
+        "MEMORYMASTER_DEFAULT_DB": "/path/to/memorymaster.db",
+        "MEMORYMASTER_WORKSPACE": "/path/to/your/project",
+        "QDRANT_URL": "http://localhost:6333",
+        "OLLAMA_URL": "http://localhost:11434"
+      }
+    },
+    "qdrant": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-qdrant"
+      ],
+      "env": {
+        "QDRANT_URL": "http://localhost:6333",
+        "COLLECTION_NAME": "agent-memories"
+      }
+    }
+  }
+}

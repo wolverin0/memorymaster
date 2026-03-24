@@ -5,7 +5,7 @@ Uses idempotency_key + text hash for dedup. Preserves both sides' claims.
 
 Usage:
     memorymaster merge-db --source /path/to/remote.db
-    memorymaster merge-db --source otacon@192.168.100.186:/opt/memorymaster/memorymaster.db
+    memorymaster merge-db --source user@remote-host:/opt/memorymaster/memorymaster.db
 """
 
 from __future__ import annotations

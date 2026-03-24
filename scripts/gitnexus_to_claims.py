@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 from pathlib import Path
 
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
 
-PROJECTS_ROOT = Path(r"G:\_OneDrive\OneDrive\Desktop\Py Apps")
+PROJECTS_ROOT = Path(os.environ.get("PROJECTS_ROOT", "."))
 DB_PATH = PROJECTS_ROOT / "memorymaster" / "memorymaster.db"
 
 
