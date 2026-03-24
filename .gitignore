@@ -55,7 +55,7 @@ venv/
 .DS_Store
 Thumbs.db
 obsidian-vault/
-.gitnexus
+.gitnexus/
 
 # Sensitive / generated (never commit)
 .mcp.json
