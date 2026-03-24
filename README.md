@@ -8,7 +8,7 @@ Lifecycle-managed claims with citations, conflict detection, steward governance,
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Tests](https://img.shields.io/badge/tests-932-green.svg)]()
 [![MCP Tools](https://img.shields.io/badge/MCP%20tools-21-purple.svg)]()
-[![CLI Commands](https://img.shields.io/badge/CLI%20commands-50%2B-orange.svg)]()
+[![CLI Commands](https://img.shields.io/badge/CLI%20commands-54%2B-orange.svg)]()
 
 ---
 
@@ -21,7 +21,7 @@ MemoryMaster gives AI coding agents **persistent, verifiable memory** with a ful
 | Source modules | 35+ (20,000+ lines) |
 | Tests | 932 across 66 test modules |
 | MCP tools | 21 |
-| CLI commands | 50+ |
+| CLI commands | 54+ |
 | Import connectors | 10+ (Git, Slack, Jira, email, GitHub, conversations) |
 | Utility scripts | 30+ (connectors, benchmarks, drills) |
 
@@ -51,13 +51,18 @@ MemoryMaster gives AI coding agents **persistent, verifiable memory** with a ful
 │  │ Entity   │  │  Skill    │  │ Daily    │  │  Vault        │  │
 │  │ Graph    │  │ Evolver   │  │ Notes    │  │  Exporter     │  │
 │  └──────────┘  └───────────┘  └──────────┘  └───────────────┘  │
-└────────┬──────────────┬──────────────┬──────────────┬───────────┘
-         │              │              │              │
-         v              v              v              v
+│                                                                 │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ Dream Bridge — bidirectional sync with Claude Code       │   │
+│  │ Auto Dream: seed claims out, ingest corrections back     │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└────────┬──────────────┬──────────────┬──────────┬───────────────┘
+         │              │              │          │
+         v              v              v          v
 ┌──────────────┐ ┌───────────┐ ┌───────────┐ ┌──────────────────┐
-│ SQLite /     │ │  Qdrant   │ │  Ollama   │ │ Obsidian Vault   │
-│ Postgres     │ │ (vectors) │ │  (LLM)    │ │ (My-Brain-Is-    │
-│              │ │           │ │           │ │  Full-Crew)       │
+│ SQLite /     │ │  Qdrant   │ │  Ollama   │ │ Claude Code      │
+│ Postgres     │ │ (vectors) │ │  (LLM)    │ │ Auto Dream       │
+│              │ │           │ │           │ │ + Obsidian Vault  │
 └──────────────┘ └───────────┘ └───────────┘ └──────────────────┘
 ```
 
@@ -84,6 +89,7 @@ MemoryMaster gives AI coding agents **persistent, verifiable memory** with a ful
 | **10+ Connectors** | Git, Slack, Jira, email, GitHub, and conversation imports |
 | **Real-time Dashboard** | HTML UI with SSE streaming, conflict view, and triage actions |
 | **Federated Query** | Cross-project querying across multiple memory databases |
+| **Dream Bridge** | Bidirectional sync with Claude Code's Auto Dream — seed quality-filtered claims into `.claude/memory/`, ingest corrections back, with sensitivity filtering and dedup |
 
 ## Quick Start
 
@@ -233,6 +239,54 @@ memorymaster --db memory.db daily-note
 # Find knowledge gaps (topics queried but underexplored)
 memorymaster --db memory.db ghost-notes
 ```
+
+## Dream Bridge (Claude Code Auto Dream Sync)
+
+MemoryMaster integrates with Claude Code's **Auto Dream** memory consolidation system. While Auto Dream provides basic session-to-memory consolidation, MemoryMaster adds structured claims, quality scoring, entity graphs, and security filtering on top.
+
+**The problem Auto Dream solves:** Claude Code accumulates memories across sessions, but they drift, contradict each other, and degrade over time. Auto Dream consolidates them every 24 hours.
+
+**What MemoryMaster adds:** A quality layer — structured claims with confidence scores, decay, deduplication, conflict resolution, and a sensitivity filter that blocks credentials, private IPs, personal paths, and code snippets from leaking into memory files.
+
+```bash
+# Export top claims as Claude Code memory files
+memorymaster --db memory.db dream-seed --project /path/to/project --max 30
+
+# Import Auto Dream memories back as claims
+memorymaster --db memory.db dream-ingest --project /path/to/project
+
+# Bidirectional sync (ingest + re-export)
+memorymaster --db memory.db dream-sync --project /path/to/project
+
+# Remove all MemoryMaster-seeded files
+memorymaster --db memory.db dream-clean --project /path/to/project
+
+# Automatic: run as part of the steward cycle
+memorymaster --db memory.db run-cycle --with-dream-sync --dream-project /path/to/project
+```
+
+### How it works
+
+```
+MemoryMaster DB ──seed──▶ .claude/projects/<slug>/memory/ ◀── Auto Dream
+       ▲                              │                        (24h cycle)
+       └────────── ingest ────────────┘
+```
+
+1. **dream-seed** queries claims filtered by tier (core/working), quality score, and sensitivity
+2. Maps MemoryMaster categories to Auto Dream types (`feedback`, `project`, `user`, `reference`)
+3. Writes markdown files with YAML frontmatter that Auto Dream can consolidate
+4. **dream-ingest** reads non-MemoryMaster memory files back as claims (captures user corrections)
+5. **dream-sync** (or `run-cycle --with-dream-sync`) does both in one pass
+
+### Safety
+
+- Blocks private IPs (`192.168.x.x`, `10.x.x.x`), personal paths, SSH commands
+- Blocks credentials (API keys, tokens, passwords, `[REDACTED]` markers)
+- Blocks raw code snippets (>50% shell commands)
+- Near-duplicate detection (70% word overlap threshold)
+- Respects Auto Dream's `.dream.lock` file — never writes during consolidation
+- MEMORY.md index capped at 200 lines
 
 ## OpenClaw Integration
 
