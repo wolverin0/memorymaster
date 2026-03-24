@@ -151,8 +151,8 @@ def _build_get_route_map(handler: Any) -> dict[str, callable]:
     """Build a mapping of routes to handler callables."""
     return {
         "/health": lambda qs: handler._write_json({"ok": True, "service": "memorymaster-dashboard"}),
-        "/": handler._write_dashboard,
-        "/dashboard": handler._write_dashboard,
+        "/": lambda qs: handler._write_dashboard(),
+        "/dashboard": lambda qs: handler._write_dashboard(),
         "/api/claims": lambda qs: handler._handle_claims(qs),
         "/api/events": lambda qs: handler._handle_events(qs),
         "/api/timeline": lambda qs: handler._handle_timeline(qs),
