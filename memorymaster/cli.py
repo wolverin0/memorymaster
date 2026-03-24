@@ -101,6 +101,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     cycle = sub.add_parser("run-cycle", help="Run extractor, validator, decay, and optional compact")
     cycle.add_argument("--with-compact", action="store_true", help="Run compactor at the end of cycle")
+    cycle.add_argument("--with-dream-sync", action="store_true", help="Sync claims with Claude Code Auto Dream after cycle")
+    cycle.add_argument("--dream-project", default=None, help="Project path for Auto Dream sync (or set CLAUDE_MEMORY_DIR)")
     _add_cycle_policy_args(cycle)
 
     query = sub.add_parser("query", help="Search claims by text")
@@ -712,6 +714,17 @@ def _handle_run_cycle(args: argparse.Namespace, service, parser: argparse.Argume
         print(_json_envelope(result, query_ms=elapsed_ms))
     else:
         print(json.dumps(result, indent=2))
+
+    if getattr(args, "with_dream_sync", False):
+        from memorymaster.dream_bridge import dream_sync
+        try:
+            sync_result = dream_sync(effective_db, project_path=args.dream_project)
+            print(f"\ndream-sync: ingested={sync_result.get('ingested', 0)} "
+                  f"seeded={sync_result.get('seeded', 0)} "
+                  f"skipped={sync_result.get('skipped', 0)}")
+        except (FileNotFoundError, RuntimeError) as exc:
+            print(f"\ndream-sync skipped: {exc}")
+
     return 0
 
 
