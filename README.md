@@ -90,6 +90,7 @@ MemoryMaster gives AI coding agents **persistent, verifiable memory** with a ful
 | **Real-time Dashboard** | HTML UI with SSE streaming, conflict view, and triage actions |
 | **Federated Query** | Cross-project querying across multiple memory databases |
 | **Dream Bridge** | Bidirectional sync with Claude Code's Auto Dream — seed quality-filtered claims into `.claude/memory/`, ingest corrections back, with sensitivity filtering and dedup |
+| **GitNexus Bridge** | Convert code intelligence (symbols, call graphs, execution flows) into memory claims for code-aware agent memory |
 
 ## Quick Start
 
@@ -296,6 +297,45 @@ MemoryMaster integrates with [OpenClaw](https://github.com/wolverin0/openclaw) f
 # Quick install via OpenClaw installer
 curl -sSL https://raw.githubusercontent.com/wolverin0/memorymaster/main/scripts/openclaw-install.sh | bash
 ```
+
+## GitNexus Integration (Code Intelligence)
+
+MemoryMaster pairs with [GitNexus](https://github.com/wolverin0/gitnexus) to bridge **code knowledge** and **agent memory**. GitNexus builds a knowledge graph of your codebase (symbols, relationships, execution flows), and MemoryMaster stores the claims that emerge from working with that code.
+
+### How they work together
+
+| Layer | Tool | What it knows |
+|-------|------|---------------|
+| **Code structure** | GitNexus | Functions, classes, call graphs, execution flows, blast radius |
+| **Agent memory** | MemoryMaster | Facts, decisions, corrections, preferences, entity relationships |
+| **Bridge** | `gitnexus_to_claims.py` | Converts GitNexus analysis into MemoryMaster claims |
+
+### Workflow
+
+```bash
+# 1. Index your codebase with GitNexus
+npx gitnexus analyze
+
+# 2. Convert code intelligence into memory claims
+python scripts/gitnexus_to_claims.py --project myapp
+
+# 3. Query with both code and memory context
+memorymaster --db memorymaster.db query "auth validation" --retrieval-mode hybrid
+```
+
+### Impact analysis before editing
+
+GitNexus provides blast-radius analysis that MemoryMaster can reference:
+
+```bash
+# Check what breaks if you change a function
+npx gitnexus impact --target "validateUser" --direction upstream
+
+# MemoryMaster remembers past decisions about that function
+memorymaster --db memorymaster.db query "validateUser" --retrieval-mode hybrid
+```
+
+When both are configured as MCP servers, Claude Code gets **code-aware memory** — it can trace execution flows (GitNexus) and recall past decisions about those flows (MemoryMaster).
 
 ## New in v2.0
 
