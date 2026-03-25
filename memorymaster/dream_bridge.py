@@ -40,13 +40,29 @@ _SENSITIVE_PATTERNS = re.compile(
     r"|[A-Z]:\\.*\\(?:OneDrive|Users\\[a-z])"
     r"|/home/\w+"
     # SSH/SCP commands with hosts or passwords
-    r"|ssh\s+\w+@"
+    r"|ssh\s+.*\w+@"
     r"|sshpass\b"
     r"|scp\s+.*@"
+    # Public IPs in connection strings (non-localhost, non-example)
+    r"|\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+"
+    r"|ubuntu@\d{1,3}\.\d{1,3}"
     # Raw credential patterns
     r"|cat\s*>\s*/tmp/.*(?:pw|pass|key|cred)"
     r"|ENDPW"
     r"|esxi_pass"
+    # Telegram bot tokens (numeric:alphanumeric)
+    r"|\d{8,}:[A-Za-z0-9_-]{30,}"
+    # Generic long tokens/keys (40+ alphanumeric chars)
+    r"|(?:token|key|secret|password)\s*[:=]\s*['\"]?[A-Za-z0-9\-._~+/]{40,}"
+    # Webhook URLs with tokens embedded
+    r"|webhook.*(?:token|key|secret).*[A-Za-z0-9]{20,}"
+    # ENV var assignments with actual values
+    r"|(?:export\s+)?(?:DB_PASS|MYSQL_PASSWORD|POSTGRES_PASSWORD|SSH_PASS)\s*="
+    # supabase/stripe/sendgrid/twilio keys
+    r"|sbp_[A-Za-z0-9]{20,}"
+    r"|sk_(?:live|test)_[A-Za-z0-9]{20,}"
+    r"|SG\.[A-Za-z0-9\-_]{20,}"
+    r"|AC[a-f0-9]{32}"
 )
 
 # Claims that are just code snippets or deployment scripts are not useful memories
@@ -60,6 +76,22 @@ _NOISE_PATTERNS = re.compile(
     r"|^(?:https?://\S+)$"
     # Session artifacts
     r"|^##\s*SESSION\s*START"
+    # Generic install/run instructions (not useful as memory)
+    r"|^(?:pip install|npm install|yarn add|uvicorn |python -m )"
+    # Environment variable templates (placeholder values)
+    r"|(?:VITE_|NEXT_PUBLIC_)\w+=(?:https?://xxx|xxx)"
+    # Test health endpoint snippets
+    r"|^##\s*\d+\.\s*(?:Test|Build|Run|Install|Deploy)\s"
+    # "Or run locally" / generic setup instructions
+    r"|^##\s*(?:Or run|Getting [Ss]tarted|Prerequisites|Environment [Vv]ariables)"
+    # Support/docs links only (no actual knowledge)
+    r"|^##\s*(?:Support|Sources|Documentation|References)\b"
+    # Duplicate doc/readme boilerplate (links-only claims)
+    r"|^Documentation for .* is available at https?://"
+    # API endpoint snippets with no context
+    r"|requests\.get\s*\(\s*['\"]http://localhost"
+    # Monitoring CLI commands without context
+    r"|^##\s*Monitoring\s+.*(?:board|live|terminal)"
 )
 
 
@@ -403,6 +435,8 @@ def _query_exportable_claims(
     if not allowed_tiers:
         allowed_tiers = ["core", "working"]
 
+    # Fetch a larger pool (5x) so sensitivity filtering still yields enough results
+    fetch_limit = max_memories * 5
     placeholders = ",".join("?" for _ in allowed_tiers)
     sql = (
         f"SELECT * FROM claims "
@@ -412,7 +446,7 @@ def _query_exportable_claims(
         f"ORDER BY COALESCE(quality_score, 0.0) DESC, access_count DESC "
         f"LIMIT ?"
     )
-    params = [*allowed_tiers, min_quality, max_memories]
+    params = [*allowed_tiers, min_quality, fetch_limit]
 
     try:
         rows = conn.execute(sql, params).fetchall()
@@ -425,7 +459,7 @@ def _query_exportable_claims(
             f"ORDER BY confidence DESC, access_count DESC "
             f"LIMIT ?"
         )
-        rows = conn.execute(sql_fallback, [*allowed_tiers, max_memories]).fetchall()
+        rows = conn.execute(sql_fallback, [*allowed_tiers, fetch_limit]).fetchall()
 
     return [dict(row) for row in rows]
 
@@ -474,6 +508,9 @@ def dream_seed(
     seen_texts: list[str] = []
 
     for claim in claims:
+        if seeded >= max_memories:
+            break
+
         text = claim.get("text") or ""
         if _is_sensitive(text):
             skipped += 1
