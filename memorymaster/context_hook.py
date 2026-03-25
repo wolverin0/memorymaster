@@ -58,6 +58,7 @@ def recall(
     db_path: str = "",
     budget: int = 2000,
     format: str = "text",
+    skip_qdrant: bool = False,
 ) -> str:
     """Query memorymaster for relevant context with quality ranking."""
     from memorymaster.service import MemoryService
@@ -74,7 +75,7 @@ def recall(
         scope_allowlist=None,
     )
 
-    if not rows:
+    if not rows and not skip_qdrant:
         # Fallback to Qdrant semantic search
         try:
             from memorymaster.qdrant_backend import QdrantBackend
@@ -90,6 +91,9 @@ def recall(
                 return "\n".join(lines).encode("ascii", errors="replace").decode("ascii")
         except Exception:
             pass
+        return ""
+
+    if not rows:
         return ""
 
     # Re-rank by lexical relevance — claims with more query words score higher
