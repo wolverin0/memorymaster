@@ -26,14 +26,15 @@ This project uses MemoryMaster as the shared memory backend for all Codex sessio
 
 ## Guardrails
 
-- Do not store secrets in plain text unless the user explicitly asks; prefer redacted references.
+- **NEVER ingest**: credentials, API keys, tokens, passwords, private IPs (192.168.x.x), personal file paths, SSH commands, or code snippets.
 - Prefer high-signal facts over noisy conversational content.
 - If facts are superseded, ingest the new fact and include citation/source so lifecycle can reconcile.
+- Always set `source` to identify which provider created the claim (e.g., `"codex-session"`, `"claude-session"`, `"gemini-session"`).
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **memorymaster** (4636 symbols, 12687 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **memorymaster** (4696 symbols, 12782 relationships, 296 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

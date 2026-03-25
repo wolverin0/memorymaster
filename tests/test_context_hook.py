@@ -72,31 +72,28 @@ class TestRecall:
         mock_service = MagicMock()
         mock_service_class.return_value = mock_service
 
-        # Mock the result
-        mock_result = MagicMock()
-        mock_result.claims_included = 3
-        mock_result.output = "claim 1\nclaim 2\nclaim 3"
-        mock_service.query_for_context.return_value = mock_result
+        # Mock query_rows to return claim-like dicts
+        mock_claim = MagicMock()
+        mock_claim.text = "working on memorymaster project"
+        mock_claim.id = 1
+        mock_service.query_rows.return_value = [
+            {"claim": mock_claim, "lexical_score": 0.8, "confidence_score": 0.9},
+        ]
 
-        result = recall("what am I working on?", db_path=":memory:")
+        result = recall("what am I working on?", db_path=":memory:", skip_qdrant=True)
 
-        assert result == "claim 1\nclaim 2\nclaim 3"
-        mock_service.query_for_context.assert_called_once()
-        call_kwargs = mock_service.query_for_context.call_args.kwargs
-        assert call_kwargs["query"] == "what am I working on?"
-        assert call_kwargs["retrieval_mode"] == "legacy"
+        assert "working on memorymaster project" in result
+        assert result.startswith("# Memory Context")
+        mock_service.query_rows.assert_called_once()
 
     @patch("memorymaster.service.MemoryService")
     def test_recall_no_results(self, mock_service_class: MagicMock) -> None:
         """Recall should return empty string when no claims found."""
         mock_service = MagicMock()
         mock_service_class.return_value = mock_service
+        mock_service.query_rows.return_value = []
 
-        mock_result = MagicMock()
-        mock_result.claims_included = 0
-        mock_service.query_for_context.return_value = mock_result
-
-        result = recall("what am I working on?", db_path=":memory:")
+        result = recall("what am I working on?", db_path=":memory:", skip_qdrant=True)
 
         assert result == ""
 
@@ -106,15 +103,15 @@ class TestRecall:
         mock_service = MagicMock()
         mock_service_class.return_value = mock_service
 
-        mock_result = MagicMock()
-        mock_result.claims_included = 1
-        mock_result.output = "result"
-        mock_service.query_for_context.return_value = mock_result
+        mock_claim = MagicMock()
+        mock_claim.text = "a" * 200
+        mock_service.query_rows.return_value = [
+            {"claim": mock_claim, "lexical_score": 0.5, "confidence_score": 0.5},
+        ]
 
-        recall("test", db_path=":memory:", budget=5000)
+        result = recall("test query here", db_path=":memory:", budget=5000, skip_qdrant=True)
 
-        call_kwargs = mock_service.query_for_context.call_args.kwargs
-        assert call_kwargs["token_budget"] == 5000
+        assert "a" * 200 in result
 
     @patch("memorymaster.service.MemoryService")
     def test_recall_sanitizes_non_ascii(self, mock_service_class: MagicMock) -> None:
@@ -122,12 +119,13 @@ class TestRecall:
         mock_service = MagicMock()
         mock_service_class.return_value = mock_service
 
-        mock_result = MagicMock()
-        mock_result.claims_included = 1
-        mock_result.output = "claim with ñ and é characters"
-        mock_service.query_for_context.return_value = mock_result
+        mock_claim = MagicMock()
+        mock_claim.text = "claim with \u00f1 and \u00e9 characters"
+        mock_service.query_rows.return_value = [
+            {"claim": mock_claim, "lexical_score": 0.5, "confidence_score": 0.5},
+        ]
 
-        result = recall("test", db_path=":memory:")
+        result = recall("test query here", db_path=":memory:", skip_qdrant=True)
 
         # Non-ASCII chars should be replaced with ?
         assert "claim" in result
