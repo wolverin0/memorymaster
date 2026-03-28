@@ -289,6 +289,63 @@ MemoryMaster DB ──seed──▶ .claude/projects/<slug>/memory/ ◀── Au
 - Respects Auto Dream's `.dream.lock` file — never writes during consolidation
 - MEMORY.md index capped at 200 lines
 
+## Auto-Ingest Stop Hook (LLM-powered memory capture)
+
+MemoryMaster includes a Claude Code **Stop hook** that automatically extracts learnings from each session using a lightweight LLM. When Claude finishes responding, the hook reads the session transcript, sends the last assistant messages to a cheap/fast LLM, and ingests any non-obvious learnings as candidate claims.
+
+### Supported LLM Providers
+
+| Provider | Env Var | Default Model | Cost |
+|----------|---------|---------------|------|
+| **Google Gemini** (default) | `GEMINI_API_KEY` | `gemini-3.1-flash-lite-preview` | ~free |
+| **OpenAI** | `OPENAI_API_KEY` | `gpt-4o-mini` | ~$0.001/call |
+| **Anthropic** | `ANTHROPIC_API_KEY` | `claude-haiku-4-5-20251001` | ~$0.001/call |
+| **Ollama** (local) | `OLLAMA_URL` | `llama3.2:3b` | free |
+
+### Configuration
+
+Set your provider and API key as environment variables:
+
+```bash
+# Google Gemini (default, cheapest cloud option)
+export MEMORYMASTER_LLM_PROVIDER=google
+export GEMINI_API_KEY=your-key-here
+
+# OpenAI
+export MEMORYMASTER_LLM_PROVIDER=openai
+export OPENAI_API_KEY=sk-...
+
+# Anthropic Claude
+export MEMORYMASTER_LLM_PROVIDER=anthropic
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Local Ollama (no API key needed)
+export MEMORYMASTER_LLM_PROVIDER=ollama
+export OLLAMA_URL=http://localhost:11434
+
+# Optional: override model for any provider
+export MEMORYMASTER_LLM_MODEL=gemini-2.5-flash
+```
+
+### How it works
+
+1. Claude Code Stop hook fires after each response
+2. Script reads last assistant messages from session transcript (JSONL)
+3. Sends to configured LLM with curator prompt (extracts max 3 learnings per turn)
+4. Ingests as `candidate` claims with `confidence=0.6`
+5. Steward cycle (every 6h) validates and promotes good candidates to `confirmed`
+
+The hook never blocks — it always approves the stop. Sensitivity filter rejects any claims containing credentials, private IPs, or tokens.
+
+### Using the LLM provider in your own code
+
+```python
+from memorymaster.llm_provider import call_llm, parse_json_response
+
+response = call_llm("Extract key facts:", "The bug was caused by missing RLS policies")
+claims = parse_json_response(response)
+```
+
 ## OpenClaw Integration
 
 MemoryMaster integrates with [OpenClaw](https://github.com/wolverin0/openclaw) for multi-agent orchestration. Claims, entities, and memory context flow between MemoryMaster and the OpenClaw task board via the `federated-query` command and the `openclaw2claude` MCP bridge.
