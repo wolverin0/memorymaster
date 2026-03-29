@@ -238,7 +238,7 @@ if FastMCP is not None:
         svc = _service(db, workspace)
         citations = _parse_sources_json(sources_json)
         if not citations:
-            citations = [{"source": "mcp-session", "locator": scope or "project"}]
+            citations = [CitationInput(source="mcp-session", locator=scope or "project")]
         claim = svc.ingest(
             text=text,
             citations=citations,
