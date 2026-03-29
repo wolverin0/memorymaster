@@ -222,10 +222,26 @@ if FastMCP is not None:
           - valid_from: start of the claim validity window
           - valid_until: end of the validity window (omit if still current)
         """
+        # Block credentials from being ingested
+        _sensitive = re.compile(
+            r"(?i)password\s*(?:is|=|:)\s*\S+"
+            r"|secret\s*(?:is|=|:)\s*\S{8,}"
+            r"|token\s*(?:is|=|:)\s*\S{20,}"
+            r"|sk-[A-Za-z0-9\-]{20,}"
+            r"|ghp_[A-Za-z0-9]{20,}"
+            r"|\d{8,}:[A-Za-z0-9_-]{30,}"
+            r"|ssh\s+.*@\d{1,3}\.\d{1,3}"
+        )
+        if _sensitive.search(text):
+            return {"ok": False, "error": "Claim rejected: contains credentials or secrets. Never ingest passwords, tokens, or keys."}
+
         svc = _service(db, workspace)
+        citations = _parse_sources_json(sources_json)
+        if not citations:
+            citations = [{"source": "mcp-session", "locator": scope or "project"}]
         claim = svc.ingest(
             text=text,
-            citations=_parse_sources_json(sources_json),
+            citations=citations,
             idempotency_key=_empty_to_none(idempotency_key),
             claim_type=_empty_to_none(claim_type),
             subject=_empty_to_none(subject),
