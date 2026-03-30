@@ -120,18 +120,18 @@ The setup script configures everything interactively:
 memorymaster --db memorymaster.db init-db
 
 # Ingest a claim with citation
-memorymaster --db memory.db ingest \
+memorymaster --db memorymaster.db ingest \
   --text "Server uses PostgreSQL 16" \
   --source "session://chat|turn-3|user confirmed"
 
 # Run validation cycle
-memorymaster --db memory.db run-cycle
+memorymaster --db memorymaster.db run-cycle
 
 # Query memory (hybrid retrieval)
-memorymaster --db memory.db query "database version" --retrieval-mode hybrid
+memorymaster --db memorymaster.db query "database version" --retrieval-mode hybrid
 
 # Context optimizer -- THE killer feature for agents
-memorymaster --db memory.db context "auth patterns" --budget 4000 --format xml
+memorymaster --db memorymaster.db context "auth patterns" --budget 4000 --format xml
 ```
 
 ### Docker Compose
@@ -167,6 +167,65 @@ Add to your `.mcp.json` (see [`.mcp.json.example`](.mcp.json.example)):
 ```
 
 **21 MCP tools:** `init_db`, `ingest_claim`, `run_cycle`, `run_steward`, `classify_query`, `query_memory`, `query_for_context`, `list_claims`, `redact_claim_payload`, `pin_claim`, `compact_memory`, `list_events`, `open_dashboard`, `list_steward_proposals`, `resolve_steward_proposal`, `extract_entities`, `entity_stats`, `find_related_claims`, `quality_scores`, `recompute_tiers`, `federated_query`
+
+## How It All Works (E2E)
+
+```
+YOU SEND A MESSAGE
+       │
+       ▼
+┌──────────────────┐
+│ Recall Hook      │  UserPromptSubmit: searches DB for relevant claims,
+│ (read memory)    │  injects as invisible context so Claude knows things
+│                  │  from previous sessions automatically
+└──────────────────┘
+       │
+       ▼
+  CLAUDE / CODEX WORKS
+  (edits, debugs, commits)
+       │
+       ▼
+┌──────────────────┐
+│ Stop Hook        │  When Claude stops: sends last messages to cheap LLM
+│ (write memory)   │  (Gemini Flash Lite / GPT-4o-mini / Haiku / Ollama),
+│                  │  extracts max 3 non-obvious learnings, ingests as
+│                  │  candidate claims (confidence 0.6)
+└──────────────────┘
+       │
+       ▼
+  CLAIM IN DB (status: candidate)
+       │
+       ├──── every 6h ──── STEWARD CRON validates candidates,
+       │                    promotes good ones to confirmed,
+       │                    decays old claims, exports to Obsidian vault
+       │
+       ├──── every 15m ─── OPENCLAW SYNC merges claims bidirectionally
+       │                    between your PC and the server (no overwrites)
+       │
+       └──── every 24h ─── CLAUDE AUTO DREAM consolidates memory files,
+                            dream-bridge syncs with MemoryMaster DB
+```
+
+### What gets installed by `setup-hooks.py`
+
+| Component | What it does | Runs when |
+|-----------|-------------|-----------|
+| **Recall hook** | Injects relevant claims into every prompt | Every message you send |
+| **Auto-ingest hook** | LLM extracts learnings from transcript | Every time Claude stops |
+| **MCP server** (global) | 21 tools for query/ingest/steward | Always available |
+| **CLAUDE.md append** | Instructions for Claude to use MemoryMaster | Read at session start |
+| **AGENTS.md append** | Instructions for Codex to use MemoryMaster | Read at session start |
+| **Steward cron** | Validates, decays, compacts claims | Every 6 hours |
+| **Obsidian skills** | Read/write/search vault via CLI | On demand |
+
+### Supported LLM providers for auto-ingest
+
+| Provider | Env var | Default model | Cost |
+|----------|---------|---------------|------|
+| Google Gemini (default) | `GEMINI_API_KEY` | `gemini-3.1-flash-lite-preview` | ~free |
+| OpenAI | `OPENAI_API_KEY` | `gpt-4o-mini` | ~$0.001/call |
+| Anthropic | `ANTHROPIC_API_KEY` | `claude-haiku-4-5-20251001` | ~$0.001/call |
+| Ollama (local) | `OLLAMA_URL` | `llama3.2:3b` | free |
 
 ## Operator Runtime
 
@@ -281,7 +340,7 @@ memorymaster --db memory.db dream-sync --project /path/to/project
 memorymaster --db memory.db dream-clean --project /path/to/project
 
 # Automatic: run as part of the steward cycle
-memorymaster --db memory.db run-cycle --with-dream-sync --dream-project /path/to/project
+memorymaster --db memorymaster.db run-cycle --with-dream-sync --dream-project /path/to/project
 ```
 
 ### How it works
