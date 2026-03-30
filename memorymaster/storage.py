@@ -768,12 +768,21 @@ class SQLiteStore:
                 # Column may not exist in legacy schemas; skip gracefully.
                 pass
             for cite in citations:
+                # Accept both CitationInput objects and plain dicts
+                if isinstance(cite, dict):
+                    _src = cite.get("source", "")
+                    _loc = cite.get("locator")
+                    _exc = cite.get("excerpt")
+                else:
+                    _src = cite.source
+                    _loc = cite.locator
+                    _exc = cite.excerpt
                 conn.execute(
                     """
                     INSERT INTO citations (claim_id, source, locator, excerpt, created_at)
                     VALUES (?, ?, ?, ?, ?)
                     """,
-                    (claim_id, cite.source, cite.locator, cite.excerpt, now),
+                    (claim_id, _src, _loc, _exc, now),
                 )
             ingest_payload = validate_event_payload(
                 "ingest",

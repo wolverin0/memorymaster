@@ -119,7 +119,7 @@ class MemoryService:
         if not text.strip():
             raise ValueError("Claim text cannot be empty.")
         if not citations:
-            raise ValueError("At least one citation is required.")
+            citations = [CitationInput(source="mcp-session", locator=scope or "project")]
         normalized_idempotency_key = (idempotency_key or "").strip() or None
         if normalized_idempotency_key is not None and hasattr(self.store, "get_claim_by_idempotency_key"):
             existing_claim = self.store.get_claim_by_idempotency_key(normalized_idempotency_key)
