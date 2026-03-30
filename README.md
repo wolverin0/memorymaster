@@ -99,7 +99,25 @@ MemoryMaster gives AI coding agents **persistent, verifiable memory** with a ful
 pip install memorymaster
 
 # Initialize database
-memorymaster --db memory.db init-db
+memorymaster --db memorymaster.db init-db
+
+# Full setup: hooks, MCP, steward cron, Obsidian skills
+python scripts/setup-hooks.py
+```
+
+The setup script configures everything interactively:
+- **Recall hook** — injects relevant claims into every Claude Code prompt
+- **Auto-ingest hook** — uses a cheap LLM (Gemini Flash Lite/GPT-4o-mini/Haiku/Ollama) to extract learnings from each session
+- **MCP server** — 21 tools available in all Claude Code & Codex sessions
+- **Steward cron** — validates and curates claims every 6 hours
+- **CLAUDE.md / AGENTS.md** — appends instructions so Claude and Codex actually use MemoryMaster
+- **Obsidian skills** — read/write/search your vault from Claude Code
+
+### Manual Quick Start
+
+```bash
+# Initialize database
+memorymaster --db memorymaster.db init-db
 
 # Ingest a claim with citation
 memorymaster --db memory.db ingest \
