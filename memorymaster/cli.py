@@ -315,6 +315,11 @@ def build_parser() -> argparse.ArgumentParser:
     vault.add_argument("--include-archived", action="store_true", help="Include archived claims")
     vault.add_argument("--incremental", action="store_true", help="Only export claims changed since last export")
 
+    curate = sub.add_parser("curate-vault", help="LLM-curated Obsidian vault with topics and wikilinks")
+    curate.add_argument("--output", required=True, help="Output directory for curated vault")
+    curate.add_argument("--scope", default="", help="Only curate claims matching this scope prefix")
+    curate.add_argument("--dry-run", action="store_true", help="Show topic breakdown without writing files")
+
     entity_cmd = sub.add_parser("extract-entities", help="Run entity extraction on claims via LLM")
     entity_cmd.add_argument("--limit", type=int, default=100, help="Max claims to process")
     entity_cmd.add_argument("--status", default="confirmed", help="Only process claims with this status")
@@ -1138,6 +1143,22 @@ def _handle_export_vault(args: argparse.Namespace, service, parser: argparse.Arg
     return 0
 
 
+def _handle_curate_vault(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.vault_curator import curate_vault
+    t0 = time.perf_counter()
+    result = curate_vault(effective_db, output_dir=args.output, scope_filter=args.scope or None, dry_run=args.dry_run)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        label = "[DRY RUN] " if args.dry_run else ""
+        print(f"{label}Curated {result['claims']} claims -> {result['files_written']} files, {result['scopes']} scopes, {result['topics']} topics ({elapsed_ms:.0f}ms)")
+        if args.dry_run and "topic_breakdown" in result:
+            for topic, count in sorted(result["topic_breakdown"].items(), key=lambda x: -x[1]):
+                print(f"  {topic}: {count}")
+    return 0
+
+
 def _handle_extract_entities(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.entity_graph import EntityGraph
     t0 = time.perf_counter()
@@ -1472,6 +1493,7 @@ COMMAND_HANDLERS: dict[str, object] = {
     "qdrant-sync": _handle_qdrant_commands,
     "qdrant-search": _handle_qdrant_commands,
     "export-vault": _handle_export_vault,
+    "curate-vault": _handle_curate_vault,
     "extract-entities": _handle_extract_entities,
     "entity-stats": _handle_entity_stats,
     "feedback-stats": _handle_feedback_stats,
