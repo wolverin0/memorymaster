@@ -6,7 +6,10 @@ from memorymaster.config import get_config
 from memorymaster.lifecycle import transition_claim
 
 def _parse_iso(dt: str) -> datetime:
-    return datetime.fromisoformat(dt)
+    parsed = datetime.fromisoformat(dt)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def run(store, limit: int = 200, stale_threshold: float | None = None) -> dict[str, int]:

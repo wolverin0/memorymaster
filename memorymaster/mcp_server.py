@@ -212,11 +212,13 @@ if FastMCP is not None:
         event_time: str = "",
         valid_from: str = "",
         valid_until: str = "",
+        source_agent: str = "",
     ) -> dict[str, Any]:
         """
         Ingest a claim into memory.
 
         `sources_json` is a JSON array of `source|locator|excerpt` strings.
+        `source_agent` identifies who created this claim (e.g. "claude-session", "codex-session").
         Bi-temporal fields (ISO-8601 strings, all optional):
           - event_time: when the fact occurred in the real world
           - valid_from: start of the claim validity window
@@ -239,6 +241,8 @@ if FastMCP is not None:
         citations = _parse_sources_json(sources_json)
         if not citations:
             citations = [CitationInput(source="mcp-session", locator=scope or "project")]
+        # Auto-detect source_agent if not provided
+        effective_source = _empty_to_none(source_agent) or "mcp-session"
         claim = svc.ingest(
             text=text,
             citations=citations,
@@ -253,6 +257,7 @@ if FastMCP is not None:
             event_time=_empty_to_none(event_time),
             valid_from=_empty_to_none(valid_from),
             valid_until=_empty_to_none(valid_until),
+            source_agent=effective_source,
         )
         return {"ok": True, "claim": _claim_to_dict(claim)}
 
