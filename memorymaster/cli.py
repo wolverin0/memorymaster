@@ -320,6 +320,11 @@ def build_parser() -> argparse.ArgumentParser:
     curate.add_argument("--scope", default="", help="Only curate claims matching this scope prefix")
     curate.add_argument("--dry-run", action="store_true", help="Show topic breakdown without writing files")
 
+    lint = sub.add_parser("lint-vault", help="Detect contradictions, orphans, gaps, and stale claims")
+    lint.add_argument("--scope", default="", help="Only lint claims matching this scope prefix")
+    lint.add_argument("--no-llm", action="store_true", help="Skip LLM verification of contradictions")
+    lint.add_argument("--max-stale-days", type=int, default=30, help="Max age in days before flagging as stale")
+
     entity_cmd = sub.add_parser("extract-entities", help="Run entity extraction on claims via LLM")
     entity_cmd.add_argument("--limit", type=int, default=100, help="Max claims to process")
     entity_cmd.add_argument("--status", default="confirmed", help="Only process claims with this status")
@@ -1159,6 +1164,38 @@ def _handle_curate_vault(args: argparse.Namespace, service, parser: argparse.Arg
     return 0
 
 
+def _handle_lint_vault(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.vault_linter import lint_vault
+    from memorymaster.vault_log import log_lint
+    t0 = time.perf_counter()
+    report = lint_vault(effective_db, scope_filter=args.scope or None, verify_with_llm=not args.no_llm, max_stale_days=args.max_stale_days)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    log_lint(report)
+    if args.json_output:
+        print(_json_envelope(report, query_ms=elapsed_ms))
+    else:
+        print(f"Lint: {report['claims']} claims, {report['issues']} issues ({elapsed_ms:.0f}ms)")
+        if report["contradictions"]:
+            print(f"\n  Contradictions ({len(report['contradictions'])}):")
+            for c in report["contradictions"][:10]:
+                claims_str = " vs ".join(f"#{cl['id']}({cl['value'][:30]})" for cl in c["claims"][:2])
+                expl = f" — {c['explanation']}" if c.get("explanation") else ""
+                print(f"    {c['key']}: {claims_str}{expl}")
+        if report["orphans"]:
+            print(f"\n  Orphans ({len(report['orphans'])}):")
+            for o in report["orphans"][:10]:
+                print(f"    #{o['id']} {o.get('subject', '')} — {o['reason']}")
+        if report["gaps"]:
+            print(f"\n  Knowledge gaps ({len(report['gaps'])}):")
+            for g in report["gaps"][:10]:
+                print(f"    {g['entity']}: mentioned {g['mentions']}x but no dedicated claims")
+        if report["stale"]:
+            print(f"\n  Stale claims ({len(report['stale'])}):")
+            for s in report["stale"][:10]:
+                print(f"    #{s['id']} ({s['age_days']}d old, conf={s['confidence']:.2f}) {s['text'][:50]}")
+    return 0
+
+
 def _handle_extract_entities(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.entity_graph import EntityGraph
     t0 = time.perf_counter()
@@ -1494,6 +1531,7 @@ COMMAND_HANDLERS: dict[str, object] = {
     "qdrant-search": _handle_qdrant_commands,
     "export-vault": _handle_export_vault,
     "curate-vault": _handle_curate_vault,
+    "lint-vault": _handle_lint_vault,
     "extract-entities": _handle_extract_entities,
     "entity-stats": _handle_entity_stats,
     "feedback-stats": _handle_feedback_stats,

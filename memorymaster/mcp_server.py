@@ -259,6 +259,21 @@ if FastMCP is not None:
             valid_until=_empty_to_none(valid_until),
             source_agent=effective_source,
         )
+        # Log to vault chronicle + cross-source synthesis
+        try:
+            from memorymaster.vault_log import log_ingest
+            log_ingest(claim.id, claim.subject, claim.scope)
+        except Exception:
+            pass
+        try:
+            from memorymaster.vault_synthesis import synthesize_on_ingest
+            import os
+            vault_dir = os.path.join(os.environ.get("MEMORYMASTER_WORKSPACE", "."), "obsidian-vault")
+            if os.path.isdir(vault_dir):
+                synthesize_on_ingest(_claim_to_dict(claim), vault_dir)
+        except Exception:
+            pass
+
         return {"ok": True, "claim": _claim_to_dict(claim)}
 
     @mcp.tool()
@@ -465,6 +480,14 @@ if FastMCP is not None:
         }
         if query_type is not None:
             response["query_type"] = query_type
+
+        # Log to vault chronicle
+        try:
+            from memorymaster.vault_log import log_query
+            log_query(query, len(claims))
+        except Exception:
+            pass
+
         return response
 
     @mcp.tool()
