@@ -424,11 +424,12 @@ def _query_exportable_claims(
     min_tier: int = 2,
     min_quality: float = 0.5,
     max_memories: int = 50,
+    scope_filter: str | None = None,
 ) -> list[dict]:
     """Query claims suitable for export.
 
-    Filters by tier (1=core, 2=working, 3=peripheral), quality_score, and
-    excludes archived/candidate status. Orders by quality then access_count.
+    Filters by tier (1=core, 2=working, 3=peripheral), quality_score, scope,
+    and excludes archived/candidate status. Orders by quality then access_count.
     """
     tier_map = {1: "core", 2: "working", 3: "peripheral"}
     allowed_tiers = [tier_map[t] for t in range(1, min_tier + 1) if t in tier_map]
@@ -438,15 +439,24 @@ def _query_exportable_claims(
     # Fetch a larger pool (5x) so sensitivity filtering still yields enough results
     fetch_limit = max_memories * 5
     placeholders = ",".join("?" for _ in allowed_tiers)
+
+    # Scope filter: only export claims from the current project
+    scope_clause = ""
+    scope_params: list = []
+    if scope_filter:
+        scope_clause = " AND scope LIKE ? "
+        scope_params = [f"{scope_filter}%"]
+
     sql = (
         f"SELECT * FROM claims "
         f"WHERE status IN ('confirmed', 'stale', 'conflicted') "
         f"AND tier IN ({placeholders}) "
         f"AND COALESCE(quality_score, 0.0) >= ? "
+        f"{scope_clause}"
         f"ORDER BY COALESCE(quality_score, 0.0) DESC, access_count DESC "
         f"LIMIT ?"
     )
-    params = [*allowed_tiers, min_quality, fetch_limit]
+    params = [*allowed_tiers, min_quality, *scope_params, fetch_limit]
 
     try:
         rows = conn.execute(sql, params).fetchall()
@@ -456,10 +466,11 @@ def _query_exportable_claims(
             f"SELECT * FROM claims "
             f"WHERE status IN ('confirmed', 'stale', 'conflicted') "
             f"AND tier IN ({placeholders}) "
+            f"{scope_clause}"
             f"ORDER BY confidence DESC, access_count DESC "
             f"LIMIT ?"
         )
-        rows = conn.execute(sql_fallback, [*allowed_tiers, fetch_limit]).fetchall()
+        rows = conn.execute(sql_fallback, [*allowed_tiers, *scope_params, fetch_limit]).fetchall()
 
     return [dict(row) for row in rows]
 
@@ -489,9 +500,15 @@ def dream_seed(
             "memory_dir": "",
         }
 
+    # Derive scope from project path to avoid cross-project pollution
+    scope_filter = None
+    if project_path:
+        project_name = os.path.basename(project_path).lower().replace(" ", "-")
+        scope_filter = f"project:{project_name}"
+
     conn = _open_db(db_path)
     try:
-        claims = _query_exportable_claims(conn, min_tier, min_quality, max_memories)
+        claims = _query_exportable_claims(conn, min_tier, min_quality, max_memories, scope_filter=scope_filter)
     finally:
         conn.close()
 
