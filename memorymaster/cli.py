@@ -325,6 +325,18 @@ def build_parser() -> argparse.ArgumentParser:
     lint.add_argument("--no-llm", action="store_true", help="Skip LLM verification of contradictions")
     lint.add_argument("--max-stale-days", type=int, default=30, help="Max age in days before flagging as stale")
 
+    wiki_absorb = sub.add_parser("wiki-absorb", help="Absorb claims into wiki articles (Karpathy/Farza style)")
+    wiki_absorb.add_argument("--output", default="obsidian-vault", help="Wiki directory")
+    wiki_absorb.add_argument("--scope", default="", help="Scope filter")
+
+    wiki_cleanup = sub.add_parser("wiki-cleanup", help="Audit and rewrite weak wiki articles")
+    wiki_cleanup.add_argument("--output", default="obsidian-vault", help="Wiki directory")
+    wiki_cleanup.add_argument("--scope", default="", help="Scope filter")
+
+    wiki_breakdown = sub.add_parser("wiki-breakdown", help="Find and create missing wiki articles")
+    wiki_breakdown.add_argument("--output", default="obsidian-vault", help="Wiki directory")
+    wiki_breakdown.add_argument("--scope", default="", help="Scope filter")
+
     entity_cmd = sub.add_parser("extract-entities", help="Run entity extraction on claims via LLM")
     entity_cmd.add_argument("--limit", type=int, default=100, help="Max claims to process")
     entity_cmd.add_argument("--status", default="confirmed", help="Only process claims with this status")
@@ -1196,6 +1208,44 @@ def _handle_lint_vault(args: argparse.Namespace, service, parser: argparse.Argum
     return 0
 
 
+def _handle_wiki_absorb(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.wiki_engine import absorb
+    from memorymaster.vault_log import log_curate
+    t0 = time.perf_counter()
+    result = absorb(effective_db, wiki_dir=args.output, scope_filter=args.scope or None)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    log_curate(result, args.output)
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        print(f"Absorbed {result['subjects']} subjects -> {result['articles_written']} new, {result['articles_updated']} updated ({elapsed_ms:.0f}ms)")
+    return 0
+
+
+def _handle_wiki_cleanup(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.wiki_engine import cleanup
+    t0 = time.perf_counter()
+    result = cleanup(wiki_dir=args.output, scope_filter=args.scope or None)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        print(f"Cleanup: {result['audited']} audited, {result['rewritten']} rewritten ({elapsed_ms:.0f}ms)")
+    return 0
+
+
+def _handle_wiki_breakdown(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.wiki_engine import breakdown
+    t0 = time.perf_counter()
+    result = breakdown(effective_db, wiki_dir=args.output, scope_filter=args.scope or None)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        print(f"Breakdown: {result['missing']} missing subjects, {result['created']} created ({elapsed_ms:.0f}ms)")
+    return 0
+
+
 def _handle_extract_entities(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.entity_graph import EntityGraph
     t0 = time.perf_counter()
@@ -1532,6 +1582,9 @@ COMMAND_HANDLERS: dict[str, object] = {
     "export-vault": _handle_export_vault,
     "curate-vault": _handle_curate_vault,
     "lint-vault": _handle_lint_vault,
+    "wiki-absorb": _handle_wiki_absorb,
+    "wiki-cleanup": _handle_wiki_cleanup,
+    "wiki-breakdown": _handle_wiki_breakdown,
     "extract-entities": _handle_extract_entities,
     "entity-stats": _handle_entity_stats,
     "feedback-stats": _handle_feedback_stats,
