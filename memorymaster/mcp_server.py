@@ -273,6 +273,19 @@ if FastMCP is not None:
                 synthesize_on_ingest(_claim_to_dict(claim), vault_dir)
         except Exception:
             pass
+        # Create timeline entry
+        try:
+            import sqlite3 as _sql
+            _db = os.environ.get("MEMORYMASTER_DEFAULT_DB", db)
+            _conn = _sql.connect(_db)
+            _conn.execute(
+                "INSERT OR IGNORE INTO timeline_entries (scope, subject, date, source, summary, claim_id) VALUES (?, ?, date('now'), ?, ?, ?)",
+                (claim.scope, claim.subject or "", effective_source, claim.text[:200], claim.id),
+            )
+            _conn.commit()
+            _conn.close()
+        except Exception:
+            pass
 
         return {"ok": True, "claim": _claim_to_dict(claim)}
 

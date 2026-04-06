@@ -18,16 +18,26 @@ logger = logging.getLogger(__name__)
 _SAFE_RE = re.compile(r"[^a-z0-9_-]+")
 
 ABSORB_PROMPT = """You are a technical writer creating a wiki article about a software project.
-Given a set of claims about a topic, write a cohesive article that:
+Given a set of claims about a topic, write a cohesive article with TWO sections:
 
-1. Has a clear POINT — not just "facts about X" but "X works this way because Y"
-2. Is organized by THEME, not chronology
-3. Uses Wikipedia tone: flat, factual, no "interestingly", no "it should be noted"
-4. Includes [[wikilinks]] to related topics when mentioning other subjects
-5. Has sections with ## headers
-6. Stays under 120 lines
+SECTION 1 — COMPILED TRUTH (above the line):
+- The current, always-updated understanding of this topic
+- Has a clear POINT — not just "facts about X" but "X works this way because Y"
+- Organized by THEME, not chronology
+- Wikipedia tone: flat, factual, no "interestingly", no "it should be noted"
+- Includes [[wikilinks]] to related topics
+- Has sections with ## headers
+- Start with a one-paragraph summary
 
-Return ONLY the article body (no frontmatter, no title). Start with a one-paragraph summary."""
+Then write exactly this separator: ---
+
+SECTION 2 — TIMELINE (below the line):
+- Append-only chronological evidence entries
+- Each entry: ### YYYY-MM-DD | source\\nOne-line summary of what was learned
+- Use dates from the claims if available, otherwise use "undated"
+- This section is NEVER rewritten, only appended to
+
+Return ONLY the article body (no frontmatter, no title)."""
 
 CLEANUP_PROMPT = """You are a wiki editor. Review this article and rate it 1-10:
 - Does it tell a coherent story? (not a chronological dump)
@@ -168,24 +178,52 @@ def absorb(
         claim_ids = [c["id"] for c in claims]
 
         if existing_path.exists():
-            # Update: read existing, ask LLM to integrate new claims
+            # Update: preserve timeline, rewrite compiled truth
             existing_body = existing_path.read_text(encoding="utf-8", errors="replace")
-            update_prompt = f"""Update this existing wiki article with new claims. Integrate them naturally — don't just append. The article should get meaningfully better.
+            # Split at --- separator to extract existing timeline
+            existing_timeline = ""
+            body_parts = existing_body.split("\n---\n")
+            if len(body_parts) >= 2:
+                # Everything after frontmatter's --- and the compiled truth's ---
+                # Find the timeline section
+                for i, part in enumerate(body_parts):
+                    if "###" in part and ("undated" in part.lower() or "20" in part[:20]):
+                        existing_timeline = "\n---\n".join(body_parts[i:])
+                        break
 
-Existing article:
-{existing_body[:1500]}
+            update_prompt = f"""Rewrite ONLY the compiled truth section of this wiki article with new claims.
+The compiled truth should reflect the CURRENT understanding including the new claims.
+Do NOT include the timeline section — I will preserve it separately.
+
+Existing compiled truth:
+{body_parts[0][:1500] if body_parts else existing_body[:1500]}
 
 New claims to integrate:
 {claims_text}
 
-Return ONLY the updated article body."""
-            body = _call_llm(update_prompt, "")
-            if body and len(body) > 50:
-                _write_article(wiki, scope_dir, slug, subject.title(), body,
+Return ONLY the updated compiled truth (no frontmatter, no title, no timeline)."""
+            new_truth = _call_llm(update_prompt, "")
+            if new_truth and len(new_truth) > 50:
+                # Build new timeline entries from new claims
+                now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                new_timeline_entries = []
+                for c in claims[:10]:
+                    date = now
+                    summary = str(c["text"])[:100].encode("ascii", errors="replace").decode("ascii")
+                    source = c.get("claim_type", "fact")
+                    new_timeline_entries.append(f"### {date} | {source}\n{summary}")
+
+                # Combine: new truth + existing timeline + new entries
+                timeline_section = existing_timeline or "## Timeline\n"
+                if new_timeline_entries:
+                    timeline_section += "\n" + "\n\n".join(new_timeline_entries) + "\n"
+
+                full_body = new_truth + "\n\n---\n\n" + timeline_section
+                _write_article(wiki, scope_dir, slug, subject.title(), full_body,
                               article_type, scope, claim_ids, related_links)
                 articles_updated += 1
         else:
-            # Create new
+            # Create new with compiled truth + timeline
             context = f"Subject: {subject}\nScope: {scope}\nClaims ({len(claims)}):\n{claims_text}"
             body = _call_llm(ABSORB_PROMPT, context)
             if body and len(body) > 50:
@@ -357,9 +395,9 @@ def _write_indexes(wiki: Path, articles: list[dict]) -> None:
 
 
 def _write_backlinks(wiki: Path) -> None:
-    """Scan articles for [[wikilinks]] and build reverse index."""
+    """Scan articles for [[wikilinks]] and build reverse index with context."""
     wikilink_re = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
-    backlinks: dict[str, list[str]] = {}
+    backlinks: dict[str, list[dict[str, str]]] = {}
 
     for md_file in wiki.rglob("*.md"):
         if md_file.name.startswith("_"):
@@ -367,16 +405,31 @@ def _write_backlinks(wiki: Path) -> None:
         try:
             content = md_file.read_text(encoding="utf-8", errors="replace")
             source = md_file.stem
-            for match in wikilink_re.finditer(content):
-                target = match.group(1).split("/")[-1]  # Handle path/slug format
-                if target != source:
-                    backlinks.setdefault(target, []).append(source)
+            for line in content.splitlines():
+                # Skip frontmatter lines
+                if line.strip().startswith(("related:", "claims:", "---")):
+                    continue
+                for match in wikilink_re.finditer(line):
+                    target = match.group(1).split("/")[-1]
+                    if target != source:
+                        ctx = line.strip()[:150]
+                        backlinks.setdefault(target, []).append({
+                            "from": source,
+                            "context": ctx,
+                        })
         except Exception:
             continue
 
-    # Dedupe
+    # Dedupe by (target, from) pair
     for target in backlinks:
-        backlinks[target] = sorted(set(backlinks[target]))
+        seen = set()
+        deduped = []
+        for entry in backlinks[target]:
+            key = entry["from"]
+            if key not in seen:
+                seen.add(key)
+                deduped.append(entry)
+        backlinks[target] = deduped
 
     (wiki / "_backlinks.json").write_text(
         json.dumps(backlinks, indent=2, ensure_ascii=False),
