@@ -140,9 +140,11 @@ class TestIngestEdgeCases:
         with pytest.raises(ValueError, match="empty"):
             svc.ingest(text="   ", citations=[CitationInput(source="x")])
 
-    def test_no_citations_raises(self, svc):
-        with pytest.raises(ValueError, match="citation"):
-            svc.ingest(text="Valid text", citations=[])
+    def test_no_citations_auto_generates(self, svc):
+        claim = svc.ingest(text="Valid text", citations=[])
+        assert claim.id is not None
+        assert len(claim.citations) == 1
+        assert claim.citations[0].source == "mcp-session"
 
     def test_idempotency_key_dedup(self, svc):
         c1 = svc.ingest(text="First", citations=[CitationInput(source="x")], idempotency_key="key1")

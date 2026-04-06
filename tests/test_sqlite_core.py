@@ -237,17 +237,19 @@ def test_deadline_update_prefers_newer_candidate() -> None:
     assert status_by_object["2026-04-01"] == "conflicted"
 
 
-def test_ingest_requires_at_least_one_citation() -> None:
-    db = _case_db("sqlite-citation-required")
+def test_ingest_auto_generates_citation_when_empty() -> None:
+    db = _case_db("sqlite-citation-auto")
     service = MemoryService(db, workspace_root=Path.cwd())
     service.init_db()
 
-    with pytest.raises(ValueError, match="At least one citation is required"):
-        service.ingest(
-            text="Server host is api.internal",
-            citations=[],
-            subject="server",
-            predicate="host",
-            object_value="api.internal",
-        )
+    claim = service.ingest(
+        text="Server host is api.internal",
+        citations=[],
+        subject="server",
+        predicate="host",
+        object_value="api.internal",
+    )
+    assert claim.id is not None
+    assert len(claim.citations) == 1
+    assert claim.citations[0].source == "mcp-session"
 
