@@ -1,7 +1,19 @@
+# MemoryMaster — Claude-Specific Instructions
+
+@AGENTS.md
+
+## Claude-specific
+
+- GitNexus is available for impact analysis before editing any symbol (see below).
+- Use `/wiki query`, `/wiki absorb`, `/wiki lint` for knowledge management.
+- Obsidian vault: `obsidian-vault/wiki/project-memorymaster/`
+- Use `.claude/rules/` for path-specific rules if needed.
+- Run `/project-setup` to regenerate these files if architecture changes significantly.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **memorymaster** (3927 symbols, 10935 relationships, 277 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **memorymaster** (3991 symbols, 11065 relationships, 281 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

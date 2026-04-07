@@ -1,134 +1,80 @@
-# MemoryMaster Usage Policy
+# MemoryMaster
 
-This project uses MemoryMaster as the shared memory backend for all Codex sessions.
+## Mission
 
-## Required Workflow Per Task
+Production-grade memory reliability system for AI coding agents. Provides lifecycle-managed claims with citations, conflict detection, steward governance, LLM Wiki (Karpathy/Farza pattern), and MCP integration. Gives AI agents persistent, verifiable, self-evolving memory.
 
-1. At task start, call `query_memory` with a short query about the user goal and current context.
-2. During task execution, call `ingest_claim` for durable facts that matter later (paths, endpoints, decisions, credentials location hints, constraints, owner decisions).
-3. Before final response, call `run_cycle` once (default cadence policy is acceptable).
-4. After final response, ingest a compact task summary using `ingest_claim`.
+## Stack
 
-## Defaults
+- **Language**: Python 3.10+
+- **Database**: SQLite (FTS5 + WAL mode) — single-file, no server
+- **Vector search**: Qdrant (external, at `192.168.100.186:6333`)
+- **LLM providers**: Google Gemini, OpenAI, Anthropic, Ollama (via `llm_provider.py`)
+- **Package manager**: pip / setuptools
+- **MCP**: FastMCP stdio server (21 tools)
+- **Wiki**: Obsidian vault with compiled truth + timeline articles
+- **CI**: GitHub Actions (`.github/workflows/ci.yml`)
 
-- Use MCP tool defaults for `db` and `workspace` unless an explicit override is required.
-- Shared DB is configured globally via MCP env (`MEMORYMASTER_DEFAULT_DB`).
-- Hybrid scope model is enabled in MCP server:
-  - Ingest default `scope="project"` auto-resolves to a project-specific scope key derived from workspace path.
-  - Query default scope allowlist (when omitted) is: project-specific scope + `global` (+ legacy `project`).
-  - This gives per-project isolation with optional global recall.
+## Architecture
 
-## Scope Rules
+| Directory | Purpose |
+|-----------|---------|
+| `memorymaster/` | Core library (54 modules) — service, storage, MCP server, wiki engine, dream bridge, vault tools |
+| `tests/` | 67 test modules, 974 tests |
+| `scripts/` | 33 utility scripts — importers, sync, setup |
+| `config-templates/` | Hook templates for setup-hooks.py installer |
+| `obsidian-vault/` | LLM-curated wiki (compiled truth + timeline articles) |
+| `obsidian-vault/wiki/` | Active wiki articles by project scope |
+| `obsidian-vault/raw/` | Staging area for Obsidian Clipper / manual ingestion |
 
-- Use `scope="global"` only for facts intentionally shared across projects.
-- Keep project-specific facts on default scope (do not force `global`).
-- To query only one project, pass `scope_allowlist="<project-scope>"` explicitly.
+## Commands
 
-## Guardrails
+| Command | Purpose |
+|---------|---------|
+| `python -m pytest tests/` | Run full test suite (974 tests) |
+| `python -m memorymaster --db memorymaster.db run-cycle` | Steward validation cycle |
+| `python -m memorymaster --db memorymaster.db query "topic"` | Query claims |
+| `python -m memorymaster --db memorymaster.db wiki-absorb --output obsidian-vault/wiki` | Absorb claims into wiki |
+| `python -m memorymaster --db memorymaster.db lint-vault` | Health check: contradictions, gaps |
+| `python -m memorymaster --db memorymaster.db wiki-cleanup --output obsidian-vault/wiki` | Audit and rewrite weak articles |
+| `python -m memorymaster --db memorymaster.db wiki-breakdown --output obsidian-vault/wiki` | Find missing articles |
+| `python scripts/setup-hooks.py` | Install hooks, MCP, cron, skills |
+| `ruff check memorymaster/` | Lint |
 
-- **NEVER ingest**: credentials, API keys, tokens, passwords, private IPs (192.168.x.x), personal file paths, SSH commands, or code snippets.
-- Prefer high-signal facts over noisy conversational content.
-- If facts are superseded, ingest the new fact and include citation/source so lifecycle can reconcile.
-- Always set `source` to identify which provider created the claim (e.g., `"codex-session"`, `"claude-session"`, `"gemini-session"`).
+## Boundaries
 
-<!-- gitnexus:start -->
-# GitNexus — Code Intelligence
+- **Never mutate the claims DB schema** without updating `storage.py` + `postgres_store.py` + all tests
+- **Never hardcode IPs, paths, or credentials** — use env vars
+- **Never skip the sensitivity filter** in dream-seed or MCP ingest — it blocks credentials
+- **The wiki is the READ layer, claims DB is the WRITE layer** — don't write to wiki directly, use `wiki-absorb`
+- **WAL mode is mandatory** — prevents DB corruption from concurrent access (MCP + OpenClaw sync)
 
-This project is indexed by GitNexus as **memorymaster** (3927 symbols, 10935 relationships, 277 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+## MemoryMaster (self-referential)
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+- Scope: `project:memorymaster`
+- This IS the MemoryMaster project — use `query_memory` to check existing architecture decisions before changing code
+- Use `ingest_claim` after fixing bugs or making architecture changes (set `source_agent` to your provider name)
 
-## Always Do
+## Testing
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+- Framework: pytest with `pytest.ini` config
+- Run: `python -m pytest tests/ -q --tb=short`
+- 974 tests across 67 modules
+- 1 known flaky: `test_operator.py::test_run_stream_resumes_from_checkpoint_state` (race condition)
 
-## When Debugging
+## Key Modules
 
-1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
-2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/memorymaster/process/{processName}` — trace the full execution flow step by step
-4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
-
-## When Refactoring
-
-- **Renaming**: MUST use `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` first. Review the preview — graph edits are safe, text_search edits need manual review. Then run with `dry_run: false`.
-- **Extracting/Splitting**: MUST run `gitnexus_context({name: "target"})` to see all incoming/outgoing refs, then `gitnexus_impact({target: "target", direction: "upstream"})` to find all external callers before moving code.
-- After any refactor: run `gitnexus_detect_changes({scope: "all"})` to verify only expected files changed.
-
-## Never Do
-
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
-
-## Tools Quick Reference
-
-| Tool | When to use | Command |
-|------|-------------|---------|
-| `query` | Find code by concept | `gitnexus_query({query: "auth validation"})` |
-| `context` | 360-degree view of one symbol | `gitnexus_context({name: "validateUser"})` |
-| `impact` | Blast radius before editing | `gitnexus_impact({target: "X", direction: "upstream"})` |
-| `detect_changes` | Pre-commit scope check | `gitnexus_detect_changes({scope: "staged"})` |
-| `rename` | Safe multi-file rename | `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` |
-| `cypher` | Custom graph queries | `gitnexus_cypher({query: "MATCH ..."})` |
-
-## Impact Risk Levels
-
-| Depth | Meaning | Action |
-|-------|---------|--------|
-| d=1 | WILL BREAK — direct callers/importers | MUST update these |
-| d=2 | LIKELY AFFECTED — indirect deps | Should test |
-| d=3 | MAY NEED TESTING — transitive | Test if critical path |
-
-## Resources
-
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/memorymaster/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/memorymaster/clusters` | All functional areas |
-| `gitnexus://repo/memorymaster/processes` | All execution flows |
-| `gitnexus://repo/memorymaster/process/{name}` | Step-by-step execution trace |
-
-## Self-Check Before Finishing
-
-Before completing any code modification task, verify:
-1. `gitnexus_impact` was run for all modified symbols
-2. No HIGH/CRITICAL risk warnings were ignored
-3. `gitnexus_detect_changes()` confirms changes match expected scope
-4. All d=1 (WILL BREAK) dependents were updated
-
-## Keeping the Index Fresh
-
-After committing code changes, the GitNexus index becomes stale. Re-run analyze to update it:
-
-```bash
-npx gitnexus analyze
-```
-
-If the index previously included embeddings, preserve them by adding `--embeddings`:
-
-```bash
-npx gitnexus analyze --embeddings
-```
-
-To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.embeddings` field shows the count (0 means no embeddings). **Running analyze without `--embeddings` will delete any previously generated embeddings.**
-
-> Claude Code users: A PostToolUse hook handles this automatically after `git commit` and `git merge`.
-
-## CLI
-
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-
-<!-- gitnexus:end -->
+| Module | Responsibility |
+|--------|---------------|
+| `service.py` | Core service layer — ingest, query, run_cycle |
+| `storage.py` | SQLite store — claims, citations, events, FTS5 |
+| `mcp_server.py` | FastMCP stdio server (21 tools) + auto-citation + sensitivity filter |
+| `wiki_engine.py` | wiki-absorb, wiki-cleanup, wiki-breakdown (Karpathy/Farza) |
+| `vault_linter.py` | lint-vault: contradictions, orphans, gaps, stale |
+| `vault_log.py` | Append-only log.md chronicle |
+| `vault_synthesis.py` | Cross-source synthesis on ingest |
+| `vault_query_capture.py` | Save query results as wiki pages |
+| `dream_bridge.py` | Dream-seed/ingest/sync with Claude Auto Dream |
+| `llm_provider.py` | Multi-provider LLM client (Gemini/OpenAI/Anthropic/Ollama) |
+| `context_hook.py` | Recall hook for UserPromptSubmit |
+| `db_merge.py` | Bidirectional merge for OpenClaw sync |
