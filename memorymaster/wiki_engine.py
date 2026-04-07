@@ -386,6 +386,18 @@ def _write_indexes(wiki: Path, articles: list[dict]) -> None:
     lines.append(f"Scopes: {len(by_scope)}")
     total = sum(len(a) for a in by_scope.values())
     lines.append(f"Total articles: {total}")
+    # Last steward run timestamp
+    try:
+        import sqlite3 as _sql
+        _db = str(wiki.parent / "memorymaster.db")
+        if Path(_db).exists():
+            _c = _sql.connect(_db)
+            _last = _c.execute("SELECT created_at FROM events WHERE event_type='validator' ORDER BY created_at DESC LIMIT 1").fetchone()
+            if _last:
+                lines.append(f"Last steward run: {_last[0]}")
+            _c.close()
+    except Exception:
+        pass
     lines.append("")
     for scope_dir in sorted(by_scope.keys()):
         count = len(by_scope[scope_dir])
