@@ -337,6 +337,11 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_breakdown.add_argument("--output", default="obsidian-vault", help="Wiki directory")
     wiki_breakdown.add_argument("--scope", default="", help="Scope filter")
 
+    mine_cmd = sub.add_parser("mine-transcript", help="Parse Claude Code transcripts into claims")
+    mine_cmd.add_argument("--input", required=True, help="JSONL transcript file or directory")
+    mine_cmd.add_argument("--scope", default="project", help="Scope for ingested claims")
+    mine_cmd.add_argument("--max", type=int, default=100, help="Max claims to ingest")
+
     entity_cmd = sub.add_parser("extract-entities", help="Run entity extraction on claims via LLM")
     entity_cmd.add_argument("--limit", type=int, default=100, help="Max claims to process")
     entity_cmd.add_argument("--status", default="confirmed", help="Only process claims with this status")
@@ -1234,6 +1239,18 @@ def _handle_wiki_cleanup(args: argparse.Namespace, service, parser: argparse.Arg
     return 0
 
 
+def _handle_mine_transcript(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.transcript_miner import mine_transcript
+    t0 = time.perf_counter()
+    result = mine_transcript(args.input, effective_db, scope=args.scope, max_claims=getattr(args, 'max', 100))
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        print(f"Mined: {result['scanned']} scanned, {result['ingested']} ingested, {result['skipped']} skipped, {result['duplicates']} dupes ({elapsed_ms:.0f}ms)")
+    return 0
+
+
 def _handle_wiki_breakdown(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.wiki_engine import breakdown
     t0 = time.perf_counter()
@@ -1585,6 +1602,7 @@ COMMAND_HANDLERS: dict[str, object] = {
     "wiki-absorb": _handle_wiki_absorb,
     "wiki-cleanup": _handle_wiki_cleanup,
     "wiki-breakdown": _handle_wiki_breakdown,
+    "mine-transcript": _handle_mine_transcript,
     "extract-entities": _handle_extract_entities,
     "entity-stats": _handle_entity_stats,
     "feedback-stats": _handle_feedback_stats,

@@ -120,11 +120,22 @@ class MemoryService:
             raise ValueError("Claim text cannot be empty.")
         if not citations:
             citations = [CitationInput(source="mcp-session", locator=scope or "project")]
+        # Dedup by idempotency key
         normalized_idempotency_key = (idempotency_key or "").strip() or None
         if normalized_idempotency_key is not None and hasattr(self.store, "get_claim_by_idempotency_key"):
             existing_claim = self.store.get_claim_by_idempotency_key(normalized_idempotency_key)
             if existing_claim is not None:
                 return existing_claim
+        # Dedup by content hash (catch duplicates without idempotency key)
+        import hashlib
+        content_hash = "hash-" + hashlib.sha256(text.strip().lower().encode()).hexdigest()[:16]
+        if hasattr(self.store, "get_claim_by_idempotency_key"):
+            existing_by_hash = self.store.get_claim_by_idempotency_key(content_hash)
+            if existing_by_hash is not None:
+                return existing_by_hash
+        # Set content hash as idempotency key if none provided
+        if normalized_idempotency_key is None:
+            normalized_idempotency_key = content_hash
         sanitized = sanitize_claim_input(
             text=text.strip(),
             object_value=object_value,

@@ -736,7 +736,7 @@ class SQLiteStore:
                         now,
                         normalized_tenant_id,
                         event_time or None,
-                        valid_from or None,
+                        valid_from or now,  # Auto-populate: claim is valid from creation time
                         valid_until or None,
                         source_agent or None,
                         visibility or "public",
@@ -1312,15 +1312,19 @@ class SQLiteStore:
         archived_at = now if to_status == "archived" else None
         next_replaced_by = replaced_by_claim_id if replaced_by_claim_id is not None else claim.replaced_by_claim_id
 
+        # Set valid_until when superseding — the old claim is no longer current truth
+        valid_until_update = now if to_status == "superseded" else None
+
         with self.connect() as conn:
             cur = conn.execute(
                 """
                 UPDATE claims
                 SET status = ?, updated_at = ?, last_validated_at = ?, archived_at = ?,
-                    replaced_by_claim_id = ?, version = version + 1
+                    replaced_by_claim_id = ?, version = version + 1,
+                    valid_until = COALESCE(?, valid_until)
                 WHERE id = ? AND version = ?
                 """,
-                (to_status, now, last_validated_at, archived_at, next_replaced_by, claim.id, claim.version),
+                (to_status, now, last_validated_at, archived_at, next_replaced_by, valid_until_update, claim.id, claim.version),
             )
             if cur.rowcount == 0:
                 raise ConcurrentModificationError(
