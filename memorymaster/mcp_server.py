@@ -682,6 +682,24 @@ if FastMCP is not None:
         return {"ok": True, "rows": len(events), "events": [asdict(e) for e in events]}
 
     @mcp.tool()
+    def search_verbatim(
+        query: str,
+        db: str = "memorymaster.db",
+        scope: str = "",
+        limit: int = 10,
+        mode: str = "fts",
+    ) -> dict[str, Any]:
+        """Search raw conversation memories (verbatim, unsummarized).
+
+        mode: "fts" (keyword), "vector" (Qdrant semantic), "hybrid" (both)
+        Use this when query_memory (claims) doesn't find what you need —
+        verbatim search finds exact conversation fragments.
+        """
+        from memorymaster.verbatim_store import search_verbatim as _search
+        results = _search(_resolve_db(db), query, scope=scope or None, limit=limit, mode=mode)
+        return {"ok": True, "rows": len(results), "results": results}
+
+    @mcp.tool()
     def open_dashboard(
         host: str = "127.0.0.1",
         port: int = 8765,
