@@ -1,0 +1,18 @@
+{
+  "version": 4,
+  "debate_id": "001-instruction-architecture",
+  "topic": "Is our unified agent instruction architecture correct for rolling out to 15+ projects?",
+  "status": "in_progress",
+  "current_round": 0,
+  "rounds_total": 3,
+  "debate_style": "thorough",
+  "moderator_style": "guided",
+  "participants": ["gemini", "codex", "claude"],
+  "models": {"gemini": "gemini-3-pro-preview", "codex": "gpt-5.4", "claude": "claude-opus-4-6"},
+  "research_enabled": true,
+  "research_complete": false,
+  "created_at": "2026-04-06T19:00:00Z",
+  "sessions": {},
+  "telemetry": {"research_duration": null, "round_durations": {}, "retries_count": 0},
+  "last_error": null
+}

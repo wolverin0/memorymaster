@@ -65,3 +65,11 @@ cloned/
 quality_model.pkl
 autoresearch*.log
 *.jsonl
+memorymaster.db.corrupted
+benchmarks/longmemeval_bench.db
+benchmarks/longmemeval_output.jsonl
+benchmarks/longmemeval_vector_output.jsonl
+dashboard_test.png
+memorymaster_recover.sql
+.claude/settings.local.json
+.claude/worktrees/
