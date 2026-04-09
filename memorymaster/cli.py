@@ -342,6 +342,10 @@ def build_parser() -> argparse.ArgumentParser:
     mine_cmd.add_argument("--scope", default="project", help="Scope for ingested claims")
     mine_cmd.add_argument("--max", type=int, default=100, help="Max claims to ingest")
 
+    verify_cmd = sub.add_parser("verify-claims", help="Cross-check claims against current codebase")
+    verify_cmd.add_argument("--scope", default="", help="Scope filter")
+    verify_cmd.add_argument("--limit", type=int, default=200, help="Max claims to check")
+
     entity_cmd = sub.add_parser("extract-entities", help="Run entity extraction on claims via LLM")
     entity_cmd.add_argument("--limit", type=int, default=100, help="Max claims to process")
     entity_cmd.add_argument("--status", default="confirmed", help="Only process claims with this status")
@@ -1239,6 +1243,23 @@ def _handle_wiki_cleanup(args: argparse.Namespace, service, parser: argparse.Arg
     return 0
 
 
+def _handle_verify_claims(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.claim_verifier import verify_claims
+    t0 = time.perf_counter()
+    result = verify_claims(effective_db, scope_filter=args.scope or None, limit=args.limit)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        print(f"Verified: {result['checked']} refs checked, {result['valid']} valid, {result['stale_candidates']} potentially stale ({elapsed_ms:.0f}ms)")
+        if result.get("error"):
+            print(f"  Error: {result['error']}")
+        for issue in result.get("issues", [])[:15]:
+            print(f"  #{issue['claim_id']} (conf={issue['confidence']:.2f}): {', '.join(issue['issues'])}")
+            print(f"    {issue['text']}")
+    return 0
+
+
 def _handle_mine_transcript(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.transcript_miner import mine_transcript
     t0 = time.perf_counter()
@@ -1603,6 +1624,7 @@ COMMAND_HANDLERS: dict[str, object] = {
     "wiki-cleanup": _handle_wiki_cleanup,
     "wiki-breakdown": _handle_wiki_breakdown,
     "mine-transcript": _handle_mine_transcript,
+    "verify-claims": _handle_verify_claims,
     "extract-entities": _handle_extract_entities,
     "entity-stats": _handle_entity_stats,
     "feedback-stats": _handle_feedback_stats,
