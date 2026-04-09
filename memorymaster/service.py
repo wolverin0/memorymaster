@@ -127,8 +127,11 @@ class MemoryService:
             if existing_claim is not None:
                 return existing_claim
         # Dedup by content hash (catch duplicates without idempotency key)
+        # Include scope + tenant to avoid cross-tenant/cross-scope dedup
         import hashlib
-        content_hash = "hash-" + hashlib.sha256(text.strip().lower().encode()).hexdigest()[:16]
+        _tenant = getattr(self, 'tenant_id', '') or ''
+        hash_input = f"{text.strip().lower()}|{scope}|{_tenant}"
+        content_hash = "hash-" + hashlib.sha256(hash_input.encode()).hexdigest()[:16]
         if hasattr(self.store, "get_claim_by_idempotency_key"):
             existing_by_hash = self.store.get_claim_by_idempotency_key(content_hash)
             if existing_by_hash is not None:

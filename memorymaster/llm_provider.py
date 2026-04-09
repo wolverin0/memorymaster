@@ -6,6 +6,7 @@ Provider is selected via MEMORYMASTER_LLM_PROVIDER env var (default: google).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import urllib.request
@@ -174,7 +175,8 @@ def _http_post(
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             result = json.loads(resp.read().decode("utf-8"))
         return extractor(result)
-    except Exception:
+    except Exception as exc:
+        logging.getLogger(__name__).warning("LLM call failed (%s): %s", url[:60], exc)
         return ""
 
 

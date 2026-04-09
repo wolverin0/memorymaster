@@ -2,11 +2,14 @@ from dataclasses import asdict
 import hashlib
 import http.client
 import json
+import logging
 import os
 from pathlib import Path
 import re
 from typing import Any
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 from memorymaster.models import CitationInput
 from memorymaster.security import resolve_allow_sensitive_access
@@ -263,29 +266,25 @@ if FastMCP is not None:
         try:
             from memorymaster.vault_log import log_ingest
             log_ingest(claim.id, claim.subject, claim.scope)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Vault log failed: %s", exc)
         try:
             from memorymaster.vault_synthesis import synthesize_on_ingest
             import os
             vault_dir = os.path.join(os.environ.get("MEMORYMASTER_WORKSPACE", "."), "obsidian-vault")
             if os.path.isdir(vault_dir):
                 synthesize_on_ingest(_claim_to_dict(claim), vault_dir)
-        except Exception:
-            pass
-        # Create timeline entry
+        except Exception as exc:
+            logger.debug("Vault synthesis failed: %s", exc)
+        # Create timeline entry (use service store connection for WAL mode)
         try:
-            import sqlite3 as _sql
-            _db = os.environ.get("MEMORYMASTER_DEFAULT_DB", db)
-            _conn = _sql.connect(_db)
-            _conn.execute(
-                "INSERT OR IGNORE INTO timeline_entries (scope, subject, date, source, summary, claim_id) VALUES (?, ?, date('now'), ?, ?, ?)",
-                (claim.scope, claim.subject or "", effective_source, claim.text[:200], claim.id),
-            )
-            _conn.commit()
-            _conn.close()
-        except Exception:
-            pass
+            with svc.store.connect() as _conn:
+                _conn.execute(
+                    "INSERT OR IGNORE INTO timeline_entries (scope, subject, date, source, summary, claim_id) VALUES (?, ?, date('now'), ?, ?, ?)",
+                    (claim.scope, claim.subject or "", effective_source, claim.text[:200], claim.id),
+                )
+        except Exception as exc:
+            logger.debug("Timeline entry failed: %s", exc)
 
         return {"ok": True, "claim": _claim_to_dict(claim)}
 

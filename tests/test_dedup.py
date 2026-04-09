@@ -205,11 +205,15 @@ class TestRunIntegration:
         svc.init_db()
         return svc
 
+    _counter = 0
+
     def _ingest(self, service, text, **kwargs):
         from memorymaster.models import CitationInput
+        TestRunIntegration._counter += 1
         defaults = {
             "citations": [CitationInput(source="test")],
             "scope": "project",
+            "idempotency_key": f"dedup-test-{TestRunIntegration._counter}",
         }
         defaults.update(kwargs)
         return service.ingest(text=text, **defaults)

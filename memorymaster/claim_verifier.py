@@ -30,7 +30,7 @@ SYMBOL_RE = re.compile(r'\b([A-Z][a-z]+[A-Z]\w+)\b')  # CamelCase likely class/c
 
 def _find_workspace(scope: str) -> str | None:
     """Try to find the workspace directory for a scope."""
-    projects_root = os.environ.get("PROJECTS_ROOT", r"G:\_OneDrive\OneDrive\Desktop\Py Apps")
+    projects_root = os.environ.get("PROJECTS_ROOT", os.path.dirname(os.getcwd()))
     if not scope.startswith("project:"):
         return None
     project_name = scope.split(":")[1]

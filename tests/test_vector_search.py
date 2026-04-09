@@ -142,7 +142,8 @@ class TestCosineSimilarity:
 
 class TestCreateBestProvider:
     def test_falls_back_to_hash_when_nothing_available(self) -> None:
-        with patch("memorymaster.embeddings._load_transformer", side_effect=ImportError("no ST")):
+        with patch("memorymaster.embeddings._load_transformer", side_effect=ImportError("no ST")), \
+             patch.dict("os.environ", {"GEMINI_API_KEY": "", "OPENAI_API_KEY": ""}, clear=False):
             provider = create_best_provider()
         assert provider.model == "hash-v1"
         assert not provider.is_semantic
