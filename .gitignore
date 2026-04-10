@@ -69,6 +69,8 @@ memorymaster.db.corrupted
 benchmarks/longmemeval_bench.db
 benchmarks/longmemeval_output.jsonl
 benchmarks/longmemeval_vector_output.jsonl
+benchmarks/longmemeval_oracle.json
+benchmarks/longmemeval_*.json
 dashboard_test.png
 memorymaster_recover.sql
 .claude/settings.local.json
