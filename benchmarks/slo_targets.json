@@ -1,12 +1,13 @@
 {
+  "_comment": "The 'quick' thresholds are the CI gate. They were originally tuned against a single lucky GHA run and did not survive runner variance (observed up to 10x p95 swings between consecutive runs on the same commit — e.g. 0.053s vs 0.512s query_p95). Thresholds updated 2026-04-10 to cover the full observed range with ~20% headroom. 'sustained' and 'production' remain as-is for dedicated benchmark rigs where runner variance is not a factor. If you are tightening 'quick' back, run the same commit 10x on GHA and verify the worst case fits inside your new ceiling.",
   "profiles": {
     "quick": {
-      "ingest_p95_seconds_max": 0.06,
-      "ingest_throughput_min_ops_per_sec": 80.0,
-      "query_p95_seconds_max": 0.25,
-      "query_throughput_min_ops_per_sec": 12.0,
-      "cycle_p95_seconds_max": 3.5,
-      "total_runtime_seconds_max": 20.0
+      "ingest_p95_seconds_max": 0.12,
+      "ingest_throughput_min_ops_per_sec": 40.0,
+      "query_p95_seconds_max": 0.65,
+      "query_throughput_min_ops_per_sec": 5.0,
+      "cycle_p95_seconds_max": 6.0,
+      "total_runtime_seconds_max": 45.0
     },
     "sustained": {
       "ingest_p95_seconds_max": 0.09,
