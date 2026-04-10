@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-04-10
+
+### Added
+
+- **Entity Registry** (`entity_registry.py`): Canonical entities with alias resolution, inspired by GBrain. New tables `entities` and `entity_aliases` provide identity resolution so "MemoryMaster", "memorymaster", "MEMORYMASTER" all resolve to the same entity. `claim.entity_id` FK links claims to canonical entities. Auto-resolved on ingest via `resolve_or_create()`. CLI commands: `entity-list`, `entity-merge`, `entity-aliases`, `entity-backfill`. 684 existing subjects backfilled in 23ms.
+- **RESOLVER.md**: MECE decision tree for wiki article routing (`obsidian-vault/wiki/RESOLVER.md`). 10 canonical types (bug, gotcha, decision, constraint, architecture, environment, reference, entity, pattern, fact) with disambiguation rules. Agents must read this before creating wiki content. Maps directly to the classify hook's routing hints.
+- **9 new relationship types**: `implements`, `configures`, `depends_on`, `deployed_on`, `owned_by`, `tested_by`, `documents`, `blocks`, `enables` — expanding `CLAIM_LINK_TYPES` from 5 to 14. Schema migration recreates `claim_links` table with expanded CHECK constraint while preserving existing data. Enables domain-specific graph traversals like "what depends on Qdrant?"
+- **`traverse_relationships()`**: BFS graph traversal on claim_links. Accepts `link_types` filter, `max_depth`, and `direction` (outgoing/incoming/both). Returns claims with depth, path, and link_type. Turns the flat claims DB into a queryable knowledge graph.
+- **graphify integration**: `pip install graphifyy` + `graphify install` adds the graphify skill to Claude Code for building knowledge graphs from any folder. Not integrated into MemoryMaster codebase — used as a complementary standalone tool.
+
 ## [3.2.2] - 2026-04-10
 
 ### Fixed

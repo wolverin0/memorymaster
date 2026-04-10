@@ -262,21 +262,57 @@ class _SchemaMixin:
 
     @staticmethod
     def _ensure_claim_links_schema(conn: sqlite3.Connection) -> None:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS claim_links (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_id INTEGER NOT NULL,
-                target_id INTEGER NOT NULL,
-                link_type TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (source_id) REFERENCES claims(id) ON DELETE CASCADE,
-                FOREIGN KEY (target_id) REFERENCES claims(id) ON DELETE CASCADE,
-                CHECK (source_id <> target_id),
-                CHECK (link_type IN ('relates_to', 'supersedes', 'derived_from', 'contradicts', 'supports'))
-            )
-            """
-        )
+        from memorymaster.models import CLAIM_LINK_TYPES
+
+        # Build the CHECK constraint from the canonical CLAIM_LINK_TYPES tuple
+        # so new types only need to be added in models.py.
+        types_sql = ", ".join(f"'{t}'" for t in CLAIM_LINK_TYPES)
+        check_clause = f"CHECK (link_type IN ({types_sql}))"
+
+        # Check if table exists and whether it needs migration (old CHECK with only 5 types)
+        existing = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='claim_links'"
+        ).fetchone()
+
+        if existing and existing[0]:
+            # Table exists — check if it has the old 5-type CHECK
+            if "'implements'" not in existing[0]:
+                # Migrate: rename old → create new → copy → drop old
+                conn.execute("ALTER TABLE claim_links RENAME TO _claim_links_old")
+                conn.execute(f"""
+                    CREATE TABLE claim_links (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        source_id INTEGER NOT NULL,
+                        target_id INTEGER NOT NULL,
+                        link_type TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        FOREIGN KEY (source_id) REFERENCES claims(id) ON DELETE CASCADE,
+                        FOREIGN KEY (target_id) REFERENCES claims(id) ON DELETE CASCADE,
+                        CHECK (source_id <> target_id),
+                        {check_clause}
+                    )
+                """)
+                conn.execute("""
+                    INSERT INTO claim_links (id, source_id, target_id, link_type, created_at)
+                    SELECT id, source_id, target_id, link_type, created_at FROM _claim_links_old
+                """)
+                conn.execute("DROP TABLE _claim_links_old")
+        else:
+            # Fresh creation
+            conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS claim_links (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_id INTEGER NOT NULL,
+                    target_id INTEGER NOT NULL,
+                    link_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (source_id) REFERENCES claims(id) ON DELETE CASCADE,
+                    FOREIGN KEY (target_id) REFERENCES claims(id) ON DELETE CASCADE,
+                    CHECK (source_id <> target_id),
+                    {check_clause}
+                )
+            """)
+
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_links_unique ON claim_links(source_id, target_id, link_type)"
         )

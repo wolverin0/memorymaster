@@ -590,3 +590,63 @@ class _ReadMixin:
             ).fetchall()
         return [self._row_to_citation(row) for row in rows]
 
+    def traverse_relationships(
+        self,
+        start_claim_id: int,
+        *,
+        link_types: list[str] | None = None,
+        max_depth: int = 3,
+        direction: str = "both",
+    ) -> list[dict]:
+        """Traverse the claim relationship graph from a starting claim.
+
+        Returns a list of dicts: [{"claim": Claim, "depth": int, "path": [int],
+        "link_type": str}]. BFS traversal, stops at max_depth. direction can be
+        "outgoing" (source→target), "incoming" (target→source), or "both".
+
+        Inspired by GBrain's graph traversal queries — "what depends on Qdrant?"
+        becomes traverse_relationships(qdrant_claim_id, link_types=["depends_on"]).
+        """
+        with self.connect() as conn:
+            visited: set[int] = {start_claim_id}
+            queue: list[tuple[int, int, list[int], str]] = []  # (claim_id, depth, path, via_link_type)
+
+            # Seed with depth-0 neighbors
+            def _get_neighbors(claim_id: int) -> list[tuple[int, str]]:
+                neighbors: list[tuple[int, str]] = []
+                if direction in ("outgoing", "both"):
+                    q = "SELECT target_id, link_type FROM claim_links WHERE source_id = ?"
+                    for row in conn.execute(q, (claim_id,)).fetchall():
+                        if link_types is None or row[1] in link_types:
+                            neighbors.append((row[0], row[1]))
+                if direction in ("incoming", "both"):
+                    q = "SELECT source_id, link_type FROM claim_links WHERE target_id = ?"
+                    for row in conn.execute(q, (claim_id,)).fetchall():
+                        if link_types is None or row[1] in link_types:
+                            neighbors.append((row[0], row[1]))
+                return neighbors
+
+            for neighbor_id, link_type in _get_neighbors(start_claim_id):
+                if neighbor_id not in visited:
+                    visited.add(neighbor_id)
+                    queue.append((neighbor_id, 1, [start_claim_id, neighbor_id], link_type))
+
+            results: list[dict] = []
+            while queue:
+                cid, depth, path, via_type = queue.pop(0)
+                claim = self.get_claim(cid, include_citations=False)
+                if claim:
+                    results.append({
+                        "claim": claim,
+                        "depth": depth,
+                        "path": path,
+                        "link_type": via_type,
+                    })
+                if depth < max_depth:
+                    for neighbor_id, link_type in _get_neighbors(cid):
+                        if neighbor_id not in visited:
+                            visited.add(neighbor_id)
+                            queue.append((neighbor_id, depth + 1, path + [neighbor_id], link_type))
+
+        return results
+

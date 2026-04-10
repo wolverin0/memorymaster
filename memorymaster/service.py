@@ -146,6 +146,21 @@ class MemoryService:
         )
         if not sanitized.citations:
             raise ValueError("At least one citation is required.")
+        # Resolve subject → canonical entity (GBrain-inspired entity registry)
+        entity_id = 0
+        if subject:
+            try:
+                from memorymaster.entity_registry import resolve_or_create
+                with self.store.connect() as _conn:
+                    entity_id = resolve_or_create(
+                        _conn, subject,
+                        entity_type=claim_type or "unknown",
+                        scope=scope,
+                    )
+                    _conn.commit()
+            except Exception:
+                pass  # entity resolution is best-effort, never block ingest
+
         claim = self.store.create_claim(
             text=sanitized.text,
             citations=sanitized.citations,
@@ -164,6 +179,18 @@ class MemoryService:
             source_agent=source_agent,
             visibility=visibility,
         )
+
+        # Set entity_id on the claim (best-effort, don't fail ingest)
+        if entity_id > 0:
+            try:
+                with self.store.connect() as _conn:
+                    _conn.execute(
+                        "UPDATE claims SET entity_id = ? WHERE id = ?",
+                        (entity_id, claim.id),
+                    )
+                    _conn.commit()
+            except Exception:
+                pass
         if sanitized.is_sensitive:
             self.store.record_event(
                 claim_id=claim.id,

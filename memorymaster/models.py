@@ -272,11 +272,22 @@ class Event:
 
 
 CLAIM_LINK_TYPES = (
+    # Core lifecycle types (original v2.0)
     "relates_to",
     "supersedes",
     "derived_from",
     "contradicts",
     "supports",
+    # Domain-specific relationship types (GBrain-inspired, v3.3)
+    "implements",       # claim A describes an implementation of claim B
+    "configures",       # claim A configures/parametrizes claim B
+    "depends_on",       # claim A requires claim B to function
+    "deployed_on",      # claim A is deployed on infrastructure described by claim B
+    "owned_by",         # claim A is owned/maintained by entity in claim B
+    "tested_by",        # claim A is validated by test described in claim B
+    "documents",        # claim A documents behavior of claim B
+    "blocks",           # claim A blocks progress on claim B
+    "enables",          # claim A enables/unlocks claim B
 )
 
 

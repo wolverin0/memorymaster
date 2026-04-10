@@ -673,3 +673,83 @@ COMMAND_HANDLERS["dream-seed"] = _handle_dream_seed
 COMMAND_HANDLERS["dream-ingest"] = _handle_dream_ingest
 COMMAND_HANDLERS["dream-sync"] = _handle_dream_sync
 COMMAND_HANDLERS["dream-clean"] = _handle_dream_clean
+
+
+# ---------------------------------------------------------------------------
+# Entity registry (GBrain-inspired)
+# ---------------------------------------------------------------------------
+
+def _handle_entity_list(args, service, parser, effective_db) -> int:
+    from memorymaster.entity_registry import list_entities
+    t0 = time.perf_counter()
+    with service.store.connect() as conn:
+        entities = list_entities(
+            conn,
+            scope=args.scope or None,
+            entity_type=getattr(args, "type", "") or None,
+            limit=args.limit,
+        )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(entities, total=len(entities), query_ms=elapsed_ms))
+    else:
+        print(f"Entities ({len(entities)}):")
+        for e in entities:
+            print(f"  #{e['id']} [{e['type']}] {e['name']} — {e['alias_count']} aliases, {e['claim_count']} claims (scope={e['scope']})")
+    return 0
+
+
+def _handle_entity_merge(args, service, parser, effective_db) -> int:
+    from memorymaster.entity_registry import merge_entities
+    t0 = time.perf_counter()
+    with service.store.connect() as conn:
+        result = merge_entities(conn, args.keep_id, args.merge_id)
+        conn.commit()
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        print(f"Merged entity #{args.merge_id} → #{args.keep_id}: {result['merged_aliases']} aliases, {result['updated_claims']} claims moved ({elapsed_ms:.0f}ms)")
+    return 0
+
+
+def _handle_entity_aliases(args, service, parser, effective_db) -> int:
+    from memorymaster.entity_registry import get_aliases, add_alias
+    t0 = time.perf_counter()
+    with service.store.connect() as conn:
+        if args.add:
+            added = add_alias(conn, args.entity_id, args.add)
+            conn.commit()
+            if args.json_output:
+                print(_json_envelope({"added": added, "alias": args.add}, query_ms=(time.perf_counter() - t0) * 1000))
+            else:
+                print(f"{'Added' if added else 'Already exists'}: '{args.add}' → entity #{args.entity_id}")
+        else:
+            aliases = get_aliases(conn, args.entity_id)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if args.json_output:
+                print(_json_envelope(aliases, total=len(aliases), query_ms=elapsed_ms))
+            else:
+                print(f"Aliases for entity #{args.entity_id} ({len(aliases)}):")
+                for a in aliases:
+                    print(f"  - {a}")
+    return 0
+
+
+def _handle_entity_backfill(args, service, parser, effective_db) -> int:
+    from memorymaster.entity_registry import backfill_entities
+    t0 = time.perf_counter()
+    with service.store.connect() as conn:
+        result = backfill_entities(conn)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        print(f"Backfill: {result['entities_created']} entities created, {result['claims_resolved']} claims resolved ({result['subjects_processed']} subjects processed, {elapsed_ms:.0f}ms)")
+    return 0
+
+
+COMMAND_HANDLERS["entity-list"] = _handle_entity_list
+COMMAND_HANDLERS["entity-merge"] = _handle_entity_merge
+COMMAND_HANDLERS["entity-aliases"] = _handle_entity_aliases
+COMMAND_HANDLERS["entity-backfill"] = _handle_entity_backfill

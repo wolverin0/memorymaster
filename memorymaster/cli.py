@@ -375,6 +375,22 @@ def build_parser() -> argparse.ArgumentParser:
     dream_clean_cmd.add_argument("--project", default=None, help="Project path to compute Claude Code memory dir slug")
     dream_clean_cmd.add_argument("--dry-run", action="store_true", help="Preview what would be removed without deleting files")
 
+    # Entity registry (GBrain-inspired)
+    entity_list = sub.add_parser("entity-list", help="List canonical entities with alias and claim counts")
+    entity_list.add_argument("--scope", default="", help="Filter by scope prefix")
+    entity_list.add_argument("--type", default="", help="Filter by entity type")
+    entity_list.add_argument("--limit", type=int, default=50)
+
+    entity_merge = sub.add_parser("entity-merge", help="Merge two entities (move aliases + claims to target)")
+    entity_merge.add_argument("keep_id", type=int, help="Entity ID to keep")
+    entity_merge.add_argument("merge_id", type=int, help="Entity ID to merge into keep_id")
+
+    entity_aliases_cmd = sub.add_parser("entity-aliases", help="List or add aliases for an entity")
+    entity_aliases_cmd.add_argument("entity_id", type=int, help="Entity ID")
+    entity_aliases_cmd.add_argument("--add", default="", help="Add this alias to the entity")
+
+    entity_backfill = sub.add_parser("entity-backfill", help="Backfill entity_id on claims with subject but no entity")
+
     return parser
 
 
