@@ -19,11 +19,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-SENSITIVE = re.compile(
-    r"(?i)password\s*(?:is|=|:)\s*\S+|secret[:=]\s*\S{8,}|token[:=]\s*\S{20,}"
-    r"|sk-[A-Za-z0-9\-]{20,}|ghp_[A-Za-z0-9]{20,}|192\.168\.\d"
-    r"|\d{8,}:[A-Za-z0-9_-]{30,}|ubuntu@|ssh\s+\w+@"
-)
+# Credential detection delegated to the canonical filter in
+# memorymaster.security — single source of truth.
+from memorymaster.security import redact_text as _redact_text
+
+
+def _contains_sensitive(text: str) -> bool:
+    """Return True if text contains any credential the canonical filter catches."""
+    _, findings = _redact_text(text)
+    return bool(findings)
 
 # Patterns indicating valuable content in assistant messages
 VALUABLE_PATTERNS = [
@@ -104,7 +108,7 @@ def mine_transcript(
         stats["scanned"] += 1
 
         # Skip sensitive content
-        if SENSITIVE.search(text):
+        if _contains_sensitive(text):
             stats["skipped"] += 1
             continue
 

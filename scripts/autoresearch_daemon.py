@@ -48,7 +48,13 @@ def log_result(mode: str, iteration: int, action: str, result: str, metric_befor
 
 
 def run(cmd: str, timeout: int = 120) -> tuple[int, str]:
-    """Run a shell command, return (returncode, output)."""
+    """Run a shell command, return (returncode, output).
+
+    Accepts a shell-string so the daemon can keep using redirections
+    (``2>/dev/null``, ``2>&1``) and pipes. Callers MUST NOT build this
+    string with untrusted input — use :func:`run_argv` for anything that
+    interpolates user-provided values.
+    """
     try:
         result = subprocess.run(
             cmd, shell=True, capture_output=True, text=True, timeout=timeout, cwd=str(ROOT)
@@ -58,15 +64,32 @@ def run(cmd: str, timeout: int = 120) -> tuple[int, str]:
         return -1, "timeout"
 
 
+def run_argv(argv: list[str], timeout: int = 120) -> tuple[int, str]:
+    """Run a command as an argv list with ``shell=False`` — injection-safe.
+
+    Use this whenever any element comes from variable content. No shell is
+    spawned, so characters like ``;``, ``&``, ``|``, backticks, and quotes
+    are passed literally to the child process.
+    """
+    try:
+        result = subprocess.run(
+            argv, shell=False, capture_output=True, text=True, timeout=timeout, cwd=str(ROOT)
+        )
+        return result.returncode, (result.stdout + result.stderr).strip()
+    except subprocess.TimeoutExpired:
+        return -1, "timeout"
+
+
 def git_revert():
     """Revert all uncommitted changes."""
-    run("git checkout -- .")
+    run_argv(["git", "checkout", "--", "."])
 
 
 def git_commit(message: str) -> bool:
-    """Stage and commit all changes."""
-    run("git add -A")
-    rc, _ = run(f'git commit -m "{message}"')
+    """Stage and commit all changes. Message is passed as argv — safe from
+    shell injection regardless of content."""
+    run_argv(["git", "add", "-A"])
+    rc, _ = run_argv(["git", "commit", "-m", message])
     return rc == 0
 
 

@@ -3,19 +3,18 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from memorymaster.cli_helpers import (
+from memorymaster.cli_helpers import (  # noqa: F401 — re-export for backward compat with tests/external callers
     STEALTH_DB_NAME,
     _add_cycle_policy_args,
     _json_error,
-    _resolve_claim_id,  # re-export for backward-compat with tests/external callers
+    _resolve_claim_id,
     _resolve_db_path,
     _stealth_active,
     parse_citation,
     parse_scope_allowlist,
 )
 from memorymaster.context_optimizer import OUTPUT_FORMATS
-from memorymaster.models import CLAIM_LINK_TYPES, CLAIM_STATUSES, CitationInput, VOLATILITY_LEVELS
-from memorymaster.policy import POLICY_MODES
+from memorymaster.models import CLAIM_LINK_TYPES, CLAIM_STATUSES, VOLATILITY_LEVELS
 from memorymaster.retrieval import RETRIEVAL_MODES
 from memorymaster.service import MemoryService
 

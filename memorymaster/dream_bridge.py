@@ -12,53 +12,42 @@ import logging
 import os
 import re
 import sqlite3
-from datetime import datetime, timezone
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Sensitivity filter
+# Sensitivity filter — credential detection is delegated to
+# `memorymaster.security.redact_text` (single source of truth). Below we keep
+# only the dream-bridge-specific extras: personal paths, SSH command shapes,
+# and vendor-specific keys that security.py doesn't need for general ingest
+# filtering but we want to block from being seeded into dream memory.
 # ---------------------------------------------------------------------------
 
-_SENSITIVE_PATTERNS = re.compile(
+from memorymaster.security import redact_text as _redact_text
+
+_DREAM_EXTRA_PATTERNS = re.compile(
     r"(?i)"
     r"\[REDACTED"
-    r"|api[_-]?key\s*[:=]"
-    r"|password\s*[:=]"
-    r"|secret\s*[:=]"
-    r"|token\s*[:=]"
-    r"|bearer\s+[A-Za-z0-9\-._~+/]+"
-    r"|sk-[A-Za-z0-9]{20,}"
-    r"|ghp_[A-Za-z0-9]{20,}"
-    r"|AIzaSy[A-Za-z0-9\-_]{30,}"
-    # Private/internal IPs (anywhere in text, including URLs)
-    r"|192\.168\.\d{1,3}\.\d{1,3}"
-    r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
-    r"|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
     # Personal/user-specific paths
     r"|[A-Z]:\\.*\\(?:OneDrive|Users\\[a-z])"
     r"|/home/\w+"
-    # SSH/SCP commands with hosts or passwords
+    # SSH/SCP command shapes — not credentials but memory-leaking host refs
     r"|ssh\s+.*\w+@"
     r"|sshpass\b"
     r"|scp\s+.*@"
     # Public IPs in connection strings (non-localhost, non-example)
     r"|\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+"
     r"|ubuntu@\d{1,3}\.\d{1,3}"
-    # Raw credential patterns
+    # Deployment artefacts
     r"|cat\s*>\s*/tmp/.*(?:pw|pass|key|cred)"
     r"|ENDPW"
     r"|esxi_pass"
-    # Telegram bot tokens (numeric:alphanumeric)
-    r"|\d{8,}:[A-Za-z0-9_-]{30,}"
-    # Generic long tokens/keys (40+ alphanumeric chars)
-    r"|(?:token|key|secret|password)\s*[:=]\s*['\"]?[A-Za-z0-9\-._~+/]{40,}"
     # Webhook URLs with tokens embedded
     r"|webhook.*(?:token|key|secret).*[A-Za-z0-9]{20,}"
-    # ENV var assignments with actual values
+    # ENV var assignments for known secret variables
     r"|(?:export\s+)?(?:DB_PASS|MYSQL_PASSWORD|POSTGRES_PASSWORD|SSH_PASS)\s*="
-    # supabase/stripe/sendgrid/twilio keys
+    # Vendor-specific API keys not in the canonical filter
     r"|sbp_[A-Za-z0-9]{20,}"
     r"|sk_(?:live|test)_[A-Za-z0-9]{20,}"
     r"|SG\.[A-Za-z0-9\-_]{20,}"
@@ -99,7 +88,12 @@ def _is_sensitive(text: str) -> bool:
     """Return True if text contains credentials, private IPs, or is just noise."""
     if not text:
         return False
-    if _SENSITIVE_PATTERNS.search(text):
+    # Canonical credential/secret filter (shared with ingest + MCP + storage)
+    _, findings = _redact_text(text)
+    if findings:
+        return True
+    # Dream-bridge-specific extras (personal paths, SSH shapes, vendor keys)
+    if _DREAM_EXTRA_PATTERNS.search(text):
         return True
     if _NOISE_PATTERNS.search(text.strip()):
         return True

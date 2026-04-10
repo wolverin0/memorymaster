@@ -129,3 +129,118 @@ class TestCleanTextNoRedaction:
         result, findings = _redact(text)
         assert result == text
         assert findings == []
+
+
+# ---------------------------------------------------------------------------
+# New patterns added 2026-04-10 (closing security audit gaps)
+# ---------------------------------------------------------------------------
+
+class TestAnthropicKeyPattern:
+    def test_sk_ant_key(self):
+        token = "sk-ant-api03-" + "A" * 40
+        result, findings = _redact(f"Authorization: {token}")
+        assert "anthropic_key" in findings or "openai_key" in findings
+        assert token not in result
+
+
+class TestGoogleApiKeyPattern:
+    def test_google_api_key(self):
+        token = "AIza" + "S" * 35  # 39 chars total (real Google key length)
+        result, findings = _redact(f"api key is {token}")
+        assert "google_api_key" in findings
+        assert token not in result
+
+    def test_google_no_false_positive_short(self):
+        _, findings = _redact("AIzaTOO_SHORT")
+        assert "google_api_key" not in findings
+
+
+class TestAwsStsKeyPattern:
+    def test_asia_key(self):
+        token = "ASIAIOSFODNN7EXAMPLE"
+        result, findings = _redact(f"AWS temp key: {token}")
+        assert "aws_sts_key" in findings
+        assert token not in result
+
+
+class TestSlackTokenPattern:
+    def test_slack_bot_token(self):
+        token = "xoxb-12345-abcdefghij123"
+        _, findings = _redact(f"slack webhook: {token}")
+        assert "slack_token" in findings
+
+    def test_slack_user_token(self):
+        token = "xoxp-9876-zyxwvutsrq987"
+        _, findings = _redact(token)
+        assert "slack_token" in findings
+
+
+class TestTelegramBotTokenPattern:
+    def test_telegram_bot_token(self):
+        token = "1234567890:AAEhBP0av28fakeTokenExample_1234567890"
+        _, findings = _redact(f"TELEGRAM_BOT_TOKEN={token}")
+        assert "telegram_bot_token" in findings
+
+
+class TestExtendedGitHubPrefixes:
+    def test_ghu_user_token(self):
+        token = "ghu_" + "A" * 36
+        _, findings = _redact(token)
+        assert "github_token" in findings
+
+    def test_ghs_server_token(self):
+        token = "ghs_" + "1" * 36
+        _, findings = _redact(token)
+        assert "github_token" in findings
+
+    def test_ghr_refresh_token(self):
+        token = "ghr_" + "B" * 36
+        _, findings = _redact(token)
+        assert "github_token" in findings
+
+
+class TestPrivateIPv4NotRedactedAtIngest:
+    """Private IPs are intentionally NOT filtered at ingest time — they appear
+    in legitimate infrastructure claims. Filtering happens at export time in
+    dream_bridge._DREAM_EXTRA_PATTERNS."""
+
+    def test_private_ip_not_redacted_by_canonical_filter(self):
+        """Claims containing private IPs should pass through sanitize_claim_input."""
+        for ip in ["10.0.0.5", "192.168.1.100", "172.16.0.1", "172.31.255.254"]:
+            _, findings = _redact(f"server at {ip}")
+            assert "private_ipv4" not in findings, f"private IP {ip} was incorrectly redacted at ingest time"
+
+
+class TestDbUrlPasswordPattern:
+    def test_postgres_url(self):
+        url = "postgres://user:secretpass@localhost/mydb"
+        result, findings = _redact(f"DATABASE_URL={url}")
+        assert "db_url_password" in findings
+        assert "secretpass" not in result
+
+    def test_mongodb_srv_url(self):
+        url = "mongodb+srv://admin:pwd123@cluster0.mongodb.net/db"
+        _, findings = _redact(url)
+        assert "db_url_password" in findings
+
+    def test_redis_url(self):
+        url = "redis://:topsecret@host:6379/0"
+        _, findings = _redact(url)
+        assert "db_url_password" in findings
+
+    def test_mysql_url(self):
+        url = "mysql://root:rootpass@db.example.com:3306/app"
+        _, findings = _redact(url)
+        assert "db_url_password" in findings
+
+
+class TestRedactTextPublicApi:
+    """Ensure the public redact_text re-export matches internal _redact."""
+
+    def test_public_api_matches_internal(self):
+        from memorymaster.security import redact_text, _redact
+        text = "sk-1234567890abcdefghij"
+        pub_result, pub_findings = redact_text(text)
+        priv_result, priv_findings = _redact(text)
+        assert pub_result == priv_result
+        assert pub_findings == priv_findings

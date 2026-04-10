@@ -6,8 +6,6 @@ to its handler. cli.main() imports this dict and dispatches to it.
 from __future__ import annotations
 
 import argparse
-import json
-import os
 from pathlib import Path
 import time
 
@@ -43,12 +41,13 @@ from memorymaster.cli_handlers_basic import (
     _handle_steward_proposals,
 )
 from memorymaster.cli_helpers import (
+    _SCORE_KEYS,
     _claim_to_dict,
     _json_envelope,
     _json_error,
-    _resolve_claim_id,
+    print_claim,
 )
-from memorymaster.service import MemoryService
+from memorymaster.models import CitationInput
 
 
 def _handle_export_vault(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
@@ -571,9 +570,15 @@ def _handle_daily_note(args, service, parser, effective_db) -> int:
 
 def _handle_ghost_notes(args, service, parser, effective_db) -> int:
     from memorymaster.daily_notes import find_ghost_notes
+    t0 = time.perf_counter()
     ghosts = find_ghost_notes(str(effective_db))
+    elapsed_ms = (time.perf_counter() - t0) * 1000
     if args.json_output:
-        print(_json_envelope({"ghost_notes": ghosts, "count": len(ghosts)}))
+        print(_json_envelope(
+            {"ghost_notes": ghosts, "count": len(ghosts)},
+            total=len(ghosts),
+            query_ms=elapsed_ms,
+        ))
     else:
         if not ghosts:
             print("No ghost notes found (all queried topics have sufficient claims)")

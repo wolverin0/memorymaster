@@ -6,9 +6,9 @@ Lifecycle-managed claims with citations, conflict detection, steward governance,
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-932-green.svg)]()
-[![MCP Tools](https://img.shields.io/badge/MCP%20tools-21-purple.svg)]()
-[![CLI Commands](https://img.shields.io/badge/CLI%20commands-54%2B-orange.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1034-green.svg)]()
+[![MCP Tools](https://img.shields.io/badge/MCP%20tools-22-purple.svg)]()
+[![CLI Commands](https://img.shields.io/badge/CLI%20commands-64-orange.svg)]()
 
 ---
 
@@ -19,9 +19,9 @@ MemoryMaster gives AI coding agents **persistent, verifiable memory** with a ful
 | Metric | Count |
 |--------|-------|
 | Source modules | 35+ (20,000+ lines) |
-| Tests | 932 across 66 test modules |
-| MCP tools | 21 |
-| CLI commands | 54+ |
+| Tests | 1034 across 68 test modules |
+| MCP tools | 22 |
+| CLI commands | 64 |
 | Import connectors | 10+ (Git, Slack, Jira, email, GitHub, conversations) |
 | Utility scripts | 30+ (connectors, benchmarks, drills) |
 
@@ -32,7 +32,7 @@ MemoryMaster gives AI coding agents **persistent, verifiable memory** with a ful
 │                        Agent Runtime                            │
 │  (Claude Code / Codex / any MCP-compatible agent)               │
 └────────────┬────────────────────────────────┬───────────────────┘
-             │ MCP (21 tools)                 │ CLI (50+ commands)
+             │ MCP (22 tools)                 │ CLI (64 commands)
              v                                v
 ┌─────────────────────────────────────────────────────────────────┐
 │                      MemoryMaster Core                          │
@@ -117,7 +117,7 @@ The setup command configures everything interactively:
 - **SessionStart hook** — injects recent claims + cycle summary + pending candidates at session start
 - **Auto-ingest hook** — uses a cheap LLM (Gemini Flash Lite/GPT-4o-mini/Haiku/Ollama) to extract learnings from each session, with a block-based checkpoint every 15 human messages
 - **PreCompact hook** — forces save to MemoryMaster before Claude Code compacts context (permanent context loss prevention)
-- **MCP server** — 21 tools available in all Claude Code & Codex sessions
+- **MCP server** — 22 tools available in all Claude Code & Codex sessions
 - **Steward cron** — validates and curates claims every 6 hours
 - **CLAUDE.md / AGENTS.md** — appends instructions so Claude and Codex actually use MemoryMaster
 - **Obsidian skills** — read/write/search your vault from Claude Code
@@ -175,7 +175,7 @@ Add to your `.mcp.json` (see [`.mcp.json.example`](.mcp.json.example)):
 }
 ```
 
-**21 MCP tools:** `init_db`, `ingest_claim`, `run_cycle`, `run_steward`, `classify_query`, `query_memory`, `query_for_context`, `list_claims`, `redact_claim_payload`, `pin_claim`, `compact_memory`, `list_events`, `open_dashboard`, `list_steward_proposals`, `resolve_steward_proposal`, `extract_entities`, `entity_stats`, `find_related_claims`, `quality_scores`, `recompute_tiers`, `federated_query`
+**22 MCP tools:** `init_db`, `ingest_claim`, `run_cycle`, `run_steward`, `classify_query`, `query_memory`, `query_for_context`, `list_claims`, `redact_claim_payload`, `pin_claim`, `compact_memory`, `list_events`, `search_verbatim`, `open_dashboard`, `list_steward_proposals`, `resolve_steward_proposal`, `extract_entities`, `entity_stats`, `find_related_claims`, `quality_scores`, `recompute_tiers`, `federated_query`
 
 ## How It All Works (E2E)
 
@@ -221,7 +221,7 @@ YOU SEND A MESSAGE
 |-----------|-------------|-----------|
 | **Recall hook** | Injects relevant claims into every prompt | Every message you send |
 | **Auto-ingest hook** | LLM extracts learnings from transcript | Every time Claude stops |
-| **MCP server** (global) | 21 tools for query/ingest/steward | Always available |
+| **MCP server** (global) | 22 tools for query/ingest/steward | Always available |
 | **CLAUDE.md append** | Instructions for Claude to use MemoryMaster | Read at session start |
 | **AGENTS.md append** | Instructions for Codex to use MemoryMaster | Read at session start |
 | **Steward cron** | Validates, decays, compacts claims | Every 6 hours |
@@ -586,7 +586,7 @@ These are optional but enhance the experience:
 
 | MCP | What it adds | Install |
 |-----|--------------|---------|
-| **memorymaster** | The 21 MCP tools (`ingest_claim`, `query_memory`, `run_cycle`, etc.) | `memorymaster-setup` (interactive; or `python scripts/setup-hooks.py` from clone) |
+| **memorymaster** | The 22 MCP tools (`ingest_claim`, `query_memory`, `run_cycle`, etc.) | `memorymaster-setup` (interactive; or `python scripts/setup-hooks.py` from clone) |
 | **GitNexus** | Code-graph aware impact analysis before edits | See [GitNexus Integration](#gitnexus-integration-code-intelligence) |
 | **Obsidian CLI** | Vault-aware search via the obsidian CLI tool | `npm install -g obsidian-cli` (requires Obsidian 1.12+) |
 | **Qdrant** | Vector search backend for semantic recall | `docker run -p 6333:6333 qdrant/qdrant` |
@@ -668,7 +668,7 @@ Key config groups:
 # Install with all dev dependencies
 pip install -e ".[dev,mcp,security,embeddings,qdrant]"
 
-# Run tests (932 tests)
+# Run tests (1034 tests)
 pytest tests/ -q
 
 # Lint and format

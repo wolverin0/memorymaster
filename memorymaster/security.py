@@ -11,25 +11,61 @@ from dataclasses import dataclass
 from memorymaster.models import CitationInput, Claim
 
 _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    # API keys by vendor
     ("openai_key", re.compile(r"\bsk-[A-Za-z0-9_\-]{12,}\b")),
+    ("anthropic_key", re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{20,}\b")),
+    ("google_api_key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
     ("aws_access_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
-    ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+    ("aws_sts_key", re.compile(r"\bASIA[0-9A-Z]{16}\b")),
+    # GitHub — all token prefixes: ghp (personal), gho (oauth), ghu (user),
+    # ghs (server-to-server), ghr (refresh), github_pat_ (fine-grained).
+    # Both patterns report as "github_token" so downstream callers get a
+    # single canonical finding label.
+    ("github_token", re.compile(r"\b(ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]{36}\b")),
+    ("github_token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b")),
+    # Slack
+    ("slack_token", re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b")),
+    # Telegram bot tokens (<numeric_id>:<token>)
+    ("telegram_bot_token", re.compile(r"\b\d{8,}:[A-Za-z0-9_\-]{30,}\b")),
+    # Bearer / JWT / private key blocks
     ("jwt_token", re.compile(r"\beyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*\b")),
-    ("github_token", re.compile(r"\b(ghp_[A-Za-z0-9]{36}|gho_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})\b")),
     ("bearer_token", re.compile(r"Bearer\s+[A-Za-z0-9_\-\.]{8,}")),
+    ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+    # NOTE: Private IPv4 (10/8, 172.16/12, 192.168/16) is intentionally NOT
+    # filtered here. Private IPs appear legitimately in infrastructure claims
+    # (e.g. "server IP is 10.0.0.1") and redacting them at ingest time makes
+    # claims meaningless. The export-time filter in dream_bridge.py catches
+    # private IPs via _DREAM_EXTRA_PATTERNS when seeding to external memory.
+    # Database / broker URLs with embedded passwords.
+    # Allows empty user (Redis common shape: redis://:password@host) via `[^:\s/@]*:`.
+    ("db_url_password", re.compile(
+        r"\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|amqps)://"
+        r"[^:\s/@]*:[^@\s]+@[^\s]+"
+    )),
+    # Key=value assignments in plain text
     ("password_assignment", re.compile(r"(?i)\b(password|passwd|pwd)\s*[:=]\s*([^\s,;]+)")),
     ("token_assignment", re.compile(r"(?i)\b(token|api[_-]?key|secret)\s*[:=]\s*([^\s,;]+)")),
-    # Hex tokens (API keys, session tokens) - standalone 40+ hex chars in backticks or after labels
+    # Hex tokens (API keys, session tokens) — 40+ hex chars in backticks or after labels
     ("hex_token", re.compile(r"`([0-9a-f]{40,})`")),
-    # Hex tokens near keyword context (keyword within 80 chars before hex)
     ("hex_token_ctx", re.compile(r"(?i)(?:token|key|secret|credential).{0,80}?([0-9a-f]{40,})")),
     # Markdown credential patterns: **Pass**: value, **Password**: value, etc.
     ("markdown_credential", re.compile(r"(?i)\*\*(?:pass(?:word)?|pwd|secret|token|key|credential)s?\*\*\s*[:=]\s*`?([^\s`,;\n]+)")),
     # Inline backtick credentials after label: `TOKEN`: `value` or TOKEN: `value`
     ("inline_credential", re.compile(r"(?i)(?:_?(?:api_?)?(?:token|key|secret|password|credential)s?_?)`?\s*[:=]\s*`([^`]+)`")),
-    # SSH/connection strings with embedded passwords
+    # SSH/connection strings with embedded passwords (legacy pattern — kept for
+    # non-standard shapes the structured db_url_password above might miss)
     ("connection_password", re.compile(r"(?i)(?:ssh|ftp|mysql|postgres|redis|mongo).*(?:password|pass|pwd)\s*[:=]\s*([^\s,;]+)")),
 ]
+
+
+def redact_text(text: str) -> tuple[str, list[str]]:
+    """Public API: redact secrets from arbitrary text.
+
+    Returns (redacted_text, list_of_finding_names). Use this instead of
+    defining local regexes in downstream modules — the patterns here are
+    the single source of truth.
+    """
+    return _redact(text)
 
 _ENCRYPTION_ENV_VAR = "MEMORYMASTER_ENCRYPTION_KEY"
 _SENSITIVE_BYPASS_ENV_VAR = "MEMORYMASTER_ALLOW_SENSITIVE_BYPASS"

@@ -9,14 +9,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict
 from pathlib import Path
 import time
 
 from memorymaster.cli_helpers import (
     STEALTH_DB_NAME,
     _SCORE_KEYS,
-    _add_cycle_policy_args,
     _claim_to_dict,
     _event_to_timeline_entry,
     _json_default,
@@ -24,19 +23,14 @@ from memorymaster.cli_helpers import (
     _json_error,
     _print_claim_brief,
     _resolve_claim_id,
-    _resolve_db_path,
+    _score_str_from_payload,
     _stealth_active,
     parse_citation,
     parse_scope_allowlist,
     print_claim,
 )
-from memorymaster.context_optimizer import OUTPUT_FORMATS
-from memorymaster.models import CLAIM_LINK_TYPES, CLAIM_STATUSES, CitationInput, VOLATILITY_LEVELS
-from memorymaster.policy import POLICY_MODES
-from memorymaster.retrieval import RETRIEVAL_MODES
 from memorymaster.scheduler import run_daemon
 from memorymaster.security import resolve_allow_sensitive_access
-from memorymaster.service import MemoryService
 
 
 def _handle_create_snapshot(args: argparse.Namespace, db_resolved: Path) -> int:

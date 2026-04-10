@@ -24,11 +24,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-SENSITIVE = re.compile(
-    r"(?i)password\s*(?:is|=|:)\s*\S+|secret[:=]\s*\S{8,}"
-    r"|sk-[A-Za-z0-9\-]{20,}|ghp_[A-Za-z0-9]{20,}"
-    r"|\d{8,}:[A-Za-z0-9_-]{30,}"
-)
+# Credential detection delegated to the canonical filter in
+# memorymaster.security — single source of truth.
+from memorymaster.security import redact_text as _redact_text
+
+
+def _contains_sensitive(text: str) -> bool:
+    _, findings = _redact_text(text)
+    return bool(findings)
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://192.168.100.186:6333")
 QDRANT_COLLECTION = "memorymaster-verbatim"
@@ -54,7 +57,7 @@ def store_verbatim(
     """Store a verbatim conversation turn. Returns row ID or None if filtered."""
     if not content or len(content) < 20:
         return None
-    if SENSITIVE.search(content):
+    if _contains_sensitive(content):
         return None
 
     now = timestamp or datetime.now(timezone.utc).isoformat()

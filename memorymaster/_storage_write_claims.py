@@ -6,39 +6,19 @@ and `self.db_path`. Do not instantiate directly.
 """
 from __future__ import annotations
 
-import contextlib
-import hashlib
 import json
 import logging
 import sqlite3
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
-from memorymaster.embeddings import EmbeddingProvider, cosine_similarity
 from memorymaster.models import (
-    CLAIM_LINK_TYPES,
-    CLAIM_STATUSES,
-    STATUS_TRANSITION_EVENT_TYPES,
-    Citation,
     CitationInput,
     Claim,
-    ClaimLink,
-    Event,
     validate_event_payload,
-    validate_event_type,
-    validate_transition_event_type,
 )
 
 logger = logging.getLogger(__name__)
 
 from memorymaster._storage_shared import (
-    EVENT_HASH_ALGO,
-    HUMAN_ID_PREFIX,
-    SQLITE_CONFIRMED_TUPLE_GUARD_TRIGGERS,
-    SQLITE_EVENTS_APPEND_ONLY_TRIGGERS,
-    ConcurrentModificationError,
-    generate_human_id_hash,
-    generate_top_level_human_id,
     utc_now,
 )
 

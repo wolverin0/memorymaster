@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.2] - 2026-04-10
+
+### Fixed
+
+- **5 NameError bugs from cli refactor**: `_score_str_from_payload`, `CitationInput`, `_SCORE_KEYS`, `print_claim` were referenced but not imported in the split handler files. All 5 cause NameError on `history`, `extract-claims --ingest`, `federated-query` CLI commands. Regression tests added for all 4 broken handlers.
+- **TypeError on `ghost-notes --json`**: `_handle_ghost_notes` called `_json_envelope()` without the required `query_ms` kwarg.
+- **UTF-8 BOM in `metrics_exporter.py`**: broke radon and mypy. Stripped.
+- **test_stealth_mode collection error**: `STEALTH_DB_NAME` was auto-removed by ruff F401 fix from cli.py but tests imported it from there. Re-exported with `# noqa: F401` annotation.
+- **Sensitivity filter: private IPs removed from canonical ingest filter**: `private_ipv4` pattern was incorrectly blocking legitimate infrastructure claims (e.g. "Server IP is 10.0.0.1"). Private IPs are now only filtered at export time (dream_bridge `_DREAM_EXTRA_PATTERNS`), not at ingest time.
+
+### Added
+
+- **Sensitivity filter extended**: 6 new patterns in `security.py` — Google API keys (`AIza*`), AWS STS keys (`ASIA*`), Slack tokens (`xoxb/xoxp/xoxa`), extended GitHub tokens (`ghu_/ghs_/ghr_`), Telegram bot tokens, DB connection URLs with embedded passwords (`postgres://user:pass@host`). All patterns tested with 20 new security test cases.
+- **Sensitivity filter consolidated**: Deleted 4 duplicated regex blocks in `mcp_server.py`, `dream_bridge.py`, `transcript_miner.py`, `verbatim_store.py`. All now call `memorymaster.security.redact_text()` as single source of truth. New public API: `memorymaster.security.redact_text(text) -> (redacted, findings)`.
+- **7 regression tests** (`test_handler_regressions.py`) covering all 4 handlers that had F821/TypeError bugs.
+- **`autoresearch_daemon.py`**: `git_commit` and `git_revert` now use `run_argv()` (list form, `shell=False`) instead of f-string interpolation into `run()` (`shell=True`), removing a potential command injection footgun.
+
+### Changed
+
+- **130 unused imports cleaned** across 10 files after the cli/storage refactor (ruff F401 autofix).
+- **README stats updated**: 22 MCP tools (was 21, `search_verbatim` was undocumented), 64 CLI commands (was "54+"), 1034 tests across 68 modules (was "932 across 66").
+
 ## [3.2.1] - 2026-04-10
 
 ### Added
