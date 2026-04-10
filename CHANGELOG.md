@@ -5,6 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-04-09
+
+### Added
+
+- **Wiki frontmatter schema**: Every absorbed article in `obsidian-vault/wiki/**/*.md` now carries `description` (~150 char), `tags`, and `date` fields for progressive disclosure. Helpers `_extract_description`, `_build_tags`, `_yaml_escape` in `wiki_engine.py`.
+- **Obsidian Bases generator** (`vault_bases.py`): Auto-generates 5 dynamic dashboards (`all-claims.base`, `gotchas.base`, `decisions.base`, `recent.base`, `needs-review.base`) under `obsidian-vault/bases/`. New `bases-generate` CLI command. `wiki-absorb` regenerates Bases automatically (suppress with `--no-bases`).
+- **Classify hook** (`config-templates/hooks/memorymaster-classify.py`): Regex signal matcher for UserPromptSubmit with 7 signals (DECISION, BUG_ROOT_CAUSE, GOTCHA, CONSTRAINT, ARCHITECTURE, ENVIRONMENT, REFERENCE) in Spanish + English. Latin-letter lookarounds make it CJK-safe. Zero LLM, ~5 ms runtime.
+- **Validate-wiki hook** (`config-templates/hooks/memorymaster-validate-wiki.py`): PostToolUse Edit/Write hook scoped to `obsidian-vault/wiki/**/*.md`. Checks frontmatter completeness and warns on orphan articles (no `[[wikilinks]]` and body > 300 chars).
+- **SessionStart hook** (`config-templates/hooks/memorymaster-session-start.py`): Injects recent claims, last cycle summary (ingest/validate/decay/supersession counts), pending candidates, and recently updated wiki articles at session start. Scope auto-derived from cwd.
+- **PyPI publish workflow** (`.github/workflows/publish.yml`): Auto-publishes on `git tag v*.*.*` push using PyPI Trusted Publisher with OIDC (no API tokens in secrets).
+- **32 E2E tests** (`tests/test_obsidian_mind_patterns.py`) covering all 5 obsidian-mind-inspired components.
+- **`benchmarks/README.md`**: Download instructions for the LongMemEval oracle dataset (~15 MB).
+- **CLI command**: `bases-generate --output <vault>` regenerates Obsidian Bases on demand.
+- **`setup-hooks.py` updates**: Now installs the 3 new hooks alongside the legacy recall + auto-ingest pair.
+
+### Fixed
+
+- **`_seek_to_offset` returned `start_offset = 0` always**: When `MemoryOperator._run_stream_json` resumed from a saved offset, the seek succeeded but the function still returned `(0, read_offset)`, breaking checkpoint resumption. Now returns `(read_offset, read_offset)` on success and `(0, 0)` on error. Fixes `test_run_stream_resumes_from_checkpoint_state` (was the last known flaky test).
+- **`test_returns_valid_sha`**: GitHub Actions runners have no global git identity, so `git commit --allow-empty` failed with exit 128. Test now sets `user.email`/`user.name` locally in the temp dir before the commit.
+- **`test_semantic_model_calls_transformer`**: Used `import numpy` unconditionally despite numpy not being a base dependency. Now uses `pytest.importorskip("numpy")` so the test skips gracefully when numpy is unavailable.
+- **CI: 3 tests failing for 5 consecutive runs** — all 3 fixed above. CI is now green again.
+
+### Changed
+
+- **CLAUDE.md (global)**: Documented SessionStart, classify, and validate-wiki hooks under "How memory flows automatically" so future Claude sessions know to trust the routing hints and react to wiki hygiene warnings.
+- **AGENTS.md**: Added wiki frontmatter schema enforcement to Boundaries section.
+- **README.md**: Added 3 new entries to Key Features (LLM Wiki, Obsidian Bases, 7-Hook Stack) and a new "New in v3.2" section documenting all the obsidian-mind-inspired patterns.
+
+### Removed
+
+- **Repo cruft from root**: Deleted `entity_extraction.log`, `qdrant_sync.log`, `qdrant_sync_result.json`, `test_output.txt` from the working tree and added them to `.gitignore`.
+- **`benchmarks/longmemeval_oracle.json` (~15 MB)** removed from tracking and added to `.gitignore` — it is a public dataset and should be downloaded with the documented commands instead of bloating the repo.
+
+## [3.1.0] - 2026-04-08 (never published to PyPI)
+
+### Added
+
+- **LLM Wiki architecture**: Compiled truth + append-only timeline articles, Karpathy/Farza style. New modules `wiki_engine.py`, `vault_linter.py`, `vault_log.py`, `vault_synthesis.py`, `vault_query_capture.py`.
+- **CLI commands**: `wiki-absorb`, `wiki-cleanup`, `wiki-breakdown`, `lint-vault`, `mine-transcript`, `verify-claims`.
+- **Verify-claims**: Cross-checks claims that mention file paths or symbols against the actual codebase using `ripgrep`, sub-100 ms per check.
+- **MemPalace-inspired upgrades**: Block-based Stop hook with `decision: block` checkpoint every N human messages, PreCompact hook, content-hash dedup (`hash-<sha256>` idempotency keys), bi-temporal `valid_from`/`valid_until` fields on claims, transcript miner.
+- **Multi-provider LLM client** (`llm_provider.py`): Google / OpenAI / Anthropic / Ollama with key rotation.
+- **Setup script** (`scripts/setup-hooks.py`): Interactive installer for hooks, MCP, env vars, and steward cron.
+- **Config templates** (`config-templates/`): Hook templates with `__MEMORYMASTER_PROJECT_ROOT__` placeholder and CLAUDE.md / AGENTS.md append snippets.
+
+### Fixed
+
+- **WAL mode mandatory**: `PRAGMA journal_mode = WAL` now enforced on every connection to prevent DB corruption from concurrent writes (caused by OpenClaw `scp` overwriting an open DB).
+- **Hardcoded path in `claim_verifier.py`**: Replaced with dynamic project root detection.
+- **35+ silent `except: pass` blocks** in `llm_provider.py`: Now log the exception so API failures are visible instead of returning empty results.
+- **Dream-bridge cross-project pollution**: Added scope filter so dream-seed only exports claims from the current project.
+- **Hardened sensitivity filter**: Added regexes for Telegram bot tokens, Stripe keys, Supabase keys, and SSH commands.
+- **MCP `ingest_claim`**: Auto-generates `CitationInput(source="mcp-session")` when caller does not provide one (was rejecting otherwise-valid ingests with "At least one citation required").
+- **Timezone-aware vs naive datetime crash** in `decay.py::_parse_iso`.
+
+## [3.0.0] - 2026-04-05 (never published to PyPI)
+
+### Added
+
+- **Verbatim memory layer** (`verbatim_store.py`): Raw conversation storage table with FTS5 search and Qdrant vector search using OpenAI text-embedding-3-small (1536 dims, Cosine).
+- **LongMemEval benchmarks**: `benchmarks/longmemeval_runner.py` (FTS5 baseline, scored 5.6%) and `benchmarks/longmemeval_vector_runner.py` (Qdrant vector, scored 25% on 20 questions). Reference: MemPalace ChromaDB scores 96.6%.
+- **Curate-vault command**: LLM-organized Obsidian export with topic clustering and wikilinks (later deprecated by `wiki-absorb`).
+
 ## [2.0.0] - 2026-03-08
 
 ### Added

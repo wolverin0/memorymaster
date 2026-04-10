@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memorymaster"
-version = "3.1.0"
+version = "3.2.0"
 description = "Production-grade memory reliability system for AI coding agents. Lifecycle-managed claims with citations, conflict detection, steward governance, and MCP integration."
 license = {text = "MIT"}
 authors = [{name = "wolverin0"}]

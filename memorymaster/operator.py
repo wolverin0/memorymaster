@@ -612,8 +612,12 @@ class MemoryOperator:
         queue_state_path: Path | None,
         emit,
     ) -> tuple[int, int]:
-        """Seek file handle to read_offset, handling errors. Returns (start_offset, read_offset)."""
-        start_offset = 0
+        """Seek file handle to read_offset, handling errors. Returns (start_offset, read_offset).
+
+        On success: start_offset == read_offset (the offset we resumed from).
+        On error:   start_offset == 0 and the handle is rewound to 0.
+        """
+        start_offset = read_offset
         if read_offset > 0:
             try:
                 file_size = inbox.stat().st_size

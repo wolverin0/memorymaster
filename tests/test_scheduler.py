@@ -27,6 +27,9 @@ class TestGetGitHead:
     def test_returns_valid_sha(self, tmp_path):
         """When run inside a real git repo, returns a 40-char hex SHA."""
         subprocess.run(["git", "init", str(tmp_path)], capture_output=True, check=True)
+        # CI runners have no global git identity — set a local one so commit works
+        subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "test@example.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "test"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(tmp_path), "commit", "--allow-empty", "-m", "init"], capture_output=True, check=True)
         sha = get_git_head(tmp_path)
         assert sha is not None

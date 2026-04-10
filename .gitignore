@@ -35,6 +35,11 @@ memorymaster.db
 artifacts/
 data/
 test_results.txt
+test_output.txt
+*.log
+entity_extraction.log
+qdrant_sync.log
+qdrant_sync_result.json
 
 # Tool configs
 .claude-flow/

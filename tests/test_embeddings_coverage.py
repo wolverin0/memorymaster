@@ -38,9 +38,9 @@ class TestEmbeddingProviderEmbed:
         assert p.is_semantic is True
 
     def test_semantic_model_calls_transformer(self):
+        np = pytest.importorskip("numpy")
         p = EmbeddingProvider(model="all-MiniLM-L6-v2", dims=384)
         mock_transformer = MagicMock()
-        import numpy as np
         mock_transformer.encode.return_value = np.array([0.1] * 384)
         p._transformer = mock_transformer
         vec = p.embed("test")
