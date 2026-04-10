@@ -37,8 +37,8 @@ pip install "memorymaster[security]"
 # Everything
 pip install "memorymaster[mcp,postgres,embeddings,gemini,qdrant,security]"
 
-# Development (includes pytest)
-pip install -e ".[dev,mcp,security,embeddings,qdrant]"
+# Development (matches CI — required extras for the full test suite)
+pip install -e ".[dev,mcp,security]"
 ```
 
 ### Initialize the database
@@ -46,6 +46,28 @@ pip install -e ".[dev,mcp,security,embeddings,qdrant]"
 ```bash
 memorymaster --db memory.db init-db
 ```
+
+### Interactive setup (hooks + MCP + cron)
+
+After `pip install memorymaster`, run the interactive installer to wire
+MemoryMaster into Claude Code (hooks, MCP server, steward cron) and
+optionally into Codex:
+
+```bash
+memorymaster-setup
+```
+
+This will:
+
+- Ask for your LLM provider (Gemini / OpenAI / Anthropic / Ollama) and API key
+- Ask where `memorymaster.db` should live (default: current directory)
+- Copy 7 hook scripts to `~/.claude/hooks/` and wire them into `~/.claude/settings.json`: recall, classify, validate-wiki, session-start, auto-ingest, pre-compact, plus the 6-hour steward cron
+- Register the `memorymaster` MCP server globally in `~/.claude.json`
+- Optionally append Codex `AGENTS.md` + global `CLAUDE.md` integration snippets
+- Optionally install the steward cron (Linux/macOS) or Task Scheduler job (Windows)
+
+Running from a cloned repo? `python scripts/setup-hooks.py` also works — it is
+a 3-line shim that calls the same `memorymaster.setup_hooks:main` function.
 
 ## Docker Compose
 
@@ -238,12 +260,21 @@ SQLite allows only one writer at a time. For concurrent access:
 ### Tests failing after install
 
 ```bash
-# Ensure dev dependencies are installed
-pip install -e ".[dev]"
+# Install the same dependency set that CI uses — this is what the
+# public GitHub Actions workflow runs against, so it's the canonical
+# tested configuration:
+pip install -e ".[dev,mcp,security]"
 
 # Run tests
 pytest tests/ -q
 
-# If specific tests fail, check for missing optional dependencies
+# If you want to additionally exercise the optional embeddings and
+# Qdrant code paths (which are skipped via pytest.importorskip when
+# the deps are absent), install their extras too:
 pip install -e ".[dev,mcp,security,embeddings,qdrant]"
 ```
+
+> **Note**: CI (`.github/workflows/ci.yml`) installs `.[dev,mcp,security]`
+> only. Optional embeddings/Qdrant tests skip automatically if those
+> extras are not present, so the smaller install is the supported
+> reproduction environment.

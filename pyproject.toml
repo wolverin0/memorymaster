@@ -38,6 +38,7 @@ memorymaster = "memorymaster.cli:main"
 memorymaster-mcp = "memorymaster.mcp_server:main"
 memorymaster-dashboard = "memorymaster.dashboard:main"
 memorymaster-steward = "memorymaster.llm_steward:main"
+memorymaster-setup = "memorymaster.setup_hooks:main"
 
 [tool.ruff]
 target-version = "py310"
@@ -51,4 +52,9 @@ ignore = ["E501"]  # line length handled by formatter
 where = ["."]
 
 [tool.setuptools.package-data]
-memorymaster = ["schema.sql", "schema_postgres.sql"]
+memorymaster = [
+    "schema.sql",
+    "schema_postgres.sql",
+    "config_templates/*.md",
+    "config_templates/hooks/*.py",
+]

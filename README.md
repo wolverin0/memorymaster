@@ -105,12 +105,18 @@ pip install memorymaster
 memorymaster --db memorymaster.db init-db
 
 # Full setup: hooks, MCP, steward cron, Obsidian skills
+memorymaster-setup      # after pip install
+# or, from a cloned repo:
 python scripts/setup-hooks.py
 ```
 
-The setup script configures everything interactively:
+The setup command configures everything interactively:
 - **Recall hook** — injects relevant claims into every Claude Code prompt
-- **Auto-ingest hook** — uses a cheap LLM (Gemini Flash Lite/GPT-4o-mini/Haiku/Ollama) to extract learnings from each session
+- **Classify hook** — regex signal matcher (DECISION/BUG/GOTCHA/CONSTRAINT/ARCHITECTURE/ENVIRONMENT/REFERENCE) that injects routing hints, Spanish + English
+- **Validate-wiki hook** — PostToolUse warning for wiki articles missing frontmatter or wikilinks
+- **SessionStart hook** — injects recent claims + cycle summary + pending candidates at session start
+- **Auto-ingest hook** — uses a cheap LLM (Gemini Flash Lite/GPT-4o-mini/Haiku/Ollama) to extract learnings from each session, with a block-based checkpoint every 15 human messages
+- **PreCompact hook** — forces save to MemoryMaster before Claude Code compacts context (permanent context loss prevention)
 - **MCP server** — 21 tools available in all Claude Code & Codex sessions
 - **Steward cron** — validates and curates claims every 6 hours
 - **CLAUDE.md / AGENTS.md** — appends instructions so Claude and Codex actually use MemoryMaster
@@ -580,7 +586,7 @@ These are optional but enhance the experience:
 
 | MCP | What it adds | Install |
 |-----|--------------|---------|
-| **memorymaster** | The 21 MCP tools (`ingest_claim`, `query_memory`, `run_cycle`, etc.) | `python scripts/setup-hooks.py` (interactive) |
+| **memorymaster** | The 21 MCP tools (`ingest_claim`, `query_memory`, `run_cycle`, etc.) | `memorymaster-setup` (interactive; or `python scripts/setup-hooks.py` from clone) |
 | **GitNexus** | Code-graph aware impact analysis before edits | See [GitNexus Integration](#gitnexus-integration-code-intelligence) |
 | **Obsidian CLI** | Vault-aware search via the obsidian CLI tool | `npm install -g obsidian-cli` (requires Obsidian 1.12+) |
 | **Qdrant** | Vector search backend for semantic recall | `docker run -p 6333:6333 qdrant/qdrant` |
@@ -588,16 +594,18 @@ These are optional but enhance the experience:
 ### Installation
 
 ```bash
-# 1. Clone and install MemoryMaster
-git clone https://github.com/your-org/memorymaster.git
+# Option A — from PyPI (recommended for users)
+pip install memorymaster
+memorymaster-setup               # interactive installer
+
+# Option B — from a clone (recommended for contributors)
+git clone https://github.com/wolverin0/memorymaster.git
 cd memorymaster
-pip install -e .
+pip install -e ".[dev,mcp,security]"
+python scripts/setup-hooks.py    # 3-line shim calling memorymaster.setup_hooks:main
 
-# 2. Run the interactive installer (sets up MCP, hooks, env vars, steward cron)
-python scripts/setup-hooks.py
-
-# 3. The installer copies hooks from config-templates/hooks/ to ~/.claude/hooks/
-#    and registers them in ~/.claude/settings.json automatically.
+# Either way, the installer copies hooks from memorymaster/config_templates/hooks/
+# to ~/.claude/hooks/ and registers them in ~/.claude/settings.json automatically.
 
 # 4. Verify
 python -m memorymaster --db memorymaster.db query "test"
