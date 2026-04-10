@@ -91,6 +91,9 @@ MemoryMaster gives AI coding agents **persistent, verifiable memory** with a ful
 | **Federated Query** | Cross-project querying across multiple memory databases |
 | **Dream Bridge** | Bidirectional sync with Claude Code's Auto Dream — seed quality-filtered claims into `.claude/memory/`, ingest corrections back, with sensitivity filtering and dedup |
 | **GitNexus Bridge** | Convert code intelligence (symbols, call graphs, execution flows) into memory claims for code-aware agent memory |
+| **LLM Wiki** | Karpathy/Farza-style compiled wiki articles (compiled truth + append-only timeline) with `description`/`tags`/`date` frontmatter for progressive disclosure |
+| **Obsidian Bases** | Auto-generated `.base` dashboards (all-claims, gotchas, decisions, recent, needs-review) regenerated on every `wiki-absorb` |
+| **7-Hook Stack** | Recall + Classify (UserPromptSubmit), Validate-Wiki (PostToolUse), Session-Start (SessionStart), Auto-Ingest (Stop), PreCompact — full memory lifecycle without manual intervention |
 
 ## Quick Start
 
@@ -505,6 +508,108 @@ memorymaster --stealth init-db
 
 # JSON output for all commands
 memorymaster --db memory.db --json list-claims
+```
+
+## New in v3.2 — Wiki Frontmatter Schema + Hook Automation
+
+This release adds **4 obsidian-mind-inspired patterns** that turn MemoryMaster into a fully passive memory system. You don't need to remember to call MCP tools — hooks do the work:
+
+### New Hooks
+
+| Hook | Event | What it does |
+|------|-------|--------------|
+| `memorymaster-classify.py` | UserPromptSubmit | Regex signal matcher (Spanish + English, Latin-letter lookarounds for CJK safety). Detects DECISION / BUG_ROOT_CAUSE / GOTCHA / CONSTRAINT / ARCHITECTURE / ENVIRONMENT / REFERENCE in your prompts and injects routing hints so the agent calls `ingest_claim` after the work. Zero LLM calls, ~5 ms runtime. |
+| `memorymaster-validate-wiki.py` | PostToolUse (Edit/Write) | Fires only on `obsidian-vault/wiki/**/*.md`. Checks frontmatter (`title`, `description`, `type`, `scope`, `tags`, `date`) and warns if the article is an orphan (no `[[wikilinks]]` and body > 300 chars). Returns warnings via `hookSpecificOutput.additionalContext` so the agent fixes them in-place. |
+| `memorymaster-session-start.py` | SessionStart (startup\|resume) | Queries the DB for recent claims, last cycle summary (ingest/validate/decay/supersession counts), pending candidates, and most-recently-updated wiki articles. Injects everything into the session context so the agent starts informed instead of blank. Scope auto-derived from cwd. |
+
+All hooks fail silently (`exit 0`) on any exception — they never block the user.
+
+### Wiki Article Frontmatter Schema
+
+`wiki_engine._write_article` now emits a richer frontmatter for every absorbed article:
+
+```yaml
+---
+title: Qdrant
+description: "Qdrant is deployed on an Ubuntu VM, accessible via localhost:6333..."
+type: decision
+scope: project:memorymaster
+tags: ["decision", "project-memorymaster", "fact"]
+claims: [7966, 8062, 8107]
+created: 2026-04-09
+last_updated: 2026-04-09
+date: 2026-04-09
+related: ["[[storage]]", "[[vector-search]]"]
+---
+```
+
+The new fields enable **progressive disclosure**: an agent can scan 50 articles' frontmatter before deciding which to read in full, and Obsidian Bases can filter on `type` / `tags` / `date`.
+
+### Obsidian Bases Generator
+
+`memorymaster/vault_bases.py` writes 5 dynamic dashboards under `obsidian-vault/bases/`:
+
+| Base | Shows |
+|------|-------|
+| `all-claims.base` | Every wiki article, sortable by date / type / scope |
+| `gotchas.base` | Articles with `type=gotcha` or `tags.contains("gotcha")` |
+| `decisions.base` | Articles with `type=decision` or `type=architecture` |
+| `recent.base` | Articles updated in the last 14 days |
+| `needs-review.base` | Articles missing a `description` field |
+
+Bases regenerate automatically on `wiki-absorb` (use `--no-bases` to skip). They are pure YAML — open any `.base` file in Obsidian to see a live filterable view.
+
+### CLI
+
+```bash
+# Regenerate Bases manually
+python -m memorymaster --db memorymaster.db bases-generate --output obsidian-vault
+
+# Wiki absorb now also regenerates Bases automatically
+python -m memorymaster --db memorymaster.db wiki-absorb --output obsidian-vault
+```
+
+### Required Tools
+
+- **Python 3.10+** with stdlib `sqlite3` (everything is stdlib — no extra deps)
+- **Obsidian 1.6+** with **Bases core plugin enabled** (for `.base` dashboards). The plugin ships with Obsidian — just enable it under Settings → Core plugins.
+
+### Optional Third-Party MCPs
+
+These are optional but enhance the experience:
+
+| MCP | What it adds | Install |
+|-----|--------------|---------|
+| **memorymaster** | The 21 MCP tools (`ingest_claim`, `query_memory`, `run_cycle`, etc.) | `python scripts/setup-hooks.py` (interactive) |
+| **GitNexus** | Code-graph aware impact analysis before edits | See [GitNexus Integration](#gitnexus-integration-code-intelligence) |
+| **Obsidian CLI** | Vault-aware search via the obsidian CLI tool | `npm install -g obsidian-cli` (requires Obsidian 1.12+) |
+| **Qdrant** | Vector search backend for semantic recall | `docker run -p 6333:6333 qdrant/qdrant` |
+
+### Installation
+
+```bash
+# 1. Clone and install MemoryMaster
+git clone https://github.com/your-org/memorymaster.git
+cd memorymaster
+pip install -e .
+
+# 2. Run the interactive installer (sets up MCP, hooks, env vars, steward cron)
+python scripts/setup-hooks.py
+
+# 3. The installer copies hooks from config-templates/hooks/ to ~/.claude/hooks/
+#    and registers them in ~/.claude/settings.json automatically.
+
+# 4. Verify
+python -m memorymaster --db memorymaster.db query "test"
+```
+
+### Tests
+
+32 E2E tests in `tests/test_obsidian_mind_patterns.py` validate all 5 components:
+
+```bash
+python -m pytest tests/test_obsidian_mind_patterns.py -v
+# 32 passed
 ```
 
 ## Security
