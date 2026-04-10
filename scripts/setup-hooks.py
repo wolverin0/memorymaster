@@ -133,7 +133,7 @@ def install_hooks(llm_config):
     # Add hooks
     hooks = settings.setdefault("hooks", {})
 
-    # UserPromptSubmit — recall
+    # UserPromptSubmit — recall + classify (in that order)
     recall_hook = {
         "hooks": [{
             "type": "command",
@@ -141,10 +141,44 @@ def install_hooks(llm_config):
             "timeout": 5
         }]
     }
+    classify_hook = {
+        "hooks": [{
+            "type": "command",
+            "command": f'python "{hooks_dir / "memorymaster-classify.py"}"',
+            "timeout": 5
+        }]
+    }
     ups_hooks = hooks.setdefault("UserPromptSubmit", [])
     # Remove existing memorymaster hooks
     ups_hooks[:] = [h for h in ups_hooks if "memorymaster" not in json.dumps(h)]
     ups_hooks.append(recall_hook)
+    ups_hooks.append(classify_hook)
+
+    # PostToolUse — validate-wiki on Edit/Write
+    validate_wiki_hook = {
+        "matcher": "Edit|Write",
+        "hooks": [{
+            "type": "command",
+            "command": f'python "{hooks_dir / "memorymaster-validate-wiki.py"}"',
+            "timeout": 5
+        }]
+    }
+    ptu_hooks = hooks.setdefault("PostToolUse", [])
+    ptu_hooks[:] = [h for h in ptu_hooks if "memorymaster-validate-wiki" not in json.dumps(h)]
+    ptu_hooks.append(validate_wiki_hook)
+
+    # SessionStart — inject MemoryMaster context on startup/resume
+    session_start_hook = {
+        "matcher": "startup|resume",
+        "hooks": [{
+            "type": "command",
+            "command": f'python "{hooks_dir / "memorymaster-session-start.py"}"',
+            "timeout": 10
+        }]
+    }
+    ss_hooks = hooks.setdefault("SessionStart", [])
+    ss_hooks[:] = [h for h in ss_hooks if "memorymaster" not in json.dumps(h)]
+    ss_hooks.append(session_start_hook)
 
     # Stop — auto-ingest
     stop_hook = {
