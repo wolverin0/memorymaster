@@ -94,21 +94,99 @@ def _call_llm(prompt: str, text: str) -> str:
         return ""
 
 
+def _extract_description(body: str, max_chars: int = 180) -> str:
+    """Extract a ~150-char description from article body.
+
+    Walks paragraphs until it finds something substantial. Used for
+    progressive disclosure in Bases views and the SessionStart hook.
+    """
+    if not body:
+        return ""
+    # Strip markdown artefacts for the description
+    for para in body.split("\n\n"):
+        clean = para.strip()
+        if not clean:
+            continue
+        # Skip headers, separators, lists
+        if clean.startswith(("#", "---", "- ", "* ", "| ", "```")):
+            continue
+        # Remove wikilinks and emphasis
+        clean = re.sub(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]", r"\1", clean)
+        clean = re.sub(r"[*_`]+", "", clean)
+        clean = re.sub(r"\s+", " ", clean).strip()
+        if len(clean) >= 40:
+            if len(clean) <= max_chars:
+                return clean
+            # Cut at last sentence boundary within limit
+            cut = clean[:max_chars]
+            for sep in (". ", "; ", ", "):
+                idx = cut.rfind(sep)
+                if idx >= 60:
+                    return cut[: idx + 1].strip()
+            return cut.rsplit(" ", 1)[0] + "..."
+    return ""
+
+
+def _build_tags(article_type: str, scope: str, claim_types: list[str]) -> list[str]:
+    """Derive frontmatter tags from article type + scope + claim distribution."""
+    tags: list[str] = []
+    tags.append(article_type)
+    # Scope tag — e.g., project:memorymaster -> project-memorymaster
+    tags.append(re.sub(r"[^a-z0-9-]+", "-", scope.lower()).strip("-"))
+    # Unique extra types that differ from majority
+    for ct in claim_types:
+        t = (ct or "").strip().lower()
+        if t and t not in tags:
+            tags.append(t)
+    # Cap to avoid runaway
+    return tags[:8]
+
+
+def _yaml_escape(value: str) -> str:
+    """Quote YAML scalar if it contains special characters."""
+    if value is None:
+        return '""'
+    v = str(value).replace("\r", " ").replace("\n", " ").strip()
+    if not v:
+        return '""'
+    if any(c in v for c in ':#"\''):
+        return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return v
+
+
 def _write_article(wiki_dir: Path, scope_dir: str, slug: str, title: str,
                     body: str, article_type: str, scope: str,
-                    claim_ids: list[int], related: list[str]) -> Path:
-    """Write a wiki article with frontmatter."""
+                    claim_ids: list[int], related: list[str],
+                    *, description: str = "",
+                    claim_types: list[str] | None = None) -> Path:
+    """Write a wiki article with frontmatter.
+
+    Frontmatter schema (obsidian-mind progressive-disclosure pattern):
+      - title, type, scope, claims, created, last_updated, date, related
+      - description (~150 char summary for Bases + SessionStart hook)
+      - tags (for Obsidian graph + Bases filters)
+    """
     dest = wiki_dir / scope_dir
     dest.mkdir(parents=True, exist_ok=True)
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    if not description:
+        description = _extract_description(body)
+
+    tags = _build_tags(article_type, scope, claim_types or [])
+
     lines = ["---"]
-    lines.append(f"title: {title}")
+    lines.append(f"title: {_yaml_escape(title)}")
+    if description:
+        lines.append(f"description: {_yaml_escape(description)}")
     lines.append(f"type: {article_type}")
     lines.append(f"scope: {scope}")
+    lines.append(f"tags: {json.dumps(tags)}")
     lines.append(f"claims: {claim_ids[:20]}")
     lines.append(f"created: {now}")
     lines.append(f"last_updated: {now}")
+    lines.append(f"date: {now}")
     if related:
         lines.append(f"related: {json.dumps(related[:10])}")
     lines.append("---")
@@ -219,16 +297,20 @@ Return ONLY the updated compiled truth (no frontmatter, no title, no timeline)."
                     timeline_section += "\n" + "\n\n".join(new_timeline_entries) + "\n"
 
                 full_body = new_truth + "\n\n---\n\n" + timeline_section
+                claim_type_list = [c.get("claim_type") or "fact" for c in claims]
                 _write_article(wiki, scope_dir, slug, subject.title(), full_body,
-                              article_type, scope, claim_ids, related_links)
+                              article_type, scope, claim_ids, related_links,
+                              claim_types=claim_type_list)
                 articles_updated += 1
         else:
             # Create new with compiled truth + timeline
             context = f"Subject: {subject}\nScope: {scope}\nClaims ({len(claims)}):\n{claims_text}"
             body = _call_llm(ABSORB_PROMPT, context)
             if body and len(body) > 50:
+                claim_type_list = [c.get("claim_type") or "fact" for c in claims]
                 _write_article(wiki, scope_dir, slug, subject.title(), body,
-                              article_type, scope, claim_ids, related_links)
+                              article_type, scope, claim_ids, related_links,
+                              claim_types=claim_type_list)
                 articles_written += 1
 
         all_articles.append({

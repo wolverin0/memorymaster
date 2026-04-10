@@ -328,6 +328,10 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_absorb = sub.add_parser("wiki-absorb", help="Absorb claims into wiki articles (Karpathy/Farza style)")
     wiki_absorb.add_argument("--output", default="obsidian-vault", help="Wiki directory")
     wiki_absorb.add_argument("--scope", default="", help="Scope filter")
+    wiki_absorb.add_argument("--no-bases", action="store_true", help="Skip regenerating Obsidian Bases")
+
+    bases_generate = sub.add_parser("bases-generate", help="Regenerate Obsidian Bases (.base) files for the wiki")
+    bases_generate.add_argument("--output", default="obsidian-vault", help="Vault root (writes to <root>/bases/)")
 
     wiki_cleanup = sub.add_parser("wiki-cleanup", help="Audit and rewrite weak wiki articles")
     wiki_cleanup.add_argument("--output", default="obsidian-vault", help="Wiki directory")
@@ -1224,10 +1228,36 @@ def _handle_wiki_absorb(args: argparse.Namespace, service, parser: argparse.Argu
     result = absorb(effective_db, wiki_dir=args.output, scope_filter=args.scope or None)
     elapsed_ms = (time.perf_counter() - t0) * 1000
     log_curate(result, args.output)
+
+    # Regenerate Bases alongside absorb unless suppressed
+    if not getattr(args, "no_bases", False):
+        try:
+            from memorymaster.vault_bases import generate_bases
+            bases_result = generate_bases(args.output)
+            result["bases"] = bases_result
+        except Exception as e:
+            result["bases_error"] = str(e)
+
     if args.json_output:
         print(_json_envelope(result, query_ms=elapsed_ms))
     else:
         print(f"Absorbed {result['subjects']} subjects -> {result['articles_written']} new, {result['articles_updated']} updated ({elapsed_ms:.0f}ms)")
+        if "bases" in result:
+            print(f"Bases: {result['bases']['written']} written to {result['bases']['path']}")
+    return 0
+
+
+def _handle_bases_generate(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.vault_bases import generate_bases
+    t0 = time.perf_counter()
+    result = generate_bases(args.output)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        print(f"Bases: {result['written']} written to {result['path']} ({elapsed_ms:.0f}ms)")
+        for f in result["files"]:
+            print(f"  - {f}")
     return 0
 
 
@@ -1623,6 +1653,7 @@ COMMAND_HANDLERS: dict[str, object] = {
     "wiki-absorb": _handle_wiki_absorb,
     "wiki-cleanup": _handle_wiki_cleanup,
     "wiki-breakdown": _handle_wiki_breakdown,
+    "bases-generate": _handle_bases_generate,
     "mine-transcript": _handle_mine_transcript,
     "verify-claims": _handle_verify_claims,
     "extract-entities": _handle_extract_entities,
