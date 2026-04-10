@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.1] - 2026-04-10
+
+### Added
+
+- **`memorymaster-setup` entry point**: New `[project.scripts]` entry so pip-installed users can run the interactive installer via `memorymaster-setup` without needing the repo cloned. `scripts/setup-hooks.py` is now a 3-line shim that calls `memorymaster.setup_hooks:main` for backward compat with clone-based workflows.
+- **`memorymaster-precompact.py` hook template**: Previously missing from `config-templates/`, now shipped inside the package. Closes the gap where README + CHANGELOG advertised a 7-hook stack but `setup-hooks.py` only installed 6.
+- **Package data**: `memorymaster/config_templates/hooks/*.py` and `memorymaster/config_templates/*.md` are now included in the wheel via `[tool.setuptools.package-data]`. `setup_hooks.py` locates templates via `importlib.resources.files("memorymaster")` so it works from both wheel and editable installs.
+
+### Fixed
+
+- **Delete phantom `dict[str` file** from repo root (0-byte file tracked since commit `1d1c33c` via a shell parsing accident).
+- **Relax `quick` SLO thresholds** in `benchmarks/slo_targets.json` to survive GitHub Actions runner variance. Observed up to 10x p95 swings between consecutive runs on the same commit (query_p95: 0.053s vs 0.512s, throughput: 19.5 vs 9.9 ops/s). The old thresholds were calibrated against a single lucky run and made CI flaky. New ceilings provide ~20% headroom over the worst observed value; a `_comment` field in the JSON documents the rationale.
+- **Align docs with CI install set**: `INSTALLATION.md` troubleshooting previously told users to install `.[dev,mcp,security,embeddings,qdrant]` while CI runs `.[dev,mcp,security]`. The minimal set is the canonical reproduction environment (optional extras skip automatically via `pytest.importorskip`). Docs now match CI.
+
+### Changed
+
+- **Templates moved from `config-templates/` to `memorymaster/config_templates/`**: Required for wheel distribution. `scripts/setup-hooks.py` becomes a shim. README and INSTALLATION.md now document both the `memorymaster-setup` flow (recommended for pip-installed users) and the clone workflow.
+- **README + INSTALLATION.md**: Document the 7-hook stack, the `memorymaster-setup` entry point, and the fact that CI uses `.[dev,mcp,security]`.
+
 ## [3.2.0] - 2026-04-09
 
 ### Added
