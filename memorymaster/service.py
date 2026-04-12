@@ -120,6 +120,10 @@ class MemoryService:
             raise ValueError("Claim text cannot be empty.")
         if not citations:
             citations = [CitationInput(source="mcp-session", locator=scope or "project")]
+        # Normalize claim_type to lowercase so routing hints like "DECISION"
+        # from the classify hook don't create a separate type from "decision".
+        if claim_type:
+            claim_type = claim_type.strip().lower() or None
         # Dedup by idempotency key
         normalized_idempotency_key = (idempotency_key or "").strip() or None
         if normalized_idempotency_key is not None and hasattr(self.store, "get_claim_by_idempotency_key"):

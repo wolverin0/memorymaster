@@ -80,3 +80,7 @@ dashboard_test.png
 memorymaster_recover.sql
 .claude/settings.local.json
 .claude/worktrees/
+
+# graphify outputs (generated per project, not committed)
+graphify-out/
+**/graphify-out/

@@ -89,13 +89,26 @@ def _parse_scope_allowlist(raw: str) -> list[str] | None:
 
 
 def _project_scope(workspace: str) -> str:
+    """Derive a project scope from a workspace path.
+
+    Returns the canonical ``project:<slug>`` form by default. The legacy
+    hash-suffix form ``project:<slug>:<sha1[:8]>`` is only used when the env
+    var ``MEMORYMASTER_SCOPE_DISAMBIGUATE=1`` is set — that's the escape hatch
+    for hosts that genuinely have two different workspaces with the same
+    directory name. For the common case (one workspace per slug on a host),
+    dropping the hash prevents scope fragmentation where CLI ingests write
+    ``project:wezbridge`` and MCP ingests write ``project:wezbridge:a6a83c6a``
+    and nobody finds each other.
+    """
     if _ENV_DEFAULT_PROJECT_SCOPE:
         return _ENV_DEFAULT_PROJECT_SCOPE
     workspace_path = Path(_resolve_workspace(workspace)).resolve()
     slug_base = workspace_path.name.strip().lower() or "workspace"
     slug = _SCOPE_SAFE_RE.sub("-", slug_base).strip("-") or "workspace"
-    digest = hashlib.sha1(str(workspace_path).lower().encode("utf-8")).hexdigest()[:8]
-    return f"project:{slug}:{digest}"
+    if os.getenv("MEMORYMASTER_SCOPE_DISAMBIGUATE", "").strip().lower() in ("1", "true", "yes"):
+        digest = hashlib.sha1(str(workspace_path).lower().encode("utf-8")).hexdigest()[:8]
+        return f"project:{slug}:{digest}"
+    return f"project:{slug}"
 
 
 def _effective_ingest_scope(scope: str, workspace: str) -> str:

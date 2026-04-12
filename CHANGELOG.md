@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.1] - 2026-04-11
+
+### Fixed
+
+- **Scope hash-suffix bug in `_project_scope()` (mcp_server.py)**: The MCP server was appending a truncated SHA1 digest of the workspace path to every project scope (`project:wezbridge:a6a83c6a`). CLI ingests wrote `project:wezbridge` without the hash, and the two scopes never merged — sessions querying `project:wezbridge` missed claims stored in `project:wezbridge:a6a83c6a` and vice-versa. Fix: default to the canonical `project:<slug>` form. The hash-suffix escape hatch is preserved behind `MEMORYMASTER_SCOPE_DISAMBIGUATE=1` for hosts that genuinely have two workspaces with the same slug. Existing claims with hash suffixes were migrated to the canonical scope (341 claims across 6 scopes).
+- **Claim type case inconsistency**: `service.ingest()` now normalizes `claim_type` to lowercase so that routing hints like `DECISION` from the classify hook don't create a duplicate type next to `decision`. 30 existing claims with ALL-CAPS types (GOTCHA, CONSTRAINT, ARCHITECTURE, BUG_ROOT_CAUSE, DECISION, REFERENCE) were normalized.
+- **Orphan conflicted claims**: 6 claims had status `conflicted` but their canonical sibling already existed with status `confirmed`. The auto-resolver had skipped them because the confirmed sibling already "won" without competition. They were re-labeled `superseded` with `replaced_by_claim_id` pointing to the winning sibling. Total conflict count: 0.
+- **Stale candidates**: Ran a full steward cycle — 200 claims decayed, 195 moved to stale, candidates older than 24h processed.
+
+### Changed
+
+- `project:*:<8hex>` scopes are now migration-compatible — on a fresh DB the scope has no hash, on an old DB the hash is preserved unless a migration strips it. This is the second time this bug has surfaced (first was in v3.2.2 with the tenant_id leak); documented as a constraint claim for future sessions.
+
 ## [3.3.0] - 2026-04-10
 
 ### Added
