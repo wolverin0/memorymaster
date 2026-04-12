@@ -6,7 +6,7 @@ Lifecycle-managed claims with citations, conflict detection, steward governance,
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-1034-green.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1029-green.svg)]()
 [![MCP Tools](https://img.shields.io/badge/MCP%20tools-22-purple.svg)]()
 [![CLI Commands](https://img.shields.io/badge/CLI%20commands-64-orange.svg)]()
 
@@ -19,7 +19,7 @@ MemoryMaster gives AI coding agents **persistent, verifiable memory** with a ful
 | Metric | Count |
 |--------|-------|
 | Source modules | 35+ (20,000+ lines) |
-| Tests | 1034 across 68 test modules |
+| Tests | 1029 across 68 test modules |
 | MCP tools | 22 |
 | CLI commands | 64 |
 | Import connectors | 10+ (Git, Slack, Jira, email, GitHub, conversations) |
@@ -95,7 +95,79 @@ MemoryMaster gives AI coding agents **persistent, verifiable memory** with a ful
 | **Obsidian Bases** | Auto-generated `.base` dashboards (all-claims, gotchas, decisions, recent, needs-review) regenerated on every `wiki-absorb` |
 | **7-Hook Stack** | Recall + Classify (UserPromptSubmit), Validate-Wiki (PostToolUse), Session-Start (SessionStart), Auto-Ingest (Stop), PreCompact — full memory lifecycle without manual intervention |
 
-## Quick Start
+## Prerequisites
+
+**Required**
+- Python **3.10+** with `pip`
+- Claude Code **or** Codex **or** any MCP-compatible agent (for the hooks + MCP integration)
+
+**Optional but recommended**
+- A free Gemini API key from [aistudio.google.com](https://aistudio.google.com) — powers the auto-ingest hook at ~zero cost. Fallbacks: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or a local Ollama.
+- **Node.js 18+** — only if you want graphify (architecture maps) or GitNexus (code impact analysis)
+- **Obsidian 1.6+** with the **Bases** core plugin — only if you want to browse the wiki visually
+- **Docker** — only if you want Qdrant for hybrid vector search (SQLite FTS5 is the default and works out of the box)
+
+## Install via Agent (One-Prompt) ⚡
+
+**The fastest way to install MemoryMaster end-to-end is to let an AI agent do it.** Open Claude Code, Codex, Cursor, or any agent with shell access in the project directory you want to instrument, and paste the prompt below. The agent handles pip install, MCP wiring, all 7 hooks, steward cron, LLM provider selection, and verification — you only approve steps and provide an API key when asked.
+
+<details>
+<summary><b>📋 Click to copy the one-prompt install</b></summary>
+
+```
+Install MemoryMaster end-to-end in this directory. Execute each step and verify it before moving to the next. Stop and ask me if any step needs a secret, credential, or destructive action.
+
+Step 1 — Prerequisites
+  • Run `python --version` and confirm 3.10+. If lower, stop and ask me to upgrade.
+  • Run `python -m pip --version` to confirm pip is available.
+
+Step 2 — Install the package
+  • `pip install "memorymaster[mcp,security]"`
+  • Confirm `python -c "import memorymaster; print(memorymaster.__version__)"` reports 3.3.1 or higher.
+
+Step 3 — Initialize the project DB
+  • `memorymaster --db memorymaster.db init-db`
+  • Confirm the file exists and is non-empty.
+
+Step 4 — Run the interactive setup
+  • `memorymaster-setup`
+  • This installs 7 Claude Code hooks (recall, classify, validate-wiki, session-start, auto-ingest, precompact, steward-cron), wires the MCP server into ~/.claude.json and ~/.codex/, schedules the steward cron (every 6h), and appends a MemoryMaster section to CLAUDE.md / AGENTS.md in the current project.
+
+Step 5 — LLM provider for the auto-ingest hook
+  • If any of GEMINI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY is already set, report which one and continue.
+  • Otherwise, tell me the cheapest option is a free Gemini Flash Lite key from aistudio.google.com and stop until I paste one. Never invent or reuse keys.
+
+Step 6 — Verify the MCP server
+  • Tell me to fully restart Claude Code / Codex so the new MCP config loads, then wait for me to confirm.
+  • After restart, call mcp__memorymaster__query_memory with text "install smoke test". Expect an empty result set (not an error).
+  • Call mcp__memorymaster__list_claims with limit 5. Expect an empty or short list.
+
+Step 7 — Optional: graphify (architecture map, saves ~70x tokens on codebase exploration)
+  • `npm install -g graphify`
+  • `graphify claude install` — installs the global Claude hook
+  • `graphify hook install` — per-project post-commit hook
+  • `graphify analyze` — index this project (first run may take a few minutes)
+
+Step 8 — Optional: GitNexus (symbol-level impact analysis before edits)
+  • `npx gitnexus analyze` in this project
+
+Step 9 — Report
+Print a table with:
+  • Component → status (✓ installed / — skipped / ✗ failed)
+  • Env vars still required (if any)
+  • 3 smoke-test commands I can run myself
+  • Absolute paths to: memorymaster.db, modified ~/.claude.json, modified CLAUDE.md
+
+Hard constraints:
+  • Do not create new accounts. Do not set credentials for me.
+  • Do not edit files outside: this project, ~/.claude/, ~/.codex/, ~/.memorymaster/.
+  • If any step fails, report the exact error and stop. Do not retry silently.
+  • Do not run `pip install --upgrade pip` or touch system Python.
+```
+
+</details>
+
+## Quick Start (Manual)
 
 ```bash
 # Install
@@ -580,16 +652,19 @@ python -m memorymaster --db memorymaster.db wiki-absorb --output obsidian-vault
 - **Python 3.10+** with stdlib `sqlite3` (everything is stdlib — no extra deps)
 - **Obsidian 1.6+** with **Bases core plugin enabled** (for `.base` dashboards). The plugin ships with Obsidian — just enable it under Settings → Core plugins.
 
-### Optional Third-Party MCPs
+### Recommended Companion Stack
 
-These are optional but enhance the experience:
+MemoryMaster is the memory layer, but it's designed to work alongside a small set of tools that each specialise in one layer of agent intelligence. The **Intelligence-First Rule** — check the cheapest cached layer before exploring raw files — is the reason this stack saves 70× tokens on typical architectural questions.
 
-| MCP | What it adds | Install |
-|-----|--------------|---------|
-| **memorymaster** | The 22 MCP tools (`ingest_claim`, `query_memory`, `run_cycle`, etc.) | `memorymaster-setup` (interactive; or `python scripts/setup-hooks.py` from clone) |
-| **GitNexus** | Code-graph aware impact analysis before edits | See [GitNexus Integration](#gitnexus-integration-code-intelligence) |
-| **Obsidian CLI** | Vault-aware search via the obsidian CLI tool | `npm install -g obsidian-cli` (requires Obsidian 1.12+) |
-| **Qdrant** | Vector search backend for semantic recall | `docker run -p 6333:6333 qdrant/qdrant` |
+| Priority | Tool | What it adds | How to install |
+|----------|------|--------------|----------------|
+| 1 | **graphify** | Pre-computed architecture map (god nodes, communities, surprising connections) in `graphify-out/GRAPH_REPORT.md`. The cheapest layer — answers architectural questions without reading a single source file. | `npm install -g graphify` → `graphify claude install` → `graphify hook install` → `graphify analyze` |
+| 2 | **memorymaster** ← you are here | 22 MCP tools (`ingest_claim`, `query_memory`, `run_cycle`, `find_related_claims`, etc.), 7 hooks, wiki, steward | `memorymaster-setup` (interactive; or `python scripts/setup-hooks.py` from clone) |
+| 3 | **GitNexus** | Symbol-level impact analysis — "what breaks if I change function X" via a pre-built call graph | `npx gitnexus analyze`. See [GitNexus Integration](#gitnexus-integration-code-intelligence). |
+| 4 | **Serena** | LSP-powered symbol-level read/edit — read or rewrite one function without opening the whole file | Global MCP config, see [oraios/serena](https://github.com/oraios/serena) |
+| 5 | **context7** | Live library docs — never guess an API signature | Already a first-party Claude Code MCP; nothing to install |
+| opt | **Obsidian CLI** | Vault-aware search from the terminal | `npm install -g obsidian-cli` (requires Obsidian 1.12+) |
+| opt | **Qdrant** | External vector search backend for semantic recall (SQLite FTS5 is the default) | `docker run -p 6333:6333 qdrant/qdrant` |
 
 ### Installation
 
@@ -606,10 +681,39 @@ python scripts/setup-hooks.py    # 3-line shim calling memorymaster.setup_hooks:
 
 # Either way, the installer copies hooks from memorymaster/config_templates/hooks/
 # to ~/.claude/hooks/ and registers them in ~/.claude/settings.json automatically.
-
-# 4. Verify
-python -m memorymaster --db memorymaster.db query "test"
 ```
+
+### Verify Installation
+
+After install (either path — pip or agent-driven), run these three commands to confirm everything is wired:
+
+```bash
+# 1. Package + version
+python -c "import memorymaster; print('memorymaster', memorymaster.__version__)"
+# expect: memorymaster 3.3.1  (or higher)
+
+# 2. DB + CLI
+python -m memorymaster --db memorymaster.db query "install smoke test"
+# expect: empty result set, no traceback
+
+# 3. MCP server reachable from an agent
+# In Claude Code or Codex (after restarting the client so MCP reloads):
+#   mcp__memorymaster__list_claims(limit=5)
+# expect: empty list or a short list of pre-existing claims, no error
+```
+
+If all three pass, the hooks are in `~/.claude/hooks/`, the MCP server is registered in `~/.claude.json`, and the steward cron is scheduled. The next message you send in that session will trigger the recall hook, and the first time Claude stops, the auto-ingest hook will capture learnings.
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| MCP tools don't appear in agent | Client didn't reload config | Fully quit and reopen Claude Code / Codex — stdio MCP servers only load at startup |
+| Claims land under `project:<name>:<hash>` scope | Running MCP is pre-v3.3.1 | Restart the agent so the new `_project_scope()` loads. See [New in v3.3](#new-in-v33--entity-registry--typed-relationships--scope-fix). |
+| Auto-ingest hook silent, no claims growing | No LLM provider env var set | Set `GEMINI_API_KEY` (free) or `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` |
+| `wiki-absorb` says "no claims to absorb" | Scope mismatch between cwd and claims | `memorymaster --db memorymaster.db query "test"` — check `scope` column on results; then re-run absorb with `--scope project:<name>` |
+| Steward cron not running | Windows doesn't have cron | `memorymaster-setup` installs a Task Scheduler entry on Windows, a `launchd` plist on macOS, and a crontab line on Linux — check your platform's scheduler UI |
+| `ruff check` fails after install | You're on the dev path and haven't pinned ruff | `pip install -e ".[dev]"` — dev extras include pinned lint tools |
 
 ### Tests
 
@@ -619,6 +723,48 @@ python -m memorymaster --db memorymaster.db query "test"
 python -m pytest tests/test_obsidian_mind_patterns.py -v
 # 32 passed
 ```
+
+## New in v3.3 — Entity Registry + Typed Relationships + Scope Fix
+
+v3.3 adds three GBrain-inspired patterns and ships a critical data-layer fix surfaced by a 24h audit.
+
+### Entity Registry
+
+`memorymaster/entity_registry.py` introduces canonical entities with alias resolution. When you ingest a claim about `qdrant`, `Qdrant`, or `QDRANT vector DB`, they all resolve to the same entity via `normalize_alias()`. New tables:
+
+| Table | Purpose |
+|-------|---------|
+| `entities` | Canonical names with `entity_type`, `description`, `aliases_count` |
+| `entity_aliases` | Many-to-one alias → entity mapping, normalized |
+
+`service.ingest()` now auto-assigns `entity_id` on every claim. A one-time backfill mapped 684 existing subjects into 312 entities in ~23 ms. Use `mcp__memorymaster__entity_stats` to see the current graph, or `find_related_claims` to walk relationships through the entity.
+
+### RESOLVER.md — MECE Decision Tree
+
+`obsidian-vault/wiki/RESOLVER.md` is an auto-generated decision tree that tells the wiki engine *which* article a new claim belongs to. 10 canonical types (decision, gotcha, constraint, architecture, environment, reference, bug-root-cause, fact, process, glossary) with disambiguation rules and scope routing. It's **M**utually **E**xclusive, **C**ollectively **E**xhaustive — no claim falls through the cracks, no claim lands in two articles.
+
+### Typed Relationships (5 → 14)
+
+`CLAIM_LINK_TYPES` grew from 5 generic (`relates_to`, `supersedes`, `derived_from`, `contradicts`, `supports`) to 14. New domain-specific link types enable graph traversal that actually answers questions:
+
+```
+implements    configures    depends_on    deployed_on    owned_by
+tested_by     documents     blocks        enables
+```
+
+New `traverse_relationships()` BFS method on the storage read layer: filter by `link_types`, `max_depth`, and `direction` (outgoing/incoming/both). Schema migration preserved existing links via `rename → create → copy → drop`.
+
+### Scope Fix + claim_type Normalization (v3.3.1)
+
+A 24-hour audit surfaced three data-quality bugs, all fixed in v3.3.1:
+
+| Bug | Impact | Fix |
+|-----|--------|-----|
+| `_project_scope()` appended a `sha1(workspace)[:8]` suffix unconditionally | 341 claims fragmented across 6 scopes for the same project | Scope is now canonical `project:<slug>` by default. Set `MEMORYMASTER_SCOPE_DISAMBIGUATE=1` only if you genuinely have two projects with the same directory name. |
+| Classify hook emits ALL-CAPS labels (`DECISION`, `GOTCHA`) that flowed straight into `claim_type` | 30 claims with uppercase types didn't match lowercase queries | `service.ingest()` now lowercases `claim_type` before write. |
+| Auto-resolver for `conflicted` claims skipped orphan conflicts (no active sibling) | 6 orphan conflicts accumulated indefinitely | Manual cleanup: orphans are marked `superseded` with `replaced_by_claim_id` pointing to the confirmed sibling. |
+
+Migration was applied in-place on existing databases. The v3.3.1 release notes include the full SQL. **After upgrading, restart Claude Code / Codex so the running MCP server picks up the new `_project_scope()` — otherwise same-session ingests still land under the old hashed scope.**
 
 ## Security
 
@@ -668,7 +814,7 @@ Key config groups:
 # Install with all dev dependencies
 pip install -e ".[dev,mcp,security,embeddings,qdrant]"
 
-# Run tests (1034 tests)
+# Run tests (1029 tests)
 pytest tests/ -q
 
 # Lint and format
