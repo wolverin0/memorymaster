@@ -473,6 +473,19 @@ class _SchemaMixin:
 
 
     @staticmethod
+    def _ensure_binding_columns(conn: sqlite3.Connection) -> None:
+        """Add wiki_article column for claim↔wiki bidirectional binding (v3.4)."""
+        try:
+            conn.execute("ALTER TABLE claims ADD COLUMN wiki_article TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_claims_wiki_article ON claims(wiki_article)"
+        )
+
+
+    @staticmethod
     def _canonical_payload(payload_json: str | None) -> str:
         if payload_json is None:
             return ""

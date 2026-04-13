@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS claims (
     event_time TEXT,
     valid_from TEXT,
     valid_until TEXT,
+    wiki_article TEXT,
     FOREIGN KEY (supersedes_claim_id) REFERENCES claims(id) ON DELETE SET NULL,
     FOREIGN KEY (replaced_by_claim_id) REFERENCES claims(id) ON DELETE SET NULL
 );

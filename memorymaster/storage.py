@@ -88,6 +88,7 @@ class SQLiteStore(_SchemaMixin, _ReadMixin, _WriteClaimsMixin, _LifecycleMixin):
             self._ensure_temporal_columns(conn)
             self._ensure_tiering_columns(conn)
             self._ensure_agent_columns(conn)
+            self._ensure_binding_columns(conn)
             self._ensure_version_column(conn)
             self._ensure_embeddings_schema(conn)
             # Entity registry (GBrain-inspired canonical entities + alias resolution)

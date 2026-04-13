@@ -200,6 +200,31 @@ def _write_article(wiki_dir: Path, scope_dir: str, slug: str, title: str,
     return filepath
 
 
+def _stamp_wiki_binding(db_path: str, claim_ids: list[int], slug: str) -> None:
+    """Record which wiki article absorbed each claim (v3.4 bidirectional binding).
+
+    Sets claims.wiki_article so the recall hook can surface "→ [[<slug>]]"
+    alongside the claim text. Silent on missing column (pre-3.4 DB).
+    """
+    if not claim_ids or not slug:
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        placeholders = ",".join("?" * len(claim_ids))
+        conn.execute(
+            f"UPDATE claims SET wiki_article = ? WHERE id IN ({placeholders})",
+            (slug, *claim_ids),
+        )
+        conn.commit()
+        conn.close()
+    except sqlite3.OperationalError as exc:
+        # Column missing on older DB — skip silently; backfill will cover it.
+        if "no such column" not in str(exc).lower():
+            logger.warning("wiki binding stamp failed: %s", exc)
+    except Exception as exc:
+        logger.warning("wiki binding stamp failed: %s", exc)
+
+
 def absorb(
     db_path: str,
     wiki_dir: str | Path,
@@ -301,6 +326,7 @@ Return ONLY the updated compiled truth (no frontmatter, no title, no timeline)."
                 _write_article(wiki, scope_dir, slug, subject.title(), full_body,
                               article_type, scope, claim_ids, related_links,
                               claim_types=claim_type_list)
+                _stamp_wiki_binding(db_path, claim_ids, slug)
                 articles_updated += 1
         else:
             # Create new with compiled truth + timeline
@@ -311,6 +337,7 @@ Return ONLY the updated compiled truth (no frontmatter, no title, no timeline)."
                 _write_article(wiki, scope_dir, slug, subject.title(), body,
                               article_type, scope, claim_ids, related_links,
                               claim_types=claim_type_list)
+                _stamp_wiki_binding(db_path, claim_ids, slug)
                 articles_written += 1
 
         all_articles.append({

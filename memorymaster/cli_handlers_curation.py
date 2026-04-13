@@ -136,6 +136,73 @@ def _handle_wiki_absorb(args: argparse.Namespace, service, parser: argparse.Argu
     return 0
 
 
+def _handle_wiki_backfill_bindings(
+    args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str
+) -> int:
+    """Backfill claims.wiki_article from existing wiki article frontmatter.
+
+    Scans every ``<wiki_dir>/**/*.md`` for a ``claims: [...]`` frontmatter line and
+    stamps each listed claim with the file's slug. One-shot v3.4 migration for DBs
+    that were absorbed before the binding feature existed.
+    """
+    import re
+    import sqlite3
+    from pathlib import Path
+
+    wiki_dir = Path(args.output)
+    if not wiki_dir.exists():
+        print(f"Wiki dir not found: {wiki_dir}")
+        return 1
+
+    t0 = time.perf_counter()
+    scanned = 0
+    updated = 0
+
+    conn = sqlite3.connect(effective_db)
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(claims)").fetchall()]
+        if "wiki_article" not in cols:
+            print("claims.wiki_article column missing — run `init-db` first.")
+            return 1
+
+        claim_line = re.compile(r"^claims:\s*(\[[^\]]*\])", re.MULTILINE)
+        for md in wiki_dir.rglob("*.md"):
+            scanned += 1
+            try:
+                head = md.read_text(encoding="utf-8", errors="replace")[:2000]
+            except OSError:
+                continue
+            if not head.startswith("---"):
+                continue
+            m = claim_line.search(head)
+            if not m:
+                continue
+            try:
+                ids = [int(x.strip()) for x in m.group(1).strip("[]").split(",") if x.strip()]
+            except ValueError:
+                continue
+            if not ids:
+                continue
+            slug = md.stem
+            placeholders = ",".join("?" * len(ids))
+            cur = conn.execute(
+                f"UPDATE claims SET wiki_article = ? WHERE id IN ({placeholders}) AND (wiki_article IS NULL OR wiki_article != ?)",
+                (slug, *ids, slug),
+            )
+            updated += cur.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    result = {"wiki_dir": str(wiki_dir), "articles_scanned": scanned, "claims_updated": updated}
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        print(f"Backfill: scanned {scanned} articles, updated {updated} claims ({elapsed_ms:.0f}ms)")
+    return 0
+
+
 def _handle_bases_generate(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.vault_bases import generate_bases
     t0 = time.perf_counter()
@@ -531,6 +598,7 @@ COMMAND_HANDLERS: dict[str, object] = {
     "wiki-absorb": _handle_wiki_absorb,
     "wiki-cleanup": _handle_wiki_cleanup,
     "wiki-breakdown": _handle_wiki_breakdown,
+    "wiki-backfill-bindings": _handle_wiki_backfill_bindings,
     "bases-generate": _handle_bases_generate,
     "mine-transcript": _handle_mine_transcript,
     "verify-claims": _handle_verify_claims,

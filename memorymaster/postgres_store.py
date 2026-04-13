@@ -72,6 +72,7 @@ class PostgresStore(SQLiteStore):
             self._ensure_claim_links_schema(conn)
             self._ensure_human_id_schema(conn)
             self._ensure_tenant_id_schema(conn)
+            self._ensure_binding_schema(conn)
 
     @staticmethod
     def _canonical_payload(payload: object | None) -> str:
@@ -1363,6 +1364,7 @@ class PostgresStore(SQLiteStore):
             archived_at=cls._as_iso(row["archived_at"]),
             human_id=cls._as_text(row.get("human_id")),
             tenant_id=cls._as_text(row.get("tenant_id")),
+            wiki_article=cls._as_text(row.get("wiki_article")),
         )
 
     @classmethod
@@ -1508,6 +1510,14 @@ class PostgresStore(SQLiteStore):
             cur.execute("ALTER TABLE claims ADD COLUMN IF NOT EXISTS tenant_id TEXT")
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_claims_tenant_id ON claims(tenant_id)"
+            )
+
+    def _ensure_binding_schema(self, conn) -> None:
+        """Add wiki_article column for claim↔wiki bidirectional binding (v3.4)."""
+        with conn.cursor() as cur:
+            cur.execute("ALTER TABLE claims ADD COLUMN IF NOT EXISTS wiki_article TEXT")
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_claims_wiki_article ON claims(wiki_article)"
             )
 
     def get_claim_by_human_id(self, human_id: str, include_citations: bool = True) -> Claim | None:

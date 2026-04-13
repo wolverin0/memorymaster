@@ -332,4 +332,5 @@ class Claim:
     source_agent: str | None = None
     visibility: str = "public"
     version: int = 1
+    wiki_article: str | None = None
     citations: list[Citation] = field(default_factory=list)

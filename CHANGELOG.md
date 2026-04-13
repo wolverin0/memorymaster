@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-04-13
+
+### Added
+
+- **Bidirectional claim↔wiki binding**: new `claims.wiki_article` column + index stamps the slug of the wiki article each claim was absorbed into. Closes the one-way link that existed before — wiki frontmatter listed `claims: [ids]` but claims couldn't point back. `wiki_engine.absorb()` now writes both directions in the same pass via the new `_stamp_wiki_binding(db_path, claim_ids, slug)` helper.
+- **Recall hook shows the wiki pointer**: `context_hook.recall()` appends `(compiled in [[<slug>]])` next to any claim that has a `wiki_article` stamp, so agents see not just the fact but where its compiled-truth version lives. Inspired by Marcosomma's "Memory Bundle" pattern (binding > recall).
+- **New CLI `wiki-backfill-bindings`**: one-shot migration that reads `claims: [ids]` frontmatter from every `<wiki_dir>/**/*.md` and stamps each listed claim with the file's slug. Run once after upgrading to v3.4 to backfill existing vaults.
+- **`Claim.wiki_article` field** on the dataclass (default `None`) + readers on both SQLite (`_row_to_claim`) and Postgres (`PostgresStore._row_to_claim`).
+- **Tests**: 8 new tests in `tests/test_wiki_binding.py` — schema shape, index presence, idempotent migration, stamp helper, silent no-op on empty input, dataclass roundtrip, recall formatter, backfill handler. Suite is 998 passed / 39 skipped.
+- **LLM provider A/B benchmark harness** (`scripts/llm_benchmark.py`): 2-arm comparison (Gemini Flash Lite vs Ollama Gemma 4 e4b with thinking) on real session transcripts. Mirrors the auto-ingest curator prompt. Not part of the runtime; used to validate LLM choices before swaps.
+
+### Changed
+
+- Schema files `schema.sql` and `schema_postgres.sql` include `wiki_article TEXT` on the base `claims` DDL for fresh installs. Existing DBs get the column via the idempotent migration (`_ensure_binding_columns` on SQLite, `_ensure_binding_schema` on Postgres).
+
+### Notes
+
+- The feature is additive and the column is nullable. Pre-v3.4 DBs continue to work; `wiki_article` stays `NULL` until the next `wiki-absorb` run (or until `wiki-backfill-bindings` is invoked).
+- Decision trail: benchmark of Gemini Flash Lite vs Gemma 4 e4b (8 sessions) showed Flash Lite extracts 3 claims/session vs Gemma 1 claim/session at the same warm latency (~2.7s). Auto-ingest hook stays on Flash Lite; Gemma remains a candidate for single-output batch tasks (conflict resolver, RESOLVER fallback, wiki-cleanup). `gemma-4-31b-it` via Gemini API (free tier, ~1500/day) works but latency is 10x Flash Lite and thinking can't be disabled — viable only for non-interactive batch.
+
 ## [3.3.1] - 2026-04-11
 
 ### Fixed

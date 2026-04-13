@@ -123,7 +123,11 @@ def recall(
         if not hasattr(claim, "text"):
             continue
         text = claim.text[:300]
-        chunk = f"- {text}"
+        wiki_slug = getattr(claim, "wiki_article", None)
+        if wiki_slug:
+            chunk = f"- {text}  (compiled in [[{wiki_slug}]])"
+        else:
+            chunk = f"- {text}"
         chunk_tokens = len(chunk) // chars_per_token
         if tokens_used + chunk_tokens > budget:
             break

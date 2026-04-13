@@ -426,6 +426,7 @@ class _ReadMixin:
         access_count = int(row["access_count"]) if "access_count" in keys else 0
         last_accessed_val = row["last_accessed"] if "last_accessed" in keys else None
         version = int(row["version"]) if "version" in keys and row["version"] is not None else 1
+        wiki_article = row["wiki_article"] if "wiki_article" in keys else None
         return Claim(
             id=int(row["id"]),
             text=str(row["text"]),
@@ -457,6 +458,7 @@ class _ReadMixin:
             source_agent=row["source_agent"] if "source_agent" in keys else None,
             visibility=row["visibility"] if "visibility" in keys else "public",
             version=version,
+            wiki_article=wiki_article,
         )
 
 

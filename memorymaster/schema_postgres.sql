@@ -30,11 +30,15 @@ CREATE TABLE IF NOT EXISTS claims (
     last_validated_at TIMESTAMPTZ,
     archived_at TIMESTAMPTZ,
     human_id TEXT,
-    tenant_id TEXT
+    tenant_id TEXT,
+    wiki_article TEXT
 );
 
 ALTER TABLE claims
     ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+
+ALTER TABLE claims
+    ADD COLUMN IF NOT EXISTS wiki_article TEXT;
 
 CREATE OR REPLACE FUNCTION memorymaster_claims_confirmed_tuple_guard()
 RETURNS trigger

@@ -292,6 +292,12 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_breakdown.add_argument("--output", default="obsidian-vault", help="Wiki directory")
     wiki_breakdown.add_argument("--scope", default="", help="Scope filter")
 
+    wiki_backfill = sub.add_parser(
+        "wiki-backfill-bindings",
+        help="Backfill claims.wiki_article from existing wiki article frontmatter (v3.4)",
+    )
+    wiki_backfill.add_argument("--output", default="obsidian-vault", help="Wiki directory to scan")
+
     mine_cmd = sub.add_parser("mine-transcript", help="Parse Claude Code transcripts into claims")
     mine_cmd.add_argument("--input", required=True, help="JSONL transcript file or directory")
     mine_cmd.add_argument("--scope", default="project", help="Scope for ingested claims")
