@@ -41,9 +41,12 @@ def get_recent_assistant_messages(transcript_path, max_chars=3000):
                 entry = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if entry.get("role") != "assistant":
+            # Claude Code transcripts wrap role+content inside `message`.
+            # Fall back to top-level for older/alternate schemas.
+            msg = entry.get("message") if isinstance(entry.get("message"), dict) else entry
+            if msg.get("role") != "assistant":
                 continue
-            content = entry.get("content", "")
+            content = msg.get("content", "")
             text = ""
             if isinstance(content, str):
                 text = content

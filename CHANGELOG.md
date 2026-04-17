@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.1] - 2026-04-16
+
+### Fixed
+
+- **Auto-ingest Stop hook silent failure — CRITICAL**: `_run_gemini_extraction()` in `memorymaster/config_templates/hooks/memorymaster-auto-ingest.py` checked `entry.get("role")` at the top level, but Claude Code transcripts wrap role+content inside `entry["message"]`. The condition evaluated `None != "assistant"` for every line, so the message-extraction loop always produced zero messages and the function silently returned before calling the LLM. Net effect: **every `memorymaster-setup` install since the transcript schema changed had the auto-ingest hook extracting zero learnings per session**. The DB grew only via manual MCP `ingest_claim` calls, recall hook queries, and the classify hook — the promised "Gemini Flash Lite reads the transcript and extracts learnings" pipeline was dead. Fix: normalize with `msg = entry.get("message") if isinstance(entry.get("message"), dict) else entry` before reading role/content, accepting both wrapped and flat shapes. Same fix applied to the deployed hook at `~/.claude/hooks/memorymaster-auto-ingest.py` on the developer machine.
+
+### Added
+
+- **Regression tests** (`tests/test_auto_ingest_hook_schema.py`, 8 tests): parses wrapped, flat, and mixed-schema transcripts; verifies short-message filtering, empty transcripts, and malformed-line skipping. Includes two static checks that fail CI if either the deployed hook or the repo template drops the `entry.get("message")` adapter in a future edit.
+
+### Notes
+
+- Existing users running `memorymaster-setup` on or before 2026-04-16 should re-run `memorymaster-setup` (or upgrade in place) to pick up the fixed hook template. Alternatively, edit `~/.claude/hooks/memorymaster-auto-ingest.py` directly and replace the `entry.get("role")` check with `msg = entry.get("message") if isinstance(entry.get("message"), dict) else entry; if msg.get("role") != "assistant": continue`.
+- 7 pre-existing test failures in `test_dedup.py` / `test_sqlite_core.py` tracked separately — Google deprecated `text-embedding-004` endpoint and those tests hit the live API. Unrelated to this fix.
+
 ## [3.4.0] - 2026-04-13
 
 ### Added
