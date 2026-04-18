@@ -64,6 +64,19 @@ All 5 files have `paths: ["**/*.py", "**/*.pyi"]` frontmatter intact (ECC python
 | Web/frontmatter fix needed | Yes (web/*.md missing `paths:`) | N/A — no web rules |
 | Total rules in final `.claude/rules/` | 14 | 9 |
 
-## Verifier pane
+## Verifier pane (pane 19, plan mode, ~5min work)
 
-Pending (task #17).
+**Findings that caught rule drift:**
+1. `claims-lifecycle.md` status table listed **invented names** `working`/`active`. Canonical statuses per `models.py:CLAIM_STATUSES` are: `candidate`, `confirmed`, `stale`, `superseded`, `conflicted`, `archived`. **Fixed** — rewrote status table with real names + transition sources + CLI enforcement note.
+2. `claims-lifecycle.md` tiers section listed **invented names** `recent`/`compact`/`archive`. Real tiers per `cli_handlers_basic.py:455` are: `core`, `working`, `peripheral`. **Fixed** — rewrote tier section.
+3. `storage-parity.md` referenced `storage.py:_ensure_wal()` — function does NOT exist. WAL is set inline at `storage.py:57` inside `SQLiteStore.connect()`'s inner `_open()`. **Fixed** — corrected reference + added the 3 sibling modules (`_storage_read.py`, `_storage_write_claims.py`, `_storage_lifecycle.py`) to scope.
+
+**Verified OK:**
+- `db_merge.py` uses `idempotency_key` ✓ (8 occurrences)
+- `mcp_server.py` + `dream_bridge.py` both run the sensitivity filter ✓ (9 + 6 occurrences)
+- `supersedes_claim_id` / `replaced_by_claim_id` fields exist ✓ (28 files)
+
+**Bonus code observation from verifier** (NOT a rule fix — a suggestion for future):
+- `ingest_claim` MCP tool doesn't expose `supersedes_claim_id` as a parameter → agents can't close the bidirectional pair atomically; they depend on steward to notice. Adding an opt-in parameter would close this gap. Noted in `claims-lifecycle.md` so agents don't invent their own workaround.
+
+**Pattern confirmed (2nd pilot):** Generated project-specific rules DO drift from code reality. 2 of 3 rules had invented identifiers on first pass. Verifier-pane pattern caught both. Skill should codify this: every generated rule's file/function/field references must be grep-verified before commit.

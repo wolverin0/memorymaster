@@ -4,26 +4,30 @@ The claims DB is the source of truth. Every claim has a **status**, **tier**, **
 
 ## Status transitions
 
-| Status | Meaning | Set by |
-|--------|---------|--------|
-| `candidate` | New claim, not yet validated | `ingest_claim` (default) |
-| `working` | Promoted by steward or human | `run_cycle` or manual pin |
-| `active` | Stable, high-confidence truth | Steward after repeat validation |
-| `superseded` | Replaced by a newer claim | `supersedes_claim_id` link |
-| `archived` | Decayed or explicitly retired | Steward decay pass |
+Canonical statuses are defined in `memorymaster/models.py:CLAIM_STATUSES` — six values, no others are valid:
 
-- Transitions MUST go through `service.py` — never update `status` via direct SQL.
+| Status | Meaning | Typically set by |
+|--------|---------|------------------|
+| `candidate` | Newly ingested, not yet validated | `ingest_claim` (default on insert) |
+| `confirmed` | Validated — steward, dedup, or compaction promoted it | `llm_steward.py`, `jobs/compact_summaries.py` |
+| `stale` | Decayed — no recent validation, past freshness window | `jobs/decay.py` |
+| `superseded` | Replaced by a newer claim via explicit link | `auto_resolver.py`, `conflict_resolver.py` |
+| `conflicted` | Contradicts another claim; needs human/steward arbitration | surfaced by `dashboard.py` + resolver jobs |
+| `archived` | Terminal — retired by compaction, dedup, or explicit action | `jobs/compactor.py`, `jobs/dedup.py`, `llm_steward.py` |
+
+- Transitions MUST go through `service.py` or the lifecycle helpers in `_storage_lifecycle.py` — never update `status` via direct SQL.
+- Use `CLAIM_STATUSES` from `models.py` as the single source of truth when writing filters or validators. Adding a new status requires updating `models.py` + `schema.sql` CHECK constraint + `schema_postgres.sql`.
 - When superseding, set both `supersedes_claim_id` on the new claim AND `replaced_by_claim_id` on the old one. Steward enforces the invariant; broken pairs break the wiki.
+- `ingest_claim` MCP tool does NOT currently expose `supersedes_claim_id` as a parameter — the steward closes pairs asynchronously. If you need atomic supersession, go through `auto_resolver` or `conflict_resolver` paths rather than inventing a new ingest signature.
 
-## Tiers (working memory, not status)
+## Tiers (recall weight, orthogonal to status)
 
-Tiers are orthogonal to status — they control recall ordering and compaction:
-- `working` — default for new candidates
-- `recent` — promoted on access or ingest
-- `compact` — older, summary only
-- `archive` — rarely recalled
+Tiers control recall ordering. Default stored in schema is `working` (see `schema.sql:26` and `_storage_schema.py:463`). The `recompute-tiers` CLI command reports counts for three buckets (see `cli_handlers_basic.py:455`):
+- `core` — promoted (frequently accessed, high-confidence, load-bearing)
+- `working` — default for new candidates and most claims
+- `peripheral` — demoted (rarely accessed, low-confidence)
 
-`recompute_tiers` runs on steward cycle; don't set tier manually unless you really mean it.
+`recompute_tiers` runs on steward cycle; don't set tier manually unless you really mean it. Tier is NOT constrained by a schema CHECK — any string is accepted — so stay within the three canonical values above or you'll silently break CLI reporting.
 
 ## Scope conventions
 

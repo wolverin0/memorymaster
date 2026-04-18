@@ -1,12 +1,16 @@
 ---
 paths:
   - "memorymaster/storage.py"
+  - "memorymaster/_storage_read.py"
+  - "memorymaster/_storage_write_claims.py"
+  - "memorymaster/_storage_lifecycle.py"
   - "memorymaster/postgres_store.py"
   - "memorymaster/schema.sql"
   - "memorymaster/schema_postgres.sql"
   - "memorymaster/db_merge.py"
   - "tests/test_storage*.py"
   - "tests/test_postgres*.py"
+  - "tests/test_postgres_parity.py"
 ---
 
 # Storage Parity Rules
@@ -28,7 +32,11 @@ Any column added to one MUST be added to the other in the same PR. Same for inde
 
 ## WAL mode is mandatory
 
-SQLite MUST be opened with `PRAGMA journal_mode=WAL`. This is set in `storage.py:_ensure_wal()`. Do not remove — concurrent readers + writers corrupt without it. Symptom of regression: sporadic `database is locked` errors.
+SQLite MUST be opened with `PRAGMA journal_mode = WAL`. This is set in `storage.py` inside the `connect()` method's inner `_open()` function (look for `conn.execute("PRAGMA journal_mode = WAL")`). Do not remove — concurrent readers + writers corrupt without it. Symptom of regression: sporadic `database is locked` errors.
+
+## Storage is split across sibling modules
+
+The storage layer is split into `storage.py` (SQLite adapter, connection, init) + `_storage_read.py` + `_storage_write_claims.py` + `_storage_lifecycle.py`. When editing ANY of these, check the others — they share the row schema and must evolve together. Read ops in `_storage_read.py` must decode what write ops in `_storage_write_claims.py` produce.
 
 ## FTS5 is the search index
 
