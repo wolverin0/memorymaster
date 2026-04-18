@@ -84,3 +84,4 @@ memorymaster_recover.sql
 # graphify outputs (generated per project, not committed)
 graphify-out/
 **/graphify-out/
+.claude/_backups/

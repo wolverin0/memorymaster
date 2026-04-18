@@ -10,10 +10,28 @@
 - Use `.claude/rules/` for path-specific rules if needed.
 - Run `/project-setup` to regenerate these files if architecture changes significantly.
 
+## Active Rules (`.claude/rules/`)
+
+Path-scoped rules auto-load when editing matching files. Unscoped rules always load.
+
+**From ECC (`repo/rules/python/` upstream — stack-specific, high quality):**
+- `python/coding-style.md`, `python/patterns.md`, `python/testing.md`, `python/security.md`, `python/hooks.md` — auto-load on `**/*.{py,pyi}`
+
+**Project-specific (generated from AGENTS.md Boundaries + Key Modules):**
+- `claims-lifecycle.md` (always-on) — status transitions, tiers, scope conventions, bitemporal fields
+- `sensitivity-filter.md` (always-on) — never ingest creds/IPs/tokens/raw code; filter must run on every ingest path
+- `storage-parity.md` (scoped to storage.py, postgres_store.py, schema*.sql, db_merge.py) — SQLite + Postgres sync, WAL, FTS5
+
+**Pre-existing (hand-authored, preserved):**
+- `mcp-server.md` — MCP tool conventions (auto-citation, sensitivity wrapper, source_agent)
+
+**Curation log:** `.claude/_curation_log_2026-04-18.md`  
+**Backup:** `.claude/_backups/pre-curate-2026-04-18.tgz`
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **memorymaster** (4194 symbols, 11436 relationships, 249 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **memorymaster** (4278 symbols, 11572 relationships, 248 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
