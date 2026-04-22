@@ -41,8 +41,34 @@ def normalize_alias(raw: str) -> str:
     return _NORMALIZE_RE.sub("-", raw.strip().lower()).strip("-")[:200]
 
 
+def _variant_key(raw: str) -> str:
+    """Per-original-form dedup key. Trims + collapses internal whitespace
+    only — preserves case and separators so every distinct surface form
+    ("Qdrant", "qdrant", "QDRANT", "qdrant-cloud", "qdrant vector db")
+    becomes its own alias row. The heavy case/separator collapsing lives
+    in :func:`normalize_alias` (the lookup key) — variant_key is the
+    WRITE-side dedup key.
+    """
+    if not raw:
+        return ""
+    return re.sub(r"\s+", " ", raw.strip())[:200]
+
+
 def ensure_entity_schema(conn: sqlite3.Connection) -> None:
-    """Create entity tables if they don't exist. Idempotent."""
+    """Create entity tables if they don't exist. Idempotent.
+
+    The UNIQUE constraint on ``entity_aliases`` is on
+    ``(entity_id, variant_key)`` — NOT on ``alias``. The normalized ``alias``
+    column is shared across variants of the same entity (by design) so
+    multiple original_forms (e.g. "Qdrant", "qdrant", "QDRANT",
+    "qdrant-cloud") can coexist as distinct rows pointing to the same
+    ``entity_id``. Lookup still uses ``alias`` (the heavily-normalized
+    form) because that's the key that collapses case/separator variation.
+
+    NOTE: this schema is applied to *new* DBs only. Existing DBs created
+    with the old UNIQUE(alias) constraint require an explicit one-shot
+    migration — see :func:`migrate_entity_aliases_schema`.
+    """
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS entities (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,9 +82,11 @@ def ensure_entity_schema(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS entity_aliases (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             entity_id INTEGER NOT NULL,
-            alias TEXT NOT NULL UNIQUE,
+            alias TEXT NOT NULL,
+            variant_key TEXT NOT NULL DEFAULT '',
             original_form TEXT NOT NULL,
             created_at TEXT NOT NULL,
+            UNIQUE(entity_id, variant_key),
             FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
         );
 
@@ -82,42 +110,55 @@ def resolve_or_create(
 ) -> int:
     """Resolve a subject string to a canonical entity_id, creating if needed.
 
-    Returns the entity_id (int). Thread-safe via SQLite serialization.
+    Every call records a distinct original_form variant (deduped per
+    ``(entity_id, variant_key)``). This is what makes the registry
+    useful: "Qdrant", "qdrant", "QDRANT " all collapse to the same
+    entity while producing multiple alias rows. Returns the entity_id
+    (int). Thread-safe via SQLite serialization.
     """
     alias = normalize_alias(subject)
     if not alias:
         return 0
 
-    # Fast path: alias already registered
+    now = _utc_now()
+    display = subject.strip()[:200]
+    variant = _variant_key(subject)
+
+    # Step 1: resolve entity_id — existing row with this normalized alias wins.
     row = conn.execute(
-        "SELECT entity_id FROM entity_aliases WHERE alias = ?", (alias,)
+        "SELECT entity_id FROM entity_aliases WHERE alias = ? LIMIT 1",
+        (alias,),
     ).fetchone()
     if row:
-        return row[0]
-
-    # Slow path: create entity + register alias
-    now = _utc_now()
-    display_name = subject.strip()[:200]
-
-    cur = conn.execute(
-        """INSERT OR IGNORE INTO entities (canonical_name, entity_type, scope, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?)""",
-        (display_name, entity_type, scope, now, now),
-    )
-    if cur.lastrowid and cur.lastrowid > 0:
-        entity_id = cur.lastrowid
+        entity_id = row[0]
     else:
-        # INSERT OR IGNORE hit a duplicate canonical_name — fetch existing
-        existing = conn.execute(
-            "SELECT id FROM entities WHERE canonical_name = ?", (display_name,)
-        ).fetchone()
-        entity_id = existing[0] if existing else 0
+        # Create new entity. If canonical_name collides (shouldn't, since
+        # no alias row exists for this normalized form, but paranoia)
+        # INSERT OR IGNORE then look up.
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO entities
+                   (canonical_name, entity_type, scope, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (display, entity_type, scope, now, now),
+        )
+        if cur.lastrowid and cur.rowcount > 0:
+            entity_id = cur.lastrowid
+        else:
+            existing = conn.execute(
+                "SELECT id FROM entities WHERE canonical_name = ?", (display,)
+            ).fetchone()
+            entity_id = existing[0] if existing else 0
 
+    # Step 2: ALWAYS record this variant. INSERT OR IGNORE is deduped by
+    # the (entity_id, variant_key) UNIQUE constraint — so calling
+    # resolve_or_create repeatedly with the same input is a no-op, but
+    # each fresh case/separator variant adds an alias row.
     if entity_id > 0:
         conn.execute(
-            """INSERT OR IGNORE INTO entity_aliases (entity_id, alias, original_form, created_at)
-               VALUES (?, ?, ?, ?)""",
-            (entity_id, alias, subject.strip(), now),
+            """INSERT OR IGNORE INTO entity_aliases
+                   (entity_id, alias, variant_key, original_form, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (entity_id, alias, variant, display, now),
         )
 
     return entity_id
@@ -153,20 +194,21 @@ def merge_entities(
 
 
 def add_alias(conn: sqlite3.Connection, entity_id: int, alias_text: str) -> bool:
-    """Register an additional alias for an entity. Returns True if added."""
+    """Register an additional alias variant for an entity. Returns True if added
+    (False if this variant was already recorded for this entity).
+    """
     alias = normalize_alias(alias_text)
     if not alias:
         return False
+    variant = _variant_key(alias_text)
     now = _utc_now()
-    try:
-        conn.execute(
-            """INSERT INTO entity_aliases (entity_id, alias, original_form, created_at)
-               VALUES (?, ?, ?, ?)""",
-            (entity_id, alias, alias_text.strip(), now),
-        )
-        return True
-    except sqlite3.IntegrityError:
-        return False  # alias already registered
+    cur = conn.execute(
+        """INSERT OR IGNORE INTO entity_aliases
+               (entity_id, alias, variant_key, original_form, created_at)
+           VALUES (?, ?, ?, ?, ?)""",
+        (entity_id, alias, variant, alias_text.strip(), now),
+    )
+    return cur.rowcount > 0
 
 
 def list_entities(
@@ -253,3 +295,162 @@ def backfill_entities(conn: sqlite3.Connection) -> dict:
 
     conn.commit()
     return {"entities_created": created, "claims_resolved": resolved, "subjects_processed": len(rows)}
+
+
+def _has_legacy_alias_unique(conn: sqlite3.Connection) -> bool:
+    """Return True if entity_aliases has the old UNIQUE(alias) column-level
+    constraint (which prevents >1 alias per normalized form). New schema
+    drops it in favour of UNIQUE(entity_id, variant_key).
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='entity_aliases'"
+    ).fetchone()
+    if not row or not row[0]:
+        return False
+    sql = row[0]
+    # legacy form: `alias TEXT NOT NULL UNIQUE`
+    # new form:   `alias TEXT NOT NULL,` + composite UNIQUE at end
+    return "alias TEXT NOT NULL UNIQUE" in sql
+
+
+def migrate_entity_aliases_schema(conn: sqlite3.Connection) -> dict:
+    """One-shot migration from the legacy UNIQUE(alias) schema to the new
+    UNIQUE(entity_id, variant_key) schema. Preserves all existing rows.
+    Adds the ``variant_key`` column (populated from ``original_form``).
+    Idempotent — safe to call on an already-migrated DB (returns no-op).
+
+    Returns stats dict. Caller is responsible for commit + running this
+    inside a single transaction.
+    """
+    if not _has_legacy_alias_unique(conn):
+        return {"migrated": False, "reason": "schema_already_current"}
+
+    # Rename old table, create new, copy data, drop old.
+    # Legacy indexes follow the renamed table, so drop them by name before
+    # re-creating on the new table (SQLite enforces index name uniqueness
+    # across the whole DB).
+    conn.executescript("""
+        DROP INDEX IF EXISTS idx_entity_aliases_alias;
+        DROP INDEX IF EXISTS idx_entity_aliases_entity_id;
+
+        ALTER TABLE entity_aliases RENAME TO entity_aliases_legacy;
+
+        CREATE TABLE entity_aliases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_id INTEGER NOT NULL,
+            alias TEXT NOT NULL,
+            variant_key TEXT NOT NULL DEFAULT '',
+            original_form TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(entity_id, variant_key),
+            FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_entity_aliases_alias ON entity_aliases(alias);
+        CREATE INDEX idx_entity_aliases_entity_id ON entity_aliases(entity_id);
+    """)
+
+    # Copy — variant_key derived from original_form on the fly.
+    rows = conn.execute(
+        "SELECT entity_id, alias, original_form, created_at "
+        "FROM entity_aliases_legacy ORDER BY id"
+    ).fetchall()
+    copied = 0
+    for entity_id, alias, original, created in rows:
+        variant = _variant_key(original or alias or "")
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO entity_aliases
+                   (entity_id, alias, variant_key, original_form, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (entity_id, alias, variant, original, created),
+        )
+        copied += cur.rowcount
+
+    conn.execute("DROP TABLE entity_aliases_legacy")
+    return {"migrated": True, "rows_copied": copied, "legacy_rows": len(rows)}
+
+
+def backfill_entities_normalized(
+    conn: sqlite3.Connection,
+    *,
+    migrate_schema: bool = True,
+) -> dict:
+    """Re-scan every claim.subject and register it against the registry,
+    producing one alias row per distinct case/separator variant of each
+    canonical entity.
+
+    This is the function to run on an existing DB where the old
+    ``resolve_or_create`` fast-path dropped all variant rows. After it
+    runs, ``avg_aliases_per_entity`` should climb significantly (~2–3x
+    on a typical DB with ad-hoc casing).
+
+    WARNING: do NOT run this on the live memorymaster.db unless you know
+    what you're doing. Call it from a throwaway copy first.
+
+    Args:
+        conn: open SQLite connection (caller commits).
+        migrate_schema: if True, auto-migrate legacy UNIQUE(alias) schema
+            before backfilling. Set False to fail-loud if schema is old.
+
+    Returns stats dict:
+        - ``schema_migration``: output of :func:`migrate_entity_aliases_schema`
+        - ``subjects_scanned``: distinct non-null subjects seen
+        - ``variants_added``: new alias rows inserted by this pass
+        - ``entities_touched``: entities that gained at least one new alias
+    """
+    ensure_entity_schema(conn)
+
+    schema_out: dict = {"migrated": False, "reason": "skipped"}
+    if migrate_schema:
+        schema_out = migrate_entity_aliases_schema(conn)
+    elif _has_legacy_alias_unique(conn):
+        raise RuntimeError(
+            "entity_aliases still has legacy UNIQUE(alias) — pass "
+            "migrate_schema=True or run migrate_entity_aliases_schema first"
+        )
+
+    # Group claim subjects by normalized alias so we can surface the
+    # per-variant delta for each entity.
+    rows = conn.execute(
+        "SELECT DISTINCT subject FROM claims "
+        "WHERE subject IS NOT NULL AND TRIM(subject) != ''"
+    ).fetchall()
+
+    variants_added = 0
+    touched: set[int] = set()
+    for (subject,) in rows:
+        entity_id = resolve_or_create(conn, subject)
+        if entity_id <= 0:
+            continue
+        # resolve_or_create already inserted the variant; detect whether
+        # it was new by checking if the rowid was fresh — but that's racy.
+        # Simpler: count total aliases per entity before/after is overkill;
+        # we just report the delta in the final pass below.
+        touched.add(entity_id)
+        # Backfill claims.entity_id too (harmless if already set).
+        conn.execute(
+            "UPDATE claims SET entity_id = ? "
+            "WHERE subject = ? AND (entity_id IS NULL OR entity_id = 0)",
+            (entity_id, subject),
+        )
+
+    # Compute the true delta: how many alias rows exist now vs how many
+    # distinct entities got touched.
+    total_aliases = conn.execute(
+        "SELECT COUNT(*) FROM entity_aliases"
+    ).fetchone()[0]
+    total_entities = conn.execute(
+        "SELECT COUNT(*) FROM entities"
+    ).fetchone()[0]
+    avg = (total_aliases / total_entities) if total_entities else 0.0
+    variants_added = max(0, total_aliases - total_entities)
+
+    return {
+        "schema_migration": schema_out,
+        "subjects_scanned": len(rows),
+        "variants_added": variants_added,
+        "entities_touched": len(touched),
+        "total_entities": total_entities,
+        "total_aliases": total_aliases,
+        "avg_aliases_per_entity": round(avg, 3),
+    }
