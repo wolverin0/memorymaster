@@ -1,0 +1,200 @@
+{"text": "Customer reports the OpenAI key sk-proj-FAKEabc123def456ghi789jklMNOPQR was found in a log.", "label": "block", "category": "api_key"}
+{"text": "Please rotate sk-ant-api03-FAKEtokenAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA immediately.", "label": "block", "category": "api_key"}
+{"text": "Google API key AIzaFAKE_exampleXXXXXXXXXXXXXXXXXXXXXXX was committed accidentally.", "label": "block", "category": "api_key"}
+{"text": "Deploy script exposed AKIAFAKEEXAMPLEXXXX1 to the build log.", "label": "block", "category": "api_key"}
+{"text": "Staging uses ASIAFAKEEXAMPLEXXXX2 temporary credentials from STS.", "label": "block", "category": "api_key"}
+{"text": "Found the personal token ghp_FAKEabcdefghijklmnopqrstuvwxyz012345 in the repo.", "label": "block", "category": "api_key"}
+{"text": "Slack webhook leaked xoxb-12345-67890-FAKEtokenABCDEFGHIJ in an email.", "label": "block", "category": "api_key"}
+{"text": "A telegram bot token 1234567890:AAEhFAKEtokenExample_bot_token_12345 was posted in chat.", "label": "block", "category": "api_key"}
+{"text": "openai_key_prod: sk-FAKE1234567890abcdefghij do not share.", "label": "block", "category": "api_key"}
+{"text": "Anthropic: sk-ant-FAKE01fakefakefakefakefakefakefake0123 rotate ASAP.", "label": "block", "category": "api_key"}
+{"text": "Legacy GitHub token gho_FAKEabcdefghijklmnopqrstuvwxyz012345 still active.", "label": "block", "category": "api_key"}
+{"text": "Fine-grained PAT github_pat_FAKE11ABCDE0123456789abcdef was in .env.", "label": "block", "category": "api_key"}
+{"text": "This is the deploy user's key: ghs_FAKEabcdefghijklmnopqrstuvwxyz012345", "label": "block", "category": "api_key"}
+{"text": "AWS access key AKIAFAKEDEMOKEYZXXXX belongs to the CI user.", "label": "block", "category": "api_key"}
+{"text": "Slack user token xoxp-FAKE-1234-5678-abcdefghijklm is on the laptop.", "label": "block", "category": "api_key"}
+{"text": "```bash\ncat <<EOF\nexport MYPW=CorrectHorseBatteryStaple9\nEOF\n```", "label": "block", "category": "heredoc_password"}
+{"text": "```\n<<'ENDPW'\nPASSWORD=Sup3rSecretPW_2024\nENDPW\n```", "label": "block", "category": "heredoc_password"}
+{"text": "Heredoc leak: cat <<CREDS\nuser=admin\npassword=Tr0ub4dor&3xyz\nCREDS", "label": "block", "category": "heredoc_password"}
+{"text": "setup script:\n<<SCRIPT\nDB_PASSWORD=Winter2024Strong!X\nSCRIPT", "label": "block", "category": "heredoc_password"}
+{"text": "```\ncat <<EOL > /etc/app.conf\nadmin_password: Hunter2Example!Q\nEOL\n```", "label": "block", "category": "heredoc_password"}
+{"text": "runtime expects a password heredoc:\n<<PASS\nPASSWORD=LongEnoughPw99Lx\nPASS", "label": "block", "category": "heredoc_password"}
+{"text": "bash <<SETUP\nexport SECRET=VeryL0ngStr0ngSecret77\nSETUP", "label": "block", "category": "heredoc_password"}
+{"text": "cat <<'EOC'\nMY_PASSWD=ThisLooksL1keAPw\nEOC", "label": "block", "category": "heredoc_password"}
+{"text": "shell snippet:\ncat <<-EOF\npin: AlphaNumPin981Zzz\nEOF", "label": "block", "category": "heredoc_password"}
+{"text": "The one-liner was: cat <<END > ~/.env\npassword=9CorrectH0rse7\nEND", "label": "block", "category": "heredoc_password"}
+{"text": "#!/bin/bash\nexport DB_PASSWORD=MyP4ssw0rdWithNum77\npsql ...", "label": "block", "category": "shell_password_kv"}
+{"text": "set PASSWORD=ShellKVExample8Pw  ::inline windows", "label": "block", "category": "shell_password_kv"}
+{"text": "export PASSWD=AnotherL0ngPwExample12\n", "label": "block", "category": "shell_password_kv"}
+{"text": "PGPASSWORD=Lemur9Pattern$Zzz psql -h db.example.com", "label": "block", "category": "shell_password_kv"}
+{"text": "MYSQL_PWD=RootLoginPw2024Zzz mysql -u root", "label": "block", "category": "shell_password_kv"}
+{"text": "docker run -e DB_PASSWORD=S3cretDockerPw!01 -d myimage", "label": "block", "category": "shell_password_kv"}
+{"text": "kubectl exec -it pod -- /bin/sh -c 'export PASSWORD=K8sSecretPw99A'", "label": "block", "category": "shell_password_kv"}
+{"text": "ENV PWD=DockerfilePw!2024xP\nENV USER=admin", "label": "block", "category": "shell_password_kv"}
+{"text": "# initial setup\nAPP_PASSWD=FirstRunPw!8Qq\n./run.sh", "label": "block", "category": "shell_password_kv"}
+{"text": "sshpass -p SSHpasswdLeak33Zz ssh user@host", "label": "block", "category": "shell_password_kv"}
+{"text": "```\nENV:\nJWT=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmYWtlIn0.SflKxwFAKEexamplepayloadsigxxx\n```", "label": "block", "category": "jwt_env"}
+{"text": "AUTH_TOKEN=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJleGFtcGxlIn0.FAKEsigFAKEsigFAKEsigFAKEsig in env", "label": "block", "category": "jwt_env"}
+{"text": "Authorization cookie was eyJhbGciOiJIUzI1NiJ9.eyJ1aWQiOiIwMDEifQ.fakeSignatureFakeSignatureFake", "label": "block", "category": "jwt_env"}
+{"text": "ID_TOKEN=eyJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6ImZha2VAZXhhbXBsZS5jb20ifQ.FAKEsigFAKEsigFAKEsigFAKEsig", "label": "block", "category": "jwt_env"}
+{"text": "SESSION=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJleHAiOjE3MDB9.FAKE_sig_fake_sig_fake_sig", "label": "block", "category": "jwt_env"}
+{"text": "env block pasted by user:\nACCESS=eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJyIjoidXNlciJ9.FAKEsigFAKEsigFAKEsigFAKEsig", "label": "block", "category": "jwt_env"}
+{"text": "Refresh-token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiYWRtaW4ifQ.fakesigfakesigfakesig", "label": "block", "category": "jwt_env"}
+{"text": "log: Authorization: Bearer FAKEopaqueTokenExample1234567890ABCDEFghij", "label": "block", "category": "bearer_log"}
+{"text": "ngnix access: GET / Bearer ya29.FAKE_google_oauth_opaque_token_0123", "label": "block", "category": "bearer_log"}
+{"text": "curl -H 'Authorization: Bearer FAKEtokenABCDEFGHIJKLMNOP.qrs.tuv' api.example.com", "label": "block", "category": "bearer_log"}
+{"text": "traceback: rejected Bearer _abcFAKEbearerTokenExample1234567890.xyz", "label": "block", "category": "bearer_log"}
+{"text": "haproxy.log: Authorization: Bearer FAKE_OPAQUE_BEARER_TOKEN_abcdef_0123", "label": "block", "category": "bearer_log"}
+{"text": "debug: h='Authorization: Bearer FAKEsomebearerToken.abcdefghij.xyz'", "label": "block", "category": "bearer_log"}
+{"text": "kong: upstream sent Bearer FAKEBearerOpaqueToken0123456789abcdefghij", "label": "block", "category": "bearer_log"}
+{"text": "HTTP 401 with Bearer FAKE.bearer.tokenExample0123456789abcdef on /v1/users", "label": "block", "category": "bearer_log"}
+{"text": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAFAKEkeycontentFAKEkeycontent==\n-----END RSA PRIVATE KEY-----", "label": "block", "category": "ssh_private_key"}
+{"text": "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktFAKEcontent...\n-----END OPENSSH PRIVATE KEY-----", "label": "block", "category": "ssh_private_key"}
+{"text": "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIFAKEecprivatekeyexampleB\n-----END EC PRIVATE KEY-----", "label": "block", "category": "ssh_private_key"}
+{"text": "-----BEGIN DSA PRIVATE KEY-----\nMIIBvAIBAAKBgQDfakedsaFakeDsaFAKE==\n-----END DSA PRIVATE KEY-----", "label": "block", "category": "ssh_private_key"}
+{"text": "key-id-alpha -----BEGIN PRIVATE KEY----- MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggS", "label": "block", "category": "ssh_private_key"}
+{"text": "embedded in yaml: |\n-----BEGIN ENCRYPTED PRIVATE KEY-----\nFAKEencryptedcontent\n-----END ENCRYPTED PRIVATE KEY-----", "label": "block", "category": "ssh_private_key"}
+{"text": "error: file contains -----BEGIN OPENSSH PRIVATE KEY----- and should not be committed", "label": "block", "category": "ssh_private_key"}
+{"text": "OAuth client_secret: FAKEclientSecretExampleABCDEFGHIJ12345 was in the mobile app.", "label": "block", "category": "oauth_client_secret"}
+{"text": "client_id=google-svc, client_secret=FAKEoauthSecretExampleXYZ12345abcdef", "label": "block", "category": "oauth_client_secret"}
+{"text": "Auth0 config had CLIENT_SECRET=FAKEauth0secretXXXXXXXXXXXXXXXXXXXXXXXX", "label": "block", "category": "oauth_client_secret"}
+{"text": "Okta OIDC secret = FAKEoktaSecretExampleAbCdEfGhIjKlMnOp", "label": "block", "category": "oauth_client_secret"}
+{"text": "Discord bot SECRET: FAKEdiscordBotSecretABCDEFGHIJKLMNOPQR", "label": "block", "category": "oauth_client_secret"}
+{"text": "oauth: client_secret = 'FAKEclientSecret_mixedCase123_ABCD'", "label": "block", "category": "oauth_client_secret"}
+{"text": "TWILIO_AUTH_TOKEN=FAKEtwiliotoken0123456789abcdefghij in prod env", "label": "block", "category": "oauth_client_secret"}
+{"text": "stripe test secret key=sk_test_FAKEstripeSecret0123456789ABCDEF", "label": "block", "category": "oauth_client_secret"}
+{"text": "DATABASE_URL=postgres://admin:FAKEpassword123@db.example.com:5432/app", "label": "block", "category": "db_conn_string"}
+{"text": "the redis url is redis://:FAKEredisPasswd99@cache.example.com:6379/0", "label": "block", "category": "db_conn_string"}
+{"text": "MONGO_URL=mongodb+srv://root:FAKEmongoPw_2024@cluster0.example.mongodb.net/app", "label": "block", "category": "db_conn_string"}
+{"text": "mysql://appuser:FAKEmysqlPw_01@mysql.example.com:3306/appdb was in config", "label": "block", "category": "db_conn_string"}
+{"text": "connection: amqps://rabbit:FAKErabbitPw!01@broker.example.com:5671/vhost", "label": "block", "category": "db_conn_string"}
+{"text": "postgresql://user:FAKEencodedPw%40sign@db.internal.example.com/mydb", "label": "block", "category": "db_conn_string"}
+{"text": "mariadb://svc:FAKEmariadbPw_8@maria.example.com:3306/service_db", "label": "block", "category": "db_conn_string"}
+{"text": "The URI was mongodb://monitoring:FAKEmongoMonPw!1@mongo.example.com:27017/admin", "label": "block", "category": "db_conn_string"}
+{"text": "Heredoc in CLAUDE.md:\ncat <<EOF > /tmp/creds\nSUPER_PASSWORD=SupeRsecret_07_Ag\nEOF", "label": "block", "category": "heredoc_password"}
+{"text": "copy from stdin:\n<<PASS_BLOCK\nbcrypt-seed=PasswordLooksR3al\nPASS_BLOCK", "label": "block", "category": "heredoc_password"}
+{"text": "# in setup_env.sh\nexport DB_PASSWD=Str0ngDBPasswordXY", "label": "block", "category": "shell_password_kv"}
+{"text": "in zsh profile: export ADMIN_PASSWD=AdminPasswd_2026aaa", "label": "block", "category": "shell_password_kv"}
+{"text": "docker-compose envfile: MYSQL_ROOT_PASSWORD=RootPw_fake_1234Xy", "label": "block", "category": "shell_password_kv"}
+{"text": "container env: POSTGRES_PASSWORD=PgPw_fake_4321Ab", "label": "block", "category": "shell_password_kv"}
+{"text": "CI leaked API_KEY=FAKEciApiKeyHexBlob0123456789abcdef0123", "label": "block", "category": "api_key"}
+{"text": "token: `0123456789abcdef0123456789abcdef01234567` was stored raw in the log", "label": "block", "category": "api_key"}
+{"text": "credential token=`deadbeefcafebabe0123456789abcdef0123456789abcdef0123456789abcd`", "label": "block", "category": "api_key"}
+{"text": "logged `eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYWtlIn0.FAKEsigFAKEsigFAKEsigFAKEsig` as token", "label": "block", "category": "jwt_env"}
+{"text": "found: Authorization: Bearer FAKE.jwt.like.bearer.tokenFakeExampleToken123", "label": "block", "category": "bearer_log"}
+{"text": "alexa-skills config client_secret = 'FAKEalexaClientSecretABCDEF123456'", "label": "block", "category": "oauth_client_secret"}
+{"text": "**Password**: `FAKEmarkdownPasswordExample_123Xy`", "label": "block", "category": "shell_password_kv"}
+{"text": "the password is Str0ngPasswordOverHere77 as noted in the chat transcript", "label": "block", "category": "shell_password_kv"}
+{"text": "PASSWORD for the staging account is LongFakePwProse_2026", "label": "block", "category": "shell_password_kv"}
+{"text": "pin for the gate is set to MixedCasePin_7788Ab per the email last week", "label": "block", "category": "shell_password_kv"}
+{"text": "User said the SECRET is FakeSecretInProseWithDigits_12345", "label": "block", "category": "shell_password_kv"}
+{"text": "remember the sshpw FakeSSHpasswordInProse_2026X will expire soon", "label": "block", "category": "shell_password_kv"}
+{"text": "the admin PASSWD for the router is AdminRouterPw_2026Zx on page 4", "label": "block", "category": "shell_password_kv"}
+{"text": "he told me his password is Hunter2SquaredHunter99 and nothing else", "label": "block", "category": "shell_password_kv"}
+{"text": "the shared passphrase is FakeSharedPass_2026KL per group chat", "label": "block", "category": "shell_password_kv"}
+{"text": "root password noted: RootAccessPw_fake_2026A and keep it safe", "label": "block", "category": "shell_password_kv"}
+{"text": "logged PASSWORD then value LongL00kingPw_2026Fake right after", "label": "block", "category": "shell_password_kv"}
+{"text": "ticket notes: passwd set to NewUserPasswd_fake_Z9 for onboarding", "label": "block", "category": "shell_password_kv"}
+{"text": "from the chat: 'my password now is CleverP4ssword_2026' user quote", "label": "block", "category": "shell_password_kv"}
+{"text": "copy: pin - AlphaNumPin88Xy set by the landlord last week", "label": "block", "category": "shell_password_kv"}
+{"text": "**Pass**: `FakeMdCredentialP4ss_2026` in wiki", "label": "block", "category": "shell_password_kv"}
+{"text": "the user's PIN is 384720 but pay no attention to that", "label": "pass", "category": "pin_numeric_only"}
+{"text": "The production server IP is 10.0.0.5 and listens on port 8080.", "label": "pass", "category": "private_ip"}
+{"text": "Worker nodes on 192.168.1.100 through 192.168.1.110 run the ingest loop.", "label": "pass", "category": "private_ip"}
+{"text": "The database is reachable at 172.16.0.1 internally.", "label": "pass", "category": "private_ip"}
+{"text": "Link-local fallback is 169.254.10.5 when DHCP fails.", "label": "pass", "category": "private_ip"}
+{"text": "Dev loopback at 127.0.0.1:5432 serves the local Postgres.", "label": "pass", "category": "private_ip"}
+{"text": "Hostname is db-primary.internal.example.com per the docs.", "label": "pass", "category": "hostname"}
+{"text": "Service mesh routes via api-gateway.svc.cluster.local now.", "label": "pass", "category": "hostname"}
+{"text": "Public endpoint is api.example.com/v1/users for this release.", "label": "pass", "category": "hostname"}
+{"text": "Bucket name is s3://example-artifacts-prod/releases/2026/", "label": "pass", "category": "hostname"}
+{"text": "The canonical FQDN is web-01.prod.internal per infra notes.", "label": "pass", "category": "hostname"}
+{"text": "Logs live in /var/log/app/ on each host.", "label": "pass", "category": "path"}
+{"text": "Config file path is /etc/example-app/config.yaml by default.", "label": "pass", "category": "path"}
+{"text": "Data directory is ~/data/warehouse as described in the README.", "label": "pass", "category": "path"}
+{"text": "Artifacts under /opt/builds/2026-04/ expire after 90 days.", "label": "pass", "category": "path"}
+{"text": "The CLI reads ./memorymaster.db from the cwd.", "label": "pass", "category": "path"}
+{"text": "Run id 550e8400-e29b-41d4-a716-446655440000 completed successfully.", "label": "pass", "category": "uuid"}
+{"text": "Trace id 1b4e28ba-2fa1-11d2-883f-0016d3cca427 recorded in Jaeger.", "label": "pass", "category": "uuid"}
+{"text": "Corr id 6ba7b810-9dad-11d1-80b4-00c04fd430c8 from the job scheduler.", "label": "pass", "category": "uuid"}
+{"text": "The event id 01928e5c-4b2c-7abc-9def-0123456789ab is a UUIDv7.", "label": "pass", "category": "uuid"}
+{"text": "Tenant 00000000-0000-0000-0000-000000000001 is the default seed.", "label": "pass", "category": "uuid"}
+{"text": "Bug fixed in commit a1b2c3d4e5f6 (short SHA).", "label": "pass", "category": "git_sha"}
+{"text": "Regression bisected to a1b2c3d4e5f6789012345678901234567890abcd on main.", "label": "pass", "category": "git_sha"}
+{"text": "Merge 3113c90 introduced the auto-ingest hook fix.", "label": "pass", "category": "git_sha"}
+{"text": "Tag v3.4.1 points at 95207fe per the changelog.", "label": "pass", "category": "git_sha"}
+{"text": "Branch omni/fix-claude-rules-curation has commit 159d724 at head.", "label": "pass", "category": "git_sha"}
+{"text": "Example in the docs uses AIzaExampleXXXXXXXXXXXXXXXXXXXXXXXXXX as a placeholder token.", "label": "pass", "category": "rfc_pseudo_key"}
+{"text": "RFC 6749 shows client_id=s6BhdRkqt3 as the example not a real secret.", "label": "pass", "category": "rfc_pseudo_key"}
+{"text": "Docs: 'Your key looks like AIza...' (redacted placeholder).", "label": "pass", "category": "rfc_pseudo_key"}
+{"text": "Tutorial says set OPENAI_API_KEY to your_key_here before running.", "label": "pass", "category": "rfc_pseudo_key"}
+{"text": "Example Bearer token in RFC: Bearer mF_9.B5f-4.1JqM (short, demo).", "label": "pass", "category": "rfc_pseudo_key"}
+{"text": "A function calculate_total_price exists in the invoice module.", "label": "pass", "category": "code_snippet"}
+{"text": "The class UserService handles lookup and validation.", "label": "pass", "category": "code_snippet"}
+{"text": "Method name is handle_claims_ingest per the MCP spec.", "label": "pass", "category": "code_snippet"}
+{"text": "Function _redact returns tuple[str, list[str]] from security.py.", "label": "pass", "category": "code_snippet"}
+{"text": "The recall hook is ingest_claim in mcp_server.py.", "label": "pass", "category": "code_snippet"}
+{"text": "Service runs on port 8443 behind the loadbalancer.", "label": "pass", "category": "infra"}
+{"text": "QPS peaks at 1200 during the 09:00 ARG rush hour.", "label": "pass", "category": "infra"}
+{"text": "Disk usage hit 78% yesterday on the backup node.", "label": "pass", "category": "infra"}
+{"text": "Memory limit is 4GiB with 3.2GiB in use currently.", "label": "pass", "category": "infra"}
+{"text": "Process count on the host is 143 with 12 zombies.", "label": "pass", "category": "infra"}
+{"text": "Queue depth for ingest is 450 items pending.", "label": "pass", "category": "infra"}
+{"text": "Steward cycle ran for 42 seconds this morning.", "label": "pass", "category": "infra"}
+{"text": "FTS5 index holds 12,450 claim rows as of today.", "label": "pass", "category": "infra"}
+{"text": "WAL mode is mandatory for SQLite writers here.", "label": "pass", "category": "infra"}
+{"text": "Vector store Qdrant runs on the same VPC as the app.", "label": "pass", "category": "infra"}
+{"text": "Decision: wiki is read layer, claims DB is write layer.", "label": "pass", "category": "decision"}
+{"text": "We agreed to pin the default model to gemini-flash-lite.", "label": "pass", "category": "decision"}
+{"text": "Architecture: sensitivity filter runs pre-ingest, never post-hoc.", "label": "pass", "category": "decision"}
+{"text": "Decision to drop the bearer-prefix cookie in v3.5.", "label": "pass", "category": "decision"}
+{"text": "Gotcha: source_agent must be set to 'claude-session' on MCP ingest.", "label": "pass", "category": "decision"}
+{"text": "Bug root cause: event_time was dropped by the serializer (fixed in d64a2b1).", "label": "pass", "category": "decision"}
+{"text": "Constraint: files under 800 lines, functions under 50.", "label": "pass", "category": "decision"}
+{"text": "Environment: Windows 10 + WSL bash for dev.", "label": "pass", "category": "decision"}
+{"text": "Reference: see README section on one-prompt install.", "label": "pass", "category": "decision"}
+{"text": "Session-start hook injects recent claims and last cycle summary.", "label": "pass", "category": "decision"}
+{"text": "Today is 2026-04-22 (ISO-8601 absolute date).", "label": "pass", "category": "date"}
+{"text": "Event_time for this claim is 2026-04-18T12:34:56Z.", "label": "pass", "category": "date"}
+{"text": "Valid_from 2026-04-01 until 2026-04-30 on the rotating credential note.", "label": "pass", "category": "date"}
+{"text": "Weekly cadence: the steward runs every 6 hours.", "label": "pass", "category": "date"}
+{"text": "Release window opens 2026-05-01 and closes 2026-05-07.", "label": "pass", "category": "date"}
+{"text": "Lint reported 0 warnings on the memorymaster module today.", "label": "pass", "category": "infra"}
+{"text": "Test suite passes with 312 tests green and 1 known-flaky.", "label": "pass", "category": "infra"}
+{"text": "ruff check memorymaster/ returned clean output just now.", "label": "pass", "category": "infra"}
+{"text": "New scope project:memorymaster has 2,145 claims currently.", "label": "pass", "category": "infra"}
+{"text": "Typical query_memory latency is 34ms on local SQLite.", "label": "pass", "category": "infra"}
+{"text": "Claim 3873 was the live leak example flagged in the audit.", "label": "pass", "category": "decision"}
+{"text": "The dream_bridge module has _DREAM_EXTRA_PATTERNS for extras.", "label": "pass", "category": "decision"}
+{"text": "Boundary: never mutate claims DB schema without tests.", "label": "pass", "category": "decision"}
+{"text": "Sensitivity filter is the firewall before ingest lands in DB.", "label": "pass", "category": "decision"}
+{"text": "Wiki article frontmatter is schema-enforced with 50-200 char description.", "label": "pass", "category": "decision"}
+{"text": "When unsure about scope, default to project:<slug>.", "label": "pass", "category": "decision"}
+{"text": "Pattern 'confirmed' status is set by the steward, not the ingest.", "label": "pass", "category": "decision"}
+{"text": "Conflicted claims surface in the dashboard page.", "label": "pass", "category": "decision"}
+{"text": "Archived is terminal — only compaction or explicit action sets it.", "label": "pass", "category": "decision"}
+{"text": "Superseded pairs set supersedes_claim_id and replaced_by_claim_id both.", "label": "pass", "category": "decision"}
+{"text": "Hostnames like build-agent-04.prod.example.com pass through.", "label": "pass", "category": "hostname"}
+{"text": "Edge case: zero-row queries return empty list not null.", "label": "pass", "category": "decision"}
+{"text": "Project folder is G:/_OneDrive/OneDrive/Desktop/Py Apps/memorymaster locally.", "label": "pass", "category": "path"}
+{"text": "Use bash on Windows via WSL — escape differences vs Git Bash noted.", "label": "pass", "category": "decision"}
+{"text": "Argentine timezone is UTC-3; no DST since 2009.", "label": "pass", "category": "decision"}
+{"text": "ARS invoicing via AFIP is a project-specific concern.", "label": "pass", "category": "decision"}
+{"text": "Decision: dream-seed exports should be scope-filtered.", "label": "pass", "category": "decision"}
+{"text": "Redis hostname is redis-cache-01.internal (no creds in hostname).", "label": "pass", "category": "hostname"}
+{"text": "Admin dashboard lives at dashboard.memorymaster.internal.", "label": "pass", "category": "hostname"}
+{"text": "Example tutorial token placeholder is AIza-YOUR-KEY-HERE as docs note.", "label": "pass", "category": "rfc_pseudo_key"}
+{"text": "Docs show OPENAI_API_KEY=sk-XXXX as placeholder, do not use literal.", "label": "pass", "category": "rfc_pseudo_key"}
+{"text": "README fragment: 'replace Bearer YOUR_TOKEN with a real bearer token'.", "label": "pass", "category": "rfc_pseudo_key"}
+{"text": "Sample config: PASSWORD=YOUR_PASSWORD_HERE as the placeholder marker.", "label": "pass", "category": "rfc_pseudo_key"}
+{"text": "Docs show DATABASE_URL=postgres://user:password@host/db as a template.", "label": "pass", "category": "rfc_pseudo_key"}
+{"text": "Use a password at least 12 chars long per policy.", "label": "pass", "category": "advice"}
+{"text": "Rotate tokens every 90 days; shorter for production.", "label": "pass", "category": "advice"}
+{"text": "Never log the password; redact at the boundary.", "label": "pass", "category": "advice"}
+{"text": "Client secrets should never be checked into git repos.", "label": "pass", "category": "advice"}
+{"text": "The word password appears in the dictionary definition page.", "label": "pass", "category": "advice"}
+{"text": "Token length requirements vary per provider policy.", "label": "pass", "category": "advice"}
+{"text": "A strong passphrase beats a short complex password on entropy.", "label": "pass", "category": "advice"}
+{"text": "PIN pads should lock after 3 failed attempts per NIST.", "label": "pass", "category": "advice"}
+{"text": "Secret management policy is documented in the security runbook.", "label": "pass", "category": "advice"}
+{"text": "The keyword 'secret' appears in many normal product descriptions.", "label": "pass", "category": "advice"}

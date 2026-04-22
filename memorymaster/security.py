@@ -17,6 +17,8 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("google_api_key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
     ("aws_access_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("aws_sts_key", re.compile(r"\bASIA[0-9A-Z]{16}\b")),
+    # Stripe keys (sk/rk/pk + live/test).
+    ("stripe_key", re.compile(r"\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}\b")),
     # GitHub — all token prefixes: ghp (personal), gho (oauth), ghu (user),
     # ghs (server-to-server), ghr (refresh), github_pat_ (fine-grained).
     # Both patterns report as "github_token" so downstream callers get a
@@ -27,8 +29,9 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("slack_token", re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b")),
     # Telegram bot tokens (<numeric_id>:<token>)
     ("telegram_bot_token", re.compile(r"\b\d{8,}:[A-Za-z0-9_\-]{30,}\b")),
-    # Bearer / JWT / private key blocks
-    ("jwt_token", re.compile(r"\beyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*\b")),
+    # Bearer / JWT / private key blocks. JWT header min 16 chars post-`eyJ`
+    # catches real minimum `{"alg":"HS256"}` -> eyJhbGciOiJIUzI1NiJ9.
+    ("jwt_token", re.compile(r"\beyJ[A-Za-z0-9_\-]{16,}\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*\b")),
     ("bearer_token", re.compile(r"Bearer\s+[A-Za-z0-9_\-\.]{8,}")),
     ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     # NOTE: Private IPv4 (10/8, 172.16/12, 192.168/16) is intentionally NOT
@@ -55,6 +58,35 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # SSH/connection strings with embedded passwords (legacy pattern — kept for
     # non-standard shapes the structured db_url_password above might miss)
     ("connection_password", re.compile(r"(?i)(?:ssh|ftp|mysql|postgres|redis|mongo).*(?:password|pass|pwd)\s*[:=]\s*([^\s,;]+)")),
+    # Compound credential identifiers — AUTH_TOKEN=, MY_PASSWD=, PGPASSWORD=,
+    # DB_PASSWORD=, CLIENT_SECRET=, API_KEY=, etc. The \bpassword\b boundary
+    # fails on these because `_` is a regex word-char; this pattern matches
+    # an optional prefix + credential core + optional suffix + value.
+    ("compound_credential", re.compile(
+        r"(?i)(?:[A-Z][A-Z0-9]*_)?"
+        r"(?:password|passwd|pwd|secret|token|api[_-]?key|client_secret|auth_token)"
+        r"[A-Z0-9_]*\s*[:=]\s*['\"`]?([^\s'\"`,;]+)"
+    )),
+    # Abbreviated password keys: MYPW, UPW, ADMINPW, DBPW (all-caps + PW tail).
+    # Requires explicit assignment, won't match PWA/PWS/SPWN.
+    ("shell_abbr_password", re.compile(r"\b[A-Z]{1,10}PW\s*=\s*['\"`]?([^\s'\"`,;]{3,})")),
+    ("sshpass_flag", re.compile(r"(?i)\bsshpass\s+-p\s+(\S+)")),
+    # MySQL inline `-p<pw>` (no space), >=6 char value to avoid short flags.
+    ("mysql_inline_password", re.compile(r"(?i)(?:^|\s)mysql\s+[^\s|]*-p([A-Za-z0-9!@#$%^&*_\-+=]{6,})")),
+    # Prose credential leak: marker word (password/passwd/pin/secret/
+    # passphrase/sshpw/api_key) within 80 chars of a password-shaped token
+    # (10+ chars, both uppercase and digit). Catches:
+    #   "the password is Str0ngPasswordOverHere77"
+    #   "PASSWORD for staging is LongFakePwProse_2026"
+    ("prose_password", re.compile(
+        r"(?i)(?:password|passwd|passphrase|sshpw|\bpin\b|\bsecret\b|api[_-]?key)"
+        r"[^\n]{0,80}?"
+        r"(?<![A-Za-z0-9_])("
+        r"(?=[A-Za-z0-9_!@#$%^&*.\-+=]*[A-Z])"
+        r"(?=[A-Za-z0-9_!@#$%^&*.\-+=]*[0-9])"
+        r"[A-Za-z][A-Za-z0-9_!@#$%^&*.\-+=]{9,})"
+        r"(?![A-Za-z0-9_])"
+    )),
 ]
 
 
@@ -146,13 +178,32 @@ def resolve_allow_sensitive_access(
     raise ValueError("deny_mode must be 'raise' or 'filter'.")
 
 
+# Placeholder tokens from RFC examples, tutorials, docs. If every match a
+# pattern makes is a placeholder, we suppress that pattern's finding so docs
+# don't get flagged as real credentials.
+_PLACEHOLDER_MARKERS: re.Pattern[str] = re.compile(
+    r"(?i)\bYOUR[_\-]?(?:TOKEN|KEY|PASSWORD|SECRET|API[_\-]?KEY)[_\-]?HERE?\b"
+    r"|\bYOUR_[A-Z]+\b|<[a-z_\- ]{3,40}>|\bREPLACE[_\- ]?ME\b"
+    r"|\bsk-[X]{3,}[A-Za-z0-9]*\b|\bsk-YOUR[_\-]?[A-Z]+\b"
+    r"|\bmF_9\.B5f-4\.1JqM\b|:password@|=password\b"
+)
+
+
+def _is_placeholder_match(matched_text: str) -> bool:
+    return bool(_PLACEHOLDER_MARKERS.search(matched_text))
+
+
 def _redact(text: str) -> tuple[str, list[str]]:
     findings: list[str] = []
     out = text
     for name, pattern in _SECRET_PATTERNS:
-        if pattern.search(out):
-            findings.append(name)
-            out = pattern.sub(f"[REDACTED:{name}]", out)
+        matches = list(pattern.finditer(out))
+        if not matches:
+            continue
+        if all(_is_placeholder_match(m.group(0)) for m in matches):
+            continue
+        findings.append(name)
+        out = pattern.sub(f"[REDACTED:{name}]", out)
     return out, findings
 
 
