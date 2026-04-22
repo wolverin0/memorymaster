@@ -24,13 +24,20 @@ def _env(key: str, default: str = "") -> str:
 
 
 def _call_google(prompt: str, text: str) -> str:
-    """Google Gemini API (default: gemini-3.1-flash-lite-preview)."""
-    api_key = _env("GEMINI_API_KEY")
-    if not api_key:
-        return ""
+    """Google Gemini API.
 
-    model = _env("MEMORYMASTER_LLM_MODEL", "gemini-3.1-flash-lite-preview")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    Default model is ``gemini-2.5-flash-lite`` (stable — higher and more
+    predictable free-tier quota than the preview variants). Override via
+    ``MEMORYMASTER_LLM_MODEL``.
+
+    Key source priority:
+        1. Rotator file (``~/.memorymaster/gemini-keys.env``) — rotates
+           round-robin, auto-cooldown on 429, permanent skip on revoked keys.
+        2. ``GEMINI_API_KEY`` env var — singular key, no rotation.
+    """
+    from memorymaster.key_rotator import get_rotator
+
+    model = _env("MEMORYMASTER_LLM_MODEL", "gemini-2.5-flash-lite")
 
     payload: dict[str, Any] = {
         "contents": [{"parts": [{"text": f"{prompt}\n\n{text}"}]}],
@@ -46,6 +53,25 @@ def _call_google(prompt: str, text: str) -> str:
     elif "gemini-2.5" in model:
         payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
 
+    rotator = get_rotator("gemini")
+    if rotator and len(rotator) > 0:
+        # Try each key at most once per call, rotating on 429.
+        attempts = len(rotator)
+        for _ in range(attempts):
+            pair = rotator.next_key()
+            if pair is None:
+                break
+            label, key = pair
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+            result = _http_post(url, payload, _extract_google, rotator_label=label, rotator=rotator)
+            if result:
+                return result
+        return ""
+
+    api_key = _env("GEMINI_API_KEY")
+    if not api_key:
+        return ""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     return _http_post(url, payload, _extract_google)
 
 
@@ -160,10 +186,13 @@ def _http_post(
     extractor: Any,
     extra_headers: dict | None = None,
     timeout: int = 10,
+    rotator_label: str | None = None,
+    rotator: Any = None,
 ) -> str:
     headers = {"Content-Type": "application/json"}
     if extra_headers:
         headers.update(extra_headers)
+    log = logging.getLogger(__name__)
 
     try:
         req = urllib.request.Request(
@@ -175,8 +204,54 @@ def _http_post(
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             result = json.loads(resp.read().decode("utf-8"))
         return extractor(result)
+    except urllib.error.HTTPError as exc:
+        # Read the response body so 429/4xx messages surface the provider's
+        # actual error (quota metric, model, Retry-After, status).
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        log.warning(
+            "LLM call failed (%s) label=%s: HTTP %s %s",
+            url[:60], rotator_label or "-", exc.code, body[:500],
+        )
+        if rotator is not None and rotator_label and exc.code in (429, 403):
+            retry_after = _parse_retry_after(body, exc.headers)
+            status = _extract_google_status(body)
+            if status in ("PERMISSION_DENIED", "UNAUTHENTICATED") or exc.code == 403:
+                rotator.mark_banned(rotator_label, reason=f"HTTP {exc.code} {status}")
+            else:
+                rotator.mark_rate_limited(rotator_label, retry_after=retry_after)
+        return ""
     except Exception as exc:
-        logging.getLogger(__name__).warning("LLM call failed (%s): %s", url[:60], exc)
+        log.warning("LLM call failed (%s) label=%s: %s", url[:60], rotator_label or "-", exc)
+        return ""
+
+
+def _parse_retry_after(body: str, headers: Any) -> float | None:
+    """Extract seconds-to-retry from Google's 429 body or Retry-After header."""
+    if headers is not None:
+        h_val = dict(headers).get("Retry-After") if hasattr(headers, "get") else None
+        if h_val:
+            try:
+                return float(h_val)
+            except (TypeError, ValueError):
+                pass
+    m = re.search(r"[Pp]lease retry in ([\d.]+)s", body)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    return None
+
+
+def _extract_google_status(body: str) -> str:
+    """Pull `error.status` field from a Google API JSON error body."""
+    try:
+        data = json.loads(body)
+        return str(data.get("error", {}).get("status", ""))
+    except (json.JSONDecodeError, TypeError):
         return ""
 
 
