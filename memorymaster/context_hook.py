@@ -66,14 +66,48 @@ def recall(
     db = db_path or os.environ.get("MEMORYMASTER_DEFAULT_DB") or "memorymaster.db"
     svc = MemoryService(db_target=db, workspace_root=Path.cwd())
 
-    # Get ranked results with lexical scoring
-    rows = svc.query_rows(
-        query_text=query,
-        limit=8,
-        retrieval_mode="legacy",
-        include_candidates=True,
-        scope_allowlist=None,
-    )
+    # Pre-extract salient tokens before hitting FTS5. Passing the full
+    # prompt verbatim AND-joins every token in FTS5 and rejects nearly all
+    # real conversational prompts (see artifacts/retrieval-eval-2026-04-22).
+    # FTS5 _escape_fts5_query() quotes-and-AND-joins tokens, so we instead
+    # run one query per top token and union the results — effectively OR.
+    from memorymaster.recall_tokenizer import extract_query_tokens
+
+    fts_query = extract_query_tokens(query, db, max_tokens=6)
+    token_list = fts_query.split() if fts_query else []
+
+    rows: list = []
+    seen_ids: set[int] = set()
+    if token_list:
+        # Fan out: top token first (highest IDF), then widen by OR.
+        per_token_limit = max(3, 8 // max(1, len(token_list)))
+        for tok in token_list:
+            batch = svc.query_rows(
+                query_text=tok,
+                limit=per_token_limit,
+                retrieval_mode="legacy",
+                include_candidates=True,
+                scope_allowlist=None,
+            )
+            for row in batch:
+                claim = row.get("claim")
+                cid = getattr(claim, "id", None)
+                if cid is None or cid in seen_ids:
+                    continue
+                seen_ids.add(cid)
+                rows.append(row)
+            if len(rows) >= 8:
+                break
+
+    if not rows:
+        # Fallback to raw prompt — preserves the old behaviour.
+        rows = svc.query_rows(
+            query_text=query,
+            limit=8,
+            retrieval_mode="legacy",
+            include_candidates=True,
+            scope_allowlist=None,
+        )
 
     if not rows and not skip_qdrant:
         # Fallback to Qdrant semantic search
@@ -96,8 +130,10 @@ def recall(
     if not rows:
         return ""
 
-    # Re-rank by lexical relevance — claims with more query words score higher
-    query_words = set(query.lower().split())
+    # Re-rank by lexical relevance — claims with more query words score higher.
+    # Use the tokenized query (same terms we actually sent to FTS5) so the
+    # post-ranker agrees with retrieval.
+    query_words = set(fts_query.lower().split()) or set(query.lower().split())
 
     def _relevance(row):
         claim = row.get("claim")
