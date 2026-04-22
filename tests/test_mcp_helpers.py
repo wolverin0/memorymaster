@@ -121,6 +121,78 @@ class TestProjectScope:
             assert ":" in scope  # has digest
 
 
+class TestProjectScopeCanonicalization:
+    """Regression tests for the 2026-04-22 scope-fragmentation audit.
+
+    Live DB had: project:omniclaude vs project:_omniclaude (underscore variant),
+    project:whatsappbot-final vs project:whatsapp-bot vs
+    project:whatsappbot-prod - Copy - Copy (copy-artefact), and bare 'project'
+    pollution for empty-workspace calls. Each case below must canonicalize to
+    ONE scope.
+    """
+
+    def _scope(self, path):
+        with patch("memorymaster.mcp_server._ENV_DEFAULT_PROJECT_SCOPE", ""):
+            return _project_scope(str(path))
+
+    def test_underscore_prefix_folds(self, tmp_path):
+        a = tmp_path / "omniclaude"
+        a.mkdir()
+        b = tmp_path / "_omniclaude"
+        b.mkdir()
+        assert self._scope(a) == "project:omniclaude"
+        assert self._scope(b) == "project:omniclaude"
+
+    def test_dash_prefix_folds(self, tmp_path):
+        plain = tmp_path / "whatsapp"
+        plain.mkdir()
+        dashed = tmp_path / "-whatsapp"
+        dashed.mkdir()
+        assert self._scope(plain) == "project:whatsapp"
+        assert self._scope(dashed) == "project:whatsapp"
+
+    def test_channel_suffixes_fold(self, tmp_path):
+        for name in ("whatsappbot", "whatsappbot-final", "whatsappbot-prod", "whatsappbot-staging"):
+            (tmp_path / name).mkdir()
+        assert self._scope(tmp_path / "whatsappbot") == "project:whatsappbot"
+        assert self._scope(tmp_path / "whatsappbot-final") == "project:whatsappbot"
+        assert self._scope(tmp_path / "whatsappbot-prod") == "project:whatsappbot"
+        assert self._scope(tmp_path / "whatsappbot-staging") == "project:whatsappbot"
+
+    def test_copy_artefact_stripped(self, tmp_path):
+        plain = tmp_path / "whatsappbot"
+        plain.mkdir()
+        copied = tmp_path / "whatsappbot - Copy - Copy"
+        copied.mkdir()
+        assert self._scope(plain) == "project:whatsappbot"
+        assert self._scope(copied) == "project:whatsappbot"
+
+    def test_numeric_suffix_stripped(self, tmp_path):
+        plain = tmp_path / "project-foo"
+        plain.mkdir()
+        numbered = tmp_path / "project-foo (1)"
+        numbered.mkdir()
+        assert self._scope(plain) == "project:project-foo"
+        assert self._scope(numbered) == "project:project-foo"
+
+    def test_empty_workspace_returns_user_not_project(self):
+        """No workspace context anywhere → 'user' scope, not 'project'."""
+        with patch("memorymaster.mcp_server._ENV_DEFAULT_PROJECT_SCOPE", ""):
+            with patch("memorymaster.mcp_server._ENV_DEFAULT_WORKSPACE", ""):
+                assert _project_scope("") == "user"
+                assert _project_scope("   ") == "user"
+
+    def test_disambiguate_env_still_adds_hash(self, tmp_path):
+        """The v3.3.1 escape hatch must keep working for genuine collisions."""
+        target = tmp_path / "myproj"
+        target.mkdir()
+        with patch("memorymaster.mcp_server._ENV_DEFAULT_PROJECT_SCOPE", ""):
+            with patch.dict(os.environ, {"MEMORYMASTER_SCOPE_DISAMBIGUATE": "1"}):
+                scope = _project_scope(str(target))
+                assert scope.startswith("project:myproj:")
+                assert len(scope.split(":")[-1]) == 8  # 8-char sha1 digest
+
+
 class TestEffectiveIngestScope:
     def test_empty_uses_project_scope(self):
         with patch("memorymaster.mcp_server._project_scope", return_value="project:test:abc"):

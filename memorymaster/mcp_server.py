@@ -30,6 +30,18 @@ _ENV_QUERY_INCLUDE_LEGACY_PROJECT = (
     os.environ.get("MEMORYMASTER_QUERY_INCLUDE_LEGACY_PROJECT", "1").strip().lower() not in {"0", "false", "no"}
 )
 _SCOPE_SAFE_RE = re.compile(r"[^a-z0-9_-]+")
+# Windows / macOS "Copy" artefacts and trailing "(1)"-style numeric variants.
+# Applied to the workspace dirname BEFORE slug derivation so `foo - Copy - Copy`
+# and `foo (2)` fold into `foo`.
+_COPY_SUFFIX_RE = re.compile(
+    r"(?:\s*[-_]?\s*copy(?:\s*[-_]?\s*copy)*|\s*\(\d+\)|_copy\d*)\s*$",
+    re.IGNORECASE,
+)
+# Deployment-channel suffixes we fold away so `whatsappbot-final` and
+# `whatsappbot-prod` both collapse to `whatsappbot`. Keep this list tight —
+# adding words here changes scope identity for every workspace dirname that
+# happens to end with one.
+_CHANNEL_SUFFIX_RE = re.compile(r"-(?:final|prod|production|dev|staging|stage|qa|test)$")
 
 
 def _resolve_db(db: str) -> str:
@@ -88,6 +100,30 @@ def _parse_scope_allowlist(raw: str) -> list[str] | None:
     return values or None
 
 
+def _canonicalize_slug(dirname: str) -> str:
+    """Canonicalize a workspace dirname into a stable project slug.
+
+    Rules (see ``omni/autoresearch-scope-canon-2026-04-22`` branch / audit):
+      1. Lowercase + strip whitespace.
+      2. Strip Windows/macOS ``- Copy``, ``- Copy - Copy``, ``(1)``, ``_copy``
+         artefacts off the tail BEFORE slugifying (dirname-level).
+      3. Slugify (non-alnum → ``-``) and trim leading/trailing ``_``/``-``/``.``
+         so ``_omniclaude`` and ``omniclaude`` collide correctly.
+      4. Fold deployment-channel suffixes (``-final``, ``-prod``, ``-dev``,
+         ``-staging``, etc) so ``whatsappbot-final`` → ``whatsappbot``.
+    """
+    base = (dirname or "").strip().lower()
+    prev = None
+    while prev != base:
+        prev = base
+        base = _COPY_SUFFIX_RE.sub("", base).strip()
+    if not base:
+        return "workspace"
+    slug = _SCOPE_SAFE_RE.sub("-", base).strip("-._") or "workspace"
+    folded = _CHANNEL_SUFFIX_RE.sub("", slug)
+    return folded or slug
+
+
 def _project_scope(workspace: str) -> str:
     """Derive a project scope from a workspace path.
 
@@ -99,12 +135,19 @@ def _project_scope(workspace: str) -> str:
     dropping the hash prevents scope fragmentation where CLI ingests write
     ``project:wezbridge`` and MCP ingests write ``project:wezbridge:a6a83c6a``
     and nobody finds each other.
+
+    If no workspace context is available (no arg, no env, no implicit ``.``
+    override) we return the literal ``"user"`` scope rather than polluting a
+    project namespace — bare ``project`` was a design smell that accumulated
+    673 ambient claims in the live DB by 2026-04-22.
     """
     if _ENV_DEFAULT_PROJECT_SCOPE:
         return _ENV_DEFAULT_PROJECT_SCOPE
+    raw_arg = str(workspace or "").strip()
+    if not raw_arg and not _ENV_DEFAULT_WORKSPACE:
+        return "user"
     workspace_path = Path(_resolve_workspace(workspace)).resolve()
-    slug_base = workspace_path.name.strip().lower() or "workspace"
-    slug = _SCOPE_SAFE_RE.sub("-", slug_base).strip("-") or "workspace"
+    slug = _canonicalize_slug(workspace_path.name)
     if os.getenv("MEMORYMASTER_SCOPE_DISAMBIGUATE", "").strip().lower() in ("1", "true", "yes"):
         digest = hashlib.sha1(str(workspace_path).lower().encode("utf-8")).hexdigest()[:8]
         return f"project:{slug}:{digest}"
