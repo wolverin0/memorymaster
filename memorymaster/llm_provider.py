@@ -26,8 +26,10 @@ def _env(key: str, default: str = "") -> str:
 def _call_google(prompt: str, text: str) -> str:
     """Google Gemini API.
 
-    Default model is ``gemini-2.5-flash-lite`` (stable — higher and more
-    predictable free-tier quota than the preview variants). Override via
+    Default model is ``gemini-3.1-flash-lite-preview``: observed free-tier
+    RPM is ~500 per key versus ~20 for gemini-2.5-flash-lite, and output
+    quality is materially better on the tasks this repo feeds it
+    (extraction, wiki-absorb, classification). Override via
     ``MEMORYMASTER_LLM_MODEL``.
 
     Key source priority:
@@ -37,7 +39,7 @@ def _call_google(prompt: str, text: str) -> str:
     """
     from memorymaster.key_rotator import get_rotator
 
-    model = _env("MEMORYMASTER_LLM_MODEL", "gemini-2.5-flash-lite")
+    model = _env("MEMORYMASTER_LLM_MODEL", "gemini-3.1-flash-lite-preview")
 
     payload: dict[str, Any] = {
         "contents": [{"parts": [{"text": f"{prompt}\n\n{text}"}]}],
