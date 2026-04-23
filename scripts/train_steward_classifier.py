@@ -1,12 +1,24 @@
 """Train the isotonic-calibrated steward promotion classifier (task #129).
 
 Reads ``tests/fixtures/steward_training.jsonl`` (from
-``build_steward_training_set.py``), does an 80/20 chronological split by
-``created_at``, fits ``LogisticRegression(class_weight='balanced')`` wrapped
-in ``CalibratedClassifierCV(method='isotonic', cv=3)``, and writes the
-artifact to ``artifacts/steward-classifier-v1.joblib``.
+``build_steward_training_set.py``), splits it (``--split`` chooses strategy),
+fits ``LogisticRegression(class_weight='balanced')`` wrapped in
+``CalibratedClassifierCV(method='isotonic', cv=3)``, and writes the artifact
+to the chosen output path.
 
-Prints ROC-AUC on the test split plus precision/recall @ threshold=0.65.
+Split strategies:
+
+* ``daily-stratified`` (default, v2): within each calendar day, the first 80 %
+  of rows go to train and the rest to test. Honors time ordering while
+  keeping both classes represented on each side — the chronological split
+  used in v1 is pathological on this corpus because confirmed claims cluster
+  in the most recent days while archived claims stop accruing once steward
+  finishes its archive sweep for the period, producing a test set of ~94 %
+  positives the model has never seen labelled that way during training.
+  See ``artifacts/steward-classifier-feature-audit-2026-04-23.md``.
+* ``chronological``: legacy behaviour. Kept for backwards comparison.
+
+Prints ROC-AUC on the test split plus precision/recall @ ``--threshold``.
 """
 
 from __future__ import annotations
@@ -14,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,6 +35,8 @@ import numpy as np
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import precision_score, recall_score, roc_auc_score
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -62,11 +77,50 @@ def chronological_split(rows: list[dict], train_frac: float = 0.8) -> tuple[list
     return rows_sorted[:split], rows_sorted[split:]
 
 
+def daily_stratified_split(
+    rows: list[dict], train_frac: float = 0.8
+) -> tuple[list[dict], list[dict]]:
+    """Time-aware, class-preserving split: bucket rows by calendar day and
+    take the first ``train_frac`` within each bucket for training.
+
+    This keeps positives and negatives proportionally represented on each
+    side of the split even when archives and confirmations are produced in
+    distinct day clusters. Equivalent to the chronological split when the
+    corpus is one day wide."""
+    by_day: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        day = (r.get("created_at") or "")[:10] or "0000-00-00"
+        by_day[day].append(r)
+    train: list[dict] = []
+    test: list[dict] = []
+    for day in sorted(by_day.keys()):
+        items = sorted(by_day[day], key=lambda r: _parse_iso(r.get("created_at")))
+        cut = int(len(items) * train_frac)
+        train.extend(items[:cut])
+        test.extend(items[cut:])
+    return train, test
+
+
+def split_rows(rows: list[dict], strategy: str, train_frac: float) -> tuple[list[dict], list[dict]]:
+    if strategy == "chronological":
+        return chronological_split(rows, train_frac=train_frac)
+    if strategy == "daily-stratified":
+        return daily_stratified_split(rows, train_frac=train_frac)
+    raise ValueError(f"unknown split strategy: {strategy!r}")
+
+
 def train(train_rows: list[dict], test_rows: list[dict], *,
           threshold: float = 0.65) -> tuple[CalibratedClassifierCV, dict]:
     X_train, y_train = to_matrix(train_rows)
     X_test, y_test = to_matrix(test_rows)
-    base = LogisticRegression(class_weight="balanced", max_iter=1000, solver="lbfgs")
+    # Scale inside the pipeline so the calibrated wrapper re-fits it on each
+    # fold consistently. Regularization strength C=0.5 mildly discourages
+    # overfitting the time-proxy session_age_days.
+    base = Pipeline([
+        ("scaler", StandardScaler()),
+        ("lr", LogisticRegression(class_weight="balanced", max_iter=5000,
+                                  C=0.5, solver="lbfgs")),
+    ])
     model = CalibratedClassifierCV(base, method="isotonic", cv=3)
     model.fit(X_train, y_train)
 
@@ -103,23 +157,32 @@ def main() -> int:
     ap.add_argument("--in", dest="in_path", type=Path,
                     default=Path("tests/fixtures/steward_training.jsonl"))
     ap.add_argument("--out", type=Path,
-                    default=Path("artifacts/steward-classifier-v1.joblib"))
+                    default=Path("artifacts/steward-classifier-v2.joblib"))
     ap.add_argument("--threshold", type=float, default=0.65)
     ap.add_argument("--train-frac", type=float, default=0.8)
+    ap.add_argument("--split", choices=("daily-stratified", "chronological"),
+                    default="daily-stratified",
+                    help="Split strategy for held-out evaluation. "
+                         "daily-stratified preserves class balance within "
+                         "each calendar day (default, v2). chronological "
+                         "reproduces the v1 behaviour.")
     args = ap.parse_args()
 
     rows = load_rows(args.in_path)
     if not rows:
         print(f"[error] {args.in_path} is empty; run build_steward_training_set.py first")
         return 1
-    train_rows, test_rows = chronological_split(rows, train_frac=args.train_frac)
+    train_rows, test_rows = split_rows(rows, args.split, args.train_frac)
     if not train_rows or not test_rows:
         print(f"[error] split produced empty partitions (n={len(rows)})")
         return 1
 
     model, metrics = train(train_rows, test_rows, threshold=args.threshold)
     save_artifact(model, args.out, metrics)
-    print(f"[train] rows={len(rows)} train={metrics['n_train']} test={metrics['n_test']}")
+    print(f"[train] rows={len(rows)} split={args.split} "
+          f"train={metrics['n_train']} test={metrics['n_test']}")
+    print(f"[train] test class counts: pos={metrics['positives_test']} "
+          f"neg={metrics['negatives_test']}")
     print(f"[train] ROC-AUC={metrics['roc_auc']:.4f}")
     print(f"[train] @threshold={metrics['threshold']}: "
           f"precision={metrics['precision']:.4f} recall={metrics['recall']:.4f}")

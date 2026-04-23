@@ -142,7 +142,7 @@ def _train_artifact(tmp_dir: Path) -> Path | None:
     if not train_rows or not test_rows:
         return None
     model, metrics = mod.train(train_rows, test_rows, threshold=0.65)
-    out_path = tmp_dir / "steward-classifier-v1.joblib"
+    out_path = tmp_dir / "steward-classifier-v2.joblib"
     mod.save_artifact(model, out_path, metrics)
     return out_path
 

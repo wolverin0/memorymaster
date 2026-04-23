@@ -26,13 +26,15 @@ from memorymaster.steward_features import FEATURE_VERSION, extract_features  # n
 
 _Q_POSITIVES = """
 SELECT id, text, subject, predicate, object_value, scope, status,
-       claim_type, source_agent, created_at, access_count
+       claim_type, source_agent, created_at, access_count,
+       supersedes_claim_id, replaced_by_claim_id, entity_id
 FROM claims WHERE status = 'confirmed' ORDER BY created_at ASC
 """
 
 _Q_NEGATIVES = """
 SELECT cl.id, cl.text, cl.subject, cl.predicate, cl.object_value, cl.scope,
-       cl.status, cl.claim_type, cl.source_agent, cl.created_at, cl.access_count
+       cl.status, cl.claim_type, cl.source_agent, cl.created_at, cl.access_count,
+       cl.supersedes_claim_id, cl.replaced_by_claim_id, cl.entity_id
 FROM claims cl
 WHERE cl.status IN ('archived', 'stale')
   AND NOT EXISTS (
