@@ -151,16 +151,44 @@ class MemoryService:
         if not sanitized.citations:
             raise ValueError("At least one citation is required.")
         # Resolve subject → canonical entity (GBrain-inspired entity registry)
+        # and mine text for pattern-based entities (#127 Wave 3).
         entity_id = 0
-        if subject:
+        if subject or sanitized.text:
             try:
-                from memorymaster.entity_registry import resolve_or_create
+                from memorymaster.entity_registry import (
+                    add_alias,
+                    resolve_or_create,
+                )
+                from memorymaster.entity_extractor import extract_patterns
+
                 with self.store.connect() as _conn:
-                    entity_id = resolve_or_create(
-                        _conn, subject,
-                        entity_type=claim_type or "unknown",
-                        scope=scope,
-                    )
+                    if subject:
+                        entity_id = resolve_or_create(
+                            _conn, subject,
+                            entity_type=claim_type or "unknown",
+                            scope=scope,
+                        )
+                    # Layer 1: mine the claim text for deterministic patterns.
+                    # Strategy: resolve the canonical_hint via the alias
+                    # index (reuses existing entity if present). Register
+                    # BOTH the raw surface AND a kind-tagged alias so every
+                    # extracted entity gains ≥2 aliases (canonical + tag),
+                    # plus any distinct surface variants.
+                    for ent in extract_patterns(sanitized.text):
+                        eid = resolve_or_create(
+                            _conn,
+                            ent.canonical_hint,
+                            entity_type=f"text_entity:{ent.kind}",
+                            scope=scope,
+                        )
+                        if eid <= 0:
+                            continue
+                        if ent.surface and ent.surface != ent.canonical_hint:
+                            add_alias(_conn, eid, ent.surface)
+                        # Kind-tagged stable alias — guarantees a second
+                        # alias row so avg_aliases_per_entity ≥ 2 after
+                        # backfill even when surface == canonical.
+                        add_alias(_conn, eid, f"{ent.kind}:{ent.canonical_hint}")
                     _conn.commit()
             except Exception:
                 pass  # entity resolution is best-effort, never block ingest

@@ -1,0 +1,107 @@
+{"text": "Updated src/agents/auth.py to fix the token refresh bug.", "expected_entities": [{"surface": "src/agents/auth.py", "kind": "file"}]}
+{"text": "The handler in memorymaster/service.py::ingest now calls resolve_or_create.", "expected_entities": [{"surface": "memorymaster/service.py", "kind": "file"}]}
+{"text": "Tests live under tests/test_entity_registry.py and tests/fixtures/dedup_cases.json.", "expected_entities": [{"surface": "tests/test_entity_registry.py", "kind": "file"}, {"surface": "tests/fixtures/dedup_cases.json", "kind": "file"}]}
+{"text": "Renamed scripts/backfill_entity_extraction.py after review.", "expected_entities": [{"surface": "scripts/backfill_entity_extraction.py", "kind": "file"}]}
+{"text": "The config lives at obsidian-vault/wiki/project-memorymaster/index.md now.", "expected_entities": [{"surface": "obsidian-vault/wiki/project-memorymaster/index.md", "kind": "file"}]}
+{"text": "Moved schema definition from schema.sql to migrations/0003_entities.sql.", "expected_entities": [{"surface": "schema.sql", "kind": "file"}, {"surface": "migrations/0003_entities.sql", "kind": "file"}]}
+{"text": "Edited .github/workflows/ci.yml to pin the Python version.", "expected_entities": [{"surface": ".github/workflows/ci.yml", "kind": "file"}]}
+{"text": "Check the frontend/src/components/Header.tsx render path for the bug.", "expected_entities": [{"surface": "frontend/src/components/Header.tsx", "kind": "file"}]}
+{"text": "GEMINI_API_KEY must be set before running the ingestion pipeline.", "expected_entities": [{"surface": "GEMINI_API_KEY", "kind": "env-var"}]}
+{"text": "We read the workspace from MEMORYMASTER_WORKSPACE on startup.", "expected_entities": [{"surface": "MEMORYMASTER_WORKSPACE", "kind": "env-var"}]}
+{"text": "Both QDRANT_URL and QDRANT_API_KEY are optional in dev.", "expected_entities": [{"surface": "QDRANT_URL", "kind": "env-var"}, {"surface": "QDRANT_API_KEY", "kind": "env-var"}]}
+{"text": "When OPENAI_API_KEY is missing the llm_provider falls back to Ollama.", "expected_entities": [{"surface": "OPENAI_API_KEY", "kind": "env-var"}]}
+{"text": "Set ANTHROPIC_API_KEY in the .env file, never commit it.", "expected_entities": [{"surface": "ANTHROPIC_API_KEY", "kind": "env-var"}]}
+{"text": "The NODE_ENV=production switch turns on caching.", "expected_entities": [{"surface": "NODE_ENV", "kind": "env-var"}]}
+{"text": "DATABASE_URL now points at the WAL-enabled replica.", "expected_entities": [{"surface": "DATABASE_URL", "kind": "env-var"}]}
+{"text": "Export MEMORYMASTER_DB_PATH before running the steward cycle.", "expected_entities": [{"surface": "MEMORYMASTER_DB_PATH", "kind": "env-var"}]}
+{"text": "Deployed to unms-server-01 last night and the migration ran clean.", "expected_entities": [{"surface": "unms-server-01", "kind": "service"}]}
+{"text": "whatsappbot-prod is still pinned at v3.1.2 pending review.", "expected_entities": [{"surface": "whatsappbot-prod", "kind": "service"}]}
+{"text": "The aircontrol-ingest-service timed out against the upstream API.", "expected_entities": [{"surface": "aircontrol-ingest-service", "kind": "service"}]}
+{"text": "We switched traffic from omniclaude-server to git-server-02.", "expected_entities": [{"surface": "omniclaude-server", "kind": "service"}, {"surface": "git-server-02", "kind": "service"}]}
+{"text": "qdrant-cloud-prod is reachable from the mcp-gateway-01 node.", "expected_entities": [{"surface": "qdrant-cloud-prod", "kind": "service"}, {"surface": "mcp-gateway-01", "kind": "service"}]}
+{"text": "Restart redis-cache-02 if you see connection exhaustion.", "expected_entities": [{"surface": "redis-cache-02", "kind": "service"}]}
+{"text": "Added the puntofutura-backend host to the Caddy config.", "expected_entities": [{"surface": "puntofutura-backend", "kind": "service"}]}
+{"text": "The steward-worker-01 pod keeps OOMing during compaction.", "expected_entities": [{"surface": "steward-worker-01", "kind": "service"}]}
+{"text": "The MCP server is now listening on :8765 by default.", "expected_entities": [{"surface": ":8765", "kind": "port"}]}
+{"text": "Postgres runs on port 5432, Redis on port 6379.", "expected_entities": [{"surface": "port 5432", "kind": "port"}, {"surface": "port 6379", "kind": "port"}]}
+{"text": "We bind the dev server to :3000 and the docs site to :8000.", "expected_entities": [{"surface": ":3000", "kind": "port"}, {"surface": ":8000", "kind": "port"}]}
+{"text": "Qdrant listens on port 6333 for HTTP and :6334 for gRPC.", "expected_entities": [{"surface": "port 6333", "kind": "port"}, {"surface": ":6334", "kind": "port"}]}
+{"text": "Changed the Vite dev port to :5173 to avoid collision.", "expected_entities": [{"surface": ":5173", "kind": "port"}]}
+{"text": "Nginx fronts the app on :80 and :443 with TLS.", "expected_entities": [{"surface": ":80", "kind": "port"}, {"surface": ":443", "kind": "port"}]}
+{"text": "The wezbridge daemon exposes :11434 for local control.", "expected_entities": [{"surface": ":11434", "kind": "port"}]}
+{"text": "Reverted commit b1a0ac9 because the test suite went red.", "expected_entities": [{"surface": "b1a0ac9", "kind": "commit"}]}
+{"text": "Fix was shipped in commit 71d7f67a9 and backported to main.", "expected_entities": [{"surface": "71d7f67a9", "kind": "commit"}]}
+{"text": "Commit 5cd8a48ef3a raised the sensitivity filter F1 to 0.995.", "expected_entities": [{"surface": "5cd8a48ef3a", "kind": "commit"}]}
+{"text": "Merged at sha 6050b2d into the dedup branch.", "expected_entities": [{"surface": "6050b2d", "kind": "commit"}]}
+{"text": "See commit 6736bf8a for the recall query tokenization fix.", "expected_entities": [{"surface": "6736bf8a", "kind": "commit"}]}
+{"text": "The regression was introduced at b3aa0ed and reverted next morning.", "expected_entities": [{"surface": "b3aa0ed", "kind": "commit"}]}
+{"text": "Cherry-picked commit deadbeef1234 onto the release branch.", "expected_entities": [{"surface": "deadbeef1234", "kind": "commit"}]}
+{"text": "Used playwright to reproduce the drag-drop regression locally.", "expected_entities": [{"surface": "playwright", "kind": "tool"}]}
+{"text": "Asked codex for a second opinion on the migration plan.", "expected_entities": [{"surface": "codex", "kind": "tool"}]}
+{"text": "The mcp__memorymaster__query_memory tool returned 0 hits for the scope.", "expected_entities": [{"surface": "mcp__memorymaster__query_memory", "kind": "tool"}]}
+{"text": "mcp__memorymaster__ingest_claim now passes through the sensitivity filter.", "expected_entities": [{"surface": "mcp__memorymaster__ingest_claim", "kind": "tool"}]}
+{"text": "Ran gitnexus analyze to rebuild the index after the merge.", "expected_entities": [{"surface": "gitnexus", "kind": "tool"}]}
+{"text": "serena find_symbol pointed me at the right function fast.", "expected_entities": [{"surface": "serena", "kind": "tool"}]}
+{"text": "graphify produced a new GRAPH_REPORT.md under graphify-out.", "expected_entities": [{"surface": "graphify", "kind": "tool"}]}
+{"text": "gemini refused the request, so we fell back to ollama.", "expected_entities": [{"surface": "gemini", "kind": "tool"}, {"surface": "ollama", "kind": "tool"}]}
+{"text": "Checked with droid before merging — it flagged two missing tests.", "expected_entities": [{"surface": "droid", "kind": "tool"}]}
+{"text": "opencode couldn't reproduce the bug, so we switched to codex for triage.", "expected_entities": [{"surface": "opencode", "kind": "tool"}, {"surface": "codex", "kind": "tool"}]}
+{"text": "The mcp__wezbridge__discover_sessions call listed 4 panes.", "expected_entities": [{"surface": "mcp__wezbridge__discover_sessions", "kind": "tool"}]}
+{"text": "pytest ran 342 tests, all green on tests/test_service.py.", "expected_entities": [{"surface": "pytest", "kind": "tool"}, {"surface": "tests/test_service.py", "kind": "file"}]}
+{"text": "After setting GEMINI_API_KEY we restarted the unms-server-01 host on :8765.", "expected_entities": [{"surface": "GEMINI_API_KEY", "kind": "env-var"}, {"surface": "unms-server-01", "kind": "service"}, {"surface": ":8765", "kind": "port"}]}
+{"text": "Commit 9a4c2bf1 in memorymaster/service.py fixed the GEMINI_API_KEY fallback.", "expected_entities": [{"surface": "9a4c2bf1", "kind": "commit"}, {"surface": "memorymaster/service.py", "kind": "file"}, {"surface": "GEMINI_API_KEY", "kind": "env-var"}]}
+{"text": "Tested playwright against mcp-gateway-01:8765 and got 200s.", "expected_entities": [{"surface": "playwright", "kind": "tool"}, {"surface": "mcp-gateway-01", "kind": "service"}]}
+{"text": "Moved the entity registry out of memorymaster/storage.py into entity_registry.py.", "expected_entities": [{"surface": "memorymaster/storage.py", "kind": "file"}, {"surface": "entity_registry.py", "kind": "file"}]}
+{"text": "The vault_linter.py pass complained about missing wikilinks.", "expected_entities": [{"surface": "vault_linter.py", "kind": "file"}]}
+{"text": "Dropped config-templates/hook.json after the migration.", "expected_entities": [{"surface": "config-templates/hook.json", "kind": "file"}]}
+{"text": "See memorymaster/wiki_engine.py::absorb for the compile-truth pass.", "expected_entities": [{"surface": "memorymaster/wiki_engine.py", "kind": "file"}]}
+{"text": "Fixed the regex in scripts/setup-hooks.py to handle Windows paths.", "expected_entities": [{"surface": "scripts/setup-hooks.py", "kind": "file"}]}
+{"text": "OLLAMA_BASE_URL is read by llm_provider.py on import.", "expected_entities": [{"surface": "OLLAMA_BASE_URL", "kind": "env-var"}, {"surface": "llm_provider.py", "kind": "file"}]}
+{"text": "AWS_SECRET_ACCESS_KEY must never be logged — sensitivity filter catches it.", "expected_entities": [{"surface": "AWS_SECRET_ACCESS_KEY", "kind": "env-var"}]}
+{"text": "QDRANT_GRPC_PORT defaults to 6334 if unset.", "expected_entities": [{"surface": "QDRANT_GRPC_PORT", "kind": "env-var"}]}
+{"text": "Provisioned a new aircontrol-db-replica-02 for failover.", "expected_entities": [{"surface": "aircontrol-db-replica-02", "kind": "service"}]}
+{"text": "whatsappbot-staging now mirrors prod with a 5-minute lag.", "expected_entities": [{"surface": "whatsappbot-staging", "kind": "service"}]}
+{"text": "moved traffic away from legacy-unifi-01 to unifi-cloud-02.", "expected_entities": [{"surface": "legacy-unifi-01", "kind": "service"}, {"surface": "unifi-cloud-02", "kind": "service"}]}
+{"text": "Scheduled maintenance on memorymaster-worker-03 tonight at 02:00 ART.", "expected_entities": [{"surface": "memorymaster-worker-03", "kind": "service"}]}
+{"text": "Grafana dashboard lives on :3001 behind the nginx proxy.", "expected_entities": [{"surface": ":3001", "kind": "port"}]}
+{"text": "Prometheus scrapes on port 9090, alertmanager on port 9093.", "expected_entities": [{"surface": "port 9090", "kind": "port"}, {"surface": "port 9093", "kind": "port"}]}
+{"text": "Bumped the MCP stdio bridge to :7823 after the conflict.", "expected_entities": [{"surface": ":7823", "kind": "port"}]}
+{"text": "Traefik is now bound to :8443 with LetsEncrypt.", "expected_entities": [{"surface": ":8443", "kind": "port"}]}
+{"text": "Regression lives in commit a1b2c3d4e5f6 — revert when confirmed.", "expected_entities": [{"surface": "a1b2c3d4e5f6", "kind": "commit"}]}
+{"text": "The fix was in 0f1e2d3 — trivial one-liner.", "expected_entities": [{"surface": "0f1e2d3", "kind": "commit"}]}
+{"text": "Rebased onto commit cafebabedead on the main branch.", "expected_entities": [{"surface": "cafebabedead", "kind": "commit"}]}
+{"text": "Hotfix 12ab34cd5 unblocked the deploy pipeline.", "expected_entities": [{"surface": "12ab34cd5", "kind": "commit"}]}
+{"text": "Previous behaviour was set in commit abcd1234ef on 2026-03-15.", "expected_entities": [{"surface": "abcd1234ef", "kind": "commit"}]}
+{"text": "claude-code resolved the conflict without touching tests.", "expected_entities": [{"surface": "claude-code", "kind": "tool"}]}
+{"text": "Used ollama + gemini together for the dual-LLM review.", "expected_entities": [{"surface": "ollama", "kind": "tool"}, {"surface": "gemini", "kind": "tool"}]}
+{"text": "mcp__gitnexus__impact flagged the d=1 blast radius before I edited.", "expected_entities": [{"surface": "mcp__gitnexus__impact", "kind": "tool"}]}
+{"text": "ripgrep is faster than grep — use rg in scripts by default.", "expected_entities": [{"surface": "ripgrep", "kind": "tool"}]}
+{"text": "pyright flagged two type errors after the dataclass change.", "expected_entities": [{"surface": "pyright", "kind": "tool"}]}
+{"text": "Ran ruff --fix on memorymaster/ and committed the results.", "expected_entities": [{"surface": "ruff", "kind": "tool"}, {"surface": "memorymaster/", "kind": "file"}]}
+{"text": "mypy reports 0 errors after the migration to TypedDict.", "expected_entities": [{"surface": "mypy", "kind": "tool"}]}
+{"text": "docker compose up brings mcp-gateway-01 and qdrant-cloud-prod online.", "expected_entities": [{"surface": "docker", "kind": "tool"}, {"surface": "mcp-gateway-01", "kind": "service"}, {"surface": "qdrant-cloud-prod", "kind": "service"}]}
+{"text": "The LOG_LEVEL env var now respects DEBUG over INFO in dev.", "expected_entities": [{"surface": "LOG_LEVEL", "kind": "env-var"}]}
+{"text": "PYTHONPATH includes memorymaster/ by default when you pip install -e .", "expected_entities": [{"surface": "PYTHONPATH", "kind": "env-var"}, {"surface": "memorymaster/", "kind": "file"}]}
+{"text": "CLAUDE_PROJECT_DIR is injected by the harness for every hook call.", "expected_entities": [{"surface": "CLAUDE_PROJECT_DIR", "kind": "env-var"}]}
+{"text": "We moved the config from src/config/default.yaml to configs/prod.yaml.", "expected_entities": [{"surface": "src/config/default.yaml", "kind": "file"}, {"surface": "configs/prod.yaml", "kind": "file"}]}
+{"text": "The handler is declared in memorymaster/mcp_server.py near the top.", "expected_entities": [{"surface": "memorymaster/mcp_server.py", "kind": "file"}]}
+{"text": "Added a test in tests/test_mcp_server.py that exercises the ingest path.", "expected_entities": [{"surface": "tests/test_mcp_server.py", "kind": "file"}]}
+{"text": "obsidian-vault/wiki/project-memorymaster/mcp-server.md is the canonical doc.", "expected_entities": [{"surface": "obsidian-vault/wiki/project-memorymaster/mcp-server.md", "kind": "file"}]}
+{"text": "The unifi-core-dc1 host runs on :8443 with a self-signed cert.", "expected_entities": [{"surface": "unifi-core-dc1", "kind": "service"}, {"surface": ":8443", "kind": "port"}]}
+{"text": "qdrant-ingest-worker-01 died at 04:13 UTC last night.", "expected_entities": [{"surface": "qdrant-ingest-worker-01", "kind": "service"}]}
+{"text": "mcp-openclaw-gateway-02 is the new synchronization target.", "expected_entities": [{"surface": "mcp-openclaw-gateway-02", "kind": "service"}]}
+{"text": "Need HUGGINGFACE_TOKEN to pull the private embedding model.", "expected_entities": [{"surface": "HUGGINGFACE_TOKEN", "kind": "env-var"}]}
+{"text": "REDIS_URL should use rediss:// in production, not redis://.", "expected_entities": [{"surface": "REDIS_URL", "kind": "env-var"}]}
+{"text": "Running npx gitnexus analyze re-indexes the repo in about 20s.", "expected_entities": [{"surface": "gitnexus", "kind": "tool"}]}
+{"text": "The nightly cron runs /cron/memorymaster-steward.sh at 02:00.", "expected_entities": [{"surface": "/cron/memorymaster-steward.sh", "kind": "file"}]}
+{"text": "Fixed a typo in the CI config at .github/actions/setup-python.yml.", "expected_entities": [{"surface": ".github/actions/setup-python.yml", "kind": "file"}]}
+{"text": "See commit f00dbabe in memorymaster/dream_bridge.py for the queue fix.", "expected_entities": [{"surface": "f00dbabe", "kind": "commit"}, {"surface": "memorymaster/dream_bridge.py", "kind": "file"}]}
+{"text": "git rebase -i HEAD~5 to squash the noisy commits before review.", "expected_entities": [{"surface": "git", "kind": "tool"}]}
+{"text": "npm ci is the canonical install path for the CI runner.", "expected_entities": [{"surface": "npm", "kind": "tool"}]}
+{"text": "Deployed aircontrol-backend-prod to :8000 after the migration.", "expected_entities": [{"surface": "aircontrol-backend-prod", "kind": "service"}, {"surface": ":8000", "kind": "port"}]}
+{"text": "TELEGRAM_BOT_TOKEN rotates weekly via the secrets manager.", "expected_entities": [{"surface": "TELEGRAM_BOT_TOKEN", "kind": "env-var"}]}
+{"text": "Set MEMORYMASTER_ENTITY_LLM=1 to enable the Layer-2 LLM extraction pass.", "expected_entities": [{"surface": "MEMORYMASTER_ENTITY_LLM", "kind": "env-var"}]}
+{"text": "We cached the output in /tmp/memorymaster/entities.json for reuse.", "expected_entities": [{"surface": "/tmp/memorymaster/entities.json", "kind": "file"}]}
+{"text": "Compared mcp__serena__find_symbol vs grep for impact analysis speed.", "expected_entities": [{"surface": "mcp__serena__find_symbol", "kind": "tool"}]}
+{"text": "Exposed the debugger on :9229 for remote Node attach.", "expected_entities": [{"surface": ":9229", "kind": "port"}]}
+{"text": "cafef00d is the rollback target if the deploy goes sideways.", "expected_entities": [{"surface": "cafef00d", "kind": "commit"}]}
