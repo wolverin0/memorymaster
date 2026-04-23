@@ -14,8 +14,26 @@ Output: hookSpecificOutput.additionalContext with routing hints.
 Claude reads them and decides whether to call ingest_claim.
 """
 import json
+import os
 import sys
 import re
+from datetime import datetime
+
+
+def _log(event, **kw):
+    """Minimal inline hook logger (no stdlib-external deps; stays ~5ms)."""
+    try:
+        log_dir = os.path.join(os.path.expanduser("~"), ".memorymaster", "hook_state")
+        os.makedirs(log_dir, exist_ok=True)
+        parts = [f"[{datetime.now().strftime('%H:%M:%S')}] hook=classify event={event}"]
+        for k, v in kw.items():
+            if v is None:
+                continue
+            parts.append(f"{k}={v}")
+        with open(os.path.join(log_dir, "hook.log"), "a", encoding="utf-8") as fh:
+            fh.write(" ".join(parts) + "\n")
+    except Exception:
+        pass
 
 
 SIGNALS = [
@@ -181,15 +199,20 @@ def main():
 
     prompt = input_data.get("prompt", "")
     if not isinstance(prompt, str) or len(prompt) < 5:
+        _log("skip", reason="short-prompt", chars=len(prompt) if isinstance(prompt, str) else 0)
         sys.exit(0)
 
     try:
         signals = classify(prompt)
-    except Exception:
+    except Exception as e:
+        _log("error", message=str(e)[:200])
         sys.exit(0)
 
     if not signals:
+        _log("no-match", chars=len(prompt))
         sys.exit(0)
+
+    _log("matched", count=len(signals), names=",".join(n for n, _ in signals))
 
     hints = "\n".join(f"- [{name}] {msg}" for name, msg in signals)
     output = {

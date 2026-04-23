@@ -22,7 +22,23 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
-MM_ROOT = Path(r"__MEMORYMASTER_PROJECT_ROOT__")
+def _log(event, **kw):
+    """Minimal inline hook logger — stdlib-only, never crashes."""
+    try:
+        log_dir = os.path.join(os.path.expanduser("~"), ".memorymaster", "hook_state")
+        os.makedirs(log_dir, exist_ok=True)
+        parts = [f"[{datetime.now().strftime('%H:%M:%S')}] hook=session-start event={event}"]
+        for k, v in kw.items():
+            if v is None:
+                continue
+            parts.append(f"{k}={v}")
+        with open(os.path.join(log_dir, "hook.log"), "a", encoding="utf-8") as fh:
+            fh.write(" ".join(parts) + "\n")
+    except Exception:
+        pass
+
+
+MM_ROOT = Path("__MEMORYMASTER_PROJECT_ROOT__")
 DB_PATH = MM_ROOT / "memorymaster.db"
 WIKI_ROOT = MM_ROOT / "obsidian-vault" / "wiki"
 MAX_RECENT_CLAIMS = 5
@@ -213,6 +229,7 @@ def main():
         pass
 
     if not DB_PATH.exists():
+        _log("skip", reason="db-missing")
         sys.exit(0)
 
     try:
@@ -225,12 +242,16 @@ def main():
         finally:
             conn.close()
         articles = _load_recent_wiki_articles(scope)
-    except Exception:
+    except Exception as e:
+        _log("error", message=str(e)[:200])
         sys.exit(0)
 
     # Skip if there's truly nothing to say
     if not claims and not cycle and not candidates and not articles:
+        _log("skip", reason="empty", scope=scope)
         sys.exit(0)
+
+    _log("injected", scope=scope, claims=len(claims), candidates=len(candidates), articles=len(articles))
 
     context = _format_context(scope, claims, cycle, candidates, articles)
     output = {
