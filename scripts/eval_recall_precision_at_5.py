@@ -162,6 +162,9 @@ def _fetch_candidates(svc: MemoryService, prompt: str, db_path: str,
             if claim is None or getattr(claim, "status", "") == "archived":
                 continue
             rows.append(_row_for_claim(claim))
+    # Vector fallback stream (Qdrant + sentence-transformers), gated by
+    # MEMORYMASTER_RECALL_VECTOR_FALLBACK=1. Runs only when the primary
+    # FTS5+entity candidate pool is below the configured threshold.
     if include_vector_fallback:
         from memorymaster import qdrant_recall_fallback
         from memorymaster.context_hook import _row_for_vector_hit
@@ -184,6 +187,46 @@ def _fetch_candidates(svc: MemoryService, prompt: str, db_path: str,
                     continue
                 rows.append(_row_for_vector_hit(claim, hit.score))
                 seen_ids.add(hit.claim_id)
+    # Verbatim stream — gated on MEMORYMASTER_RECALL_VERBATIM=1. Mirrors the
+    # boost-or-inject strategy in context_hook.recall so the eval harness
+    # agrees with the production hook.
+    try:
+        from memorymaster.verbatim_recall import (
+            hit_to_synthetic_row,
+            is_enabled as _verbatim_enabled,
+            recall_verbatim,
+        )
+    except Exception:
+        _verbatim_enabled = lambda: False  # noqa: E731
+        recall_verbatim = lambda *a, **k: []  # noqa: E731
+        hit_to_synthetic_row = None
+    if _verbatim_enabled():
+        try:
+            verbatim_hits = recall_verbatim(prompt, scope=None,
+                                            db_path=db_path, limit=5)
+        except Exception:
+            verbatim_hits = []
+        if verbatim_hits and hit_to_synthetic_row is not None:
+            scope_to_rows: dict[str, list[dict]] = {}
+            for row in rows:
+                claim = row.get("claim")
+                s = getattr(claim, "scope", "") or ""
+                if s:
+                    scope_to_rows.setdefault(s, []).append(row)
+            added_keys: set[str] = set()
+            for hit in verbatim_hits:
+                existing = scope_to_rows.get(hit.scope) or []
+                if existing:
+                    target = existing[0]
+                    prev = float(target.get("verbatim_score") or 0.0)
+                    if hit.score > prev:
+                        target["verbatim_score"] = hit.score
+                    continue
+                key = hit.excerpt[:100]
+                if key in added_keys:
+                    continue
+                added_keys.add(key)
+                rows.append(hit_to_synthetic_row(hit))
     # Attach the tokenized query for re-ranking.
     for row in rows:
         row["_fts_query"] = fts_query
@@ -193,11 +236,15 @@ def _fetch_candidates(svc: MemoryService, prompt: str, db_path: str,
 
 def _score(row: dict, weights: tuple[float, ...]) -> float:
     """Replicate context_hook._relevance with injected weights."""
-    # Pad legacy 7-tuples to 8-dim for backwards compat.
+    # Pad legacy 7-tuples to 9-dim for backwards compat.
     if len(weights) == 7:
-        weights = (*weights, 0.0)
+        weights = (*weights, 0.0, 0.0)
+    if len(weights) == 8:
+        # Pad w_verbatim=env-value when caller didn't specify.
+        from memorymaster.verbatim_recall import verbatim_weight
+        weights = (*weights, verbatim_weight())
     (w_matches, w_phrase, w_all, w_lexical, w_confidence,
-     w_freshness, w_vector, w_entity) = weights
+     w_freshness, w_vector, w_entity, w_verbatim) = weights
     claim = row.get("claim")
     text = (claim.text if hasattr(claim, "text") else "").lower()
     fts_query = row.get("_fts_query", "") or ""
@@ -212,6 +259,7 @@ def _score(row: dict, weights: tuple[float, ...]) -> float:
     freshness = float(row.get("freshness_score") or 0.0)
     vector = float(row.get("vector_score") or 0.0)
     entity = float(row.get("entity_score") or 0.0)
+    verbatim = float(row.get("verbatim_score") or 0.0)
     return (
         matches * w_matches
         + phrase_bonus * w_phrase
@@ -221,6 +269,7 @@ def _score(row: dict, weights: tuple[float, ...]) -> float:
         + freshness * w_freshness
         + vector * w_vector
         + entity * w_entity
+        + verbatim * w_verbatim
     )
 
 
