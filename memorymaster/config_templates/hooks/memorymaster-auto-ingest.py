@@ -79,7 +79,7 @@ def ingest(claims, cwd):
             idem = "llm-stop-" + str(hash(text) & 0xFFFFFFFF)
             if conn.execute("SELECT id FROM claims WHERE idempotency_key = ?", (idem,)).fetchone():
                 continue
-            conn.execute(
+            cur = conn.execute(
                 """INSERT INTO claims (text, idempotency_key, normalized_text, claim_type,
                    subject, predicate, scope, status, confidence,
                    source_agent, created_at, updated_at, tier, version, visibility)
@@ -88,6 +88,13 @@ def ingest(claims, cwd):
                 (text, idem, text.lower(), c.get("claim_type", "fact"),
                  c.get("subject", "codebase"), c.get("predicate", "observation"),
                  scope, now, now),
+            )
+            # Auto-citation: steward min_citations>=1 gate requires >=1 row.
+            # Without this, every claim is born unpromotable. (#128)
+            conn.execute(
+                """INSERT INTO citations (claim_id, source, locator, excerpt, created_at)
+                   VALUES (?, 'llm-stop-hook', ?, ?, ?)""",
+                (cur.lastrowid, scope, text[:200], now),
             )
             ingested += 1
         conn.commit()
