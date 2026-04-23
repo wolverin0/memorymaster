@@ -25,13 +25,21 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Recall re-ranker weights (7 dims, matches scripts/eval_recall_precision_at_5.py).
+# Recall re-ranker weights (8 dims, matches scripts/eval_recall_precision_at_5.py).
 # Baseline (w0) held after autoresearch candidate #4 grid search on
 # artifacts/real-prompts.jsonl (30 prompts) — grid winner (+0.02 p@5 at
 # hook-matched top_k=8) also regressed MAP@5 by -0.006, so baseline wins.
 # Override any single weight via env var, e.g.:
 #     MEMORYMASTER_RECALL_W_FRESHNESS=0.15
+#     MEMORYMASTER_RECALL_W_ENTITY=0.15
 # See artifacts/eval/recall-precision-grid-k8-mov1.jsonl for the full grid.
+#
+# W_ENTITY (dim 8) powers the entity-link fanout stage. When set to 0.0
+# (default), the fanout only runs as a rescue path — i.e. when the FTS5
+# stage returned zero hits. Whenever FTS5 produced >=1 hit, the fanout is
+# skipped entirely, so the top-K ranking is bit-identical to pre-fanout
+# behaviour. Set W_ENTITY > 0 to also run fanout after a non-empty FTS5
+# stage and let entity-matched claims compete in the ranker.
 _RECALL_WEIGHT_DEFAULTS: dict[str, float] = {
     "W_MATCHES": 0.3,
     "W_PHRASE": 0.3,
@@ -40,6 +48,7 @@ _RECALL_WEIGHT_DEFAULTS: dict[str, float] = {
     "W_CONFIDENCE": 0.1,
     "W_FRESHNESS": 0.0,
     "W_VECTOR": 0.0,
+    "W_ENTITY": 0.0,
 }
 
 
@@ -55,6 +64,109 @@ def _recall_weight(name: str) -> float:
         logger.warning("Invalid %s=%r, falling back to default %.2f",
                        env_key, raw, _RECALL_WEIGHT_DEFAULTS[name])
         return _RECALL_WEIGHT_DEFAULTS[name]
+
+
+# Per-call fanout caps. Kept conservative so a pathological prompt (10+ env-vars)
+# doesn't blow up the hook budget: at most _ENTITY_CAP_PER_ENTITY claims per
+# matched entity, at most _ENTITY_CAP_TOTAL new claims added overall.
+_ENTITY_CAP_PER_ENTITY = 3
+_ENTITY_CAP_TOTAL = 8
+
+
+def _entity_fanout_claim_ids(
+    store,
+    prompt: str,
+    seen_ids: set[int],
+) -> list[int]:
+    """Mine entities from the prompt, resolve to entity_ids via entity_aliases,
+    and return claim IDs where ``claims.entity_id`` matches — excluding IDs
+    already seen by the FTS5 stage.
+
+    Best-effort: any DB error returns an empty list so the fanout never
+    breaks the recall hook. The tables ``entities`` / ``entity_aliases`` are
+    created lazily by ``ensure_entity_schema`` at ingest time, so we tolerate
+    their absence on legacy DBs.
+    """
+    try:
+        from memorymaster.entity_extractor import extract_patterns
+        from memorymaster.entity_registry import normalize_alias
+    except Exception:  # pragma: no cover — import errors are fatal elsewhere
+        return []
+
+    entities = extract_patterns(prompt or "")
+    if not entities:
+        return []
+
+    # Dedupe by normalized alias (entity_extractor already dedupes by
+    # canonical_hint, but different kinds can collapse to the same alias form
+    # — e.g. "git" as tool vs "git" substring of something else).
+    aliases: list[str] = []
+    seen_aliases: set[str] = set()
+    for ent in entities:
+        alias = normalize_alias(ent.canonical_hint)
+        if not alias or alias in seen_aliases:
+            continue
+        seen_aliases.add(alias)
+        aliases.append(alias)
+
+    if not aliases:
+        return []
+
+    new_ids: list[int] = []
+    try:
+        with store.connect() as conn:
+            # One SELECT per alias so per-entity cap is enforceable
+            # without a correlated subquery. Aliases are indexed, so this
+            # is cheap even with 10 entities.
+            for alias in aliases:
+                if len(new_ids) >= _ENTITY_CAP_TOTAL:
+                    break
+                rows = conn.execute(
+                    """
+                    SELECT DISTINCT c.id
+                      FROM entity_aliases a
+                      JOIN claims c ON c.entity_id = a.entity_id
+                     WHERE a.alias = ?
+                       AND c.status != 'archived'
+                       AND (c.visibility IS NULL OR c.visibility = 'public')
+                     ORDER BY c.updated_at DESC
+                     LIMIT ?
+                    """,
+                    (alias, _ENTITY_CAP_PER_ENTITY),
+                ).fetchall()
+                for row in rows:
+                    cid = int(row[0])
+                    if cid in seen_ids:
+                        continue
+                    seen_ids.add(cid)
+                    new_ids.append(cid)
+                    if len(new_ids) >= _ENTITY_CAP_TOTAL:
+                        break
+    except Exception as exc:
+        logger.debug("entity fanout skipped: %s", exc)
+        return []
+
+    return new_ids
+
+
+def _row_for_claim(claim) -> dict:
+    """Build a query_rows-shaped row dict for a fanout-sourced claim.
+
+    Scores default to zero so the claim adds no baseline signal; the
+    W_ENTITY weight on the ``entity_score`` bit is what promotes it.
+    """
+    return {
+        "claim": claim,
+        "status": getattr(claim, "status", "confirmed"),
+        "annotation": None,
+        "score": 0.0,
+        "lexical_score": 0.0,
+        "freshness_score": 0.0,
+        "confidence_score": float(getattr(claim, "confidence", 0.0) or 0.0),
+        "vector_score": 0.0,
+        "entity_score": 1.0,
+        "source": "entity_fanout",
+    }
 
 
 # Patterns that indicate something worth remembering
@@ -140,6 +252,41 @@ def recall(
             include_candidates=True,
             scope_allowlist=None,
         )
+        for row in rows:
+            claim = row.get("claim")
+            cid = getattr(claim, "id", None)
+            if cid is not None:
+                seen_ids.add(cid)
+
+    # Entity-link fanout — mine entities from the prompt, resolve via
+    # entity_aliases, and union in claims we haven't already seen.
+    #
+    # Backwards-compat contract: when MEMORYMASTER_RECALL_W_ENTITY == 0.0
+    # (shipped default) the fanout ONLY runs if the FTS5 stage returned
+    # nothing — it acts purely as a rescue path for zero-hit prompts, which
+    # keeps ranking bit-identical for the 24/30 prompts that already hit.
+    # When W_ENTITY > 0, fanout runs unconditionally and its rows (with
+    # entity_score=1.0, other scores zeroed) contribute to the re-rank.
+    w_entity_probe = _recall_weight("W_ENTITY")
+    should_fanout = (not rows) or (w_entity_probe > 0.0)
+    if should_fanout:
+        # Lazy import so legacy callers without the security module still
+        # work — fanout is a best-effort layer.
+        try:
+            from memorymaster.security import is_sensitive_claim
+        except Exception:
+            is_sensitive_claim = lambda _claim: False  # type: ignore[assignment]  # noqa: E731
+        fanout_ids = _entity_fanout_claim_ids(svc.store, query, seen_ids)
+        for cid in fanout_ids:
+            try:
+                claim = svc.store.get_claim(cid, include_citations=True)
+            except Exception:
+                continue
+            if claim is None or getattr(claim, "status", "") == "archived":
+                continue
+            if is_sensitive_claim(claim):
+                continue
+            rows.append(_row_for_claim(claim))
 
     if not rows and not skip_qdrant:
         # Fallback to Qdrant semantic search
@@ -175,6 +322,7 @@ def recall(
     w_confidence = _recall_weight("W_CONFIDENCE")
     w_freshness = _recall_weight("W_FRESHNESS")
     w_vector = _recall_weight("W_VECTOR")
+    w_entity = _recall_weight("W_ENTITY")
 
     def _relevance(row):
         claim = row.get("claim")
@@ -190,6 +338,10 @@ def recall(
         conf = float(row.get("confidence_score") or 0.0)
         freshness = float(row.get("freshness_score") or 0.0)
         vector = float(row.get("vector_score") or 0.0)
+        # entity_score is 1.0 for fanout-sourced claims, absent (→0.0) for
+        # FTS5-sourced rows. When W_ENTITY==0.0 this contributes nothing,
+        # preserving bit-identical ranking with the pre-fanout implementation.
+        entity = float(row.get("entity_score") or 0.0)
         return (
             matches * w_matches
             + phrase_bonus * w_phrase
@@ -198,6 +350,7 @@ def recall(
             + conf * w_confidence
             + freshness * w_freshness
             + vector * w_vector
+            + entity * w_entity
         )
 
     ranked = sorted(rows, key=_relevance, reverse=True)
