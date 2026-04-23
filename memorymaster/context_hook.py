@@ -77,7 +77,12 @@ _RECALL_WEIGHT_DEFAULTS: dict[str, float] = {
     "W_MATCHES": 0.3,
     "W_PHRASE": 0.3,
     "W_ALL": 0.2,
-    "W_LEXICAL": 0.1,
+    # Bumped from 0.1 → 0.3 on 2026-04-23 after the BM25 rescorer (commit 159eef7)
+    # replaced the weak overlap scorer. The old W_LEXICAL=0.1 under-weighted the
+    # now-much-stronger BM25 signal (see claim 11857). 0.3 matches the observed
+    # BM25 agent's isolated measurement of +0.113 p@5 lift when lexical was
+    # free to dominate ranking. Override via MEMORYMASTER_RECALL_W_LEXICAL.
+    "W_LEXICAL": 0.3,
     "W_CONFIDENCE": 0.1,
     "W_FRESHNESS": 0.0,
     "W_VECTOR": 0.0,

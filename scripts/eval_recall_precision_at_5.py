@@ -56,7 +56,10 @@ WEIGHT_NAMES = (
 
 # Baseline weights in context_hook.py::_relevance (matches + phrase + all + lex + conf).
 # Freshness + vector + entity were unused in w0.
-W0 = (0.3, 0.3, 0.2, 0.1, 0.1, 0.0, 0.0, 0.0)
+W0 = (0.3, 0.3, 0.2, 0.3, 0.1, 0.0, 0.0, 0.0)
+# W_LEXICAL=0.3 (4th slot) matches the 2026-04-23 shipped default in
+# memorymaster/context_hook.py after the BM25 rescorer replaced the
+# weak overlap scorer. See claim 11857 for why 0.1 was insufficient.
 
 
 @dataclass(frozen=True)
