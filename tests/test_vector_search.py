@@ -165,7 +165,9 @@ class TestCreateBestProvider:
             patch("memorymaster.embeddings._load_gemini_client", return_value=mock_client),
         ):
             provider = create_best_provider()
-        assert provider.model == "gemini:text-embedding-004"
+        # Default upgraded to gemini-embedding-001 after Google deprecated
+        # text-embedding-004 from v1beta (see memorymaster/embeddings.py).
+        assert provider.model == "gemini:gemini-embedding-001"
         assert provider.is_semantic
 
     def test_no_gemini_without_api_key(self) -> None:
