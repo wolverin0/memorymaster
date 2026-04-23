@@ -53,6 +53,10 @@ SIGNALS = [
             "decidimos", "decidí", "elegimos", "vamos con", "nos quedamos con",
             "la decisión es", "la decision es", "quedó que", "quedo que",
             "acordamos", "zanjamos", "se definio", "se definió", "definimos",
+            # Negative-decision (we are NOT going to do X) — durable "no-go"
+            "no vamos a", "no lo vamos a", "olvidate", "olvidá",
+            # Imperative command form signals a choice being made
+            "más vale", "mas vale",
         ],
     },
     {
@@ -63,15 +67,27 @@ SIGNALS = [
             "future sessions avoid re-debugging it."
         ),
         "patterns": [
-            # English
+            # English — root-cause phrasing
             "root cause", "the bug is", "the bug was", "turned out to be",
             "was caused by", "is caused by", "fails because",
             "broken because", "regression", "was due to",
+            # English — bug-report phrasing (user describing a failure)
+            "dont work", "don't work", "doesn't work", "doesnt work",
+            "not working", "is broken", "are broken",
+            "help me debug", "debug this", "having an issue",
+            "dropping error", "throwing error", "throws error", "throwing a",
+            # HTTP error codes inside a bug description
+            "429 error", "500 error", "502 error", "503 error", "504 error",
+            "404 error", "400 error",
             # Spanish
             "la causa es", "la causa era", "el problema es", "el problema era",
             "se rompe cuando", "se rompia cuando", "se rompía cuando",
             "fallaba porque", "falla porque", "fue por", "era por",
             "el bug es", "el bug era", "resulta que",
+            # Spanish — bug-report phrasing
+            "no anda", "no funciona", "no andaba", "no funcionaba",
+            "tira error", "tira eso", "sigue fallando", "se rompió",
+            "se rompio", "está roto", "esta roto",
         ],
     },
     {
@@ -104,11 +120,25 @@ SIGNALS = [
             "must not", "cannot", "can't", "never", "always", "required to",
             "requires", "mandatory", "forbidden", "not allowed", "only if",
             "only when", "must be", "has to be", "limited to",
+            # English — numeric/technical limits (specs & rate limits).
+            # Specific trailing colon/phrasing to avoid rhetorical matches.
+            "rate limits:", "rate-limits:", "free tier limits",
+            "hard limit", "soft limit", "token limits:",
+            "requests per minute", "requests per day",
+            "tokens per minute",
             # Spanish
-            "no podemos", "no puede", "nunca", "siempre", "obligatorio",
+            "no puede", "nunca", "siempre", "obligatorio",
             "obligatoria", "prohibido", "requiere", "tiene que", "debe ser",
             "debe estar", "no permitido", "solo si", "sólo si", "sólo cuando",
             "solo cuando", "limitado a",
+            # Spanish — negated capabilities ("we don't have X", hard block).
+            # Specific object heads (llave, acceso, permiso) avoid matching
+            # idioms like "no tenemos nada que perder".
+            "no tenemos llave", "no tenemos acceso",
+            "no tenemos permiso", "no tenemos permisos",
+            "no tenemos api", "sin llave", "no hay forma",
+            # Explicit "we won't install X" is both decision & constraint
+            "no lo instalamos", "no la instalamos",
         ],
     },
     {
@@ -123,6 +153,10 @@ SIGNALS = [
             "architecture", "system design", "refactor", "restructure",
             "rewrite", "data flow", "module boundary", "separation of concerns",
             "adr", "design doc", "trade-off", "tradeoff",
+            # English — concrete architectural components
+            "mcp server", "json-rpc", "stdio json", "knowledge base",
+            "orchestrator", "vault structure", "exposes tools",
+            "exposes 6 tools", "multi-session", "cross-session",
             # Spanish
             "arquitectura", "diseño del sistema", "diseno del sistema",
             "estructura", "refactor", "reescribir", "reestructurar",
@@ -140,13 +174,22 @@ SIGNALS = [
         "patterns": [
             # English
             "env var", "environment variable", ".env", "export ",
-            "install", "installing", "setup", "set up", "configure",
+            "install", "installing", "configure",
             "configuration", "path issue", "venv", "virtualenv",
             "dependency", "pip install", "npm install",
+            # English — model/runtime switches (coding-agent specific)
+            "using model", "using the model", "using opus", "using sonnet",
+            "using haiku", "using gemini", "using gpt",
+            "switched to", "switch model", "claude desktop",
             # Spanish
-            "variable de entorno", "instalar", "instalación", "instalacion",
+            "variable de entorno", "instalación", "instalacion",
             "configurar", "configuración", "configuracion", "entorno",
             "dependencia", "problema de path",
+            # Spanish — model/runtime switches
+            "usando el modelo", "estamos usando", "cambiamos al modelo",
+            "cambié al modelo", "cambie al modelo",
+            # MCP/agent runtime config changes
+            "agregar mcp", "sacar el mcp", "agregar memorymaster",
         ],
     },
     {
@@ -172,21 +215,43 @@ SIGNALS = [
 def _any_word_match(pattern_words: list, text: str) -> bool:
     """Check if any phrase appears as a whole word/phrase.
 
-    Latin-letter lookarounds: (?<![a-zA-Z]) and (?![a-zA-Z]) ensure English
-    keywords aren't part of a larger English word while allowing adjacency
-    with Spanish accents or punctuation. Works with ñ, á, é, í, ó, ú.
+    Conditional Latin-letter lookarounds: add (?<![a-zA-Z]) only if the
+    phrase STARTS with a letter, and (?![a-zA-Z]) only if it ENDS with a
+    letter. This prevents URL/symbol phrases like "https://" or
+    "github.com/" from failing the right boundary when followed by a
+    letter ("https://github..." — the 'g' after '/' used to block the
+    match). Still safe for plain English keywords like "decided" /
+    "cannot" — they have letter edges so both lookarounds apply.
     """
     for phrase in pattern_words:
-        pat = r'(?<![a-zA-Z])' + re.escape(phrase) + r'(?![a-zA-Z])'
+        if not phrase:
+            continue
+        left = r'(?<![a-zA-Z])' if phrase[0].isalpha() else ''
+        right = r'(?![a-zA-Z])' if phrase[-1].isalpha() else ''
+        pat = left + re.escape(phrase) + right
         if re.search(pat, text, re.IGNORECASE):
             return True
     return False
 
 
+# Meta-prompt wrappers injected by the Claude CLI that should NOT be
+# classified (they're control messages, not user intent).
+_META_STRIP_RE = re.compile(
+    r'<local-command-caveat>.*?</local-command-caveat>',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _strip_meta(text: str) -> str:
+    """Remove Claude CLI meta-prompt wrappers before classification."""
+    return _META_STRIP_RE.sub(' ', text)
+
+
 def classify(prompt: str) -> list:
+    cleaned = _strip_meta(prompt)
     signals = []
     for sig in SIGNALS:
-        if _any_word_match(sig["patterns"], prompt):
+        if _any_word_match(sig["patterns"], cleaned):
             signals.append((sig["name"], sig["message"]))
     return signals
 

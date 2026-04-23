@@ -70,6 +70,8 @@ cloned/
 quality_model.pkl
 autoresearch*.log
 *.jsonl
+# Labeled eval fixtures are checked in
+!tests/fixtures/*.jsonl
 memorymaster.db.corrupted
 benchmarks/longmemeval_bench.db
 benchmarks/longmemeval_output.jsonl
