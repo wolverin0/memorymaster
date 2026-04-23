@@ -1,7 +1,7 @@
 # Session Handoff — 2026-04-23
 
 **Project:** memorymaster
-**Branch:** `main` at `6d8729e`
+**Branch:** `main` at `7d80d83` (updated mid-session; see §9 for late-session additions)
 **Model:** Opus 4.7 1M-context
 **Purpose:** continuation checkpoint for the big autonomy push on 2026-04-23.
 
@@ -117,3 +117,72 @@ Highest-leverage pending work:
 The 12 tasks that closed this session do not need review — they
 shipped, tests pass, migrations landed cleanly.
 ```
+
+---
+
+## 9 · Late-session additions (post-handoff-first-draft)
+
+After the first handoff draft, the session kept going. Additional commits
+on `origin/main` past `6d8729e`:
+
+| Commit | What |
+|---|---|
+| `473b5dd` | merge: session handoff 2026-04-23 (this file's initial version) |
+| `7439fa6` | merge: classify-hook macro-F1 0.22 → 0.98 (#116) |
+| `542392b` | merge: stale vector_search default-model expectation fix |
+| `5285edd` | merge: .claude/ rules curation (long-open PR finally merged) |
+| `b1a0ac9` | docs: roadmapres.md — remaining-work plan |
+| `fe88344` | feat(entity-extraction): Layer-1 regex extractor at ingest (#127 Wave 3) |
+| `d119eb1` | feat(steward): real-DB training run v1 (honest null — ROC-AUC 0.46 on broken split) |
+| `0dff74a` | feat(policy): MEMORYMASTER_POLICY_MODE env-var opt-in for cadence |
+| `6679805` | merge: steward classifier v2 — fix chronological-split pathology (#129b, ROC-AUC 0.990) |
+| `847342f` | merge: recall precision@5 eval + env-knob infrastructure (#4) |
+| `e884f23` | fix(tests,docs): de-flake key_rotator cooldown test + operator enable doc |
+| `7d80d83` | **merge: recall tokenizer v2 — df=0 IDF bug fix + stem/synonym fallback (+4 prompts)** |
+
+### Metrics landed (vs pre-session baselines)
+
+| Metric | Before | After | Source |
+|---|---|---|---|
+| Stuck candidates with 0 citations | 824 | 68 | #128 fix + backfill |
+| avg_aliases_per_entity | 1.033 | 2.150 | #127 Layer-1 extract + backfill |
+| Classify hook macro-F1 | 0.22 | 0.98 | #116 (agent) |
+| Steward classifier ROC-AUC (sound split) | — | 0.99 | #129b (agent) |
+| Recall non-empty rate | 24/30 (80%) | **28/30 (93%)** | tokenizer v2 |
+| Recall precision@5 | 0.197 | **0.280** | tokenizer v2 downstream |
+| Recall MAP@5 | 0.237 | **0.442** | tokenizer v2 downstream |
+| Hook template drift | 6/7 + 2 missing | 0/9 | #130 |
+
+### Classifier + policy-mode operator path
+
+Both systems are enable-ready but off by default. See
+`docs/enabling-v2-systems.md` for the env-var recipe and rollback
+instructions. Cadence-mode was validated live on this session's DB —
+first run reports `considered=200, due=188, selected=5` at
+`--policy-limit 5` (expect a ~5-cycle backlog-clearing window).
+
+### Subagents in flight at handoff-close
+
+Two background agents were running when this section was written:
+- **BM25 param sweep** (agent `a0542217`, branch `omni/feat-bm25-sweep-2026-04-23`). Grid search over (k1, b) 5×5 against the 30-prompt eval.
+- **Entity-link retrieval fanout** (agent `aad80bced0a3080c6`, branch `omni/feat-recall-entity-fanout-2026-04-23`). Wires post-#127 entity_aliases into the recall path.
+
+When their notifications fire, merge via commit-guard-safe branch path
+and re-run `scripts/eval_recall_quality.py` + `scripts/eval_recall_precision_at_5.py`.
+
+### New autoresearch candidates (open)
+
+With the retrieval bottleneck partially broken, the remaining levers are:
+1. Vector fallback when FTS5 returns <3 (Qdrant) — 2 days
+2. Steward classifier v3 feature engineering on the sound-split corpus
+3. Sensitivity-filter refresh on a new adversarial corpus
+4. Content-embedding similarity feature for the classifier
+
+### Claims saved this extension
+
+11822 (subagent HEAD bleed), 11825 (commit-guard merge workflow),
+11830 (Wave 3 shipped), 11831 (classifier v2 shipped), 11833 (v1 real-
+DB training null result), 11834 (policy-mode legacy-is-stub),
+11838 (split-pathology correction), 11841 (retrieval-not-ranking),
+11847 (user "no stopping" preference), 11848 (Windows timer flake),
+11853 (df=0 IDF inverted-ranking bug), 11854 (cadence-mode validation).
