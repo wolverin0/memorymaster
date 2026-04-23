@@ -4,10 +4,27 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
+
+def _port_bound(host: str = "127.0.0.1", port: int = 8765) -> bool:
+    """True if *something* is already listening on (host, port).
+
+    Used to skip ``test_open_dashboard_no_server`` when a real dashboard
+    process is already running on the default port — otherwise the assertion
+    ``reachable is False`` fails locally even though the test logic is fine.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.25)
+        try:
+            s.connect((host, port))
+            return True
+        except OSError:
+            return False
 
 from memorymaster.mcp_server import (
     _claim_to_dict,
@@ -369,6 +386,10 @@ class TestMcpToolsIntegration:
         result = redact_claim_payload(claim_id=cid, db=self.db_path, workspace=self.workspace)
         assert result["ok"] is True
 
+    @pytest.mark.skipif(
+        _port_bound(),
+        reason="dashboard port 8765 is bound; this test requires no real server",
+    )
     def test_open_dashboard_no_server(self):
         try:
             from memorymaster.mcp_server import open_dashboard
