@@ -25,6 +25,38 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Recall re-ranker weights (7 dims, matches scripts/eval_recall_precision_at_5.py).
+# Baseline (w0) held after autoresearch candidate #4 grid search on
+# artifacts/real-prompts.jsonl (30 prompts) — grid winner (+0.02 p@5 at
+# hook-matched top_k=8) also regressed MAP@5 by -0.006, so baseline wins.
+# Override any single weight via env var, e.g.:
+#     MEMORYMASTER_RECALL_W_FRESHNESS=0.15
+# See artifacts/eval/recall-precision-grid-k8-mov1.jsonl for the full grid.
+_RECALL_WEIGHT_DEFAULTS: dict[str, float] = {
+    "W_MATCHES": 0.3,
+    "W_PHRASE": 0.3,
+    "W_ALL": 0.2,
+    "W_LEXICAL": 0.1,
+    "W_CONFIDENCE": 0.1,
+    "W_FRESHNESS": 0.0,
+    "W_VECTOR": 0.0,
+}
+
+
+def _recall_weight(name: str) -> float:
+    """Read a single recall-ranker weight from env, falling back to default."""
+    env_key = f"MEMORYMASTER_RECALL_{name}"
+    raw = os.environ.get(env_key)
+    if raw is None or raw.strip() == "":
+        return _RECALL_WEIGHT_DEFAULTS[name]
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%r, falling back to default %.2f",
+                       env_key, raw, _RECALL_WEIGHT_DEFAULTS[name])
+        return _RECALL_WEIGHT_DEFAULTS[name]
+
+
 # Patterns that indicate something worth remembering
 OBSERVATION_PATTERNS = [
     # User corrections/preferences
@@ -135,18 +167,38 @@ def recall(
     # post-ranker agrees with retrieval.
     query_words = set(fts_query.lower().split()) or set(query.lower().split())
 
+    # Resolve weights once per call — env overrides shipped defaults.
+    w_matches = _recall_weight("W_MATCHES")
+    w_phrase = _recall_weight("W_PHRASE")
+    w_all = _recall_weight("W_ALL")
+    w_lexical = _recall_weight("W_LEXICAL")
+    w_confidence = _recall_weight("W_CONFIDENCE")
+    w_freshness = _recall_weight("W_FRESHNESS")
+    w_vector = _recall_weight("W_VECTOR")
+
     def _relevance(row):
         claim = row.get("claim")
         text = (claim.text if hasattr(claim, "text") else "").lower()
-        # Count how many query words appear in the claim
-        matches = sum(1 for w in query_words if w in text and len(w) > 2)
-        # Bonus: full query phrase appears in text
+        # Count how many query words (length > 2) appear in the claim text.
+        tokens_gt2 = [w for w in query_words if len(w) > 2]
+        matches = sum(1 for w in tokens_gt2 if w in text)
+        # Bonus: full query phrase appears in text.
         phrase_bonus = 1.0 if query.lower() in text else 0.0
-        # Bonus: ALL query words present (not just some)
-        all_present = 1.0 if matches == len([w for w in query_words if len(w) > 2]) else 0.0
-        lexical = row.get("lexical_score", 0)
-        conf = row.get("confidence_score", 0)
-        return matches * 0.3 + phrase_bonus * 0.3 + all_present * 0.2 + lexical * 0.1 + conf * 0.1
+        # Bonus: ALL query tokens present (not just some).
+        all_present = 1.0 if tokens_gt2 and matches == len(tokens_gt2) else 0.0
+        lexical = float(row.get("lexical_score") or 0.0)
+        conf = float(row.get("confidence_score") or 0.0)
+        freshness = float(row.get("freshness_score") or 0.0)
+        vector = float(row.get("vector_score") or 0.0)
+        return (
+            matches * w_matches
+            + phrase_bonus * w_phrase
+            + all_present * w_all
+            + lexical * w_lexical
+            + conf * w_confidence
+            + freshness * w_freshness
+            + vector * w_vector
+        )
 
     ranked = sorted(rows, key=_relevance, reverse=True)
 
