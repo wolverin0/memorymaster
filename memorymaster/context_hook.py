@@ -19,11 +19,44 @@ Usage (from CLAUDE.md):
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# BM25 lexical re-scorer (ships on by default after the 5x5 k1/b sweep
+# on 30-prompt eval — see artifacts/bm25-sweep-2026-04-23.md).
+#
+# Beats the previous overlap-based `_lexical_score` by +0.113 p@5 and
+# +0.108 MAP@5 on the 30-prompt eval with non-empty rate held at 28/30.
+# k1=1.2, b=0.25 are the shipped defaults (tied with six other combos
+# at p@5=0.393; picked because they are classical-BM25 canonical values
+# and maximise MAP@5 across ties). Override via env:
+#     MEMORYMASTER_BM25_K1=<float>
+#     MEMORYMASTER_BM25_B=<float>
+#     MEMORYMASTER_LEXICAL_BM25=0           # disable, fall back to overlap scorer
+_BM25_K1_DEFAULT = 1.2
+_BM25_B_DEFAULT = 0.25
+
+
+def _bm25_param(name: str, default: float) -> float:
+    raw = os.environ.get(f"MEMORYMASTER_BM25_{name}")
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("Invalid MEMORYMASTER_BM25_%s=%r, falling back to %.2f",
+                       name, raw, default)
+        return default
+
+
+def _bm25_enabled() -> bool:
+    raw = os.environ.get("MEMORYMASTER_LEXICAL_BM25", "1").strip()
+    return raw not in ("0", "false", "False", "no", "off", "")
+
 
 # Recall re-ranker weights (8 dims, matches scripts/eval_recall_precision_at_5.py).
 # Baseline (w0) held after autoresearch candidate #4 grid search on
@@ -324,6 +357,70 @@ def recall(
     w_vector = _recall_weight("W_VECTOR")
     w_entity = _recall_weight("W_ENTITY")
 
+    # Build BM25 corpus stats over the candidate set once per call. This is
+    # cheap (O(rows * avg_doc_len)) and strictly read-only — we never touch
+    # the DB past what query_rows already fetched. Feature-flagged; on by
+    # default after the sweep. See module-level comment for why.
+    bm25_on = _bm25_enabled()
+    bm25_scores: dict[int, float] = {}
+    if bm25_on:
+        from memorymaster.recall_tokenizer import _candidate_tokens
+
+        def _doc_tokens(claim_obj) -> list[str]:
+            subject = getattr(claim_obj, "subject", "") or ""
+            text = getattr(claim_obj, "text", "") or ""
+            joined = f"{subject} {text}"
+            return [t for t in _candidate_tokens(joined) if len(t) >= 3]
+
+        # Cache tokenisation per row (keyed by id) and build df + dl stats.
+        doc_tokens_by_id: dict[int, list[str]] = {}
+        df: dict[str, int] = {}
+        for r in rows:
+            c = r.get("claim")
+            cid = getattr(c, "id", None)
+            if cid is None or cid in doc_tokens_by_id:
+                continue
+            toks = _doc_tokens(c)
+            doc_tokens_by_id[cid] = toks
+            for t in set(toks):
+                df[t] = df.get(t, 0) + 1
+        n_docs = len(doc_tokens_by_id)
+        avg_dl = (
+            sum(len(v) for v in doc_tokens_by_id.values()) / n_docs
+            if n_docs else 0.0
+        )
+
+        k1 = _bm25_param("K1", _BM25_K1_DEFAULT)
+        b = _bm25_param("B", _BM25_B_DEFAULT)
+
+        # Query tokens for BM25: use the same tokenizer as the tokenizer
+        # pipeline so we agree with the retrieval stage. Fall back to the
+        # raw query_words split when the tokenizer finds nothing.
+        q_tokens = [t for t in _candidate_tokens(query) if len(t) >= 3]
+        if not q_tokens:
+            q_tokens = [w for w in query_words if len(w) >= 3]
+
+        if n_docs > 0 and avg_dl > 0 and q_tokens:
+            for cid, doc_tokens in doc_tokens_by_id.items():
+                if not doc_tokens:
+                    continue
+                tf: dict[str, int] = {}
+                for t in doc_tokens:
+                    tf[t] = tf.get(t, 0) + 1
+                dl = len(doc_tokens)
+                score = 0.0
+                for qt in q_tokens:
+                    f = tf.get(qt, 0)
+                    if f == 0:
+                        continue
+                    n_q = df.get(qt, 0)
+                    idf = math.log(
+                        ((n_docs - n_q + 0.5) / (n_q + 0.5)) + 1.0
+                    )
+                    norm = 1.0 - b + b * (dl / avg_dl)
+                    score += idf * ((f * (k1 + 1.0)) / (f + k1 * norm))
+                bm25_scores[cid] = score
+
     def _relevance(row):
         claim = row.get("claim")
         text = (claim.text if hasattr(claim, "text") else "").lower()
@@ -334,7 +431,11 @@ def recall(
         phrase_bonus = 1.0 if query.lower() in text else 0.0
         # Bonus: ALL query tokens present (not just some).
         all_present = 1.0 if tokens_gt2 and matches == len(tokens_gt2) else 0.0
-        lexical = float(row.get("lexical_score") or 0.0)
+        if bm25_on:
+            cid = getattr(claim, "id", None)
+            lexical = bm25_scores.get(cid, 0.0) if cid is not None else 0.0
+        else:
+            lexical = float(row.get("lexical_score") or 0.0)
         conf = float(row.get("confidence_score") or 0.0)
         freshness = float(row.get("freshness_score") or 0.0)
         vector = float(row.get("vector_score") or 0.0)
