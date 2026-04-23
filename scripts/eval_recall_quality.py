@@ -45,12 +45,14 @@ def _run_raw(svc: MemoryService, q: str) -> int:
     return len(rows)
 
 
-def _run_tokenized(svc: MemoryService, tokens: str, limit: int = 8) -> int:
-    if not tokens:
+def _run_tokenized(svc: MemoryService, tokens: str, limit: int = 8,
+                   raw_prompt: str | None = None,
+                   db_path: str | None = None) -> int:
+    if not tokens and not raw_prompt:
         return 0
-    token_list = tokens.split()
+    token_list = tokens.split() if tokens else []
     seen: set[int] = set()
-    per_token = max(3, limit // max(1, len(token_list)))
+    per_token = max(3, limit // max(1, len(token_list) or 1))
     hits = 0
     for tok in token_list:
         rows = svc.query_rows(
@@ -65,6 +67,22 @@ def _run_tokenized(svc: MemoryService, tokens: str, limit: int = 8) -> int:
             hits += 1
             if hits >= limit:
                 return hits
+    # Optional verbatim stream — gated on MEMORYMASTER_RECALL_VERBATIM=1.
+    # Acts as a rescue stream when the claims pipeline returned nothing.
+    if raw_prompt and db_path and hits < limit:
+        try:
+            from memorymaster.verbatim_recall import (
+                is_enabled as _verbatim_enabled,
+                recall_verbatim,
+            )
+            if _verbatim_enabled():
+                verbatim_hits = recall_verbatim(
+                    raw_prompt, scope=None, db_path=db_path,
+                    limit=limit - hits,
+                )
+                hits += len(verbatim_hits)
+        except Exception:
+            pass
     return hits
 
 
@@ -94,7 +112,8 @@ def main() -> int:
     for i, prompt in enumerate(prompts, 1):
         old_n = _run_raw(svc, prompt)
         tokens = extract_query_tokens(prompt, str(db_path), max_tokens=args.max_tokens)
-        new_n = _run_tokenized(svc, tokens)
+        new_n = _run_tokenized(svc, tokens, raw_prompt=prompt,
+                                db_path=str(db_path))
         before += 1 if old_n > 0 else 0
         after += 1 if new_n > 0 else 0
         if args.verbose:

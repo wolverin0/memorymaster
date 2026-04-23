@@ -82,6 +82,10 @@ _RECALL_WEIGHT_DEFAULTS: dict[str, float] = {
     "W_FRESHNESS": 0.0,
     "W_VECTOR": 0.0,
     "W_ENTITY": 0.0,
+    # W_VERBATIM — MemPalace-style raw-conversation stream. Off by default
+    # (see memorymaster.verbatim_recall). Only contributes when the stream
+    # itself is gated on via MEMORYMASTER_RECALL_VERBATIM=1.
+    "W_VERBATIM": 0.0,
 }
 
 
@@ -321,6 +325,67 @@ def recall(
                 continue
             rows.append(_row_for_claim(claim))
 
+    # Verbatim retrieval — MemPalace-style raw conversation stream.
+    #
+    # Gated on MEMORYMASTER_RECALL_VERBATIM=1 (default 0 = off) so legacy
+    # behaviour is bit-identical when the env var is absent.
+    #
+    # When a verbatim hit's scope matches a claim we already retrieved,
+    # we BOOST that claim's verbatim_score rather than add a synthetic
+    # row — avoids phantom candidates when the information is already
+    # represented as a curated claim.
+    try:
+        from memorymaster.verbatim_recall import (
+            hit_to_synthetic_row,
+            is_enabled as _verbatim_enabled,
+            recall_verbatim,
+        )
+    except Exception:  # pragma: no cover - importless path
+        _verbatim_enabled = lambda: False  # type: ignore[assignment]  # noqa: E731
+        recall_verbatim = lambda *a, **k: []  # type: ignore[assignment]  # noqa: E731
+        hit_to_synthetic_row = None  # type: ignore[assignment]
+
+    if _verbatim_enabled():
+        try:
+            verbatim_hits = recall_verbatim(query, scope=None, db_path=db, limit=5)
+        except Exception as exc:
+            logger.debug("verbatim stream skipped: %s", exc)
+            verbatim_hits = []
+
+        if verbatim_hits and hit_to_synthetic_row is not None:
+            # Build a scope -> existing row index so we can boost instead
+            # of duplicate when the same context is already represented.
+            scope_to_rows: dict[str, list[dict]] = {}
+            for row in rows:
+                claim = row.get("claim")
+                s = getattr(claim, "scope", "") or ""
+                if not s:
+                    continue
+                scope_to_rows.setdefault(s, []).append(row)
+
+            added_excerpts: set[str] = set()
+            for hit in verbatim_hits:
+                existing = scope_to_rows.get(hit.scope) or []
+                if existing:
+                    # Boost the first scope-matching claim rather than
+                    # inject a phantom. The ranker reads max verbatim_score
+                    # across boosts, so repeated hits accumulate into the
+                    # strongest existing claim.
+                    target = existing[0]
+                    prev = float(target.get("verbatim_score") or 0.0)
+                    if hit.score > prev:
+                        target["verbatim_score"] = hit.score
+                        target["_verbatim_id"] = hit.verbatim_id
+                    continue
+                # No scope-match — inject as synthetic candidate. Dedup
+                # trivially by excerpt prefix so multiple turns of the
+                # same rant don't flood the top-k.
+                key = hit.excerpt[:100]
+                if key in added_excerpts:
+                    continue
+                added_excerpts.add(key)
+                rows.append(hit_to_synthetic_row(hit))
+
     if not rows and not skip_qdrant:
         # Fallback to Qdrant semantic search
         try:
@@ -356,6 +421,7 @@ def recall(
     w_freshness = _recall_weight("W_FRESHNESS")
     w_vector = _recall_weight("W_VECTOR")
     w_entity = _recall_weight("W_ENTITY")
+    w_verbatim = _recall_weight("W_VERBATIM")
 
     # Build BM25 corpus stats over the candidate set once per call. This is
     # cheap (O(rows * avg_doc_len)) and strictly read-only — we never touch
@@ -443,6 +509,11 @@ def recall(
         # FTS5-sourced rows. When W_ENTITY==0.0 this contributes nothing,
         # preserving bit-identical ranking with the pre-fanout implementation.
         entity = float(row.get("entity_score") or 0.0)
+        # verbatim_score is non-zero only when the verbatim stream is gated
+        # on (MEMORYMASTER_RECALL_VERBATIM=1) AND the row matched a FTS5
+        # query over verbatim_memories. W_VERBATIM=0.0 (default) preserves
+        # legacy ranking bit-for-bit.
+        verbatim = float(row.get("verbatim_score") or 0.0)
         return (
             matches * w_matches
             + phrase_bonus * w_phrase
@@ -452,6 +523,7 @@ def recall(
             + freshness * w_freshness
             + vector * w_vector
             + entity * w_entity
+            + verbatim * w_verbatim
         )
 
     ranked = sorted(rows, key=_relevance, reverse=True)
