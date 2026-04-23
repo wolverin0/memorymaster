@@ -106,15 +106,19 @@ def test_cooldown_is_skipped_until_recovery() -> None:
 
 def test_all_on_cooldown_sleeps_and_returns_soonest() -> None:
     r = _make(["a", "b"])
-    r.mark_rate_limited("a", retry_after=0.10)
-    r.mark_rate_limited("b", retry_after=0.02)
+    # Use larger cooldown windows so Windows' ~15.6ms timer resolution can't
+    # undershoot the assertion. Previously 0.02/0.10 with a >=0.02 floor was
+    # flaky because time.sleep(0.02) often returns in ~0.016s on Windows.
+    r.mark_rate_limited("a", retry_after=0.25)
+    r.mark_rate_limited("b", retry_after=0.10)
     t0 = time.monotonic()
     label, _ = r.next_key()
     elapsed = time.monotonic() - t0
     assert label == "b"
-    # Should have slept ~0.02s (the soonest)
-    assert elapsed >= 0.02
-    assert elapsed < 0.15
+    # Should have slept ~0.10s (the soonest). Tolerance absorbs clock jitter
+    # on low-resolution Windows timers.
+    assert elapsed >= 0.08
+    assert elapsed < 0.35
 
 
 def test_banned_keys_are_skipped_permanently() -> None:
