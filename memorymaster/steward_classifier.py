@@ -34,7 +34,7 @@ _LOG = logging.getLogger(__name__)
 
 _ENV_VAR = "MEMORYMASTER_STEWARD_CLASSIFIER_PATH"
 _ENABLE_ENV = "MEMORYMASTER_STEWARD_CLASSIFIER_ENABLED"
-_DEFAULT_PATH = Path("artifacts/steward-classifier-v1.joblib")
+_DEFAULT_PATH = Path("artifacts/steward-classifier-v2.joblib")
 
 _cache_lock = threading.Lock()
 _cache: "LoadedClassifier | None" = None

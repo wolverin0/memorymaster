@@ -51,9 +51,17 @@ def _ins(conn: sqlite3.Connection, **overrides) -> int:
 
 
 def test_feature_version_is_stable() -> None:
-    assert FEATURE_VERSION == "v1"
-    assert len(FEATURE_KEYS) == 9
+    assert FEATURE_VERSION == "v2"
+    # v2 = 9 v1 keys + 6 text + 3 links + 1 entity + 2 citation-depth = 21
+    assert len(FEATURE_KEYS) == 21
     assert "n_citations" in FEATURE_KEYS
+    # v2 additions must all be present
+    for new_key in ("text_length", "word_count", "sentence_count",
+                    "has_url", "has_code_fence", "has_file_path",
+                    "n_related_claims", "n_supersedes", "n_superseded_by",
+                    "has_entity", "citation_has_locator",
+                    "citation_distinct_sources"):
+        assert new_key in FEATURE_KEYS, f"missing v2 feature: {new_key}"
 
 
 def test_n_citations_counts_rows(conn) -> None:
