@@ -100,13 +100,19 @@ def _label(prompt_tokens: set[str], claim_subject: str | None, claim_text: str,
 
 def _fetch_candidates(svc: MemoryService, prompt: str, db_path: str,
                       max_tokens: int = 6, top_k: int = 20,
-                      include_entity_fanout: bool = True) -> list[dict]:
+                      include_entity_fanout: bool = True,
+                      include_vector_fallback: bool = False) -> list[dict]:
     """Mirror context_hook.recall() candidate collection, but fetch top_k.
 
     When ``include_entity_fanout`` is True, also mines entities from the
     prompt and unions in claims linked by ``entity_id`` (lower-weight
     via ``entity_score=1.0``). This matches context_hook.recall when
     ``MEMORYMASTER_RECALL_W_ENTITY > 0``.
+
+    When ``include_vector_fallback`` is True AND the post-fanout candidate
+    count is below :func:`memorymaster.qdrant_recall_fallback.fallback_threshold`,
+    also unions in Qdrant semantic-search hits. Env vars must be set as in
+    context_hook.recall (MEMORYMASTER_QDRANT_URL + MEMORYMASTER_RECALL_VECTOR_FALLBACK).
     """
     fts_query = extract_query_tokens(prompt, db_path, max_tokens=max_tokens)
     token_list = fts_query.split() if fts_query else []
@@ -156,6 +162,28 @@ def _fetch_candidates(svc: MemoryService, prompt: str, db_path: str,
             if claim is None or getattr(claim, "status", "") == "archived":
                 continue
             rows.append(_row_for_claim(claim))
+    if include_vector_fallback:
+        from memorymaster import qdrant_recall_fallback
+        from memorymaster.context_hook import _row_for_vector_hit
+        if (
+            qdrant_recall_fallback.is_fallback_enabled()
+            and len(rows) < qdrant_recall_fallback.fallback_threshold()
+        ):
+            try:
+                hits = qdrant_recall_fallback.search(prompt)
+            except Exception:
+                hits = []
+            for hit in hits:
+                if hit.claim_id in seen_ids:
+                    continue
+                try:
+                    claim = svc.store.get_claim(hit.claim_id, include_citations=True)
+                except Exception:
+                    continue
+                if claim is None or getattr(claim, "status", "") == "archived":
+                    continue
+                rows.append(_row_for_vector_hit(claim, hit.score))
+                seen_ids.add(hit.claim_id)
     # Attach the tokenized query for re-ranking.
     for row in rows:
         row["_fts_query"] = fts_query
@@ -223,12 +251,14 @@ def _average_precision_at_k(labels: list[int], k: int = 5) -> float:
 
 def _collect_candidates(prompts: list[str], svc: MemoryService, db_path: str,
                         top_k: int = 20,
-                        include_entity_fanout: bool = True) -> list[tuple[str, list[dict], set[str]]]:
+                        include_entity_fanout: bool = True,
+                        include_vector_fallback: bool = False) -> list[tuple[str, list[dict], set[str]]]:
     """Fetch top_k candidates once per prompt — reused across weight tuples."""
     out = []
     for prompt in prompts:
         rows = _fetch_candidates(svc, prompt, db_path, top_k=top_k,
-                                 include_entity_fanout=include_entity_fanout)
+                                 include_entity_fanout=include_entity_fanout,
+                                 include_vector_fallback=include_vector_fallback)
         ptoks = _prompt_tokens(prompt)
         out.append((prompt, rows, ptoks))
     return out
@@ -257,6 +287,14 @@ def _evaluate(collected: list[tuple[str, list[dict], set[str]]],
             hit_prompts += 1
     n = max(1, len(collected))
     return sum(ps) / n, sum(aps) / n, hit_prompts
+
+
+def _vector_fallback_env_on() -> bool:
+    """True when BOTH env gates are set — mirrors context_hook behaviour."""
+    import os as _os
+    flag = _os.environ.get("MEMORYMASTER_RECALL_VECTOR_FALLBACK", "").strip()
+    url = _os.environ.get("MEMORYMASTER_QDRANT_URL", "").strip()
+    return bool(url) and flag.lower() not in ("", "0", "false", "no", "off")
 
 
 def _parse_weights(s: str) -> tuple[float, ...]:
@@ -326,6 +364,9 @@ def main() -> int:
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--no-entity-fanout", action="store_true",
                     help="Disable entity-link fanout (reproduce pre-fanout baseline)")
+    ap.add_argument("--vector-fallback", action="store_true",
+                    help="Enable Qdrant vector-search fallback (also honours "
+                         "MEMORYMASTER_RECALL_VECTOR_FALLBACK + QDRANT_URL env).")
     ap.add_argument("--json-out", default=None, help="Write grid search results as JSONL")
     args = ap.parse_args()
 
@@ -352,9 +393,12 @@ def main() -> int:
     print(f"DB: {db_path.name} (read-only via _record_accesses override)")
     fanout = not args.no_entity_fanout
     print(f"Entity-link fanout: {'ON' if fanout else 'OFF'}")
+    vector_fallback = args.vector_fallback or _vector_fallback_env_on()
+    print(f"Vector fallback:    {'ON' if vector_fallback else 'OFF'}")
     print(f"Fetching top-{args.top_k} candidates per prompt (one-shot, reused across grid)...")
     collected = _collect_candidates(prompts, svc, str(db_path), top_k=args.top_k,
-                                     include_entity_fanout=fanout)
+                                     include_entity_fanout=fanout,
+                                     include_vector_fallback=vector_fallback)
     cand_counts = [len(r) for _, r, _ in collected]
     print(f"  mean candidates/prompt: {sum(cand_counts) / max(1, len(cand_counts)):.1f} "
           f"(min={min(cand_counts, default=0)}, max={max(cand_counts, default=0)})")

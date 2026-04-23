@@ -30,6 +30,11 @@ security = ["cryptography>=42"]
 embeddings = ["sentence-transformers>=3.0"]
 gemini = ["google-genai>=1.0"]
 qdrant = ["httpx>=0.27"]
+# `vector` enables the Qdrant vector-search recall fallback and the
+# scripts/index_claims_to_qdrant.py indexer. Local-only (no network deps
+# beyond Qdrant itself); sentence-transformers gives deterministic
+# 384-dim embeddings on CPU.
+vector = ["sentence-transformers>=3.0", "qdrant-client>=1.9"]
 dev = ["pytest>=8.2", "pytest-cov>=6.0"]
 mcp = ["mcp>=1.2"]
 ml = ["scikit-learn>=1.3", "joblib>=1.3"]

@@ -202,6 +202,98 @@ def _row_for_claim(claim) -> dict:
     }
 
 
+def _row_for_vector_hit(claim, vector_score: float) -> dict:
+    """Build a query_rows-shaped row dict for a Qdrant-sourced claim.
+
+    ``vector_score`` is the raw Qdrant cosine similarity in [0, 1] (values
+    below ``MEMORYMASTER_RECALL_VECTOR_SCORE_THRESHOLD`` are filtered out
+    upstream). All other signals default to zero so ``W_VECTOR`` is the
+    only thing promoting the row — at ``W_VECTOR=0`` (legacy default)
+    these rows still add nothing to the ranking.
+    """
+    return {
+        "claim": claim,
+        "status": getattr(claim, "status", "confirmed"),
+        "annotation": None,
+        "score": 0.0,
+        "lexical_score": 0.0,
+        "freshness_score": 0.0,
+        "confidence_score": float(getattr(claim, "confidence", 0.0) or 0.0),
+        "vector_score": float(vector_score),
+        "entity_score": 0.0,
+        "source": "vector_fallback",
+    }
+
+
+def _apply_vector_fallback(
+    svc,
+    query: str,
+    rows: list,
+    seen_ids: set[int],
+) -> list:
+    """Augment ``rows`` with Qdrant semantic-search hits when the primary
+    retrieval stages under-produced.
+
+    Triggers only when ``len(rows) < MEMORYMASTER_RECALL_VECTOR_MIN_CANDIDATES``
+    (default 3) and every env-var gate is satisfied. Silently degrades on
+    any failure (qdrant unreachable, collection missing, embedder import
+    error, etc) so the caller keeps whatever FTS5 + entity fanout produced.
+
+    Returns the (possibly augmented) row list. Always mutates ``seen_ids``
+    when new rows are added.
+    """
+    try:
+        from memorymaster import qdrant_recall_fallback
+    except Exception as exc:  # pragma: no cover — import errors rare
+        logger.debug("vector fallback: module import skipped: %s", exc)
+        return rows
+
+    if not qdrant_recall_fallback.is_fallback_enabled():
+        return rows
+    if len(rows) >= qdrant_recall_fallback.fallback_threshold():
+        return rows
+
+    try:
+        hits = qdrant_recall_fallback.search(query)
+    except Exception as exc:  # pragma: no cover — search() already swallows
+        logger.debug("vector fallback: search skipped: %s", exc)
+        return rows
+
+    if not hits:
+        return rows
+
+    # Lazy security check — mirrors the entity fanout treatment.
+    try:
+        from memorymaster.security import is_sensitive_claim
+    except Exception:
+        is_sensitive_claim = lambda _claim: False  # type: ignore[assignment]  # noqa: E731
+
+    appended = 0
+    for hit in hits:
+        cid = hit.claim_id
+        if cid in seen_ids:
+            continue
+        try:
+            claim = svc.store.get_claim(cid, include_citations=True)
+        except Exception as exc:
+            logger.debug("vector fallback: get_claim(%d) failed: %s", cid, exc)
+            continue
+        if claim is None or getattr(claim, "status", "") == "archived":
+            continue
+        if is_sensitive_claim(claim):
+            continue
+        rows.append(_row_for_vector_hit(claim, hit.score))
+        seen_ids.add(cid)
+        appended += 1
+
+    if appended:
+        logger.debug(
+            "vector fallback: appended %d rows (total=%d) for query=%r",
+            appended, len(rows), query[:60],
+        )
+    return rows
+
+
 # Patterns that indicate something worth remembering
 OBSERVATION_PATTERNS = [
     # User corrections/preferences
@@ -320,6 +412,12 @@ def recall(
             if is_sensitive_claim(claim):
                 continue
             rows.append(_row_for_claim(claim))
+
+    # Vector fallback — Qdrant semantic search when FTS5 + entity fanout
+    # produced fewer than MEMORYMASTER_RECALL_VECTOR_MIN_CANDIDATES rows
+    # (default 3). Fully env-gated so default behaviour is unchanged. See
+    # ``_apply_vector_fallback`` for the exact gating logic.
+    rows = _apply_vector_fallback(svc, query, rows, seen_ids)
 
     if not rows and not skip_qdrant:
         # Fallback to Qdrant semantic search
