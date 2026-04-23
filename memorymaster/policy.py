@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -7,6 +8,20 @@ from memorymaster.config import get_config
 from memorymaster.models import Claim
 
 POLICY_MODES = ("legacy", "cadence")
+
+
+def _env_mode_override() -> str | None:
+    """Read ``MEMORYMASTER_POLICY_MODE`` env var, return a valid mode or None.
+
+    Lets operators opt into proactive cadence-based revalidation without
+    editing the six callers that hardcode ``policy_mode='legacy'`` as the
+    default. An unset or invalid value is ignored so existing behavior is
+    preserved.
+    """
+    value = os.environ.get("MEMORYMASTER_POLICY_MODE", "").strip().lower()
+    if value in POLICY_MODES:
+        return value
+    return None
 
 _CLAIM_TYPE_MULTIPLIER = {
     "security_fact": 0.5,
@@ -70,6 +85,14 @@ def select_revalidation_candidates(
     mode: str = "legacy",
     limit: int = 200,
 ) -> RevalidationSelection:
+    # Operators can flip the six hardcoded ``legacy`` defaults at runtime by
+    # setting MEMORYMASTER_POLICY_MODE=cadence. If the caller passed an
+    # explicit mode (anything non-legacy), honor it; only override the
+    # default-legacy path so this never clobbers deliberate choices.
+    if mode == "legacy":
+        override = _env_mode_override()
+        if override is not None:
+            mode = override
     if mode not in POLICY_MODES:
         raise ValueError(f"Unknown policy mode: {mode}")
     if mode == "legacy":
