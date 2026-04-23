@@ -40,10 +40,24 @@ class EmbeddingProvider:
         if self._transformer is None:
             self._transformer = _load_gemini_client()
         gemini_model = self.model.split(":", 1)[1]
-        result = self._transformer.models.embed_content(
-            model=gemini_model,
-            contents=text,
-        )
+        try:
+            result = self._transformer.models.embed_content(
+                model=gemini_model,
+                contents=text,
+            )
+        except Exception as exc:
+            # Common runtime failures: 404 (model deprecated/renamed), 503
+            # (high demand), timeout, quota exhausted. Fall back to hash-v1
+            # so the retrieval pipeline degrades gracefully to BM25-only
+            # rather than blowing up. Downgrade permanently for this
+            # provider instance so we don't retry per-call.
+            logger.warning(
+                "Gemini embed_content failed (%s); falling back to hash-v1 for this provider",
+                exc,
+            )
+            self.model = "hash-v1"
+            self.dims = 1536
+            return hash_embed(text, dims=self.dims)
         vec = result.embeddings[0].values
         self.dims = len(vec)
         return normalize(list(vec))
@@ -62,13 +76,17 @@ def create_semantic_provider(model: str = "all-MiniLM-L6-v2") -> EmbeddingProvid
 
 
 def create_gemini_provider(
-    model: str = "text-embedding-004",
+    model: str = "gemini-embedding-001",
     api_key: str | None = None,
 ) -> EmbeddingProvider:
     """Create a provider using the Gemini embedding API.
 
     Requires: pip install google-genai
     Set GEMINI_API_KEY or GOOGLE_API_KEY env var, or pass api_key directly.
+
+    Model default is ``gemini-embedding-001`` (Google's current general-purpose
+    embedding model, 768 default dims). The older ``text-embedding-004`` was
+    removed from the v1beta surface in 2026-Q1 and returns 404.
     """
     client = _load_gemini_client(api_key=api_key)
     provider = EmbeddingProvider(model=f"gemini:{model}", dims=768)
