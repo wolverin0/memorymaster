@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+import contextlib
+
 from memorymaster.config import get_config
 from memorymaster.lifecycle import transition_claim
 from memorymaster.models import Claim
+from memorymaster.steward_classifier import load_classifier, predict_promote_probability
+
+# Calibrated-classifier decision threshold — the (precision>=0.95, max recall)
+# operating point from the Pareto sweep. See
+# artifacts/spec-steward-classifier-2026-04-23.md.
+_CLF_THRESHOLD = 0.65
 
 
 def validation_score(claim: Claim, citation_count: int, prior_confidence: float) -> float:
@@ -13,6 +21,29 @@ def validation_score(claim: Claim, citation_count: int, prior_confidence: float)
     raw = base + citation_bonus + length_bonus + structure_bonus
     blended = (raw * 0.75) + (prior_confidence * 0.25)
     return max(0.0, min(1.0, blended))
+
+
+def _classifier_promote_decision(store, claim: Claim, citation_count: int) -> bool | None:
+    """Run the calibrated classifier gate. Returns ``True``/``False`` to accept
+    or reject promotion, or ``None`` when the artifact is unavailable (caller
+    MUST fall back to the legacy additive formula).
+
+    Never raises — any failure returns ``None`` so the validator stays alive.
+    """
+    clf = load_classifier()
+    if clf is None:
+        return None
+    try:
+        connect = getattr(store, "connect", None)
+        if connect is None:
+            return None
+        with contextlib.closing(connect()) as conn:
+            proba = predict_promote_probability(claim, conn, classifier=clf)
+    except Exception:
+        return None
+    if proba is None:
+        return None
+    return proba >= _CLF_THRESHOLD and citation_count >= 1
 
 
 def _merge_claims(primary: list[Claim], secondary: list[Claim]) -> list[Claim]:
@@ -87,7 +118,16 @@ def run(
             superseded += 1
             continue
 
-        if citation_count < min_citations or score < min_score:
+        # Calibrated-classifier gate (task #129): when the artifact is present
+        # AND its feature_version matches, use the learned probability; else
+        # fall back to the legacy (min_citations, min_score) additive formula.
+        clf_decision = _classifier_promote_decision(store, claim, citation_count)
+        legacy_gate = citation_count < min_citations or score < min_score
+        if clf_decision is not None:
+            promote_blocked = not clf_decision
+        else:
+            promote_blocked = legacy_gate
+        if promote_blocked:
             if is_revalidation and claim.status == "confirmed":
                 transition_claim(
                     store,
