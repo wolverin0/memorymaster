@@ -25,6 +25,7 @@ import fnmatch
 import sqlite3
 import sys
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Allow running as ``python scripts/merge_scope_variants.py`` from repo root.
@@ -84,22 +85,69 @@ def _plan(conn: sqlite3.Connection, except_patterns: list[str]) -> list[tuple[st
     )
 
 
-def _apply(conn: sqlite3.Connection, plan: list[tuple[str, str, int]]) -> int:
-    """Execute the plan inside a single transaction. Returns rows updated."""
-    total = 0
+def _archive_confirmed_collisions(conn: sqlite3.Connection, old: str, new: str) -> int:
+    """Archive older confirmed claims that would collide in the target scope.
+
+    The DB has a partial UNIQUE index ``idx_claims_confirmed_tuple_unique`` on
+    ``(subject, predicate, scope) WHERE status = 'confirmed'`` plus trigger
+    guards. Re-pointing the scope of a confirmed claim into a scope that
+    already holds a confirmed claim with the same ``(subject, predicate)``
+    would violate that constraint.
+
+    Resolution policy: keep the more recent of the two (by ``updated_at``);
+    archive the older one in-place. Both rows survive, history is preserved,
+    and the migration can proceed.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    # For every confirmed claim in ``old`` whose (subject, predicate) also has
+    # a confirmed twin in ``new``, archive whichever one is older.
+    rows = conn.execute(
+        """
+        SELECT a.id AS a_id, a.updated_at AS a_upd,
+               b.id AS b_id, b.updated_at AS b_upd
+        FROM claims a
+        JOIN claims b
+          ON a.subject = b.subject
+         AND a.predicate = b.predicate
+         AND a.status = 'confirmed'
+         AND b.status = 'confirmed'
+        WHERE a.scope = ? AND b.scope = ?
+          AND a.subject IS NOT NULL AND a.predicate IS NOT NULL
+        """,
+        (old, new),
+    ).fetchall()
+    archived = 0
+    for a_id, a_upd, b_id, b_upd in rows:
+        loser = a_id if (a_upd or "") < (b_upd or "") else b_id
+        conn.execute(
+            "UPDATE claims SET status='archived', archived_at=?, updated_at=? WHERE id=?",
+            (now, now, loser),
+        )
+        archived += 1
+    return archived
+
+
+def _apply(conn: sqlite3.Connection, plan: list[tuple[str, str, int]]) -> tuple[int, int]:
+    """Execute the plan inside a single transaction.
+
+    Returns ``(rows_updated, collisions_archived)``.
+    """
+    total_updated = 0
+    total_archived = 0
     try:
         conn.execute("BEGIN")
         for old, new, _count in plan:
+            total_archived += _archive_confirmed_collisions(conn, old, new)
             cur = conn.execute(
                 "UPDATE claims SET scope = ? WHERE scope = ?",
                 (new, old),
             )
-            total += cur.rowcount
+            total_updated += cur.rowcount
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
         raise
-    return total
+    return total_updated, total_archived
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -156,8 +204,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.apply_changes:
             print()
             print("applying...")
-            updated = _apply(conn, plan)
-            print(f"done — {updated} rows updated")
+            updated, archived = _apply(conn, plan)
+            print(f"done — {updated} rows updated, {archived} colliding confirmed claims archived")
         else:
             print()
             print("(dry-run — pass --apply to execute)")
