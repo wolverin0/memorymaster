@@ -1,11 +1,34 @@
 """Recall tokenizer — extract salient FTS5 tokens from a raw prompt.
 
-Real prompts are 50–500 chars of mixed Spanish/English. FTS5 AND-joins
+Real prompts are 50-500 chars of mixed Spanish/English. FTS5 AND-joins
 every token, so full-prompt queries almost never hit. Fix: extract up to
 ``max_tokens`` salient tokens (stopword filter + IDF + entity-alias boost).
 Stdlib only, read-only DB, per-process LRU cache.
 
-See ``artifacts/retrieval-eval-2026-04-22.md`` for the motivating audit.
+See ``artifacts/retrieval-eval-2026-04-22.md`` for the original audit and
+``artifacts/recall-zero-hit-prompts-2026-04-23.md`` for the v2 diagnosis.
+
+v2 changes (Wave 1-E, 2026-04-23)
+---------------------------------
+1. **df=0 demotion.** Earlier pure-IDF ranking preferred unmatchable
+   tokens (typos, rants) because ``log((N+1)/1)+1`` peaks when the
+   token doesn't exist in the corpus. v2 applies a ``-_DF_ZERO_PENALTY``
+   unless the token is also a technical-term allowlist entry.
+2. **Lightweight stemming.** ``_stem_candidates`` emits the original
+   token plus a conservative ASCII stem (strip trailing ``s/es/ing/ed/ea``).
+   When the original has df=0 but the stem has df>0, the stem replaces
+   the original in the output — recovers Spanish imperatives like
+   ``fixea -> fix``.
+3. **Technical-term allowlist.** A small set of abbreviations
+   (``llm``, ``api``, ``mcp``, ``fts5``, ``sqlite``, ``bm25``, ...) is
+   protected from the df=0 penalty so low-corpus-frequency technical
+   tokens still surface.
+4. **Synonym expansion.** ``_SYNONYMS`` bidirectionally maps common
+   project terms (``claim<->claims``, ``hook<->hooks``, ...) so that the
+   tokenizer picks whichever side has higher df.
+
+Latin-lookaround boundary pattern preserved from the classify-hook work
+so accented Spanish words aren't split mid-character.
 """
 from __future__ import annotations
 
@@ -22,6 +45,77 @@ _WORD = re.compile(r"[A-Za-z\u00c0-\u024f][A-Za-z0-9\u00c0-\u024f_-]{2,}")
 _URL = re.compile(r"https?://\S+")
 _PATH = re.compile(r"[A-Za-z]:\\\\\S+|/[\w./-]{4,}")
 _CODE = re.compile(r"`[^`]+`|```[\s\S]*?```")
+
+# Magnitude of the df=0 penalty. With typical IDF in [3, 10], a penalty
+# of 8.0 pushes any df=0 token below every df>0 token *unless* it is in
+# the technical-term allowlist (which gets a partial offset).
+_DF_ZERO_PENALTY = 8.0
+
+# Trailing-suffix stem fallbacks, longest first (order matters — strip
+# "ing" before "g"). Purely ASCII; Spanish accents have no trailing-s
+# concerns. Conservative: only strip when residual length >= 3.
+#
+# English verb/plural suffixes first, then a small set of Spanish clitic
+# pronouns that commonly attach to imperatives ("explicamelo" -> "explica").
+# The clitics are intentionally conservative — they're all ≥2 chars so
+# random short words aren't sliced, and ``_best_form`` only picks the
+# stem when it has strictly higher df than the original, so we never
+# replace a real corpus word with a worse stem.
+_STEM_SUFFIXES = (
+    "ings", "ing", "ies", "ied", "ed", "es", "ea", "s",
+    # Spanish clitic pronoun clusters attached to imperatives/infinitives.
+    "melo", "mela", "nosla", "noslo", "selo", "sela",
+    "me", "te", "se", "lo", "la", "nos",
+)
+
+# Technical terms that should NEVER be penalised for low df — they are
+# real signals even if the corpus doesn't mention them often yet.
+_TECH_TERMS = frozenset({
+    "llm", "llms", "api", "apis", "mcp", "fts5", "sqlite", "sql", "bm25",
+    "roc", "ml", "ai", "http", "https", "json", "yaml", "toml", "csv",
+    "afip", "ci", "cd", "db", "idf", "lru", "utf", "tpm", "rpm", "rpd",
+    "rps", "cors", "csrf", "xss", "jwt", "oauth", "ssl", "tls", "dns",
+    "tcp", "udp", "cpu", "ram", "gpu", "ssd", "os", "ui", "ux", "dom",
+    "css", "scss", "tsx", "jsx", "vue", "svelte", "npm", "pip", "uv",
+    "wal", "orm", "sdk", "cli", "tui", "mcp", "nlp", "rag", "gnn",
+    "lstm", "cnn", "bert", "gpt", "vllm", "ollama", "fastapi", "django",
+    "flask", "qdrant", "faiss", "hnsw",
+})
+
+# Small bidirectional synonym map. Each key maps to its preferred
+# alternates. Used only when the original has strictly lower df.
+_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "claim": ("claims",),
+    "claims": ("claim",),
+    "hook": ("hooks",),
+    "hooks": ("hook",),
+    "entity": ("entities",),
+    "entities": ("entity",),
+    "gotcha": ("gotchas",),
+    "gotchas": ("gotcha",),
+    "scope": ("scopes",),
+    "scopes": ("scope",),
+    "prompt": ("prompts",),
+    "prompts": ("prompt",),
+    "tool": ("tools",),
+    "tools": ("tool",),
+    "agent": ("agents",),
+    "agents": ("agent",),
+    "pattern": ("patterns",),
+    "patterns": ("pattern",),
+    "token": ("tokens",),
+    "tokens": ("token",),
+    "model": ("models",),
+    "models": ("model",),
+    "test": ("tests",),
+    "tests": ("test",),
+    "error": ("errors",),
+    "errors": ("error",),
+    "fix": ("fixes", "fixed", "fixing"),
+    "fixes": ("fix",),
+    "fixed": ("fix",),
+    "fixing": ("fix",),
+}
 
 _STOP = frozenset((
     # Spanish function words + chat filler
@@ -53,7 +147,7 @@ def _strip(text: str) -> str:
 
 
 def _candidate_tokens(raw: str) -> list[str]:
-    """Tokenize → lowercase → drop stopwords + too-short + pure-digits."""
+    """Tokenize -> lowercase -> drop stopwords + too-short + pure-digits."""
     out: list[str] = []
     for m in _WORD.finditer(_strip(raw)):
         tok = m.group(0).lower()
@@ -61,6 +155,21 @@ def _candidate_tokens(raw: str) -> list[str]:
             continue
         out.append(tok)
     return out
+
+
+def _stem(tok: str) -> str | None:
+    """Return an ASCII stem for ``tok`` or None if none applies.
+
+    Strips the first matching suffix in ``_STEM_SUFFIXES`` provided the
+    residual is at least 3 chars long and differs from the input.
+    """
+    lower = tok.lower()
+    for suffix in _STEM_SUFFIXES:
+        if lower.endswith(suffix) and len(lower) - len(suffix) >= 3:
+            stem = lower[: -len(suffix)]
+            if stem != lower:
+                return stem
+    return None
 
 
 @lru_cache(maxsize=8)
@@ -105,6 +214,39 @@ def _alias_set(db_path: str) -> frozenset[str]:
         conn.close()
 
 
+def _best_form(tok: str, df: dict[str, int]) -> str:
+    """Pick the highest-df surface form among ``tok``, its stem, and synonyms.
+
+    Does not invent tokens — only returns a form known to appear in the
+    corpus if at least one such form exists. Falls back to the original
+    ``tok`` otherwise so behaviour is unchanged when df is unavailable.
+    """
+    if not df:
+        return tok
+    candidates: list[str] = [tok]
+    stem = _stem(tok)
+    if stem:
+        candidates.append(stem)
+    for syn in _SYNONYMS.get(tok, ()):
+        candidates.append(syn)
+    # De-dup while preserving order.
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c)
+            ordered.append(c)
+    # Pick the form with the highest df; ties go to the original.
+    best = tok
+    best_df = df.get(tok, 0)
+    for c in ordered[1:]:
+        d = df.get(c, 0)
+        if d > best_df:
+            best_df = d
+            best = c
+    return best
+
+
 def extract_query_tokens(raw_prompt: str, db_path: str, max_tokens: int = 6) -> str:
     """Extract up to ``max_tokens`` salient tokens, space-joined."""
     if not raw_prompt or not raw_prompt.strip() or max_tokens <= 0:
@@ -112,27 +254,52 @@ def extract_query_tokens(raw_prompt: str, db_path: str, max_tokens: int = 6) -> 
     tokens = _candidate_tokens(raw_prompt)
     if not tokens:
         return ""
-    # Short prompt: keep all unique tokens in first-seen order.
-    unique = {t for t in tokens}
-    if len(unique) <= max_tokens:
-        seen: set[str] = set()
-        ordered: list[str] = []
-        for tok in tokens:
-            if tok not in seen:
-                seen.add(tok)
-                ordered.append(tok)
-        return " ".join(ordered[:max_tokens])
-    # Score by smoothed IDF + alias boost + length + stable tiebreak.
+
     total_docs, df = _corpus_stats(db_path)
     aliases = _alias_set(db_path)
+
+    # Resolve each unique token to the best-matching corpus form (stem
+    # or synonym fallback). Preserve first-seen order.
     order: dict[str, int] = {}
     for i, tok in enumerate(tokens):
         order.setdefault(tok, i)
-    scored: list[tuple[str, float]] = []
+
+    resolved: dict[str, tuple[str, int]] = {}  # best_form -> (source_tok, first_idx)
     for tok, first_idx in order.items():
-        freq = df.get(tok, 1) if total_docs > 0 else 1
-        idf = math.log((total_docs + 1) / (freq + 1)) + 1 if total_docs > 0 else 1.0
-        score = idf + (2.0 if tok in aliases else 0.0) + (0.1 if len(tok) >= 6 else 0.0) - 0.001 * first_idx
-        scored.append((tok, score))
+        best = _best_form(tok, df)
+        # Keep the earliest index if the same best-form appears twice.
+        if best not in resolved or first_idx < resolved[best][1]:
+            resolved[best] = (tok, first_idx)
+
+    # Short prompt: keep all unique resolved tokens in first-seen order.
+    if len(resolved) <= max_tokens:
+        by_idx = sorted(resolved.items(), key=lambda kv: kv[1][1])
+        return " ".join(k for k, _ in by_idx[:max_tokens])
+
+    # Score by smoothed IDF, plus boosts for alias / technical term /
+    # length, penalty for df==0 unless whitelisted, stable tiebreak on
+    # first-seen index.
+    scored: list[tuple[str, float]] = []
+    for best_form, (_source, first_idx) in resolved.items():
+        freq = df.get(best_form, 0) if total_docs > 0 else 1
+        if total_docs > 0:
+            idf = math.log((total_docs + 1) / (freq + 1)) + 1
+        else:
+            idf = 1.0
+        score = idf
+        if best_form in aliases:
+            score += 2.0
+        if best_form in _TECH_TERMS:
+            # Technical abbreviations always escape the df=0 penalty
+            # and get a small boost on top of IDF so short but real
+            # terms like "llm" or "mcp" surface.
+            score += 1.5
+        elif total_docs > 0 and freq == 0:
+            # df=0 tokens cannot match any document: demote hard.
+            score -= _DF_ZERO_PENALTY
+        if len(best_form) >= 6:
+            score += 0.1
+        score -= 0.001 * first_idx
+        scored.append((best_form, score))
     scored.sort(key=lambda p: p[1], reverse=True)
     return " ".join(tok for tok, _ in scored[:max_tokens])
