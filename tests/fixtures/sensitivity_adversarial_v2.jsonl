@@ -1,0 +1,100 @@
+{"text": "Build log dumped: export OPENAI_API_KEY=sk-proj-FAKEv2envA1B2C3D4E5F6G7H8I9J0 before the deploy step.", "label": "block", "category": "api_key_env_export"}
+{"text": "env.sh snippet: export ANTHROPIC_API_KEY=sk-ant-api03-FAKEv2envZZ11223344556677889900aabbccdd on line 42.", "label": "block", "category": "api_key_env_export"}
+{"text": "set -a; export GOOGLE_API_KEY=AIzaFAKEv2envPQRSTUVWXYZabcdefghijkl012 ; set +a  # from prod .env", "label": "block", "category": "api_key_env_export"}
+{"text": "Env dump contains export GITHUB_TOKEN=ghp_FAKEv2envBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB01 beneath other variables.", "label": "block", "category": "api_key_env_export"}
+{"text": "config.toml fragment:\n[secrets]\nopenai_key = \"sk-proj-FAKEv2tomlABCDEFGHIJKLMNOPQRSTUVWX\"\nwas checked in.", "label": "block", "category": "api_key_toml_config"}
+{"text": "pyproject had [tool.myapp.secrets]\nanthropic = \"sk-ant-api03-FAKEv2tomlAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"", "label": "block", "category": "api_key_toml_config"}
+{"text": "Inside config/prod.toml: aws_access = \"AKIAFAKEV2TOMLKEYZZ1\" ; aws_secret = \"FAKEv2secret+base64/sample==\"", "label": "block", "category": "api_key_toml_config"}
+{"text": "services.toml:\n[openai]\ntoken = \"sk-FAKEv2toml9876543210fedcba0987\"\n# rotate quarterly", "label": "block", "category": "api_key_toml_config"}
+{"text": "Request URL leaked in analytics: https://api.example.com/v1/users?api_key=sk-proj-FAKEv2url123456789abcdefghijklmn", "label": "block", "category": "api_key_url_param"}
+{"text": "Support ticket included https://svc.example.com/export?token=ghp_FAKEv2urlXXXXXXXXXXXXXXXXXXXXXXXXXXXX01 in the body.", "label": "block", "category": "api_key_url_param"}
+{"text": "Webhook retry URL: https://hooks.example.com/push?secret=Bearer%20FAKEv2urlEncodedTokenAbcdef123456", "label": "block", "category": "api_key_url_param"}
+{"text": "OAuth redirect surfaced https://login.example.com/callback?access_token=eyJhbGciOiJIUzI1NiJ9.FAKEv2urlJWTpayloadBody.sigXyZ in referer.", "label": "block", "category": "api_key_url_param"}
+{"text": "Referrer logged: GET /dash?gapi_key=AIzaFAKEv2urlRandomStuffEntryPoint7890x HTTP/1.1", "label": "block", "category": "api_key_url_param"}
+{"text": "POST body dumped to log: {\"model\":\"gpt-4\",\"api_key\":\"sk-FAKEv2jsonPAYLOAD0123456789abcd\"}", "label": "block", "category": "api_key_json_payload"}
+{"text": "Response included {\"error\":\"rate_limit\",\"debug\":{\"header\":\"Authorization: Bearer FAKEv2jsonBearerTokenExampleVal\"}}", "label": "block", "category": "api_key_json_payload"}
+{"text": "Persisted webhook config: {\"url\":\"https://h.example.com\",\"secret\":\"ghp_FAKEv2jsonpayloadXXXXXXXXXXXXXXXXXX01\"}", "label": "block", "category": "api_key_json_payload"}
+{"text": "Frontend shipped {\"auth\":{\"anthropic_key\":\"sk-ant-api03-FAKEv2jsonAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}} in a /debug dump.", "label": "block", "category": "api_key_json_payload"}
+{"text": "Traceback (most recent call last):\n  File \"run.py\", line 7, in <module>\n    client = OpenAI(api_key='sk-proj-FAKEv2stackABCDEFGHIJKLMNOPQRSTUV')\nAuthenticationError: invalid key", "label": "block", "category": "api_key_stacktrace"}
+{"text": "Error detail: requests.exceptions.HTTPError: 401 for url https://api.example.com/?access_token=sk_live_FAKEv2stacktrace01234567890abcd", "label": "block", "category": "api_key_stacktrace"}
+{"text": "bash_history pasted in ticket: curl -H \"Authorization: Bearer FAKEv2historyBearerTokenXyZ987654321\" https://api.example.com/me", "label": "block", "category": "api_key_shell_history"}
+{"text": "SQL dump row: INSERT INTO oauth_tokens VALUES (17, 'user42', 'ghp_FAKEv2dbrowOAUTHAAAAAAAAAAAAAAAAAAAAAAAAAAAA', '2026-04-01');", "label": "block", "category": "oauth_db_row"}
+{"text": "pg_dump output:\nCOPY oauth_grants (id, token) FROM stdin;\n33\tgho_FAKEv2dbrowOauthUserRowZZZZZZZZZZZZZZZZZZZZ\n\\.", "label": "block", "category": "oauth_db_row"}
+{"text": "Audit row: {id: 9, token: 'ghs_FAKEv2dbrowServerServerServerServerServerServ01', scope: 'repo'}", "label": "block", "category": "oauth_db_row"}
+{"text": "DB leak: session_id=7;refresh_token=eyJhbGciOiJIUzI1NiJ9.FAKEv2dbrowJWTpayload.FAKEv2dbrowJWTsig", "label": "block", "category": "oauth_db_row"}
+{"text": "A CSV export of the auth table listed user_42,ghu_FAKEv2dbrowUserTokenAAAAAAAAAAAAAAAAAAAAAA01,scope_all", "label": "block", "category": "oauth_db_row"}
+{"text": "Browser console shows: [DEBUG] token = 'eyJhbGciOiJIUzI1NiJ9.FAKEv2consoleJWTpayload.consoleSig'", "label": "block", "category": "jwt_console_log"}
+{"text": "console.log('auth header', 'Bearer eyJhbGciOiJIUzI1NiJ9.FAKEv2consoleJWTbodyXyZ.signaturePart')", "label": "block", "category": "jwt_console_log"}
+{"text": "Chrome devtools screenshot captured: access_token: \"eyJhbGciOiJIUzI1NiJ9.FAKEv2consoleJWTaccessTokenBody.signedPart\"", "label": "block", "category": "jwt_console_log"}
+{"text": "Connection leaked in error: psycopg2.OperationalError: could not connect to postgres://dbuser:FAKEv2dsnPasswordPassP@10.2.0.5:5432/app", "label": "block", "category": "password_dsn"}
+{"text": "config.yaml had url: mongodb+srv://admin:FAKEv2dsnMongoPassPassPass@cluster.example.com/db", "label": "block", "category": "password_dsn"}
+{"text": "Support dump: redis://:FAKEv2dsnRedisPassw0rdPassw0rd@cache-primary.internal:6379/2", "label": "block", "category": "password_dsn"}
+{"text": "DSN pasted in slack: mysql://root:FAKEv2dsnMySqlPrimaryPassword!@db-1.example.com/shop", "label": "block", "category": "password_dsn"}
+{"text": "Broker dashboard logged amqps://queue_user:FAKEv2dsnAmqpsRabbitPassPass@mq.example.com:5671/prod_vhost", "label": "block", "category": "password_dsn"}
+{"text": "Screenshot included:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAFAKEv2PEMprivateKeyBodyExample...\n-----END RSA PRIVATE KEY-----", "label": "block", "category": "cert_pem_body"}
+{"text": "Pasted in chat:\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUFAKEv2sshprivatebody\n-----END OPENSSH PRIVATE KEY-----", "label": "block", "category": "cert_pem_body"}
+{"text": "Topology note: the Postgres primary is at 10.0.5.3:5432 on the admin VLAN; password rotation pending.", "label": "block", "category": "private_ip_port_prose"}
+{"text": "Redis cache listens on 192.168.4.17:6379 and accepts only internal-net traffic with the pass value set in Vault.", "label": "block", "category": "private_ip_port_prose"}
+{"text": "Kafka bootstrap servers sit on 172.16.11.8:9092,172.16.11.9:9092 per the infra doc's credentials section.", "label": "block", "category": "private_ip_port_prose"}
+{"text": "SSH into jumpbox 10.20.30.40:22 with the shared password from the ops passphrase vault to reach the rest of the fleet.", "label": "block", "category": "private_ip_port_prose"}
+{"text": "Mongo replica is reachable at 192.168.100.50:27017 with auth password SourcedFromK8sSecretXy9z configured.", "label": "block", "category": "private_ip_port_prose"}
+{"text": "User emailed screenshot of path C:\\Users\\paola.ramirez\\.aws\\credentials as evidence of leak.", "label": "block", "category": "home_path_windows"}
+{"text": "Crash report mentioned file at C:\\Users\\mario.lopez\\AppData\\Roaming\\app\\.env which had the secret.", "label": "block", "category": "home_path_windows"}
+{"text": "Stack frame: at C:\\Users\\dev.intern\\Projects\\internal\\scripts\\run.py line 7 with leaked PAT inline.", "label": "block", "category": "home_path_windows"}
+{"text": "From the ticket: ls -la /home/juliana.perez/.ssh/id_rsa showed mode 0600 but the key was shared in slack.", "label": "block", "category": "home_path_unix"}
+{"text": "Attach path /Users/carlos.mendez/.config/gcloud/application_default_credentials.json from the bug report.", "label": "block", "category": "home_path_unix"}
+{"text": "Reviewer log shows /home/alvaro.silva/work/.npmrc with _authToken=FAKEv2unixNpmTokenVerbatimVal01 inside.", "label": "block", "category": "home_path_unix"}
+{"text": "Customer service note: refund card 4242-4242-4242-4242 exp 12/29 cvv 123 per phone call, filed in the ticket body.", "label": "block", "category": "card_number_prose"}
+{"text": "Form-data dump pasted: cc_number=4000000000000002&cc_exp=0730&cc_cvv=000 from the staging checkout.", "label": "block", "category": "card_number_prose"}
+{"text": "Ticket body: \"my card number is 5555 5555 5555 4444, please charge it manually\" — DO NOT STORE.", "label": "block", "category": "card_number_prose"}
+{"text": "Internal chat leaked PAN 4012-0000-0000-1881 with expiry 11/27 for QA testing, should not be kept.", "label": "block", "category": "card_number_prose"}
+{"text": "The README shows how to set `OPENAI_API_KEY=YOUR_API_KEY_HERE` before running the sample.", "label": "pass", "category": "placeholder_tutorial"}
+{"text": "Replace <your-token> with the PAT from your GitHub settings page; never commit the real value.", "label": "pass", "category": "placeholder_tutorial"}
+{"text": "Onboarding guide: set STRIPE_SECRET=YOUR_STRIPE_KEY_HERE to your live key, then restart the server.", "label": "pass", "category": "placeholder_tutorial"}
+{"text": "Tutorial snippet uses Authorization: Bearer <ACCESS_TOKEN> as a placeholder in the curl example.", "label": "pass", "category": "placeholder_tutorial"}
+{"text": "Install step: export ANTHROPIC_API_KEY=sk-XXXXXXXX and rerun once the real key is populated.", "label": "pass", "category": "placeholder_tutorial"}
+{"text": "config.sample.toml documents token = \"REPLACE_ME\" so operators know to swap it before deploy.", "label": "pass", "category": "placeholder_tutorial"}
+{"text": "curl -H \"Authorization: Bearer YOUR_TOKEN_HERE\" https://api.example.com/v1/me in the docs site.", "label": "pass", "category": "placeholder_tutorial"}
+{"text": "Helm values example: openaiKey: \"<openai-api-key>\"  # edit before installing the chart", "label": "pass", "category": "placeholder_tutorial"}
+{"text": "Getting-started markdown lists export GOOGLE_API_KEY=YOUR_KEY_HERE as the only env var required.", "label": "pass", "category": "placeholder_tutorial"}
+{"text": "Quickstart: set api_key to \"your-api-key-here\" in settings.json (placeholder stays in the doc only).", "label": "pass", "category": "placeholder_tutorial"}
+{"text": "The function get_password loads the value from Vault at runtime; nothing is hardcoded anywhere.", "label": "pass", "category": "prose_secret_word"}
+{"text": "Security review covered how we store tokens: they live in KMS-encrypted secrets, never in source.", "label": "pass", "category": "prose_secret_word"}
+{"text": "Our onboarding doc explains that passwords must be at least 14 characters and rotated quarterly.", "label": "pass", "category": "prose_secret_word"}
+{"text": "The team decided to use an OAuth flow for third-party integrations instead of long-lived keys.", "label": "pass", "category": "prose_secret_word"}
+{"text": "Password reset emails now include a link rather than a temporary password per the new SSO policy.", "label": "pass", "category": "prose_secret_word"}
+{"text": "The secret manager is backed by GCP Secret Manager; each token has an audit trail on access.", "label": "pass", "category": "prose_secret_word"}
+{"text": "Engineering retro noted that credential rotation was slow, so we invested in automation this quarter.", "label": "pass", "category": "prose_secret_word"}
+{"text": "We agreed the API key documentation page should link to the rotation runbook from the sidebar.", "label": "pass", "category": "prose_secret_word"}
+{"text": "Our product supports OAuth 2.0 with PKCE for mobile clients, per the integrations handbook.", "label": "pass", "category": "product_copy"}
+{"text": "SSH key authentication is recommended over passwords for all remote administration paths.", "label": "pass", "category": "product_copy"}
+{"text": "Encryption at rest uses AES-256-GCM and keys are managed via the customer's KMS integration.", "label": "pass", "category": "product_copy"}
+{"text": "The CLI supports Bearer authentication and will prompt interactively if no token is cached.", "label": "pass", "category": "product_copy"}
+{"text": "Passkeys are on the roadmap for next quarter; until then, TOTP + password is the supported flow.", "label": "pass", "category": "product_copy"}
+{"text": "The JWT session lasts 15 minutes by default and is refreshed transparently by the SDK.", "label": "pass", "category": "product_copy"}
+{"text": "Build artifact sha256 digest is 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 per the release notes.", "label": "pass", "category": "hex_hash_not_secret"}
+{"text": "Commit 3a34b2d56e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b is the one that introduced the regression.", "label": "pass", "category": "hex_hash_not_secret"}
+{"text": "md5sum of the manifest: d41d8cd98f00b204e9800998ecf8427e (empty-file digest, for sanity check).", "label": "pass", "category": "hex_hash_not_secret"}
+{"text": "Docker image digest sha256:e7ab3e4c1e0c6c0d4b5a6978f8e9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7 is pinned in the lockfile.", "label": "pass", "category": "hex_hash_not_secret"}
+{"text": "The block hash 0000000000000000000a7a2e5c55c5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e was confirmed by 6 peers.", "label": "pass", "category": "hex_hash_not_secret"}
+{"text": "File checksum (sha1) reads da39a3ee5e6b4b0d3255bfef95601890afd80709 which matches the empty input.", "label": "pass", "category": "hex_hash_not_secret"}
+{"text": "Release tag v3.2.1 maps to git rev 981bd7b0aacc5ff3e0fd5a0ebe4c3a83c9bdc5ef per the changelog footer.", "label": "pass", "category": "hex_hash_not_secret"}
+{"text": "Trace id a3bb189e-8bf9-3888-9912-ace4e6543002 was attached to this request in the apm dashboard.", "label": "pass", "category": "uuid_identifier"}
+{"text": "Customer uuid 550e8400-e29b-41d4-a716-446655440000 should be redacted in logs per GDPR posture.", "label": "pass", "category": "uuid_identifier"}
+{"text": "Job id 123e4567-e89b-12d3-a456-426614174000 is retried every 5 minutes while the poller runs.", "label": "pass", "category": "uuid_identifier"}
+{"text": "Session id 6ba7b810-9dad-11d1-80b4-00c04fd430c8 is rotated on each login per the auth doc.", "label": "pass", "category": "uuid_identifier"}
+{"text": "Correlation id e8400-e29b-41d4-a716-446655440abc travels through every downstream service call.", "label": "pass", "category": "uuid_identifier"}
+{"text": "The tenant id we use in tests is fff9a9aa-1111-2222-3333-444455556666 (synthetic, no PII).", "label": "pass", "category": "uuid_identifier"}
+{"text": "The base64 for 'hello world' is aGVsbG8gd29ybGQ= and is used as the sample payload in our docs.", "label": "pass", "category": "base64_public_data"}
+{"text": "Our test vector base64-encodes to dGVzdHZlY3RvcjEyMw== which any reader can decode locally.", "label": "pass", "category": "base64_public_data"}
+{"text": "Content-Type boundary uses the literal dGVzdA== for reproducibility across clients.", "label": "pass", "category": "base64_public_data"}
+{"text": "Data URI example in the rfc: data:text/plain;base64,SGVsbG8sIFdvcmxkIQ== for quick demos.", "label": "pass", "category": "base64_public_data"}
+{"text": "The fixture's canonical encoding reads YWJjZGVmZ2hpamtsbW5vcA== (the first 16 letters of the alphabet).", "label": "pass", "category": "base64_public_data"}
+{"text": "Docs link: https://docs.example.com/guide/oauth?lang=es&version=2 for the Spanish OAuth doc.", "label": "pass", "category": "url_without_secret"}
+{"text": "Status page https://status.example.com/history?month=2026-04 shows the April incidents.", "label": "pass", "category": "url_without_secret"}
+{"text": "Forum thread at https://community.example.com/t/oauth-setup/12345 has the community walkthrough.", "label": "pass", "category": "url_without_secret"}
+{"text": "Repo browse URL https://github.com/org/repo/blob/main/docs/auth.md anchors the latest guide.", "label": "pass", "category": "url_without_secret"}
+{"text": "CDN asset https://cdn.example.com/v1/logo.svg?cache=nocache is used for the header image.", "label": "pass", "category": "url_without_secret"}
+{"text": "Makefile uses curl -H \"Authorization: Bearer ${API_TOKEN}\" to call the protected endpoint.", "label": "pass", "category": "dollar_variable_reference"}
+{"text": "Config stub: apiKey: ${OPENAI_API_KEY} is resolved at runtime from the ambient environment.", "label": "pass", "category": "dollar_variable_reference"}
+{"text": "Helm template renders password: {{ .Values.password }} in the secret manifest before install.", "label": "pass", "category": "dollar_variable_reference"}
