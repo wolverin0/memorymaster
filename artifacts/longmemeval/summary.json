@@ -1,0 +1,16 @@
+{
+  "summaries": [
+    {
+      "config": "A",
+      "description": "baseline (default env)",
+      "n_questions": 500,
+      "hit_at_1": 0.342,
+      "hit_at_5": 0.43,
+      "mrr": 0.3769,
+      "mean_latency_ms": 71.81,
+      "total_runtime_s": 153.5,
+      "env_applied": {}
+    }
+  ],
+  "limit": 500
+}
