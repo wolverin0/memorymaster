@@ -1,0 +1,14 @@
+{
+  "config": "C",
+  "description": "+ verbatim (W_VERBATIM=0.2)",
+  "n_questions": 500,
+  "hit_at_1": 0.342,
+  "hit_at_5": 0.43,
+  "mrr": 0.3769,
+  "mean_latency_ms": 76.46,
+  "total_runtime_s": 173.6,
+  "env_applied": {
+    "MEMORYMASTER_RECALL_VERBATIM": "1",
+    "MEMORYMASTER_RECALL_W_VERBATIM": "0.2"
+  }
+}

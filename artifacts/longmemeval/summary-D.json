@@ -1,0 +1,13 @@
+{
+  "config": "D",
+  "description": "+ RRF fusion (env set, but unimplemented on this branch)",
+  "n_questions": 500,
+  "hit_at_1": 0.342,
+  "hit_at_5": 0.43,
+  "mrr": 0.3769,
+  "mean_latency_ms": 75.43,
+  "total_runtime_s": 162.5,
+  "env_applied": {
+    "MEMORYMASTER_RECALL_FUSION": "rrf"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "config": "B",
+  "description": "+ entity fanout (W_ENTITY=0.15)",
+  "n_questions": 500,
+  "hit_at_1": 0.342,
+  "hit_at_5": 0.43,
+  "mrr": 0.3769,
+  "mean_latency_ms": 79.29,
+  "total_runtime_s": 175.2,
+  "env_applied": {
+    "MEMORYMASTER_RECALL_W_ENTITY": "0.15"
+  }
+}
