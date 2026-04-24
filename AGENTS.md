@@ -58,7 +58,6 @@ Production-grade memory reliability system for AI coding agents. Provides lifecy
 
 - Framework: pytest with `pytest.ini` config
 - Run: `python -m pytest tests/ -q --tb=short`
-- 1 known flaky: `test_operator.py::test_run_stream_resumes_from_checkpoint_state`
 
 ## Verification
 

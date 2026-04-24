@@ -298,8 +298,12 @@ def test_run_stream_resumes_from_checkpoint_state() -> None:
     inbox = base / "operator_stream_resume.jsonl"
     state_path = base / "operator_stream_resume_state.json"
     log_path = base / "operator_stream_resume_events.jsonl"
+    queue_state_path = base / "operator_stream_resume_queue_state.json"
+    queue_journal_path = base / "operator_stream_resume_queue_journal.jsonl"
     state_path.unlink(missing_ok=True)
     log_path.unlink(missing_ok=True)
+    queue_state_path.unlink(missing_ok=True)
+    queue_journal_path.unlink(missing_ok=True)
     inbox.write_text(
         '{"session_id":"s1","thread_id":"t1","turn_id":"turn-1","user_text":"Support email is first@example.com","assistant_text":"","observations":[]}\n'
         + '{"session_id":"s1","thread_id":"t1","turn_id":"turn-2","user_text":"Support email is second@example.com","assistant_text":"","observations":[]}\n',
@@ -310,6 +314,8 @@ def test_run_stream_resumes_from_checkpoint_state() -> None:
         policy_mode="legacy",
         log_jsonl_path=str(log_path),
         state_json_path=str(state_path),
+        queue_state_json_path=str(queue_state_path),
+        queue_journal_jsonl_path=str(queue_journal_path),
     )
 
     first_run = MemoryOperator(service, config=config).run_stream(inbox, poll_seconds=0.05, max_events=1)
