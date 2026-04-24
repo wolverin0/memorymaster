@@ -1,12 +1,17 @@
 """Build the steward-classifier training fixture (task #129).
 
 Reads a MemoryMaster SQLite DB in read-only mode and emits one JSONL row per
-eligible claim with its v1 feature vector.
+eligible claim with its feature vector under the active ``FEATURE_VERSION``.
 
 Positives:  ``status = 'confirmed'``.
 Negatives:  ``status IN ('archived', 'stale')`` where the most recent event
             is NOT a scope-migration archive and NOT a stop-hook backfill
             (those are label-leaking per the spec's risk section).
+
+For v3 we also load a ``WikiCorpus`` once and reuse it across every claim so
+the embedding backend (sentence-transformers or TF-IDF fallback) is
+initialised exactly once. Disk-side cache at ``artifacts/feature-cache/``
+speeds up re-runs.
 """
 
 from __future__ import annotations
@@ -22,19 +27,22 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from memorymaster.steward_features import FEATURE_VERSION, extract_features  # noqa: E402
+from memorymaster.wiki_similarity import load_wiki_corpus  # noqa: E402
 
 
 _Q_POSITIVES = """
 SELECT id, text, subject, predicate, object_value, scope, status,
        claim_type, source_agent, created_at, access_count,
-       supersedes_claim_id, replaced_by_claim_id, entity_id
+       supersedes_claim_id, replaced_by_claim_id, entity_id,
+       wiki_article
 FROM claims WHERE status = 'confirmed' ORDER BY created_at ASC
 """
 
 _Q_NEGATIVES = """
 SELECT cl.id, cl.text, cl.subject, cl.predicate, cl.object_value, cl.scope,
        cl.status, cl.claim_type, cl.source_agent, cl.created_at, cl.access_count,
-       cl.supersedes_claim_id, cl.replaced_by_claim_id, cl.entity_id
+       cl.supersedes_claim_id, cl.replaced_by_claim_id, cl.entity_id,
+       cl.wiki_article
 FROM claims cl
 WHERE cl.status IN ('archived', 'stale')
   AND NOT EXISTS (
@@ -54,18 +62,24 @@ def _ro(db: Path) -> sqlite3.Connection:
     return conn
 
 
-def _emit(row: sqlite3.Row, label: int, conn: sqlite3.Connection) -> dict:
+def _emit(row: sqlite3.Row, label: int, conn: sqlite3.Connection, corpus) -> dict:
     return {
         "claim_id": int(row["id"]),
         "label": int(label),
         "created_at": row["created_at"],
         "feature_version": FEATURE_VERSION,
-        "features": extract_features(dict(row), conn),
+        "features": extract_features(dict(row), conn, wiki_corpus=corpus),
     }
 
 
 def build(db_path: Path, out_path: Path, *, neg_ratio: int = 3,
-          pos_limit: int | None = None) -> tuple[int, int]:
+          pos_limit: int | None = None,
+          wiki_scope: str = "project:memorymaster",
+          wiki_root: Path | None = None,
+          repo_root: Path | None = None) -> tuple[int, int, str]:
+    corpus = load_wiki_corpus(
+        scope=wiki_scope, wiki_root=wiki_root, repo_root=repo_root or ROOT,
+    )
     with _ro(db_path) as conn:
         positives = list(conn.execute(_Q_POSITIVES))
         negatives = list(conn.execute(_Q_NEGATIVES))
@@ -77,10 +91,10 @@ def build(db_path: Path, out_path: Path, *, neg_ratio: int = 3,
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with out_path.open("w", encoding="utf-8") as fh:
             for row in positives:
-                fh.write(json.dumps(_emit(row, 1, conn)) + "\n")
+                fh.write(json.dumps(_emit(row, 1, conn, corpus)) + "\n")
             for row in negatives:
-                fh.write(json.dumps(_emit(row, 0, conn)) + "\n")
-    return len(positives), len(negatives)
+                fh.write(json.dumps(_emit(row, 0, conn, corpus)) + "\n")
+    return len(positives), len(negatives), corpus.embedding_backend
 
 
 def main() -> int:
@@ -90,9 +104,14 @@ def main() -> int:
                     default=Path("tests/fixtures/steward_training.jsonl"))
     ap.add_argument("--neg-ratio", type=int, default=3)
     ap.add_argument("--pos-limit", type=int, default=None)
+    ap.add_argument("--wiki-scope", default="project:memorymaster")
+    ap.add_argument("--wiki-root", type=Path, default=None)
     args = ap.parse_args()
-    n_pos, n_neg = build(args.db, args.out, neg_ratio=args.neg_ratio, pos_limit=args.pos_limit)
-    print(f"[training-set] positives={n_pos} negatives={n_neg} -> {args.out}")
+    n_pos, n_neg, backend = build(
+        args.db, args.out, neg_ratio=args.neg_ratio, pos_limit=args.pos_limit,
+        wiki_scope=args.wiki_scope, wiki_root=args.wiki_root,
+    )
+    print(f"[training-set] positives={n_pos} negatives={n_neg} backend={backend} -> {args.out}")
     return 0
 
 
