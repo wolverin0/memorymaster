@@ -1,0 +1,13 @@
+{
+  "config": "shared",
+  "description": "custom (shared) \u2014 env-driven",
+  "n_questions": 500,
+  "hit_at_1": 0.342,
+  "hit_at_5": 0.43,
+  "mrr": 0.3769,
+  "mean_latency_ms": 67.62,
+  "total_runtime_s": 142.7,
+  "env_applied": {},
+  "isolate_per_q": false,
+  "keep_bench_dbs": false
+}

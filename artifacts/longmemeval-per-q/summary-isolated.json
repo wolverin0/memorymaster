@@ -1,0 +1,13 @@
+{
+  "config": "isolated",
+  "description": "custom (isolated) \u2014 env-driven",
+  "n_questions": 500,
+  "hit_at_1": 0.998,
+  "hit_at_5": 0.998,
+  "mrr": 0.998,
+  "mean_latency_ms": 119.2,
+  "total_runtime_s": 228.4,
+  "env_applied": {},
+  "isolate_per_q": true,
+  "keep_bench_dbs": false
+}
