@@ -257,3 +257,53 @@ Everything AGENT-READY is ticked. These still need the operator to act:
 - **LongMemEval per-question DB isolation** (claim 11896): 100% of hit@5 misses have top-1 from another question's seeded claims. Add a bench mode.
 - **Wiki scope expansion** for classifier v3 chronological gap (0.5687→0.60): expand `WikiCorpus` to multi-scope.
 - **Eval harness consolidation**: add a companion harness that invokes `recall()` directly (pattern from `artifacts/scope-queryexp-harness.py`) so future ranker-internal changes aren't invisible to the default eval (claim 11897).
+
+---
+
+## 11 · Post-wave autonomous-run extension (2026-04-24 overnight)
+
+User re-authorized "do everything that's remaining" during 8-hour sleep window.
+Took each originally-flagged USER-INPUT item and did either the work, the
+proposal, or honest "cannot" with citation. Main at `d35efc5` + `.claude/hooks/`
+edit + 3 new artifact docs (force-added past .gitignore per convention).
+
+### Actioned
+
+| Item | Outcome |
+|---|---|
+| **2.3 Enable classifier** | DONE. v3 (not v2) enabled in `~/.claude/hooks/memorymaster-steward-cycle.py` via `os.environ.setdefault`. v3 beats v2 on both sound (0.9924 vs 0.9898) and chrono (0.5687 vs 0.45) splits per claim 11894. |
+| **2.4 Enable cadence policy** | DONE. Same hook, `MEMORYMASTER_POLICY_MODE=cadence` + `policy_limit=50` passed to `run_cycle` to stay under Gemini free-tier. Verified `policy={mode:cadence, considered:200, due:186, selected:50}` via live `run-cycle`. |
+| **7.1 DESTRUCTIVE delete DB backups** | DONE. Removed 3 files (6.9 GB freed): `memorymaster.db.bak.1776912987`, `memorymaster.db.bak.1776949606-pre-entity-backfill`, `memorymaster.db.corrupted`. Live `memorymaster.db` (7.4 GB, modified today) preserved. |
+| **3.1 Real-LLM Layer-2 backfill** | ATTEMPTED, BLOCKED. Gemini free-tier quota exhausted by the day's existing traffic (steward + wiki-absorb + test calls). 6 keys × 500/day = 3000 ceiling, all drained. Claim 11902 captures block + 3 resolution paths (paid tier ~$1.19, quota-quiet window, or switch to `OPENAI_API_KEY`). |
+| **9.1 Graphify 15+ legacy projects** | SPEC-ONLY. `/graphify` is a Claude Code skill, not a CLI subcommand (verified via `graphify --help`). Autonomous batch-run not feasible. Produced `artifacts/graphify-queue-2026-04-24.md` — 35-project scan + 3-tier priority queue. User drives. |
+| **9.2 Wiki freshness metric** | SPEC-ONLY. Product decision remains. Produced `artifacts/spec-wiki-freshness-metric-2026-04-24.md` — 4 candidate metrics (absorb recency / claim turnover / contradiction pressure / retrieval traffic), composite proposal, 5 open decisions, implementation sketch. |
+| **Cognee assessment** (new, from user-shared X thread) | DONE. `artifacts/cognee-assessment-2026-04-24.md` — side-by-side, recommendation: **do NOT replace MM**; **do add Kuzu-backed graph stream as opt-in 6th retrieval stream** (closes the LongMemEval multi-hop gap per claims 11896 + 11898). |
+
+### New claims ingested
+
+- 11899 — Cognee reference (X thread URL + github.com/topoteretes/cognee)
+- 11902 — Gemini free-tier quota block on L2 backfill (constraint)
+
+### Configuration changes (outside repo)
+
+`~/.claude/hooks/memorymaster-steward-cycle.py` now exports:
+```
+MEMORYMASTER_STEWARD_CLASSIFIER_ENABLED=1
+MEMORYMASTER_STEWARD_CLASSIFIER_PATH=<PROJECT>/artifacts/steward-classifier-v3.joblib
+MEMORYMASTER_POLICY_MODE=cadence
+```
+and calls `run_cycle(policy_limit=50)`. Rollback: revert the `os.environ.setdefault` lines.
+
+### Remaining work for the user
+
+1. **3.1 full backfill** — run after daily quota resets OR on paid Gemini / OpenAI. Command: `MEMORYMASTER_ENTITY_LLM=1 python scripts/backfill_entity_extraction.py --db memorymaster.db --apply --layer2`.
+2. **9.1 graphify Tier A** — 8 projects, ~4-5 hours of focused sessions. List in `artifacts/graphify-queue-2026-04-24.md`.
+3. **9.2 pick a freshness shape** — 5 open decisions in the spec; after you pick, implementation is 0.5–3 days depending on signal count.
+4. **Cognee graph-stream decision** — read `artifacts/cognee-assessment-2026-04-24.md`; if you agree with the opt-in Kuzu integration, next step is a concrete spec (~1 week of work, acceptance: LongMemEval hit@5 ≥ +0.05 over baseline).
+
+### What's live right now
+
+- Steward runs v3 classifier on every scheduled cycle (hook will fire per its existing schedule).
+- Cadence policy revalidates up to 50 claims/cycle — this is the primary new LLM consumer. If Gemini billing becomes a concern, flip `MEMORYMASTER_POLICY_MODE=legacy` to revert.
+- Retrieval stack unchanged from end of §10 (5 streams, linear+RRF opt-in, BM25 per-field opt-in, scope-boost opt-in, query-expansion opt-in).
+- Disk: 6.9 GB freed.
