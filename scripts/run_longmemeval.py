@@ -56,12 +56,16 @@ sys.path.insert(0, str(REPO))
 if hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-ART_DIR = REPO / "artifacts" / "longmemeval"
+# Default output directory; override with --output-dir (propagated to worker
+# via MEMORYMASTER_LONGMEMEVAL_OUTPUT_DIR). The dataset cache stays in the
+# canonical location so we don't re-download 15 MB per run.
+_DEFAULT_ART_DIR = REPO / "artifacts" / "longmemeval"
+ART_DIR = _DEFAULT_ART_DIR
 DATASET_URL = (
     "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/"
     "resolve/main/longmemeval_oracle.json"
 )
-DATASET_PATH = ART_DIR / "longmemeval_oracle.json"
+DATASET_PATH = _DEFAULT_ART_DIR / "longmemeval_oracle.json"
 
 # Max chars per claim — session transcripts are chunked to survive recall's
 # 300-char preview and keep token count reasonable. 3500 is a compromise
@@ -110,7 +114,7 @@ logger = logging.getLogger("longmemeval")
 
 def ensure_dataset() -> Path:
     """Download the oracle subset if it isn't already on disk."""
-    ART_DIR.mkdir(parents=True, exist_ok=True)
+    _DEFAULT_ART_DIR.mkdir(parents=True, exist_ok=True)
     if DATASET_PATH.exists() and DATASET_PATH.stat().st_size > 1_000_000:
         return DATASET_PATH
     logger.info("Downloading LongMemEval oracle from %s", DATASET_URL)
@@ -457,7 +461,59 @@ def recall_with_ranked_ids(query: str, db_path: str, *, top_k: int = _TOPK) -> R
             + verbatim * w_verbatim
         )
 
-    ranked = sorted(rows, key=_relevance, reverse=True)
+    # Fusion mode: linear (default, legacy bit-identical) or RRF.  Mirror of
+    # memorymaster/context_hook.py's fusion branch so the harness reflects
+    # what a production recall call would actually rank under this env.
+    fusion_mode = os.environ.get("MEMORYMASTER_RECALL_FUSION", "linear").strip().lower()
+
+    if fusion_mode == "rrf":
+        from memorymaster.recall_fusion import rrf_fuse
+
+        def _row_cid(r: dict) -> int | None:
+            c = r.get("claim")
+            return getattr(c, "id", None)
+
+        def _ranking(score_fn) -> list[int]:
+            scored = [
+                (cid, score_fn(r))
+                for r in rows
+                if (cid := _row_cid(r)) is not None
+            ]
+            if all(s == 0.0 for _, s in scored):
+                return []
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return [cid for cid, _ in scored]
+
+        rankings: dict[str, list[int]] = {}
+        bm25_ranking = _ranking(
+            lambda r: bm25_scores.get(_row_cid(r), 0.0) if bm25_on else 0.0
+        )
+        if bm25_ranking:
+            rankings["bm25"] = bm25_ranking
+        entity_ranking = _ranking(lambda r: float(r.get("entity_score") or 0.0))
+        if entity_ranking:
+            rankings["entity"] = entity_ranking
+        vector_ranking = _ranking(lambda r: float(r.get("vector_score") or 0.0))
+        if vector_ranking:
+            rankings["vector"] = vector_ranking
+        verbatim_ranking = _ranking(lambda r: float(r.get("verbatim_score") or 0.0))
+        if verbatim_ranking:
+            rankings["verbatim"] = verbatim_ranking
+        freshness_ranking = _ranking(lambda r: float(r.get("freshness_score") or 0.0))
+        if freshness_ranking:
+            rankings["freshness"] = freshness_ranking
+
+        if rankings:
+            rrf_scores = rrf_fuse(rankings)
+            ranked = sorted(
+                rows,
+                key=lambda r: rrf_scores.get(_row_cid(r) or -1, 0.0),
+                reverse=True,
+            )
+        else:
+            ranked = sorted(rows, key=_relevance, reverse=True)
+    else:
+        ranked = sorted(rows, key=_relevance, reverse=True)
     dt_ms = (time.perf_counter() - t0) * 1000.0
 
     # Back-map each ranked row to its session_id via claim.scope.
@@ -502,10 +558,34 @@ def score_question(ranked_sids: list[str], golden_sids: Iterable[str]) -> dict:
 # ---------------------------------------------------------------------------
 
 def run_worker(config_key: str, limit: int) -> None:
-    """Run one config over the sampled questions and emit results JSONL."""
+    """Run one config over the sampled questions and emit results JSONL.
+
+    ``config_key`` may be either a known CONFIGS entry (A/B/C/D) OR a custom
+    label supplied via ``--config-label``. Custom labels inherit whatever
+    ``MEMORYMASTER_RECALL_*`` env vars the caller set — the worker does NOT
+    clobber them — and seed_verbatim is gated on the presence of
+    ``MEMORYMASTER_RECALL_VERBATIM=1`` rather than the config letter.
+    """
     logging.basicConfig(level=logging.WARNING, format="[%(levelname)s] %(message)s")
-    cfg = CONFIGS[config_key]
-    seed_verbatim = config_key == "C"
+    global ART_DIR
+    output_dir_override = os.environ.get("MEMORYMASTER_LONGMEMEVAL_OUTPUT_DIR")
+    if output_dir_override:
+        ART_DIR = Path(output_dir_override).resolve()
+
+    if config_key in CONFIGS:
+        cfg = CONFIGS[config_key]
+        seed_verbatim = config_key == "C"
+    else:
+        # Custom label: pick up the running env verbatim so the caller owns
+        # the knobs. seed_verbatim is inferred from the verbatim gate.
+        cfg = {
+            "description": f"custom ({config_key}) — env-driven",
+            "env": {
+                k: v for k, v in os.environ.items()
+                if k.startswith("MEMORYMASTER_RECALL_")
+            },
+        }
+        seed_verbatim = os.environ.get("MEMORYMASTER_RECALL_VERBATIM") == "1"
 
     ART_DIR.mkdir(parents=True, exist_ok=True)
     db_path = str(ART_DIR / f"bench-{config_key}.db")
@@ -611,20 +691,43 @@ def run_worker(config_key: str, limit: int) -> None:
 # Orchestrator
 # ---------------------------------------------------------------------------
 
-def run_config_subprocess(config_key: str, limit: int) -> dict:
-    """Run one config in a clean subprocess with its env vars applied."""
-    cfg = CONFIGS[config_key]
+def run_config_subprocess(
+    config_key: str,
+    limit: int,
+    *,
+    output_dir: Path | None = None,
+    inherit_env: bool = False,
+) -> dict:
+    """Run one config in a clean subprocess with its env vars applied.
+
+    Args:
+        config_key: named config (A/B/C/D) or custom label.
+        limit: number of questions (0 = all 500).
+        output_dir: optional override for artifact directory. Propagated to
+            the worker via ``MEMORYMASTER_LONGMEMEVAL_OUTPUT_DIR``.
+        inherit_env: when True, keep the caller's ``MEMORYMASTER_RECALL_*``
+            env untouched (used by ``--config-label`` mode where the caller
+            explicitly sets the knobs). When False (default, legacy multi-
+            config sweep), scrub the recall env and apply ``CONFIGS`` entry.
+    """
+    if config_key in CONFIGS:
+        cfg = CONFIGS[config_key]
+    else:
+        cfg = {"description": f"custom ({config_key})", "env": {}}
     env = os.environ.copy()
-    # Remove any leftover MEMORYMASTER_RECALL_* knobs from the parent shell
-    # so we truly start from shipped defaults.
-    for k in list(env.keys()):
-        if k.startswith("MEMORYMASTER_RECALL_"):
-            env.pop(k, None)
+    if not inherit_env:
+        # Remove any leftover MEMORYMASTER_RECALL_* knobs from the parent shell
+        # so we truly start from shipped defaults.
+        for k in list(env.keys()):
+            if k.startswith("MEMORYMASTER_RECALL_"):
+                env.pop(k, None)
+        env.update(cfg["env"])
     # Also clear QDRANT_URL so the subprocess can't hit an external service.
     env.pop("QDRANT_URL", None)
-    env.update(cfg["env"])
     # Ensure Python can import the project package.
     env["PYTHONPATH"] = str(REPO) + os.pathsep + env.get("PYTHONPATH", "")
+    if output_dir is not None:
+        env["MEMORYMASTER_LONGMEMEVAL_OUTPUT_DIR"] = str(output_dir.resolve())
 
     print(f"[longmemeval] running config {config_key}: {cfg['description']}", flush=True)
     t0 = time.perf_counter()
@@ -669,36 +772,76 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=100,
                         help="How many questions to evaluate (0 = all 500).")
+    parser.add_argument("--questions", type=int, default=None,
+                        help="Alias for --limit (0 = all 500).")
     parser.add_argument("--configs", type=str, default="A,B,C,D")
+    parser.add_argument(
+        "--config-label",
+        type=str,
+        default="",
+        help="Run a single custom-labeled config inheriting the caller's "
+             "MEMORYMASTER_RECALL_* env. Skips the A/B/C/D sweep. Writes "
+             "results-<label>.jsonl and summary-<label>.json.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="",
+        help="Override artifact directory (default artifacts/longmemeval).",
+    )
     parser.add_argument("--worker", action="store_true",
                         help="Internal: run a single config end-to-end.")
     parser.add_argument("--config", type=str, default="",
                         help="Internal (worker mode).")
     args = parser.parse_args()
 
+    # --questions takes precedence when explicitly provided.
+    limit = args.questions if args.questions is not None else args.limit
+
     if args.worker:
-        if args.config not in CONFIGS:
-            parser.error(f"--config must be one of {list(CONFIGS)}")
-        run_worker(args.config, args.limit or 0)
+        # Worker accepts either a known config key or a custom label.
+        run_worker(args.config, limit or 0)
         return 0
 
+    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+    ensure_dataset()
+    global ART_DIR
+    output_dir = Path(args.output_dir).resolve() if args.output_dir else _DEFAULT_ART_DIR
+    ART_DIR = output_dir
+    ART_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Single-label custom-config path (new). Inherits caller's env so, e.g.,
+    # MEMORYMASTER_RECALL_FUSION=rrf gets through untouched.
+    if args.config_label:
+        summary = run_config_subprocess(
+            args.config_label,
+            limit,
+            output_dir=output_dir,
+            inherit_env=True,
+        )
+        roll_up_path = ART_DIR / f"summary-{args.config_label}.json"
+        if "error" not in summary:
+            roll_up_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+            print(f"[longmemeval] wrote {roll_up_path}", flush=True)
+        else:
+            print(f"[longmemeval] run FAILED: {summary}", flush=True)
+            return 1
+        return 0
+
+    # Legacy multi-config sweep path (unchanged behaviour).
     configs = [c.strip() for c in args.configs.split(",") if c.strip()]
     for c in configs:
         if c not in CONFIGS:
             parser.error(f"unknown config {c!r}; valid: {list(CONFIGS)}")
 
-    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-    ensure_dataset()
-    ART_DIR.mkdir(parents=True, exist_ok=True)
-
     all_summaries: list[dict] = []
     for c in configs:
-        summary = run_config_subprocess(c, args.limit)
+        summary = run_config_subprocess(c, limit, output_dir=output_dir)
         all_summaries.append(summary)
 
     roll_up_path = ART_DIR / "summary.json"
     roll_up_path.write_text(
-        json.dumps({"summaries": all_summaries, "limit": args.limit}, indent=2),
+        json.dumps({"summaries": all_summaries, "limit": limit}, indent=2),
         encoding="utf-8",
     )
     print(f"[longmemeval] wrote {roll_up_path}", flush=True)
