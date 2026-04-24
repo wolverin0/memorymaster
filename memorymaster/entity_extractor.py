@@ -1,9 +1,11 @@
 """Layer-1 regex entity extractor + Layer-2 LLM assist.
 
-See ``artifacts/spec-entity-extraction-at-ingest-2026-04-23.md``.
+See ``artifacts/spec-entity-extraction-at-ingest-2026-04-23.md`` and the
+3.2 expansion artifact ``artifacts/entity-new-kinds-2026-04-23.md``.
 
 Layer 1 (``extract_patterns``): stdlib-only regex pass, kinds
-    ``file``, ``env-var``, ``service``, ``port``, ``commit``, ``tool``.
+    ``file``, ``env-var``, ``service``, ``port``, ``commit``, ``tool``,
+    ``package``, ``url_domain``, ``slash_command``, ``claim_id_ref``.
 
 Layer 2 (``extract_llm``): optional LLM pass, gated by env var
     ``MEMORYMASTER_ENTITY_LLM``. Permitted kinds:
@@ -109,6 +111,81 @@ _TOOL_WORD_RE = re.compile(
 )
 _MCP_TOOL_RE = re.compile(r"\bmcp__[a-zA-Z0-9_\-]+__[a-zA-Z0-9_\-]+\b")
 
+# package: Python/Node/JS package names mentioned in UNAMBIGUOUS install or
+# import contexts. Loose English verbs (``from``, ``import``, ``require``)
+# as plain context triggers were tried in an earlier revision but over-fired
+# on natural prose (e.g. ``from the backend``). Context now requires either:
+#   (a) a CLI install verb — ``pip install``, ``npm install``, ``poetry add``
+#       and siblings; the "line" after the verb is scanned for tokens, OR
+#   (b) a line-anchored Python import statement.
+_PACKAGE_CLI_RE = re.compile(
+    r"\b(?:"
+    r"pip[0-9]?\s+install|"
+    r"uv\s+(?:pip\s+)?add|uv\s+pip\s+install|"
+    r"poetry\s+add|conda\s+install|pipx\s+install|"
+    r"npm\s+install|npm\s+i|pnpm\s+(?:add|i)|"
+    r"yarn\s+add|bun\s+(?:add|install)"
+    r")\b",
+    re.IGNORECASE,
+)
+# Python import statements, anchored at start-of-line / after ``\n`` so
+# prose like ``reverts from...`` or ``import paths are bad`` doesn't fire.
+_PACKAGE_PY_IMPORT_RE = re.compile(
+    r"(?m)^\s*(?:import\s+([a-z][a-z0-9_]*(?:\s*,\s*[a-z][a-z0-9_]*)*)"
+    r"|from\s+([a-z][a-z0-9_.]*)\s+import\s+)",
+)
+# A single package token: lowercase start, may contain digits, hyphens, dots,
+# underscores, but must begin with a letter and be at least 2 chars long.
+_PACKAGE_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9_./-])([a-z][a-z0-9]*(?:[._-][a-z0-9]+)*)(?![A-Za-z0-9_./-])"
+)
+# Generous English + keyword blocklist — even under tight CLI context the
+# user may write ``pip install --upgrade with the cache cleared``.
+_PACKAGE_BLOCKLIST = frozenset(
+    {
+        # CLI flags / keywords
+        "as", "from", "import", "install", "add", "require", "requires",
+        "dev", "devdependencies", "save", "global", "save-dev", "upgrade",
+        # Common python / shell noise
+        "os", "sys", "re", "io", "time", "typing",
+        "sudo", "bash", "sh", "exec", "cd",
+        # Generic English stopwords.
+        "the", "and", "or", "but", "for", "with", "without", "into",
+        "this", "that", "these", "those", "some", "any", "all",
+        "will", "would", "can", "could", "may", "might", "should",
+        "need", "needs", "needed", "want", "wants", "wanted",
+        "also", "only", "still", "already", "just", "now", "then",
+        "uses", "used", "using", "use", "make", "made", "makes",
+        "allow", "allows", "allowed", "block", "blocks", "blocked",
+        "true", "false", "none", "null", "yes", "no",
+    }
+)
+
+# url_domain: http(s) URL host only. Port + path are discarded, host is
+# lowercased and the leading ``www.`` is stripped so ``www.GitHub.com`` and
+# ``github.com`` canonicalize to the same entity.
+_URL_RE = re.compile(
+    r"\bhttps?://([A-Za-z0-9][A-Za-z0-9.\-]+\.[A-Za-z]{2,})(?::\d+)?(?:/[^\s]*)?",
+    re.IGNORECASE,
+)
+
+# slash_command: leading ``/``, lowercase name, optional ``:namespace`` segment.
+# Filter: the match must NOT be preceded by an alphanumeric char (so
+# ``http://x`` doesn't fire) and must NOT be followed by another ``/segment``
+# with word characters (so POSIX paths like ``/usr/bin/foo`` are excluded —
+# they have 2+ path segments). ``/wiki`` and ``/superpowers:brainstorming``
+# are accepted; ``/tmp/foo`` and ``/var/log/app.log`` are rejected.
+_SLASH_COMMAND_RE = re.compile(
+    r"(?<![A-Za-z0-9_:/.])(/[a-z][a-z0-9_:-]{1,})(?![a-zA-Z0-9_:])"
+)
+
+# claim_id_ref: references to MemoryMaster claims by numeric id or hashed
+# ``mm-`` prefix. Accepts ``claim 11822``, ``claims 11822, 11823``, and
+# ``mm-abcd1234`` / ``mm-abcd1234~0``. We deliberately do NOT match bare
+# 4-6 digit numbers — only when the ``claim`` keyword precedes them.
+_CLAIM_NUM_RE = re.compile(r"\bclaims?\s+(\d{4,6})\b", re.IGNORECASE)
+_CLAIM_MM_RE = re.compile(r"\b(mm-[a-f0-9]{4,}(?:~[0-9]+)?)\b", re.IGNORECASE)
+
 
 # -- Helpers ----------------------------------------------------------------
 
@@ -137,6 +214,37 @@ def _canonical_commit(surface: str) -> str:
 def _canonical_tool(surface: str) -> str:
     s = surface.strip()
     return s if s.startswith("mcp__") else s.lower()
+
+
+def _canonical_package(surface: str) -> str:
+    """Lowercase and normalize ``_``/``.`` separators to ``-`` for packages.
+
+    PyPI treats ``scikit_learn``, ``scikit.learn`` and ``scikit-learn`` as the
+    same project; npm is effectively case-insensitive. Normalizing keeps the
+    alias graph from fragmenting.
+    """
+    s = surface.strip().lower()
+    # PyPI canonical-name rule: PEP 503. Collapse runs of [-_.] to a single '-'.
+    return re.sub(r"[-_.]+", "-", s).strip("-")
+
+
+def _canonical_url_domain(host_surface: str) -> str:
+    s = host_surface.strip().lower().rstrip(".")
+    if s.startswith("www."):
+        s = s[4:]
+    return s
+
+
+def _canonical_slash_command(surface: str) -> str:
+    return surface.strip().lower()
+
+
+def _canonical_claim_numeric(num: str) -> str:
+    return f"claim_{num.strip()}"
+
+
+def _canonical_claim_mm(surface: str) -> str:
+    return surface.strip().lower()
 
 
 # English-phrase blocklist so multi-dash noise doesn't pass as a service.
@@ -173,6 +281,102 @@ def _is_plausible_commit(surface: str, full_text: str) -> bool:
 
 def _is_plausible_port(num: int) -> bool:
     return num in {80, 443, 21, 22, 25, 53} or 1024 <= num <= 65535
+
+
+def _is_plausible_package(token: str) -> bool:
+    """Reject packages that are really English words, flags, or too short."""
+    t = token.strip().lower()
+    if len(t) < 2 or len(t) > 60:
+        return False
+    if t in _PACKAGE_BLOCKLIST:
+        return False
+    if not t[0].isalpha():
+        return False
+    # Require either a hyphen/underscore/dot OR at least 4 chars — avoids
+    # over-matching on short English filler like "for", "but", "the".
+    if len(t) < 4 and not re.search(r"[-_.]", t):
+        return False
+    return True
+
+
+def _iter_package_mentions(text: str) -> list[tuple[str, str]]:
+    """Yield ``(surface, canonical)`` pairs for package-like tokens.
+
+    Two context modes:
+
+    1. CLI install verb — take the IMMEDIATE contiguous run of package-like
+       tokens that follows. As soon as a non-package token appears (English
+       word, punctuation, shell operator), the run stops. This is strict
+       on purpose: ``npm install`` inside prose like ``we had to npm
+       install for the deploy`` only captures ``for`` which is blocked, so
+       nothing lands. ``pip install fastmcp qdrant-client`` captures both.
+    2. Python ``import`` / ``from X import`` — parse the specific module
+       name captured by ``_PACKAGE_PY_IMPORT_RE``.
+    """
+    out: list[tuple[str, str]] = []
+
+    # Mode 1 — CLI install invocations. Strict contiguous run, max 5 tokens.
+    for verb in _PACKAGE_CLI_RE.finditer(text):
+        start = verb.end()
+        newline_pos = text.find("\n", start)
+        window_end = newline_pos if newline_pos != -1 else len(text)
+        comment_pos = text.find("#", start, window_end)
+        if comment_pos != -1:
+            window_end = comment_pos
+        # Stop at backtick/quote — those bracket code snippets in prose.
+        for stop_ch in ("`", "'", '"'):
+            stop_pos = text.find(stop_ch, start, window_end)
+            if stop_pos != -1:
+                window_end = min(window_end, stop_pos)
+        window = text[start:window_end]
+
+        # Walk forward one token at a time. A token must be IMMEDIATELY
+        # adjacent (separated only by spaces / tabs) to the previous one, or
+        # to the verb for the first token. Any gap that contains a non-space
+        # character breaks the run.
+        cursor = 0
+        grabbed = 0
+        while grabbed < 5 and cursor < len(window):
+            # Consume leading whitespace.
+            gap_match = re.match(r"[\s]*", window[cursor:])
+            if gap_match:
+                cursor += gap_match.end()
+            if cursor >= len(window):
+                break
+            # Skip CLI flags like ``--upgrade`` or ``-r``.
+            if window[cursor] == "-":
+                flag_match = re.match(r"-+[A-Za-z0-9][A-Za-z0-9_-]*", window[cursor:])
+                if flag_match:
+                    cursor += flag_match.end()
+                    continue
+                break
+            tok_match = _PACKAGE_TOKEN_RE.match(window[cursor:])
+            if not tok_match:
+                break
+            tok = tok_match.group(1)
+            if not _is_plausible_package(tok):
+                # Non-package token terminates the run.
+                break
+            canonical = _canonical_package(tok)
+            if canonical:
+                out.append((tok, canonical))
+                grabbed += 1
+            cursor += tok_match.end()
+
+    # Mode 2 — Python imports (line-anchored).
+    for m in _PACKAGE_PY_IMPORT_RE.finditer(text):
+        captures = [g for g in m.groups() if g]
+        for capture in captures:
+            for raw in re.split(r"\s*,\s*", capture):
+                head = raw.split()[0] if raw.split() else raw
+                # ``from pkg.sub import X`` — top-level package only.
+                tok = head.split(".")[0].strip().lower()
+                if not _is_plausible_package(tok):
+                    continue
+                canonical = _canonical_package(tok)
+                if canonical:
+                    out.append((tok, canonical))
+    return out
 
 
 # -- Public API -------------------------------------------------------------
@@ -253,6 +457,37 @@ def extract_patterns(text: str) -> list[Entity]:
         if any(low in o.lower() and o.lower() != low for o in other_surfaces):
             continue
         _add(surface, "tool", _canonical_tool(surface))
+
+    # package (3.2) — context-aware: ``pip install foo``, ``import bar``.
+    for surface, canonical in _iter_package_mentions(text):
+        _add(surface, "package", canonical)
+
+    # url_domain (3.2) — extract host from http(s) URLs.
+    for m in _URL_RE.finditer(text):
+        host = m.group(1)
+        canonical = _canonical_url_domain(host)
+        if not canonical or "." not in canonical:
+            continue
+        _add(host, "url_domain", canonical)
+
+    # slash_command (3.2) — Claude Code / skill invocations like ``/wiki``.
+    for m in _SLASH_COMMAND_RE.finditer(text):
+        surface = m.group(1)
+        # Reject POSIX paths: if the match is immediately followed by
+        # ``/<word>`` in the source text, it's a path, not a command.
+        tail = text[m.end():m.end() + 2]
+        if tail.startswith("/") and len(tail) > 1 and (tail[1].isalnum() or tail[1] == "."):
+            continue
+        canonical = _canonical_slash_command(surface)
+        _add(surface, "slash_command", canonical)
+
+    # claim_id_ref (3.2) — ``claim 11822`` and ``mm-<hex>`` forms.
+    for m in _CLAIM_NUM_RE.finditer(text):
+        num = m.group(1)
+        _add(m.group(0), "claim_id_ref", _canonical_claim_numeric(num))
+    for m in _CLAIM_MM_RE.finditer(text):
+        surface = m.group(1)
+        _add(surface, "claim_id_ref", _canonical_claim_mm(surface))
 
     return found
 
