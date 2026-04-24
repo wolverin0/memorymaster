@@ -698,8 +698,21 @@ def recall(
     budget: int = 2000,
     format: str = "text",
     skip_qdrant: bool = False,
-) -> str:
-    """Query memorymaster for relevant context with quality ranking."""
+    return_ids: bool = False,
+) -> str | tuple[str, list[int]]:
+    """Query memorymaster for relevant context with quality ranking.
+
+    By default returns the rendered ``# Memory Context`` markdown block
+    (backwards-compatible). When ``return_ids=True``, returns a tuple of
+    ``(markdown, [claim_id, ...])`` where the list is the ordered set of
+    claim IDs that appear as bullets in the markdown — in the same order
+    as rendered. The ID list is the audit-friendly output used by the
+    eval harness so it no longer has to re-lookup rendered text against
+    the DB (roadmap 11.7).
+
+    ``return_ids`` defaults to ``False`` so every existing caller — MCP
+    tools, CLI, hooks — gets the legacy ``str`` return type unchanged.
+    """
     from memorymaster.service import MemoryService
 
     # Retrieval latency instrumentation (roadmap 5.1). ``phase_ms`` records
@@ -710,9 +723,13 @@ def recall(
     # no entry — that is how "zero overhead when disabled" is enforced.
     phase_ms: dict[str, float] = {}
     total_start = time.perf_counter()
+    # When return_ids=True, _recall_impl appends rendered claim IDs here in
+    # bullet-order so the caller gets exact mapping without parsing the
+    # rendered markdown.
+    rendered_ids: list[int] = []
 
     try:
-        return _recall_impl(
+        rendered = _recall_impl(
             query,
             db_path=db_path,
             budget=budget,
@@ -720,7 +737,11 @@ def recall(
             skip_qdrant=skip_qdrant,
             phase_ms=phase_ms,
             _memory_service_cls=MemoryService,
+            _rendered_ids=rendered_ids if return_ids else None,
         )
+        if return_ids:
+            return rendered, rendered_ids
+        return rendered
     finally:
         _emit_recall_latency(phase_ms, total_start)
 
@@ -734,10 +755,16 @@ def _recall_impl(
     skip_qdrant: bool,
     phase_ms: dict[str, float],
     _memory_service_cls,
+    _rendered_ids: list[int] | None = None,
 ) -> str:
     """Inner recall body. Kept separate from ``recall()`` so the outer
     function's ``try/finally`` can emit latency logs from every return path
     without reindenting the whole routine.
+
+    When ``_rendered_ids`` is a list (not None), claim IDs are appended to
+    it in bullet-order as the output markdown is built — enabling the
+    ``return_ids=True`` opt-in on the public ``recall()`` API without
+    re-running the ranker.
     """
     MemoryService = _memory_service_cls
     db = db_path or os.environ.get("MEMORYMASTER_DEFAULT_DB") or "memorymaster.db"
@@ -921,6 +948,10 @@ def _recall_impl(
                     p = hit.get("payload", {})
                     text = p.get("claim_text", "")[:200]
                     lines.append(f"- {text}")
+                    if _rendered_ids is not None:
+                        cid = p.get("claim_id")
+                        if isinstance(cid, int):
+                            _rendered_ids.append(cid)
                 return "\n".join(lines).encode("ascii", errors="replace").decode("ascii")
         except Exception:
             pass
@@ -1217,6 +1248,10 @@ def _recall_impl(
             break
         lines.append(chunk)
         tokens_used += chunk_tokens
+        if _rendered_ids is not None:
+            cid = getattr(claim, "id", None)
+            if isinstance(cid, int):
+                _rendered_ids.append(cid)
 
     # Close the rank_and_build timer right before we emit output so the
     # measurement covers _relevance/RRF + the budget-trimming loop.

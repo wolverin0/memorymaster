@@ -1,76 +1,123 @@
-"""Evaluate recall-hook ranking precision@5 and MAP@5 on real prompts.
+"""Evaluate production ``context_hook.recall()`` at precision@5 / MAP@5.
 
-Runs the recall pipeline end-to-end (query tokenization + per-token fanout
-+ re-rank with configurable weight tuple), then scores the top-K against a
-token-overlap proxy label.
+Roadmap 11.7 — harness consolidation. Previously this script duplicated the
+ranker logic (its own ``_fetch_candidates`` + ``_score``) so ranker-internal
+changes (BM25 rescorer, scope-boost, query-expansion, RRF fusion) were
+invisible. This rewrite invokes the real production ``recall()`` end-to-end
+and evaluates the claim IDs it actually surfaces in the ``# Memory Context``
+block.
 
-Proxy label: a candidate is "relevant" to a prompt iff
-``len(candidate_tokens & prompt_tokens) >= min_overlap`` after the same
-stopword/stem filter used by the recall tokenizer. This is coarse but
-reproducible and does not require manual annotations.
+Key design notes:
 
-Usage:
-    python scripts/eval_recall_precision_at_5.py                          # baseline w0
-    python scripts/eval_recall_precision_at_5.py --weights 0.3,0.3,0.2,0.1,0.1,0.0,0.0
-    python scripts/eval_recall_precision_at_5.py --grid                   # 5^5 grid search
-    python scripts/eval_recall_precision_at_5.py --weights <w> --verbose
+* Uses the ``return_ids=True`` opt-in added to
+  :func:`memorymaster.context_hook.recall` so we never have to re-match
+  rendered bullet text against the DB.
+* Read-only against the live DB — monkey-patches the service + store to
+  disable every write path.
+* Ground-truth labels: when a side-file of the form
+  ``<prompts>-labels.json`` exists (e.g.
+  ``artifacts/real-prompts-100-labels.json``), its
+  ``labels: {prompt_sha1_16: [claim_ids]}`` mapping is consulted first.
+  Prompts without an entry fall back to the token-overlap heuristic the
+  old harness used — same ``min_overlap`` semantic.
+* Tunable feature flags (RRF fusion, scope-boost, query-expansion,
+  verbatim, vector fallback, W_* weights) are configured via env vars
+  *before* this script runs; the harness reads the environment and
+  records it in the JSON summary for reproducibility.
 
-The weight tuple is 7-dim:
-    (w_matches, w_phrase, w_all, w_lexical, w_confidence, w_freshness, w_vector)
+Usage::
 
-Read-only against the live DB — monkey-patches _record_accesses to no-op.
+    python scripts/eval_recall_precision_at_5.py \
+        --prompts artifacts/real-prompts-100.jsonl \
+        --db memorymaster.db \
+        --json-out artifacts/<run>.jsonl \
+        --label cfg
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
-import itertools
 import json
+import os
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-if hasattr(sys.stdout, "buffer"):
+# Only rebind stdout when run as a CLI script. Importing this module from
+# pytest (for the test_eval_harness integration tests) MUST NOT swap the
+# pytest stdout capture — doing so triggers "I/O operation on closed file"
+# at teardown time.
+if __name__ == "__main__" and hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-from memorymaster.recall_tokenizer import _candidate_tokens, extract_query_tokens  # noqa: E402
-from memorymaster.service import MemoryService  # noqa: E402
+from memorymaster.context_hook import recall  # noqa: E402
+from memorymaster.recall_tokenizer import _candidate_tokens  # noqa: E402
 
 
-# 8-dim weights — matches the order in context_hook._relevance.
-# The 8th dim (w_entity) is shipped at 0.0 so legacy 7-dim invocations are
-# equivalent to (..., w_entity=0.0). See context_hook._entity_fanout_claim_ids.
-WEIGHT_NAMES = (
-    "w_matches",
-    "w_phrase",
-    "w_all",
-    "w_lexical",
-    "w_confidence",
-    "w_freshness",
-    "w_vector",
-    "w_entity",
+# Env flags whose values we capture in the run summary — makes it trivial to
+# tell ex-post what feature set a given JSONL came from. We never mutate them.
+_TRACKED_ENV = (
+    "MEMORYMASTER_RECALL_VERBATIM",
+    "MEMORYMASTER_RECALL_VECTOR_FALLBACK",
+    "MEMORYMASTER_RECALL_SCOPE_BOOST",
+    "MEMORYMASTER_RECALL_QUERY_EXPANSION",
+    "MEMORYMASTER_RECALL_FUSION",
+    "MEMORYMASTER_LEXICAL_BM25",
+    "MEMORYMASTER_RECALL_W_MATCHES",
+    "MEMORYMASTER_RECALL_W_PHRASE",
+    "MEMORYMASTER_RECALL_W_ALL",
+    "MEMORYMASTER_RECALL_W_LEXICAL",
+    "MEMORYMASTER_RECALL_W_CONFIDENCE",
+    "MEMORYMASTER_RECALL_W_FRESHNESS",
+    "MEMORYMASTER_RECALL_W_VECTOR",
+    "MEMORYMASTER_RECALL_W_ENTITY",
+    "MEMORYMASTER_RECALL_W_VERBATIM",
+    "MEMORYMASTER_BM25_K1",
+    "MEMORYMASTER_BM25_B",
+    "MEMORYMASTER_BM25_W_SUBJECT",
+    "MEMORYMASTER_BM25_W_TEXT",
 )
-
-# Baseline weights in context_hook.py::_relevance (matches + phrase + all + lex + conf).
-# Freshness + vector + entity were unused in w0.
-W0 = (0.3, 0.3, 0.2, 0.3, 0.1, 0.0, 0.0, 0.0)
-# W_LEXICAL=0.3 (4th slot) matches the 2026-04-23 shipped default in
-# memorymaster/context_hook.py after the BM25 rescorer replaced the
-# weak overlap scorer. See claim 11857 for why 0.1 was insufficient.
 
 
 @dataclass(frozen=True)
-class PromptResult:
+class PromptRecord:
+    """One evaluation prompt + its heuristic-label seed tokens."""
+
+    text: str
+    sha: str
+    prompt_tokens: frozenset[str]
+
+
+@dataclass(frozen=True)
+class PromptEval:
+    """Per-prompt evaluation outcome."""
+
+    idx: int
     prompt: str
-    ranked_claim_ids: tuple[int, ...]
-    labels: tuple[int, ...]  # 1 = relevant, 0 = not
+    sha: str
+    returned_ids: tuple[int, ...]
+    labels: tuple[int, ...]
+    p5: float
+    ap5: float
+    latency_ms: float
+    label_source: str  # "ground_truth" | "heuristic" | "error"
 
 
-def _load_prompts(path: Path) -> list[str]:
-    out: list[str] = []
+def _sha16(text: str) -> str:
+    """SHA1[:16] — matches ``scripts/expand_recall_eval._sha`` so labels
+    produced by that script line up with prompts here without a separate
+    mapping table.
+    """
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _load_prompts(path: Path) -> list[PromptRecord]:
+    out: list[PromptRecord] = []
     with path.open(encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -78,269 +125,59 @@ def _load_prompts(path: Path) -> list[str]:
                 continue
             rec = json.loads(line)
             text = (rec.get("text") or "").strip()
-            if text:
-                out.append(text)
+            if not text:
+                continue
+            out.append(PromptRecord(
+                text=text,
+                sha=_sha16(text),
+                prompt_tokens=frozenset(
+                    t for t in _candidate_tokens(text) if len(t) >= 3
+                ),
+            ))
     return out
 
 
-def _prompt_tokens(prompt: str) -> set[str]:
-    """Stopword-stripped tokens from a prompt — matches the recall tokenizer."""
-    return {t for t in _candidate_tokens(prompt) if len(t) >= 3}
+def _load_labels(path: Path) -> tuple[dict[str, set[int]], int]:
+    """Load ground-truth labels side-file.
+
+    Returns ``(sha → relevant_ids, min_overlap_used_to_generate_labels)``.
+    When the side-file is missing, returns an empty mapping and the
+    default min_overlap=2. Missing file is not an error — prompts simply
+    fall back to the heuristic overlap scorer.
+    """
+    if not path.exists():
+        return {}, 2
+    with path.open(encoding="utf-8") as fh:
+        payload = json.load(fh)
+    raw = payload.get("labels") or {}
+    out: dict[str, set[int]] = {}
+    for sha, ids in raw.items():
+        if isinstance(sha, str) and isinstance(ids, list):
+            out[sha] = {int(i) for i in ids if isinstance(i, int)}
+    min_overlap = int(payload.get("min_overlap", 2))
+    return out, min_overlap
 
 
-def _claim_tokens(subject: str | None, text: str) -> set[str]:
-    """Stopword-stripped tokens from a claim's subject + text."""
-    joined = f"{subject or ''} {text}"
-    return {t for t in _candidate_tokens(joined) if len(t) >= 3}
-
-
-def _label(prompt_tokens: set[str], claim_subject: str | None, claim_text: str,
-           min_overlap: int = 2) -> int:
-    """Proxy relevance label: 1 if token overlap >= min_overlap, else 0."""
-    ct = _claim_tokens(claim_subject, claim_text)
+def _heuristic_relevance(
+    claim_text: str,
+    claim_subject: str | None,
+    prompt_tokens: frozenset[str],
+    min_overlap: int,
+) -> int:
+    """Token-overlap proxy label — matches the old harness semantic."""
+    joined = f"{claim_subject or ''} {claim_text or ''}"
+    ct = {t for t in _candidate_tokens(joined) if len(t) >= 3}
     return 1 if len(ct & prompt_tokens) >= min_overlap else 0
 
 
-def _fetch_candidates(svc: MemoryService, prompt: str, db_path: str,
-                      max_tokens: int = 6, top_k: int = 20,
-                      include_entity_fanout: bool = True,
-                      include_vector_fallback: bool = False) -> list[dict]:
-    """Mirror context_hook.recall() candidate collection, but fetch top_k.
-
-    When ``include_entity_fanout`` is True, also mines entities from the
-    prompt and unions in claims linked by ``entity_id`` (lower-weight
-    via ``entity_score=1.0``). This matches context_hook.recall when
-    ``MEMORYMASTER_RECALL_W_ENTITY > 0``.
-
-    When ``include_vector_fallback`` is True AND the post-fanout candidate
-    count is below :func:`memorymaster.qdrant_recall_fallback.fallback_threshold`,
-    also unions in Qdrant semantic-search hits. Env vars must be set as in
-    context_hook.recall (MEMORYMASTER_QDRANT_URL + MEMORYMASTER_RECALL_VECTOR_FALLBACK).
-    """
-    fts_query = extract_query_tokens(prompt, db_path, max_tokens=max_tokens)
-    token_list = fts_query.split() if fts_query else []
-    rows: list = []
-    seen_ids: set[int] = set()
-    if token_list:
-        per_token_limit = max(5, (top_k * 2) // max(1, len(token_list)))
-        for tok in token_list:
-            batch = svc.query_rows(
-                query_text=tok,
-                limit=per_token_limit,
-                retrieval_mode="legacy",
-                include_candidates=True,
-                scope_allowlist=None,
-            )
-            for row in batch:
-                claim = row.get("claim")
-                cid = getattr(claim, "id", None)
-                if cid is None or cid in seen_ids:
-                    continue
-                seen_ids.add(cid)
-                rows.append(row)
-    if not rows:
-        rows = svc.query_rows(
-            query_text=prompt,
-            limit=top_k,
-            retrieval_mode="legacy",
-            include_candidates=True,
-            scope_allowlist=None,
-        )
-        for row in rows:
-            claim = row.get("claim")
-            cid = getattr(claim, "id", None)
-            if cid is not None:
-                seen_ids.add(cid)
-    if include_entity_fanout:
-        from memorymaster.context_hook import (
-            _entity_fanout_claim_ids,
-            _row_for_claim,
-        )
-        fanout_ids = _entity_fanout_claim_ids(svc.store, prompt, seen_ids)
-        for cid in fanout_ids:
-            try:
-                claim = svc.store.get_claim(cid, include_citations=True)
-            except Exception:
-                continue
-            if claim is None or getattr(claim, "status", "") == "archived":
-                continue
-            rows.append(_row_for_claim(claim))
-    # Vector fallback stream (Qdrant + sentence-transformers), gated by
-    # MEMORYMASTER_RECALL_VECTOR_FALLBACK=1. Runs only when the primary
-    # FTS5+entity candidate pool is below the configured threshold.
-    if include_vector_fallback:
-        from memorymaster import qdrant_recall_fallback
-        from memorymaster.context_hook import _row_for_vector_hit
-        if (
-            qdrant_recall_fallback.is_fallback_enabled()
-            and len(rows) < qdrant_recall_fallback.fallback_threshold()
-        ):
-            try:
-                hits = qdrant_recall_fallback.search(prompt)
-            except Exception:
-                hits = []
-            for hit in hits:
-                if hit.claim_id in seen_ids:
-                    continue
-                try:
-                    claim = svc.store.get_claim(hit.claim_id, include_citations=True)
-                except Exception:
-                    continue
-                if claim is None or getattr(claim, "status", "") == "archived":
-                    continue
-                rows.append(_row_for_vector_hit(claim, hit.score))
-                seen_ids.add(hit.claim_id)
-    # Verbatim stream — gated on MEMORYMASTER_RECALL_VERBATIM=1. Mirrors the
-    # boost-or-inject strategy in context_hook.recall so the eval harness
-    # agrees with the production hook.
-    try:
-        from memorymaster.verbatim_recall import (
-            hit_to_synthetic_row,
-            is_enabled as _verbatim_enabled,
-            recall_verbatim,
-        )
-    except Exception:
-        _verbatim_enabled = lambda: False  # noqa: E731
-        recall_verbatim = lambda *a, **k: []  # noqa: E731
-        hit_to_synthetic_row = None
-    if _verbatim_enabled():
-        try:
-            verbatim_hits = recall_verbatim(prompt, scope=None,
-                                            db_path=db_path, limit=5)
-        except Exception:
-            verbatim_hits = []
-        if verbatim_hits and hit_to_synthetic_row is not None:
-            scope_to_rows: dict[str, list[dict]] = {}
-            for row in rows:
-                claim = row.get("claim")
-                s = getattr(claim, "scope", "") or ""
-                if s:
-                    scope_to_rows.setdefault(s, []).append(row)
-            added_keys: set[str] = set()
-            for hit in verbatim_hits:
-                existing = scope_to_rows.get(hit.scope) or []
-                if existing:
-                    target = existing[0]
-                    prev = float(target.get("verbatim_score") or 0.0)
-                    if hit.score > prev:
-                        target["verbatim_score"] = hit.score
-                    continue
-                key = hit.excerpt[:100]
-                if key in added_keys:
-                    continue
-                added_keys.add(key)
-                rows.append(hit_to_synthetic_row(hit))
-    # Attach the tokenized query for re-ranking.
-    for row in rows:
-        row["_fts_query"] = fts_query
-        row["_raw_query"] = prompt
-    return rows
-
-
-def _score(row: dict, weights: tuple[float, ...]) -> float:
-    """Replicate context_hook._relevance with injected weights."""
-    # Pad legacy 7-tuples to 9-dim for backwards compat.
-    if len(weights) == 7:
-        weights = (*weights, 0.0, 0.0)
-    if len(weights) == 8:
-        # Pad w_verbatim=env-value when caller didn't specify.
-        from memorymaster.verbatim_recall import verbatim_weight
-        weights = (*weights, verbatim_weight())
-    (w_matches, w_phrase, w_all, w_lexical, w_confidence,
-     w_freshness, w_vector, w_entity, w_verbatim) = weights
-    claim = row.get("claim")
-    text = (claim.text if hasattr(claim, "text") else "").lower()
-    fts_query = row.get("_fts_query", "") or ""
-    raw_query = row.get("_raw_query", "") or ""
-    query_words = set(fts_query.lower().split()) or set(raw_query.lower().split())
-    tokens_gt2 = [w for w in query_words if len(w) > 2]
-    matches = sum(1 for w in tokens_gt2 if w in text)
-    phrase_bonus = 1.0 if raw_query and raw_query.lower() in text else 0.0
-    all_present = 1.0 if tokens_gt2 and matches == len(tokens_gt2) else 0.0
-    lexical = float(row.get("lexical_score") or 0.0)
-    conf = float(row.get("confidence_score") or 0.0)
-    freshness = float(row.get("freshness_score") or 0.0)
-    vector = float(row.get("vector_score") or 0.0)
-    entity = float(row.get("entity_score") or 0.0)
-    verbatim = float(row.get("verbatim_score") or 0.0)
-    return (
-        matches * w_matches
-        + phrase_bonus * w_phrase
-        + all_present * w_all
-        + lexical * w_lexical
-        + conf * w_confidence
-        + freshness * w_freshness
-        + vector * w_vector
-        + entity * w_entity
-        + verbatim * w_verbatim
-    )
-
-
-def _fusion_mode() -> str:
-    """Read MEMORYMASTER_RECALL_FUSION env var. 'linear' (default) or 'rrf'."""
-    import os as _os
-    return _os.environ.get("MEMORYMASTER_RECALL_FUSION", "linear").strip().lower()
-
-
-def _rank(rows: list[dict], weights: tuple[float, ...]) -> list[dict]:
-    """Rank rows by fusion mode: linear (weights) or RRF (env-gated)."""
-    if _fusion_mode() == "rrf":
-        return _rank_rrf(rows)
-    return sorted(rows, key=lambda r: _score(r, weights), reverse=True)
-
-
-def _rank_rrf(rows: list[dict]) -> list[dict]:
-    """Rank rows via Reciprocal Rank Fusion over per-stream rankings.
-
-    Streams mirror context_hook.recall:
-      - bm25 (lexical_score)
-      - entity (entity_score)
-      - vector (vector_score)
-      - verbatim (verbatim_score)
-      - freshness (freshness_score)
-    A stream with ALL-zero values contributes nothing (skipped) so
-    disabled retrieval layers don't introduce arbitrary order.
-    """
-    from memorymaster.recall_fusion import rrf_fuse
-
-    def _cid(r: dict):
-        c = r.get("claim")
-        return getattr(c, "id", None)
-
-    def _ranking(score_fn) -> list[int]:
-        scored = [(cid, score_fn(r)) for r in rows
-                  if (cid := _cid(r)) is not None]
-        if all(s == 0.0 for _, s in scored):
-            return []
-        scored.sort(key=lambda x: x[1], reverse=True)
-        return [cid for cid, _ in scored]
-
-    rankings: dict[str, list[int]] = {}
-    for name, fn in [
-        ("bm25",      lambda r: float(r.get("lexical_score") or 0.0)),
-        ("entity",    lambda r: float(r.get("entity_score") or 0.0)),
-        ("vector",    lambda r: float(r.get("vector_score") or 0.0)),
-        ("verbatim",  lambda r: float(r.get("verbatim_score") or 0.0)),
-        ("freshness", lambda r: float(r.get("freshness_score") or 0.0)),
-    ]:
-        r = _ranking(fn)
-        if r:
-            rankings[name] = r
-    if not rankings:
-        # Fall back to raw order — defensive.
-        return list(rows)
-    scores = rrf_fuse(rankings)
-    return sorted(rows, key=lambda r: scores.get(_cid(r) or -1, 0.0), reverse=True)
-
-
-def _precision_at_k(labels: list[int], k: int = 5) -> float:
+def _precision_at_k(labels: tuple[int, ...], k: int = 5) -> float:
     head = labels[:k]
     if not head:
         return 0.0
     return sum(head) / len(head)
 
 
-def _average_precision_at_k(labels: list[int], k: int = 5) -> float:
+def _average_precision_at_k(labels: tuple[int, ...], k: int = 5) -> float:
     head = labels[:k]
     if not head:
         return 0.0
@@ -354,125 +191,190 @@ def _average_precision_at_k(labels: list[int], k: int = 5) -> float:
     return total / n_rel
 
 
-def _collect_candidates(prompts: list[str], svc: MemoryService, db_path: str,
-                        top_k: int = 20,
-                        include_entity_fanout: bool = True,
-                        include_vector_fallback: bool = False) -> list[tuple[str, list[dict], set[str]]]:
-    """Fetch top_k candidates once per prompt — reused across weight tuples."""
-    out = []
-    for prompt in prompts:
-        rows = _fetch_candidates(svc, prompt, db_path, top_k=top_k,
-                                 include_entity_fanout=include_entity_fanout,
-                                 include_vector_fallback=include_vector_fallback)
-        ptoks = _prompt_tokens(prompt)
-        out.append((prompt, rows, ptoks))
+def _patch_service_readonly() -> None:
+    """Disable every write path on ``MemoryService`` + its store.
+
+    We install this globally BEFORE any ``recall()`` call so the hot loop
+    never mutates ``claim_accesses`` / ``claim_signals`` — necessary when
+    the harness runs against the live 7.8 GB DB.
+    """
+    from memorymaster import service as _svc_mod
+
+    _original_init = _svc_mod.MemoryService.__init__
+
+    def _ro_init(self, *a, **kw):
+        _original_init(self, *a, **kw)
+        self._record_accesses = lambda *a, **k: None
+        if hasattr(self, "store") and hasattr(self.store, "record_accesses_batch"):
+            self.store.record_accesses_batch = lambda *a, **k: None
+
+    _svc_mod.MemoryService.__init__ = _ro_init
+
+
+def _lookup_claim_texts(db_path: str, ids: list[int]) -> dict[int, tuple[str, str | None]]:
+    """Batch-load (text, subject) for the claim IDs we care about.
+
+    We go through the storage layer — NOT raw SQL — to preserve the
+    read-only contract and stay schema-agnostic.
+    """
+    if not ids:
+        return {}
+    from memorymaster.service import MemoryService
+
+    svc = MemoryService(db_target=db_path, workspace_root=REPO)
+    out: dict[int, tuple[str, str | None]] = {}
+    for cid in ids:
+        try:
+            claim = svc.store.get_claim(cid, include_citations=False)
+        except Exception:
+            continue
+        if claim is None:
+            continue
+        out[cid] = (
+            getattr(claim, "text", "") or "",
+            getattr(claim, "subject", None),
+        )
     return out
 
 
-def _evaluate(collected: list[tuple[str, list[dict], set[str]]],
-              weights: tuple[float, ...], k: int = 5,
-              min_overlap: int = 2) -> tuple[float, float, int]:
-    """Return (precision@k mean, MAP@k mean, prompts-with-any-hit)."""
-    ps, aps = [], []
-    hit_prompts = 0
-    for _prompt, rows, ptoks in collected:
-        if not rows:
-            ps.append(0.0)
-            aps.append(0.0)
-            continue
-        ranked = _rank(rows, weights)
-        labels = [
-            _label(ptoks, getattr(r.get("claim"), "subject", None),
-                   getattr(r.get("claim"), "text", ""), min_overlap=min_overlap)
-            for r in ranked
-        ]
-        ps.append(_precision_at_k(labels, k))
-        aps.append(_average_precision_at_k(labels, k))
-        if any(labels[:k]):
-            hit_prompts += 1
-    n = max(1, len(collected))
-    return sum(ps) / n, sum(aps) / n, hit_prompts
-
-
-def _vector_fallback_env_on() -> bool:
-    """True when BOTH env gates are set — mirrors context_hook behaviour."""
-    import os as _os
-    flag = _os.environ.get("MEMORYMASTER_RECALL_VECTOR_FALLBACK", "").strip()
-    url = _os.environ.get("MEMORYMASTER_QDRANT_URL", "").strip()
-    return bool(url) and flag.lower() not in ("", "0", "false", "no", "off")
-
-
-def _parse_weights(s: str) -> tuple[float, ...]:
-    parts = [float(x) for x in s.split(",")]
-    if len(parts) == 7:
-        parts.append(0.0)  # pad w_entity=0.0 for legacy invocations
-    if len(parts) != 8:
-        raise argparse.ArgumentTypeError(
-            f"Expected 7 or 8 comma-separated weights ({','.join(WEIGHT_NAMES)}), got {len(parts)}"
+def _evaluate_prompt(
+    idx: int,
+    rec: PromptRecord,
+    db_path: str,
+    ground_truth: dict[str, set[int]],
+    min_overlap: int,
+    claim_text_cache: dict[int, tuple[str, str | None]],
+) -> PromptEval:
+    """Run a single prompt through production recall() and score."""
+    start = time.perf_counter()
+    try:
+        result = recall(
+            rec.text,
+            db_path=db_path,
+            skip_qdrant=True,
+            return_ids=True,
         )
-    return tuple(parts)
-
-
-def _grid_iter(values: tuple[float, ...]) -> itertools.product:
-    """5-dim grid (first 5 weights) — freshness/vector held at 0 for w0, varied for tune."""
-    return itertools.product(values, repeat=5)
-
-
-def _extended_grid_iter(values: tuple[float, ...]) -> itertools.product:
-    """7-dim extended grid used when the 5-dim one plateaus."""
-    return itertools.product(values, repeat=7)
-
-
-def run_grid_search(collected, values: tuple[float, ...] = (0.0, 0.1, 0.2, 0.3, 0.5),
-                    include_freshness_vector: bool = True,
-                    min_overlap: int = 2,
-                    verbose: bool = False) -> list[tuple[tuple[float, ...], float, float]]:
-    """Return list of (weights, precision@5, MAP@5) sorted by p@5 desc."""
-    results = []
-    if include_freshness_vector:
-        # 8-dim grid: 4^8 = 65536. Narrow values for speed.
-        vals_8 = (0.0, 0.15, 0.3, 0.5)
-        iterator = itertools.product(vals_8, repeat=8)
-        pad_to_8 = False
+    except Exception as exc:
+        print(f"[{idx}] recall() raised: {exc}", file=sys.stderr)
+        return PromptEval(
+            idx=idx,
+            prompt=rec.text[:120],
+            sha=rec.sha,
+            returned_ids=(),
+            labels=(),
+            p5=0.0,
+            ap5=0.0,
+            latency_ms=(time.perf_counter() - start) * 1000.0,
+            label_source="error",
+        )
+    latency_ms = (time.perf_counter() - start) * 1000.0
+    # When return_ids=True, recall returns (markdown, ids). Defensive coercion
+    # because recall() legacy callers get just ``str`` — kept here so that
+    # a typo in the kwarg won't silently blow up with a cryptic IndexError.
+    if isinstance(result, tuple) and len(result) == 2:
+        _rendered, returned_ids = result
     else:
-        iterator = itertools.product(values, repeat=5)
-        pad_to_8 = True
-    count = 0
-    for w in iterator:
-        if pad_to_8:
-            w = (*w, 0.0, 0.0, 0.0)
-        if all(x == 0.0 for x in w):
-            continue
-        p5, m5, _hits = _evaluate(collected, w, min_overlap=min_overlap)
-        results.append((w, p5, m5))
-        count += 1
-        if verbose and count % 500 == 0:
-            best = max(results, key=lambda r: (r[1], r[2]))
-            print(f"  [grid] {count} tried  best p@5={best[1]:.3f}  w={best[0]}")
-    results.sort(key=lambda r: (r[1], r[2]), reverse=True)
-    return results
+        returned_ids = []
+
+    # Prefer ground-truth labels when available for this prompt.
+    gt_ids = ground_truth.get(rec.sha)
+    if gt_ids is not None:
+        labels = tuple(1 if cid in gt_ids else 0 for cid in returned_ids)
+        label_source = "ground_truth"
+    else:
+        # Fall back to the heuristic token-overlap scorer. We need the
+        # claim text to compute overlap — populate the cache lazily so we
+        # don't pay for claims we never see.
+        missing = [cid for cid in returned_ids if cid not in claim_text_cache]
+        if missing:
+            fetched = _lookup_claim_texts(db_path, missing)
+            claim_text_cache.update(fetched)
+        labels = tuple(
+            _heuristic_relevance(
+                claim_text_cache.get(cid, ("", None))[0],
+                claim_text_cache.get(cid, ("", None))[1],
+                rec.prompt_tokens,
+                min_overlap=min_overlap,
+            )
+            for cid in returned_ids
+        )
+        label_source = "heuristic"
+
+    return PromptEval(
+        idx=idx,
+        prompt=rec.text[:120],
+        sha=rec.sha,
+        returned_ids=tuple(returned_ids),
+        labels=labels,
+        p5=_precision_at_k(labels, k=5),
+        ap5=_average_precision_at_k(labels, k=5),
+        latency_ms=latency_ms,
+        label_source=label_source,
+    )
+
+
+def run_eval(
+    prompts: list[PromptRecord],
+    db_path: str,
+    ground_truth: dict[str, set[int]],
+    min_overlap: int,
+) -> list[PromptEval]:
+    """Evaluate every prompt and return the per-prompt records."""
+    claim_text_cache: dict[int, tuple[str, str | None]] = {}
+    out: list[PromptEval] = []
+    for i, rec in enumerate(prompts):
+        out.append(_evaluate_prompt(
+            idx=i,
+            rec=rec,
+            db_path=db_path,
+            ground_truth=ground_truth,
+            min_overlap=min_overlap,
+            claim_text_cache=claim_text_cache,
+        ))
+    return out
+
+
+def _summarize(results: list[PromptEval]) -> dict:
+    n = max(1, len(results))
+    p_sum = sum(r.p5 for r in results)
+    m_sum = sum(r.ap5 for r in results)
+    non_empty = sum(1 for r in results if r.returned_ids)
+    hits = sum(1 for r in results if any(r.labels[:5]))
+    lat_ms = [r.latency_ms for r in results]
+    lat_ms.sort()
+    p95_idx = int(0.95 * (len(lat_ms) - 1)) if lat_ms else 0
+    gt_count = sum(1 for r in results if r.label_source == "ground_truth")
+    return {
+        "prompts_total": len(results),
+        "precision_at_5": p_sum / n,
+        "map_at_5": m_sum / n,
+        "hit_at_5": hits / n,
+        "non_empty": non_empty,
+        "prompts_with_ground_truth": gt_count,
+        "latency_ms_mean": (sum(lat_ms) / n) if lat_ms else 0.0,
+        "latency_ms_p95": lat_ms[p95_idx] if lat_ms else 0.0,
+    }
+
+
+def _capture_env() -> dict[str, str]:
+    return {k: os.environ[k] for k in _TRACKED_ENV if k in os.environ}
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--prompts", default="artifacts/real-prompts.jsonl")
     ap.add_argument("--db", default="memorymaster.db")
-    ap.add_argument("--weights", type=_parse_weights, default=None,
-                    help="7-dim comma-separated weight tuple")
-    ap.add_argument("--grid", action="store_true", help="Run full grid search")
-    ap.add_argument("--grid-narrow", action="store_true",
-                    help="Run narrow 5-dim grid (freshness/vector=0)")
-    ap.add_argument("--top-k", type=int, default=20,
-                    help="Fetch top-K candidates per prompt before re-ranking")
+    ap.add_argument("--labels", default=None,
+                    help="Path to labels side-file. Defaults to "
+                         "<prompts-stem>-labels.json next to the prompts file.")
     ap.add_argument("--min-overlap", type=int, default=2,
-                    help="Token-overlap threshold for proxy relevance label")
-    ap.add_argument("--verbose", action="store_true")
-    ap.add_argument("--no-entity-fanout", action="store_true",
-                    help="Disable entity-link fanout (reproduce pre-fanout baseline)")
-    ap.add_argument("--vector-fallback", action="store_true",
-                    help="Enable Qdrant vector-search fallback (also honours "
-                         "MEMORYMASTER_RECALL_VECTOR_FALLBACK + QDRANT_URL env).")
-    ap.add_argument("--json-out", default=None, help="Write grid search results as JSONL")
+                    help="Token-overlap threshold for heuristic relevance "
+                         "(used only when a prompt has no ground-truth entry).")
+    ap.add_argument("--label", default="prod-recall",
+                    help="Short tag emitted in the summary line + JSON.")
+    ap.add_argument("--json-out", default=None,
+                    help="Write per-prompt records as JSONL, plus one "
+                         "summary line at the end.")
     args = ap.parse_args()
 
     prompts_path = Path(args.prompts)
@@ -481,74 +383,83 @@ def main() -> int:
     db_path = Path(args.db)
     if not db_path.is_absolute():
         db_path = REPO / db_path
-
-    if not prompts_path.exists() or not db_path.exists():
-        missing = prompts_path if not prompts_path.exists() else db_path
-        print(f"ERROR: missing {missing}")
+    if not prompts_path.exists():
+        print(f"ERROR: missing prompts file: {prompts_path}")
+        return 2
+    if not db_path.exists():
+        print(f"ERROR: missing DB: {db_path}")
         return 2
 
+    labels_path = Path(args.labels) if args.labels else prompts_path.with_name(
+        prompts_path.stem + "-labels.json"
+    )
+    ground_truth, labels_min_overlap = _load_labels(labels_path)
+
+    # Install read-only service shim ONCE before any recall() call.
+    _patch_service_readonly()
+
     prompts = _load_prompts(prompts_path)
-    svc = MemoryService(db_target=str(db_path), workspace_root=REPO)
-    # Hard read-only: disable every write that the service could trigger.
-    svc._record_accesses = lambda *a, **k: None  # type: ignore[assignment]
-    if hasattr(svc, "store") and hasattr(svc.store, "record_accesses_batch"):
-        svc.store.record_accesses_batch = lambda *a, **k: None  # type: ignore[assignment]
+    effective_min_overlap = args.min_overlap
+    print(f"[{args.label}] prompts={len(prompts)} "
+          f"db={db_path.name} labels={'yes' if ground_truth else 'no'}"
+          f" (have {len(ground_truth)} labeled / fall-back min_overlap="
+          f"{effective_min_overlap})")
 
-    print(f"Loading {len(prompts)} prompts from {prompts_path.name}")
-    print(f"DB: {db_path.name} (read-only via _record_accesses override)")
-    fanout = not args.no_entity_fanout
-    print(f"Entity-link fanout: {'ON' if fanout else 'OFF'}")
-    vector_fallback = args.vector_fallback or _vector_fallback_env_on()
-    print(f"Vector fallback:    {'ON' if vector_fallback else 'OFF'}")
-    print(f"Fetching top-{args.top_k} candidates per prompt (one-shot, reused across grid)...")
-    collected = _collect_candidates(prompts, svc, str(db_path), top_k=args.top_k,
-                                     include_entity_fanout=fanout,
-                                     include_vector_fallback=vector_fallback)
-    cand_counts = [len(r) for _, r, _ in collected]
-    print(f"  mean candidates/prompt: {sum(cand_counts) / max(1, len(cand_counts)):.1f} "
-          f"(min={min(cand_counts, default=0)}, max={max(cand_counts, default=0)})")
+    env_snapshot = _capture_env()
+    if env_snapshot:
+        print(f"[{args.label}] env overrides: {env_snapshot}")
 
-    # Baseline
-    p5_base, m5_base, hits_base = _evaluate(collected, W0, min_overlap=args.min_overlap)
-    print(f"\nBASELINE weights w0 = {W0}   (min_overlap={args.min_overlap})")
-    print(f"  precision@5 = {p5_base:.3f}")
-    print(f"  MAP@5       = {m5_base:.3f}")
-    print(f"  prompts with >=1 hit in top-5 = {hits_base}/{len(prompts)}")
+    start = time.perf_counter()
+    results = run_eval(
+        prompts=prompts,
+        db_path=str(db_path),
+        ground_truth=ground_truth,
+        min_overlap=effective_min_overlap,
+    )
+    total_ms = (time.perf_counter() - start) * 1000.0
 
-    if args.weights:
-        p5, m5, hits = _evaluate(collected, args.weights, min_overlap=args.min_overlap)
-        print(f"\nCANDIDATE weights = {args.weights}")
-        print(f"  precision@5 = {p5:.3f}  (delta vs baseline: {p5 - p5_base:+.3f})")
-        print(f"  MAP@5       = {m5:.3f}  (delta vs baseline: {m5 - m5_base:+.3f})")
-        print(f"  prompts with >=1 hit in top-5 = {hits}/{len(prompts)}")
+    summary = _summarize(results)
+    summary.update({
+        "label": args.label,
+        "db": str(db_path),
+        "prompts_file": str(prompts_path),
+        "labels_file": str(labels_path) if labels_path.exists() else "",
+        "labels_min_overlap": labels_min_overlap,
+        "env": env_snapshot,
+        "wall_ms_total": total_ms,
+    })
 
-    if args.grid or args.grid_narrow:
-        include_fv = not args.grid_narrow
-        print(f"\nRunning grid search (include_freshness_vector={include_fv})...")
-        results = run_grid_search(collected, include_freshness_vector=include_fv,
-                                  min_overlap=args.min_overlap, verbose=args.verbose)
-        print(f"  tried {len(results)} weight tuples")
-        print("\nTop 10 weight tuples by precision@5 (tiebreak MAP@5):")
-        for w, p5, m5 in results[:10]:
-            print(f"  p@5={p5:.3f}  MAP@5={m5:.3f}  w={w}")
-        best_w, best_p5, best_m5 = results[0]
-        print(f"\nGRID WINNER: {best_w}")
-        print(f"  precision@5 = {best_p5:.3f}  (delta vs baseline: {best_p5 - p5_base:+.3f})")
-        print(f"  MAP@5       = {best_m5:.3f}  (delta vs baseline: {best_m5 - m5_base:+.3f})")
-        ship_ok = (best_p5 - p5_base) >= 0.05
-        print(f"  ship? {'YES' if ship_ok else 'NO  (improvement <0.05 — current near-optimal)'}")
-        acceptance = best_p5 >= 0.70
-        print(f"  acceptance bar (>=0.70): {'PASS' if acceptance else 'FAIL'}")
+    print(f"[{args.label}] precision@5  = {summary['precision_at_5']:.3f}")
+    print(f"[{args.label}] MAP@5        = {summary['map_at_5']:.3f}")
+    print(f"[{args.label}] hit@5        = {summary['hit_at_5']:.3f}")
+    print(f"[{args.label}] non_empty    = {summary['non_empty']}/"
+          f"{summary['prompts_total']}")
+    print(f"[{args.label}] labeled GT   = "
+          f"{summary['prompts_with_ground_truth']}/{summary['prompts_total']}")
+    print(f"[{args.label}] latency mean = "
+          f"{summary['latency_ms_mean']:.1f} ms, p95 = "
+          f"{summary['latency_ms_p95']:.1f} ms")
 
-        if args.json_out:
-            out_path = Path(args.json_out)
-            if not out_path.is_absolute():
-                out_path = REPO / out_path
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            with out_path.open("w", encoding="utf-8") as fh:
-                for w, p5, m5 in results:
-                    fh.write(json.dumps({"w": list(w), "p5": p5, "m5": m5}) + "\n")
-            print(f"  wrote grid results: {out_path}")
+    if args.json_out:
+        out_path = Path(args.json_out)
+        if not out_path.is_absolute():
+            out_path = REPO / out_path
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with out_path.open("w", encoding="utf-8") as fh:
+            for r in results:
+                fh.write(json.dumps({
+                    "idx": r.idx,
+                    "prompt": r.prompt,
+                    "sha": r.sha,
+                    "returned_ids": list(r.returned_ids),
+                    "labels": list(r.labels),
+                    "p5": r.p5,
+                    "ap5": r.ap5,
+                    "latency_ms": r.latency_ms,
+                    "label_source": r.label_source,
+                }) + "\n")
+            fh.write(json.dumps({"__summary__": summary}) + "\n")
+        print(f"[{args.label}] wrote {out_path}")
 
     return 0
 
