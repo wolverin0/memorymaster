@@ -22,9 +22,51 @@ import logging
 import math
 import os
 import re
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
+from memorymaster.hook_log import log_hook
+
 logger = logging.getLogger(__name__)
+
+
+# Retrieval latency instrumentation (roadmap 5.1).
+#
+# Each retrieval stream inside ``recall()`` is timed with ``time.perf_counter``
+# — NOT ``time.monotonic`` — because claim 11848 documents a Windows flake
+# where ``monotonic()`` can return non-monotonic values across a clock-sync
+# boundary, yielding negative deltas. ``perf_counter`` is the stdlib-
+# recommended timer for short intervals on all platforms.
+#
+# Every per-stream sample is emitted as a ``log_hook("recall", "latency",
+# stream=<name>, ms=<float>, ...)`` line so downstream aggregators can compute
+# p50/p99/mean without re-running the workload. A consolidated
+# ``latency_total`` line is emitted once per call so operators can grep one
+# line per call and pull every phase in one shot.
+#
+# Overhead is observation-only: no branch inside the timer changes retrieval,
+# ranking, or output. ``log_hook`` itself swallows every exception, so a full
+# log-dir that fails to write cannot break recall().
+_LATENCY_EVENT = "latency"
+_LATENCY_TOTAL_EVENT = "latency_total"
+
+
+@contextmanager
+def _phase_timer(phase_ms: dict[str, float], name: str):
+    """Context manager that records ``(perf_counter end - start) * 1000`` into
+    ``phase_ms[name]``.
+
+    Uses ``time.perf_counter`` per claim 11848 (Windows timer flake on
+    ``time.monotonic``). Safe to nest; each call writes an independent slot.
+    The timer does not swallow exceptions — the caller's try/except is the
+    authority for error handling.
+    """
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        phase_ms[name] = (time.perf_counter() - start) * 1000.0
 
 # BM25 lexical re-scorer (ships on by default after the 5x5 k1/b sweep
 # on 30-prompt eval — see artifacts/bm25-sweep-2026-04-23.md).
@@ -356,6 +398,34 @@ def classify_observation(text: str) -> str | None:
     return None
 
 
+def _emit_recall_latency(phase_ms: dict[str, float], total_start: float) -> None:
+    """Emit per-stream + consolidated latency log lines for a recall() call.
+
+    Emits one ``recall / latency`` line per stream that actually ran (streams
+    absent from ``phase_ms`` emit nothing — zero-overhead invariant), plus a
+    single ``recall / latency_total`` line with every phase consolidated so
+    aggregators can pull all durations from one grep. Never raises —
+    ``log_hook`` swallows internally, and this function is called from
+    ``finally`` in ``recall()``.
+    """
+    try:
+        total_ms = (time.perf_counter() - total_start) * 1000.0
+        for stream, ms in phase_ms.items():
+            log_hook("recall", _LATENCY_EVENT, stream=stream, ms=round(ms, 3))
+        consolidated = {
+            f"{stream}_ms": round(ms, 3) for stream, ms in phase_ms.items()
+        }
+        log_hook(
+            "recall",
+            _LATENCY_TOTAL_EVENT,
+            total_ms=round(total_ms, 3),
+            **consolidated,
+        )
+    except Exception:
+        # Observation-only — never let logging break recall().
+        pass
+
+
 def recall(
     query: str,
     *,
@@ -367,6 +437,44 @@ def recall(
     """Query memorymaster for relevant context with quality ranking."""
     from memorymaster.service import MemoryService
 
+    # Retrieval latency instrumentation (roadmap 5.1). ``phase_ms`` records
+    # per-stream wall-clock durations in milliseconds. Each entry is emitted
+    # as an individual ``recall / latency`` line AND consolidated into one
+    # ``recall / latency_total`` line at the end. Streams that never run
+    # (e.g. verbatim when ``MEMORYMASTER_RECALL_VERBATIM`` is unset) leave
+    # no entry — that is how "zero overhead when disabled" is enforced.
+    phase_ms: dict[str, float] = {}
+    total_start = time.perf_counter()
+
+    try:
+        return _recall_impl(
+            query,
+            db_path=db_path,
+            budget=budget,
+            format=format,
+            skip_qdrant=skip_qdrant,
+            phase_ms=phase_ms,
+            _memory_service_cls=MemoryService,
+        )
+    finally:
+        _emit_recall_latency(phase_ms, total_start)
+
+
+def _recall_impl(
+    query: str,
+    *,
+    db_path: str,
+    budget: int,
+    format: str,
+    skip_qdrant: bool,
+    phase_ms: dict[str, float],
+    _memory_service_cls,
+) -> str:
+    """Inner recall body. Kept separate from ``recall()`` so the outer
+    function's ``try/finally`` can emit latency logs from every return path
+    without reindenting the whole routine.
+    """
+    MemoryService = _memory_service_cls
     db = db_path or os.environ.get("MEMORYMASTER_DEFAULT_DB") or "memorymaster.db"
     svc = MemoryService(db_target=db, workspace_root=Path.cwd())
 
@@ -382,41 +490,42 @@ def recall(
 
     rows: list = []
     seen_ids: set[int] = set()
-    if token_list:
-        # Fan out: top token first (highest IDF), then widen by OR.
-        per_token_limit = max(3, 8 // max(1, len(token_list)))
-        for tok in token_list:
-            batch = svc.query_rows(
-                query_text=tok,
-                limit=per_token_limit,
+    with _phase_timer(phase_ms, "fts5"):
+        if token_list:
+            # Fan out: top token first (highest IDF), then widen by OR.
+            per_token_limit = max(3, 8 // max(1, len(token_list)))
+            for tok in token_list:
+                batch = svc.query_rows(
+                    query_text=tok,
+                    limit=per_token_limit,
+                    retrieval_mode="legacy",
+                    include_candidates=True,
+                    scope_allowlist=None,
+                )
+                for row in batch:
+                    claim = row.get("claim")
+                    cid = getattr(claim, "id", None)
+                    if cid is None or cid in seen_ids:
+                        continue
+                    seen_ids.add(cid)
+                    rows.append(row)
+                if len(rows) >= 8:
+                    break
+
+        if not rows:
+            # Fallback to raw prompt — preserves the old behaviour.
+            rows = svc.query_rows(
+                query_text=query,
+                limit=8,
                 retrieval_mode="legacy",
                 include_candidates=True,
                 scope_allowlist=None,
             )
-            for row in batch:
+            for row in rows:
                 claim = row.get("claim")
                 cid = getattr(claim, "id", None)
-                if cid is None or cid in seen_ids:
-                    continue
-                seen_ids.add(cid)
-                rows.append(row)
-            if len(rows) >= 8:
-                break
-
-    if not rows:
-        # Fallback to raw prompt — preserves the old behaviour.
-        rows = svc.query_rows(
-            query_text=query,
-            limit=8,
-            retrieval_mode="legacy",
-            include_candidates=True,
-            scope_allowlist=None,
-        )
-        for row in rows:
-            claim = row.get("claim")
-            cid = getattr(claim, "id", None)
-            if cid is not None:
-                seen_ids.add(cid)
+                if cid is not None:
+                    seen_ids.add(cid)
 
     # Entity-link fanout — mine entities from the prompt, resolve via
     # entity_aliases, and union in claims we haven't already seen.
@@ -429,30 +538,46 @@ def recall(
     # entity_score=1.0, other scores zeroed) contribute to the re-rank.
     w_entity_probe = _recall_weight("W_ENTITY")
     should_fanout = (not rows) or (w_entity_probe > 0.0)
+    # Only time + emit when the stream actually runs, so disabled streams
+    # contribute no latency line (zero-overhead invariant, roadmap 5.1).
     if should_fanout:
-        # Lazy import so legacy callers without the security module still
-        # work — fanout is a best-effort layer.
-        try:
-            from memorymaster.security import is_sensitive_claim
-        except Exception:
-            is_sensitive_claim = lambda _claim: False  # type: ignore[assignment]  # noqa: E731
-        fanout_ids = _entity_fanout_claim_ids(svc.store, query, seen_ids)
-        for cid in fanout_ids:
+        with _phase_timer(phase_ms, "entity_fanout"):
+            # Lazy import so legacy callers without the security module still
+            # work — fanout is a best-effort layer.
             try:
-                claim = svc.store.get_claim(cid, include_citations=True)
+                from memorymaster.security import is_sensitive_claim
             except Exception:
-                continue
-            if claim is None or getattr(claim, "status", "") == "archived":
-                continue
-            if is_sensitive_claim(claim):
-                continue
-            rows.append(_row_for_claim(claim))
+                is_sensitive_claim = lambda _claim: False  # type: ignore[assignment]  # noqa: E731
+            fanout_ids = _entity_fanout_claim_ids(svc.store, query, seen_ids)
+            for cid in fanout_ids:
+                try:
+                    claim = svc.store.get_claim(cid, include_citations=True)
+                except Exception:
+                    continue
+                if claim is None or getattr(claim, "status", "") == "archived":
+                    continue
+                if is_sensitive_claim(claim):
+                    continue
+                rows.append(_row_for_claim(claim))
 
     # Vector fallback — Qdrant semantic search when FTS5 + entity fanout
     # produced fewer than MEMORYMASTER_RECALL_VECTOR_MIN_CANDIDATES rows
     # (default 3). Fully env-gated so default behaviour is unchanged. See
-    # ``_apply_vector_fallback`` for the exact gating logic.
-    rows = _apply_vector_fallback(svc, query, rows, seen_ids)
+    # ``_apply_vector_fallback`` for the exact gating logic. Only time when
+    # the fallback is enabled — otherwise we emit nothing (zero-overhead).
+    _vector_enabled = False
+    try:
+        from memorymaster import qdrant_recall_fallback as _qrf
+
+        _vector_enabled = bool(_qrf.is_fallback_enabled())
+    except Exception:
+        _vector_enabled = False
+
+    if _vector_enabled:
+        with _phase_timer(phase_ms, "vector_fallback"):
+            rows = _apply_vector_fallback(svc, query, rows, seen_ids)
+    else:
+        rows = _apply_vector_fallback(svc, query, rows, seen_ids)
 
     # Verbatim retrieval — MemPalace-style raw conversation stream.
     #
@@ -474,37 +599,40 @@ def recall(
         recall_verbatim = lambda *a, **k: []  # type: ignore[assignment]  # noqa: E731
         hit_to_synthetic_row = None  # type: ignore[assignment]
 
+    # Verbatim stream is opt-in — time + emit only when enabled so the
+    # disabled case produces zero latency lines (roadmap 5.1).
     if _verbatim_enabled():
-        try:
-            verbatim_hits = recall_verbatim(query, scope=None, db_path=db, limit=5)
-        except Exception as exc:
-            logger.debug("verbatim stream skipped: %s", exc)
-            verbatim_hits = []
+        with _phase_timer(phase_ms, "verbatim"):
+            try:
+                verbatim_hits = recall_verbatim(query, scope=None, db_path=db, limit=5)
+            except Exception as exc:
+                logger.debug("verbatim stream skipped: %s", exc)
+                verbatim_hits = []
 
-        if verbatim_hits and hit_to_synthetic_row is not None:
-            scope_to_rows: dict[str, list[dict]] = {}
-            for row in rows:
-                claim = row.get("claim")
-                s = getattr(claim, "scope", "") or ""
-                if not s:
-                    continue
-                scope_to_rows.setdefault(s, []).append(row)
+            if verbatim_hits and hit_to_synthetic_row is not None:
+                scope_to_rows: dict[str, list[dict]] = {}
+                for row in rows:
+                    claim = row.get("claim")
+                    s = getattr(claim, "scope", "") or ""
+                    if not s:
+                        continue
+                    scope_to_rows.setdefault(s, []).append(row)
 
-            added_excerpts: set[str] = set()
-            for hit in verbatim_hits:
-                existing = scope_to_rows.get(hit.scope) or []
-                if existing:
-                    target = existing[0]
-                    prev = float(target.get("verbatim_score") or 0.0)
-                    if hit.score > prev:
-                        target["verbatim_score"] = hit.score
-                        target["_verbatim_id"] = hit.verbatim_id
-                    continue
-                key = hit.excerpt[:100]
-                if key in added_excerpts:
-                    continue
-                added_excerpts.add(key)
-                rows.append(hit_to_synthetic_row(hit))
+                added_excerpts: set[str] = set()
+                for hit in verbatim_hits:
+                    existing = scope_to_rows.get(hit.scope) or []
+                    if existing:
+                        target = existing[0]
+                        prev = float(target.get("verbatim_score") or 0.0)
+                        if hit.score > prev:
+                            target["verbatim_score"] = hit.score
+                            target["_verbatim_id"] = hit.verbatim_id
+                        continue
+                    key = hit.excerpt[:100]
+                    if key in added_excerpts:
+                        continue
+                    added_excerpts.add(key)
+                    rows.append(hit_to_synthetic_row(hit))
 
     if not rows and not skip_qdrant:
         # Fallback to Qdrant semantic search
@@ -547,8 +675,11 @@ def recall(
     # cheap (O(rows * avg_doc_len)) and strictly read-only — we never touch
     # the DB past what query_rows already fetched. Feature-flagged; on by
     # default after the sweep. See module-level comment for why.
+    # Time + emit only when BM25 is active — an operator disabling BM25 via
+    # MEMORYMASTER_LEXICAL_BM25=0 should see no latency line for this stream.
     bm25_on = _bm25_enabled()
     bm25_scores: dict[int, float] = {}
+    _bm25_start = time.perf_counter() if bm25_on else None
     if bm25_on:
         from memorymaster.recall_tokenizer import _candidate_tokens
 
@@ -657,6 +788,18 @@ def recall(
                 combined = w_subject * subj_score + w_text * text_score
                 if combined > 0.0:
                     bm25_scores[cid] = combined
+
+    if _bm25_start is not None:
+        # Manually close the BM25 timer (we opened it with a perf_counter
+        # snapshot above rather than a context manager because the body has
+        # too many local function definitions to reindent cleanly).
+        phase_ms["bm25_rescore"] = (time.perf_counter() - _bm25_start) * 1000.0
+
+    # Rank + output-budget loop (roadmap 5.1 stream "rank_and_build"). This
+    # phase ALWAYS runs when ``rows`` is non-empty, so it always emits a
+    # latency line — the metric is useful as a baseline against the other
+    # streams. Starts AFTER BM25 closes so the two don't double-count.
+    _rank_start = time.perf_counter()
 
     def _relevance(row):
         claim = row.get("claim")
@@ -774,6 +917,10 @@ def recall(
             break
         lines.append(chunk)
         tokens_used += chunk_tokens
+
+    # Close the rank_and_build timer right before we emit output so the
+    # measurement covers _relevance/RRF + the budget-trimming loop.
+    phase_ms["rank_and_build"] = (time.perf_counter() - _rank_start) * 1000.0
 
     if len(lines) <= 2:
         return ""
