@@ -68,6 +68,169 @@ def _phase_timer(phase_ms: dict[str, float], name: str):
     finally:
         phase_ms[name] = (time.perf_counter() - start) * 1000.0
 
+
+# RRF auto-gate telemetry (roadmap 11.6).
+#
+# When MEMORYMASTER_RECALL_FUSION=auto, the hook counts how many candidate
+# streams are "populated" (at least one row with a non-zero score on that
+# stream) and picks RRF when the count meets
+# MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD (default 3), falling back to the
+# linear combiner otherwise. Claim 11898 documents the rationale: on a
+# dense 500-Q LongMemEval set with 2+ populated streams, RRF wins hit@1
+# +18% / MRR +11% vs linear; on a 30-prompt conversational set with only
+# bm25+freshness populated, RRF regresses p@5 from 0.313 to 0.127. The
+# gate is a stream-topology heuristic, not a universal "RRF > linear"
+# claim.
+#
+# Stats shape mirrors ``llm_provider._FALLBACK_STATS`` (claim 11.1) so
+# operators can check get_auto_gate_stats() the same way they check
+# get_fallback_stats().
+_AUTO_GATE_STATS: dict[str, int] = {
+    "calls": 0,
+    "picked_rrf": 0,
+    "picked_linear": 0,
+}
+_AUTO_GATE_THRESHOLD_DEFAULT = 3
+
+
+def get_auto_gate_stats() -> dict[str, int]:
+    """Return a copy of RRF auto-gate telemetry counters.
+
+    Counters:
+        calls          — total times the auto-gate decided a fusion mode
+        picked_rrf     — decisions that selected RRF
+        picked_linear  — decisions that selected linear combiner
+
+    Only incremented when MEMORYMASTER_RECALL_FUSION=auto. When
+    MEMORYMASTER_RECALL_FUSION=linear (default) or =rrf, the gate code
+    is never reached, so all counters stay at 0.
+    """
+    return dict(_AUTO_GATE_STATS)
+
+
+def reset_auto_gate_stats() -> None:
+    """Reset RRF auto-gate telemetry counters to zero (test helper)."""
+    for key in _AUTO_GATE_STATS:
+        _AUTO_GATE_STATS[key] = 0
+
+
+def _auto_gate_threshold() -> int:
+    """Read gate threshold from env, falling back to 3."""
+    raw = os.environ.get("MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD")
+    if raw is None or raw.strip() == "":
+        return _AUTO_GATE_THRESHOLD_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD=%r, falling back to %d",
+            raw,
+            _AUTO_GATE_THRESHOLD_DEFAULT,
+        )
+        return _AUTO_GATE_THRESHOLD_DEFAULT
+    if value < 1:
+        logger.warning(
+            "MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD=%d < 1, falling back to %d",
+            value,
+            _AUTO_GATE_THRESHOLD_DEFAULT,
+        )
+        return _AUTO_GATE_THRESHOLD_DEFAULT
+    return value
+
+
+def _auto_gate_decide(
+    rows: list,
+    bm25_scores: dict[int, float],
+    bm25_on: bool,
+    freshness_weight: float,
+    threshold: int | None = None,
+) -> tuple[str, int, int]:
+    """Decide ``rrf`` vs ``linear`` for MEMORYMASTER_RECALL_FUSION=auto.
+
+    Mutates ``_AUTO_GATE_STATS`` (increments ``calls`` + one of
+    ``picked_rrf`` / ``picked_linear``) and emits a ``log_hook("recall",
+    "rrf_auto_gate", ...)`` line. Returns ``(decision, populated, threshold)``.
+
+    ``threshold`` defaults to the env-var / constant (see
+    ``_auto_gate_threshold``). Passing an explicit integer bypasses env
+    lookup — useful for tests.
+    """
+    if threshold is None:
+        threshold = _auto_gate_threshold()
+    populated = _count_populated_streams(
+        rows,
+        bm25_scores,
+        bm25_on,
+        freshness_weight,
+    )
+    _AUTO_GATE_STATS["calls"] += 1
+    if populated >= threshold:
+        decision = "rrf"
+        _AUTO_GATE_STATS["picked_rrf"] += 1
+    else:
+        decision = "linear"
+        _AUTO_GATE_STATS["picked_linear"] += 1
+    log_hook(
+        "recall",
+        "rrf_auto_gate",
+        decision=decision,
+        populated_streams=populated,
+        threshold=threshold,
+    )
+    logger.info(
+        "rrf_auto_gate decision=%s populated_streams=%d threshold=%d",
+        decision,
+        populated,
+        threshold,
+    )
+    return decision, populated, threshold
+
+
+def _count_populated_streams(
+    rows: list,
+    bm25_scores: dict[int, float],
+    bm25_on: bool,
+    freshness_weight: float,
+) -> int:
+    """Count candidate streams that have at least one non-zero row.
+
+    A stream is "populated" iff at least one row in the candidate pool has
+    a non-zero score on that stream. Freshness is only counted when
+    ``W_FRESHNESS > 0`` — otherwise the stream is present in the row dict
+    but W_FRESHNESS=0.0 means it contributes nothing to the linear combiner,
+    so it should not nudge the gate toward RRF either.
+
+    Streams counted: bm25, entity, vector, verbatim, freshness (gated on
+    W_FRESHNESS). Returns an integer in [0, 5].
+    """
+    count = 0
+
+    # bm25 — only count when the BM25 rescorer is ON. When bm25_on=False,
+    # bm25_scores will be empty (or stale), so treat the stream as absent.
+    if bm25_on and any(v > 0.0 for v in bm25_scores.values()):
+        count += 1
+
+    def _any_positive(field: str) -> bool:
+        for r in rows:
+            try:
+                if float(r.get(field) or 0.0) > 0.0:
+                    return True
+            except (TypeError, ValueError):
+                continue
+        return False
+
+    if _any_positive("entity_score"):
+        count += 1
+    if _any_positive("vector_score"):
+        count += 1
+    if _any_positive("verbatim_score"):
+        count += 1
+    if freshness_weight > 0.0 and _any_positive("freshness_score"):
+        count += 1
+
+    return count
+
+
 # BM25 lexical re-scorer (ships on by default after the 5x5 k1/b sweep
 # on 30-prompt eval — see artifacts/bm25-sweep-2026-04-23.md).
 #
@@ -965,10 +1128,22 @@ def _recall_impl(
                 return base * (1.0 + scope_boost)
         return base
 
-    # Fusion mode: linear (default, legacy bit-identical) or RRF.
+    # Fusion mode: linear (default, legacy bit-identical), rrf, or auto.
     # RRF is Reciprocal Rank Fusion — merges per-stream rankings instead of
     # summing weighted raw scores. See memorymaster/recall_fusion.py.
+    # ``auto`` applies a stream-topology heuristic (roadmap 11.6, claim
+    # 11898): pick RRF when >= AUTO_GATE_THRESHOLD (default 3) streams are
+    # populated, else linear. Default stays ``linear`` so legacy callers
+    # are bit-identical.
     fusion_mode = os.environ.get("MEMORYMASTER_RECALL_FUSION", "linear").strip().lower()
+
+    if fusion_mode == "auto":
+        fusion_mode, _, _ = _auto_gate_decide(
+            rows,
+            bm25_scores,
+            bm25_on,
+            w_freshness,
+        )
 
     if fusion_mode == "rrf":
         from memorymaster.recall_fusion import rrf_fuse
