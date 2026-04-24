@@ -121,7 +121,9 @@ class TestBm25FieldWeightHelper:
     def test_defaults_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("MEMORYMASTER_BM25_W_SUBJECT", raising=False)
         monkeypatch.delenv("MEMORYMASTER_BM25_W_TEXT", raising=False)
-        assert _bm25_field_weight("W_SUBJECT", _BM25_W_SUBJECT_DEFAULT) == 2.0
+        # Default is 1.0 / 1.0 (neutral) after the 2026-04-23 null-result
+        # eval; see artifacts/bm25-per-field-eval-2026-04-23.md.
+        assert _bm25_field_weight("W_SUBJECT", _BM25_W_SUBJECT_DEFAULT) == 1.0
         assert _bm25_field_weight("W_TEXT", _BM25_W_TEXT_DEFAULT) == 1.0
 
     def test_parses_float_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:

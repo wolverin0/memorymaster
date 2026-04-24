@@ -40,12 +40,16 @@ logger = logging.getLogger(__name__)
 _BM25_K1_DEFAULT = 1.2
 _BM25_B_DEFAULT = 0.25
 
-# Per-field BM25 weights (roadmap 1.4). Subject is short and usually the most
-# topical signal in a claim (e.g. "PostgreSQL", "WAL mode"); text is longer
-# and more noisy. A small positive bias on subject tends to help recall on
-# topic-named prompts without hurting long-form matches. Defaults are tuned
-# by the eval script below; see artifacts/bm25-per-field-eval-2026-04-23.md.
-_BM25_W_SUBJECT_DEFAULT = 2.0
+# Per-field BM25 weights (roadmap 1.4). Subject + text are scored
+# independently and combined. Defaults are a neutral (1.0, 1.0) because the
+# 2026-04-23 eval on 30 real prompts produced a NULL RESULT for every
+# non-neutral weighting — subject-heavy (2.0 / 3.0 / 5.0 / 10.0) all
+# regressed p@5 vs the concat baseline, and text-heavy (0.0 / 10.0) tied
+# MAP but lost p@5. Keep the code path live (we get the infrastructure and
+# the per-field headroom for future tuning) but don't promote any config
+# that didn't clear the +0.02 p@5 bar. See
+# artifacts/bm25-per-field-eval-2026-04-23.md for the full table.
+_BM25_W_SUBJECT_DEFAULT = 1.0
 _BM25_W_TEXT_DEFAULT = 1.0
 
 
