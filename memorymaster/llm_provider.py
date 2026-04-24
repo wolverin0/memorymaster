@@ -271,22 +271,132 @@ _PROVIDERS = {
 }
 
 
+# Quota-exhausted detection for the fallback chain.
+#
+# Defensive on purpose (claim 11907): err on the side of false-negatives
+# (fallback fires less) rather than false-positives (fallback spuriously
+# fires on legitimate content that merely mentions "quota"). Each pattern
+# requires error-response shape, not a bare English word:
+#   - "RESOURCE_EXHAUSTED"  — Google API error.status field
+#   - quoted-code patterns like `"code": 429` in a JSON error body
+#   - "quota exceeded" as a contiguous phrase (rare outside error bodies)
+# Case-insensitive because some providers capitalize inconsistently.
+_QUOTA_EXHAUSTED_RE = re.compile(
+    r"RESOURCE_EXHAUSTED"
+    r"|\"code\"\s*:\s*429"
+    r"|\bHTTP\s*429\b"
+    r"|\bquota\s+exceeded\b"
+    r"|\brate[\s_-]?limit(?:ed)?\b.*\bexceeded\b",
+    re.IGNORECASE,
+)
+
+
+_FALLBACK_STATS: dict[str, int] = {"attempts": 0, "fired": 0, "primary_ok": 0}
+
+
+def get_fallback_stats() -> dict[str, int]:
+    """Return a copy of fallback telemetry counters.
+
+    Counters:
+        attempts    — total `call_llm` invocations
+        fired       — times fallback provider was actually called
+        primary_ok  — times primary returned a usable (non-empty, non-quota) response
+    """
+    return dict(_FALLBACK_STATS)
+
+
+def reset_fallback_stats() -> None:
+    """Reset fallback telemetry counters to zero (test helper / operator reset)."""
+    for key in _FALLBACK_STATS:
+        _FALLBACK_STATS[key] = 0
+
+
+def _looks_like_quota_error(response: str) -> bool:
+    """True if the response body appears to be a quota-exhausted error."""
+    if not response:
+        return False
+    return bool(_QUOTA_EXHAUSTED_RE.search(response))
+
+
 def call_llm(prompt: str, text: str) -> str:
-    """Call configured LLM provider. Returns raw text response.
+    """Call configured LLM provider with optional fallback chain. Returns raw text.
 
     Configure via env vars:
-        MEMORYMASTER_LLM_PROVIDER  — google|openai|anthropic|ollama (default: google)
-        MEMORYMASTER_LLM_MODEL     — model override (default per provider)
-        GEMINI_API_KEY             — for google provider
-        OPENAI_API_KEY             — for openai provider
-        ANTHROPIC_API_KEY          — for anthropic provider
-        OLLAMA_URL                 — for ollama provider (default: http://localhost:11434)
+        MEMORYMASTER_LLM_PROVIDER           — google|openai|anthropic|ollama (default: google)
+        MEMORYMASTER_LLM_MODEL              — model override (default per provider)
+        MEMORYMASTER_LLM_FALLBACK_PROVIDER  — (optional) provider to use if primary returns
+                                              empty or a quota-exhausted error
+        MEMORYMASTER_LLM_FALLBACK_MODEL     — (optional) model override used while calling
+                                              fallback provider (MEMORYMASTER_LLM_MODEL is
+                                              swapped for the duration of the fallback call
+                                              and restored afterwards)
+        GEMINI_API_KEY                      — for google provider
+        OPENAI_API_KEY                      — for openai provider
+        ANTHROPIC_API_KEY                   — for anthropic provider
+        OLLAMA_URL                          — for ollama provider (default: http://localhost:11434)
+
+    Fallback semantics:
+        1. Call primary. If non-empty AND not a quota-exhausted error shape → return it.
+        2. Otherwise, if MEMORYMASTER_LLM_FALLBACK_PROVIDER is set, call the fallback
+           (temporarily swapping MEMORYMASTER_LLM_MODEL to the fallback model if provided),
+           log at INFO, and return the fallback response.
+        3. If fallback also fails or returns empty, return the primary's (possibly empty)
+           response — preserves legacy "empty string on failure" contract for callers that
+           already treat empty as "no result".
     """
-    provider = _env("MEMORYMASTER_LLM_PROVIDER", "google").lower()
-    fn = _PROVIDERS.get(provider)
-    if not fn:
+    _FALLBACK_STATS["attempts"] += 1
+    log = logging.getLogger(__name__)
+
+    primary_name = _env("MEMORYMASTER_LLM_PROVIDER", "google").lower()
+    primary_fn = _PROVIDERS.get(primary_name)
+    if not primary_fn:
         return ""
-    return fn(prompt, text)
+
+    primary_response = primary_fn(prompt, text)
+
+    # Happy path: primary returned something that doesn't look like a quota error.
+    if primary_response and not _looks_like_quota_error(primary_response):
+        _FALLBACK_STATS["primary_ok"] += 1
+        return primary_response
+
+    fallback_name = _env("MEMORYMASTER_LLM_FALLBACK_PROVIDER", "").lower()
+    if not fallback_name:
+        return primary_response
+
+    fallback_fn = _PROVIDERS.get(fallback_name)
+    if not fallback_fn:
+        log.warning(
+            "llm_fallback configured but unknown provider=%s; returning primary response",
+            fallback_name,
+        )
+        return primary_response
+
+    reason = "quota_exhausted" if _looks_like_quota_error(primary_response) else "empty_response"
+    log.info("llm_fallback_fired primary=%s reason=%s", primary_name, reason)
+    _FALLBACK_STATS["fired"] += 1
+
+    # Swap MEMORYMASTER_LLM_MODEL to fallback model for the duration of the call.
+    fallback_model = _env("MEMORYMASTER_LLM_FALLBACK_MODEL", "")
+    saved_model = os.environ.get("MEMORYMASTER_LLM_MODEL")
+    try:
+        if fallback_model:
+            os.environ["MEMORYMASTER_LLM_MODEL"] = fallback_model
+        elif "MEMORYMASTER_LLM_MODEL" in os.environ:
+            # No fallback model configured — let the fallback provider use its
+            # own default, not the primary's model (which may be Gemini-specific).
+            del os.environ["MEMORYMASTER_LLM_MODEL"]
+        fallback_response = fallback_fn(prompt, text)
+    finally:
+        if saved_model is None:
+            os.environ.pop("MEMORYMASTER_LLM_MODEL", None)
+        else:
+            os.environ["MEMORYMASTER_LLM_MODEL"] = saved_model
+
+    if fallback_response and not _looks_like_quota_error(fallback_response):
+        return fallback_response
+
+    # Both failed — match legacy contract, return primary's (possibly empty) response.
+    return primary_response
 
 
 def parse_json_response(text: str) -> list[dict]:
