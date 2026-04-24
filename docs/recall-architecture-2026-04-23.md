@@ -98,9 +98,66 @@ Current baseline on this stack: **p@5 = 0.127, MAP@5 = 0.159** — net-negative.
 - **Eval-set expansion 30 → 100 prompts** (Wave B 1.3) — current thresholds are noisy at N=30.
 - **Scope-aware ranking bonus** (Wave G 1.2) — fold current-project scope into `_relevance` as a conditional multiplier.
 
+## 6th stream — Kuzu graph traversal (roadmap 11.3, 2026-04-24)
+
+MemoryMaster now has an opt-in **graph retrieval stream** backed by
+Kuzu (embedded, file-based — same "no server" story as SQLite +
+Qdrant).
+
+**Intent.** Close the multi-hop gap documented in
+`artifacts/cognee-assessment-2026-04-24.md`: BM25 / vector / entity-alias
+fanout / verbatim / freshness are all *similarity* mechanisms. None
+traverse bridge facts (Alice → Atlas → Postgres). The graph stream is
+the first MemoryMaster retrieval that follows edges.
+
+**Wiring.** `memorymaster/graph_store.py` exposes a minimal
+`open / close / ingest_edges / neighbors / claims_for_entities` API
+over a three-table Kuzu schema:
+
+```
+NODE TABLE Claim  (id INT64 PRIMARY KEY)
+NODE TABLE Entity (id INT64 PRIMARY KEY, kind STRING)
+REL  TABLE Mentions (FROM Claim TO Entity, created_at STRING)
+```
+
+`scripts/backfill_graph_store.py` reads `claims.entity_id` and
+`entity_aliases.original_form` from the SQLite DB and writes edges
+into a **separate** Kuzu file (default `~/.memorymaster/graph.kuzu`).
+The live SQLite DB is read-only. Re-running the backfill writes zero
+new edges (idempotent).
+
+**Recall.** When `MEMORYMASTER_RECALL_GRAPH=1`, `recall()`:
+
+1. Runs the existing L1 entity extractor on the query.
+2. Resolves query entities → entity_ids via `entity_aliases`.
+3. BFS in Kuzu: `neighbors(entity_ids, max_hops=MAX_HOPS)`.
+4. Reverse-lookup: `claims_for_entities(reached, limit=50)`.
+5. Annotates each candidate row: `graph_score = 1.0` iff its
+   `claim_id` is in the reached set, else 0.0.
+6. Contributes `graph_score * W_GRAPH` to the linear combiner, and
+   adds a separate per-ranking input to the RRF fuser.
+
+**Defaults.** `W_GRAPH=0.0`, `GRAPH=0`, `MAX_HOPS=2`. Shipped OFF so
+the 5-stream stack is bit-identical.
+
+**Defensive contract (claim 11907).** If Kuzu isn't installed, the DB
+is missing, or any traversal raises — the stream returns an empty
+reached set and `graph_score=0.0` on every row. The recall hook
+falls back to the 5-stream stack without error.
+
+**Null-result caveat.** At `W_GRAPH=0.15` on the current 100-prompt
+set, the graph stream produces zero p@5 / MAP@5 lift because (a) L1
+entity extraction only matches 33/100 prompts and (b) the graph is so
+dense around popular entities ("gemini", "claude") that every top-8
+FTS5 candidate is already inside the reached cluster, making the
+boolean bonus a constant. See
+`artifacts/kuzu-graph-stream-2026-04-24.md` for the full diagnosis and
+follow-up levers (Layer-2 LLM entity extraction, distance-weighted
+graph_score, per-entity edge caps).
+
 ## References
 
 - Commits: `bb71944` (tokenizer v2), `159eef7` (BM25 rescorer), `274577d` (Qdrant fallback), `3f1777c` (verbatim), `a315bf5` (W_LEXICAL=0.3), `f425212` (RRF fusion), `98e25ca` (BM25 per-field plumbing)
 - ADRs: `docs/adr/2026-04-23-tokenizer-v2-idf-fix.md`, `docs/adr/2026-04-23-steward-v2-classifier.md`
-- Claims: 11853, 11855, 11856, 11857, 11870, 11871, 11881, 11882, 11883
+- Claims: 11853, 11855, 11856, 11857, 11870, 11871, 11881, 11882, 11883, 11896, 11899, 11907
 - Roadmap: `artifacts/final-roadmap-2026-04-23.md`

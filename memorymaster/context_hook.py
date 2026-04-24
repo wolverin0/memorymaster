@@ -201,7 +201,7 @@ def _count_populated_streams(
     so it should not nudge the gate toward RRF either.
 
     Streams counted: bm25, entity, vector, verbatim, freshness (gated on
-    W_FRESHNESS). Returns an integer in [0, 5].
+    W_FRESHNESS), graph. Returns an integer in [0, 6].
     """
     count = 0
 
@@ -226,6 +226,13 @@ def _count_populated_streams(
     if _any_positive("verbatim_score"):
         count += 1
     if freshness_weight > 0.0 and _any_positive("freshness_score"):
+        count += 1
+    # graph stream (roadmap 11.3). Only counted when at least one row got
+    # a non-zero graph_score — i.e. the stream actually fired and reached
+    # the row's claim_id. When MEMORYMASTER_RECALL_GRAPH=0 (default) the
+    # field is absent / 0.0 on every row, so this branch is a no-op and
+    # the populated count stays bit-identical with the 5-stream baseline.
+    if _any_positive("graph_score"):
         count += 1
 
     return count
@@ -322,7 +329,137 @@ _RECALL_WEIGHT_DEFAULTS: dict[str, float] = {
     # (see memorymaster.verbatim_recall). Only contributes when the stream
     # itself is gated on via MEMORYMASTER_RECALL_VERBATIM=1.
     "W_VERBATIM": 0.0,
+    # W_GRAPH — Kuzu-backed graph-traversal stream (roadmap 11.3). Off by
+    # default; only contributes when MEMORYMASTER_RECALL_GRAPH=1 AND the
+    # on-disk Kuzu DB is available (see memorymaster.graph_store). When
+    # disabled, graph_score stays at 0.0 on every row so ranking is
+    # bit-identical to the 5-stream baseline.
+    "W_GRAPH": 0.0,
 }
+
+
+# Graph retrieval stream (roadmap 11.3). Three env vars control the stream:
+#
+# * ``MEMORYMASTER_RECALL_GRAPH`` — "1" / truthy enables the stream.
+#   Default "0" = off, and the entire stream is short-circuited before any
+#   Kuzu import so the disabled path has zero overhead.
+# * ``MEMORYMASTER_RECALL_GRAPH_MAX_HOPS`` — BFS depth on the
+#   claim↔entity bipartite graph. Default 2 (matches Cognee example in
+#   artifacts/cognee-assessment-2026-04-24.md).
+# * ``MEMORYMASTER_RECALL_GRAPH_PATH`` — Kuzu DB file path. Default
+#   ``~/.memorymaster/graph.kuzu``. The backfill script writes here.
+#
+# Defensive-fail contract (claim 11907): every error is swallowed. If the
+# Kuzu DB is missing, corrupt, or kuzu isn't installed, the stream returns
+# an empty set of graph-reached claim_ids and recall() falls back to the
+# 5-stream stack bit-for-bit.
+_GRAPH_MAX_HOPS_DEFAULT = 2
+_GRAPH_PATH_DEFAULT = "~/.memorymaster/graph.kuzu"
+
+
+def _graph_enabled() -> bool:
+    raw = os.environ.get("MEMORYMASTER_RECALL_GRAPH", "0").strip()
+    return raw not in ("0", "false", "False", "no", "off", "")
+
+
+def _graph_max_hops() -> int:
+    raw = os.environ.get("MEMORYMASTER_RECALL_GRAPH_MAX_HOPS")
+    if raw is None or raw.strip() == "":
+        return _GRAPH_MAX_HOPS_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid MEMORYMASTER_RECALL_GRAPH_MAX_HOPS=%r, falling back to %d",
+            raw, _GRAPH_MAX_HOPS_DEFAULT,
+        )
+        return _GRAPH_MAX_HOPS_DEFAULT
+    return max(1, value)
+
+
+def _graph_path() -> Path:
+    raw = os.environ.get("MEMORYMASTER_RECALL_GRAPH_PATH") or _GRAPH_PATH_DEFAULT
+    return Path(os.path.expanduser(raw))
+
+
+def _graph_reached_claim_ids(query: str, store) -> set[int]:
+    """Run the graph-traversal stream for ``query`` and return a set of
+    claim_ids reachable within ``MAX_HOPS`` hops of the query's entities.
+
+    Defensive: any failure (kuzu missing, DB corrupt, SQLite alias lookup
+    broken, network hiccup) returns an empty set so the recall hook is
+    unaffected. We only import :mod:`memorymaster.graph_store` when the
+    feature flag is on so disabled callers pay zero import cost.
+    """
+    if not _graph_enabled():
+        return set()
+
+    # Lazy imports — gated behind the enabled check above.
+    try:
+        from memorymaster.entity_extractor import extract_patterns
+        from memorymaster.entity_registry import normalize_alias
+        from memorymaster.graph_store import GraphStoreUnavailable, open_graph_store
+    except Exception as exc:
+        logger.debug("graph stream: imports failed: %s", exc)
+        return set()
+
+    # Step 1: extract entities from the query and resolve to entity_ids.
+    entities = extract_patterns(query or "")
+    if not entities:
+        return set()
+
+    aliases: list[str] = []
+    seen: set[str] = set()
+    for ent in entities:
+        key = normalize_alias(ent.canonical_hint)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        aliases.append(key)
+    if not aliases:
+        return set()
+
+    entity_ids: list[int] = []
+    try:
+        with store.connect() as conn:
+            # Alias→entity_id lookup via the same index the entity fanout
+            # uses. One SELECT per alias is fine — low-K fanout.
+            placeholders = ",".join("?" * len(aliases))
+            rows = conn.execute(
+                f"SELECT DISTINCT entity_id FROM entity_aliases "
+                f"WHERE alias IN ({placeholders})",
+                aliases,
+            ).fetchall()
+            entity_ids = [int(r[0]) for r in rows if r and r[0]]
+    except Exception as exc:
+        logger.debug("graph stream: alias resolution failed: %s", exc)
+        return set()
+
+    if not entity_ids:
+        return set()
+
+    # Step 2: traverse the Kuzu graph, collect reachable entity_ids.
+    max_hops = _graph_max_hops()
+    gs = None
+    try:
+        gs = open_graph_store(_graph_path(), allow_networkx=False)
+        reached = gs.neighbors(entity_ids, max_hops=max_hops)
+        if not reached:
+            return set()
+        claim_ids = gs.claims_for_entities(list(reached), limit=50)
+        return {int(cid) for cid in claim_ids}
+    except GraphStoreUnavailable as exc:
+        logger.debug("graph stream: store unavailable: %s", exc)
+        return set()
+    except Exception as exc:
+        logger.debug("graph stream: traversal failed: %s", exc)
+        return set()
+    finally:
+        if gs is not None:
+            try:
+                gs.close()
+            except Exception:  # pragma: no cover - defensive
+                pass
 
 
 def _recall_weight(name: str) -> float:
@@ -935,6 +1072,30 @@ def _recall_impl(
                     added_excerpts.add(key)
                     rows.append(hit_to_synthetic_row(hit))
 
+    # Graph traversal stream (roadmap 11.3) — annotate candidate rows
+    # whose claim_id is reachable within MAX_HOPS of the query's entities
+    # in the Kuzu graph. Opt-in via MEMORYMASTER_RECALL_GRAPH=1. When off,
+    # the entire stream short-circuits in ``_graph_reached_claim_ids``
+    # before any Kuzu import, so there's zero overhead on the default
+    # code path. When on but the graph DB is empty / missing / corrupt,
+    # the helper returns an empty set (claim 11907 silent-fail pattern)
+    # and graph_score stays 0.0 on every row — equivalent to the stream
+    # being disabled.
+    #
+    # Only time + emit latency when the stream is ON so disabled callers
+    # produce no latency line (zero-overhead invariant, roadmap 5.1).
+    if _graph_enabled():
+        with _phase_timer(phase_ms, "graph"):
+            graph_reached = _graph_reached_claim_ids(query, svc.store)
+            if graph_reached:
+                for row in rows:
+                    claim = row.get("claim")
+                    cid = getattr(claim, "id", None)
+                    if cid is not None and int(cid) in graph_reached:
+                        row["graph_score"] = 1.0
+                    elif row.get("graph_score") is None:
+                        row["graph_score"] = 0.0
+
     if not rows and not skip_qdrant:
         # Fallback to Qdrant semantic search
         try:
@@ -975,6 +1136,10 @@ def _recall_impl(
     w_vector = _recall_weight("W_VECTOR")
     w_entity = _recall_weight("W_ENTITY")
     w_verbatim = _recall_weight("W_VERBATIM")
+    # W_GRAPH (roadmap 11.3) — only contributes when the graph stream was
+    # enabled AND reached at least one row. Default 0.0 preserves
+    # bit-identical ranking with the 5-stream baseline.
+    w_graph = _recall_weight("W_GRAPH")
     # Scope-aware retrieval boost (roadmap 1.2). Multiplier applied to the
     # final _relevance score for claims whose scope matches the current
     # project scope. 0.0 (default) → no boost, ranking bit-identical to legacy.
@@ -1138,6 +1303,11 @@ def _recall_impl(
         # query over verbatim_memories. W_VERBATIM=0.0 (default) preserves
         # legacy ranking bit-for-bit.
         verbatim = float(row.get("verbatim_score") or 0.0)
+        # graph_score is 1.0 for rows whose claim_id was reachable within
+        # MAX_HOPS of the query's entities on the Kuzu graph; 0.0 (or
+        # absent) otherwise. W_GRAPH=0.0 (default) makes this a no-op so
+        # legacy ranking is bit-identical.
+        graph = float(row.get("graph_score") or 0.0)
         base = (
             matches * w_matches
             + phrase_bonus * w_phrase
@@ -1148,6 +1318,7 @@ def _recall_impl(
             + vector * w_vector
             + entity * w_entity
             + verbatim * w_verbatim
+            + graph * w_graph
         )
         # Scope-aware retrieval boost (roadmap 1.2). When scope_boost > 0 AND
         # the claim's scope matches the current project scope, multiply by
@@ -1212,6 +1383,12 @@ def _recall_impl(
         freshness_ranking = _ranking(lambda r: float(r.get("freshness_score") or 0.0))
         if freshness_ranking:
             rankings["freshness"] = freshness_ranking
+        # Graph stream — contributes to RRF only when at least one row got
+        # a non-zero graph_score (i.e. MEMORYMASTER_RECALL_GRAPH=1 fired
+        # and the graph reached the candidate pool).
+        graph_ranking = _ranking(lambda r: float(r.get("graph_score") or 0.0))
+        if graph_ranking:
+            rankings["graph"] = graph_ranking
 
         if rankings:
             rrf_scores = rrf_fuse(rankings)
