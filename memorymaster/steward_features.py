@@ -1,11 +1,19 @@
-"""Feature extraction for the steward promotion classifier (task #129, v2).
+"""Feature extraction for the steward promotion classifier (task #129, v3).
 
 Shape must stay stable across training and serving. Any change here requires
 bumping ``FEATURE_VERSION`` and retraining the artifact. See
-``artifacts/spec-steward-classifier-2026-04-23.md`` and
-``artifacts/steward-classifier-feature-audit-2026-04-23.md``.
+``artifacts/spec-steward-classifier-2026-04-23.md``,
+``artifacts/steward-classifier-feature-audit-2026-04-23.md``, and the v3
+report at ``artifacts/steward-classifier-v3-backtest-2026-04-24.md``.
 
-v2 adds claim-intrinsic quality signals (text shape, citation depth, entity
+v3 adds a single feature — ``wiki_similarity_cosine`` — the cosine
+similarity between the claim's ``subject + text`` content and its
+best-matching wiki article's compiled-truth section. The feature is
+time-invariant (it compares semantic content, not creation date) which
+is why it is expected to help on the chronological-split pathology that
+dominated v2's held-out numbers on drifty corpora.
+
+v2 added claim-intrinsic quality signals (text shape, citation depth, entity
 richness, link fan-out). v1 features that leaked the chronological split
 (``session_age_days``) are kept but the learner downweights them with the
 additional evidence.
@@ -18,7 +26,12 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-FEATURE_VERSION = "v2"
+from memorymaster.wiki_similarity import (
+    WikiCorpus,
+    compute_wiki_similarity,
+)
+
+FEATURE_VERSION = "v3"
 
 FEATURE_KEYS: tuple[str, ...] = (
     # v1 core
@@ -47,6 +60,8 @@ FEATURE_KEYS: tuple[str, ...] = (
     # v2 citation depth
     "citation_has_locator",
     "citation_distinct_sources",
+    # v3 wiki-grounded semantic similarity
+    "wiki_similarity_cosine",
 )
 
 _TRUSTED_AGENTS: frozenset[str] = frozenset({
@@ -254,12 +269,23 @@ def _citation_depth(claim_id: int, conn: sqlite3.Connection) -> dict[str, float]
     }
 
 
-def extract_features(claim: Any, conn: sqlite3.Connection) -> dict[str, float]:
-    """Return the v2 feature dict for a single claim. ``claim`` may be a dict,
+def extract_features(
+    claim: Any,
+    conn: sqlite3.Connection,
+    *,
+    wiki_corpus: WikiCorpus | None = None,
+) -> dict[str, float]:
+    """Return the v3 feature dict for a single claim. ``claim`` may be a dict,
     ``sqlite3.Row``, or dataclass with standard Claim fields (``id``,
     ``text``, ``subject``, ``predicate``, ``object_value``, ``scope``,
     ``created_at``, ``access_count``, ``claim_type``, ``source_agent``,
-    ``supersedes_claim_id``, ``entity_id``)."""
+    ``supersedes_claim_id``, ``entity_id``, ``wiki_article``).
+
+    ``wiki_corpus``: optional pre-loaded corpus for the claim's scope. When
+    absent or empty, ``wiki_similarity_cosine`` falls back to ``0.0`` — this
+    is by design so v3 stays backwards-compatible with minimal in-memory
+    test schemas.
+    """
     c = _as_dict(claim)
     cid = int(c.get("id") or 0)
     if cid:
@@ -285,6 +311,11 @@ def extract_features(claim: Any, conn: sqlite3.Connection) -> dict[str, float]:
     txt = _text_quality(c.get("text"))
     has_entity = 1.0 if c.get("entity_id") else 0.0
 
+    if wiki_corpus is not None:
+        wiki_sim = compute_wiki_similarity(c, wiki_corpus)
+    else:
+        wiki_sim = 0.0
+
     return {
         "n_citations": float(n_citations),
         "source_agent_trust": _score_source_agent(c.get("source_agent")),
@@ -300,6 +331,8 @@ def extract_features(claim: Any, conn: sqlite3.Connection) -> dict[str, float]:
         **cross,
         "has_entity": has_entity,
         **cite_depth,
+        # v3
+        "wiki_similarity_cosine": float(wiki_sim),
     }
 
 
