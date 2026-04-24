@@ -107,6 +107,48 @@ MemoryMaster gives AI coding agents **persistent, verifiable memory** with a ful
 - **Obsidian 1.6+** with the **Bases** core plugin — only if you want to browse the wiki visually
 - **Docker** — only if you want Qdrant for hybrid vector search (SQLite FTS5 is the default and works out of the box)
 
+## Setup
+
+A minimal path for new users. Every env var mentioned here is documented in [`.env.example`](.env.example) — copy that file and uncomment the lines you need.
+
+### 1. Minimum viable setup
+
+```bash
+pip install "memorymaster[mcp]"
+python -m memorymaster --db memorymaster.db init-db
+cp .env.example .env
+# Then set ONE of:
+#   GEMINI_API_KEY=...    (free from https://aistudio.google.com)
+#   OPENAI_API_KEY=...
+#   ANTHROPIC_API_KEY=...
+# Or run Ollama locally (no key needed) — see below.
+```
+
+That's enough to use the CLI, the MCP server, and the auto-ingest Stop hook.
+
+### 2. Pick your LLM provider
+
+| Provider | Env vars | Model (default) | Cost |
+|----------|----------|-----------------|------|
+| Google Gemini (default) | `MEMORYMASTER_LLM_PROVIDER=google` + `GEMINI_API_KEY=...` | `gemini-3.1-flash-lite-preview` | ~free |
+| OpenAI | `MEMORYMASTER_LLM_PROVIDER=openai` + `OPENAI_API_KEY=...` | `gpt-4o-mini` | ~$0.001/call |
+| Anthropic | `MEMORYMASTER_LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY=...` | `claude-haiku-4-5-20251001` | ~$0.001/call |
+| Ollama (local) | `MEMORYMASTER_LLM_PROVIDER=ollama` + `OLLAMA_URL=http://localhost:11434` | `llama3.2:3b` | free |
+
+For zero-cost offline use, install [Ollama](https://ollama.com), `ollama pull llama3.2:3b`, and set `MEMORYMASTER_LLM_PROVIDER=ollama`. No API key required.
+
+### 3. Enable the v3 classifier + cadence policy (optional)
+
+The v3 statistical classifier + cadence policy are off by default so fresh installs behave like legacy steward. To opt in, set `MEMORYMASTER_STEWARD_CLASSIFIER_ENABLED=1` (or point `MEMORYMASTER_STEWARD_CLASSIFIER_PATH` at a trained `.pkl`) and `MEMORYMASTER_POLICY_MODE=cadence`. Full details, the training workflow, and the back-test harness live in [`docs/enabling-v2-systems.md`](docs/enabling-v2-systems.md).
+
+### 4. First run
+
+```bash
+python -m memorymaster --db memorymaster.db run-cycle
+```
+
+Expect output summarising `ingest / validate / decay / supersession / archive` counts. A fresh DB prints all zeroes — that's normal. After one or two sessions of the auto-ingest hook feeding candidates, the next cycle starts promoting `candidate` → `confirmed`.
+
 ## Install via Agent (One-Prompt) ⚡
 
 **The fastest way to install MemoryMaster end-to-end is to let an AI agent do it.** Open Claude Code, Codex, Cursor, or any agent with shell access in the project directory you want to instrument, and paste the prompt below. The agent handles pip install, MCP wiring, all 7 hooks, steward cron, LLM provider selection, and verification — you only approve steps and provide an API key when asked.
