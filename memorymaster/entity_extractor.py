@@ -1,14 +1,36 @@
-"""Layer-1 regex entity extractor. See spec-entity-extraction-at-ingest-2026-04-23.md.
+"""Layer-1 regex entity extractor + Layer-2 LLM assist.
 
-Kinds: file, env-var, service, port, commit, tool (stdlib-only).
-Public API: extract_patterns(text) -> list[Entity], deduped by (kind, canonical_hint).
+See ``artifacts/spec-entity-extraction-at-ingest-2026-04-23.md``.
+
+Layer 1 (``extract_patterns``): stdlib-only regex pass, kinds
+    ``file``, ``env-var``, ``service``, ``port``, ``commit``, ``tool``.
+
+Layer 2 (``extract_llm``): optional LLM pass, gated by env var
+    ``MEMORYMASTER_ENTITY_LLM``. Permitted kinds:
+    ``person_name``, ``spanish_surname``, ``time_expression``,
+    ``model_name``, ``library_name``, ``concept``.
+
+Both return ``list[Entity]`` with the same ``(surface, kind, canonical_hint)``
+shape; callers can merge results and dedup on ``(kind, canonical_hint)``.
 """
 from __future__ import annotations
 
+import logging
+import os
 import re
 from dataclasses import dataclass
 
-__all__ = ["Entity", "extract_patterns", "TOOL_ALLOWLIST"]
+__all__ = [
+    "Entity",
+    "extract_patterns",
+    "extract_llm",
+    "merge_entities",
+    "TOOL_ALLOWLIST",
+    "LLM_KINDS",
+    "LLM_PROMPT_VERSION",
+]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -233,3 +255,213 @@ def extract_patterns(text: str) -> list[Entity]:
         _add(surface, "tool", _canonical_tool(surface))
 
     return found
+
+
+# -- Layer 2 — LLM assist ---------------------------------------------------
+
+# Version identifier baked into the prompt. Bump this string when the prompt
+# changes so that downstream idempotency / caching keys invalidate cleanly.
+LLM_PROMPT_VERSION = "entity-l2-v1-2026-04-23"
+
+# Permitted entity kinds for Layer-2. Any `kind` returned by the LLM that is
+# not in this set is dropped to keep the registry schema predictable.
+LLM_KINDS: frozenset[str] = frozenset(
+    {
+        "person_name",
+        "spanish_surname",
+        "time_expression",
+        "model_name",
+        "library_name",
+        "concept",
+    }
+)
+
+_LLM_ENV_FLAG = "MEMORYMASTER_ENTITY_LLM"
+_LLM_MAX_TEXT_CHARS = 4000  # Truncate long claims before sending to LLM.
+_LLM_MAX_ENTITIES = 8       # Hard cap to keep cost bounded per claim.
+
+_LLM_PROMPT = f"""You are an entity-extraction assistant for a memory database.
+Prompt version: {LLM_PROMPT_VERSION}
+
+Given a short text snippet, return a JSON ARRAY of entities that a regex
+pattern-matcher cannot reliably catch. Only return entities of these kinds:
+
+  - person_name        (human given + family name, e.g. "Ada Lovelace")
+  - spanish_surname    (Spanish-language surname alone, e.g. "Colombero")
+  - time_expression    (natural-language time, e.g. "Thursday", "last week")
+  - model_name         (AI model names, e.g. "gpt-4o", "claude-3.5-sonnet")
+  - library_name       (SDKs/libs, e.g. "FastAPI", "Qdrant", "LangChain")
+  - concept            (abstract named concept, e.g. "bitemporal modeling")
+
+Return at most {_LLM_MAX_ENTITIES} entities. DO NOT return file paths,
+env-vars, hostnames, ports, commit SHAs, or tool names — those are handled
+by the regex layer.
+
+Output format (strict JSON, no prose, no code fence):
+
+  [
+    {{"kind": "...", "surface_form": "...", "aliases": ["...", "..."]}}
+  ]
+
+Where:
+  - kind          one of the six kinds above
+  - surface_form  the exact substring you saw in the text
+  - aliases       0-3 alternative canonical forms (may be empty)
+
+If nothing fits, return [].
+""".strip()
+
+
+def _canonical_llm(kind: str, surface: str) -> str:
+    """Normalize a Layer-2 surface into a stable canonical_hint."""
+    s = surface.strip()
+    if not s:
+        return ""
+    if kind in {"model_name", "library_name"}:
+        return s.lower()
+    if kind == "time_expression":
+        return s.lower()
+    if kind in {"person_name", "spanish_surname"}:
+        # Preserve casing but collapse whitespace.
+        return re.sub(r"\s+", " ", s)
+    # concept: lowercase + collapse whitespace
+    return re.sub(r"\s+", " ", s).lower()
+
+
+def _parse_llm_payload(raw: str) -> list[dict]:
+    """Defensive wrapper around parse_json_response — returns []  on failure."""
+    from memorymaster.llm_provider import parse_json_response
+
+    try:
+        parsed = parse_json_response(raw)
+    except Exception:  # pragma: no cover - parse_json_response already defensive
+        logger.warning("entity_l2: parse_json_response raised unexpectedly")
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [row for row in parsed if isinstance(row, dict)]
+
+
+def _llm_enabled() -> bool:
+    raw = os.environ.get(_LLM_ENV_FLAG, "").strip().lower()
+    return raw not in {"", "0", "false", "no", "off"}
+
+
+def extract_llm(text: str, *, provider: str | None = None) -> list[Entity]:
+    """Layer-2 LLM-assisted entity extraction.
+
+    Gated by the ``MEMORYMASTER_ENTITY_LLM`` env var. When unset or falsy,
+    this is a no-op that returns ``[]``. When enabled, calls the configured
+    LLM provider (see ``memorymaster.llm_provider.call_llm``) and parses
+    a JSON array of ``{kind, surface_form, aliases}`` objects.
+
+    Idempotent for a given ``(text, LLM_PROMPT_VERSION, model_version)``
+    tuple — the prompt sets ``temperature=0.1`` on the provider side. The
+    caller is responsible for caching / deduping across runs.
+
+    Defensive: any failure (missing provider, HTTP error, malformed JSON,
+    bad kind, empty surface) is logged at WARNING and yields ``[]`` —
+    never raises.
+
+    Parameters
+    ----------
+    text
+        Claim body to scan. Truncated to ``_LLM_MAX_TEXT_CHARS`` before send.
+    provider
+        Optional provider override (forwarded via the
+        ``MEMORYMASTER_LLM_PROVIDER`` env var for the duration of the call).
+        When ``None``, uses whatever is already configured in the environment.
+    """
+    if not text or not text.strip():
+        return []
+    if not _llm_enabled():
+        return []
+
+    # Truncate defensively — the LLM has its own token limits, but we also
+    # want to bound per-claim cost.
+    snippet = text if len(text) <= _LLM_MAX_TEXT_CHARS else text[:_LLM_MAX_TEXT_CHARS]
+
+    previous_provider = os.environ.get("MEMORYMASTER_LLM_PROVIDER")
+    if provider:
+        os.environ["MEMORYMASTER_LLM_PROVIDER"] = provider
+    try:
+        from memorymaster.llm_provider import call_llm
+
+        try:
+            raw = call_llm(_LLM_PROMPT, snippet)
+        except Exception as exc:  # noqa: BLE001 — defensive, never re-raise
+            logger.warning("entity_l2: call_llm failed: %s", exc)
+            return []
+    finally:
+        if provider:
+            if previous_provider is None:
+                os.environ.pop("MEMORYMASTER_LLM_PROVIDER", None)
+            else:
+                os.environ["MEMORYMASTER_LLM_PROVIDER"] = previous_provider
+
+    if not raw or not raw.strip():
+        return []
+
+    rows = _parse_llm_payload(raw)
+    if not rows:
+        logger.warning(
+            "entity_l2: LLM returned no parseable entities (len=%d)", len(raw)
+        )
+        return []
+
+    found: list[Entity] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows[:_LLM_MAX_ENTITIES]:
+        kind = str(row.get("kind", "")).strip().lower().replace(" ", "_")
+        surface = str(row.get("surface_form", "")).strip()
+        if kind not in LLM_KINDS or not surface:
+            continue
+        canonical = _canonical_llm(kind, surface)
+        if not canonical:
+            continue
+        key = (kind, canonical)
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append(Entity(surface=surface, kind=kind, canonical_hint=canonical))
+
+        # Per-row alias suggestions become separate Entity records with the
+        # same (kind, canonical_hint) when distinct — downstream
+        # `resolve_or_create` + `add_alias` is responsible for the alias
+        # table write. We intentionally do NOT fold them into a single
+        # Entity because the dataclass is flat.
+        aliases = row.get("aliases") or []
+        if not isinstance(aliases, list):
+            continue
+        for alias in aliases[:3]:
+            if not isinstance(alias, str):
+                continue
+            alias = alias.strip()
+            if not alias or alias == surface:
+                continue
+            alias_canonical = _canonical_llm(kind, alias)
+            if not alias_canonical:
+                continue
+            alias_key = (kind, alias_canonical)
+            if alias_key in seen:
+                continue
+            seen.add(alias_key)
+            found.append(
+                Entity(surface=alias, kind=kind, canonical_hint=alias_canonical)
+            )
+
+    return found
+
+
+def merge_entities(*groups: list[Entity]) -> list[Entity]:
+    """Merge multiple Entity lists, deduping on (kind, canonical_hint)."""
+    seen: set[tuple[str, str]] = set()
+    out: list[Entity] = []
+    for group in groups:
+        for ent in group:
+            key = (ent.kind, ent.canonical_hint)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(ent)
+    return out
