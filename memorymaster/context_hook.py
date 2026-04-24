@@ -40,6 +40,14 @@ logger = logging.getLogger(__name__)
 _BM25_K1_DEFAULT = 1.2
 _BM25_B_DEFAULT = 0.25
 
+# Per-field BM25 weights (roadmap 1.4). Subject is short and usually the most
+# topical signal in a claim (e.g. "PostgreSQL", "WAL mode"); text is longer
+# and more noisy. A small positive bias on subject tends to help recall on
+# topic-named prompts without hurting long-form matches. Defaults are tuned
+# by the eval script below; see artifacts/bm25-per-field-eval-2026-04-23.md.
+_BM25_W_SUBJECT_DEFAULT = 2.0
+_BM25_W_TEXT_DEFAULT = 1.0
+
 
 def _bm25_param(name: str, default: float) -> float:
     raw = os.environ.get(f"MEMORYMASTER_BM25_{name}")
@@ -50,6 +58,20 @@ def _bm25_param(name: str, default: float) -> float:
     except ValueError:
         logger.warning("Invalid MEMORYMASTER_BM25_%s=%r, falling back to %.2f",
                        name, raw, default)
+        return default
+
+
+def _bm25_field_weight(name: str, default: float) -> float:
+    """Read a per-field BM25 weight from env (e.g. ``W_SUBJECT``)."""
+    env_key = f"MEMORYMASTER_BM25_{name}"
+    raw = os.environ.get(env_key)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%r, falling back to %.2f",
+                       env_key, raw, default)
         return default
 
 
@@ -526,60 +548,111 @@ def recall(
     if bm25_on:
         from memorymaster.recall_tokenizer import _candidate_tokens
 
-        def _doc_tokens(claim_obj) -> list[str]:
-            subject = getattr(claim_obj, "subject", "") or ""
-            text = getattr(claim_obj, "text", "") or ""
-            joined = f"{subject} {text}"
-            return [t for t in _candidate_tokens(joined) if len(t) >= 3]
+        def _doc_tokens(raw) -> list[str]:
+            """Tokenize ONE field (subject or text) with the standard filter.
 
-        # Cache tokenisation per row (keyed by id) and build df + dl stats.
-        doc_tokens_by_id: dict[int, list[str]] = {}
-        df: dict[str, int] = {}
+            Keeps the >=3 len filter we've used since the BM25 sweep, so
+            per-field results are comparable to the concatenated baseline
+            for shared tokens. Non-string inputs (missing attrs, MagicMock
+            placeholders in tests) are coerced to empty string — never crash
+            the rescorer.
+            """
+            if not isinstance(raw, str):
+                return []
+            return [t for t in _candidate_tokens(raw) if len(t) >= 3]
+
+        # Cache per-field tokenisation per row and build per-field df + dl
+        # stats. We compute BM25 on each field independently and then combine
+        # with per-field weights, so a rare subject match is not diluted by a
+        # long text body (which was the original failure mode of the
+        # concatenated scorer).
+        subj_tokens_by_id: dict[int, list[str]] = {}
+        text_tokens_by_id: dict[int, list[str]] = {}
+        df_subj: dict[str, int] = {}
+        df_text: dict[str, int] = {}
         for r in rows:
             c = r.get("claim")
             cid = getattr(c, "id", None)
-            if cid is None or cid in doc_tokens_by_id:
+            if cid is None or cid in subj_tokens_by_id:
                 continue
-            toks = _doc_tokens(c)
-            doc_tokens_by_id[cid] = toks
-            for t in set(toks):
-                df[t] = df.get(t, 0) + 1
-        n_docs = len(doc_tokens_by_id)
-        avg_dl = (
-            sum(len(v) for v in doc_tokens_by_id.values()) / n_docs
-            if n_docs else 0.0
+            subj_toks = _doc_tokens(getattr(c, "subject", "") or "")
+            text_toks = _doc_tokens(getattr(c, "text", "") or "")
+            subj_tokens_by_id[cid] = subj_toks
+            text_tokens_by_id[cid] = text_toks
+            for t in set(subj_toks):
+                df_subj[t] = df_subj.get(t, 0) + 1
+            for t in set(text_toks):
+                df_text[t] = df_text.get(t, 0) + 1
+
+        n_docs = len(subj_tokens_by_id)
+        # avg_dl is field-specific — a field with mostly empty strings (dl=0)
+        # gets an avg_dl that reflects only the non-empty docs. When every
+        # doc is empty for a field, avg_dl stays 0 and that field contributes
+        # nothing (the per-doc branch below skips dl==0).
+        non_empty_subj = [v for v in subj_tokens_by_id.values() if v]
+        non_empty_text = [v for v in text_tokens_by_id.values() if v]
+        avg_dl_subj = (
+            sum(len(v) for v in non_empty_subj) / len(non_empty_subj)
+            if non_empty_subj else 0.0
+        )
+        avg_dl_text = (
+            sum(len(v) for v in non_empty_text) / len(non_empty_text)
+            if non_empty_text else 0.0
         )
 
         k1 = _bm25_param("K1", _BM25_K1_DEFAULT)
         b = _bm25_param("B", _BM25_B_DEFAULT)
+        w_subject = _bm25_field_weight("W_SUBJECT", _BM25_W_SUBJECT_DEFAULT)
+        w_text = _bm25_field_weight("W_TEXT", _BM25_W_TEXT_DEFAULT)
 
         # Query tokens for BM25: use the same tokenizer as the tokenizer
         # pipeline so we agree with the retrieval stage. Fall back to the
-        # raw query_words split when the tokenizer finds nothing.
+        # raw query_words split when the tokenizer finds nothing. Shared
+        # across both fields — the df is per-field so IDF still varies.
         q_tokens = [t for t in _candidate_tokens(query) if len(t) >= 3]
         if not q_tokens:
             q_tokens = [w for w in query_words if len(w) >= 3]
 
-        if n_docs > 0 and avg_dl > 0 and q_tokens:
-            for cid, doc_tokens in doc_tokens_by_id.items():
-                if not doc_tokens:
+        def _bm25_field_score(
+            doc_tokens: list[str],
+            df_field: dict[str, int],
+            avg_dl_field: float,
+        ) -> float:
+            """BM25 for one field on one doc. Returns 0.0 when the field is empty."""
+            if not doc_tokens or avg_dl_field <= 0.0:
+                return 0.0
+            tf: dict[str, int] = {}
+            for t in doc_tokens:
+                tf[t] = tf.get(t, 0) + 1
+            dl = len(doc_tokens)
+            score = 0.0
+            for qt in q_tokens:
+                f = tf.get(qt, 0)
+                if f == 0:
                     continue
-                tf: dict[str, int] = {}
-                for t in doc_tokens:
-                    tf[t] = tf.get(t, 0) + 1
-                dl = len(doc_tokens)
-                score = 0.0
-                for qt in q_tokens:
-                    f = tf.get(qt, 0)
-                    if f == 0:
-                        continue
-                    n_q = df.get(qt, 0)
-                    idf = math.log(
-                        ((n_docs - n_q + 0.5) / (n_q + 0.5)) + 1.0
-                    )
-                    norm = 1.0 - b + b * (dl / avg_dl)
-                    score += idf * ((f * (k1 + 1.0)) / (f + k1 * norm))
-                bm25_scores[cid] = score
+                # IDF uses n_docs from the corpus (shared across fields) but
+                # df_field from this field only. A term present in every
+                # subject but no text body still contributes via the text
+                # stream when it appears there with a high IDF.
+                n_q = df_field.get(qt, 0)
+                idf = math.log(
+                    ((n_docs - n_q + 0.5) / (n_q + 0.5)) + 1.0
+                )
+                norm = 1.0 - b + b * (dl / avg_dl_field)
+                score += idf * ((f * (k1 + 1.0)) / (f + k1 * norm))
+            return score
+
+        if n_docs > 0 and q_tokens:
+            for cid in subj_tokens_by_id:
+                subj_score = _bm25_field_score(
+                    subj_tokens_by_id[cid], df_subj, avg_dl_subj
+                )
+                text_score = _bm25_field_score(
+                    text_tokens_by_id[cid], df_text, avg_dl_text
+                )
+                combined = w_subject * subj_score + w_text * text_score
+                if combined > 0.0:
+                    bm25_scores[cid] = combined
 
     def _relevance(row):
         claim = row.get("claim")
