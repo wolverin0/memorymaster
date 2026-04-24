@@ -221,6 +221,63 @@ def _current_scope() -> str:
     return raw.strip()
 
 
+# Query expansion via entity-matched synonyms (roadmap 1.5).
+#
+# Env gate: ``MEMORYMASTER_RECALL_QUERY_EXPANSION`` — truthy values enable
+# expansion, default (unset / "0") keeps legacy behaviour bit-for-bit.
+def _query_expansion_enabled() -> bool:
+    raw = os.environ.get("MEMORYMASTER_RECALL_QUERY_EXPANSION", "0").strip()
+    return raw not in ("0", "false", "False", "no", "off", "")
+
+
+def _apply_query_expansion(svc, query: str, token_list: list[str]) -> list[str]:
+    """Augment ``token_list`` with entity-alias tokens from the raw prompt.
+
+    Runs :func:`memorymaster.query_expansion.expand_query` against the
+    service's SQLite store; the expansion's ``[query, *aliases]`` output is
+    folded into ``token_list`` as additional OR terms for the per-token
+    FTS5 fanout. The original query itself is dropped from the expansion
+    payload (we only want the alias tokens — the full query is already
+    represented by ``token_list``).
+
+    Best-effort: any DB, import, or attribute error returns the unchanged
+    ``token_list`` so the feature can never break recall. Deduplication is
+    case-insensitive against the existing tokens.
+    """
+    try:
+        from memorymaster.query_expansion import expand_query
+    except Exception as exc:  # pragma: no cover — import error unlikely
+        logger.debug("query_expansion: import skipped: %s", exc)
+        return token_list
+
+    try:
+        store = getattr(svc, "store", None)
+        conn_ctx = getattr(store, "connect", None) if store is not None else None
+        if conn_ctx is None:
+            return token_list
+        with conn_ctx() as conn:
+            expanded = expand_query(query, conn)
+    except Exception as exc:
+        logger.debug("query_expansion: expand_query failed: %s", exc)
+        return token_list
+
+    # expand_query returns [query, *aliases]; drop query since token_list
+    # already captures it via extract_query_tokens.
+    aliases = expanded[1:] if len(expanded) > 1 else []
+    if not aliases:
+        return token_list
+
+    lowered_existing = {t.lower() for t in token_list}
+    out = list(token_list)
+    for alias in aliases:
+        key = alias.lower().strip()
+        if not key or key in lowered_existing:
+            continue
+        lowered_existing.add(key)
+        out.append(key)
+    return out
+
+
 # Per-call fanout caps. Kept conservative so a pathological prompt (10+ env-vars)
 # doesn't blow up the hook budget: at most _ENTITY_CAP_PER_ENTITY claims per
 # matched entity, at most _ENTITY_CAP_TOTAL new claims added overall.
@@ -532,6 +589,15 @@ def _recall_impl(
 
     fts_query = extract_query_tokens(query, db, max_tokens=6)
     token_list = fts_query.split() if fts_query else []
+
+    # Query expansion via entity-matched synonyms (roadmap 1.5). Opt-in via
+    # MEMORYMASTER_RECALL_QUERY_EXPANSION=1. When enabled, we augment
+    # ``token_list`` with alias tokens mined from the prompt's extracted
+    # entities so the per-token FTS5 fanout below effectively runs an OR
+    # clause across the expanded set. Default OFF so ranking is
+    # bit-identical to legacy behaviour.
+    if _query_expansion_enabled() and token_list:
+        token_list = _apply_query_expansion(svc, query, token_list)
 
     rows: list = []
     seen_ids: set[int] = set()
