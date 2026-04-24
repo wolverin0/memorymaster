@@ -23,7 +23,10 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # ghs (server-to-server), ghr (refresh), github_pat_ (fine-grained).
     # Both patterns report as "github_token" so downstream callers get a
     # single canonical finding label.
-    ("github_token", re.compile(r"\b(ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]{36}\b")),
+    # v2-refresh (oauth_db_row): bumped {36} -> {36,} so synthetic/longer
+    # tokens embedded in SQL dumps and CSV exports still match — {36} with
+    # a trailing \b missed any token whose body exceeded the canonical length.
+    ("github_token", re.compile(r"\b(ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]{36,}\b")),
     ("github_token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b")),
     # Slack
     ("slack_token", re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b")),
@@ -32,7 +35,11 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # Bearer / JWT / private key blocks. JWT header min 16 chars post-`eyJ`
     # catches real minimum `{"alg":"HS256"}` -> eyJhbGciOiJIUzI1NiJ9.
     ("jwt_token", re.compile(r"\beyJ[A-Za-z0-9_\-]{16,}\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*\b")),
-    ("bearer_token", re.compile(r"Bearer\s+[A-Za-z0-9_\-\.]{8,}")),
+    # v2-refresh (product_copy): require value to contain a digit, underscore,
+    # hyphen, or dot — plain English words after 'Bearer' (e.g. "Bearer
+    # authentication and will prompt") now pass. Real bearer tokens always
+    # contain digits or structural chars.
+    ("bearer_token", re.compile(r"Bearer\s+(?=[A-Za-z0-9_\-\.]*[0-9_\-\.])[A-Za-z0-9_\-\.]{8,}")),
     ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     # NOTE: Private IPv4 (10/8, 172.16/12, 192.168/16) is intentionally NOT
     # filtered here. Private IPs appear legitimately in infrastructure claims
@@ -86,6 +93,33 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         r"(?=[A-Za-z0-9_!@#$%^&*.\-+=]*[0-9])"
         r"[A-Za-z][A-Za-z0-9_!@#$%^&*.\-+=]{9,})"
         r"(?![A-Za-z0-9_])"
+    )),
+    # v2-refresh (private_ip_port_prose): private IPv4 paired with ':<port>'
+    # in prose leaks internal topology. Bare private IPs are still allowed
+    # through (see the comment above db_url_password) — only the IP+port
+    # combination is redacted.
+    ("private_ip_port", re.compile(
+        r"\b(?:"
+        r"10\.(?:\d{1,3}\.){2}\d{1,3}"
+        r"|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+        r"|192\.168\.\d{1,3}\.\d{1,3}"
+        r"):\d{1,5}\b"
+    )),
+    # v2-refresh (home_path_windows): C:\Users\<name>\... reveals the user's
+    # Windows account name. We match the first path segment (1-40 chars) and
+    # redact it; downstream paths beyond the username are not re-redacted.
+    ("home_path_windows", re.compile(r"[Cc]:\\Users\\([A-Za-z][A-Za-z0-9._\-]{1,40})")),
+    # v2-refresh (home_path_unix): /home/<name>/ or /Users/<name>/ likewise
+    # exposes usernames. Anchored to start-of-string, whitespace, or a few
+    # common surrounding chars so we don't match arbitrary substrings.
+    ("home_path_unix", re.compile(
+        r"(?:^|[\s=(\"'])((?:/home|/Users)/[a-z][a-z0-9._\-]{1,40}/)"
+    )),
+    # v2-refresh (card_number_prose): PAN-shaped runs (Visa/MC/Amex BIN +
+    # 12-15 more digits, optionally group-separated). Synthetic test values
+    # like 4242-4242-4242-4242 and 5555 5555 5555 4444 are still caught.
+    ("card_number_pan", re.compile(
+        r"\b(?:4\d{3}|5[1-5]\d{2}|3[47]\d{2})[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b"
     )),
 ]
 
@@ -181,16 +215,59 @@ def resolve_allow_sensitive_access(
 # Placeholder tokens from RFC examples, tutorials, docs. If every match a
 # pattern makes is a placeholder, we suppress that pattern's finding so docs
 # don't get flagged as real credentials.
+# v2-refresh (placeholder_tutorial): added optional WORD segment between
+# YOUR_ and HERE so shapes like YOUR_STRIPE_KEY_HERE and YOUR_CLIENT_SECRET_HERE
+# are recognised as tutorial placeholders. Also added ${VAR}, {{ expr }}, and
+# $VAR shell/template interpolations (v2 dollar_variable_reference).
 _PLACEHOLDER_MARKERS: re.Pattern[str] = re.compile(
-    r"(?i)\bYOUR[_\-]?(?:TOKEN|KEY|PASSWORD|SECRET|API[_\-]?KEY)[_\-]?HERE?\b"
+    r"(?i)\bYOUR[_\-]?(?:[A-Z]+[_\-])?(?:TOKEN|KEY|PASSWORD|SECRET|API[_\-]?KEY)[_\-]?HERE?\b"
     r"|\bYOUR_[A-Z]+\b|<[a-z_\- ]{3,40}>|\bREPLACE[_\- ]?ME\b"
     r"|\bsk-[X]{3,}[A-Za-z0-9]*\b|\bsk-YOUR[_\-]?[A-Z]+\b"
     r"|\bmF_9\.B5f-4\.1JqM\b|:password@|=password\b"
+    # Case-sensitive alts — the leading (?i) must be switched off via (?-i:)
+    # or shell-style $lowercase would match the uppercase-only $VAR class.
+    r"|(?-i:\$\{[A-Za-z_][A-Za-z0-9_]*\}|\{\{[^}]{0,120}\}\}|\$[A-Z][A-Z0-9_]*\b)"
 )
 
 
 def _is_placeholder_match(matched_text: str) -> bool:
     return bool(_PLACEHOLDER_MARKERS.search(matched_text))
+
+
+# v2-refresh (prose_secret_word, product_copy): patterns whose match can trip
+# on prose like "tokens: they live in Vault" or "Bearer authentication". For
+# these we also require the captured value to look credential-shaped: at
+# least 6 chars AND containing either a digit, a non-alphanumeric char, or an
+# uppercase letter. Plain lowercase English words are suppressed.
+_STRUCTURED_CRED_FINDINGS: frozenset[str] = frozenset({
+    "password_assignment",
+    "token_assignment",
+    "compound_credential",
+    "connection_password",
+})
+
+
+def _is_low_entropy_value(value: str) -> bool:
+    """Return True if value looks like an English word, not a credential."""
+    if len(value) < 6:
+        return True
+    has_digit = any(c.isdigit() for c in value)
+    has_special = any(not c.isalnum() and c != "_" for c in value)
+    has_upper = any(c.isupper() for c in value)
+    return not (has_digit or has_special or has_upper)
+
+
+def _match_is_suppressed(name: str, match: re.Match[str]) -> bool:
+    """Return True if a match should be ignored (placeholder / low-entropy)."""
+    if _is_placeholder_match(match.group(0)):
+        return True
+    # v2-refresh (prose_secret_word, product_copy): reject plain-word values
+    # for structured credential patterns, which capture a value group.
+    if name in _STRUCTURED_CRED_FINDINGS and match.lastindex:
+        captured = match.group(match.lastindex)
+        if captured and _is_low_entropy_value(captured):
+            return True
+    return False
 
 
 def _redact(text: str) -> tuple[str, list[str]]:
@@ -200,10 +277,14 @@ def _redact(text: str) -> tuple[str, list[str]]:
         matches = list(pattern.finditer(out))
         if not matches:
             continue
-        if all(_is_placeholder_match(m.group(0)) for m in matches):
+        if all(_match_is_suppressed(name, m) for m in matches):
             continue
         findings.append(name)
-        out = pattern.sub(f"[REDACTED:{name}]", out)
+        # Preserve non-suppressed matches only: substitute match-by-match so
+        # a placeholder-only occurrence isn't overwritten by [REDACTED:*].
+        def _sub(m: re.Match[str]) -> str:
+            return m.group(0) if _match_is_suppressed(name, m) else f"[REDACTED:{name}]"
+        out = pattern.sub(_sub, out)
     return out, findings
 
 
