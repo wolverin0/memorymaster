@@ -1,0 +1,13 @@
+{
+  "config": "linear",
+  "description": "custom (linear) \u2014 env-driven",
+  "n_questions": 500,
+  "hit_at_1": 0.342,
+  "hit_at_5": 0.43,
+  "mrr": 0.3769,
+  "mean_latency_ms": 73.74,
+  "total_runtime_s": 155.8,
+  "env_applied": {
+    "MEMORYMASTER_RECALL_FUSION": "linear"
+  }
+}

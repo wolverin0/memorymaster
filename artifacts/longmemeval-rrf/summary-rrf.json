@@ -1,0 +1,13 @@
+{
+  "config": "rrf",
+  "description": "custom (rrf) \u2014 env-driven",
+  "n_questions": 500,
+  "hit_at_1": 0.404,
+  "hit_at_5": 0.44,
+  "mrr": 0.4202,
+  "mean_latency_ms": 84.51,
+  "total_runtime_s": 187.3,
+  "env_applied": {
+    "MEMORYMASTER_RECALL_FUSION": "rrf"
+  }
+}
