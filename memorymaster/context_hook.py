@@ -176,6 +176,51 @@ def _recall_weight(name: str) -> float:
         return _RECALL_WEIGHT_DEFAULTS[name]
 
 
+# Scope-aware retrieval boost (roadmap 1.2).
+#
+# When ``MEMORYMASTER_RECALL_SCOPE_BOOST`` > 0, claims whose ``scope`` matches
+# the "current project scope" get their ``_relevance`` multiplied by
+# ``(1.0 + SCOPE_BOOST)``. Default is 0.0 so the flag is fully opt-in and the
+# ranking is bit-identical to pre-boost behaviour when unset.
+#
+# The current scope is resolved from ``MEMORYMASTER_SCOPE_DEFAULT`` (if set),
+# falling back to ``project:memorymaster`` so the typical deployment gets a
+# sensible default without forcing every caller to wire env plumbing.
+_DEFAULT_CURRENT_SCOPE = "project:memorymaster"
+
+
+def _recall_scope_boost() -> float:
+    """Read ``MEMORYMASTER_RECALL_SCOPE_BOOST`` as float, default 0.0 (off).
+
+    Negative or garbage values fall back to 0.0 (= no boost).
+    """
+    raw = os.environ.get("MEMORYMASTER_RECALL_SCOPE_BOOST")
+    if raw is None or raw.strip() == "":
+        return 0.0
+    try:
+        val = float(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid MEMORYMASTER_RECALL_SCOPE_BOOST=%r, falling back to 0.0", raw
+        )
+        return 0.0
+    # Guard against pathological negatives — they would demote current-scope
+    # claims, which is the opposite of the feature's intent. Treat as off.
+    return max(0.0, val)
+
+
+def _current_scope() -> str:
+    """Return the "current project scope" used by the scope-boost multiplier.
+
+    Reads ``MEMORYMASTER_SCOPE_DEFAULT`` first; falls back to
+    :data:`_DEFAULT_CURRENT_SCOPE` when unset or empty.
+    """
+    raw = os.environ.get("MEMORYMASTER_SCOPE_DEFAULT")
+    if raw is None or raw.strip() == "":
+        return _DEFAULT_CURRENT_SCOPE
+    return raw.strip()
+
+
 # Per-call fanout caps. Kept conservative so a pathological prompt (10+ env-vars)
 # doesn't blow up the hook budget: at most _ENTITY_CAP_PER_ENTITY claims per
 # matched entity, at most _ENTITY_CAP_TOTAL new claims added overall.
@@ -670,6 +715,11 @@ def _recall_impl(
     w_vector = _recall_weight("W_VECTOR")
     w_entity = _recall_weight("W_ENTITY")
     w_verbatim = _recall_weight("W_VERBATIM")
+    # Scope-aware retrieval boost (roadmap 1.2). Multiplier applied to the
+    # final _relevance score for claims whose scope matches the current
+    # project scope. 0.0 (default) → no boost, ranking bit-identical to legacy.
+    scope_boost = _recall_scope_boost()
+    current_scope = _current_scope() if scope_boost > 0.0 else ""
 
     # Build BM25 corpus stats over the candidate set once per call. This is
     # cheap (O(rows * avg_doc_len)) and strictly read-only — we never touch
@@ -828,7 +878,7 @@ def _recall_impl(
         # query over verbatim_memories. W_VERBATIM=0.0 (default) preserves
         # legacy ranking bit-for-bit.
         verbatim = float(row.get("verbatim_score") or 0.0)
-        return (
+        base = (
             matches * w_matches
             + phrase_bonus * w_phrase
             + all_present * w_all
@@ -839,6 +889,15 @@ def _recall_impl(
             + entity * w_entity
             + verbatim * w_verbatim
         )
+        # Scope-aware retrieval boost (roadmap 1.2). When scope_boost > 0 AND
+        # the claim's scope matches the current project scope, multiply by
+        # (1.0 + scope_boost). When scope_boost == 0 this branch is a no-op
+        # (current_scope is "") so ranking is bit-identical to legacy.
+        if scope_boost > 0.0:
+            claim_scope = getattr(claim, "scope", "") or ""
+            if claim_scope == current_scope:
+                return base * (1.0 + scope_boost)
+        return base
 
     # Fusion mode: linear (default, legacy bit-identical) or RRF.
     # RRF is Reciprocal Rank Fusion — merges per-stream rankings instead of
