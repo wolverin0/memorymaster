@@ -276,8 +276,61 @@ def _score(row: dict, weights: tuple[float, ...]) -> float:
     )
 
 
+def _fusion_mode() -> str:
+    """Read MEMORYMASTER_RECALL_FUSION env var. 'linear' (default) or 'rrf'."""
+    import os as _os
+    return _os.environ.get("MEMORYMASTER_RECALL_FUSION", "linear").strip().lower()
+
+
 def _rank(rows: list[dict], weights: tuple[float, ...]) -> list[dict]:
+    """Rank rows by fusion mode: linear (weights) or RRF (env-gated)."""
+    if _fusion_mode() == "rrf":
+        return _rank_rrf(rows)
     return sorted(rows, key=lambda r: _score(r, weights), reverse=True)
+
+
+def _rank_rrf(rows: list[dict]) -> list[dict]:
+    """Rank rows via Reciprocal Rank Fusion over per-stream rankings.
+
+    Streams mirror context_hook.recall:
+      - bm25 (lexical_score)
+      - entity (entity_score)
+      - vector (vector_score)
+      - verbatim (verbatim_score)
+      - freshness (freshness_score)
+    A stream with ALL-zero values contributes nothing (skipped) so
+    disabled retrieval layers don't introduce arbitrary order.
+    """
+    from memorymaster.recall_fusion import rrf_fuse
+
+    def _cid(r: dict):
+        c = r.get("claim")
+        return getattr(c, "id", None)
+
+    def _ranking(score_fn) -> list[int]:
+        scored = [(cid, score_fn(r)) for r in rows
+                  if (cid := _cid(r)) is not None]
+        if all(s == 0.0 for _, s in scored):
+            return []
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return [cid for cid, _ in scored]
+
+    rankings: dict[str, list[int]] = {}
+    for name, fn in [
+        ("bm25",      lambda r: float(r.get("lexical_score") or 0.0)),
+        ("entity",    lambda r: float(r.get("entity_score") or 0.0)),
+        ("vector",    lambda r: float(r.get("vector_score") or 0.0)),
+        ("verbatim",  lambda r: float(r.get("verbatim_score") or 0.0)),
+        ("freshness", lambda r: float(r.get("freshness_score") or 0.0)),
+    ]:
+        r = _ranking(fn)
+        if r:
+            rankings[name] = r
+    if not rankings:
+        # Fall back to raw order — defensive.
+        return list(rows)
+    scores = rrf_fuse(rankings)
+    return sorted(rows, key=lambda r: scores.get(_cid(r) or -1, 0.0), reverse=True)
 
 
 def _precision_at_k(labels: list[int], k: int = 5) -> float:

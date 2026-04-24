@@ -620,7 +620,63 @@ def recall(
             + verbatim * w_verbatim
         )
 
-    ranked = sorted(rows, key=_relevance, reverse=True)
+    # Fusion mode: linear (default, legacy bit-identical) or RRF.
+    # RRF is Reciprocal Rank Fusion — merges per-stream rankings instead of
+    # summing weighted raw scores. See memorymaster/recall_fusion.py.
+    fusion_mode = os.environ.get("MEMORYMASTER_RECALL_FUSION", "linear").strip().lower()
+
+    if fusion_mode == "rrf":
+        from memorymaster.recall_fusion import rrf_fuse
+
+        # Build per-stream rankings — skip any stream where ALL rows score zero
+        # so a disabled stream (e.g. vector when Qdrant is off) contributes
+        # nothing rather than a deterministic but meaningless order.
+        def _row_cid(r: dict) -> int | None:
+            c = r.get("claim")
+            return getattr(c, "id", None)
+
+        def _ranking(score_fn) -> list[int]:
+            scored = [(cid, score_fn(r)) for r in rows
+                      if (cid := _row_cid(r)) is not None]
+            if all(s == 0.0 for _, s in scored):
+                return []
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return [cid for cid, _ in scored]
+
+        rankings: dict[str, list[int]] = {}
+        bm25_ranking = _ranking(
+            lambda r: bm25_scores.get(_row_cid(r), 0.0) if bm25_on else 0.0
+        )
+        if bm25_ranking:
+            rankings["bm25"] = bm25_ranking
+        entity_ranking = _ranking(lambda r: float(r.get("entity_score") or 0.0))
+        if entity_ranking:
+            rankings["entity"] = entity_ranking
+        vector_ranking = _ranking(lambda r: float(r.get("vector_score") or 0.0))
+        if vector_ranking:
+            rankings["vector"] = vector_ranking
+        verbatim_ranking = _ranking(lambda r: float(r.get("verbatim_score") or 0.0))
+        if verbatim_ranking:
+            rankings["verbatim"] = verbatim_ranking
+        freshness_ranking = _ranking(lambda r: float(r.get("freshness_score") or 0.0))
+        if freshness_ranking:
+            rankings["freshness"] = freshness_ranking
+
+        if rankings:
+            rrf_scores = rrf_fuse(rankings)
+            # Rows without any stream score (shouldn't normally happen) sink
+            # to the bottom via default 0.0. Keep stable order for ties.
+            ranked = sorted(
+                rows,
+                key=lambda r: rrf_scores.get(_row_cid(r) or -1, 0.0),
+                reverse=True,
+            )
+        else:
+            # No active streams — fall through to linear so we still return
+            # a deterministic order (same as legacy behaviour).
+            ranked = sorted(rows, key=_relevance, reverse=True)
+    else:
+        ranked = sorted(rows, key=_relevance, reverse=True)
 
     # Build output — top claims within budget
     lines = ["# Memory Context", ""]
