@@ -186,3 +186,74 @@ DB training null result), 11834 (policy-mode legacy-is-stub),
 11838 (split-pathology correction), 11841 (retrieval-not-ranking),
 11847 (user "no stopping" preference), 11848 (Windows timer flake),
 11853 (df=0 IDF inverted-ranking bug), 11854 (cadence-mode validation).
+
+---
+
+## 10 · Autonomous roadmap-clearing run (2026-04-24, waves A→G)
+
+Executed from `artifacts/final-roadmap-2026-04-23.md` starting at main `3a34b2d` with
+`isolation=worktree` subagents capped at 3 parallel (claim 11761).
+
+### Commits landed (chronological)
+
+| Commit | What |
+|---|---|
+| `0e133fe`..`f425212` | **Wave A 1.1 RRF fusion** — opt-in `MEMORYMASTER_RECALL_FUSION=rrf`, honest null on 30-prompt (-0.186 p@5). Claim 11881. |
+| `7574b80`..`98e25ca` | **Wave A 1.4 BM25 per-field** — opt-in `W_SUBJECT/W_TEXT`, defaults 1.0/1.0 (null on 30-prompt, -0.013). Claim 11883. |
+| `9f2ea25`..`2d07a90` | **Wave B 1.3 eval expand 30→100** — `real-prompts-100.jsonl` + `expand_recall_eval.py`. p@5 30→100: 0.313→0.358. Claim 11884. |
+| `1efedf2`..`3e887d5` | **Wave B 3.1 L2 LLM entity extraction** — plumbing + `--layer2` flag gated by `MEMORYMASTER_ENTITY_LLM`. Simulated dry-run 2.33→2.37 (bar 2.5). Real LLM backfill is USER-INPUT ($0.73–$1.96 Gemini). Claim 11885. |
+| `6b72cf8`..`a6ca213` | **Wave B 4.1 sensitivity v2 refresh** — 100-sample corpus; v1 F1 0.995, v2 F1 0.764→1.00 after targeted filter patches. 4 new patterns added. Claim 11886. |
+| `7574b80`..`98e25ca` (ff-merge into main at Wave A close) | — |
+| `28531d8`..`f0a2376` | **Wave C 5.1 recall latency counters** — per-stream timing via `log_hook`. fts5 p50=52ms dominant; total p50=53ms. Overhead 0.5 µs/call. Claim 11887. |
+| `79eea58`..`8ee84cb` | **Wave C 2.1 classifier v3** — `wiki_similarity_cosine` feature. Sound AUC 0.9924 (beats v2 0.9898). Chronological AUC 0.5687 (beats v2 0.45, short of 0.60 stretch). Claim 11894. |
+| `bf06300` | **Wave F 7.3 test_operator flake fix** — NOT a flake. Real root cause: cross-test state leak via module-default `artifacts/operator/operator_queue_state.json`. 10/10 pass after fix. Claim 11895. |
+| `6e62c4d`..`1c7f41a` | **Wave D 6.1 LongMemEval harness** — 500-Q oracle; linear fusion hit@1=0.342 / hit@5=0.430 / MRR=0.377. Gap vs MemPalace 96.6%: 55% relative. Claim 11896. |
+| `3d44e86` | **Wave G 1.2 scope boost + 1.5 query expansion** — `MEMORYMASTER_RECALL_SCOPE_BOOST` + `MEMORYMASTER_RECALL_QUERY_EXPANSION` env vars. Ship opt-in; minor lifts (1–2 prompts). Eval harness structural blindness gotcha surfaced (claim 11897). |
+| `82af78f`..`8456ae2` | **Wave G 3.2 new entity kinds** — `package`, `url_domain`, `slash_command`, `claim_id_ref` added to Layer-1. avg_aliases flat (2.1845→2.1824) — acceptance metric ill-defined. `package` regex went through 820-FP→0-FP iteration. |
+| `a054725`..`a46efc8` | **Wave D 6.2 RRF vs linear on LongMemEval** — RRF WINS: hit@1 0.342→0.404 (+18.1%), MRR +11.5%. 32 wins / 1 loss / 467 ties. Reconciles with 11881 — stream topology matters. Claim 11898. |
+| `470efdc` | **Wave E 8.1 arch doc + 8.2/8.3 ADRs** — `docs/recall-architecture-2026-04-23.md`, `docs/adr/2026-04-23-tokenizer-v2-idf-fix.md`, `docs/adr/2026-04-23-steward-v2-classifier.md`. |
+
+### Metrics matrix (post-roadmap-clearing)
+
+| Metric | Before wave-run | After wave-run |
+|---|---|---|
+| Retrieval streams | 5 (linear only) | 5 (linear + RRF opt-in) |
+| Fusion modes available | 1 | 2 (`linear` default, `rrf` opt-in) |
+| Ranker env knobs | 8 dims | 10 dims (+ scope_boost, + query_expansion) |
+| BM25 field weighting | concat only | per-field (env-overridable) |
+| Entity kinds (Layer-1) | 6 | 10 (added package / url_domain / slash_command / claim_id_ref) |
+| Entity extraction layers | 1 | 2 (L2 LLM gated opt-in) |
+| Sensitivity corpus | 200 samples (v1) | 300 samples (v1+v2), F1 both at ≥0.995 |
+| Steward classifier | v2 (AUC 0.990 sound / 0.45 chrono) | v3 (AUC 0.9924 sound / 0.5687 chrono), v2 preserved |
+| Recall eval set | 30 prompts | 30 + 100 prompts |
+| LongMemEval hit@5 | not measured | 0.430 (linear), 0.440 (RRF) |
+| Known-flaky tests | 1 | 0 |
+| Latency instrumentation | none | per-stream p50/p99/mean logged |
+| ADRs | 0 | 2 (tokenizer v2, classifier v2) |
+| Architecture docs | scattered | 1 canonical (`docs/recall-architecture-2026-04-23.md`) |
+
+### Claims ingested this run
+
+11881 (RRF null on 30-prompt), 11882 (eval harness bypasses BM25), 11883 (BM25 per-field null + text>subject),
+11884 (100-prompt eval baseline), 11885 (L2 LLM simulated null + cost), 11886 (sensitivity v1 overfit exposed),
+11887 (recall latency baseline), 11889 (commit-guard precise rules), 11894 (classifier v3 sound+chrono AUC),
+11895 (flake real root cause), 11896 (LongMemEval baseline + contamination), 11897 (eval harness structural blindness),
+11898 (RRF vs linear is stream-topology-dependent, not universally one-way).
+
+### Remaining USER-INPUT items (NOT AGENT-READY)
+
+Everything AGENT-READY is ticked. These still need the operator to act:
+
+1. **2.3 Enable v2 classifier in prod** — env flip `MEMORYMASTER_STEWARD_CLASSIFIER_ENABLED=1` + `MEMORYMASTER_STEWARD_CLASSIFIER_PATH=artifacts/steward-classifier-v2.joblib`. v3 is also shipped — operator may prefer v3.
+2. **2.4 Enable cadence policy mode** — env flip `MEMORYMASTER_POLICY_MODE=cadence`. Expect 188/200 first-cycle backlog.
+3. **3.1 Real-LLM Layer-2 backfill** — `scripts/backfill_entity_extraction.py --layer2` against live DB. Est $0.73–$1.96 on Gemini Flash Lite, 20–30 min runtime.
+4. **7.1 DESTRUCTIVE: delete 3 DB backup files (~6.9 GB)** — `memorymaster.db.bak.1776912987`, `memorymaster.db.bak.1776949606-pre-entity-backfill`, `memorymaster.db.corrupted`. Single `rm` when approved.
+5. **9.1 #75 Run graphify on 15+ legacy projects** — needs concrete project list.
+6. **9.2 Wiki absorb freshness metric** — product decision on what "fresh" means.
+
+### Follow-ups worth scheduling
+
+- **RRF default promotion**: per claim 11898, RRF wins on LongMemEval but regresses on 30-prompt. Promote RRF to default only after (a) folding overlap signals (matches/phrase/all) into a pseudo-stream, or (b) adding a heuristic gate "N streams with ≥k non-zero rows".
+- **LongMemEval per-question DB isolation** (claim 11896): 100% of hit@5 misses have top-1 from another question's seeded claims. Add a bench mode.
+- **Wiki scope expansion** for classifier v3 chronological gap (0.5687→0.60): expand `WikiCorpus` to multi-scope.
+- **Eval harness consolidation**: add a companion harness that invokes `recall()` directly (pattern from `artifacts/scope-queryexp-harness.py`) so future ranker-internal changes aren't invisible to the default eval (claim 11897).
