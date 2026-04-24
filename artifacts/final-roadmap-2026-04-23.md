@@ -100,10 +100,8 @@
 - **Status:** SHIPPED (commit `f0a2376`). Per-stream p50/p99/mean via `log_hook()` event type `latency`. Aggregator at `scripts/agg_recall_latency.py`.
 - **Baseline (100-prompt set):** fts5 p50=52.2ms (dominant), bm25 0.4ms, total p50=53ms. Timer overhead 0.5µs/call. See claim 11887.
 
-### 5.2 · [ ] Classify hook latency budget test
-- **Status:** AGENT-READY
-- **Acceptance:** pytest asserts classify hook runtime < 15ms on fixture prompts
-- **Files:** `tests/test_classify_hook_latency.py`
+### 5.2 · [x] Classify hook latency budget test — **DONE (in-session)**
+- **Files:** `tests/test_classify_hook_latency.py` — asserts median < 15ms across 20×12 fixture runs (using `perf_counter` per claim 11848). 2/2 pass.
 
 ---
 
