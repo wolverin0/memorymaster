@@ -245,14 +245,24 @@ def run_backtest(
     artifacts: list[LoadedArtifact],
     days: int = 30,
     wiki_scope: str = "project:memorymaster",
+    wiki_scopes: str | list[str] | None = None,
 ) -> list[BacktestRow]:
     """Load every claim with a promotion-decision event in the last ``days``,
     extract v3 features against the shared wiki corpus, and score with each
     artifact in ``artifacts``. Returns per-claim rows.
+
+    ``wiki_scopes`` (item 11.5): when set, overrides ``wiki_scope`` and
+    forwards to ``load_wiki_corpus(scopes=...)`` — use ``"*"`` to aggregate
+    every scope dir (needed for v3.1+ multi-scope acceptance).
     """
     window = f"-{days} days"
     train_cutoff = _parse_iso_utc(_TRAIN_SPLIT_CUTOFF_ISO)
-    corpus = load_wiki_corpus(scope=wiki_scope, repo_root=ROOT)
+    if wiki_scopes is not None:
+        corpus = load_wiki_corpus(
+            scopes=wiki_scopes, repo_root=ROOT,
+        )
+    else:
+        corpus = load_wiki_corpus(scope=wiki_scope, repo_root=ROOT)
     with _ro_connect(db_path) as conn:
         ids = [int(r[0]) for r in conn.execute(_EVENT_QUERY, (window,))]
         rows: list[BacktestRow] = []
@@ -665,6 +675,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Samples per disagreement class (minimum 10 for v2-vs-v3 "
                         "per acceptance spec).")
     p.add_argument("--seed", type=int, default=1337)
+    p.add_argument("--wiki-scopes", default=None,
+                   help="Wiki scope selector; overrides the default single-"
+                        "scope load. Use '*' to aggregate every obsidian-"
+                        "vault/wiki/* scope dir (required for v3.1 / item "
+                        "11.5 multi-scope acceptance). Comma-separated "
+                        "strings pick explicit scopes.")
     return p.parse_args(argv)
 
 
@@ -692,8 +708,20 @@ def main(argv: list[str] | None = None) -> int:
     # classifier cache BUT the backtest itself bypasses it via _load_artifact.
     os.environ.setdefault("MEMORYMASTER_STEWARD_CLASSIFIER_PATH", str(artifacts[0].path.resolve()))
 
-    rows = run_backtest(args.db, artifacts=artifacts, days=args.days)
-    print(f"backtest: loaded {len(rows)} claim-events", file=sys.stderr)
+    wiki_scopes_arg: str | list[str] | None = None
+    if args.wiki_scopes is not None:
+        if args.wiki_scopes.strip() == "*":
+            wiki_scopes_arg = "*"
+        else:
+            wiki_scopes_arg = [
+                s.strip() for s in args.wiki_scopes.split(",") if s.strip()
+            ]
+    rows = run_backtest(
+        args.db, artifacts=artifacts, days=args.days,
+        wiki_scopes=wiki_scopes_arg,
+    )
+    print(f"backtest: loaded {len(rows)} claim-events "
+          f"(wiki_scopes={wiki_scopes_arg!r})", file=sys.stderr)
 
     md = _render_report(rows, artifacts, args.db, args.days, args.sample_k, args.seed)
     args.out.parent.mkdir(parents=True, exist_ok=True)

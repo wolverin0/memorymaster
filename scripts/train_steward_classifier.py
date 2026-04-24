@@ -36,10 +36,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 
 import joblib
 import numpy as np
@@ -53,7 +55,12 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from memorymaster.steward_features import FEATURE_KEYS, FEATURE_VERSION  # noqa: E402
+from memorymaster.steward_features import (  # noqa: E402
+    FEATURE_KEYS,
+    FEATURE_VERSION,
+    extract_features,
+)
+from memorymaster.wiki_similarity import load_wiki_corpus  # noqa: E402
 
 
 def _parse_iso(ts: str | None) -> datetime:
@@ -73,6 +80,109 @@ def _parse_iso(ts: str | None) -> datetime:
 def load_rows(path: Path) -> list[dict]:
     with path.open("r", encoding="utf-8") as fh:
         return [json.loads(line) for line in fh if line.strip()]
+
+
+# -- Optional: re-extract features from a live DB with multi-scope WikiCorpus.
+# Used by v3.1+ training when we want the ``wiki_similarity_cosine`` feature
+# to aggregate across every scope directory under ``obsidian-vault/wiki/``.
+# Mirrors ``scripts.build_steward_training_set`` but keeps training in-process
+# so we don't have to rewrite the fixture on disk.
+
+_Q_POSITIVES = """
+SELECT id, text, subject, predicate, object_value, scope, status,
+       claim_type, source_agent, created_at, access_count,
+       supersedes_claim_id, replaced_by_claim_id, entity_id,
+       wiki_article
+FROM claims WHERE status = 'confirmed' ORDER BY created_at ASC
+"""
+
+_Q_NEGATIVES = """
+SELECT cl.id, cl.text, cl.subject, cl.predicate, cl.object_value, cl.scope,
+       cl.status, cl.claim_type, cl.source_agent, cl.created_at, cl.access_count,
+       cl.supersedes_claim_id, cl.replaced_by_claim_id, cl.entity_id,
+       cl.wiki_article
+FROM claims cl
+WHERE cl.status IN ('archived', 'stale')
+  AND NOT EXISTS (
+    SELECT 1 FROM events ev
+    WHERE ev.claim_id = cl.id
+      AND ev.id = (SELECT MAX(id) FROM events WHERE claim_id = cl.id)
+      AND (LOWER(COALESCE(ev.details, '')) LIKE 'migration:%'
+           OR LOWER(COALESCE(ev.details, '')) LIKE '%llm-stop-hook-backfill%')
+  )
+ORDER BY cl.created_at ASC
+"""
+
+
+def rebuild_rows_from_db(
+    db_path: Path,
+    *,
+    wiki_scopes: str | list[str] = "*",
+    neg_ratio: int = 3,
+    pos_limit: int | None = None,
+) -> tuple[list[dict], dict]:
+    """Extract a fresh v3 training set from ``db_path`` using a multi-scope
+    WikiCorpus (``scopes="*"`` by default). Returns ``(rows, stats)`` where
+    stats reports per-scope article counts and wiki_similarity coverage so
+    callers can verify the multi-scope aggregation actually landed.
+    """
+    t0 = perf_counter()
+    corpus = load_wiki_corpus(scopes=wiki_scopes, repo_root=ROOT)
+    t_load = perf_counter() - t0
+
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only = ON")
+
+    t1 = perf_counter()
+    positives = list(conn.execute(_Q_POSITIVES))
+    negatives = list(conn.execute(_Q_NEGATIVES))
+    if pos_limit is not None:
+        positives = positives[-pos_limit:]
+    target_neg = min(len(negatives), max(1, neg_ratio * len(positives)))
+    if len(negatives) > target_neg:
+        negatives = negatives[-target_neg:]
+
+    rows: list[dict] = []
+    scope_article_counts: dict[str, int] = defaultdict(int)
+    for a in corpus.articles.values():
+        scope_article_counts[a.article_scope] += 1
+
+    nonzero_wiki = 0
+    cross_project_nonzero = 0
+    for label, bucket in ((1, positives), (0, negatives)):
+        for row in bucket:
+            claim = dict(row)
+            feats = extract_features(claim, conn, wiki_corpus=corpus)
+            rows.append({
+                "claim_id": int(row["id"]),
+                "label": int(label),
+                "created_at": row["created_at"],
+                "feature_version": FEATURE_VERSION,
+                "features": feats,
+                "scope": row["scope"],
+            })
+            ws = float(feats.get("wiki_similarity_cosine", 0.0))
+            if ws > 0.0:
+                nonzero_wiki += 1
+                if (row["scope"] or "").strip() and row["scope"] != "project:memorymaster":
+                    cross_project_nonzero += 1
+    conn.close()
+    t_extract = perf_counter() - t1
+
+    stats = {
+        "n_positives": len(positives),
+        "n_negatives": len(negatives),
+        "embedding_backend": corpus.embedding_backend,
+        "scopes_loaded": list(corpus.scopes),
+        "articles_by_scope": dict(scope_article_counts),
+        "total_articles": len(corpus.articles),
+        "rows_with_nonzero_wiki_sim": nonzero_wiki,
+        "cross_project_rows_with_nonzero_wiki_sim": cross_project_nonzero,
+        "load_seconds": round(t_load, 3),
+        "extract_seconds": round(t_extract, 3),
+    }
+    return rows, stats
 
 
 def to_matrix(rows: list[dict]) -> tuple[np.ndarray, np.ndarray]:
@@ -172,7 +282,8 @@ def eval_only(model: CalibratedClassifierCV, test_rows: list[dict], *,
 
 
 def save_artifact(model: CalibratedClassifierCV, out_path: Path, metrics: dict,
-                  *, chrono_roc_auc: float | None = None) -> None:
+                  *, chrono_roc_auc: float | None = None,
+                  rebuild_stats: dict | None = None) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "model": model,
@@ -186,6 +297,16 @@ def save_artifact(model: CalibratedClassifierCV, out_path: Path, metrics: dict,
     }
     if chrono_roc_auc is not None:
         payload["roc_auc_chronological"] = chrono_roc_auc
+    if rebuild_stats is not None:
+        payload["multiscope"] = {
+            "scopes_loaded": rebuild_stats["scopes_loaded"],
+            "articles_by_scope": rebuild_stats["articles_by_scope"],
+            "total_articles": rebuild_stats["total_articles"],
+            "rows_with_nonzero_wiki_sim": rebuild_stats["rows_with_nonzero_wiki_sim"],
+            "cross_project_rows_with_nonzero_wiki_sim":
+                rebuild_stats["cross_project_rows_with_nonzero_wiki_sim"],
+            "embedding_backend": rebuild_stats["embedding_backend"],
+        }
     joblib.dump(payload, out_path)
 
 
@@ -220,11 +341,64 @@ def main() -> int:
     ap.add_argument("--random-state", type=int, default=42,
                     help="Seed for the LogisticRegression to keep training "
                          "deterministic across runs.")
+    ap.add_argument("--rebuild-from-db", type=Path, default=None,
+                    help="If set, re-extract features in-process from the "
+                         "given memorymaster.db using a multi-scope "
+                         "WikiCorpus (--wiki-scopes). This is how item 11.5 "
+                         "trains v3.1 with cross-project wiki signal. "
+                         "Ignores --in when set.")
+    ap.add_argument("--wiki-scopes", default="*",
+                    help="Wiki scope selector forwarded to load_wiki_corpus. "
+                         "``*`` (default) auto-discovers every scope dir "
+                         "under obsidian-vault/wiki/. Comma-separated strings "
+                         "pick explicit scopes (e.g. "
+                         "'project:memorymaster,project:whatsappbot').")
+    ap.add_argument("--neg-ratio", type=int, default=3,
+                    help="Negatives per positive when --rebuild-from-db.")
+    ap.add_argument("--pos-limit", type=int, default=None,
+                    help="Cap on positives when --rebuild-from-db.")
+    ap.add_argument("--stats-out", type=Path, default=None,
+                    help="Optional JSON file for multi-scope stats (article "
+                         "counts per scope, coverage numbers).")
     args = ap.parse_args()
 
-    rows = load_rows(args.in_path)
+    rebuild_stats: dict | None = None
+    if args.rebuild_from_db is not None:
+        if args.rebuild_from_db.exists() is False:
+            print(f"[error] --rebuild-from-db path not found: {args.rebuild_from_db}")
+            return 1
+        wiki_scopes: str | list[str]
+        if args.wiki_scopes.strip() == "*":
+            wiki_scopes = "*"
+        else:
+            wiki_scopes = [s.strip() for s in args.wiki_scopes.split(",") if s.strip()]
+        print(f"[train] rebuilding features from db={args.rebuild_from_db} "
+              f"wiki_scopes={wiki_scopes!r}")
+        rows, rebuild_stats = rebuild_rows_from_db(
+            args.rebuild_from_db,
+            wiki_scopes=wiki_scopes,
+            neg_ratio=args.neg_ratio,
+            pos_limit=args.pos_limit,
+        )
+        print(f"[train] wiki backend={rebuild_stats['embedding_backend']} "
+              f"scopes={len(rebuild_stats['scopes_loaded'])} "
+              f"articles={rebuild_stats['total_articles']} "
+              f"rows_nonzero_wiki_sim={rebuild_stats['rows_with_nonzero_wiki_sim']} "
+              f"cross_project_nonzero={rebuild_stats['cross_project_rows_with_nonzero_wiki_sim']}")
+        for scope, n in sorted(rebuild_stats["articles_by_scope"].items(),
+                               key=lambda kv: -kv[1]):
+            print(f"[train]   {scope}: {n} articles")
+        if args.stats_out is not None:
+            args.stats_out.parent.mkdir(parents=True, exist_ok=True)
+            args.stats_out.write_text(
+                json.dumps(rebuild_stats, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+            print(f"[train] multi-scope stats -> {args.stats_out}")
+    else:
+        rows = load_rows(args.in_path)
     if not rows:
-        print(f"[error] {args.in_path} is empty; run build_steward_training_set.py first")
+        print("[error] training corpus is empty")
         return 1
     train_rows, test_rows = split_rows(rows, args.split, args.train_frac)
     if not train_rows or not test_rows:
@@ -259,6 +433,7 @@ def main() -> int:
     save_artifact(
         model, out_path, metrics,
         chrono_roc_auc=(chrono_metrics or {}).get("roc_auc"),
+        rebuild_stats=rebuild_stats,
     )
 
     print(f"[train] version={args.version} calibration={calibration}")

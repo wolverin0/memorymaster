@@ -281,10 +281,15 @@ def extract_features(
     ``created_at``, ``access_count``, ``claim_type``, ``source_agent``,
     ``supersedes_claim_id``, ``entity_id``, ``wiki_article``).
 
-    ``wiki_corpus``: optional pre-loaded corpus for the claim's scope. When
-    absent or empty, ``wiki_similarity_cosine`` falls back to ``0.0`` — this
-    is by design so v3 stays backwards-compatible with minimal in-memory
-    test schemas.
+    ``wiki_corpus``: optional pre-loaded corpus. Single-scope corpora (the
+    default in v3.0) score every claim against every article regardless of
+    scope; multi-scope corpora (v3.1 / item 11.5, created via
+    ``load_wiki_corpus(scopes="*")``) filter down to articles whose
+    ``article_scope`` matches the claim's ``scope`` field, so a
+    ``project:X`` claim is never scored against a ``project:Y`` article.
+    When the corpus is absent or empty, ``wiki_similarity_cosine`` falls
+    back to ``0.0`` — this is by design so v3 stays backwards-compatible
+    with minimal in-memory test schemas.
     """
     c = _as_dict(claim)
     cid = int(c.get("id") or 0)
