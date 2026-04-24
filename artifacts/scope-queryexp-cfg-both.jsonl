@@ -1,0 +1,100 @@
+{"idx": 0, "prompt": "hace C, no tenemos nada que perder, go.", "n_bullets": 1, "p5": 0.0, "ap5": 0.0, "labels_top5": [0]}
+{"idx": 1, "prompt": "Dale, hagamoslo. Y con todo este contexto, sabes lo que deberiamos hacer, evaluar que archivos/queries/metodos podriamos", "n_bullets": 8, "p5": 0.2, "ap5": 1.0, "labels_top5": [1, 0, 0, 0, 0]}
+{"idx": 2, "prompt": "hable con vos en claude chat y me diste esto para hacer: G:\\_OneDrive\\OneDrive\\Desktop\\new fiber.txt que opinas ?", "n_bullets": 8, "p5": 0.4, "ap5": 0.8333333333333333, "labels_top5": [1, 0, 1, 0, 0]}
+{"idx": 3, "prompt": "hay que correr el steward? y tambien, el dashboard, podes correrlo,? tenemos much9os claims para revisar ?", "n_bullets": 19, "p5": 0.2, "ap5": 1.0, "labels_top5": [1, 0, 0, 0, 0]}
+{"idx": 4, "prompt": "vos tenes que mergearlo, yo no voy a revisar nada manualmente, y sobre lo del cambio de modelo, PORQUE? gastamos el limi", "n_bullets": 8, "p5": 0.2, "ap5": 1.0, "labels_top5": [1, 0, 0, 0, 0]}
+{"idx": 5, "prompt": "camvio algo de golgle? \u00f1orque teniamls 6 laves nl puede ser que esten todas agitadas menls si em steward funciona 3 vece", "n_bullets": 8, "p5": 0.8, "ap5": 0.95, "labels_top5": [1, 1, 1, 0, 1]}
+{"idx": 6, "prompt": "the steward is dropping 429 error by google, can we know what it is ?", "n_bullets": 9, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 7, "prompt": "ya te reinicie, ahi figura conectado, tenes acceso ?", "n_bullets": 6, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 8, "prompt": "es del pane 6 elduderino si queres revisarlo... no se porque tira eso, como que aparece conectado el mcp pero no anda, a", "n_bullets": 9, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 9, "prompt": "MemoryMaster shows reconnected but the tool schema isn't registered in my handle \u2014 same failure as before. The /mcp reco", "n_bullets": 9, "p5": 1.0, "ap5": 1.0, "labels_top5": [1, 1, 1, 1, 1]}
+{"idx": 10, "prompt": "fixea todos si", "n_bullets": 8, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 11, "prompt": "\u276f ahora estamos usando el modelo opus 4.7, hasta el mensjae anterior era opus 4.6, asi que si queres hacer algun review ", "n_bullets": 14, "p5": 0.4, "ap5": 1.0, "labels_top5": [1, 1, 0, 0, 0]}
+{"idx": 12, "prompt": "peque\u00f1o update, ahora estamos usando el modelo opus 4.7, hasta el mensjae anterior era opus 4.6, asi que si queres hacer", "n_bullets": 14, "p5": 0.4, "ap5": 1.0, "labels_top5": [1, 1, 0, 0, 0]}
+{"idx": 13, "prompt": "o sea pasamos de hablar de esto a directamnte lo instalaste en todos lados sin mi permiso? estas cosas son inentendibles", "n_bullets": 8, "p5": 0.2, "ap5": 1.0, "labels_top5": [1, 0, 0, 0, 0]}
+{"idx": 14, "prompt": "i honestly dont even think that you have even read the main readme  https://github.com/yamadashy/repomix it even provide", "n_bullets": 8, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 15, "prompt": "y pero no hace lo mismo que gitnexus por ej? que diferencia tendrian ?", "n_bullets": 3, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0]}
+{"idx": 16, "prompt": "bueno pero eso es para otros repo, aca veo que la gente lo usa para sus propios repo, literalmente dice:  Perfect for wh", "n_bullets": 10, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 17, "prompt": "te juro que no entiendo, explicamelo mas facil", "n_bullets": 2, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0]}
+{"idx": 18, "prompt": "si, pero  que hay que hacer, correr un comando en todos nuestros repos? (y lean-ctx olvidate, no lo instalamos ni lo vam", "n_bullets": 10, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 19, "prompt": "podes sacar el mcp de docker de claude desktop y agregar memorymaster + gitnexus + los mcp que usemos para memorymaster ", "n_bullets": 9, "p5": 0.2, "ap5": 0.3333333333333333, "labels_top5": [0, 0, 1, 0, 0]}
+{"idx": 20, "prompt": "o sea la realidad de lo que decis es absurdo, decirme que no nos hace falta token savings es un delirio, como no voy a p", "n_bullets": 7, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 21, "prompt": "Fijate si este repo nos sirve de algo para lo que hacemos https://github.com/yvgude/lean-ctx", "n_bullets": 5, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 22, "prompt": "Hace a m\u00e1s b, no tenemos llave de anthropic, usa gemini 3.1 flash lite qu\u00e9 es mejor que el 2.5 m\u00e1s vale", "n_bullets": 13, "p5": 0.2, "ap5": 1.0, "labels_top5": [1, 0, 0, 0, 0]}
+{"idx": 23, "prompt": "nos modifica algo que sea free? nos conviene usar un llm mas poderosa para hacerlo? como que lances un agente con haiku ", "n_bullets": 10, "p5": 0.4, "ap5": 0.5833333333333333, "labels_top5": [0, 1, 1, 0, 0]}
+{"idx": 24, "prompt": "Continue from where you left off.", "n_bullets": 1, "p5": 0.0, "ap5": 0.0, "labels_top5": [0]}
+{"idx": 25, "prompt": "hay forma de testear todas estas cosas nuevas? tenemos que curar nuetra data vieja o algo para que se alinee con todo es", "n_bullets": 10, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 26, "prompt": "si crees realmentq eu es algo productivo, hagamoslo si", "n_bullets": 1, "p5": 0.0, "ap5": 0.0, "labels_top5": [0]}
+{"idx": 27, "prompt": "lee esto: https://dev.to/marcosomma/i-ran-500-more-agent-memory-experiments-the-real-problem-wasnt-recall-it-was-binding", "n_bullets": 5, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 28, "prompt": "no se, si la unica ventaja es no gastar dinero, por tan poca plata no me importa, si tiene algo que nos beneficie realme", "n_bullets": 5, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 29, "prompt": "https://ai.google.dev/gemma/docs/core/gemma_on_gemini_api#thinking you are not reading the documentation at all", "n_bullets": 8, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 30, "prompt": "im having an issue with my windows account  @123.png @1234.png this appears everytime i restart windows and my windows s", "n_bullets": 8, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 31, "prompt": "-\nRespond with hello.", "n_bullets": 8, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 32, "prompt": "i lost this project session because of corruption, i need to grab it back, this was a implementation try of this project", "n_bullets": 9, "p5": 0.4, "ap5": 1.0, "labels_top5": [1, 1, 0, 0, 0]}
+{"idx": 33, "prompt": "-\nYou are agent 01a7aa5a-6dd0-41d4-b140-41dca883663e (NetworkAnalyst). Continue your Paperclip work.", "n_bullets": 10, "p5": 0.6, "ap5": 1.0, "labels_top5": [1, 1, 1, 0, 0]}
+{"idx": 34, "prompt": "-\nYou are agent 9409cb3b-fb5e-4fb6-88f5-f71ff2ce1f6f (CEO). Continue your Paperclip work.", "n_bullets": 9, "p5": 0.6, "ap5": 1.0, "labels_top5": [1, 1, 1, 0, 0]}
+{"idx": 35, "prompt": "Implement the following plan:\n\n# OmniClaude v2 \u2014 Multi-Session Chat + Smart Parsing\r\n\r\n## Context\r\n\r\nThe Phase 1 rebuild", "n_bullets": 10, "p5": 0.6, "ap5": 0.9166666666666666, "labels_top5": [1, 1, 0, 1, 0]}
+{"idx": 36, "prompt": "Continue from the omni mode work: we just added pane-discovery.cjs, mcp-server.cjs, omni.cjs, and .mcp.json. The MCP ser", "n_bullets": 8, "p5": 0.8, "ap5": 0.8875, "labels_top5": [1, 1, 0, 1, 1]}
+{"idx": 37, "prompt": "Implement the following plan:\n\n# Omni Vault \u2014 Obsidian-Style Knowledge Base for the Orchestrator\r\n\r\n## Context\r\n\r\nThe Om", "n_bullets": 9, "p5": 0.6, "ap5": 0.9166666666666666, "labels_top5": [1, 1, 0, 1, 0]}
+{"idx": 38, "prompt": "do you have access to the currently opened sessions on the wezterminal ?", "n_bullets": 13, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 39, "prompt": "[Request interrupted by user for tool use]", "n_bullets": 12, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 40, "prompt": "<task-notification>\n<task-id>brlf0a1yw</task-id>\n<tool-use-id>toolu_01XcjL7CsMVyGBm8yaserU2K</tool-use-id>\n<output-file>", "n_bullets": 9, "p5": 0.6, "ap5": 0.8666666666666667, "labels_top5": [1, 1, 0, 0, 1]}
+{"idx": 41, "prompt": "do it yes, you have to do the push too right ?", "n_bullets": 8, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 42, "prompt": "yes ok. i just saw this new, read the transcfipt, irs a hidden new claide code feature maybe we can take advantage of it", "n_bullets": 10, "p5": 0.2, "ap5": 0.25, "labels_top5": [0, 0, 0, 1, 0]}
+{"idx": 43, "prompt": "transcript C:\\Users\\pauol\\new 1.txt", "n_bullets": 10, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 44, "prompt": "yes lets do it. and who would steward that after x time? wenmudt consider everything evem edge cases bullt points", "n_bullets": 9, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 45, "prompt": "yes but watching the vkdeo i also noticed something. do memories have timedates and references to files that the dream i", "n_bullets": 8, "p5": 0.2, "ap5": 1.0, "labels_top5": [1, 0, 0, 0, 0]}
+{"idx": 46, "prompt": "i dont get who does the cleaning steward curating this files, whsg am i missing", "n_bullets": 10, "p5": 0.2, "ap5": 0.5, "labels_top5": [0, 1, 0, 0, 0]}
+{"idx": 47, "prompt": "if you say its the right approach", "n_bullets": 8, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 48, "prompt": "ive actually restarted the session, i wnat you to merge to main, how do we do to have the opensource relase branch witho", "n_bullets": 13, "p5": 0.6, "ap5": 0.8055555555555555, "labels_top5": [1, 0, 1, 1, 0]}
+{"idx": 49, "prompt": "deberiamos mejorar el readme agregando TODAS las mejoras que hicimos, sobre todo esta ultima de claude dreams que todavi", "n_bullets": 10, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 50, "prompt": "espa\u00f1ol ahora; veo que codex tien econfigurado el memorymaster pero era el viejo, hay que cambiarle algo o ya anda asi n", "n_bullets": 9, "p5": 0.6, "ap5": 0.9166666666666666, "labels_top5": [1, 1, 0, 1, 0]}
+{"idx": 51, "prompt": "no teniamos un dashboard tambien? donde esta ?", "n_bullets": 14, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 52, "prompt": "lo levante pero dice {\"ok\": false, \"error\": \"Internal server error: DashboardRequestHandler._write_dashboard() takes 1 p", "n_bullets": 9, "p5": 0.2, "ap5": 1.0, "labels_top5": [1, 0, 0, 0, 0]}
+{"idx": 53, "prompt": "abrilo vos, ya esta cargado, no veo ninguna data, esta bien que aprezca asi ?", "n_bullets": 9, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 54, "prompt": "no entiendo... no tenemos base de datos? como funciona memorymaster entonces ?", "n_bullets": 9, "p5": 0.2, "ap5": 1.0, "labels_top5": [1, 0, 0, 0, 0]}
+{"idx": 55, "prompt": "yo no corri nada la concah de tu madre vos me diste el comando", "n_bullets": 2, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0]}
+{"idx": 56, "prompt": "yo sigo viendo todo empty, correlo vos y revisa la pagina", "n_bullets": 8, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 57, "prompt": "<task-notification>\n<task-id>bcxvs8a0r</task-id>\n<tool-use-id>toolu_019ewfdYqtMWhXkzhid8NNSi</tool-use-id>\n<output-file>", "n_bullets": 9, "p5": 0.6, "ap5": 0.7555555555555555, "labels_top5": [1, 0, 1, 0, 1]}
+{"idx": 58, "prompt": "abrilo vos con playwright y probalo vos, yo no lo tengo corriendo , correlo y probal ovos", "n_bullets": 9, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 59, "prompt": "<task-notification>\n<task-id>b81vuxuci</task-id>\n<tool-use-id>toolu_01AmjnPwu5MmAgYkXQkmCobb</tool-use-id>\n<output-file>", "n_bullets": 9, "p5": 0.6, "ap5": 0.9166666666666666, "labels_top5": [1, 1, 0, 1, 0]}
+{"idx": 60, "prompt": "y si claramente que si, todo tenemos que especififar en el readme", "n_bullets": 3, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0]}
+{"idx": 61, "prompt": "create a new release version !", "n_bullets": 14, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 62, "prompt": "podes evaluar como viene funcionando todo? Estamos usando esto en todas las sesiones, pero tampoco veo que se hookee nad", "n_bullets": 5, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 63, "prompt": "y si, claramente no esta funcoinando, tuvimos 3 dias HYPER ACTIVOS y nadie seedea nada, ni siquiera otacon de openclaw ?", "n_bullets": 8, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 64, "prompt": "what happened", "n_bullets": 8, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 65, "prompt": "wtf pasa porque dejas de trabajar ???", "n_bullets": 2, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0]}
+{"idx": 66, "prompt": "fijate si vos generaste estos errores que ahora slaen cuando iniciamos claude \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500", "n_bullets": 13, "p5": 0.8, "ap5": 0.95, "labels_top5": [1, 1, 1, 0, 1]}
+{"idx": 67, "prompt": "\u25cf Ran 2 stop hooks (ctrl+o to expand)\n  \u23bf \u00a0Stop hook error: Failed with non-blocking status code: node:internal/modules/", "n_bullets": 10, "p5": 0.4, "ap5": 0.41666666666666663, "labels_top5": [0, 0, 1, 1, 0]}
+{"idx": 68, "prompt": "<task-notification>\n<task-id>brbg2v5bs</task-id>\n<tool-use-id>toolu_01JUeCthpZJaJAz6iPFkNctT</tool-use-id>\n<output-file>", "n_bullets": 9, "p5": 0.6, "ap5": 0.9166666666666666, "labels_top5": [1, 1, 0, 1, 0]}
+{"idx": 69, "prompt": "ahora me preocupa lo anterior, que no se seedeaba nada por los hooks, y como hace codex que tambien tiene el mcp configu", "n_bullets": 10, "p5": 0.2, "ap5": 0.5, "labels_top5": [0, 1, 0, 0, 0]}
+{"idx": 70, "prompt": "no pero entonces algo hiciste, no esta ni configurado aca el mcp .... y antes estaba, lo mismo en codex y en codex lo ve", "n_bullets": 8, "p5": 0.4, "ap5": 1.0, "labels_top5": [1, 1, 0, 0, 0]}
+{"idx": 71, "prompt": "<task-notification>\n<task-id>b0stpkaln</task-id>\n<tool-use-id>toolu_01F8nyep5bMiRNQiQ5fVLks7</tool-use-id>\n<output-file>", "n_bullets": 9, "p5": 0.6, "ap5": 0.8666666666666667, "labels_top5": [1, 1, 0, 0, 1]}
+{"idx": 72, "prompt": "<task-notification>\n<task-id>bfv52hxba</task-id>\n<tool-use-id>toolu_011HvBPEAWMJ1j8LXjsPydE6</tool-use-id>\n<output-file>", "n_bullets": 9, "p5": 0.6, "ap5": 0.8666666666666667, "labels_top5": [1, 1, 0, 0, 1]}
+{"idx": 73, "prompt": "si, fijate tambien de ponerselo al agents.md global de codex si es necesario, porque si no nadie va a seedear nada.... n", "n_bullets": 8, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 74, "prompt": "si habia sesiones de codex abiertas hay que reiniciarlas para que tomen los cambios? lo mismo con las de claude que habi", "n_bullets": 8, "p5": 0.4, "ap5": 1.0, "labels_top5": [1, 1, 0, 0, 0]}
+{"idx": 75, "prompt": "ahi te reinicie aca, proba a ver", "n_bullets": 5, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 76, "prompt": "que paso con el dream-sync? es una feature nueva de claude que la necesitamos si o si integrar, es groundbreaking segun ", "n_bullets": 8, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 77, "prompt": "commit con big message y push ?", "n_bullets": 10, "p5": 0.4, "ap5": 1.0, "labels_top5": [1, 1, 0, 0, 0]}
+{"idx": 78, "prompt": "<local-command-stdout>Run /reload-plugins to apply plugin changes.</local-command-stdout>", "n_bullets": 9, "p5": 0.2, "ap5": 1.0, "labels_top5": [1, 0, 0, 0, 0]}
+{"idx": 79, "prompt": "queres evaluar si alguien esta escribiendo memorias? porqeu no veo que el mcp salte NUNCA JAMAS en ninguna sesion de cla", "n_bullets": 8, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 80, "prompt": "y pero depende de claude.. no podemos forzarlo de alguna forma con algun stop hook? o es matarlo y llenarlo de memorias?", "n_bullets": 11, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 81, "prompt": "explicame antes como funcionaria no hagas por hacer, fue una idea", "n_bullets": 8, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 82, "prompt": "si te digo, corre dreams (todavia no es un comando pero ya tenes acceso) sabes que hacer?", "n_bullets": 10, "p5": 0.2, "ap5": 1.0, "labels_top5": [1, 0, 0, 0, 0]}
+{"idx": 83, "prompt": "pero si ya sabes que hace el dreams, porque manualmente, de fondo tenes acceso a la herramienta real, la opdes correr ah", "n_bullets": 8, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 84, "prompt": "[Request interrupted by user]", "n_bullets": 12, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 85, "prompt": "Unknown skill: dream", "n_bullets": 8, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 86, "prompt": "noe xiste todavia el comando, solo lo hacen pidiendote hace el dream", "n_bullets": 10, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 87, "prompt": "espa\u00f1ol ahora: que hiciste con ese stop hook? el stop hook va a correr cada fin de respuesta tuya, no se si es lo mas co", "n_bullets": 9, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 88, "prompt": "pero el punto 1 es una pelotudes gignate lo que me decis \"corre al cerrar sesion\" a doned cerramos sesion, de que mierda", "n_bullets": 12, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 89, "prompt": "no, tampoco, estas inventando, no sabes ni como funcionan los hooks, lee primero hooks en la doc de claude o en context7", "n_bullets": 10, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 90, "prompt": "no qures investigar toda la documentacion de claude code para ver que podemos mejorar ?", "n_bullets": 9, "p5": 0.4, "ap5": 0.5833333333333333, "labels_top5": [0, 1, 1, 0, 0]}
+{"idx": 91, "prompt": "https://medium.com/@Micheal-Lanham/the-markdown-file-that-beat-a-50m-vector-database-38e1f5113cbe podes leer esto mientr", "n_bullets": 10, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 92, "prompt": "a mi me preguntas que implicacion tiene? no se, yo lo veo obvio, mas info para saber como manejan los mainstream la memo", "n_bullets": 10, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 93, "prompt": "explicame como funciona eso e2e", "n_bullets": 6, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 94, "prompt": "pero no es un delirio de consumo de tokens si es cada vez que frena ? y si es el que acabas de hcaer, tambien falla \u25cf Ra", "n_bullets": 11, "p5": 0.4, "ap5": 0.41666666666666663, "labels_top5": [0, 0, 1, 1, 0]}
+{"idx": 95, "prompt": "se puede usae un scrkpt o algl que use haiku para que sea mas rapido y menos codtoso?", "n_bullets": 8, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 96, "prompt": "no, usamos oauth aca... no podes hacerlo a traves de la misma interfaz de claude code? ??", "n_bullets": 12, "p5": 0.2, "ap5": 1.0, "labels_top5": [1, 0, 0, 0, 0]}
+{"idx": 97, "prompt": "no puede depender de un transcript_path ... no se, hace research sobre como podemos mejorar esto, usa context7 si encont", "n_bullets": 9, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 98, "prompt": "el tema del de userpromptsubmit no entiendo como funciona, todas las prompt injecta algo en el contexto? y el steward a ", "n_bullets": 10, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
+{"idx": 99, "prompt": "y el steward lo deberia hacer alguien autoamticamente si, no era cada 6 horas que lo ibamos a hacer?", "n_bullets": 7, "p5": 0.0, "ap5": 0.0, "labels_top5": [0, 0, 0, 0, 0]}
