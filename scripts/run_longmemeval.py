@@ -25,6 +25,13 @@ Usage
     python scripts/run_longmemeval.py --limit 100 --configs A,B,C,D
     python scripts/run_longmemeval.py --worker --config A --limit 100  # internal
 
+    # Per-question DB isolation (roadmap 11.4). Eliminates cross-question
+    # contamination; on the 500-Q oracle this lifts hit@5 from 0.430 to the
+    # range measured in artifacts/longmemeval-per-q-2026-04-24.md.
+    python scripts/run_longmemeval.py --isolate-per-q --limit 0 \
+        --config-label isolated \
+        --output-dir artifacts/longmemeval-per-q
+
 Outputs
 -------
 - artifacts/longmemeval/results-<config>.jsonl — per-question records
@@ -38,14 +45,18 @@ Read-only against the live ``memorymaster.db``. All seeding goes to a fresh
 from __future__ import annotations
 
 import argparse
+import gc
 import io
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
@@ -554,6 +565,46 @@ def score_question(ranked_sids: list[str], golden_sids: Iterable[str]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Per-question DB isolation (roadmap 11.4)
+# ---------------------------------------------------------------------------
+
+def _per_q_root(*, keep_dbs: bool) -> Path:
+    """Return root dir for per-question ephemeral bench DBs.
+
+    When ``keep_dbs`` is True, persist under ``artifacts/longmemeval-per-q/``
+    for debugging. Otherwise scope to a UUID-namespaced temp dir under the
+    OS tmp root (e.g. ``%TEMP%/memorymaster-longmemeval/<uuid>``) so parallel
+    workers can't collide and nothing ever leaks into the repo tree.
+    """
+    if keep_dbs:
+        root = REPO / "artifacts" / "longmemeval-per-q"
+    else:
+        base = Path(tempfile.gettempdir()) / "memorymaster-longmemeval"
+        root = base / uuid.uuid4().hex
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _per_q_db_path(root: Path, qid: str) -> str:
+    """Return the sqlite path for a single question's ephemeral bench DB."""
+    # Sanitise qid for filesystem: LongMemEval IDs look like
+    # ``multi_session_synthesis_1_0`` — already safe — but be defensive.
+    safe = "".join(ch if (ch.isalnum() or ch in "-_.") else "_" for ch in qid)
+    return str(root / f"{safe}.db")
+
+
+def _cleanup_per_q_db(db_path: str) -> None:
+    """Delete a per-question bench DB and its WAL/SHM sidecars."""
+    for suffix in ("", "-wal", "-shm"):
+        p = Path(db_path + suffix)
+        if p.exists():
+            try:
+                p.unlink()
+            except OSError as exc:
+                logger.debug("failed to unlink %s: %s", p, exc)
+
+
+# ---------------------------------------------------------------------------
 # Worker — single-config run, invoked in a subprocess
 # ---------------------------------------------------------------------------
 
@@ -588,12 +639,26 @@ def run_worker(config_key: str, limit: int) -> None:
         seed_verbatim = os.environ.get("MEMORYMASTER_RECALL_VERBATIM") == "1"
 
     ART_DIR.mkdir(parents=True, exist_ok=True)
-    db_path = str(ART_DIR / f"bench-{config_key}.db")
-    # Wipe any prior bench DB (and WAL/SHM sidecars) — we seed fresh.
-    for suffix in ("", "-wal", "-shm"):
-        p = Path(db_path + suffix)
-        if p.exists():
-            p.unlink()
+
+    # Per-Q isolation knobs (roadmap 11.4). When enabled, each question gets
+    # its own fresh SQLite file — scoring no longer sees other questions'
+    # claims during FTS5 candidate generation, BM25 re-ranking, or entity
+    # fanout. Baseline behaviour (shared bench DB) is preserved when the env
+    # var is unset so the legacy A/B/C/D sweep stays bit-identical.
+    isolate_per_q = os.environ.get("MEMORYMASTER_LONGMEMEVAL_ISOLATE_PER_Q") == "1"
+    keep_dbs = os.environ.get("MEMORYMASTER_LONGMEMEVAL_KEEP_DBS") == "1"
+    per_q_root: Path | None = None
+    shared_db_path: str | None = None
+
+    if isolate_per_q:
+        per_q_root = _per_q_root(keep_dbs=keep_dbs)
+    else:
+        shared_db_path = str(ART_DIR / f"bench-{config_key}.db")
+        # Wipe any prior bench DB (and WAL/SHM sidecars) — we seed fresh.
+        for suffix in ("", "-wal", "-shm"):
+            p = Path(shared_db_path + suffix)
+            if p.exists():
+                p.unlink()
 
     # Block the qdrant fallback from contacting an external service by
     # clearing QDRANT_URL in the worker env. MEMORYMASTER_RECALL_VECTOR_FALLBACK
@@ -602,8 +667,9 @@ def run_worker(config_key: str, limit: int) -> None:
 
     from memorymaster.service import MemoryService
 
-    svc = MemoryService(db_target=db_path, workspace_root=REPO)
-    svc.init_db()
+    if not isolate_per_q:
+        svc_shared = MemoryService(db_target=shared_db_path, workspace_root=REPO)
+        svc_shared.init_db()
 
     questions = load_questions(limit=limit)
     out_path = ART_DIR / f"results-{config_key}.jsonl"
@@ -619,9 +685,23 @@ def run_worker(config_key: str, limit: int) -> None:
     with out_path.open("w", encoding="utf-8") as fh:
         for q in questions:
             qid = q["question_id"]
-            # Each question gets its own scope namespace so FTS5 indices
-            # don't cross-contaminate; but we keep all questions in the SAME
-            # bench.db (seeding 500 fresh DBs would 10x runtime).
+
+            if isolate_per_q:
+                assert per_q_root is not None  # narrowing for type-checkers
+                db_path = _per_q_db_path(per_q_root, qid)
+                # Defensive: if a stale file exists (rerun with --keep), wipe
+                # before seeding so we never measure with yesterday's claims.
+                _cleanup_per_q_db(db_path)
+                svc = MemoryService(db_target=db_path, workspace_root=REPO)
+                svc.init_db()
+            else:
+                db_path = shared_db_path  # type: ignore[assignment]
+                svc = svc_shared
+
+            # Scope prefix keeps the back-strip logic working whether we're
+            # in shared or isolated mode. In isolated mode, cross-question
+            # leaks are impossible at the SQLite layer, but the prefix is
+            # still required for the scoring strip and synthetic verbatim rows.
             seed_stats = seed_question(
                 svc,
                 q,
@@ -670,7 +750,28 @@ def run_worker(config_key: str, limit: int) -> None:
             mrr_sum += scores["mrr"]
             latency_total += result.latency_ms
 
+            # Per-Q cleanup (skip when --keep-bench-dbs was requested).
+            if isolate_per_q:
+                # Drop the local service reference and force GC so any lingering
+                # sqlite connections from MemoryService/SQLiteStore are finalised
+                # before we try to unlink the file (Windows + WAL is stricter
+                # than POSIX here — an open handle blocks ``.db`` removal).
+                del svc
+                gc.collect()
+                if not keep_dbs:
+                    _cleanup_per_q_db(db_path)
+
     dt_run = time.perf_counter() - t_run
+
+    # After the whole sweep, remove the UUID-namespaced temp root so we don't
+    # leak hundreds of empty directories into %TEMP%. In keep mode we leave
+    # everything under ``artifacts/longmemeval-per-q/`` untouched so the
+    # caller can diff individual DBs.
+    if isolate_per_q and not keep_dbs and per_q_root is not None:
+        try:
+            shutil.rmtree(per_q_root, ignore_errors=True)
+        except OSError as exc:
+            logger.debug("failed to remove per-q root %s: %s", per_q_root, exc)
     summary = {
         "config": config_key,
         "description": cfg["description"],
@@ -681,6 +782,8 @@ def run_worker(config_key: str, limit: int) -> None:
         "mean_latency_ms": round(latency_total / n, 2) if n else 0.0,
         "total_runtime_s": round(dt_run, 1),
         "env_applied": cfg["env"],
+        "isolate_per_q": isolate_per_q,
+        "keep_bench_dbs": keep_dbs if isolate_per_q else False,
     }
     sum_path = ART_DIR / f"summary-{config_key}.json"
     sum_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -697,6 +800,8 @@ def run_config_subprocess(
     *,
     output_dir: Path | None = None,
     inherit_env: bool = False,
+    isolate_per_q: bool = False,
+    keep_bench_dbs: bool = False,
 ) -> dict:
     """Run one config in a clean subprocess with its env vars applied.
 
@@ -709,6 +814,13 @@ def run_config_subprocess(
             env untouched (used by ``--config-label`` mode where the caller
             explicitly sets the knobs). When False (default, legacy multi-
             config sweep), scrub the recall env and apply ``CONFIGS`` entry.
+        isolate_per_q: when True, seed a fresh bench DB per question so FTS5
+            candidate generation and BM25 re-ranking only see that question's
+            own claims (roadmap 11.4). Propagated via
+            ``MEMORYMASTER_LONGMEMEVAL_ISOLATE_PER_Q=1``.
+        keep_bench_dbs: when True (with ``isolate_per_q``), preserve each
+            per-question DB under ``artifacts/longmemeval-per-q/<qid>.db``
+            instead of cleaning up. Debugging aid.
     """
     if config_key in CONFIGS:
         cfg = CONFIGS[config_key]
@@ -728,6 +840,14 @@ def run_config_subprocess(
     env["PYTHONPATH"] = str(REPO) + os.pathsep + env.get("PYTHONPATH", "")
     if output_dir is not None:
         env["MEMORYMASTER_LONGMEMEVAL_OUTPUT_DIR"] = str(output_dir.resolve())
+    if isolate_per_q:
+        env["MEMORYMASTER_LONGMEMEVAL_ISOLATE_PER_Q"] = "1"
+    else:
+        env.pop("MEMORYMASTER_LONGMEMEVAL_ISOLATE_PER_Q", None)
+    if keep_bench_dbs:
+        env["MEMORYMASTER_LONGMEMEVAL_KEEP_DBS"] = "1"
+    else:
+        env.pop("MEMORYMASTER_LONGMEMEVAL_KEEP_DBS", None)
 
     print(f"[longmemeval] running config {config_key}: {cfg['description']}", flush=True)
     t0 = time.perf_counter()
@@ -789,6 +909,23 @@ def main() -> int:
         default="",
         help="Override artifact directory (default artifacts/longmemeval).",
     )
+    parser.add_argument(
+        "--isolate-per-q",
+        action="store_true",
+        help="Seed a fresh ephemeral bench DB for each question so FTS5 "
+             "candidate generation and BM25 re-ranking only see that "
+             "question's own claims. Eliminates cross-question contamination "
+             "on the LongMemEval harness (roadmap 11.4). Opt-in; default "
+             "preserves legacy shared-DB behaviour.",
+    )
+    parser.add_argument(
+        "--keep-bench-dbs",
+        action="store_true",
+        help="With --isolate-per-q, persist each per-question DB under "
+             "artifacts/longmemeval-per-q/<qid>.db for debugging. Default "
+             "places them in a UUID-namespaced temp dir and deletes after "
+             "scoring.",
+    )
     parser.add_argument("--worker", action="store_true",
                         help="Internal: run a single config end-to-end.")
     parser.add_argument("--config", type=str, default="",
@@ -818,6 +955,8 @@ def main() -> int:
             limit,
             output_dir=output_dir,
             inherit_env=True,
+            isolate_per_q=args.isolate_per_q,
+            keep_bench_dbs=args.keep_bench_dbs,
         )
         roll_up_path = ART_DIR / f"summary-{args.config_label}.json"
         if "error" not in summary:
@@ -836,7 +975,13 @@ def main() -> int:
 
     all_summaries: list[dict] = []
     for c in configs:
-        summary = run_config_subprocess(c, limit, output_dir=output_dir)
+        summary = run_config_subprocess(
+            c,
+            limit,
+            output_dir=output_dir,
+            isolate_per_q=args.isolate_per_q,
+            keep_bench_dbs=args.keep_bench_dbs,
+        )
         all_summaries.append(summary)
 
     roll_up_path = ART_DIR / "summary.json"
