@@ -298,6 +298,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     wiki_backfill.add_argument("--output", default="obsidian-vault", help="Wiki directory to scan")
 
+    wiki_freshness = sub.add_parser(
+        "wiki-freshness",
+        help="Report per-article freshness (Option A — absorb recency)",
+    )
+    wiki_freshness.add_argument("--vault", default="obsidian-vault/wiki", help="Wiki root (defaults to obsidian-vault/wiki)")
+    wiki_freshness.add_argument("--below", type=float, default=None, help="Only show articles with freshness_score below this threshold (0-1)")
+    wiki_freshness.add_argument("--threshold-days", type=int, default=None, help="Only show articles older than N days since last absorb (alias for --below)")
+
     mine_cmd = sub.add_parser("mine-transcript", help="Parse Claude Code transcripts into claims")
     mine_cmd.add_argument("--input", required=True, help="JSONL transcript file or directory")
     mine_cmd.add_argument("--scope", default="project", help="Scope for ingested claims")
@@ -407,7 +415,7 @@ def main(argv: list[str] | None = None) -> int:
     effective_db = _resolve_db_path(args)
 
     # Commands that don't need MemoryService run first; service is lazy-created once for all others.
-    _NO_SERVICE_COMMANDS = {"stealth-status", "export-metrics"}
+    _NO_SERVICE_COMMANDS = {"stealth-status", "export-metrics", "wiki-freshness"}
 
     try:
         handler = COMMAND_HANDLERS.get(args.command)

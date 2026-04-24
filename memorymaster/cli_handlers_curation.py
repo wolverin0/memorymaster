@@ -107,6 +107,16 @@ def _handle_lint_vault(args: argparse.Namespace, service, parser: argparse.Argum
             print(f"\n  Stale claims ({len(report['stale'])}):")
             for s in report["stale"][:10]:
                 print(f"    #{s['id']} ({s['age_days']}d old, conf={s['confidence']:.2f}) {s['text'][:50]}")
+        stale_articles = report.get("stale_articles") or []
+        if stale_articles:
+            print(f"\n  Stale articles ({len(stale_articles)}):")
+            for a in stale_articles[:10]:
+                scope = a.get("scope") or ""
+                title = a.get("title") or ""
+                print(
+                    f"    [{scope}] {title} — {a['days_since_absorb']:.0f}d "
+                    f"(freshness={a['freshness_score']:.2f})"
+                )
     return 0
 
 
@@ -214,6 +224,65 @@ def _handle_bases_generate(args: argparse.Namespace, service, parser: argparse.A
         print(f"Bases: {result['written']} written to {result['path']} ({elapsed_ms:.0f}ms)")
         for f in result["files"]:
             print(f"  - {f}")
+    return 0
+
+
+def _handle_wiki_freshness(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    """Print per-article freshness scores (Option A — absorb recency).
+
+    Service is unused; the metric is a pure filesystem read over the vault.
+    """
+    from memorymaster.wiki_freshness import (
+        as_jsonable,
+        bucket_distribution,
+        scan_vault,
+    )
+
+    vault_root = Path(args.vault)
+    t0 = time.perf_counter()
+    snapshots = scan_vault(vault_root)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    # Optional filters.
+    threshold_score: float | None = None
+    if args.below is not None:
+        threshold_score = float(args.below)
+    if args.threshold_days is not None:
+        import math as _math
+        # Convert the day threshold into the equivalent score cut-off using the
+        # same decay curve as wiki_freshness.FRESHNESS_SCALE_DAYS.
+        equivalent = _math.exp(-float(args.threshold_days) / 30.0)
+        threshold_score = equivalent if threshold_score is None else min(threshold_score, equivalent)
+
+    filtered = snapshots
+    if threshold_score is not None:
+        filtered = [s for s in snapshots if s.freshness_score < threshold_score]
+
+    dist = bucket_distribution(snapshots)
+
+    if args.json_output:
+        payload = {
+            "vault": str(vault_root),
+            "total_articles": len(snapshots),
+            "distribution": dist,
+            "threshold_score": threshold_score,
+            "articles": as_jsonable(filtered),
+        }
+        print(_json_envelope(payload, total=len(filtered), query_ms=elapsed_ms))
+        return 0
+
+    print(f"wiki-freshness: {len(snapshots)} articles scanned in {elapsed_ms:.0f}ms")
+    print(f"  fresh (>=0.5): {dist['fresh']}  mid (0.2-0.5): {dist['mid']}  stale (<0.2): {dist['stale']}")
+    if threshold_score is not None:
+        print(f"  filter: freshness_score < {threshold_score:.3f}  -> {len(filtered)} matching")
+    if not filtered:
+        return 0
+    print()
+    print(f"  {'score':>6}  {'days':>6}  {'scope':<28} {'title'}")
+    for snap in filtered:
+        title = snap.title[:50]
+        scope = (snap.scope or "")[:28]
+        print(f"  {snap.freshness_score:>6.3f}  {snap.days_since_absorb:>6.1f}  {scope:<28} {title}")
     return 0
 
 
@@ -599,6 +668,7 @@ COMMAND_HANDLERS: dict[str, object] = {
     "wiki-cleanup": _handle_wiki_cleanup,
     "wiki-breakdown": _handle_wiki_breakdown,
     "wiki-backfill-bindings": _handle_wiki_backfill_bindings,
+    "wiki-freshness": _handle_wiki_freshness,
     "bases-generate": _handle_bases_generate,
     "mine-transcript": _handle_mine_transcript,
     "verify-claims": _handle_verify_claims,

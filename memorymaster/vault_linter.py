@@ -13,9 +13,15 @@ import logging
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Default vault root for STALE_ARTICLE detection. Callers can override via
+# `lint_vault(wiki_root=...)` — the check is skipped silently if the path does
+# not exist, so this stays inert on setups without a wiki.
+_DEFAULT_WIKI_ROOT = Path("obsidian-vault/wiki")
 
 
 def _load_claims(db_path: str, scope_filter: str | None = None) -> list[dict]:
@@ -145,6 +151,51 @@ def _detect_stale(claims: list[dict], max_age_days: int = 30) -> list[dict]:
     return sorted(stale, key=lambda x: -x["age_days"])[:30]
 
 
+def _detect_stale_articles(
+    wiki_root: Path | str,
+    *,
+    threshold: float | None = None,
+) -> list[dict]:
+    """Flag wiki articles whose absorb-recency freshness is below ``threshold``.
+
+    Implements roadmap item 11.8 (Option A) at the lint layer. Delegates the
+    actual scoring to :mod:`memorymaster.wiki_freshness` and wraps each stale
+    article in a structured warning row. Warning only — never blocks lint.
+    """
+    try:
+        from memorymaster.wiki_freshness import (
+            STALE_ARTICLE_THRESHOLD,
+            scan_vault,
+        )
+    except ImportError:  # pragma: no cover — defensive, same package
+        return []
+
+    cutoff = STALE_ARTICLE_THRESHOLD if threshold is None else float(threshold)
+    root = Path(wiki_root)
+    if not root.exists():
+        return []
+
+    stale_articles: list[dict] = []
+    for snap in scan_vault(root):
+        if snap.freshness_score >= cutoff:
+            continue
+        stale_articles.append(
+            {
+                "type": "stale_article",
+                "path": str(snap.path),
+                "title": snap.title,
+                "scope": snap.scope,
+                "days_since_absorb": round(snap.days_since_absorb, 2),
+                "freshness_score": round(snap.freshness_score, 4),
+                "reason": (
+                    f"not absorbed in {snap.days_since_absorb:.0f}d "
+                    f"(freshness={snap.freshness_score:.2f} < {cutoff:.2f})"
+                ),
+            }
+        )
+    return stale_articles
+
+
 def _llm_verify_contradictions(contradictions: list[dict]) -> list[dict]:
     """Use LLM to verify if detected contradictions are real or false positives."""
     if not contradictions:
@@ -190,14 +241,28 @@ def lint_vault(
     scope_filter: str | None = None,
     verify_with_llm: bool = True,
     max_stale_days: int = 30,
+    wiki_root: Path | str | None = None,
 ) -> dict[str, Any]:
     """Run lint checks on the knowledge base.
 
-    Returns a report with contradictions, orphans, gaps, and stale claims.
+    Returns a report with contradictions, orphans, gaps, stale claims, and
+    stale wiki articles (Option A absorb-recency).
     """
     claims = _load_claims(db_path, scope_filter)
+
+    resolved_wiki_root = Path(wiki_root) if wiki_root else _DEFAULT_WIKI_ROOT
+    stale_articles = _detect_stale_articles(resolved_wiki_root)
+
     if not claims:
-        return {"claims": 0, "issues": 0, "contradictions": [], "orphans": [], "gaps": [], "stale": []}
+        return {
+            "claims": 0,
+            "issues": len(stale_articles),
+            "contradictions": [],
+            "orphans": [],
+            "gaps": [],
+            "stale": [],
+            "stale_articles": stale_articles,
+        }
 
     contradictions = _detect_contradictions(claims)
     if verify_with_llm and contradictions:
@@ -209,7 +274,13 @@ def lint_vault(
     gaps = _detect_gaps(claims)
     stale = _detect_stale(claims, max_stale_days)
 
-    total_issues = len(contradictions) + len(orphans) + len(gaps) + len(stale)
+    total_issues = (
+        len(contradictions)
+        + len(orphans)
+        + len(gaps)
+        + len(stale)
+        + len(stale_articles)
+    )
 
     report = {
         "claims": len(claims),
@@ -218,7 +289,13 @@ def lint_vault(
         "orphans": orphans,
         "gaps": gaps,
         "stale": stale,
+        "stale_articles": stale_articles,
     }
 
-    logger.info("Lint: %d claims, %d issues found", len(claims), total_issues)
+    logger.info(
+        "Lint: %d claims, %d issues found (%d stale articles)",
+        len(claims),
+        total_issues,
+        len(stale_articles),
+    )
     return report
