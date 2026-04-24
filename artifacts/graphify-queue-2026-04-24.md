@@ -20,6 +20,35 @@ claude   # open a Claude Code session
 
 One dedicated session per project. Graphify emits `graphify-out/GRAPH_REPORT.md` + `graphify-out/graph.json`. Processing time scales with source-code size — small tools (~5 min), large apps (~30–45 min).
 
+## Measured sizes (MB, source code only; node_modules/.venv/dist/build excluded)
+
+From background `du -sm` run:
+
+| MB | Project |
+|---:|---|
+| 4326 | lcdc |
+| 3073 | app |
+| 2852 | pedrito |
+| 2534 | memoryking |
+| 2519 | personaldashboard |
+| 1626 | nereidas |
+| 1330 | impulsa |
+| 1322 | OCVSA |
+| 1142 | douglas-haig |
+| 1122 | argentina-sales-hub |
+| 862 | interonda |
+| 641 | goodmorning |
+| 512 | final-inpla |
+| 307 | metasdk |
+| 260 | fitflow-pro-connect2 |
+| 208 | newspage |
+| 179 | montecino |
+| 172 | venezia |
+| 145 | Eye2byte |
+| 95 | mutual |
+
+Projects >1GB likely still contain build/data artifacts that slipped past the exclude filter (caches, large JSON, screenshots). Before graphifying, do `du -sh <project>/*` to spot and `rm -rf` obvious artifact dirs — otherwise graphify will drown in noise.
+
 ## Candidate list (35 projects)
 
 Suggested priority tiers — sort within each by what you use most:
