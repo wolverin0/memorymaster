@@ -236,48 +236,48 @@ Claims saved (partial): 11775, 11776, 11777, 11811, 11812, 11813, 11821,
 
 Discovered during waves A–G. All AGENT-READY.
 
-### 11.1 · [ ] LLM provider fallback chain (Gemini → Ollama)
+### 11.1 · [x] LLM provider fallback chain (Gemini → Ollama)
 - **Risk:** low (pure add)
 - **Acceptance:** when primary provider returns 429 / empty, `call_llm` transparently retries on `MEMORYMASTER_LLM_FALLBACK_PROVIDER` (default `ollama`, model `gemma4:e4b`). Unit tests with mocked 429.
 - **Why:** today the rotator gives up silently on quota exhaustion (observed in 3.1 dry-run — `llm_calls: 0` with no visible error).
 - **Est:** ~0.5 day.
 
-### 11.2 · [ ] `.env.example` + README setup section
+### 11.2 · [x] `.env.example` + README setup section
 - **Risk:** trivial
 - **Acceptance:** `.env.example` in repo covering all `MEMORYMASTER_*` + provider keys + `OLLAMA_URL`. README has a "Setup for external users" block.
 - **Why:** today every env var is documented piecemeal in `docs/enabling-v2-systems.md` or CLAUDE.md; no single starter file.
 - **Est:** ~0.3 day.
 
-### 11.3 · [ ] Kuzu graph as 6th retrieval stream
+### 11.3 · [x] Kuzu graph as 6th retrieval stream
 - **Risk:** medium (new embedded DB dependency on Windows + Linux CI)
 - **Acceptance:** LongMemEval hit@5 ≥ 0.48 (baseline 0.430 linear, 0.440 RRF). Gated by `MEMORYMASTER_RECALL_GRAPH=1`, `W_GRAPH` weight in ranker.
 - **Why:** Cognee assessment (`artifacts/cognee-assessment-2026-04-24.md`) + claim 11898 — multi-hop queries are the remaining retrieval gap.
 - **Files:** new `memorymaster/graph_store.py`, `context_hook.py` integration, `scripts/backfill_entity_graph.py`.
 - **Est:** ~1 week.
 
-### 11.4 · [ ] LongMemEval per-question DB isolation
+### 11.4 · [x] LongMemEval per-question DB isolation
 - **Risk:** low (harness-only)
 - **Acceptance:** `--isolate-per-q` flag in `scripts/run_longmemeval.py`; hit@5 lift ≥ 0.1 (claim 11896 says contamination is the SOLE miss cause).
 - **Est:** ~0.5 day.
 
-### 11.5 · [ ] WikiCorpus multi-scope for classifier v3 chrono gap
+### 11.5 · [x] WikiCorpus multi-scope for classifier v3 chrono gap
 - **Risk:** low
 - **Acceptance:** classifier v3 chronological ROC-AUC from 0.5687 to ≥ 0.60 (stretch target from 2.1).
 - **Files:** `memorymaster/wiki_similarity.py::WikiCorpus` — aggregate all scopes, not just `project:memorymaster`.
 - **Est:** ~1 day.
 
-### 11.6 · [ ] RRF default-promotion heuristic gate
+### 11.6 · [x] RRF default-promotion heuristic gate
 - **Risk:** low (opt-in, defaults stay linear)
 - **Acceptance:** `MEMORYMASTER_RECALL_FUSION=auto` — picks RRF when ≥3 streams have ≥k non-zero rows (claim 11898 threshold). Unit tests per stream-count case.
 - **Est:** ~0.5 day.
 
-### 11.7 · [ ] Eval harness consolidation — invoke `recall()` directly
+### 11.7 · [x] Eval harness consolidation — invoke `recall()` directly
 - **Risk:** medium (changes default eval outputs)
 - **Acceptance:** `scripts/eval_recall_precision_at_5.py` replaces its inline `_score` + `_fetch_candidates` duplication with a call into `context_hook.recall()`. Baseline numbers re-published.
 - **Why:** claim 11897 — the shipped harness is blind to any change inside `_relevance()`; future ranker-internal work is invisible.
 - **Est:** ~1 day.
 
-### 11.8 · [ ] Wiki freshness metric (was 9.2)
+### 11.8 · [x] Wiki freshness metric (was 9.2)
 - **Status:** spec written (`artifacts/spec-wiki-freshness-metric-2026-04-24.md`). **Recommendation:** ship Option A (days-since-last-absorb) first, 0.5 day. Compose with other signals only if Option A proves insufficient.
 
 _End of roadmap._

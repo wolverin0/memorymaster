@@ -307,3 +307,66 @@ and calls `run_cycle(policy_limit=50)`. Rollback: revert the `os.environ.setdefa
 - Cadence policy revalidates up to 50 claims/cycle — this is the primary new LLM consumer. If Gemini billing becomes a concern, flip `MEMORYMASTER_POLICY_MODE=legacy` to revert.
 - Retrieval stack unchanged from end of §10 (5 streams, linear+RRF opt-in, BM25 per-field opt-in, scope-boost opt-in, query-expansion opt-in).
 - Disk: 6.9 GB freed.
+
+---
+
+## 12 · Wave §11 clearing run (2026-04-24 second-sleep window)
+
+User re-authorized "seguí, no pares, tenemos que terminar". Took every §11 AGENT-READY item through to green. **All 8 items shipped** (some as honest nulls with next-lever identified).
+
+### Commits landed
+
+| # | Commit | Result |
+|---|---|---|
+| 11.1 LLM fallback Gemini→Ollama | `7740763` | 8 tests. Quota-regex + `get_fallback_stats()`. Activated in hook. |
+| 11.2 `.env.example` + README | `9551bb5` | 57 env vars grouped. 43-line Setup section. Secret-scan clean. |
+| 11.4 LongMemEval per-Q iso | `b7fcf99` | **hit@5 0.430→0.998 (+0.568, 5.7× bar).** Invalidates shared-DB sweeps (claim 11936). |
+| 11.6 RRF auto-gate | `343f8b5` | `FUSION=auto` picks based on ≥3 populated streams. Default unchanged. 8 tests. |
+| 11.7 Harness consolidation | `31972ae` | Harness now invokes production `recall()` via `return_ids=True` kwarg. Claim 11884 does NOT reproduce — retraction + new baseline (claim 11937). |
+| 11.5 WikiCorpus multi-scope | `795c781` | Chrono AUC 0.5687→0.5778 (+0.009, strict PASS, stretch miss 0.022). 9171 cross-project claims now carry wiki signal. |
+| 11.8 Wiki freshness Option A | `702c904` | `wiki-freshness` CLI + lint STALE_ARTICLE check. Baseline: 275 articles, all fresh. |
+| 11.3 Kuzu graph stream | `49cbad6` | **Honest null** (p@5 lift 0.000). Kuzu 0.11.3 clean install, 21,216 edges from 2,885 claims, 14 tests. Root cause identified: boolean graph_score + L1 sparsity. |
+
+### Claims ingested
+
+- 11918 — cross-provider model bleed foot-gun (MEMORYMASTER_LLM_MODEL)
+- 11936 — LongMemEval per-Q iso + retroactive-invalidation of shared-DB sweeps
+- 11937 — Claim 11884 retraction + new harness baseline
+- 12045 — WikiCorpus multi-scope result + fixture-pinning process gotcha
+- 12056 — Kuzu graph stream honest null with 3 next-lever targets
+
+### Live config changes (outside repo)
+
+`~/.claude/hooks/memorymaster-steward-cycle.py` now sets at startup:
+```
+MEMORYMASTER_STEWARD_CLASSIFIER_ENABLED=1
+MEMORYMASTER_STEWARD_CLASSIFIER_PATH=<project>/artifacts/steward-classifier-v3.joblib
+MEMORYMASTER_POLICY_MODE=cadence
+MEMORYMASTER_LLM_FALLBACK_PROVIDER=ollama
+MEMORYMASTER_LLM_FALLBACK_MODEL=gemma4:e4b
+```
+and calls `run_cycle(policy_limit=50)`. Rollback: revert the `os.environ.setdefault` lines.
+
+### What's live NOW
+
+- v3 classifier (multi-scope wiki_similarity) on every steward cycle
+- Cadence policy mode capped at 50/cycle
+- Ollama fallback when Gemini 429 (gemma4:e4b locally, 18s cold / 2.7s warm)
+- RRF opt-in via `MEMORYMASTER_RECALL_FUSION=rrf` OR `auto` (auto=3+ populated streams)
+- Per-Q iso mandatory for any future LongMemEval ranker A/B — pass `--isolate-per-q`
+- Kuzu graph stream plumbing present but `W_GRAPH=0` (off) until the distance-weighted score lands
+
+### Remaining work (new roadmap candidates — not in §11)
+
+1. **Graph distance-weighting** — turn `graph_score ∈ {0,1}` into `1/(1+hops)` so the stream becomes discriminative. Necessary precondition for any measurable lift from the Kuzu stream. Est ~0.5 day.
+2. **Graph stream + L2 LLM entity densification** — run `--layer2` with the new Ollama fallback (free), re-backfill graph edges, re-measure. Est ~1 day total.
+3. **Time-decay sample-weighting in classifier training** — closes the remaining 0.022 chrono AUC gap vs the 0.60 stretch target without structural changes.
+4. **.env graph vars docs drift** — verify `.env.example` includes `MEMORYMASTER_RECALL_GRAPH*` env vars that 11.3 added.
+5. **Harness rewrite fallout audit** — per claim 11937, re-measure all "scale/lift" claims that used the old duplicated harness. Could turn up more retractions.
+
+### USER-INPUT reminders (unchanged from §11)
+
+- Real-LLM L2 entity backfill (~$1.19 Gemini paid OR free via new Ollama fallback)
+- Graphify Tier A (8 projects per queue)
+- Freshness metric shape decision — Option A shipped; compose with B/C/D is a product call
+- Cognee adoption — graph stream shipped as opt-in per recommendation; no need to revisit unless new use case emerges
