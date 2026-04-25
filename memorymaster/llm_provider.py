@@ -1,6 +1,7 @@
 """Multi-provider LLM client for MemoryMaster hooks and curators.
 
-Supports: google (Gemini), openai (GPT/o-series), anthropic (Claude), ollama (local).
+Supports: google (Gemini), openai (GPT/o-series), anthropic (Claude API),
+claude_cli (Claude Code OAuth via local `claude --print` binary), ollama (local).
 Provider is selected via MEMORYMASTER_LLM_PROVIDER env var (default: google).
 """
 from __future__ import annotations
@@ -9,6 +10,8 @@ import json
 import logging
 import os
 import re
+import shutil
+import subprocess
 import urllib.request
 import urllib.error
 from typing import Any
@@ -146,6 +149,54 @@ def _call_ollama(prompt: str, text: str) -> str:
     return _http_post(url, payload, _extract_ollama, timeout=60)
 
 
+def _call_claude_cli(prompt: str, text: str) -> str:
+    """Claude Code OAuth via local `claude --print` binary.
+
+    Uses the user's existing Claude Code subscription (no API key needed). The
+    `claude` CLI must be on PATH. OAuth credentials are managed by the CLI and
+    persist across sessions on desktop installs (VM tokens expire ~24h).
+
+    Cold start adds ~3-15s per call — acceptable for batched/cron use, not for
+    latency-sensitive recall paths. Set MEMORYMASTER_CLAUDE_CLI_BIN to override
+    binary location (default: 'claude' from PATH).
+    """
+    log = logging.getLogger(__name__)
+    bin_path = _env("MEMORYMASTER_CLAUDE_CLI_BIN", "") or shutil.which("claude")
+    if not bin_path:
+        log.warning("claude_cli: binary not found on PATH (set MEMORYMASTER_CLAUDE_CLI_BIN)")
+        return ""
+
+    model = _env("MEMORYMASTER_LLM_MODEL", "claude-haiku-4-5-20251001")
+    timeout_s = int(_env("MEMORYMASTER_CLAUDE_CLI_TIMEOUT", "120"))
+    full_prompt = f"{prompt}\n\n{text}"
+
+    try:
+        result = subprocess.run(
+            [bin_path, "--print", "--model", model],
+            input=full_prompt,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except subprocess.TimeoutExpired:
+        log.warning("claude_cli: timed out after %ds", timeout_s)
+        return ""
+    except OSError as exc:
+        log.warning("claude_cli: subprocess failed: %s", exc)
+        return ""
+
+    if result.returncode != 0:
+        log.warning(
+            "claude_cli: exit=%d stderr=%s",
+            result.returncode,
+            (result.stderr or "")[:200],
+        )
+        return ""
+    return (result.stdout or "").strip()
+
+
 # ---------------------------------------------------------------------------
 # Response extractors
 # ---------------------------------------------------------------------------
@@ -267,6 +318,8 @@ _PROVIDERS = {
     "openai": _call_openai,
     "anthropic": _call_anthropic,
     "claude": _call_anthropic,
+    "claude_cli": _call_claude_cli,
+    "claude-cli": _call_claude_cli,
     "ollama": _call_ollama,
 }
 
@@ -322,7 +375,7 @@ def call_llm(prompt: str, text: str) -> str:
     """Call configured LLM provider with optional fallback chain. Returns raw text.
 
     Configure via env vars:
-        MEMORYMASTER_LLM_PROVIDER           — google|openai|anthropic|ollama (default: google)
+        MEMORYMASTER_LLM_PROVIDER           — google|openai|anthropic|claude_cli|ollama (default: google)
         MEMORYMASTER_LLM_MODEL              — model override (default per provider)
         MEMORYMASTER_LLM_FALLBACK_PROVIDER  — (optional) provider to use if primary returns
                                               empty or a quota-exhausted error
