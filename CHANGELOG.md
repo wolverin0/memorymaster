@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-04-25
+
+### Added
+
+- **`claude_cli` LLM provider** (`memorymaster/llm_provider.py::_call_claude_cli`): shells out to the local `claude --print --model <name>` binary to use the user's Claude Code OAuth subscription instead of an API key. Registered as `claude_cli` and `claude-cli` in `_PROVIDERS`. Default model `claude-haiku-4-5-20251001`. Override the binary path with `MEMORYMASTER_CLAUDE_CLI_BIN` and the per-call timeout with `MEMORYMASTER_CLAUDE_CLI_TIMEOUT` (default 120s). Defensive: returns `""` on missing binary, timeout, or non-zero exit so the existing `call_llm()` fallback chain transparently routes to the configured backup provider (typically Ollama).
+- **Steward / wiki-absorb hook switched to `claude_cli`**: the deployed `~/.claude/hooks/memorymaster-steward-cycle.py` template now defaults primary LLM to `claude_cli` with Ollama `gemma4:e4b` as fallback. Eliminates the Gemini key rotator (six `~/.memorymaster/gemini-keys.env` keys + 429 dance) for periodic curator paths and removes the SQLite writer-lock contention that local Ollama runs introduced during long backfills.
+
+### Changed
+
+- Hook env wiring uses **direct assignment** (`os.environ["KEY"] = ...`) for `MEMORYMASTER_LLM_PROVIDER` and `MEMORYMASTER_LLM_MODEL` instead of `setdefault(...)`. Reason: `setdefault` is a no-op when the inherited shell env already has the var set, which silently leaves a stale provider routed (e.g. provider stays `google` while model gets swapped to a Claude-name → HTTP 404 from Gemini API for every call). Observed in prior cycle as 50 LLM calls 404'ing before the fallback to Ollama saved the run.
+- `llm_provider.py` module docstring updated to list the new provider.
+
+### Notes
+
+- **Use the new provider for batched/cron paths only.** Cold-start adds 3-15s per call (subprocess spawn + CLI startup). Fine for steward (50 claims/6h) and wiki-absorb; **NOT** suitable for latency-sensitive recall hooks.
+- **OAuth lifetime**: desktop installs of Claude Code do not expire their OAuth tokens. VM installs expire ~24h and require interactive `claude auth login` to refresh — pair with the Ollama fallback for unattended VM use.
+- **Cost / scale validation**: a one-shot L2 entity backfill across 11,711 claims (58 batches × 200, 3 parallel haiku subagents) consumed ~5.5M tokens (~1.5% of weekly Claude budget) and produced +8,229 entities (+49.5%) and +18,266 aliases (+50.3%) in ~30 min wall, with zero writer-lock incidents. The same approach applied to steward + wiki-absorb is well inside the user's existing subscription headroom.
+- File-based batch I/O pattern (write `in-batchNN.json`, spawn worker, read `out-batchNN.json`, apply via `resolve_or_create` + `add_alias`) is the recommended sidestep for any future bulk LLM job — it avoids the SQLite writer-lock that blocks the steward when a long-running cursor holds a transaction during LLM calls.
+
 ## [3.4.1] - 2026-04-16
 
 ### Fixed
