@@ -370,3 +370,47 @@ and calls `run_cycle(policy_limit=50)`. Rollback: revert the `os.environ.setdefa
 - Graphify Tier A (8 projects per queue)
 - Freshness metric shape decision — Option A shipped; compose with B/C/D is a product call
 - Cognee adoption — graph stream shipped as opt-in per recommendation; no need to revisit unless new use case emerges
+
+---
+
+## 13 · Wave §12 next-lever pass (2026-04-25)
+
+User said "terminemos los 7 pendientes sin limite". Took every actionable lever.
+
+### Commits landed
+
+| # | Commit | Result |
+|---|---|---|
+| 12.4 .env W_GRAPH | `5c47a68` | Drift fix from 11.3. |
+| 12.5 Ollama timeout+num_ctx | `a7cd094` | timeout 10s→60s, num_ctx 4k→8k. Unblocks Ollama-as-fallback for any long-prompt path. |
+| 12.2 harness fallout audit | `bbf3ca7` | 5 HOLDS / 4 RETRACTED / 1 AMBIGUOUS. Retraction claims 12110-12113. Top: 11856 BM25 +40%→+13% (still net positive). |
+| 12.1 graph distance-weight | `eaa8e8f` | `graph_score = 1/(1+hops)`. 26 tests. Honest null #2 — root cause: limit-fill (popular entity Alice fills the 50-claim cap with hop-0 before any hop-1/2 surfaces). |
+
+### Claims ingested
+
+- 12110, 12111, 12112, 12113 — retraction claims from 12.2 audit
+- 12114 — Ollama timeout 10s default bug
+- 12115 — claims_for_entities_with_distance limit-fill gotcha (per-hop quota needed)
+- 12116 — backfill writer-lock bug (holds SQLite txn during LLM HTTP call → blocks other writers)
+
+### Deferred (infra ready, USER decides when to run)
+
+**12.3 L2 LLM full backfill** (11,883 claims). Sanity 50-claim test ran successfully via Ollama with the timeout fix. Full run would take ~9 hours via Ollama OR ~$1.19 + 20 min via Gemini paid. Two blockers worth knowing:
+- **Writer-lock bug** (claim 12116): the script holds a SQLite write transaction during each LLM HTTP call. Means the entire run (hours) blocks any concurrent ingest_claim. Either run it overnight when no other activity is expected, OR fix the bug first (refactor: LLM call outside the transaction).
+- **Gemini quota churn**: even with fallback to Ollama wired, Gemini 6-key rotator burns through ~3000 calls before all keys cooldown. Either skip Gemini (`MEMORYMASTER_LLM_PROVIDER=ollama` direct) or accept the warm-up noise.
+
+CLI to resume:
+```bash
+MEMORYMASTER_ENTITY_LLM=1 MEMORYMASTER_LLM_PROVIDER=ollama \
+  MEMORYMASTER_LLM_MODEL=gemma4:e4b \
+  nohup python scripts/backfill_entity_extraction.py \
+    --db memorymaster.db --apply --layer2 \
+    --progress-every 100 --log-level INFO \
+    > artifacts/l2-backfill-full-overnight.log 2>&1 &
+```
+
+### Next-lever candidates opened during this wave
+
+1. **Per-hop quota in `claims_for_entities_with_distance`** (~0.5d) — would actually unlock the graph stream value. Currently `limit=50` fills entirely with hop-0 before any hop-1 surfaces.
+2. **Backfill writer-lock fix** (~0.5d) — refactor to commit per-batch instead of per-claim, with the LLM call OUTSIDE the txn. Unblocks parallel ingests during long runs.
+3. **L2 backfill full** — pending user trigger.
