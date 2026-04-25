@@ -496,7 +496,7 @@ def extract_patterns(text: str) -> list[Entity]:
 
 # Version identifier baked into the prompt. Bump this string when the prompt
 # changes so that downstream idempotency / caching keys invalidate cleanly.
-LLM_PROMPT_VERSION = "entity-l2-v1-2026-04-23"
+LLM_PROMPT_VERSION = "entity-l2-v2-2026-04-25"
 
 # Permitted entity kinds for Layer-2. Any `kind` returned by the LLM that is
 # not in this set is dropped to keep the registry schema predictable.
@@ -515,35 +515,20 @@ _LLM_ENV_FLAG = "MEMORYMASTER_ENTITY_LLM"
 _LLM_MAX_TEXT_CHARS = 4000  # Truncate long claims before sending to LLM.
 _LLM_MAX_ENTITIES = 8       # Hard cap to keep cost bounded per claim.
 
-_LLM_PROMPT = f"""You are an entity-extraction assistant for a memory database.
+_LLM_PROMPT = f"""Extract entities from the snippet that regex cannot catch.
 Prompt version: {LLM_PROMPT_VERSION}
 
-Given a short text snippet, return a JSON ARRAY of entities that a regex
-pattern-matcher cannot reliably catch. Only return entities of these kinds:
+Allowed kinds: person_name, spanish_surname, time_expression, model_name, library_name, concept.
+Skip: file paths, env-vars, hostnames, ports, commit SHAs, tool names.
+Max {_LLM_MAX_ENTITIES} entities. Output STRICT JSON ARRAY only — no prose, no code fence.
 
-  - person_name        (human given + family name, e.g. "Ada Lovelace")
-  - spanish_surname    (Spanish-language surname alone, e.g. "Colombero")
-  - time_expression    (natural-language time, e.g. "Thursday", "last week")
-  - model_name         (AI model names, e.g. "gpt-4o", "claude-3.5-sonnet")
-  - library_name       (SDKs/libs, e.g. "FastAPI", "Qdrant", "LangChain")
-  - concept            (abstract named concept, e.g. "bitemporal modeling")
+Schema (use EXACT field names):
+  [{{"kind": "...", "surface_form": "exact substring from text", "aliases": []}}]
 
-Return at most {_LLM_MAX_ENTITIES} entities. DO NOT return file paths,
-env-vars, hostnames, ports, commit SHAs, or tool names — those are handled
-by the regex layer.
+Example input: "Ada Lovelace y Charles Babbage usaron FastAPI y gpt-4o-mini."
+Example output: [{{"kind":"person_name","surface_form":"Ada Lovelace","aliases":[]}},{{"kind":"person_name","surface_form":"Charles Babbage","aliases":[]}},{{"kind":"library_name","surface_form":"FastAPI","aliases":[]}},{{"kind":"model_name","surface_form":"gpt-4o-mini","aliases":[]}}]
 
-Output format (strict JSON, no prose, no code fence):
-
-  [
-    {{"kind": "...", "surface_form": "...", "aliases": ["...", "..."]}}
-  ]
-
-Where:
-  - kind          one of the six kinds above
-  - surface_form  the exact substring you saw in the text
-  - aliases       0-3 alternative canonical forms (may be empty)
-
-If nothing fits, return [].
+If nothing fits, return: []
 """.strip()
 
 
@@ -648,7 +633,10 @@ def extract_llm(text: str, *, provider: str | None = None) -> list[Entity]:
     seen: set[tuple[str, str]] = set()
     for row in rows[:_LLM_MAX_ENTITIES]:
         kind = str(row.get("kind", "")).strip().lower().replace(" ", "_")
-        surface = str(row.get("surface_form", "")).strip()
+        # Accept both "surface_form" (standard) and "entity" (Gemma variant)
+        surface = (
+            str(row.get("surface_form") or row.get("entity") or row.get("text") or "").strip()
+        )
         if kind not in LLM_KINDS or not surface:
             continue
         canonical = _canonical_llm(kind, surface)
@@ -667,7 +655,7 @@ def extract_llm(text: str, *, provider: str | None = None) -> list[Entity]:
         # Entity because the dataclass is flat.
         aliases = row.get("aliases") or []
         if not isinstance(aliases, list):
-            continue
+            aliases = []
         for alias in aliases[:3]:
             if not isinstance(alias, str):
                 continue
