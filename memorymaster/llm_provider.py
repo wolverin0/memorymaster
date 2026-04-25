@@ -140,10 +140,10 @@ def _call_ollama(prompt: str, text: str) -> str:
         "model": model,
         "prompt": f"{prompt}\n\n{text}",
         "stream": False,
-        "options": {"temperature": 0.1, "num_predict": 500},
+        "options": {"temperature": 0.1, "num_predict": 500, "num_ctx": 8192},
     }
 
-    return _http_post(url, payload, _extract_ollama)
+    return _http_post(url, payload, _extract_ollama, timeout=60)
 
 
 # ---------------------------------------------------------------------------
