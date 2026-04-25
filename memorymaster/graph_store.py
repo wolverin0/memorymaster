@@ -319,6 +319,118 @@ class GraphStore:
             logger.debug("graph_store: claims_for_entities failed: %s", exc)
             return []
 
+    # ------------------------------------------------------------------
+    # distance-weighted reads (roadmap 12.1)
+    # ------------------------------------------------------------------
+    def _entity_hop_map(
+        self, entity_ids: list[int], max_hops: int
+    ) -> dict[int, int]:
+        """Layer-by-layer BFS — return ``{entity_id: min_hop_from_seeds}``.
+
+        Layer 0 = the seed entities themselves. Each subsequent layer is
+        reached by traversing one bridge claim
+        (``Entity <- Claim -> Entity``). Stops when ``max_hops`` is
+        reached or the frontier is empty. Defensive: any Kuzu error
+        terminates BFS early but returns whatever was already discovered
+        (claim 11907 silent-fail pattern).
+        """
+        if not entity_ids:
+            return {}
+        hop_of: dict[int, int] = {int(x): 0 for x in entity_ids}
+        if max_hops < 1:
+            return hop_of
+        frontier: set[int] = set(hop_of.keys())
+        for hop in range(1, max_hops + 1):
+            if not frontier:
+                break
+            next_frontier: set[int] = set()
+            try:
+                result = self._conn.execute(
+                    f"MATCH (src:Entity)<-[:{MENTIONS_REL}]-"
+                    f"(c:Claim)-[:{MENTIONS_REL}]->(dst:Entity) "
+                    "WHERE src.id IN $ids "
+                    "RETURN DISTINCT dst.id",
+                    {"ids": list(frontier)},
+                )
+                while result.has_next():
+                    dst = int(result.get_next()[0])
+                    if dst not in hop_of:
+                        hop_of[dst] = hop
+                        next_frontier.add(dst)
+            except Exception as exc:
+                logger.debug("graph_store: hop %d BFS failed: %s", hop, exc)
+                break
+            frontier = next_frontier
+        return hop_of
+
+    def claims_for_entities_with_distance(
+        self,
+        entity_ids: list[int],
+        max_hops: int = 2,
+        limit: int = 50,
+    ) -> list[tuple[int, int]]:
+        """Return ``[(claim_id, min_hops_from_query_entities), ...]``.
+
+        For every reachable claim, ``min_hops`` is the shortest BFS hop
+        from any of ``entity_ids`` to an entity the claim mentions. A
+        claim mentioning two entities at hops 1 AND 2 is emitted once at
+        hop 1 (the smaller). Sorted by hops ASC, then by recency DESC
+        (graph created_at). ``limit`` caps the total claim count after
+        sorting.
+
+        ``hops == 0`` means the claim mentions one of the query entities
+        directly. The legacy :meth:`claims_for_entities` helper is kept
+        for callers that don't need the hop count.
+
+        Returns ``[]`` on any Kuzu error (claim 11907 silent-fail).
+        """
+        if self._conn is None or not entity_ids:
+            return []
+        try:
+            hop_of = self._entity_hop_map(
+                [int(x) for x in entity_ids], int(max_hops)
+            )
+            if not hop_of:
+                return []
+            # Pull every (claim, entity, ts) edge for the reached set,
+            # then reduce to (claim → min(hop_of[entity])) in Python so
+            # the dedupe rule stays portable across Kuzu versions.
+            result = self._conn.execute(
+                f"MATCH (c:Claim)-[r:{MENTIONS_REL}]->(e:Entity) "
+                "WHERE e.id IN $ids "
+                "RETURN c.id, e.id, r.created_at",
+                {"ids": list(hop_of.keys())},
+            )
+            best_hop: dict[int, int] = {}
+            best_ts: dict[int, str] = {}
+            while result.has_next():
+                row = result.get_next()
+                cid = int(row[0])
+                eid = int(row[1])
+                ts = row[2] or ""
+                hop = hop_of.get(eid)
+                if hop is None:
+                    continue
+                prev_hop = best_hop.get(cid)
+                if prev_hop is None or hop < prev_hop:
+                    best_hop[cid] = hop
+                    best_ts[cid] = ts
+                elif hop == prev_hop and ts > best_ts.get(cid, ""):
+                    best_ts[cid] = ts
+            # Two-pass sort: by recency DESC first (secondary key), then
+            # by hops ASC (stable primary). Python's sort is stable, so
+            # this yields the desired (hops_asc, recency_desc) ordering.
+            items = list(best_hop.items())
+            items.sort(key=lambda kv: best_ts.get(kv[0], ""), reverse=True)
+            items.sort(key=lambda kv: kv[1])
+            return [(cid, hop) for cid, hop in items[: int(limit)]]
+        except Exception as exc:
+            logger.debug(
+                "graph_store: claims_for_entities_with_distance failed: %s",
+                exc,
+            )
+            return []
+
 
 # ----------------------------------------------------------------------
 # networkx fallback
@@ -392,6 +504,46 @@ class _NetworkXGraphStore:
                 if len(out) >= limit:
                     return list(out)
         return list(out)
+
+    def claims_for_entities_with_distance(
+        self,
+        entity_ids: list[int],
+        max_hops: int = 2,
+        limit: int = 50,
+    ) -> list[tuple[int, int]]:
+        """In-memory mirror of :meth:`GraphStore.claims_for_entities_with_distance`.
+
+        BFS the bipartite graph layer-by-layer, track ``entity → min_hop``,
+        then for each reached entity collect its mentioning claims. A
+        claim's hop is the smallest hop of any entity it mentions.
+        Sorted by ``(hops_asc, claim_id_desc)`` — the in-memory store
+        has no graph timestamp, so claim_id (insertion order) is the
+        recency proxy.
+        """
+        if not entity_ids:
+            return []
+        hop_of: dict[int, int] = {int(x): 0 for x in entity_ids}
+        if max_hops >= 1:
+            frontier: set[int] = set(hop_of.keys())
+            for hop in range(1, int(max_hops) + 1):
+                if not frontier:
+                    break
+                next_frontier: set[int] = set()
+                for src in frontier:
+                    for cid in self._entity_to_claims.get(src, ()):
+                        for dst in self._claim_to_entities.get(cid, ()):
+                            if dst not in hop_of:
+                                hop_of[dst] = hop
+                                next_frontier.add(dst)
+                frontier = next_frontier
+        best_hop: dict[int, int] = {}
+        for eid, hop in hop_of.items():
+            for cid in self._entity_to_claims.get(eid, ()):
+                prev = best_hop.get(cid)
+                if prev is None or hop < prev:
+                    best_hop[cid] = hop
+        items = sorted(best_hop.items(), key=lambda kv: (kv[1], -kv[0]))
+        return [(cid, hop) for cid, hop in items[: int(limit)]]
 
 
 def open_graph_store(

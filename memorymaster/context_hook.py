@@ -390,9 +390,31 @@ def _graph_reached_claim_ids(query: str, store) -> set[int]:
     broken, network hiccup) returns an empty set so the recall hook is
     unaffected. We only import :mod:`memorymaster.graph_store` when the
     feature flag is on so disabled callers pay zero import cost.
+
+    Kept for backward compatibility (existing tests + future callers
+    that want a boolean reach mask). The distance-aware path used by
+    the recall ranker is :func:`_graph_reached_claim_distance`.
     """
     if not _graph_enabled():
         return set()
+    distance_map = _graph_reached_claim_distance(query, store)
+    return set(distance_map.keys())
+
+
+def _graph_reached_claim_distance(query: str, store) -> dict[int, int]:
+    """Distance-weighted variant — returns ``{claim_id: min_hops}``.
+
+    ``min_hops`` is the shortest BFS distance from any of the query's
+    entities to the entity the claim mentions. ``hops == 0`` means the
+    claim mentions a query entity directly. Callers translate hops into
+    a distance-decayed ``graph_score = 1.0 / (1 + hops)`` so closer
+    claims rank higher than far ones (roadmap 12.1 — un-cap the
+    constant-bonus pathology of the boolean stream).
+
+    Returns an empty dict on any failure path (claim 11907 silent-fail).
+    """
+    if not _graph_enabled():
+        return {}
 
     # Lazy imports — gated behind the enabled check above.
     try:
@@ -401,12 +423,12 @@ def _graph_reached_claim_ids(query: str, store) -> set[int]:
         from memorymaster.graph_store import GraphStoreUnavailable, open_graph_store
     except Exception as exc:
         logger.debug("graph stream: imports failed: %s", exc)
-        return set()
+        return {}
 
     # Step 1: extract entities from the query and resolve to entity_ids.
     entities = extract_patterns(query or "")
     if not entities:
-        return set()
+        return {}
 
     aliases: list[str] = []
     seen: set[str] = set()
@@ -417,7 +439,7 @@ def _graph_reached_claim_ids(query: str, store) -> set[int]:
         seen.add(key)
         aliases.append(key)
     if not aliases:
-        return set()
+        return {}
 
     entity_ids: list[int] = []
     try:
@@ -433,27 +455,28 @@ def _graph_reached_claim_ids(query: str, store) -> set[int]:
             entity_ids = [int(r[0]) for r in rows if r and r[0]]
     except Exception as exc:
         logger.debug("graph stream: alias resolution failed: %s", exc)
-        return set()
+        return {}
 
     if not entity_ids:
-        return set()
+        return {}
 
-    # Step 2: traverse the Kuzu graph, collect reachable entity_ids.
+    # Step 2: traverse the Kuzu graph, collect reachable claims keyed by
+    # their min hop distance. The store helper handles BFS + min-hop
+    # dedupe in one trip; we just translate failures to {}.
     max_hops = _graph_max_hops()
     gs = None
     try:
         gs = open_graph_store(_graph_path(), allow_networkx=False)
-        reached = gs.neighbors(entity_ids, max_hops=max_hops)
-        if not reached:
-            return set()
-        claim_ids = gs.claims_for_entities(list(reached), limit=50)
-        return {int(cid) for cid in claim_ids}
+        pairs = gs.claims_for_entities_with_distance(
+            entity_ids, max_hops=max_hops, limit=50
+        )
+        return {int(cid): int(hop) for cid, hop in pairs}
     except GraphStoreUnavailable as exc:
         logger.debug("graph stream: store unavailable: %s", exc)
-        return set()
+        return {}
     except Exception as exc:
         logger.debug("graph stream: traversal failed: %s", exc)
-        return set()
+        return {}
     finally:
         if gs is not None:
             try:
@@ -1086,13 +1109,21 @@ def _recall_impl(
     # produce no latency line (zero-overhead invariant, roadmap 5.1).
     if _graph_enabled():
         with _phase_timer(phase_ms, "graph"):
-            graph_reached = _graph_reached_claim_ids(query, svc.store)
-            if graph_reached:
+            # Roadmap 12.1 — distance-weighted score breaks the
+            # constant-bonus pathology of the boolean stream. Closer
+            # claims get a much bigger boost than far ones:
+            #   hop 0  → score 1.000  (claim mentions a query entity)
+            #   hop 1  → score 0.500
+            #   hop 2  → score 0.333
+            #   not reached → score 0.0
+            graph_distance = _graph_reached_claim_distance(query, svc.store)
+            if graph_distance:
                 for row in rows:
                     claim = row.get("claim")
                     cid = getattr(claim, "id", None)
-                    if cid is not None and int(cid) in graph_reached:
-                        row["graph_score"] = 1.0
+                    if cid is not None and int(cid) in graph_distance:
+                        hops = graph_distance[int(cid)]
+                        row["graph_score"] = 1.0 / (1.0 + float(hops))
                     elif row.get("graph_score") is None:
                         row["graph_score"] = 0.0
 
