@@ -1,0 +1,1000 @@
+{"claim_id": 334, "entities": [{"kind": "library_name", "surface_form": "FastAPI", "aliases": []}, {"kind": "library_name", "surface_form": "React", "aliases": []}]}
+{"claim_id": 384, "entities": [{"kind": "library_name", "surface_form": "Obsidian", "aliases": []}]}
+{"claim_id": 442, "entities": []}
+{"claim_id": 452, "entities": []}
+{"claim_id": 647, "entities": []}
+{"claim_id": 815, "entities": [{"kind": "library_name", "surface_form": "Qdrant", "aliases": []}, {"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 832, "entities": [{"kind": "person_name", "surface_form": "Claude Flow", "aliases": []}]}
+{"claim_id": 853, "entities": [{"kind": "library_name", "surface_form": "ChromaDB", "aliases": []}]}
+{"claim_id": 1022, "entities": []}
+{"claim_id": 1038, "entities": []}
+{"claim_id": 1081, "entities": [{"kind": "person_name", "surface_form": "Environment Variables", "aliases": []}]}
+{"claim_id": 1122, "entities": []}
+{"claim_id": 1320, "entities": [{"kind": "person_name", "surface_form": "Environment Variables", "aliases": []}]}
+{"claim_id": 1392, "entities": [{"kind": "person_name", "surface_form": "Supabase Auth", "aliases": []}, {"kind": "person_name", "surface_form": "Web Crypto", "aliases": []}, {"kind": "person_name", "surface_form": "Side Storage", "aliases": []}]}
+{"claim_id": 1896, "entities": []}
+{"claim_id": 1928, "entities": []}
+{"claim_id": 1958, "entities": []}
+{"claim_id": 2189, "entities": [{"kind": "person_name", "surface_form": "Data Table", "aliases": []}, {"kind": "person_name", "surface_form": "React Hook", "aliases": []}, {"kind": "person_name", "surface_form": "Table Docs", "aliases": []}, {"kind": "library_name", "surface_form": "React", "aliases": []}, {"kind": "library_name", "surface_form": "GitHub", "aliases": []}]}
+{"claim_id": 2568, "entities": []}
+{"claim_id": 2609, "entities": []}
+{"claim_id": 2676, "entities": [{"kind": "person_name", "surface_form": "Backend Configuration", "aliases": []}]}
+{"claim_id": 2677, "entities": [{"kind": "person_name", "surface_form": "Testing Workflow", "aliases": []}]}
+{"claim_id": 2735, "entities": []}
+{"claim_id": 2808, "entities": []}
+{"claim_id": 2842, "entities": [{"kind": "person_name", "surface_form": "Purpose\n\nMain", "aliases": []}, {"kind": "library_name", "surface_form": "Express", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 2989, "entities": [{"kind": "person_name", "surface_form": "Deployment Method", "aliases": []}, {"kind": "person_name", "surface_form": "Rebuilds Docker", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 3003, "entities": []}
+{"claim_id": 3061, "entities": []}
+{"claim_id": 3814, "entities": []}
+{"claim_id": 3870, "entities": []}
+{"claim_id": 3873, "entities": []}
+{"claim_id": 3877, "entities": [{"kind": "person_name", "surface_form": "Local Controller", "aliases": []}]}
+{"claim_id": 3884, "entities": []}
+{"claim_id": 4049, "entities": []}
+{"claim_id": 4740, "entities": [{"kind": "person_name", "surface_form": "Critical Bug", "aliases": []}, {"kind": "person_name", "surface_form": "Root Cause", "aliases": []}, {"kind": "person_name", "surface_form": "Fix Required", "aliases": []}, {"kind": "library_name", "surface_form": "React", "aliases": []}, {"kind": "library_name", "surface_form": "Express", "aliases": []}]}
+{"claim_id": 4783, "entities": []}
+{"claim_id": 5699, "entities": [{"kind": "person_name", "surface_form": "Server Status", "aliases": []}, {"kind": "person_name", "surface_form": "Important Finding", "aliases": []}]}
+{"claim_id": 7377, "entities": [{"kind": "person_name", "surface_form": "How Deployment", "aliases": []}, {"kind": "person_name", "surface_form": "Server Filesystem", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 7399, "entities": []}
+{"claim_id": 7450, "entities": []}
+{"claim_id": 7484, "entities": []}
+{"claim_id": 7491, "entities": []}
+{"claim_id": 7492, "entities": []}
+{"claim_id": 7493, "entities": []}
+{"claim_id": 7494, "entities": []}
+{"claim_id": 7495, "entities": []}
+{"claim_id": 7497, "entities": [{"kind": "person_name", "surface_form": "Interonda Fase", "aliases": []}]}
+{"claim_id": 7498, "entities": []}
+{"claim_id": 7499, "entities": [{"kind": "library_name", "surface_form": "React", "aliases": []}]}
+{"claim_id": 7500, "entities": []}
+{"claim_id": 7503, "entities": [{"kind": "person_name", "surface_form": "En Interonda", "aliases": []}]}
+{"claim_id": 7504, "entities": [{"kind": "person_name", "surface_form": "Interonda Fase", "aliases": []}]}
+{"claim_id": 7505, "entities": [{"kind": "person_name", "surface_form": "Interonda Fase", "aliases": []}]}
+{"claim_id": 7512, "entities": [{"kind": "person_name", "surface_form": "Punto Futura", "aliases": []}, {"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 7513, "entities": []}
+{"claim_id": 7515, "entities": [{"kind": "library_name", "surface_form": "React", "aliases": []}]}
+{"claim_id": 7516, "entities": [{"kind": "person_name", "surface_form": "For Interonda", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 7517, "entities": []}
+{"claim_id": 7525, "entities": []}
+{"claim_id": 7526, "entities": []}
+{"claim_id": 7527, "entities": []}
+{"claim_id": 7530, "entities": []}
+{"claim_id": 7532, "entities": []}
+{"claim_id": 7533, "entities": []}
+{"claim_id": 7534, "entities": [{"kind": "library_name", "surface_form": "FastAPI", "aliases": []}, {"kind": "library_name", "surface_form": "React", "aliases": []}, {"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}]}
+{"claim_id": 7535, "entities": [{"kind": "person_name", "surface_form": "Cloudflare Tunnel", "aliases": []}, {"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}]}
+{"claim_id": 7536, "entities": []}
+{"claim_id": 7537, "entities": []}
+{"claim_id": 7538, "entities": []}
+{"claim_id": 7539, "entities": []}
+{"claim_id": 7540, "entities": []}
+{"claim_id": 7541, "entities": []}
+{"claim_id": 7542, "entities": []}
+{"claim_id": 7543, "entities": [{"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 7544, "entities": []}
+{"claim_id": 7545, "entities": [{"kind": "person_name", "surface_form": "On Windows", "aliases": []}]}
+{"claim_id": 7546, "entities": []}
+{"claim_id": 7547, "entities": []}
+{"claim_id": 7548, "entities": []}
+{"claim_id": 7549, "entities": [{"kind": "person_name", "surface_form": "Completar Baja", "aliases": []}]}
+{"claim_id": 7563, "entities": [{"kind": "person_name", "surface_form": "Google Search", "aliases": []}]}
+{"claim_id": 7564, "entities": [{"kind": "person_name", "surface_form": "Google Business", "aliases": []}]}
+{"claim_id": 7565, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 7566, "entities": []}
+{"claim_id": 7567, "entities": []}
+{"claim_id": 7568, "entities": []}
+{"claim_id": 7569, "entities": []}
+{"claim_id": 7570, "entities": []}
+{"claim_id": 7571, "entities": [{"kind": "person_name", "surface_form": "Marketing Hub", "aliases": []}]}
+{"claim_id": 7572, "entities": [{"kind": "person_name", "surface_form": "Supabase Edge", "aliases": []}]}
+{"claim_id": 7574, "entities": []}
+{"claim_id": 7575, "entities": [{"kind": "library_name", "surface_form": "React", "aliases": []}]}
+{"claim_id": 7576, "entities": []}
+{"claim_id": 7577, "entities": []}
+{"claim_id": 7578, "entities": [{"kind": "person_name", "surface_form": "Gastos Empresa", "aliases": []}]}
+{"claim_id": 7579, "entities": [{"kind": "person_name", "surface_form": "Impulsa Producciones", "aliases": []}]}
+{"claim_id": 7580, "entities": []}
+{"claim_id": 7581, "entities": [{"kind": "person_name", "surface_form": "Impulsa Producciones", "aliases": []}]}
+{"claim_id": 7582, "entities": []}
+{"claim_id": 7583, "entities": [{"kind": "person_name", "surface_form": "Use Gemini", "aliases": []}]}
+{"claim_id": 7584, "entities": [{"kind": "person_name", "surface_form": "Generated Supabase", "aliases": []}]}
+{"claim_id": 7585, "entities": [{"kind": "person_name", "surface_form": "Impulsa Supabase", "aliases": []}]}
+{"claim_id": 7588, "entities": [{"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 7589, "entities": []}
+{"claim_id": 7590, "entities": [{"kind": "person_name", "surface_form": "Facebook Futura", "aliases": []}]}
+{"claim_id": 7591, "entities": []}
+{"claim_id": 7592, "entities": []}
+{"claim_id": 7595, "entities": []}
+{"claim_id": 7596, "entities": [{"kind": "library_name", "surface_form": "React", "aliases": []}, {"kind": "library_name", "surface_form": "Express", "aliases": []}]}
+{"claim_id": 7600, "entities": [{"kind": "person_name", "surface_form": "Optima Demo", "aliases": []}]}
+{"claim_id": 7601, "entities": [{"kind": "person_name", "surface_form": "Facebook Futura", "aliases": []}, {"kind": "library_name", "surface_form": "React", "aliases": []}]}
+{"claim_id": 7604, "entities": [{"kind": "person_name", "surface_form": "In Interonda", "aliases": []}, {"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 7605, "entities": [{"kind": "person_name", "surface_form": "In Interonda", "aliases": []}]}
+{"claim_id": 7611, "entities": [{"kind": "person_name", "surface_form": "Starter Packs", "aliases": []}]}
+{"claim_id": 7612, "entities": [{"kind": "person_name", "surface_form": "Google Cloud", "aliases": []}]}
+{"claim_id": 7613, "entities": []}
+{"claim_id": 7614, "entities": []}
+{"claim_id": 7615, "entities": []}
+{"claim_id": 7616, "entities": []}
+{"claim_id": 7617, "entities": []}
+{"claim_id": 7618, "entities": []}
+{"claim_id": 7619, "entities": [{"kind": "person_name", "surface_form": "Kraft Fondo", "aliases": []}, {"kind": "person_name", "surface_form": "Sulfito Fondo", "aliases": []}, {"kind": "person_name", "surface_form": "Blanco Fondo", "aliases": []}, {"kind": "person_name", "surface_form": "Starter Packs", "aliases": []}, {"kind": "person_name", "surface_form": "Default Warehouse", "aliases": []}, {"kind": "person_name", "surface_form": "Argentina Resell", "aliases": []}]}
+{"claim_id": 7620, "entities": []}
+{"claim_id": 7621, "entities": [{"kind": "person_name", "surface_form": "Packia Mayorista", "aliases": []}]}
+{"claim_id": 7624, "entities": [{"kind": "library_name", "surface_form": "React", "aliases": []}]}
+{"claim_id": 7625, "entities": [{"kind": "library_name", "surface_form": "Next.js", "aliases": []}]}
+{"claim_id": 7657, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 7660, "entities": [{"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 7661, "entities": []}
+{"claim_id": 7662, "entities": []}
+{"claim_id": 7663, "entities": []}
+{"claim_id": 7666, "entities": []}
+{"claim_id": 7667, "entities": [{"kind": "time_expression", "surface_form": "March", "aliases": []}, {"kind": "time_expression", "surface_form": "April", "aliases": []}]}
+{"claim_id": 7672, "entities": [{"kind": "time_expression", "surface_form": "July", "aliases": []}, {"kind": "time_expression", "surface_form": "may", "aliases": []}]}
+{"claim_id": 7676, "entities": []}
+{"claim_id": 7677, "entities": []}
+{"claim_id": 7681, "entities": []}
+{"claim_id": 7687, "entities": []}
+{"claim_id": 7688, "entities": [{"kind": "person_name", "surface_form": "Punto Futura", "aliases": []}]}
+{"claim_id": 7689, "entities": [{"kind": "person_name", "surface_form": "On Windows", "aliases": []}]}
+{"claim_id": 7693, "entities": []}
+{"claim_id": 7694, "entities": []}
+{"claim_id": 7695, "entities": []}
+{"claim_id": 7696, "entities": [{"kind": "time_expression", "surface_form": "July", "aliases": []}]}
+{"claim_id": 7697, "entities": []}
+{"claim_id": 7698, "entities": []}
+{"claim_id": 7701, "entities": [{"kind": "person_name", "surface_form": "Jose Hernandez", "aliases": []}]}
+{"claim_id": 7702, "entities": []}
+{"claim_id": 7768, "entities": []}
+{"claim_id": 7769, "entities": []}
+{"claim_id": 7770, "entities": []}
+{"claim_id": 7772, "entities": []}
+{"claim_id": 7773, "entities": []}
+{"claim_id": 7774, "entities": [{"kind": "library_name", "surface_form": "Flask", "aliases": []}]}
+{"claim_id": 7780, "entities": [{"kind": "library_name", "surface_form": "Pytest", "aliases": []}]}
+{"claim_id": 7781, "entities": []}
+{"claim_id": 7782, "entities": []}
+{"claim_id": 7800, "entities": []}
+{"claim_id": 7801, "entities": []}
+{"claim_id": 7802, "entities": []}
+{"claim_id": 7807, "entities": []}
+{"claim_id": 7808, "entities": []}
+{"claim_id": 7819, "entities": []}
+{"claim_id": 7830, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 7831, "entities": []}
+{"claim_id": 7832, "entities": []}
+{"claim_id": 7833, "entities": [{"kind": "library_name", "surface_form": "Flask", "aliases": []}]}
+{"claim_id": 7835, "entities": []}
+{"claim_id": 7836, "entities": []}
+{"claim_id": 7837, "entities": []}
+{"claim_id": 7861, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 7862, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 7863, "entities": [{"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}]}
+{"claim_id": 7864, "entities": [{"kind": "person_name", "surface_form": "Business Cloud", "aliases": []}]}
+{"claim_id": 7865, "entities": [{"kind": "person_name", "surface_form": "Checkout Pro", "aliases": []}]}
+{"claim_id": 7866, "entities": [{"kind": "person_name", "surface_form": "Checkout Pro", "aliases": []}]}
+{"claim_id": 7867, "entities": []}
+{"claim_id": 7868, "entities": []}
+{"claim_id": 7869, "entities": []}
+{"claim_id": 7870, "entities": []}
+{"claim_id": 7871, "entities": []}
+{"claim_id": 7872, "entities": [{"kind": "person_name", "surface_form": "Build React", "aliases": []}, {"kind": "library_name", "surface_form": "React", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 7873, "entities": [{"kind": "person_name", "surface_form": "Incident Engine", "aliases": []}]}
+{"claim_id": 7874, "entities": []}
+{"claim_id": 7875, "entities": []}
+{"claim_id": 7876, "entities": []}
+{"claim_id": 7877, "entities": [{"kind": "person_name", "surface_form": "Cloudflare Tunnel", "aliases": []}]}
+{"claim_id": 7878, "entities": []}
+{"claim_id": 7879, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 7880, "entities": [{"kind": "person_name", "surface_form": "Docker Hub", "aliases": []}, {"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}, {"kind": "library_name", "surface_form": "MySQL", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 7917, "entities": []}
+{"claim_id": 7918, "entities": []}
+{"claim_id": 7919, "entities": []}
+{"claim_id": 7920, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 7921, "entities": []}
+{"claim_id": 7922, "entities": []}
+{"claim_id": 7923, "entities": []}
+{"claim_id": 7924, "entities": []}
+{"claim_id": 7925, "entities": []}
+{"claim_id": 7926, "entities": []}
+{"claim_id": 7927, "entities": []}
+{"claim_id": 7928, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 7929, "entities": [{"kind": "person_name", "surface_form": "Emil Kowalski", "aliases": []}]}
+{"claim_id": 7949, "entities": [{"kind": "person_name", "surface_form": "Packia Mayorista", "aliases": []}]}
+{"claim_id": 7950, "entities": []}
+{"claim_id": 7951, "entities": []}
+{"claim_id": 7952, "entities": [{"kind": "person_name", "surface_form": "Creates Paperclip", "aliases": []}]}
+{"claim_id": 7953, "entities": []}
+{"claim_id": 7958, "entities": []}
+{"claim_id": 7959, "entities": []}
+{"claim_id": 7963, "entities": []}
+{"claim_id": 7964, "entities": []}
+{"claim_id": 7965, "entities": []}
+{"claim_id": 7982, "entities": []}
+{"claim_id": 7985, "entities": []}
+{"claim_id": 7993, "entities": []}
+{"claim_id": 7997, "entities": []}
+{"claim_id": 7999, "entities": [{"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8000, "entities": []}
+{"claim_id": 8014, "entities": []}
+{"claim_id": 8015, "entities": []}
+{"claim_id": 8016, "entities": [{"kind": "concept", "surface_form": "knowledge graph", "aliases": []}]}
+{"claim_id": 8017, "entities": []}
+{"claim_id": 8018, "entities": []}
+{"claim_id": 8019, "entities": []}
+{"claim_id": 8020, "entities": []}
+{"claim_id": 8021, "entities": []}
+{"claim_id": 8022, "entities": []}
+{"claim_id": 8023, "entities": [{"kind": "person_name", "surface_form": "Uses Gemini", "aliases": []}, {"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8024, "entities": []}
+{"claim_id": 8025, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8026, "entities": []}
+{"claim_id": 8027, "entities": []}
+{"claim_id": 8028, "entities": []}
+{"claim_id": 8029, "entities": [{"kind": "library_name", "surface_form": "Qdrant", "aliases": []}, {"kind": "library_name", "surface_form": "ChromaDB", "aliases": []}]}
+{"claim_id": 8030, "entities": []}
+{"claim_id": 8031, "entities": [{"kind": "person_name", "surface_form": "Sales Agent", "aliases": []}, {"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}]}
+{"claim_id": 8032, "entities": []}
+{"claim_id": 8033, "entities": []}
+{"claim_id": 8034, "entities": [{"kind": "person_name", "surface_form": "All Paperclip", "aliases": []}]}
+{"claim_id": 8035, "entities": [{"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}]}
+{"claim_id": 8036, "entities": []}
+{"claim_id": 8037, "entities": []}
+{"claim_id": 8038, "entities": []}
+{"claim_id": 8039, "entities": [{"kind": "library_name", "surface_form": "Qdrant", "aliases": []}]}
+{"claim_id": 8040, "entities": [{"kind": "library_name", "surface_form": "Qdrant", "aliases": []}, {"kind": "library_name", "surface_form": "ChromaDB", "aliases": []}]}
+{"claim_id": 8041, "entities": [{"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}]}
+{"claim_id": 8042, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8043, "entities": []}
+{"claim_id": 8044, "entities": []}
+{"claim_id": 8045, "entities": []}
+{"claim_id": 8046, "entities": []}
+{"claim_id": 8047, "entities": [{"kind": "person_name", "surface_form": "Lost Supabase", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8048, "entities": []}
+{"claim_id": 8049, "entities": []}
+{"claim_id": 8050, "entities": []}
+{"claim_id": 8051, "entities": []}
+{"claim_id": 8052, "entities": [{"kind": "person_name", "surface_form": "Each Playwright", "aliases": []}]}
+{"claim_id": 8053, "entities": []}
+{"claim_id": 8054, "entities": [{"kind": "library_name", "surface_form": "Qdrant", "aliases": []}]}
+{"claim_id": 8055, "entities": []}
+{"claim_id": 8056, "entities": []}
+{"claim_id": 8057, "entities": [{"kind": "person_name", "surface_form": "En Conversacion", "aliases": []}]}
+{"claim_id": 8058, "entities": [{"kind": "person_name", "surface_form": "When Paperclip", "aliases": []}]}
+{"claim_id": 8059, "entities": [{"kind": "time_expression", "surface_form": "may", "aliases": []}]}
+{"claim_id": 8060, "entities": []}
+{"claim_id": 8061, "entities": [{"kind": "person_name", "surface_form": "Flash Lite", "aliases": []}]}
+{"claim_id": 8062, "entities": [{"kind": "library_name", "surface_form": "Qdrant", "aliases": []}, {"kind": "library_name", "surface_form": "SQLite", "aliases": []}]}
+{"claim_id": 8063, "entities": []}
+{"claim_id": 8064, "entities": []}
+{"claim_id": 8065, "entities": []}
+{"claim_id": 8066, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8067, "entities": []}
+{"claim_id": 8068, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8069, "entities": []}
+{"claim_id": 8070, "entities": []}
+{"claim_id": 8071, "entities": []}
+{"claim_id": 8072, "entities": []}
+{"claim_id": 8073, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8074, "entities": []}
+{"claim_id": 8075, "entities": [{"kind": "time_expression", "surface_form": "may", "aliases": []}]}
+{"claim_id": 8076, "entities": []}
+{"claim_id": 8077, "entities": []}
+{"claim_id": 8078, "entities": []}
+{"claim_id": 8079, "entities": [{"kind": "person_name", "surface_form": "Resto Brunch", "aliases": []}]}
+{"claim_id": 8080, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8081, "entities": []}
+{"claim_id": 8082, "entities": []}
+{"claim_id": 8083, "entities": []}
+{"claim_id": 8084, "entities": []}
+{"claim_id": 8085, "entities": []}
+{"claim_id": 8086, "entities": []}
+{"claim_id": 8087, "entities": [{"kind": "person_name", "surface_form": "When Paperclip", "aliases": []}]}
+{"claim_id": 8088, "entities": []}
+{"claim_id": 8089, "entities": []}
+{"claim_id": 8090, "entities": [{"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8091, "entities": [{"kind": "person_name", "surface_form": "Dashboard React", "aliases": []}, {"kind": "library_name", "surface_form": "React", "aliases": []}]}
+{"claim_id": 8092, "entities": []}
+{"claim_id": 8093, "entities": [{"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}, {"kind": "library_name", "surface_form": "MySQL", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8094, "entities": [{"kind": "library_name", "surface_form": "Postgres", "aliases": []}]}
+{"claim_id": 8095, "entities": []}
+{"claim_id": 8096, "entities": []}
+{"claim_id": 8097, "entities": []}
+{"claim_id": 8098, "entities": []}
+{"claim_id": 8099, "entities": [{"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8100, "entities": []}
+{"claim_id": 8101, "entities": []}
+{"claim_id": 8102, "entities": []}
+{"claim_id": 8103, "entities": []}
+{"claim_id": 8104, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8105, "entities": []}
+{"claim_id": 8106, "entities": []}
+{"claim_id": 8107, "entities": []}
+{"claim_id": 8108, "entities": [{"kind": "time_expression", "surface_form": "March", "aliases": []}]}
+{"claim_id": 8109, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8110, "entities": [{"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}]}
+{"claim_id": 8111, "entities": [{"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8112, "entities": []}
+{"claim_id": 8113, "entities": []}
+{"claim_id": 8115, "entities": []}
+{"claim_id": 8116, "entities": []}
+{"claim_id": 8117, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8118, "entities": []}
+{"claim_id": 8119, "entities": [{"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}]}
+{"claim_id": 8120, "entities": []}
+{"claim_id": 8123, "entities": []}
+{"claim_id": 8124, "entities": []}
+{"claim_id": 8125, "entities": []}
+{"claim_id": 8126, "entities": []}
+{"claim_id": 8127, "entities": []}
+{"claim_id": 8128, "entities": [{"kind": "person_name", "surface_form": "Pilates Estudio", "aliases": []}, {"kind": "person_name", "surface_form": "San Miguel", "aliases": []}, {"kind": "person_name", "surface_form": "Sushi Roll", "aliases": []}]}
+{"claim_id": 8129, "entities": []}
+{"claim_id": 8130, "entities": []}
+{"claim_id": 8131, "entities": []}
+{"claim_id": 8133, "entities": []}
+{"claim_id": 8134, "entities": [{"kind": "library_name", "surface_form": "FastAPI", "aliases": []}, {"kind": "library_name", "surface_form": "Node.js", "aliases": []}]}
+{"claim_id": 8135, "entities": [{"kind": "person_name", "surface_form": "Entrenamiento Funcional", "aliases": []}]}
+{"claim_id": 8136, "entities": []}
+{"claim_id": 8137, "entities": []}
+{"claim_id": 8138, "entities": [{"kind": "person_name", "surface_form": "Disabled Docker", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8139, "entities": [{"kind": "model_name", "surface_form": "gpt-5", "aliases": []}]}
+{"claim_id": 8140, "entities": [{"kind": "person_name", "surface_form": "Packia Mayorista", "aliases": []}]}
+{"claim_id": 8141, "entities": []}
+{"claim_id": 8142, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8143, "entities": []}
+{"claim_id": 8144, "entities": []}
+{"claim_id": 8145, "entities": []}
+{"claim_id": 8146, "entities": []}
+{"claim_id": 8147, "entities": []}
+{"claim_id": 8148, "entities": [{"kind": "person_name", "surface_form": "Punto Futura", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8149, "entities": []}
+{"claim_id": 8151, "entities": []}
+{"claim_id": 8152, "entities": []}
+{"claim_id": 8153, "entities": []}
+{"claim_id": 8154, "entities": []}
+{"claim_id": 8155, "entities": []}
+{"claim_id": 8157, "entities": [{"kind": "person_name", "surface_form": "Cloud Connector", "aliases": []}]}
+{"claim_id": 8158, "entities": []}
+{"claim_id": 8159, "entities": []}
+{"claim_id": 8160, "entities": []}
+{"claim_id": 8161, "entities": []}
+{"claim_id": 8162, "entities": []}
+{"claim_id": 8163, "entities": []}
+{"claim_id": 8164, "entities": []}
+{"claim_id": 8165, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8166, "entities": []}
+{"claim_id": 8175, "entities": []}
+{"claim_id": 8176, "entities": []}
+{"claim_id": 8177, "entities": []}
+{"claim_id": 8178, "entities": []}
+{"claim_id": 8179, "entities": []}
+{"claim_id": 8180, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8181, "entities": [{"kind": "person_name", "surface_form": "Jina Reader", "aliases": []}]}
+{"claim_id": 8182, "entities": []}
+{"claim_id": 8183, "entities": []}
+{"claim_id": 8184, "entities": []}
+{"claim_id": 8185, "entities": [{"kind": "person_name", "surface_form": "Telegram Bot", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8186, "entities": [{"kind": "person_name", "surface_form": "Futura Telegram", "aliases": []}, {"kind": "person_name", "surface_form": "Bot Handler", "aliases": []}, {"kind": "person_name", "surface_form": "Built Futura", "aliases": []}, {"kind": "person_name", "surface_form": "Telegram Bot", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8187, "entities": []}
+{"claim_id": 8188, "entities": [{"kind": "library_name", "surface_form": "FastAPI", "aliases": []}, {"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}]}
+{"claim_id": 8189, "entities": [{"kind": "person_name", "surface_form": "Telegram Bot", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8190, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8191, "entities": []}
+{"claim_id": 8192, "entities": []}
+{"claim_id": 8193, "entities": [{"kind": "person_name", "surface_form": "Futura Telegram", "aliases": []}, {"kind": "person_name", "surface_form": "Bot Handler", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8194, "entities": [{"kind": "person_name", "surface_form": "Gateway Telegram", "aliases": []}, {"kind": "person_name", "surface_form": "Futura Telegram", "aliases": []}, {"kind": "person_name", "surface_form": "Futura Bot", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8195, "entities": []}
+{"claim_id": 8196, "entities": []}
+{"claim_id": 8197, "entities": [{"kind": "library_name", "surface_form": "Postgres", "aliases": []}]}
+{"claim_id": 8198, "entities": []}
+{"claim_id": 8199, "entities": []}
+{"claim_id": 8201, "entities": [{"kind": "person_name", "surface_form": "North Star", "aliases": []}, {"kind": "library_name", "surface_form": "Obsidian", "aliases": []}]}
+{"claim_id": 8202, "entities": []}
+{"claim_id": 8203, "entities": [{"kind": "library_name", "surface_form": "Postgres", "aliases": []}]}
+{"claim_id": 8204, "entities": []}
+{"claim_id": 8205, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8207, "entities": []}
+{"claim_id": 8208, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8209, "entities": [{"kind": "person_name", "surface_form": "Obsidian Bases", "aliases": []}, {"kind": "library_name", "surface_form": "Obsidian", "aliases": []}]}
+{"claim_id": 8210, "entities": []}
+{"claim_id": 8211, "entities": []}
+{"claim_id": 8212, "entities": []}
+{"claim_id": 8213, "entities": []}
+{"claim_id": 8214, "entities": []}
+{"claim_id": 8215, "entities": []}
+{"claim_id": 8216, "entities": []}
+{"claim_id": 8217, "entities": []}
+{"claim_id": 8218, "entities": []}
+{"claim_id": 8219, "entities": [{"kind": "library_name", "surface_form": "Postgres", "aliases": []}]}
+{"claim_id": 8220, "entities": []}
+{"claim_id": 8221, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8228, "entities": []}
+{"claim_id": 8229, "entities": []}
+{"claim_id": 8230, "entities": []}
+{"claim_id": 8231, "entities": [{"kind": "time_expression", "surface_form": "June", "aliases": []}, {"kind": "time_expression", "surface_form": "July", "aliases": []}, {"kind": "time_expression", "surface_form": "May", "aliases": []}, {"kind": "time_expression", "surface_form": "March", "aliases": []}]}
+{"claim_id": 8232, "entities": [{"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8233, "entities": [{"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}, {"kind": "library_name", "surface_form": "MySQL", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8234, "entities": []}
+{"claim_id": 8235, "entities": []}
+{"claim_id": 8236, "entities": []}
+{"claim_id": 8239, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8240, "entities": [{"kind": "person_name", "surface_form": "Stale Paperclip", "aliases": []}, {"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}, {"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8241, "entities": []}
+{"claim_id": 8242, "entities": [{"kind": "time_expression", "surface_form": "may", "aliases": []}]}
+{"claim_id": 8243, "entities": []}
+{"claim_id": 8244, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8245, "entities": []}
+{"claim_id": 8246, "entities": [{"kind": "person_name", "surface_form": "Trusted Publisher", "aliases": []}, {"kind": "library_name", "surface_form": "GitHub", "aliases": []}]}
+{"claim_id": 8248, "entities": []}
+{"claim_id": 8249, "entities": [{"kind": "person_name", "surface_form": "Bad Request", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8250, "entities": [{"kind": "person_name", "surface_form": "Telegram Approve", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8251, "entities": []}
+{"claim_id": 8252, "entities": [{"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8253, "entities": [{"kind": "person_name", "surface_form": "Liliana Valdez", "aliases": []}, {"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8254, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8255, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8256, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8257, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8258, "entities": []}
+{"claim_id": 8259, "entities": []}
+{"claim_id": 8260, "entities": [{"kind": "person_name", "surface_form": "Telegram Approve", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8261, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8262, "entities": []}
+{"claim_id": 8268, "entities": []}
+{"claim_id": 8269, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8270, "entities": [{"kind": "library_name", "surface_form": "Next.js", "aliases": []}]}
+{"claim_id": 8271, "entities": []}
+{"claim_id": 8272, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8273, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "library_name", "surface_form": "GitHub", "aliases": []}]}
+{"claim_id": 8279, "entities": []}
+{"claim_id": 8280, "entities": []}
+{"claim_id": 8281, "entities": []}
+{"claim_id": 8282, "entities": []}
+{"claim_id": 8283, "entities": [{"kind": "library_name", "surface_form": "GitHub", "aliases": []}]}
+{"claim_id": 8284, "entities": []}
+{"claim_id": 8285, "entities": []}
+{"claim_id": 8286, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8291, "entities": [{"kind": "person_name", "surface_form": "Trusted Publisher", "aliases": []}]}
+{"claim_id": 8292, "entities": []}
+{"claim_id": 8293, "entities": []}
+{"claim_id": 8294, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8299, "entities": [{"kind": "person_name", "surface_form": "Each Step", "aliases": []}]}
+{"claim_id": 8300, "entities": [{"kind": "person_name", "surface_form": "Analyst Step", "aliases": []}]}
+{"claim_id": 8301, "entities": [{"kind": "library_name", "surface_form": "Next.js", "aliases": []}, {"kind": "library_name", "surface_form": "Postgres", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8302, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8303, "entities": []}
+{"claim_id": 8304, "entities": []}
+{"claim_id": 8305, "entities": []}
+{"claim_id": 8306, "entities": []}
+{"claim_id": 8307, "entities": [{"kind": "library_name", "surface_form": "React", "aliases": []}, {"kind": "library_name", "surface_form": "Next.js", "aliases": []}]}
+{"claim_id": 8308, "entities": [{"kind": "library_name", "surface_form": "React", "aliases": []}, {"kind": "library_name", "surface_form": "Next.js", "aliases": []}]}
+{"claim_id": 8309, "entities": []}
+{"claim_id": 8310, "entities": []}
+{"claim_id": 8311, "entities": [{"kind": "person_name", "surface_form": "Supabase Custom", "aliases": []}, {"kind": "person_name", "surface_form": "Access Token", "aliases": []}]}
+{"claim_id": 8312, "entities": [{"kind": "library_name", "surface_form": "Postgres", "aliases": []}]}
+{"claim_id": 8313, "entities": []}
+{"claim_id": 8314, "entities": []}
+{"claim_id": 8315, "entities": [{"kind": "library_name", "surface_form": "Postgres", "aliases": []}, {"kind": "library_name", "surface_form": "Redis", "aliases": []}]}
+{"claim_id": 8317, "entities": []}
+{"claim_id": 8318, "entities": [{"kind": "library_name", "surface_form": "Express", "aliases": []}]}
+{"claim_id": 8319, "entities": [{"kind": "person_name", "surface_form": "Analyst Step", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8320, "entities": []}
+{"claim_id": 8321, "entities": []}
+{"claim_id": 8326, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8327, "entities": []}
+{"claim_id": 8328, "entities": [{"kind": "person_name", "surface_form": "Frozen Track", "aliases": []}]}
+{"claim_id": 8329, "entities": []}
+{"claim_id": 8333, "entities": [{"kind": "library_name", "surface_form": "Next.js", "aliases": []}]}
+{"claim_id": 8336, "entities": [{"kind": "person_name", "surface_form": "Paperclip Step", "aliases": []}]}
+{"claim_id": 8337, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8338, "entities": [{"kind": "person_name", "surface_form": "Futura Paperclip", "aliases": []}]}
+{"claim_id": 8339, "entities": []}
+{"claim_id": 8340, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8341, "entities": []}
+{"claim_id": 8342, "entities": [{"kind": "person_name", "surface_form": "Clonacion Agentica", "aliases": []}, {"kind": "person_name", "surface_form": "His Learn", "aliases": []}]}
+{"claim_id": 8343, "entities": []}
+{"claim_id": 8344, "entities": []}
+{"claim_id": 8345, "entities": []}
+{"claim_id": 8346, "entities": [{"kind": "person_name", "surface_form": "Banco Central", "aliases": []}]}
+{"claim_id": 8347, "entities": []}
+{"claim_id": 8348, "entities": []}
+{"claim_id": 8349, "entities": [{"kind": "person_name", "surface_form": "Zip Slip", "aliases": []}]}
+{"claim_id": 8350, "entities": [{"kind": "person_name", "surface_form": "Consejo Profesional", "aliases": []}]}
+{"claim_id": 8351, "entities": [{"kind": "person_name", "surface_form": "Space Grotesk", "aliases": []}, {"kind": "person_name", "surface_form": "Archivo Black", "aliases": []}]}
+{"claim_id": 8352, "entities": [{"kind": "library_name", "surface_form": "GitHub", "aliases": []}]}
+{"claim_id": 8353, "entities": []}
+{"claim_id": 8354, "entities": []}
+{"claim_id": 8355, "entities": []}
+{"claim_id": 8356, "entities": []}
+{"claim_id": 8357, "entities": [{"kind": "person_name", "surface_form": "Frontend Vite", "aliases": []}]}
+{"claim_id": 8358, "entities": []}
+{"claim_id": 8359, "entities": [{"kind": "time_expression", "surface_form": "may", "aliases": []}]}
+{"claim_id": 8360, "entities": []}
+{"claim_id": 8361, "entities": []}
+{"claim_id": 8362, "entities": []}
+{"claim_id": 8363, "entities": [{"kind": "person_name", "surface_form": "Active Workarounds", "aliases": []}, {"kind": "person_name", "surface_form": "Custom Access", "aliases": []}, {"kind": "person_name", "surface_form": "Token Hook", "aliases": []}, {"kind": "person_name", "surface_form": "Supabase Dashboard", "aliases": []}]}
+{"claim_id": 8364, "entities": []}
+{"claim_id": 8365, "entities": []}
+{"claim_id": 8366, "entities": [{"kind": "person_name", "surface_form": "Optional Telegram", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8367, "entities": []}
+{"claim_id": 8368, "entities": [{"kind": "person_name", "surface_form": "For Guardar", "aliases": []}]}
+{"claim_id": 8369, "entities": []}
+{"claim_id": 8370, "entities": [{"kind": "person_name", "surface_form": "After React", "aliases": []}, {"kind": "library_name", "surface_form": "React", "aliases": []}]}
+{"claim_id": 8371, "entities": []}
+{"claim_id": 8372, "entities": []}
+{"claim_id": 8373, "entities": [{"kind": "person_name", "surface_form": "Futura Paperclip", "aliases": []}, {"kind": "person_name", "surface_form": "Packia Mayorista", "aliases": []}, {"kind": "person_name", "surface_form": "Punto Futura", "aliases": []}]}
+{"claim_id": 8374, "entities": [{"kind": "person_name", "surface_form": "Futura Ubuntu", "aliases": []}]}
+{"claim_id": 8375, "entities": []}
+{"claim_id": 8376, "entities": [{"kind": "person_name", "surface_form": "Mis Comprobantes", "aliases": []}]}
+{"claim_id": 8377, "entities": [{"kind": "person_name", "surface_form": "Vite React", "aliases": []}, {"kind": "library_name", "surface_form": "React", "aliases": []}]}
+{"claim_id": 8378, "entities": []}
+{"claim_id": 8379, "entities": [{"kind": "library_name", "surface_form": "Postgres", "aliases": []}]}
+{"claim_id": 8381, "entities": []}
+{"claim_id": 8382, "entities": []}
+{"claim_id": 8383, "entities": []}
+{"claim_id": 8384, "entities": []}
+{"claim_id": 8385, "entities": []}
+{"claim_id": 8386, "entities": [{"kind": "library_name", "surface_form": "Next.js", "aliases": []}]}
+{"claim_id": 8387, "entities": []}
+{"claim_id": 8388, "entities": []}
+{"claim_id": 8389, "entities": []}
+{"claim_id": 8390, "entities": [{"kind": "person_name", "surface_form": "Mariana Rodriguez", "aliases": []}, {"kind": "person_name", "surface_form": "Juan Gutierrez", "aliases": []}, {"kind": "person_name", "surface_form": "Lucia Alderete", "aliases": []}]}
+{"claim_id": 8391, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8392, "entities": [{"kind": "person_name", "surface_form": "Impulsa Supabase", "aliases": []}, {"kind": "person_name", "surface_form": "Custom Access", "aliases": []}, {"kind": "person_name", "surface_form": "Token Hook", "aliases": []}]}
+{"claim_id": 8393, "entities": [{"kind": "person_name", "surface_form": "Custom Access", "aliases": []}, {"kind": "person_name", "surface_form": "Token Hook", "aliases": []}]}
+{"claim_id": 8394, "entities": []}
+{"claim_id": 8395, "entities": []}
+{"claim_id": 8396, "entities": []}
+{"claim_id": 8397, "entities": [{"kind": "library_name", "surface_form": "MySQL", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8398, "entities": []}
+{"claim_id": 8399, "entities": [{"kind": "library_name", "surface_form": "Express", "aliases": []}, {"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8400, "entities": [{"kind": "person_name", "surface_form": "Connection Closed", "aliases": []}]}
+{"claim_id": 8401, "entities": []}
+{"claim_id": 8402, "entities": []}
+{"claim_id": 8403, "entities": [{"kind": "person_name", "surface_form": "When Evolution", "aliases": []}]}
+{"claim_id": 8404, "entities": [{"kind": "time_expression", "surface_form": "may", "aliases": []}]}
+{"claim_id": 8406, "entities": []}
+{"claim_id": 8407, "entities": []}
+{"claim_id": 8410, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8411, "entities": []}
+{"claim_id": 8412, "entities": []}
+{"claim_id": 8413, "entities": [{"kind": "person_name", "surface_form": "Insight Cards", "aliases": []}]}
+{"claim_id": 8414, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8415, "entities": [{"kind": "person_name", "surface_form": "Windows Terminal", "aliases": []}]}
+{"claim_id": 8416, "entities": [{"kind": "library_name", "surface_form": "Obsidian", "aliases": []}]}
+{"claim_id": 8418, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "person_name", "surface_form": "Omni Claude", "aliases": []}]}
+{"claim_id": 8419, "entities": [{"kind": "person_name", "surface_form": "Windows Terminal", "aliases": []}, {"kind": "library_name", "surface_form": "GitHub", "aliases": []}]}
+{"claim_id": 8420, "entities": []}
+{"claim_id": 8421, "entities": [{"kind": "library_name", "surface_form": "Obsidian", "aliases": []}, {"kind": "concept", "surface_form": "knowledge graph", "aliases": []}]}
+{"claim_id": 8422, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8423, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8424, "entities": [{"kind": "library_name", "surface_form": "Express", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8425, "entities": []}
+{"claim_id": 8426, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8427, "entities": []}
+{"claim_id": 8429, "entities": []}
+{"claim_id": 8430, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8431, "entities": [{"kind": "library_name", "surface_form": "React", "aliases": []}, {"kind": "library_name", "surface_form": "Express", "aliases": []}]}
+{"claim_id": 8432, "entities": []}
+{"claim_id": 8433, "entities": [{"kind": "person_name", "surface_form": "Entity Registry", "aliases": []}, {"kind": "library_name", "surface_form": "SQLite", "aliases": []}, {"kind": "concept", "surface_form": "knowledge graph", "aliases": []}]}
+{"claim_id": 8434, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8435, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "person_name", "surface_form": "Requires Bun", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8436, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8437, "entities": [{"kind": "library_name", "surface_form": "MySQL", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8438, "entities": [{"kind": "concept", "surface_form": "knowledge graph", "aliases": []}]}
+{"claim_id": 8439, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8440, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8441, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8442, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "person_name", "surface_form": "Git Bash", "aliases": []}]}
+{"claim_id": 8443, "entities": []}
+{"claim_id": 8444, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8445, "entities": []}
+{"claim_id": 8446, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8447, "entities": [{"kind": "library_name", "surface_form": "Postgres", "aliases": []}]}
+{"claim_id": 8448, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8449, "entities": [{"kind": "person_name", "surface_form": "Git Bash", "aliases": []}]}
+{"claim_id": 8450, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "time_expression", "surface_form": "may", "aliases": []}]}
+{"claim_id": 8451, "entities": [{"kind": "time_expression", "surface_form": "March", "aliases": []}]}
+{"claim_id": 8452, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8455, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8456, "entities": []}
+{"claim_id": 8457, "entities": [{"kind": "person_name", "surface_form": "Validates Monitor", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8458, "entities": []}
+{"claim_id": 8459, "entities": []}
+{"claim_id": 8460, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "person_name", "surface_form": "Every Claude", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8461, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8462, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8463, "entities": []}
+{"claim_id": 8464, "entities": [{"kind": "person_name", "surface_form": "Project Settings", "aliases": []}, {"kind": "library_name", "surface_form": "Postgres", "aliases": []}]}
+{"claim_id": 8465, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "person_name", "surface_form": "Uses Bash", "aliases": []}, {"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8466, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8467, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8468, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8469, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "time_expression", "surface_form": "may", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8470, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8471, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8472, "entities": []}
+{"claim_id": 8473, "entities": []}
+{"claim_id": 8474, "entities": [{"kind": "person_name", "surface_form": "Caddyfile Caddyfile", "aliases": []}, {"kind": "library_name", "surface_form": "Express", "aliases": []}]}
+{"claim_id": 8475, "entities": [{"kind": "person_name", "surface_form": "Postgres Docker", "aliases": []}, {"kind": "library_name", "surface_form": "Postgres", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8476, "entities": []}
+{"claim_id": 8477, "entities": []}
+{"claim_id": 8478, "entities": [{"kind": "person_name", "surface_form": "Esperando Resp", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8480, "entities": [{"kind": "person_name", "surface_form": "Claude Monitor", "aliases": []}, {"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8481, "entities": [{"kind": "person_name", "surface_form": "Claude Monitor", "aliases": []}, {"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "library_name", "surface_form": "MySQL", "aliases": []}, {"kind": "library_name", "surface_form": "Redis", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8482, "entities": [{"kind": "person_name", "surface_form": "Task Scheduler", "aliases": []}, {"kind": "person_name", "surface_form": "No Monitor", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8483, "entities": []}
+{"claim_id": 8484, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8485, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8486, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "person_name", "surface_form": "Interrupt Claude", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8487, "entities": []}
+{"claim_id": 8488, "entities": []}
+{"claim_id": 8489, "entities": [{"kind": "person_name", "surface_form": "Jonatan Emmanuel", "aliases": []}]}
+{"claim_id": 8490, "entities": []}
+{"claim_id": 8491, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8492, "entities": [{"kind": "person_name", "surface_form": "Windows Task", "aliases": []}, {"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "person_name", "surface_form": "Task Scheduler", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8493, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8494, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8495, "entities": [{"kind": "library_name", "surface_form": "Obsidian", "aliases": []}]}
+{"claim_id": 8496, "entities": []}
+{"claim_id": 8497, "entities": []}
+{"claim_id": 8498, "entities": []}
+{"claim_id": 8499, "entities": [{"kind": "person_name", "surface_form": "Git Bash", "aliases": []}, {"kind": "person_name", "surface_form": "Critical Rule", "aliases": []}, {"kind": "person_name", "surface_form": "Windows Task", "aliases": []}, {"kind": "library_name", "surface_form": "Obsidian", "aliases": []}]}
+{"claim_id": 8500, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "time_expression", "surface_form": "may", "aliases": []}]}
+{"claim_id": 8501, "entities": [{"kind": "library_name", "surface_form": "React", "aliases": []}]}
+{"claim_id": 8502, "entities": []}
+{"claim_id": 8503, "entities": [{"kind": "time_expression", "surface_form": "may", "aliases": []}]}
+{"claim_id": 8504, "entities": []}
+{"claim_id": 8505, "entities": [{"kind": "person_name", "surface_form": "Supabase Management", "aliases": []}, {"kind": "person_name", "surface_form": "No Management", "aliases": []}, {"kind": "time_expression", "surface_form": "March", "aliases": []}]}
+{"claim_id": 8506, "entities": []}
+{"claim_id": 8507, "entities": [{"kind": "library_name", "surface_form": "Next.js", "aliases": []}]}
+{"claim_id": 8508, "entities": []}
+{"claim_id": 8509, "entities": []}
+{"claim_id": 8510, "entities": []}
+{"claim_id": 8511, "entities": []}
+{"claim_id": 8512, "entities": []}
+{"claim_id": 8513, "entities": []}
+{"claim_id": 8516, "entities": [{"kind": "person_name", "surface_form": "Jonatan Emmanuel", "aliases": []}]}
+{"claim_id": 8517, "entities": []}
+{"claim_id": 8518, "entities": [{"kind": "person_name", "surface_form": "Telegram Bot", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8520, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8521, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8522, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "person_name", "surface_form": "Driven Monitoring", "aliases": []}, {"kind": "person_name", "surface_form": "Token Efficiency", "aliases": []}]}
+{"claim_id": 8523, "entities": []}
+{"claim_id": 8524, "entities": []}
+{"claim_id": 8525, "entities": []}
+{"claim_id": 8526, "entities": [{"kind": "person_name", "surface_form": "Speed Boost", "aliases": []}, {"kind": "person_name", "surface_form": "Ingresos Totales", "aliases": []}, {"kind": "person_name", "surface_form": "Total Compras", "aliases": []}, {"kind": "person_name", "surface_form": "Boosts Activos", "aliases": []}]}
+{"claim_id": 8527, "entities": [{"kind": "person_name", "surface_form": "Speed Boost", "aliases": []}, {"kind": "person_name", "surface_form": "Osvaldo Blaiotta", "aliases": []}, {"kind": "person_name", "surface_form": "Maria Gonzalez", "aliases": []}]}
+{"claim_id": 8528, "entities": []}
+{"claim_id": 8529, "entities": [{"kind": "person_name", "surface_form": "Task Scheduler", "aliases": []}]}
+{"claim_id": 8530, "entities": [{"kind": "person_name", "surface_form": "Speed Boost", "aliases": []}]}
+{"claim_id": 8531, "entities": [{"kind": "person_name", "surface_form": "Speed Boost", "aliases": []}, {"kind": "time_expression", "surface_form": "Friday", "aliases": []}]}
+{"claim_id": 8532, "entities": [{"kind": "person_name", "surface_form": "Speed Boost", "aliases": []}, {"kind": "person_name", "surface_form": "Boosts Activos", "aliases": []}]}
+{"claim_id": 8533, "entities": []}
+{"claim_id": 8534, "entities": [{"kind": "library_name", "surface_form": "FastAPI", "aliases": []}]}
+{"claim_id": 8535, "entities": [{"kind": "person_name", "surface_form": "Scripts Python", "aliases": []}, {"kind": "library_name", "surface_form": "Pydantic", "aliases": []}]}
+{"claim_id": 8536, "entities": []}
+{"claim_id": 8537, "entities": []}
+{"claim_id": 8538, "entities": [{"kind": "person_name", "surface_form": "System Idle", "aliases": []}]}
+{"claim_id": 8540, "entities": []}
+{"claim_id": 8541, "entities": []}
+{"claim_id": 8542, "entities": []}
+{"claim_id": 8543, "entities": [{"kind": "person_name", "surface_form": "Agent Auth", "aliases": []}, {"kind": "person_name", "surface_form": "Reverse Channel", "aliases": []}, {"kind": "person_name", "surface_form": "Refactorizar Device", "aliases": []}]}
+{"claim_id": 8544, "entities": []}
+{"claim_id": 8545, "entities": []}
+{"claim_id": 8546, "entities": [{"kind": "library_name", "surface_form": "FastAPI", "aliases": []}]}
+{"claim_id": 8547, "entities": []}
+{"claim_id": 8548, "entities": [{"kind": "person_name", "surface_form": "Docker Desktop", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8549, "entities": []}
+{"claim_id": 8550, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8551, "entities": []}
+{"claim_id": 8553, "entities": []}
+{"claim_id": 8554, "entities": []}
+{"claim_id": 8555, "entities": [{"kind": "person_name", "surface_form": "Dashboard React", "aliases": []}, {"kind": "person_name", "surface_form": "Analytics Pipeline", "aliases": []}, {"kind": "person_name", "surface_form": "Network Signal", "aliases": []}, {"kind": "person_name", "surface_form": "Wireless Optimizer", "aliases": []}, {"kind": "person_name", "surface_form": "Bot Core", "aliases": []}, {"kind": "person_name", "surface_form": "Network Intelligence", "aliases": []}, {"kind": "person_name", "surface_form": "Network Topology", "aliases": []}, {"kind": "person_name", "surface_form": "Weather Correlation", "aliases": []}, {"kind": "person_name", "surface_form": "Outage Watcher", "aliases": []}, {"kind": "person_name", "surface_form": "Technical Reports", "aliases": []}, {"kind": "library_name", "surface_form": "React", "aliases": []}, {"kind": "library_name", "surface_form": "Express", "aliases": []}, {"kind": "concept", "surface_form": "knowledge graph", "aliases": []}]}
+{"claim_id": 8556, "entities": [{"kind": "library_name", "surface_form": "Next.js", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8557, "entities": []}
+{"claim_id": 8558, "entities": []}
+{"claim_id": 8559, "entities": [{"kind": "person_name", "surface_form": "Gilda Irma", "aliases": []}, {"kind": "person_name", "surface_form": "Speed Boost", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8560, "entities": []}
+{"claim_id": 8561, "entities": [{"kind": "person_name", "surface_form": "Two Telegram", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8562, "entities": []}
+{"claim_id": 8563, "entities": [{"kind": "person_name", "surface_form": "Valid Gemini", "aliases": []}]}
+{"claim_id": 8564, "entities": []}
+{"claim_id": 8565, "entities": [{"kind": "person_name", "surface_form": "Karen Ovejero", "aliases": []}, {"kind": "person_name", "surface_form": "Bianca Vera", "aliases": []}, {"kind": "person_name", "surface_form": "Elena Saucedo", "aliases": []}, {"kind": "person_name", "surface_form": "Claudio Alegre", "aliases": []}, {"kind": "person_name", "surface_form": "Aldana Velazquez", "aliases": []}, {"kind": "person_name", "surface_form": "Silvana Kopf", "aliases": []}, {"kind": "person_name", "surface_form": "Angelica Cansino", "aliases": []}, {"kind": "person_name", "surface_form": "Gilda Velazco", "aliases": []}]}
+{"claim_id": 8566, "entities": []}
+{"claim_id": 8567, "entities": []}
+{"claim_id": 8568, "entities": [{"kind": "time_expression", "surface_form": "March", "aliases": []}, {"kind": "time_expression", "surface_form": "April", "aliases": []}]}
+{"claim_id": 8569, "entities": []}
+{"claim_id": 8570, "entities": [{"kind": "time_expression", "surface_form": "March", "aliases": []}]}
+{"claim_id": 8571, "entities": [{"kind": "concept", "surface_form": "knowledge graph", "aliases": []}]}
+{"claim_id": 8572, "entities": []}
+{"claim_id": 8573, "entities": []}
+{"claim_id": 8574, "entities": []}
+{"claim_id": 8575, "entities": []}
+{"claim_id": 8576, "entities": []}
+{"claim_id": 8577, "entities": []}
+{"claim_id": 8578, "entities": []}
+{"claim_id": 8579, "entities": []}
+{"claim_id": 8580, "entities": [{"kind": "person_name", "surface_form": "Google Search", "aliases": []}, {"kind": "person_name", "surface_form": "Google Shopping", "aliases": []}]}
+{"claim_id": 8582, "entities": []}
+{"claim_id": 8583, "entities": []}
+{"claim_id": 8584, "entities": [{"kind": "person_name", "surface_form": "All Saleor", "aliases": []}, {"kind": "person_name", "surface_form": "Google Search", "aliases": []}, {"kind": "library_name", "surface_form": "Next.js", "aliases": []}]}
+{"claim_id": 8585, "entities": [{"kind": "person_name", "surface_form": "Mauricio Benitez", "aliases": []}]}
+{"claim_id": 8586, "entities": []}
+{"claim_id": 8587, "entities": [{"kind": "concept", "surface_form": "knowledge graph", "aliases": []}]}
+{"claim_id": 8588, "entities": []}
+{"claim_id": 8589, "entities": []}
+{"claim_id": 8590, "entities": []}
+{"claim_id": 8591, "entities": [{"kind": "person_name", "surface_form": "New Step", "aliases": []}, {"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8592, "entities": [{"kind": "library_name", "surface_form": "React", "aliases": []}]}
+{"claim_id": 8593, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8594, "entities": [{"kind": "person_name", "surface_form": "On Windows", "aliases": []}, {"kind": "person_name", "surface_form": "Git Bash", "aliases": []}, {"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "person_name", "surface_form": "Program Files", "aliases": []}]}
+{"claim_id": 8596, "entities": []}
+{"claim_id": 8597, "entities": [{"kind": "person_name", "surface_form": "Telegram Group", "aliases": []}, {"kind": "person_name", "surface_form": "Telegram Mini", "aliases": []}, {"kind": "person_name", "surface_form": "Dream Mode", "aliases": []}, {"kind": "library_name", "surface_form": "Obsidian", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}, {"kind": "concept", "surface_form": "knowledge graph", "aliases": []}]}
+{"claim_id": 8598, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8599, "entities": []}
+{"claim_id": 8600, "entities": []}
+{"claim_id": 8602, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8604, "entities": [{"kind": "time_expression", "surface_form": "March", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8605, "entities": [{"kind": "time_expression", "surface_form": "may", "aliases": []}, {"kind": "library_name", "surface_form": "GitHub", "aliases": []}]}
+{"claim_id": 8606, "entities": []}
+{"claim_id": 8607, "entities": [{"kind": "person_name", "surface_form": "Telegram Group", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8608, "entities": [{"kind": "person_name", "surface_form": "Control Plane", "aliases": []}, {"kind": "person_name", "surface_form": "Telegram Group", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8610, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8612, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8613, "entities": []}
+{"claim_id": 8615, "entities": [{"kind": "person_name", "surface_form": "Background Agent", "aliases": []}, {"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "time_expression", "surface_form": "may", "aliases": []}]}
+{"claim_id": 8616, "entities": []}
+{"claim_id": 8617, "entities": []}
+{"claim_id": 8618, "entities": []}
+{"claim_id": 8619, "entities": [{"kind": "person_name", "surface_form": "Telegram Group", "aliases": []}, {"kind": "person_name", "surface_form": "Los Ricardos", "aliases": []}, {"kind": "person_name", "surface_form": "Manage Topics", "aliases": []}, {"kind": "person_name", "surface_form": "Inner Ricardo", "aliases": []}, {"kind": "person_name", "surface_form": "Control Plane", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8620, "entities": [{"kind": "time_expression", "surface_form": "may", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8621, "entities": [{"kind": "person_name", "surface_form": "Tool Preferences", "aliases": []}]}
+{"claim_id": 8625, "entities": [{"kind": "person_name", "surface_form": "Telegram Group", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8626, "entities": [{"kind": "person_name", "surface_form": "Autonomy Pipeline", "aliases": []}]}
+{"claim_id": 8627, "entities": []}
+{"claim_id": 8628, "entities": []}
+{"claim_id": 8630, "entities": []}
+{"claim_id": 8632, "entities": []}
+{"claim_id": 8633, "entities": []}
+{"claim_id": 8634, "entities": [{"kind": "library_name", "surface_form": "Next.js", "aliases": []}]}
+{"claim_id": 8635, "entities": [{"kind": "library_name", "surface_form": "Next.js", "aliases": []}]}
+{"claim_id": 8636, "entities": []}
+{"claim_id": 8637, "entities": []}
+{"claim_id": 8638, "entities": [{"kind": "library_name", "surface_form": "Next.js", "aliases": []}]}
+{"claim_id": 8639, "entities": []}
+{"claim_id": 8640, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8641, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8642, "entities": []}
+{"claim_id": 8643, "entities": []}
+{"claim_id": 8644, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8645, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8646, "entities": []}
+{"claim_id": 8647, "entities": [{"kind": "time_expression", "surface_form": "may", "aliases": []}]}
+{"claim_id": 8648, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8649, "entities": []}
+{"claim_id": 8650, "entities": [{"kind": "library_name", "surface_form": "Next.js", "aliases": []}]}
+{"claim_id": 8651, "entities": [{"kind": "library_name", "surface_form": "Flask", "aliases": []}]}
+{"claim_id": 8652, "entities": []}
+{"claim_id": 8653, "entities": []}
+{"claim_id": 8655, "entities": [{"kind": "person_name", "surface_form": "Recommended Approach", "aliases": []}, {"kind": "person_name", "surface_form": "Autonomous Operations", "aliases": []}, {"kind": "person_name", "surface_form": "Unified Operations", "aliases": []}, {"kind": "person_name", "surface_form": "Predictive Autonomy", "aliases": []}]}
+{"claim_id": 8658, "entities": []}
+{"claim_id": 8659, "entities": []}
+{"claim_id": 8660, "entities": []}
+{"claim_id": 8661, "entities": [{"kind": "person_name", "surface_form": "Telegram Group", "aliases": []}, {"kind": "person_name", "surface_form": "Requires Monitor", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8662, "entities": []}
+{"claim_id": 8663, "entities": [{"kind": "person_name", "surface_form": "On Windows", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8664, "entities": [{"kind": "person_name", "surface_form": "Any Node", "aliases": []}, {"kind": "time_expression", "surface_form": "may", "aliases": []}, {"kind": "library_name", "surface_form": "Node.js", "aliases": []}]}
+{"claim_id": 8665, "entities": []}
+{"claim_id": 8666, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8667, "entities": []}
+{"claim_id": 8670, "entities": []}
+{"claim_id": 8671, "entities": [{"kind": "library_name", "surface_form": "Node.js", "aliases": []}]}
+{"claim_id": 8672, "entities": []}
+{"claim_id": 8674, "entities": []}
+{"claim_id": 8679, "entities": [{"kind": "person_name", "surface_form": "Telegram Bot", "aliases": []}, {"kind": "person_name", "surface_form": "Too Many", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8681, "entities": []}
+{"claim_id": 8682, "entities": []}
+{"claim_id": 8683, "entities": []}
+{"claim_id": 8684, "entities": []}
+{"claim_id": 8685, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8686, "entities": [{"kind": "person_name", "surface_form": "Telegram Bot", "aliases": []}, {"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8687, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8689, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8690, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8691, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8692, "entities": [{"kind": "person_name", "surface_form": "Git Bash", "aliases": []}]}
+{"claim_id": 8694, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8695, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8696, "entities": [{"kind": "person_name", "surface_form": "Too Many", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8697, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8698, "entities": [{"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8699, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8700, "entities": [{"kind": "library_name", "surface_form": "Flask", "aliases": []}]}
+{"claim_id": 8701, "entities": []}
+{"claim_id": 8702, "entities": []}
+{"claim_id": 8703, "entities": []}
+{"claim_id": 8704, "entities": []}
+{"claim_id": 8705, "entities": [{"kind": "person_name", "surface_form": "Git Bash", "aliases": []}]}
+{"claim_id": 8706, "entities": [{"kind": "person_name", "surface_form": "Git Bash", "aliases": []}]}
+{"claim_id": 8711, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8712, "entities": []}
+{"claim_id": 8713, "entities": [{"kind": "person_name", "surface_form": "Command Palette", "aliases": []}, {"kind": "person_name", "surface_form": "Uptime Kuma", "aliases": []}, {"kind": "person_name", "surface_form": "Unified Inbox", "aliases": []}, {"kind": "person_name", "surface_form": "Deep Windows", "aliases": []}, {"kind": "library_name", "surface_form": "Slack", "aliases": []}]}
+{"claim_id": 8714, "entities": [{"kind": "person_name", "surface_form": "Uptime Kuma", "aliases": []}, {"kind": "library_name", "surface_form": "LangChain", "aliases": []}]}
+{"claim_id": 8715, "entities": [{"kind": "person_name", "surface_form": "Cloudflare Tunnel", "aliases": []}]}
+{"claim_id": 8716, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8717, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8718, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8719, "entities": []}
+{"claim_id": 8720, "entities": []}
+{"claim_id": 8722, "entities": []}
+{"claim_id": 8723, "entities": []}
+{"claim_id": 8724, "entities": []}
+{"claim_id": 8725, "entities": []}
+{"claim_id": 8726, "entities": []}
+{"claim_id": 8727, "entities": []}
+{"claim_id": 8728, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8729, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8730, "entities": []}
+{"claim_id": 8732, "entities": []}
+{"claim_id": 8733, "entities": []}
+{"claim_id": 8734, "entities": [{"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8736, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8737, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8738, "entities": []}
+{"claim_id": 8739, "entities": []}
+{"claim_id": 8740, "entities": []}
+{"claim_id": 8741, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8742, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8743, "entities": [{"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8744, "entities": [{"kind": "time_expression", "surface_form": "April", "aliases": []}]}
+{"claim_id": 8745, "entities": []}
+{"claim_id": 8746, "entities": [{"kind": "person_name", "surface_form": "El Pato", "aliases": []}]}
+{"claim_id": 8747, "entities": []}
+{"claim_id": 8749, "entities": []}
+{"claim_id": 8750, "entities": []}
+{"claim_id": 8751, "entities": [{"kind": "person_name", "surface_form": "Subject Public", "aliases": []}, {"kind": "person_name", "surface_form": "Key Info", "aliases": []}]}
+{"claim_id": 8752, "entities": []}
+{"claim_id": 8753, "entities": [{"kind": "person_name", "surface_form": "Unified Inbox", "aliases": []}, {"kind": "person_name", "surface_form": "Command Palette", "aliases": []}]}
+{"claim_id": 8754, "entities": []}
+{"claim_id": 8755, "entities": [{"kind": "person_name", "surface_form": "Defer Netdata", "aliases": []}, {"kind": "person_name", "surface_form": "Gemini Flash", "aliases": []}]}
+{"claim_id": 8756, "entities": [{"kind": "person_name", "surface_form": "Open Interpreter", "aliases": []}, {"kind": "person_name", "surface_form": "Uptime Kuma", "aliases": []}, {"kind": "library_name", "surface_form": "LangChain", "aliases": []}]}
+{"claim_id": 8757, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8758, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8759, "entities": [{"kind": "library_name", "surface_form": "Postgres", "aliases": []}]}
+{"claim_id": 8760, "entities": [{"kind": "library_name", "surface_form": "Postgres", "aliases": []}]}
+{"claim_id": 8762, "entities": []}
+{"claim_id": 8763, "entities": [{"kind": "person_name", "surface_form": "Open Source", "aliases": []}]}
+{"claim_id": 8764, "entities": [{"kind": "person_name", "surface_form": "React Native", "aliases": []}, {"kind": "person_name", "surface_form": "Command Palette", "aliases": []}, {"kind": "person_name", "surface_form": "Unified Inbox", "aliases": []}, {"kind": "library_name", "surface_form": "React", "aliases": []}]}
+{"claim_id": 8770, "entities": []}
+{"claim_id": 8772, "entities": []}
+{"claim_id": 8773, "entities": []}
+{"claim_id": 8774, "entities": []}
+{"claim_id": 8775, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8776, "entities": [{"kind": "person_name", "surface_form": "Chat Analyst", "aliases": []}]}
+{"claim_id": 8777, "entities": [{"kind": "library_name", "surface_form": "Postgres", "aliases": []}]}
+{"claim_id": 8778, "entities": []}
+{"claim_id": 8779, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8780, "entities": [{"kind": "library_name", "surface_form": "Postgres", "aliases": []}]}
+{"claim_id": 8781, "entities": [{"kind": "person_name", "surface_form": "Quick Start", "aliases": []}]}
+{"claim_id": 8782, "entities": [{"kind": "person_name", "surface_form": "Recommended Companion", "aliases": []}, {"kind": "person_name", "surface_form": "First Rule", "aliases": []}]}
+{"claim_id": 8783, "entities": [{"kind": "person_name", "surface_form": "Task Scheduler", "aliases": []}]}
+{"claim_id": 8785, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "person_name", "surface_form": "Paperclip Postgres", "aliases": []}, {"kind": "library_name", "surface_form": "Postgres", "aliases": []}]}
+{"claim_id": 8789, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8790, "entities": []}
+{"claim_id": 8791, "entities": []}
+{"claim_id": 8792, "entities": []}
+{"claim_id": 8793, "entities": [{"kind": "person_name", "surface_form": "Gemini Flash", "aliases": []}, {"kind": "person_name", "surface_form": "Flash Preview", "aliases": []}, {"kind": "person_name", "surface_form": "Lite Preview", "aliases": []}]}
+{"claim_id": 8794, "entities": [{"kind": "library_name", "surface_form": "Redis", "aliases": []}]}
+{"claim_id": 8795, "entities": []}
+{"claim_id": 8796, "entities": []}
+{"claim_id": 8797, "entities": []}
+{"claim_id": 8798, "entities": [{"kind": "person_name", "surface_form": "Windows Git", "aliases": []}]}
+{"claim_id": 8799, "entities": []}
+{"claim_id": 8800, "entities": []}
+{"claim_id": 8801, "entities": []}
+{"claim_id": 8802, "entities": [{"kind": "person_name", "surface_form": "Pedrito Oracle", "aliases": []}]}
+{"claim_id": 8803, "entities": [{"kind": "person_name", "surface_form": "Pedrito Oracle", "aliases": []}, {"kind": "library_name", "surface_form": "Flask", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8804, "entities": []}
+{"claim_id": 8805, "entities": []}
+{"claim_id": 8807, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8809, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8811, "entities": []}
+{"claim_id": 8814, "entities": []}
+{"claim_id": 8818, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8822, "entities": [{"kind": "time_expression", "surface_form": "april", "aliases": []}]}
+{"claim_id": 8827, "entities": [{"kind": "person_name", "surface_form": "Either Telegram", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8829, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8831, "entities": [{"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8837, "entities": []}
+{"claim_id": 8839, "entities": []}
+{"claim_id": 8842, "entities": [{"kind": "person_name", "surface_form": "Paperclip Foundation", "aliases": []}, {"kind": "person_name", "surface_form": "Rollout Foundation", "aliases": []}]}
+{"claim_id": 8845, "entities": []}
+{"claim_id": 8846, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8847, "entities": [{"kind": "person_name", "surface_form": "For App", "aliases": []}, {"kind": "library_name", "surface_form": "SQLAlchemy", "aliases": []}]}
+{"claim_id": 8848, "entities": [{"kind": "person_name", "surface_form": "Command Palette", "aliases": []}, {"kind": "person_name", "surface_form": "Unified Inbox", "aliases": []}, {"kind": "person_name", "surface_form": "Combined Phase", "aliases": []}, {"kind": "person_name", "surface_form": "Pending Phase", "aliases": []}, {"kind": "library_name", "surface_form": "Slack", "aliases": []}]}
+{"claim_id": 8849, "entities": [{"kind": "person_name", "surface_form": "Paperclip Postgres", "aliases": []}, {"kind": "library_name", "surface_form": "Postgres", "aliases": []}]}
+{"claim_id": 8851, "entities": [{"kind": "person_name", "surface_form": "Embedded Postgres", "aliases": []}, {"kind": "library_name", "surface_form": "Postgres", "aliases": []}]}
+{"claim_id": 8854, "entities": []}
+{"claim_id": 8855, "entities": []}
+{"claim_id": 8856, "entities": []}
+{"claim_id": 8857, "entities": [{"kind": "person_name", "surface_form": "Claude Agent", "aliases": []}, {"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "library_name", "surface_form": "Qdrant", "aliases": []}, {"kind": "library_name", "surface_form": "Obsidian", "aliases": []}]}
+{"claim_id": 8860, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8861, "entities": []}
+{"claim_id": 8863, "entities": []}
+{"claim_id": 8864, "entities": [{"kind": "library_name", "surface_form": "MySQL", "aliases": []}, {"kind": "library_name", "surface_form": "Redis", "aliases": []}]}
+{"claim_id": 8865, "entities": [{"kind": "person_name", "surface_form": "Creating Paperclip", "aliases": []}]}
+{"claim_id": 8866, "entities": []}
+{"claim_id": 8867, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8868, "entities": [{"kind": "library_name", "surface_form": "Redis", "aliases": []}]}
+{"claim_id": 8869, "entities": []}
+{"claim_id": 8870, "entities": [{"kind": "library_name", "surface_form": "Redis", "aliases": []}]}
+{"claim_id": 8871, "entities": []}
+{"claim_id": 8872, "entities": [{"kind": "person_name", "surface_form": "Automatic Function", "aliases": []}]}
+{"claim_id": 8873, "entities": []}
+{"claim_id": 8874, "entities": []}
+{"claim_id": 8875, "entities": []}
+{"claim_id": 8876, "entities": [{"kind": "person_name", "surface_form": "First Turn", "aliases": []}]}
+{"claim_id": 8877, "entities": [{"kind": "person_name", "surface_form": "First Turn", "aliases": []}]}
+{"claim_id": 8878, "entities": []}
+{"claim_id": 8879, "entities": []}
+{"claim_id": 8880, "entities": [{"kind": "person_name", "surface_form": "Paperclip Collections", "aliases": []}]}
+{"claim_id": 8881, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8882, "entities": []}
+{"claim_id": 8883, "entities": []}
+{"claim_id": 8884, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8885, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "time_expression", "surface_form": "may", "aliases": []}]}
+{"claim_id": 8886, "entities": []}
+{"claim_id": 8887, "entities": [{"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8888, "entities": [{"kind": "person_name", "surface_form": "Each Paperclip", "aliases": []}, {"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8889, "entities": [{"kind": "library_name", "surface_form": "Next.js", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8890, "entities": []}
+{"claim_id": 8891, "entities": [{"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8892, "entities": []}
+{"claim_id": 8893, "entities": []}
+{"claim_id": 8894, "entities": []}
+{"claim_id": 8895, "entities": [{"kind": "library_name", "surface_form": "React", "aliases": []}]}
+{"claim_id": 8896, "entities": []}
+{"claim_id": 8897, "entities": []}
+{"claim_id": 8898, "entities": []}
+{"claim_id": 8899, "entities": []}
+{"claim_id": 8900, "entities": []}
+{"claim_id": 8901, "entities": []}
+{"claim_id": 8902, "entities": []}
+{"claim_id": 8903, "entities": []}
+{"claim_id": 8904, "entities": []}
+{"claim_id": 8905, "entities": []}
+{"claim_id": 8906, "entities": [{"kind": "library_name", "surface_form": "MySQL", "aliases": []}]}
+{"claim_id": 8907, "entities": []}
+{"claim_id": 8908, "entities": []}
+{"claim_id": 8909, "entities": [{"kind": "time_expression", "surface_form": "marzo", "aliases": []}]}
+{"claim_id": 8910, "entities": []}
+{"claim_id": 8911, "entities": [{"kind": "time_expression", "surface_form": "marzo", "aliases": []}]}
+{"claim_id": 8912, "entities": []}
+{"claim_id": 8915, "entities": []}
+{"claim_id": 8916, "entities": []}
+{"claim_id": 8917, "entities": []}
+{"claim_id": 8918, "entities": [{"kind": "person_name", "surface_form": "React Flow", "aliases": []}, {"kind": "library_name", "surface_form": "React", "aliases": []}, {"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}]}
+{"claim_id": 8919, "entities": []}
+{"claim_id": 8920, "entities": [{"kind": "person_name", "surface_form": "First Turn", "aliases": []}]}
+{"claim_id": 8921, "entities": []}
+{"claim_id": 8922, "entities": [{"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}]}
+{"claim_id": 8923, "entities": []}
+{"claim_id": 8924, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}, {"kind": "person_name", "surface_form": "Google Gemini", "aliases": []}, {"kind": "model_name", "surface_form": "gpt-5", "aliases": []}]}
+{"claim_id": 8925, "entities": []}
+{"claim_id": 8926, "entities": [{"kind": "model_name", "surface_form": "gpt-5", "aliases": []}]}
+{"claim_id": 8927, "entities": []}
+{"claim_id": 8928, "entities": [{"kind": "person_name", "surface_form": "Survives Claude", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8929, "entities": [{"kind": "person_name", "surface_form": "Survives Claude", "aliases": []}, {"kind": "library_name", "surface_form": "Postgres", "aliases": []}, {"kind": "library_name", "surface_form": "MySQL", "aliases": []}, {"kind": "library_name", "surface_form": "Docker", "aliases": []}, {"kind": "library_name", "surface_form": "Telegram", "aliases": []}]}
+{"claim_id": 8930, "entities": [{"kind": "person_name", "surface_form": "React Flow", "aliases": []}, {"kind": "model_name", "surface_form": "gpt-5", "aliases": []}, {"kind": "library_name", "surface_form": "React", "aliases": []}, {"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}]}
+{"claim_id": 8931, "entities": []}
+{"claim_id": 8932, "entities": []}
+{"claim_id": 8933, "entities": []}
+{"claim_id": 8934, "entities": [{"kind": "person_name", "surface_form": "Saleor Python", "aliases": []}]}
+{"claim_id": 8935, "entities": [{"kind": "library_name", "surface_form": "Postgres", "aliases": []}]}
+{"claim_id": 8936, "entities": [{"kind": "library_name", "surface_form": "PostgreSQL", "aliases": []}]}
+{"claim_id": 8937, "entities": []}
+{"claim_id": 8938, "entities": [{"kind": "library_name", "surface_form": "Docker", "aliases": []}]}
+{"claim_id": 8939, "entities": [{"kind": "person_name", "surface_form": "Claude Code", "aliases": []}]}
+{"claim_id": 8940, "entities": []}
