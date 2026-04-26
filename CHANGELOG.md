@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.2] - 2026-04-26
+
+### Added
+
+- **Tests for `_call_claude_cli` provider** (`tests/test_llm_provider_claude_cli.py`, 11 cases): missing binary, non-zero exit, timeout, OSError, UTF-8 / emoji round-trip, `MEMORYMASTER_CLAUDE_CLI_BIN` override, `MEMORYMASTER_CLAUDE_CLI_TIMEOUT` override, default model, alias registration (both `claude_cli` and `claude-cli`), end-to-end dispatch through `call_llm()`. Mocks `subprocess.run` so tests don't invoke the real CLI.
+- **Regression test for the v3.5.0 hook env-assignment fix** (`tests/test_hook_env_isolation.py`, 7 cases): asserts `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py` uses direct `os.environ["KEY"] = ...` assignment (not `setdefault`) for `MEMORYMASTER_LLM_PROVIDER`, `MEMORYMASTER_LLM_MODEL`, `MEMORYMASTER_LLM_FALLBACK_PROVIDER`, `MEMORYMASTER_LLM_FALLBACK_MODEL`, plus an import-discipline check (no third-party deps in the hook).
+- **Recall weight grid-search harness** (`scripts/grid_recall_weights.py`): 36-cell sweep of `W_LEXICAL × W_FRESHNESS × W_GRAPH` against `eval_recall_precision_at_5.py`. Auto-enables `MEMORYMASTER_RECALL_FRESHNESS=1` / `MEMORYMASTER_RECALL_GRAPH=1` only when the corresponding weight is non-zero (avoids wasted latency on no-op cells). Writes a markdown report and a per-cell JSONL log under `artifacts/grid-runs/`.
+- **Recall weight tuning report** (`artifacts/recall-weight-tuning-2026-04-26.md`): full sweep results, decisions, and next-lever notes. **TL;DR:** the current default `W_LEXICAL=0.3` is within measurement noise of the empirical optimum (`W_LEXICAL=0.1` for +0.002 precision@5). The GRAPH stream is flat across all tested weights even after the v3.5.0 +8,229-entity backfill — likely a `1/(1+hops)` weighting / labeled-GT-bias issue, not a weight-tuning issue.
+- **Roadmap doc** (`artifacts/roadmap-v3.5.2-2026-04-26.md`): documents the audit + autoresearch ship plan that produced this release.
+
+### Changed
+
+- **Synced steward hook template to the v3.5.0 wiring** (`memorymaster/config_templates/hooks/memorymaster-steward-cycle.py`): primary provider `claude_cli` (haiku-4.5), fallback `ollama` (gemma4:e4b), all four LLM env vars set via direct assignment. Until this release the deployed hook on the developer machine had been hand-edited but the shipped template still defaulted to `google` via `setdefault` — meaning fresh `memorymaster-setup` installs were getting the broken pre-v3.5.0 wiring. Now `memorymaster-setup` deploys the corrected hook out of the box.
+
+### Notes
+
+- No recall weight default changes shipped. Empirical lift ceiling is +0.002 absolute precision@5 — the existing defaults are at-or-near optimum.
+- Pure additive release: no schema changes, no API surface changes, no breaking behavior. Existing v3.5.x installs upgrade transparently.
+
 ## [3.5.1] - 2026-04-25
 
 ### Changed

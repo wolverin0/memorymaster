@@ -6,6 +6,19 @@ DB_PATH = os.path.join(PROJECT_ROOT, "memorymaster.db")
 
 sys.path.insert(0, PROJECT_ROOT)
 os.environ["MEMORYMASTER_DEFAULT_DB"] = DB_PATH
+
+# LLM stack: claude_cli (Claude Code OAuth via local `claude --print`) is the
+# primary, with Ollama gemma4:e4b as a defensive fallback. Direct assignment
+# (NOT setdefault) — the hook MUST own these vars so an inherited shell env
+# can't silently route LLM calls to a stale provider. Bug observed 2026-04-25:
+# setdefault was a no-op when the inherited env already had MEMORYMASTER_LLM_PROVIDER
+# set, so the new model name routed to the OLD provider → 50× HTTP 404 per cycle
+# before the fallback chain saved it. Captured as v3.5.0 release notes.
+os.environ["MEMORYMASTER_LLM_PROVIDER"] = "claude_cli"
+os.environ["MEMORYMASTER_LLM_MODEL"] = "claude-haiku-4-5-20251001"
+os.environ["MEMORYMASTER_LLM_FALLBACK_PROVIDER"] = "ollama"
+os.environ["MEMORYMASTER_LLM_FALLBACK_MODEL"] = "gemma4:e4b"
+
 os.chdir(PROJECT_ROOT)
 
 try:
@@ -36,11 +49,9 @@ try:
 except Exception as e:
     print(f"[MemoryMaster] auto-archive error: {e}", file=sys.stderr)
 
-# Wiki absorb (compiled truth + timeline articles)
+# Wiki absorb (compiled truth + timeline articles). Inherits the LLM provider
+# block above — uses the same OAuth-backed haiku stack as the steward.
 try:
-    # Keys come from the rotator file (~/.memorymaster/gemini-keys.env) or a
-    # singular GEMINI_API_KEY env var. Hook must never hardcode credentials.
-    os.environ.setdefault("MEMORYMASTER_LLM_PROVIDER", "google")
     from memorymaster.wiki_engine import absorb
     wiki_path = os.path.join(PROJECT_ROOT, "obsidian-vault", "wiki")
     stats = absorb(DB_PATH, wiki_path)
