@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.1] - 2026-04-25
+
+### Changed
+
+- **README slimmed from 890 → 187 lines (-79%)**. The full operator-level depth (hooks, dashboard, steward, dream bridge, wiki engine, entity registry, OpenClaw / GitNexus integration, troubleshooting, performance SLOs, one-prompt agent install) moved to a new `docs/handbook.md`. The README is now a 5-minute tour: what it is, prerequisites, quick start, provider table, MCP server template, backends, dev setup, docs index. Existing in-repo links (INSTALLATION.md, CONTRIBUTING.md, ARCHITECTURE.md, USER_GUIDE.md) are preserved.
+- README provider table updated to reflect the new `claude_cli` provider added in v3.5.0.
+- Install-verify version reference bumped to `3.5.0 or higher`.
+
+### Added
+
+- **`docs/handbook.md`** — single-file operator handbook, ~500 lines. Indexed table of contents, lifted from the prior README sections plus the wiki engine + Bases reference and the Dream Bridge safety rails section.
+
+### Notes
+
+- No code changes — purely documentation reorganization. Behavior identical to v3.5.0.
+
 ## [3.5.0] - 2026-04-25
 
 ### Added
