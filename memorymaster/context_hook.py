@@ -426,6 +426,18 @@ def _closets_enabled() -> bool:
     return raw not in ("0", "false", "False", "no", "off", "")
 
 
+def _closets_boost_only() -> bool:
+    """v3.11 P1b — when set, closets only BOOST already-recalled rows.
+
+    The default is OFF (legacy v3.10 behaviour: hydrate new candidates AND
+    boost). Boost-only mode is MemPalace's stricter "boost signal, never
+    gate" interpretation — it can't displace real lexical matches because
+    it never adds new candidates, only re-ranks the existing set.
+    """
+    raw = os.environ.get("MEMORYMASTER_RECALL_CLOSETS_BOOST_ONLY", "0").strip()
+    return raw not in ("0", "false", "False", "no", "off", "")
+
+
 def _two_pass_max_neighbors() -> int:
     """Cap neighbors discovered per recall call (default 20)."""
     raw = os.environ.get("MEMORYMASTER_RECALL_TWO_PASS_MAX", "20").strip()
@@ -1305,7 +1317,10 @@ def _recall_impl(
                 _search_closets = None
             if _search_closets is not None:
                 try:
-                    closet_hits = _search_closets(db, query, limit=5)
+                    # v3.11 P1 fix: cap to 3 articles (was 5) to bound the
+                    # candidate flood, and request BM25-normalised scores so
+                    # weaker matches don't dominate ranking with constant 1.0.
+                    closet_hits = _search_closets(db, query, limit=3, with_scores=True)
                 except Exception as exc:  # noqa: BLE001
                     logger.debug("closets stream skipped (search): %s", exc)
                     closet_hits = []
@@ -1315,11 +1330,22 @@ def _recall_impl(
                         c = row.get("claim")
                         if c is not None and getattr(c, "id", None) is not None:
                             existing_by_id[int(c.id)] = row
-                    for _slug, claim_ids in closet_hits:
+                    boost_only = _closets_boost_only()
+                    for hit in closet_hits:
+                        if len(hit) == 3:
+                            _slug, claim_ids, score = hit
+                        else:
+                            _slug, claim_ids = hit
+                            score = 1.0
                         for cid in claim_ids:
                             if cid in existing_by_id:
-                                # Boost: closet_score=1.0 is the constant signal
-                                existing_by_id[cid]["closet_score"] = 1.0
+                                prev = float(existing_by_id[cid].get("closet_score") or 0.0)
+                                existing_by_id[cid]["closet_score"] = max(prev, float(score))
+                                continue
+                            if boost_only:
+                                # v3.11 P1b — never hydrate new candidates;
+                                # closets are pure re-ranking. Skip cids not
+                                # already in the candidate set.
                                 continue
                             try:
                                 claim = svc.store.get_claim(cid)
@@ -1335,7 +1361,7 @@ def _recall_impl(
                                     "confidence_score": float(getattr(claim, "confidence", 0.0) or 0.0),
                                     "vector_score": 0.0,
                                     "entity_score": 0.0,
-                                    "closet_score": 1.0,
+                                    "closet_score": float(score),
                                     "source": "closets",
                                 }
                             )
@@ -1414,7 +1440,27 @@ def _recall_impl(
     # at the end of _relevance. Default 0.0 → query_type stays None and the
     # boost is a no-op, preserving bit-identical ranking.
     w_claim_type = _recall_weight("W_CLAIM_TYPE")
-    query_claim_type = classify_observation(query) if w_claim_type > 0.0 else None
+    # v3.11 P2 — derive query intent from query_classifier (sharper than the
+    # 6-pattern classify_observation which matched "preference" too greedily).
+    # Map query_type → claim_type so the boost compares apples to apples.
+    if w_claim_type > 0.0:
+        try:
+            from memorymaster.query_classifier import classify_query
+            qt = classify_query(query)
+            _query_to_claim_type = {
+                "constraint_check": "constraint",
+                "preference": "preference",
+                "fact_lookup": "fact",
+                "verification": "fact",
+                "temporal": "event",
+                "relational": "fact",
+                "open_ended": None,  # too vague to bias
+            }
+            query_claim_type = _query_to_claim_type.get(qt)
+        except Exception:  # noqa: BLE001
+            query_claim_type = classify_observation(query)
+    else:
+        query_claim_type = None
     # Scope-aware retrieval boost (roadmap 1.2). Multiplier applied to the
     # final _relevance score for claims whose scope matches the current
     # project scope. 0.0 (default) → no boost, ranking bit-identical to legacy.

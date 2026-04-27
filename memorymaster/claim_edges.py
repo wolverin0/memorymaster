@@ -39,6 +39,7 @@ __all__ = [
 
 MENTION_KIND = "mentions"
 SUPERSEDES_KIND = "supersedes"
+SHARES_ENTITY_KIND = "shares_entity"  # v3.11 P3 — claim_a and claim_b have the same primary entity_id
 
 
 _CLAIM_NUM_RE = re.compile(r"\bclaims?\s+(\d{1,6})\b", re.IGNORECASE)
@@ -112,14 +113,31 @@ def extract_edges_for_claim(
     return edges
 
 
-def rebuild_edges(db_path: str | Path, *, batch_size: int = 500) -> dict[str, int]:
+def rebuild_edges(
+    db_path: str | Path,
+    *,
+    batch_size: int = 500,
+    include_shares_entity: bool = True,
+    shares_entity_max_per_pivot: int = 50,
+) -> dict[str, int]:
     """Walk the entire claims table and rebuild the claim_edges index.
 
-    Returns counters: ``{"claims_scanned": N, "edges_written": M, "supersession_edges": K}``.
+    Returns counters: ``{"claims_scanned": N, "edges_written": M, "supersession_edges": K, "shares_entity_edges": L}``.
 
     Idempotent: ``INSERT OR IGNORE`` against the composite primary key.
+
+    v3.11 P3 — when ``include_shares_entity`` (default True), also writes
+    ``shares_entity`` edges between any two claims that share their primary
+    ``entity_id``. Capped at ``shares_entity_max_per_pivot`` neighbors per
+    entity to bound the explosion: a popular entity (say, "claim") with 200
+    referencing claims would otherwise produce 200×199/2 = 19,900 edges.
     """
-    counters = {"claims_scanned": 0, "edges_written": 0, "supersession_edges": 0}
+    counters = {
+        "claims_scanned": 0,
+        "edges_written": 0,
+        "supersession_edges": 0,
+        "shares_entity_edges": 0,
+    }
     conn = sqlite3.connect(str(db_path))
     try:
         ensure_claim_edges_schema(conn)
@@ -151,6 +169,39 @@ def rebuild_edges(db_path: str | Path, *, batch_size: int = 500) -> dict[str, in
             if counters["claims_scanned"] % batch_size == 0:
                 conn.commit()
         conn.commit()
+
+        # v3.11 P3 — shares_entity edges. One pass over claims-grouped-by-
+        # entity_id; for each non-trivial group emit pairwise edges (capped).
+        if include_shares_entity:
+            try:
+                groups = conn.execute(
+                    """
+                    SELECT entity_id, GROUP_CONCAT(id) AS ids
+                    FROM claims
+                    WHERE entity_id IS NOT NULL
+                    GROUP BY entity_id
+                    HAVING COUNT(*) BETWEEN 2 AND ?
+                    """,
+                    (shares_entity_max_per_pivot,),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                groups = []
+            for _eid, ids_str in groups:
+                ids = [int(x) for x in (ids_str or "").split(",") if x.strip().isdigit()]
+                # Pairwise edges (a, b) with a < b only — keeps it bidirectional
+                # via a single canonical row.
+                for i, a in enumerate(ids):
+                    for b in ids[i + 1:]:
+                        cur = conn.execute(
+                            "INSERT OR IGNORE INTO claim_edges "
+                            "(src_claim_id, dst_claim_id, edge_kind, created_at) "
+                            "VALUES (?, ?, ?, ?)",
+                            (a, b, SHARES_ENTITY_KIND, now),
+                        )
+                        if cur.rowcount:
+                            counters["edges_written"] += 1
+                            counters["shares_entity_edges"] += 1
+            conn.commit()
     finally:
         conn.close()
     return counters

@@ -186,9 +186,20 @@ def rebuild_closets(
 
 
 def search_closets(
-    db_path: str | Path, query: str, *, limit: int = 5
-) -> list[tuple[str, list[int]]]:
+    db_path: str | Path, query: str, *, limit: int = 5, with_scores: bool = False
+) -> list[tuple[str, list[int]]] | list[tuple[str, list[int], float]]:
     """Return ``[(slug, claim_ids), ...]`` ranked by FTS5 BM25.
+
+    When ``with_scores=True`` (v3.11 P1), returns ``[(slug, claim_ids, score)]``
+    where ``score`` is the FTS5 BM25 score normalised to [0, 1] across this
+    result set. The recall hook uses this to weight closet hits proportional
+    to how well the query matched, instead of the v3.10 constant 1.0 that
+    flooded the top-5 with article-membership noise.
+
+    BM25 from SQLite's FTS5 returns NEGATIVE values where 0 = no match and
+    more-negative = better match (`ORDER BY bm25(...) ASC` puts best first).
+    We normalise: ``score = best_bm25 / row_bm25`` so the best match scores
+    1.0 and weaker matches scale below.
 
     Defensive: if the table doesn't exist or the query is malformed, returns
     an empty list rather than raising.
@@ -197,9 +208,6 @@ def search_closets(
         return []
     conn = sqlite3.connect(str(db_path))
     try:
-        # Sanitize query: FTS5 MATCH treats most punctuation as syntax. The
-        # safest path for LLM-shaped queries is to extract bare alphanumeric
-        # tokens and OR them together.
         tokens = [t for t in re.findall(r"[A-Za-z0-9_]{3,}", query) if t]
         if not tokens:
             return []
@@ -207,26 +215,39 @@ def search_closets(
         try:
             rows = conn.execute(
                 """
-                SELECT c.article_slug, c.claim_ids_json
+                SELECT c.article_slug, c.claim_ids_json, bm25(closets_fts) AS bm25_score
                 FROM closets_fts ft
                 JOIN closets c ON c.article_slug = ft.article_slug
                 WHERE closets_fts MATCH ?
-                ORDER BY bm25(closets_fts)
+                ORDER BY bm25_score
                 LIMIT ?
                 """,
                 (fts_query, limit),
             ).fetchall()
         except sqlite3.OperationalError:
             return []
-        out: list[tuple[str, list[int]]] = []
-        for slug, ids_json in rows:
+        if not rows:
+            return []
+        # FTS5 BM25 returns negative numbers; lower (more negative) = better.
+        # The first row is the best. Normalise so best=1.0, others scale below.
+        best = abs(rows[0][2]) if rows[0][2] else 1.0
+        if best == 0.0:
+            best = 1.0
+        out: list[tuple] = []
+        for slug, ids_json, bm25_score in rows:
             try:
                 ids = json.loads(ids_json or "[]")
                 if not isinstance(ids, list):
                     ids = []
             except (json.JSONDecodeError, ValueError):
                 ids = []
-            out.append((str(slug), [int(i) for i in ids if isinstance(i, int)]))
+            normalised = abs(bm25_score) / best if bm25_score else 0.0
+            normalised = max(0.0, min(1.0, normalised))
+            cleaned_ids = [int(i) for i in ids if isinstance(i, int)]
+            if with_scores:
+                out.append((str(slug), cleaned_ids, normalised))
+            else:
+                out.append((str(slug), cleaned_ids))
         return out
     finally:
         conn.close()
