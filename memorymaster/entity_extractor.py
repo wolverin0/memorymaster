@@ -496,7 +496,7 @@ def extract_patterns(text: str) -> list[Entity]:
 
 # Version identifier baked into the prompt. Bump this string when the prompt
 # changes so that downstream idempotency / caching keys invalidate cleanly.
-LLM_PROMPT_VERSION = "entity-l2-v2-2026-04-25"
+LLM_PROMPT_VERSION = "entity-l2-v3-2026-04-27"
 
 # Permitted entity kinds for Layer-2. Any `kind` returned by the LLM that is
 # not in this set is dropped to keep the registry schema predictable.
@@ -513,22 +513,50 @@ LLM_KINDS: frozenset[str] = frozenset(
 
 _LLM_ENV_FLAG = "MEMORYMASTER_ENTITY_LLM"
 _LLM_MAX_TEXT_CHARS = 4000  # Truncate long claims before sending to LLM.
-_LLM_MAX_ENTITIES = 8       # Hard cap to keep cost bounded per claim.
+_LLM_MAX_ENTITIES = 5       # v3: tightened from 8 to 5 — overgeneration was the
+                            # dominant failure mode in v2 backfill batches.
 
-_LLM_PROMPT = f"""Extract entities from the snippet that regex cannot catch.
+_LLM_PROMPT = f"""Extract HIGH-VALUE entities from the snippet — only ones a future agent would search for by name. Be conservative.
 Prompt version: {LLM_PROMPT_VERSION}
 
-Allowed kinds: person_name, spanish_surname, time_expression, model_name, library_name, concept.
-Skip: file paths, env-vars, hostnames, ports, commit SHAs, tool names.
-Max {_LLM_MAX_ENTITIES} entities. Output STRICT JSON ARRAY only — no prose, no code fence.
+ALLOWED kinds (return ONE per entity): person_name, spanish_surname, time_expression, model_name, library_name, concept.
+
+WHEN IN DOUBT, SKIP. A future agent searching memory for this claim should be searching by the entity name itself, not by a generic word.
+
+ALWAYS SKIP:
+- File paths, directories, env vars, hostnames, IPs, ports
+- Commit SHAs, branch names, tool names like "git", "docker", "npm", "sqlite", "psql"
+- Generic English words: "system", "config", "service", "module", "function", "component", "data", "process", "task", "user"
+- Generic Spanish words: "sistema", "config", "servicio", "modulo", "funcion", "componente", "datos", "proceso", "tarea", "usuario", "cosa", "caso"
+- Standalone numbers, percentages, dates already in YYYY-MM-DD form
+- HTML/CSS class names, JSON keys, code identifiers in snake_case or camelCase
+
+Quality bar by kind:
+- person_name: full name (≥2 capitalized words) of a real person, NOT a role like "user" or "developer"
+- spanish_surname: bare surname when it stands alone WITHOUT a first name
+- time_expression: relative phrases like "next Thursday", "el lunes pasado", "Q3 2026" — NOT absolute YYYY-MM-DD dates
+- model_name: AI model identifier with a recognizable family prefix (gpt-, claude-, gemini-, llama-, mistral-) AND a version
+- library_name: a SPECIFIC named library/framework like "FastAPI", "React", "pyafipws" — NOT "the API" or "the framework"
+- concept: a named domain concept (3+ words usually) that appears as a noun-phrase a person would research, like "RRF fusion", "byzantine consensus", "writer-lock contention" — NOT generic ideas
+
+Output STRICT JSON ARRAY only — no prose, no code fence. Max {_LLM_MAX_ENTITIES} entities. If nothing in the snippet rises to the bar, return [].
 
 Schema (use EXACT field names):
   [{{"kind": "...", "surface_form": "exact substring from text", "aliases": []}}]
 
-Example input: "Ada Lovelace y Charles Babbage usaron FastAPI y gpt-4o-mini."
-Example output: [{{"kind":"person_name","surface_form":"Ada Lovelace","aliases":[]}},{{"kind":"person_name","surface_form":"Charles Babbage","aliases":[]}},{{"kind":"library_name","surface_form":"FastAPI","aliases":[]}},{{"kind":"model_name","surface_form":"gpt-4o-mini","aliases":[]}}]
+POSITIVE example
+Input: "Ada Lovelace y Charles Babbage usaron FastAPI y gpt-4o-mini el lunes pasado para implementar RRF fusion."
+Output: [{{"kind":"person_name","surface_form":"Ada Lovelace","aliases":[]}},{{"kind":"person_name","surface_form":"Charles Babbage","aliases":[]}},{{"kind":"library_name","surface_form":"FastAPI","aliases":[]}},{{"kind":"model_name","surface_form":"gpt-4o-mini","aliases":[]}},{{"kind":"concept","surface_form":"RRF fusion","aliases":[]}}]
 
-If nothing fits, return: []
+NEGATIVE example (bloat to AVOID)
+Input: "El sistema usa la base de datos para guardar config del usuario en el modulo principal."
+Output: []
+(All terms are generic — system, database, config, user, module — none worth indexing.)
+
+NEGATIVE example (path/SHA noise)
+Input: "Bug fixed in commit a133bc6 in src/auth/login.py — see logs at /var/log/app.log"
+Output: []
+(Commit SHA, file path, log path — all skip.)
 """.strip()
 
 

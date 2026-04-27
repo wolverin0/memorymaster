@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2026-04-27
+
+Honest-null release. Spent significant compute on a tighter L2 prompt + a 9.5×-bigger eval set to definitively answer whether the v3.5.x recall stack has untapped headroom. Answer: **no, the W_LEXICAL/W_FRESHNESS/W_GRAPH weights are at-or-near optimal on every measurable axis, and the GRAPH stream contributes zero across all tested weights**. Shipping the negative result + the new eval/tooling so the next release can attack the actual bottleneck (graph hops formula or labeled-GT bias) instead of re-tuning weights.
+
+### Added
+
+- **L2 entity extraction prompt v3** (`memorymaster/entity_extractor.py::LLM_PROMPT`, version `entity-l2-v3-2026-04-27`): tightened from v2 with `_LLM_MAX_ENTITIES` reduced 8→5, explicit `ALWAYS SKIP` block (file paths, env vars, hostnames, IPs, ports, commit SHAs, branch names, generic tools, generic words like `system`/`config`/`service`/`module`/`sistema`/`proceso`, absolute YYYY-MM-DD dates, code identifiers), per-kind quality bar (e.g. `person_name` requires ≥2 capitalized words AND a real person — not a role like "user"; `concept` requires a named noun-phrase 3+ words usually), and 2 negative examples (bloat + path/SHA noise) showing the empty array as the right answer when nothing rises to the bar. Smoke test on 5 real claims via `claude_cli`: 0.4 entities/claim avg vs the worst v2 batches at 5-7/claim.
+- **Hardened `parse_json_response`** (`memorymaster/llm_provider.py`): now resilient to four common LLM output shapes — raw JSON, fenced from start, prose preamble + fenced, prose preamble + raw. Strategy: try direct, then strict-fenced, then regex-extract any fenced block, then greedy first-`[` to last-`]`. Until v3.6.0 only the first two shapes parsed; the others returned `[]` silently. Shipped with `_coerce_to_list` helper. All 30 existing `tests/test_llm_provider.py` + `tests/test_entity_extractor_llm.py` tests still pass.
+- **Synthetic prompt set N=953** (`artifacts/real-prompts-1000.jsonl` + `artifacts/real-prompts-1000-labels.json`, 953 deduped from 1000 generated): produced via 5 parallel haiku subagents, mix Spanish + English, 7 categories (architecture / debugging / decision-recall / project-lookup / gotcha-recall / env-config / feature-spec). Labels generated via LLM-judge (10 chunks × 100 prompts via 5 parallel haiku subagents over pre-computed top-15 candidates) — 248/953 prompts have non-empty labels.
+- **Pre-compute candidates harness** (`scripts/precompute_candidates.py`): runs production `recall()` once per prompt and writes chunked JSON files for parallel labeling. ~3 min wall for 953 prompts (recall is ~17 ms/query) vs ~5 h serial for the full label-via-LLM path.
+- **Label-via-judge harness** (`scripts/label_prompts_with_judge.py`): single-process Python labeler kept for small runs / debugging. Uses claude_cli with direct `os.environ[KEY] = ...` assignment (avoids the v3.5.0 setdefault bug).
+- **Roadmap doc** (`artifacts/roadmap-v3.6.0-2026-04-27.md`) + outcome reports (`artifacts/recall-eval-baseline-N953-2026-04-27.jsonl`, `artifacts/recall-weight-tuning-N953-2026-04-27.md`) capturing the negative-result plan and decisions.
+
+### Confirmed (from autoresearch B1, now with N=953)
+
+- **W_LEXICAL alone peaks at 0.106 precision@5** (W=0.05-0.1). Default `W_LEXICAL=0.3` produces 0.105 — within +0.001 = measurement noise. Above W=0.1, MAP@5 monotonically degrades.
+- **W_GRAPH stream is FLAT at precision@5 = 0.103 across all weights W=0.0..1.0.** Same null result as v3.5.2 with N=100, now confirmed with 9.5× more samples. The +8,229 entities from the v3.5.0 backfill and the +103 from v3.6.0's v3-prompt re-extraction did not lift the GRAPH stream by any measurable amount on either eval. The next-lever is the `1/(1+hops)` weighting shape or the labels themselves, not weight tuning or entity coverage.
+- **W_FRESHNESS hurts above 0.1.** Default 0.0 stays.
+
+### Notes
+
+- No weight default changes shipped. The empirical optimum is within measurement noise of the current defaults across both eval sets.
+- L2 v3 is the new default for ALL future extractions (steward + auto-ingest hooks pick it up automatically via `LLM_PROMPT_VERSION`).
+- The N=953 prompt set + labels are now in `artifacts/` for any future autoresearch run; reproducible via the chunked precompute + parallel-label pattern documented in the new scripts.
+- Pure additive — no schema, API surface, or breaking behavior changes. Any v3.5.x install upgrades transparently.
+
 ## [3.5.2] - 2026-04-26
 
 ### Added

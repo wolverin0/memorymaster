@@ -1,0 +1,953 @@
+{"text": "where do we store the claim status enum?", "category": "architecture"}
+{"text": "que pasa si el steward classifier no esta entrenado?", "category": "gotcha-recall"}
+{"text": "como conecto qdrant?", "category": "env-config"}
+{"text": "donde se define el W_LEXICAL default?", "category": "architecture"}
+{"text": "tenemos algun script para resetear la DB?", "category": "project-lookup"}
+{"text": "el RRF fusion auto-gate cuando se enciende?", "category": "feature-spec"}
+{"text": "porque me da 429 el steward?", "category": "debugging"}
+{"text": "decidimos usar postgres o sqlite para multi-tenancy?", "category": "decision-recall"}
+{"text": "how do i disable the sensitivity filter for testing?", "category": "env-config"}
+{"text": "el wiki-absorb que pasa si hay conflictos sin resolver?", "category": "gotcha-recall"}
+{"text": "cual es la diferencia entre valid_from y event_time?", "category": "architecture"}
+{"text": "pasame el comando para correr la steward cycle?", "category": "project-lookup"}
+{"text": "por que el recall hook no se activa con skip_qdrant?", "category": "debugging"}
+{"text": "en que archivo definimos los statuses canonicos?", "category": "architecture"}
+{"text": "tenes algo de benchmark RRF vs BM25 puro?", "category": "decision-recall"}
+{"text": "como se triggerea el wiki-cleanup automaticamente?", "category": "feature-spec"}
+{"text": "donde vive la sensitivity filter logic?", "category": "architecture"}
+{"text": "que hace la validate-wiki hook exactamente?", "category": "feature-spec"}
+{"text": "como reseteo el tier al default working?", "category": "project-lookup"}
+{"text": "el dream-bridge se sincroniza bidireccional o uni?", "category": "decision-recall"}
+{"text": "cual es el scope hash bug que mencionaste?", "category": "gotcha-recall"}
+{"text": "como configuro Ollama en lugar de Gemini?", "category": "env-config"}
+{"text": "hay un limite en la longitud de los claim texts?", "category": "architecture"}
+{"text": "que hace el key rotator en el setup-hooks?", "category": "feature-spec"}
+{"text": "el MCP server usa auto-citation siempre?", "category": "architecture"}
+{"text": "que pasa si la DB entra en WAL mode corrupted?", "category": "gotcha-recall"}
+{"text": "donde le paso el `source_agent` al ingest_claim?", "category": "architecture"}
+{"text": "como se comporta el steward con claims superseded?", "category": "feature-spec"}
+{"text": "el graphify me da god nodes del memorymaster?", "category": "project-lookup"}
+{"text": "por que el decay job no ejecuta en algunas envs?", "category": "debugging"}
+{"text": "hay que regenerar el GitNexus index despues del commit?", "category": "decision-recall"}
+{"text": "que scope values son validos para project claims?", "category": "architecture"}
+{"text": "el Qdrant vector index se borra si reseteo todo?", "category": "gotcha-recall"}
+{"text": "como desabilito el conflicted status en queries?", "category": "feature-spec"}
+{"text": "en que branch esta el WIP para entity registry?", "category": "project-lookup"}
+{"text": "el retrieve+rank fusion cuando falla gracefully?", "category": "debugging"}
+{"text": "decidimos usar Postgres para state o solo SQLite?", "category": "decision-recall"}
+{"text": "donde configuro el token budget para query_for_context?", "category": "env-config"}
+{"text": "el hook que inyecta recalls en prompts como se llama?", "category": "architecture"}
+{"text": "que pasa con claims sensibles si pasan el filter?", "category": "gotcha-recall"}
+{"text": "hay un dry-run para wiki-absorb sin escribir?", "category": "feature-spec"}
+{"text": "como le digo al steward que ignore candidate claims?", "category": "project-lookup"}
+{"text": "por que el merge de OpenClaw es asincronico?", "category": "debugging"}
+{"text": "cual es el contrato entre claims y citations tables?", "category": "architecture"}
+{"text": "el supersedes_claim_id siempre necesita replaced_by_id?", "category": "gotcha-recall"}
+{"text": "que metricas ve el dashboard del steward cycle?", "category": "feature-spec"}
+{"text": "hay test coverage para la sensitivity filter?", "category": "project-lookup"}
+{"text": "como reproduzco la vulnerability scope hash?", "category": "debugging"}
+{"text": "en que casos se promueve un claim a tier core?", "category": "decision-recall"}
+{"text": "como paso API_KEY sin exponerla en CLAUDE.md?", "category": "env-config"}
+{"text": "el FTS5 en SQLite que lenguajes soporta?", "category": "architecture"}
+{"text": "que hago si hay stale claims viejos de hace un anio?", "category": "gotcha-recall"}
+{"text": "el wiki-breakdown auto-detecta gaps?", "category": "feature-spec"}
+{"text": "donde se guardan los backups pre-ciclo?", "category": "project-lookup"}
+{"text": "por que falla el compactor con claims archivados?", "category": "debugging"}
+{"text": "cual fue la decision de no tener multi-db sharding?", "category": "decision-recall"}
+{"text": "como configuro el hybrid search mode en qdrant?", "category": "env-config"}
+{"text": "el drift en RRF cuando es significante para re-rankear?", "category": "architecture"}
+{"text": "hay que vaciar claim_changes antes de compactar?", "category": "gotcha-recall"}
+{"text": "que metricas reporta recompute-tiers?", "category": "feature-spec"}
+{"text": "donde esta el benchmark de recall@100 vs recall@10?", "category": "project-lookup"}
+{"text": "el dream-seed por que exporta todas las projects juntas?", "category": "debugging"}
+{"text": "decidimos no usar SQLAlchemy por que razon?", "category": "decision-recall"}
+{"text": "como le digo que use Claude CLI provider sin Gemini?", "category": "env-config"}
+{"text": "el bitemporal schema que reparticion temporal tiene?", "category": "architecture"}
+{"text": "si invoco ingest sin sensitivity filter que pasa?", "category": "gotcha-recall"}
+{"text": "el vault linter que contradiciones reporta?", "category": "feature-spec"}
+{"text": "en que commit se agrego la validate-wiki hook?", "category": "project-lookup"}
+{"text": "por que el recall hook timeout a veces en cold start?", "category": "debugging"}
+{"text": "el arbitraje de conflictos es manual o auto-resolver?", "category": "decision-recall"}
+{"text": "como paso QDRANT_URL en windows sin quotes?", "category": "env-config"}
+{"text": "donde esta el schema CHECK para status?", "category": "architecture"}
+{"text": "el entity registry que tipos de entidades almacena?", "category": "feature-spec"}
+{"text": "que pasa si el wiki article no tiene wikilinks?", "category": "gotcha-recall"}
+{"text": "tenes el GRAPH_REPORT.md del memorymaster?", "category": "project-lookup"}
+{"text": "el autoresearch B1 por que falla a veces?", "category": "debugging"}
+{"text": "decidimos usar MCP en lugar de tRPC?", "category": "decision-recall"}
+{"text": "como activo el verbosity log para dream-bridge?", "category": "env-config"}
+{"text": "el scope filter en query_memory que rango cubre?", "category": "architecture"}
+{"text": "hay que correr lint-vault antes de wiki-absorb?", "category": "feature-spec"}
+{"text": "si redact_claim_payload que queda del payload original?", "category": "gotcha-recall"}
+{"text": "el schema_postgres.sql que diferencias tiene con sqlite?", "category": "project-lookup"}
+{"text": "por que el steward cycle a veces pasa 429 rate limit?", "category": "debugging"}
+{"text": "el recall weight de tier core que valor es?", "category": "architecture"}
+{"text": "como deshabilito el auto-citation fallback en MCP?", "category": "feature-spec"}
+{"text": "en que casos el archive job retiene claims?", "category": "decision-recall"}
+{"text": "el CLAUDE.md del proyecto que tiene?", "category": "project-lookup"}
+{"text": "como configuro Ollama local para LLM provider?", "category": "env-config"}
+{"text": "el freshness window default cuantos dias es?", "category": "architecture"}
+{"text": "que pasa si dos claims tienen mismo content hash?", "category": "gotcha-recall"}
+{"text": "el wiki absorb que regexes se aplican?", "category": "feature-spec"}
+{"text": "donde esta el test para supersedes_claim_id invariant?", "category": "project-lookup"}
+{"text": "por que falla el db_merge con concurrent writes?", "category": "debugging"}
+{"text": "cual es el W_SEMANTIC default en RRF?", "category": "architecture"}
+{"text": "como paso citation sources sin permitir API keys?", "category": "feature-spec"}
+{"text": "decidimos no cachear el vector index en memoria?", "category": "decision-recall"}
+{"text": "el validate-wiki hook que frontmatter campos requiere?", "category": "gotcha-recall"}
+{"text": "tenes los metrics del v3.5.2 recall vs latency?", "category": "project-lookup"}
+{"text": "como reseteo el steward classifier en produccion?", "category": "env-config"}
+{"text": "el auto-dedup que metrica usa para similarity?", "category": "architecture"}
+{"text": "hay compactor que corre auto o manual solo?", "category": "feature-spec"}
+{"text": "el dream-seed pollution como se filtra por scope?", "category": "debugging"}
+{"text": "que decide si un claim es candidate vs confirmed?", "category": "architecture"}
+{"text": "el superseded status que transiciones permite?", "category": "gotcha-recall"}
+{"text": "donde esta el handler para la conflicted resolution?", "category": "feature-spec"}
+{"text": "en que linea del setup-hooks entra el key rotator?", "category": "project-lookup"}
+{"text": "por que el WikiAbsorb tiene timeout en articulos largos?", "category": "debugging"}
+{"text": "decidimos usar Obsidian vault en lugar de Notion?", "category": "decision-recall"}
+{"text": "como seteo min_score en query_for_context?", "category": "env-config"}
+{"text": "el per-claim citations que schema tiene?", "category": "architecture"}
+{"text": "si ingest_claim duplica content que sucede?", "category": "gotcha-recall"}
+{"text": "el lint-vault que reporta contradiction?", "category": "feature-spec"}
+{"text": "tenes branch list para el entity registry WIP?", "category": "project-lookup"}
+{"text": "por que el Qdrant timeout con batches grandes?", "category": "debugging"}
+{"text": "el decay job que freshness threshold usa?", "category": "architecture"}
+{"text": "como desactivo sensitivity filter en dev?", "category": "env-config"}
+{"text": "hay API rate limit en el MCP ingest?", "category": "feature-spec"}
+{"text": "el scope hash collision que probabilidad tiene?", "category": "gotcha-recall"}
+{"text": "donde se define la canonical list de tier valores?", "category": "project-lookup"}
+{"text": "el auto-resolver cuando se triggerea exactamente?", "category": "debugging"}
+{"text": "decidimos que archived claims se borren o solo mark?", "category": "decision-recall"}
+{"text": "como envio OPENAI_API_KEY sin que se loguee?", "category": "env-config"}
+{"text": "el RRF fusion score que rango tiene?", "category": "architecture"}
+{"text": "hay test para el bitemporal valid_from/valid_until?", "category": "feature-spec"}
+{"text": "si wiki article tiene title duplicado que pasa?", "category": "gotcha-recall"}
+{"text": "en que commit se agrego el entity registry?", "category": "project-lookup"}
+{"text": "por que falla el recall hook sin network?", "category": "debugging"}
+{"text": "cual es la ventaja de WAL mode en SQLite?", "category": "architecture"}
+{"text": "el MCP que authorization tiene para ingest?", "category": "feature-spec"}
+{"text": "decidimos autoscope o manual en query_memory?", "category": "decision-recall"}
+{"text": "como hago for dry-run del compactor?", "category": "env-config"}
+{"text": "el conflicted claim que propiedades conserva?", "category": "gotcha-recall"}
+{"text": "donde se guardan los stats post ciclo?", "category": "project-lookup"}
+{"text": "el dream-bridge que hace exactamente en sync?", "category": "architecture"}
+{"text": "por que el steward rechaza claims sin citations?", "category": "debugging"}
+{"text": "hay minimo de confidence para promote a confirmed?", "category": "feature-spec"}
+{"text": "el wiki Bases auto-gen para que archivos?", "category": "gotcha-recall"}
+{"text": "tenes los logs del sensitivity filter violations?", "category": "project-lookup"}
+{"text": "como configuro el LLM provider fallback?", "category": "env-config"}
+{"text": "el scope filter en MCP que regex pattern usa?", "category": "architecture"}
+{"text": "hay limit en cuantos claims puedo query en una request?", "category": "feature-spec"}
+{"text": "si claim tiene visibility:sensitive que pasa en query?", "category": "gotcha-recall"}
+{"text": "donde esta el test suite completo?", "category": "project-lookup"}
+{"text": "el autoresearch B1 que modelos usa?", "category": "debugging"}
+{"text": "decidimos marcar superseded claims como archived?", "category": "decision-recall"}
+{"text": "como deshabilito la validate-wiki hook?", "category": "env-config"}
+{"text": "el BM25 scorer que weight tiene por defecto?", "category": "architecture"}
+{"text": "hay cleanup para orphan wikilinks en vault?", "category": "feature-spec"}
+{"text": "el scope:project hash que algoritmo usa?", "category": "gotcha-recall"}
+{"text": "en que archivo se define ingest_claim MCP tool?", "category": "project-lookup"}
+{"text": "por que el recall hook a veces tarda 30s?", "category": "debugging"}
+{"text": "el multi-tenancy que archivo lo resuelve?", "category": "architecture"}
+{"text": "como bypaso citation requirement en testing?", "category": "feature-spec"}
+{"text": "tenes decision log del fork del memorymaster repo?", "category": "decision-recall"}
+{"text": "como paso CLAUDE_CLI_PATH sin expose en env?", "category": "env-config"}
+{"text": "porque me da 429 el steward cuando corro run-cycle?", "category": "debugging"}
+{"text": "cual es el threshold para que una claim pase de candidate a confirmed?", "category": "feature-spec"}
+{"text": "como funciona el recall hook en claude code?", "category": "architecture"}
+{"text": "qdrant setup sin QDRANT_URL env var?", "category": "gotcha-recall"}
+{"text": "tenes algo de la scope hash bug en venezia?", "category": "project-lookup"}
+{"text": "RRF fusion ranking en query_memory", "category": "architecture"}
+{"text": "why does wiki-absorb leave orphaned articles?", "category": "debugging"}
+{"text": "hoeveel de MCP tools tienen auto-citation fallback?", "category": "feature-spec"}
+{"text": "what's the bitemporal field convention para event_time?", "category": "gotcha-recall"}
+{"text": "sensitivity filter patterns - which regex catches bearer tokens?", "category": "architecture"}
+{"text": "porque el PuntoFutura CRM tiene 3 schemas diferentes?", "category": "project-lookup"}
+{"text": "validate-wiki hook warnings on Edit - cuales son las obligatorias?", "category": "env-config"}
+{"text": "FTS5 WAL mode - cuando se regenera el checkpoint?", "category": "architecture"}
+{"text": "tenes el claude_cli OAuth flow documentado?", "category": "decision-recall"}
+{"text": "entity_extractor.py - como extrae las relaciones many-to-many?", "category": "architecture"}
+{"text": "Ollama provider fallback cuando OpenAI esta caido", "category": "gotcha-recall"}
+{"text": "pasame el comando para lint-vault con los orphans report", "category": "env-config"}
+{"text": "Auto Dream seed - porque exporta ALL projects claims en una carpeta?", "category": "debugging"}
+{"text": "llm_provider.py - cual es el order de preferencia de modelos?", "category": "architecture"}
+{"text": "dream-bridge bidi merge con OpenClaw - como evita duplicados?", "category": "feature-spec"}
+{"text": "claim supersession - cuando seteamos tanto supersedes_claim_id como replaced_by_claim_id?", "category": "gotcha-recall"}
+{"text": "MercadoPago webhook signatures - dónde guardamos el secret?", "category": "env-config"}
+{"text": "why does query_memory sometimes return stale claims when include_stale=False?", "category": "debugging"}
+{"text": "steward validation cycle - cuantos claims procesa por batch?", "category": "feature-spec"}
+{"text": "claim tiers: cuando promuevo de working a core?", "category": "decision-recall"}
+{"text": "sensitivity filter - cuales son los patrones nuevos agregados en v3.5?", "category": "gotcha-recall"}
+{"text": "repository structure - porque split storage.py y postgres_store.py?", "category": "architecture"}
+{"text": "Venezia POS - que pasa cuando falla la reconciliacion con MercadoPago?", "category": "project-lookup"}
+{"text": "validate-wiki frontmatter - scope vs project:slug convention?", "category": "env-config"}
+{"text": "BM25 scoring en FTS5 - custom weights para query_memory?", "category": "architecture"}
+{"text": "how does gitnexus handle the claims lifecycle module detection?", "category": "debugging"}
+{"text": "OmniRemote control plane - como se integra con memorymaster hooks?", "category": "project-lookup"}
+{"text": "fresh signal decay - decay.py runs cada cuanto?", "category": "feature-spec"}
+{"text": "tenes algo sobre el key rotator para Qdrant credentials?", "category": "gotcha-recall"}
+{"text": "claim scope filter - cuando usamos project:slug vs team:name?", "category": "decision-recall"}
+{"text": "mcp_server.py - porque la citation input no es un dict plain?", "category": "architecture"}
+{"text": "wiki-cleanup rewrite - como detecta contradictions entre articles?", "category": "feature-spec"}
+{"text": "Obsidian Bases generation - cuando se regeneran automaticamente?", "category": "env-config"}
+{"text": "why does ingest_claim default to status=candidate?", "category": "gotcha-recall"}
+{"text": "vault_linter orphans report - como define 'unreferenced'?", "category": "architecture"}
+{"text": "PuntoFutura CRM - pasame el schema para clients table", "category": "project-lookup"}
+{"text": "dream_bridge.py - como distingue dream-seed output del ingest manual?", "category": "debugging"}
+{"text": "redact_claim_payload - que hace con las citations cuando redactea?", "category": "feature-spec"}
+{"text": "steward conflict resolution - cuales son los criterios de arbitration?", "category": "decision-recall"}
+{"text": "graphify integration - como se usa para entity registry extraction?", "category": "architecture"}
+{"text": "recall hook - por que necesita raw string paths en Windows?", "category": "gotcha-recall"}
+{"text": "setup-hooks.py - cual es el order de instalacion de los 7 hooks?", "category": "env-config"}
+{"text": "claim visibility='sensitive' - como afecta query_memory results?", "category": "architecture"}
+{"text": "porque OmniRemote necesita un control plane separado?", "category": "project-lookup"}
+{"text": "PostgreSQL schema parity - cuando corremos db_merge bidirectional?", "category": "debugging"}
+{"text": "Codex vs Claude para entity_extractor refinement?", "category": "decision-recall"}
+{"text": "tenes el prometheus metrics setup para steward cycle timing?", "category": "env-config"}
+{"text": "wiki-absorb - cuales articles quedan en 'staging' vs 'active'?", "category": "feature-spec"}
+{"text": "claim citations - cuando un solo source puede tener múltiples excerpts?", "category": "gotcha-recall"}
+{"text": "llm_provider.py - fallback chain cuando Gemini rate-limits?", "category": "architecture"}
+{"text": "Venezia POS - como se sincronizan los transaction logs con MercadoPago?", "category": "project-lookup"}
+{"text": "why does validate-wiki require at least one [[wikilink]]?", "category": "debugging"}
+{"text": "claim scope=user vs scope=project:memorymaster - coverage difference?", "category": "feature-spec"}
+{"text": "sensitivity filter bypass - existe alguna excepto por credentials estructuradas?", "category": "gotcha-recall"}
+{"text": "steward decay job - cual es el freshness window default?", "category": "decision-recall"}
+{"text": "entity registry - como mapea claims a entities para FTS5 indexing?", "category": "architecture"}
+{"text": "setup.py - cuales son las optional dependencies para Qdrant?", "category": "env-config"}
+{"text": "wiki-cleanup - que hace cuando encuentra 2 articles con mismo title?", "category": "debugging"}
+{"text": "tenes logs del último run-cycle en memorymaster.db?", "category": "project-lookup"}
+{"text": "claim valid_until - como la usa Auto Dream para filtered seed?", "category": "feature-spec"}
+{"text": "MCP tool sensitivity filter - cuales patrones son regex vs literal?", "category": "gotcha-recall"}
+{"text": "porque split claims.py en models.py vs storage.py?", "category": "architecture"}
+{"text": "Obsidian Clipper integration - como diferencia raw vs processed input?", "category": "decision-recall"}
+{"text": "dream-bridge - cuales claims exporta a OpenClaw?", "category": "debugging"}
+{"text": "claim bitemporal - cuando usamos event_time vs valid_from?", "category": "env-config"}
+{"text": "graphify skill - como lo activamos desde memorymaster context?", "category": "project-lookup"}
+{"text": "llm_provider selection - cual es el heuristic para elegir modelo?", "category": "feature-spec"}
+{"text": "tenes parametros para BM25 custom weights en storage.py?", "category": "gotcha-recall"}
+{"text": "validate-wiki - como se estructura el warnings output?", "category": "architecture"}
+{"text": "Ollama + Qdrant offline - cual es el fallback para recall hook?", "category": "debugging"}
+{"text": "claim supersession - permite chains de supersedes_claim_id?", "category": "decision-recall"}
+{"text": "PuntoFutura - como se sincronizan invoices con accounting ledger?", "category": "project-lookup"}
+{"text": "steward llm_prompt - como parametriza el confidence threshold?", "category": "feature-spec"}
+{"text": "sensitivity filter - regex pattern para AWS credentials?", "category": "gotcha-recall"}
+{"text": "claim scope autofiler - case-sensitive?", "category": "env-config"}
+{"text": "wiki article frontmatter - description field max length?", "category": "architecture"}
+{"text": "why does query_memory batch results by relevance instead of date?", "category": "debugging"}
+{"text": "OmniRemote - como mapea device IDs entre PWA y backend?", "category": "project-lookup"}
+{"text": "steward cycle - cuando skips un claim marcado como archived?", "category": "decision-recall"}
+{"text": "dream_bridge.py - como filtra por scope para cada project?", "category": "feature-spec"}
+{"text": "Venezia POS - cual es el retry logic para MercadoPago timeouts?", "category": "gotcha-recall"}
+{"text": "claim archive - puede un archived claim ser unarchived?", "category": "architecture"}
+{"text": "tenes metrics para query_memory latency por source (BM25 vs Qdrant)?", "category": "env-config"}
+{"text": "wiki-absorb - como maneja la compaction de claims dups?", "category": "debugging"}
+{"text": "mcp_server.py - cual es el rate limit por tool?", "category": "project-lookup"}
+{"text": "claim valid_until - como lo usa la compaction job?", "category": "feature-spec"}
+{"text": "sensitivity filter fallthrough - cuando un pattern match pero el claim se ingesta igual?", "category": "gotcha-recall"}
+{"text": "steward conflict detector - como decide si dos claims contradicen?", "category": "decision-recall"}
+{"text": "entity_extractor - como linea entities A entities B en diferentes claims?", "category": "architecture"}
+{"text": "postgresql_store.py - cuando se ejecuta la bidirectional merge?", "category": "debugging"}
+{"text": "claim tiers recompute - cuales metricas usa para promover a core?", "category": "feature-spec"}
+{"text": "PuntoFutura - como trackea warranty claims por product?", "category": "project-lookup"}
+{"text": "validate-wiki - scope field enum values?", "category": "env-config"}
+{"text": "wiki-cleanup - cuales articles pueden ser rewritten?", "category": "gotcha-recall"}
+{"text": "llm_provider - cual es el timeout para Ollama inference?", "category": "architecture"}
+{"text": "why does Auto Dream exclude project-scoped claims from team:shared?", "category": "debugging"}
+{"text": "steward dedup - cual es el similarity threshold?", "category": "decision-recall"}
+{"text": "tenes backup strategy para WAL mode corruption?", "category": "env-config"}
+{"text": "OmniRemote - como se authn hacia el control plane?", "category": "project-lookup"}
+{"text": "dream_bridge - cuales claims quedan en 'processing' state?", "category": "feature-spec"}
+{"text": "claim supersession chains - max depth limit?", "category": "gotcha-recall"}
+{"text": "Venezia - como se reconcilia con MercadoPago settlement reports?", "category": "architecture"}
+{"text": "query_memory - cual es el default token budget para context?", "category": "debugging"}
+{"text": "wiki article type enum - cuales valores son canonical?", "category": "decision-recall"}
+{"text": "sensitivity filter - como detecta home directory paths?", "category": "feature-spec"}
+{"text": "mcp_server CitationInput - como serializa los excerpt fields?", "category": "gotcha-recall"}
+{"text": "claim archive -> unarchive - existe esa transicion?", "category": "env-config"}
+{"text": "storage.py - cual es la query para traer claims por entity_id?", "category": "architecture"}
+{"text": "steward - cuando genera conflicted status en lugar de superseding?", "category": "debugging"}
+{"text": "PuntoFutura CRM - como maneja customer churn prediction?", "category": "project-lookup"}
+{"text": "graphify - cuando se actualiza el GRAPH_REPORT.md?", "category": "feature-spec"}
+{"text": "validate-wiki - como reporta contradictions entre articles?", "category": "gotcha-recall"}
+{"text": "Ollama model selection - cual es el fallback cuando model not found?", "category": "decision-recall"}
+{"text": "claim visibility=sensitive - afecta a wiki-absorb?", "category": "env-config"}
+{"text": "tenes el comando para exportar claims a CSV?", "category": "architecture"}
+{"text": "OmniRemote - como se maneja la offline mode en PWA?", "category": "debugging"}
+{"text": "steward - cuales claims quedan con status=conflicted vs superseded?", "category": "feature-spec"}
+{"text": "dream-bridge - como evita circular references en supersession chains?", "category": "gotcha-recall"}
+{"text": "Venezia POS - timeout para reconciliacion nocturna con MercadoPago?", "category": "project-lookup"}
+{"text": "claim description field - min/max chars para validation?", "category": "architecture"}
+{"text": "wiki-absorb - como prioriza entre multiple conflicting claims?", "category": "decision-recall"}
+{"text": "sensitivity filter - pattern para private IPs (10.*, 172.16-31.*)?", "category": "env-config"}
+{"text": "mcp_server - cual es la signature para ingest_claim tool?", "category": "debugging"}
+{"text": "entity registry - como mapea claim_id -> entity_id bidirectional?", "category": "feature-spec"}
+{"text": "PuntoFutura - como se auditan los cambios en warranty status?", "category": "project-lookup"}
+{"text": "validate-wiki - cuales warnings son blocking vs informational?", "category": "gotcha-recall"}
+{"text": "steward decay - cuales claims marks como stale por default?", "category": "architecture"}
+{"text": "why does recall hook need skip_qdrant=True sin Qdrant?", "category": "debugging"}
+{"text": "claim archive - cuales transiciones terminales en status?", "category": "decision-recall"}
+{"text": "tenes el prometheus endpoint para steward metrics?", "category": "env-config"}
+{"text": "OmniRemote - como se pagina device list en control plane?", "category": "project-lookup"}
+{"text": "dream_bridge - quando sincroniza con OpenClaw?", "category": "feature-spec"}
+{"text": "Qdrant vector embedding - cual modelo usamos por default?", "category": "gotcha-recall"}
+{"text": "claim valid_from - timezone aware o naive?", "category": "architecture"}
+{"text": "wiki-cleanup - como determina si un article es orphaned?", "category": "debugging"}
+{"text": "sensitivity filter - exception para codigo snippets < 3 lineas?", "category": "decision-recall"}
+{"text": "llm_provider - cual es el retry logic para rate limits?", "category": "env-config"}
+{"text": "steward - cuando auto-promotes candidate -> confirmed?", "category": "feature-spec"}
+{"text": "Venezia - como trackea cash drawer discrepancies?", "category": "project-lookup"}
+{"text": "claim scope=global - cuando usamos vs project:all?", "category": "gotcha-recall"}
+{"text": "mcp_server - hay timeout para tool execution?", "category": "architecture"}
+{"text": "query_memory - cual es el default limit en results?", "category": "debugging"}
+{"text": "PuntoFutura - como se manejan los product refunds?", "category": "decision-recall"}
+{"text": "validate-wiki - como reporta frontmatter missing fields?", "category": "env-config"}
+{"text": "steward conflict - cual es el arbitration criteria final?", "category": "feature-spec"}
+{"text": "dream-seed - como filtra por scope en auto export?", "category": "gotcha-recall"}
+{"text": "tenes logs para query failures en FTS5?", "category": "architecture"}
+{"text": "claim archived -> unarchive workflow", "category": "gotcha-recall"}
+{"text": "Obsidian vault structure - donde quedan los raw files?", "category": "architecture"}
+{"text": "steward batch processing - cuales metricas monitorea?", "category": "decision-recall"}
+{"text": "PuntoFutura - como se manejan los cambios de cliente?", "category": "project-lookup"}
+{"text": "tenes la signature para wiki-absorb con custom output?", "category": "env-config"}
+{"text": "OmniRemote control plane - cuales endpoints expone?", "category": "debugging"}
+{"text": "Venezia POS - como se sincroniza con cuenta bancaria?", "category": "feature-spec"}
+{"text": "MCP tool sensitividad - cuales claims quedan redactadas?", "category": "gotcha-recall"}
+{"text": "claim archive - puedo re-ingestar un archived claim?", "category": "architecture"}
+{"text": "llm_provider - cuales modelos soportan embedding custom?", "category": "project-lookup"}
+{"text": "steward decay - windowsize default en días?", "category": "decision-recall"}
+{"text": "wiki-absorb - como maneja timeline articles?", "category": "env-config"}
+{"text": "sensitivity filter - patrones para Docker credentials?", "category": "debugging"}
+{"text": "claim supersession - permite supersede loop detection?", "category": "feature-spec"}
+{"text": "PuntoFutura - como se calcula costo de producto?", "category": "gotcha-recall"}
+{"text": "validate-wiki - wikilink validation recursiva?", "category": "architecture"}
+{"text": "OmniRemote - como se manejan múltiples homes?", "category": "project-lookup"}
+{"text": "Venezia - como se audita efectivo en caja?", "category": "decision-recall"}
+{"text": "MCP ingest_claim - soporta priority levels?", "category": "env-config"}
+{"text": "steward - cuando marca claim=conflicted vs stale?", "category": "debugging"}
+{"text": "PuntoFutura - como se manejan cambios de dirección?", "category": "feature-spec"}
+{"text": "llm_provider - timeout para embedding calls?", "category": "gotcha-recall"}
+{"text": "dream_bridge - puedo programar exports?", "category": "architecture"}
+{"text": "claim scope - acepta caracteres especiales?", "category": "project-lookup"}
+{"text": "tenes benchmark para query_memory latency?", "category": "decision-recall"}
+{"text": "MCP server - rate limit per IP?", "category": "env-config"}
+{"text": "steward - cuando archive claims automáticamente?", "category": "debugging"}
+{"text": "wiki-cleanup - cuales articulos quedan para review?", "category": "feature-spec"}
+{"text": "sensitivity filter - exception para test data?", "category": "gotcha-recall"}
+{"text": "claim archive - audita quién y cuándo?", "category": "architecture"}
+{"text": "OmniRemote - como se configura el automation?", "category": "project-lookup"}
+{"text": "Venezia - como se exportan datos de auditoria?", "category": "decision-recall"}
+{"text": "validate-wiki - máximo articulo size?", "category": "env-config"}
+{"text": "steward - confidence score distribution?", "category": "debugging"}
+{"text": "PuntoFutura - como se sincronizan cambios de precio?", "category": "feature-spec"}
+{"text": "llm_provider - cuales modelos soportan caching?", "category": "gotcha-recall"}
+{"text": "dream_bridge - puedo hacer filter por date range?", "category": "architecture"}
+{"text": "claim tiers - como se calcula median access?", "category": "project-lookup"}
+{"text": "storage.py - indices para faster queries?", "category": "decision-recall"}
+{"text": "MCP CitationInput - validation schema?", "category": "env-config"}
+{"text": "steward - cuando un claim pasa de candidate->confirmed?", "category": "debugging"}
+{"text": "wiki-absorb - como resuelve article content conflicts?", "category": "feature-spec"}
+{"text": "sensitivity filter - cuales son los patterns nuevos?", "category": "gotcha-recall"}
+{"text": "claim supersession - puedo ver la cadena completa?", "category": "architecture"}
+{"text": "OmniRemote - como se actualiza la configuración remotamente?", "category": "project-lookup"}
+{"text": "Venezia - como se manejan los cambios de jornada?", "category": "decision-recall"}
+{"text": "cual es el comando para limpiar el índice de GitNexus?", "category": "env-config"}
+{"text": "claim archived - puedo revertar una claim archived back to confirmed?", "category": "architecture"}
+{"text": "steward - quando corre el decay cycle?", "category": "feature-spec"}
+{"text": "tenes la documentacion del MCP spec versioning?", "category": "project-lookup"}
+{"text": "OmniRemote - como maneja la autenticacion de APIs externas?", "category": "debugging"}
+{"text": "Venezia POS - cual es el formato para archivos de settlement?", "category": "gotcha-recall"}
+{"text": "wiki-absorb - como resuelve conflicts entre fuentes de claims?", "category": "decision-recall"}
+{"text": "sensitivity filter - patrones para email addresses de terceros?", "category": "architecture"}
+{"text": "PuntoFutura - como se auditan cambios en pricing?", "category": "project-lookup"}
+{"text": "llm_provider - timeout setting para llamadas lentas?", "category": "env-config"}
+{"text": "dream_bridge - cuando exporta claims a STDOUT?", "category": "debugging"}
+{"text": "claim supersession - cual es el máximo de levels en cadena?", "category": "feature-spec"}
+{"text": "Obsidian Bases - como se sincronizan con wiki articles?", "category": "gotcha-recall"}
+{"text": "tenes benchmark para query_memory con 100K claims?", "category": "architecture"}
+{"text": "Qdrant embedding dimension - cual es el default?", "category": "decision-recall"}
+{"text": "MCP tool ingest_claim - soporta supersedes_claim_id parameter?", "category": "env-config"}
+{"text": "why does steward validate candidates pero no stale claims?", "category": "debugging"}
+{"text": "claim scope enum - existe scope=team:cro?", "category": "feature-spec"}
+{"text": "sensitivity filter - como detecta SSN patterns?", "category": "gotcha-recall"}
+{"text": "wiki article title uniqueness - permitimos duplicados por scope?", "category": "architecture"}
+{"text": "OmniRemote - como funciona la websocket reconnection logic?", "category": "project-lookup"}
+{"text": "Venezia - como mapea customer IDs entre sistemas?", "category": "decision-recall"}
+{"text": "validate-wiki - puede tener articles sin body text?", "category": "env-config"}
+{"text": "steward - cuando setea claim=stale vs skips?", "category": "debugging"}
+{"text": "PuntoFutura - como trackea employee commission splits?", "category": "feature-spec"}
+{"text": "llm_provider - cual modelo fallback para embeddings?", "category": "gotcha-recall"}
+{"text": "dream_bridge - compatible con PostgreSQL backend?", "category": "architecture"}
+{"text": "claim archive transiciones - cual es el último valid state?", "category": "project-lookup"}
+{"text": "tenes el SQL schema para claims table en postgres?", "category": "decision-recall"}
+{"text": "MCP server - como maneja concurrent ingest_claim calls?", "category": "env-config"}
+{"text": "why does recall hook skip_qdrant cuando Qdrant is down?", "category": "debugging"}
+{"text": "wiki-absorb - cuales articles quedan en borrador?", "category": "feature-spec"}
+{"text": "sensitivity filter - exception para API documentation examples?", "category": "gotcha-recall"}
+{"text": "claim visibility - puede ser custom string o enum fixed?", "category": "architecture"}
+{"text": "OmniRemote - como se integra con Home Assistant?", "category": "project-lookup"}
+{"text": "Venezia POS - timeout para operaciones de stock?", "category": "decision-recall"}
+{"text": "validate-wiki - cuales tags son obligatorios?", "category": "env-config"}
+{"text": "steward conflict detection - similarity score threshold?", "category": "debugging"}
+{"text": "PuntoFutura - como maneja product discontinued status?", "category": "feature-spec"}
+{"text": "llm_provider Ollama - fallback cuando port 11434 no disponible?", "category": "gotcha-recall"}
+{"text": "dream_bridge - puede exportar a múltiples destinos simultáneamente?", "category": "architecture"}
+{"text": "claim bitemporal - permite event_time en el futuro?", "category": "project-lookup"}
+{"text": "tenes documentacion del API rate limit structure?", "category": "decision-recall"}
+{"text": "MCP ingest_claim - máximo size del text field?", "category": "env-config"}
+{"text": "why does steward promote candidates sin confidence > 0.7?", "category": "debugging"}
+{"text": "wiki article description - permit markdown formatting?", "category": "feature-spec"}
+{"text": "sensitivity filter - como clasifica 'staging' API keys?", "category": "gotcha-recall"}
+{"text": "claim supersession - cuando se rompe una cadena?", "category": "architecture"}
+{"text": "OmniRemote - cual es el max devices por usuario?", "category": "project-lookup"}
+{"text": "Venezia - como se reconcilia con impuestos locales?", "category": "decision-recall"}
+{"text": "validate-wiki - frontmatter schema version?", "category": "env-config"}
+{"text": "steward - cuando los conflicted claims se resuelven auto?", "category": "debugging"}
+{"text": "PuntoFutura - como se manejan cambios de precio mid-month?", "category": "feature-spec"}
+{"text": "llm_provider - cual es la preferencia de embedding models?", "category": "gotcha-recall"}
+{"text": "dream_bridge - logs para sync failures?", "category": "architecture"}
+{"text": "claim archive - puedo regenerar indexed claims desde archived?", "category": "project-lookup"}
+{"text": "storage.py - cuales queries usan full-text search?", "category": "decision-recall"}
+{"text": "MCP server CitationInput - serialization format para sources?", "category": "env-config"}
+{"text": "why does query_memory return stale=True cuando include_stale=False?", "category": "debugging"}
+{"text": "wiki-absorb - como maneja article versioning?", "category": "feature-spec"}
+{"text": "sensitivity filter - cuales patterns nueva en v3.6?", "category": "gotcha-recall"}
+{"text": "claim scope=global - como la usa graphify?", "category": "architecture"}
+{"text": "OmniRemote - como funciona la pairing flow?", "category": "project-lookup"}
+{"text": "Venezia - como mapea employee roles a permisos?", "category": "decision-recall"}
+{"text": "validate-wiki - permite article sin [[wikilinks]]?", "category": "env-config"}
+{"text": "steward - quando elige supersede over conflicted?", "category": "debugging"}
+{"text": "PuntoFutura - como se auditan cambios de warranty terms?", "category": "feature-spec"}
+{"text": "llm_provider Gemini - fallback model cuando quota exceeded?", "category": "gotcha-recall"}
+{"text": "dream_bridge - cuales claims NO exporta?", "category": "architecture"}
+{"text": "claim valid_until - puede ser NULL en database?", "category": "project-lookup"}
+{"text": "tenes el schema migration guide para PostgreSQL?", "category": "decision-recall"}
+{"text": "MCP ingest_claim - soporta custom metadata fields?", "category": "env-config"}
+{"text": "why does steward skip archived claims en run-cycle?", "category": "debugging"}
+{"text": "wiki-cleanup - como detecta LOW-quality articles?", "category": "feature-spec"}
+{"text": "sensitivity filter - exception para git commit hashes?", "category": "gotcha-recall"}
+{"text": "claim tiers - median metrics para core promotion?", "category": "architecture"}
+{"text": "OmniRemote - como se maneja device offline state?", "category": "project-lookup"}
+{"text": "Venezia - como se registran transacciones fallidas?", "category": "decision-recall"}
+{"text": "validate-wiki - description field markup language?", "category": "env-config"}
+{"text": "steward dedup - cual es el máximo de claims fusionable?", "category": "debugging"}
+{"text": "PuntoFutura - como se sincronizan los precios entre sucursales?", "category": "feature-spec"}
+{"text": "llm_provider - cual es el default temperature para ingest validation?", "category": "gotcha-recall"}
+{"text": "dream_bridge - rate limit para export operations?", "category": "architecture"}
+{"text": "claim archive - puedo exportar archived claims a wiki?", "category": "project-lookup"}
+{"text": "storage.py FTS5 - cual es el ranking algorithm?", "category": "decision-recall"}
+{"text": "MCP server - error handling para malformed citation sources?", "category": "env-config"}
+{"text": "why does query_for_context return token budget warnings?", "category": "debugging"}
+{"text": "wiki-absorb - cuales conflicts quedan unresolved?", "category": "feature-spec"}
+{"text": "sensitivity filter - como valida private IP ranges?", "category": "gotcha-recall"}
+{"text": "claim supersession - máximo de hops en traversal?", "category": "architecture"}
+{"text": "OmniRemote - cual es el protocol para device communication?", "category": "project-lookup"}
+{"text": "Venezia POS - como se maneja la denominacion de moneda?", "category": "decision-recall"}
+{"text": "validate-wiki - permite article type=unknown?", "category": "env-config"}
+{"text": "steward - cuando decay claims vs supersede?", "category": "debugging"}
+{"text": "PuntoFutura - como se archivan invoices viejas?", "category": "feature-spec"}
+{"text": "llm_provider OpenAI - custom model parameter?", "category": "gotcha-recall"}
+{"text": "dream_bridge - puedo filtrar claims por entidad?", "category": "architecture"}
+{"text": "claim status enum - permitimos custom values?", "category": "project-lookup"}
+{"text": "tenes la comparacion de performance SQLite vs PostgreSQL?", "category": "decision-recall"}
+{"text": "MCP ingest_claim - soporta batch insert?", "category": "env-config"}
+{"text": "why does recall hook inyecta claims de otros proyectos?", "category": "debugging"}
+{"text": "wiki-absorb - cuales articulos quedan sin categoría?", "category": "feature-spec"}
+{"text": "sensitivity filter - exception para GitHub Actions secrets?", "category": "gotcha-recall"}
+{"text": "claim scope - permite scope=device:uuid?", "category": "architecture"}
+{"text": "OmniRemote - como se actualiza el firmware?", "category": "project-lookup"}
+{"text": "Venezia - como se exportan reportes a contador?", "category": "decision-recall"}
+{"text": "validate-wiki - frontmatter type enum values?", "category": "env-config"}
+{"text": "steward - confidence threshold para promoted claims?", "category": "debugging"}
+{"text": "PuntoFutura - como se manejan customer credit limits?", "category": "feature-spec"}
+{"text": "llm_provider - cual modelo para entidad extraction?", "category": "gotcha-recall"}
+{"text": "dream_bridge - puedo hacer rollback de exports?", "category": "architecture"}
+{"text": "claim bitemporal - como interpreta overlapping valid_from/valid_until?", "category": "project-lookup"}
+{"text": "tenes benchmark para steward cycle con 10K claims?", "category": "decision-recall"}
+{"text": "MCP CitationInput - soporta múltiples excerpts per source?", "category": "env-config"}
+{"text": "why does sensitivity filter bloquea 'Bearer ' prefix?", "category": "debugging"}
+{"text": "wiki-cleanup - cuales metricas detectan orphaned articles?", "category": "feature-spec"}
+{"text": "sensitivity filter - patrones para OAuth tokens?", "category": "gotcha-recall"}
+{"text": "claim archive terminalidad - puedo cambiar claim archived a active?", "category": "architecture"}
+{"text": "OmniRemote - como funciona la scene creation?", "category": "project-lookup"}
+{"text": "Venezia - como se manejan devoluciones partial?", "category": "decision-recall"}
+{"text": "validate-wiki - scope field canonical values?", "category": "env-config"}
+{"text": "steward - quando declara claim conflicted?", "category": "debugging"}
+{"text": "PuntoFutura - como se audita customer status changes?", "category": "feature-spec"}
+{"text": "llm_provider - fallback embedding model cuando no disponible?", "category": "gotcha-recall"}
+{"text": "dream_bridge - buffer size para batch exports?", "category": "architecture"}
+{"text": "claim supersession - permite reverse chains?", "category": "project-lookup"}
+{"text": "storage.py - cual es la estrategia para index vacuuming?", "category": "decision-recall"}
+{"text": "MCP server - timeout para citation resolution?", "category": "env-config"}
+{"text": "why does steward skip claims cuando llm_provider es offline?", "category": "debugging"}
+{"text": "wiki-absorb - maximum article title length?", "category": "feature-spec"}
+{"text": "sensitivity filter - como valida AWS credential formats?", "category": "gotcha-recall"}
+{"text": "claim tiers recompute - cuales metricas controlan core promotion?", "category": "architecture"}
+{"text": "OmniRemote - cual es el default refresh interval?", "category": "project-lookup"}
+{"text": "Venezia - como se sincronizan impuestos con backend?", "category": "decision-recall"}
+{"text": "validate-wiki - permite articulos sin body?", "category": "env-config"}
+{"text": "steward - cuando demote claims de core a working?", "category": "debugging"}
+{"text": "PuntoFutura - como se exportan datos a sistemas de terceros?", "category": "feature-spec"}
+{"text": "llm_provider - cual es el pool size para concurrent requests?", "category": "gotcha-recall"}
+{"text": "dream_bridge - cuales claims son exportables?", "category": "architecture"}
+{"text": "claim archived - puedo agregar citations después?", "category": "project-lookup"}
+{"text": "tenes el changelog para breaking changes en API?", "category": "decision-recall"}
+{"text": "MCP ingest_claim - validacion de source_agent format?", "category": "env-config"}
+{"text": "why does query_memory timeout con Qdrant slow?", "category": "debugging"}
+{"text": "wiki-absorb - algoritmo para detectar dupes?", "category": "feature-spec"}
+{"text": "sensitivity filter - exception para credentials en comentarios?", "category": "gotcha-recall"}
+{"text": "claim supersession - puede haber ciclos?", "category": "architecture"}
+{"text": "OmniRemote - como se maneja la power saving mode?", "category": "project-lookup"}
+{"text": "Venezia - como se manejan las horas extras en payroll?", "category": "decision-recall"}
+{"text": "validate-wiki - máximo de tags per articulo?", "category": "env-config"}
+{"text": "steward - cual es el batch size para processing?", "category": "debugging"}
+{"text": "PuntoFutura - como se sincronizan inventarios?", "category": "feature-spec"}
+{"text": "llm_provider - cual es el retry count para fallbacks?", "category": "gotcha-recall"}
+{"text": "dream_bridge - puedo filtrar por estatus de claim?", "category": "architecture"}
+{"text": "claim scope scope:user - como se hereda en queries?", "category": "project-lookup"}
+{"text": "storage.py - cual es la estrategia VACUUM para WAL?", "category": "decision-recall"}
+{"text": "MCP server - máximo payload size para tool responses?", "category": "env-config"}
+{"text": "why does steward no promueve todas las confirmed?", "category": "debugging"}
+{"text": "wiki-cleanup - como reescribe articulos weak?", "category": "feature-spec"}
+{"text": "sensitivity filter - exception para data de desarrollo?", "category": "gotcha-recall"}
+{"text": "claim archive - como se regeneran los índices?", "category": "architecture"}
+{"text": "OmniRemote - como se manejan los escenarios complejos?", "category": "project-lookup"}
+{"text": "Venezia - como se sincronizan los cambios horarios?", "category": "decision-recall"}
+{"text": "MCP server - authenticated endpoints?", "category": "env-config"}
+{"text": "steward - cual es el intervalo mínimo entre runs?", "category": "debugging"}
+{"text": "PuntoFutura - como se manejan los descuentos volumen?", "category": "feature-spec"}
+{"text": "llm_provider - cual es el modelo para classification?", "category": "gotcha-recall"}
+{"text": "dream_bridge - puedo ver el audit trail?", "category": "architecture"}
+{"text": "claim supersession - metadata para tracking?", "category": "project-lookup"}
+{"text": "storage.py - cual query es más cara?", "category": "decision-recall"}
+{"text": "MCP CitationInput - como se valida excerpt format?", "category": "env-config"}
+{"text": "steward - cuando promueve claims sin validación LLM?", "category": "debugging"}
+{"text": "wiki-absorb - cuales articulos skips?", "category": "feature-spec"}
+{"text": "sensitivity filter - exception para mock data?", "category": "gotcha-recall"}
+{"text": "claim archive - puedo queryar archived claims?", "category": "architecture"}
+{"text": "OmniRemote - cuales routines están soportadas?", "category": "project-lookup"}
+{"text": "Venezia - como se manejan los cambios de turno?", "category": "decision-recall"}
+{"text": "validate-wiki - cuales warnings son críticos?", "category": "env-config"}
+{"text": "steward - cuando declara confidence=low?", "category": "debugging"}
+{"text": "PuntoFutura - como se calculan comisiones?", "category": "feature-spec"}
+{"text": "llm_provider - cual es el default token limit?", "category": "gotcha-recall"}
+{"text": "dream_bridge - puedo hacer dry-run?", "category": "architecture"}
+{"text": "claim scope - permite wildcard patterns?", "category": "project-lookup"}
+{"text": "tenes el SQL explain para slow queries?", "category": "decision-recall"}
+{"text": "MCP server - metrics exposure format?", "category": "env-config"}
+{"text": "steward - cuando un claim pasa a stale?", "category": "debugging"}
+{"text": "wiki-cleanup - máximo articulos per run?", "category": "feature-spec"}
+{"text": "sensitivity filter - como maneja patrones regex complejos?", "category": "architecture"}
+{"text": "claim archived - cuales operaciones permitidas?", "category": "debugging"}
+{"text": "OmniRemote - como se sincroniza estado con backend?", "category": "feature-spec"}
+{"text": "Venezia - como se handlean vencimientos de tarjetas?", "category": "gotcha-recall"}
+{"text": "MCP server - custom headers support?", "category": "env-config"}
+{"text": "steward - cual es el max retry count?", "category": "project-lookup"}
+{"text": "PuntoFutura - como se manejan cambios de impuestos?", "category": "decision-recall"}
+{"text": "llm_provider - fallback para embeddings API?", "category": "debugging"}
+{"text": "dream_bridge - puedo ver estadísticas de export?", "category": "feature-spec"}
+{"text": "claim supersession - máximo profundidad cadena?", "category": "gotcha-recall"}
+{"text": "storage.py - query optimizer hints?", "category": "architecture"}
+{"text": "MCP CitationInput - excepciones de validación?", "category": "env-config"}
+{"text": "steward - cuando un claim no se valida?", "category": "project-lookup"}
+{"text": "wiki-absorb - filtros antes de absorber?", "category": "decision-recall"}
+{"text": "what's the difference between confirmed and stale claims?", "category": "architecture"}
+{"text": "donde esta el validator para scopes?", "category": "architecture"}
+{"text": "como se resuelven conflictos entre claims duplicados?", "category": "decision-recall"}
+{"text": "el bm25 rescorer esta usando solo titulo o tambien description?", "category": "feature-spec"}
+{"text": "why does wiki-absorb sometimes create duplicate articles?", "category": "debugging"}
+{"text": "setup-hooks.py needs CLAUDE_DB_PATH?", "category": "env-config"}
+{"text": "sensitivity filter is catching home paths — which regex pattern?", "category": "gotcha-recall"}
+{"text": "can ingest_claim run with both event_time and valid_from?", "category": "feature-spec"}
+{"text": "el steward cierra pares de superseded automaticamente?", "category": "decision-recall"}
+{"text": "how do we prevent silent dropper on claim status updates?", "category": "architecture"}
+{"text": "Qdrant vectorizer — qual embedding model?", "category": "env-config"}
+{"text": "MCP auto-citation fails if source_agent is missing?", "category": "debugging"}
+{"text": "where's the claims decay job configured?", "category": "project-lookup"}
+{"text": "RRF fusion weights — are they tuned per language?", "category": "feature-spec"}
+{"text": "como seteamos el tier de un claim?", "category": "architecture"}
+{"text": "does wiki-cleanup rewrite ALL articles or just weak ones?", "category": "feature-spec"}
+{"text": "claim id collision risk with 1000 daily ingests?", "category": "gotcha-recall"}
+{"text": "el dream-bridge esta filtrando por scope?", "category": "debugging"}
+{"text": "which claims are marked 'peripheral' by default?", "category": "architecture"}
+{"text": "setup-hooks.py — do we need Ollama running first?", "category": "env-config"}
+{"text": "PuntoFutura uses memorymaster para qué?", "category": "project-lookup"}
+{"text": "conflict_resolver — when does it run?", "category": "decision-recall"}
+{"text": "how does ingest_claim handle citation enrichment?", "category": "architecture"}
+{"text": "supersedes_claim_id — does the steward validate consistency?", "category": "gotcha-recall"}
+{"text": "Venezia POS integration — claims schema compatibility?", "category": "project-lookup"}
+{"text": "el recall hook inyecta claims candidates o solo confirmed?", "category": "feature-spec"}
+{"text": "why are WAL writes slower than regular SQLite?", "category": "debugging"}
+{"text": "MCP tool requires explicit source_agent or defaults?", "category": "env-config"}
+{"text": "FTS5 ranking function — BM25 variant or custom?", "category": "architecture"}
+{"text": "donde esta el codigo que valida wiki frontmatter?", "category": "project-lookup"}
+{"text": "claim lifecycle — can we transition from stale → confirmed?", "category": "decision-recall"}
+{"text": "OmniRemote uses memorymaster claims para what exactly?", "category": "project-lookup"}
+{"text": "entity registry — how does it sync with claims?", "category": "architecture"}
+{"text": "MercadoPago webhook scope — is it hardcoded or dynamic?", "category": "gotcha-recall"}
+{"text": "el dream-seed esta exportando todos los projects en una carpeta?", "category": "debugging"}
+{"text": "steward cycle — how long for 10k claims?", "category": "feature-spec"}
+{"text": "scope hash bug — which commit fixed it?", "category": "project-lookup"}
+{"text": "redact_claim_payload — does it keep the hash for dedup?", "category": "architecture"}
+{"text": "how does GitNexus index memorymaster symbols?", "category": "architecture"}
+{"text": "Ollama endpoint — does setup-hooks.py validate it?", "category": "env-config"}
+{"text": "claim tier recompute — is it blocking or background?", "category": "feature-spec"}
+{"text": "sensitivity filter catches email addresses — all or just third-party?", "category": "gotcha-recall"}
+{"text": "hooks directory — how many are installed by setup?", "category": "project-lookup"}
+{"text": "auto_resolver — when does it supersede vs mark conflicted?", "category": "decision-recall"}
+{"text": "el claude_cli provider — que provider usa como fallback?", "category": "architecture"}
+{"text": "wikipedia articles con [[wikilinks]] — minimo cuantos?", "category": "feature-spec"}
+{"text": "db_merge.py — SQLite + Postgres bidirectional sync correctness?", "category": "debugging"}
+{"text": "QDRANT_URL — si no esta definida, el sistema falla?", "category": "gotcha-recall"}
+{"text": "graphify integration — does it read live claims or snapshot?", "category": "project-lookup"}
+{"text": "MCP server stdio — how many concurrent clients?", "category": "architecture"}
+{"text": "claim visibility field — cuando se sete a 'sensitive'?", "category": "decision-recall"}
+{"text": "compactor job — which claims does it remove first?", "category": "feature-spec"}
+{"text": "donde esta la lista de valid claim statuses?", "category": "project-lookup"}
+{"text": "dream-bridge ingest path — does it validate against schema?", "category": "debugging"}
+{"text": "steward uses OpenClaw para que step?", "category": "architecture"}
+{"text": "claim with no sources — is it valid?", "category": "gotcha-recall"}
+{"text": "wiki-absorb frequency — daily or on-demand?", "category": "feature-spec"}
+{"text": "PuntoFutura CRM — CRM integration points con memorymaster?", "category": "project-lookup"}
+{"text": "entity extractor — uses Haiku o Claude 3?", "category": "architecture"}
+{"text": "validity window — can valid_until be in the past?", "category": "decision-recall"}
+{"text": "el recall hook inyecta memory ANTES o DESPUES del clasificador?", "category": "feature-spec"}
+{"text": "linked claims — el steward verifica bidireccionalidad?", "category": "gotcha-recall"}
+{"text": "schema CHECK constraint para status — donde esta?", "category": "project-lookup"}
+{"text": "MCP citation builder — cita o pasa plain dict?", "category": "debugging"}
+{"text": "how many articles does wiki-absorb create per cycle?", "category": "feature-spec"}
+{"text": "claim supersession — set both forwards + backwards refs?", "category": "architecture"}
+{"text": "Venezia POS — does it push claims into memorymaster?", "category": "project-lookup"}
+{"text": "sensitivity filter regex — false positives con Argentina IPs?", "category": "gotcha-recall"}
+{"text": "OmniRemote control plane — uses memorymaster para state?", "category": "decision-recall"}
+{"text": "el dedup job — compara claims o inline?", "category": "architecture"}
+{"text": "Qdrant similarity threshold — configurable?", "category": "env-config"}
+{"text": "claim with valid_until in future — how does steward treat it?", "category": "feature-spec"}
+{"text": "donde esta la implementacion del recall hook?", "category": "project-lookup"}
+{"text": "linter detects orphan wiki articles — son removidas automaticamente?", "category": "debugging"}
+{"text": "MercadoPago claims — separamos por scope o por webhook ID?", "category": "decision-recall"}
+{"text": "vault validator — error vs warning para missing frontmatter?", "category": "architecture"}
+{"text": "setup-hooks.py instala cuantos hooks?", "category": "env-config"}
+{"text": "claim confidence score — es parte del schema o metadata?", "category": "gotcha-recall"}
+{"text": "el steward — single-threaded o parallel workers?", "category": "feature-spec"}
+{"text": "dream-bridge exporting all project claims to one dir — scope filter added?", "category": "project-lookup"}
+{"text": "wiki articles — compiled truth + timeline pattern — implemented?", "category": "architecture"}
+{"text": "BM25 + vector search — weighted combination o fallback chain?", "category": "decision-recall"}
+{"text": "MCP ingest — does it commit to SQLite immediately?", "category": "debugging"}
+{"text": "claim visibility — can we query hidden claims with include_sensitive=True?", "category": "feature-spec"}
+{"text": "GitNexus index freshness — command to validate memorymaster symbols?", "category": "project-lookup"}
+{"text": "entity registry — is it a separate table or embedded in claims?", "category": "architecture"}
+{"text": "supersedes_claim_id — does the schema enforce referential integrity?", "category": "gotcha-recall"}
+{"text": "Ollama LLM — cual modelo se usa para entity extraction?", "category": "env-config"}
+{"text": "compactor removes claims older than X days — configurable?", "category": "feature-spec"}
+{"text": "donde esta el codigo que genera wiki Bases?", "category": "project-lookup"}
+{"text": "el recall hook — inyecta en system prompt o in-context?", "category": "decision-recall"}
+{"text": "claim with same text pero different sources — dedup o keep both?", "category": "debugging"}
+{"text": "sensitivity filter — catches hardcoded paths from /home?", "category": "gotcha-recall"}
+{"text": "MCP auto-citation — when does it fail over to plain dict?", "category": "architecture"}
+{"text": "wiki article rewrite — which LLM provider?", "category": "env-config"}
+{"text": "steward cycle frequency — configurable in config?", "category": "feature-spec"}
+{"text": "PuntoFutura user preferences — stored en claims o in separate table?", "category": "project-lookup"}
+{"text": "scope:project format — are there other valid scope formats?", "category": "architecture"}
+{"text": "claim event_time vs valid_from — when do we use each?", "category": "decision-recall"}
+{"text": "el dream-seed — donde esta el scope filter?", "category": "debugging"}
+{"text": "entity extractor accuracy — tested on memorymaster claims?", "category": "gotcha-recall"}
+{"text": "Venezia integration — real-time claims ingest o batch?", "category": "feature-spec"}
+{"text": "claim conflicted status — can query return it?", "category": "architecture"}
+{"text": "MercadoPago webhook — retry logic for failed ingests?", "category": "project-lookup"}
+{"text": "vault linter contradictions — auto-resolved or just reported?", "category": "debugging"}
+{"text": "setup-hooks.py — regenerable o one-shot?", "category": "env-config"}
+{"text": "claims tier recompute — preserves tier=core when it's set manually?", "category": "feature-spec"}
+{"text": "donde esta la lista de projects soportados?", "category": "project-lookup"}
+{"text": "RRF ranking — k1 parameter tuned?", "category": "architecture"}
+{"text": "claim supersession asymmetry — replaced_by es el inverse de supersedes?", "category": "decision-recall"}
+{"text": "FTS5 tokenizer — language-aware?", "category": "gotcha-recall"}
+{"text": "MCP tool documentation — auto-generated or hand-written?", "category": "debugging"}
+{"text": "claim archived status — can we unarchive?", "category": "feature-spec"}
+{"text": "OmniRemote state persistence — memorymaster as single source of truth?", "category": "project-lookup"}
+{"text": "wiki article titles — follow naming convention?", "category": "architecture"}
+{"text": "sensitivity filter bypass — is there a --allow-sensitive flag?", "category": "gotcha-recall"}
+{"text": "steward validation — uses OpenClaw for LLM calls?", "category": "env-config"}
+{"text": "el recall hook — cuanto overhead agrega per prompt?", "category": "feature-spec"}
+{"text": "claim tier peripheral — automatically demoted when?", "category": "decision-recall"}
+{"text": "donde esta el comando para lint-vault?", "category": "project-lookup"}
+{"text": "dream-bridge — ingest from Auto Dream transcript o manual?", "category": "debugging"}
+{"text": "claim sources — structured or freeform text?", "category": "architecture"}
+{"text": "MercadoPago claim scope — hardcoded o parameterized?", "category": "gotcha-recall"}
+{"text": "schema migration — backfill strategy para new fields?", "category": "feature-spec"}
+{"text": "Venetia POS claims — deduped across locations?", "category": "project-lookup"}
+{"text": "entity registry — indexed by entity type or claim ID?", "category": "architecture"}
+{"text": "claim confidence — stored as float or enum?", "category": "decision-recall"}
+{"text": "el compactor — preserves core tier claims?", "category": "debugging"}
+{"text": "QDRANT_URL sin esquema — http vs https?", "category": "env-config"}
+{"text": "wiki-cleanup LLM — same provider as steward?", "category": "feature-spec"}
+{"text": "claim linked relationships — directed or undirected graph?", "category": "architecture"}
+{"text": "PuntoFutura — which claims are most frequently queried?", "category": "project-lookup"}
+{"text": "sensitivity filter — updated when new pattern discovered?", "category": "gotcha-recall"}
+{"text": "steward cycle — does it handle concurrent ingest?", "category": "debugging"}
+{"text": "claim visibility modes — how many types?", "category": "feature-spec"}
+{"text": "OmniRemote — uses memorymaster for audit trail?", "category": "decision-recall"}
+{"text": "donde esta el archivo de schema principal?", "category": "project-lookup"}
+{"text": "MCP citation — include locator or just text?", "category": "architecture"}
+{"text": "claim with no valid_from — defaults to created_at?", "category": "gotcha-recall"}
+{"text": "setup-hooks instala para Python 3.10+ solamente?", "category": "env-config"}
+{"text": "wiki article body minimum length para require wikilinks?", "category": "feature-spec"}
+{"text": "dream-bridge exporting to single dir — scope isolation needed?", "category": "debugging"}
+{"text": "claim superseded status — can it transition back?", "category": "decision-recall"}
+{"text": "GitNexus impact analysis — includes memorymaster symbols?", "category": "architecture"}
+{"text": "el recall hook — injected por qué mecanismo?", "category": "project-lookup"}
+{"text": "claim archived — space savings vs recovery cost?", "category": "gotcha-recall"}
+{"text": "Ollama LLM provider — fallback if offline?", "category": "feature-spec"}
+{"text": "MercadoPago webhook auth — JWT o HMAC?", "category": "architecture"}
+{"text": "Venezia claims schema — compatible con v3.6?", "category": "debugging"}
+{"text": "entity extractor — separate service o in-process?", "category": "project-lookup"}
+{"text": "claim tier working — is it the default?", "category": "decision-recall"}
+{"text": "donde esta el codigo de conflict resolution?", "category": "architecture"}
+{"text": "sensitivity filter — catches IPv6 addresses?", "category": "gotcha-recall"}
+{"text": "steward LLM — uses OpenClaw para redundancia?", "category": "env-config"}
+{"text": "el wiki-absorb — output format Obsidian or generic?", "category": "feature-spec"}
+{"text": "claim visibility sensitive — queries return count?", "category": "debugging"}
+{"text": "PuntoFutura integrations — sales force sync?", "category": "project-lookup"}
+{"text": "MCP tool parameter validation — schema enforced?", "category": "architecture"}
+{"text": "claim conficted status — how long until resolved?", "category": "decision-recall"}
+{"text": "compactor job — preserves working tier?", "category": "gotcha-recall"}
+{"text": "wiki-cleanup — frequency or on-demand only?", "category": "feature-spec"}
+{"text": "OmniRemote authorization — memorymaster claims?", "category": "project-lookup"}
+{"text": "donde esta la definicion de claim statuses?", "category": "architecture"}
+{"text": "dream-bridge — manual ingest o automatic from transcript?", "category": "debugging"}
+{"text": "claim sources — can have same locator twice?", "category": "decision-recall"}
+{"text": "setup-hooks.py — compatible con Windows WSL?", "category": "env-config"}
+{"text": "sensitivity filter — regex patterns per LLM provider?", "category": "gotcha-recall"}
+{"text": "steward cycle — persists validation results?", "category": "feature-spec"}
+{"text": "claim visibility — default para new ingests?", "category": "architecture"}
+{"text": "MercadoPago claims — timestamped o event-based?", "category": "project-lookup"}
+{"text": "el recall hook — costo en tokens?", "category": "debugging"}
+{"text": "claim archived — space recovered immediately?", "category": "feature-spec"}
+{"text": "steward LLM — which provider fallback?", "category": "architecture"}
+{"text": "donde esta el endpoint para query claims?", "category": "project-lookup"}
+{"text": "MercadoPago webhook — HMAC verification?", "category": "debugging"}
+{"text": "Venezia — customer feedback as claims?", "category": "decision-recall"}
+{"text": "entity registry — how many entities indexed?", "category": "gotcha-recall"}
+{"text": "el dream-bridge — scope filtering added?", "category": "architecture"}
+{"text": "claim title search boost — multiplier?", "category": "feature-spec"}
+{"text": "PuntoFutura — marketing campaigns tracked?", "category": "project-lookup"}
+{"text": "sensitivity filter — Argentina phone numbers?", "category": "debugging"}
+{"text": "wiki-absorb frequency — hourly or daily?", "category": "decision-recall"}
+{"text": "steward — how long per claim validate?", "category": "gotcha-recall"}
+{"text": "donde esta el código de conflict resolver?", "category": "architecture"}
+{"text": "Qdrant — how many vectors stored?", "category": "feature-spec"}
+{"text": "OmniRemote — state version tracking?", "category": "project-lookup"}
+{"text": "claim archived — is it still queryable?", "category": "debugging"}
+{"text": "el linter — ciclos en wikilinks detectados?", "category": "decision-recall"}
+{"text": "MCP citation — includes source timestamp?", "category": "gotcha-recall"}
+{"text": "Venezia stock updates — per transaction?", "category": "architecture"}
+{"text": "steward LLM timeout — configurable seconds?", "category": "feature-spec"}
+{"text": "PuntoFutura — revenue per claim?", "category": "project-lookup"}
+{"text": "sensitivity filter — regex compilation time?", "category": "debugging"}
+{"text": "claim visibility — group-based access?", "category": "decision-recall"}
+{"text": "donde esta el test coverage report?", "category": "gotcha-recall"}
+{"text": "wiki article — footnote support?", "category": "architecture"}
+{"text": "MercadoPago — payment method tracking?", "category": "feature-spec"}
+{"text": "OmniRemote — permission revocation audit?", "category": "project-lookup"}
+{"text": "el recall hook — memory size limit?", "category": "debugging"}
+{"text": "claim conflicted auto-resolution delay?", "category": "decision-recall"}
+{"text": "claim confidence field — float or categorical?", "category": "architecture"}
+{"text": "como es el algoritmo de RRF para fusion?", "category": "architecture"}
+{"text": "el lint-vault detecta ciclos en wikilinks?", "category": "feature-spec"}
+{"text": "donde se define el default tier para claims?", "category": "project-lookup"}
+{"text": "MCP responde con citation siempre o solo si existe?", "category": "debugging"}
+{"text": "claim stale decay — formula based on what variables?", "category": "decision-recall"}
+{"text": "Qdrant vector dimension — configurable?", "category": "env-config"}
+{"text": "setup-hooks.py — can run without Ollama?", "category": "feature-spec"}
+{"text": "OmniRemote roles — stored as claims?", "category": "project-lookup"}
+{"text": "PuntoFutura CRM — which claims most valuable?", "category": "gotcha-recall"}
+{"text": "claim text tokenization — BPE o whitespace?", "category": "architecture"}
+{"text": "steward LLM calls — parallelized by claim ID range?", "category": "debugging"}
+{"text": "donde esta el endpoint para wiki-absorb API?", "category": "project-lookup"}
+{"text": "sensitivity filter — who maintains the regex patterns?", "category": "decision-recall"}
+{"text": "claim bulk ingest — transactional or row-by-row?", "category": "feature-spec"}
+{"text": "Venezia integration — real-time claims push?", "category": "gotcha-recall"}
+{"text": "el recall hook — cuando entra en el pipeline?", "category": "architecture"}
+{"text": "claim visibility private — queryable by owner only?", "category": "debugging"}
+{"text": "wiki article links — internal or external URLs?", "category": "decision-recall"}
+{"text": "MercadoPago webhook rate limit — builtin?", "category": "env-config"}
+{"text": "compactor batch size — claims per transaction?", "category": "feature-spec"}
+{"text": "PuntoFutura dashboard — pulling live from memorymaster?", "category": "project-lookup"}
+{"text": "entity registry — one entry per unique entity?", "category": "gotcha-recall"}
+{"text": "claim superseded — can it be recovered by searching?", "category": "architecture"}
+{"text": "steward candidate score — 0-100 scale?", "category": "debugging"}
+{"text": "donde esta el code del dream-bridge?", "category": "project-lookup"}
+{"text": "OmniRemote — audit trail stored as claims?", "category": "decision-recall"}
+{"text": "sensitivity filter — tested on real creds?", "category": "gotcha-recall"}
+{"text": "wiki-cleanup — preserves manually edited sections?", "category": "feature-spec"}
+{"text": "claim with 1000 sources — performance impact?", "category": "architecture"}
+{"text": "MCP server — STDIO buffer size limit?", "category": "debugging"}
+{"text": "Qdrant embedding batch size — configurable?", "category": "env-config"}
+{"text": "claim title vs text — separate search indexes?", "category": "decision-recall"}
+{"text": "donde esta el config para wiki-absorb output?", "category": "project-lookup"}
+{"text": "steward LLM — timeout per claim?", "category": "feature-spec"}
+{"text": "PuntoFutura scope:project:puntofutura — usage stats?", "category": "gotcha-recall"}
+{"text": "entity extractor — confidence thresholds?", "category": "architecture"}
+{"text": "claim linked supersession — transitivity?", "category": "debugging"}
+{"text": "MercadoPago claim retention — configurable days?", "category": "decision-recall"}
+{"text": "el recall hook — memory injection format?", "category": "env-config"}
+{"text": "wiki article body rewrite — sentence-by-sentence?", "category": "feature-spec"}
+{"text": "claim visibility modes — presets for GDPR?", "category": "project-lookup"}
+{"text": "OmniRemote state mutations — logged as claims?", "category": "gotcha-recall"}
+{"text": "donde esta la lista de LLM providers soportados?", "category": "architecture"}
+{"text": "steward cycle — how does it handle provider failure?", "category": "debugging"}
+{"text": "claim archived space freed immediately?", "category": "decision-recall"}
+{"text": "MCP citation locator — URL format?", "category": "feature-spec"}
+{"text": "Venezia POS — one memorymaster per location?", "category": "project-lookup"}
+{"text": "sensitivity filter — user email vs third-party?", "category": "gotcha-recall"}
+{"text": "claim tier core — never evicted?", "category": "architecture"}
+{"text": "el dream-seed — all projects en una carpeta?", "category": "debugging"}
+{"text": "wiki-absorb — incremental or full rebuild?", "category": "decision-recall"}
+{"text": "PuntoFutura sales forecast — uses memorymaster analytics?", "category": "env-config"}
+{"text": "claim ETag validation — for what purpose?", "category": "feature-spec"}
+{"text": "donde esta el test para sensitivity filter?", "category": "project-lookup"}
+{"text": "OmniRemote permissions — claim-based o JWT?", "category": "gotcha-recall"}
+{"text": "steward validation — stores reasoning?", "category": "architecture"}
+{"text": "MercadoPago webhook signature — verification method?", "category": "debugging"}
+{"text": "claim bulk query — limits?", "category": "decision-recall"}
+{"text": "el recall hook — injected pre o post classification?", "category": "feature-spec"}
+{"text": "wiki article timeline — append-only?", "category": "project-lookup"}
+{"text": "entity registry — searchable?", "category": "env-config"}
+{"text": "Qdrant connection pooling — configurable?", "category": "gotcha-recall"}
+{"text": "claim conflicted — auto-resolved cuando?", "category": "architecture"}
+{"text": "MCP tool return type — structured o text?", "category": "debugging"}
+{"text": "donde esta el endpoint para steward LLM?", "category": "decision-recall"}
+{"text": "Venezia claims deduplication — por location?", "category": "feature-spec"}
+{"text": "PuntoFutura — cual es el scope?", "category": "project-lookup"}
+{"text": "claim text length limit — bytes or characters?", "category": "gotcha-recall"}
+{"text": "el linter — que entidades detecta como orphan?", "category": "architecture"}
+{"text": "OmniRemote — does it batch ingest claims?", "category": "debugging"}
+{"text": "wiki article link validation — external?", "category": "decision-recall"}
+{"text": "MercadoPago retries — exponential backoff?", "category": "feature-spec"}
+{"text": "steward LLM — which model for conflict resolution?", "category": "project-lookup"}
+{"text": "sensitivity filter — IPv4 CIDR blocks?", "category": "gotcha-recall"}
+{"text": "claim visibility inherited from source_agent?", "category": "architecture"}
+{"text": "donde esta el codigo que parcea citations?", "category": "debugging"}
+{"text": "el dream-bridge — connection timeout?", "category": "decision-recall"}
+{"text": "MCP server — max connections?", "category": "feature-spec"}
+{"text": "Qdrant vector similarity metric — cosine?", "category": "project-lookup"}
+{"text": "claim search results — pagination token?", "category": "gotcha-recall"}
+{"text": "PuntoFutura integrations — Salesforce sync?", "category": "architecture"}
+{"text": "wiki-cleanup — preserves expert edits?", "category": "debugging"}
+{"text": "entity extractor — separate model per domain?", "category": "decision-recall"}
+{"text": "MercadoPago webhook format — JSON or form?", "category": "feature-spec"}
+{"text": "steward — resume on failure?", "category": "project-lookup"}
+{"text": "OmniRemote — single claims database or per-region?", "category": "gotcha-recall"}
+{"text": "claim supersedes chain — max depth?", "category": "architecture"}
+{"text": "donde esta el archivo de constants para statuses?", "category": "debugging"}
+{"text": "el recall hook — memory size in tokens?", "category": "decision-recall"}
+{"text": "Venezia stock levels — tracked as claims?", "category": "feature-spec"}
+{"text": "sensitivity filter — comma-separated email addresses?", "category": "project-lookup"}
+{"text": "MCP auto-citation — fallback behavior?", "category": "gotcha-recall"}
+{"text": "claim archived — recoverable via export?", "category": "architecture"}
+{"text": "wiki article frontmatter — required fields?", "category": "debugging"}
+{"text": "PuntoFutura dashboard — real-time or cached?", "category": "decision-recall"}
+{"text": "Qdrant — fallback si offline?", "category": "feature-spec"}
+{"text": "steward cycle frequency — configurable?", "category": "project-lookup"}
+{"text": "OmniRemote — state reconciliation via claims?", "category": "gotcha-recall"}
+{"text": "claim source locator — numeric ID?", "category": "architecture"}
+{"text": "donde esta el validator para wikilinks?", "category": "debugging"}
+{"text": "el compactor — preserves linked claims?", "category": "decision-recall"}
+{"text": "MercadoPago claims schema — static?", "category": "feature-spec"}
+{"text": "Venezia claims — daily aggregation?", "category": "project-lookup"}
+{"text": "sensitivity filter — regex compilation cached?", "category": "gotcha-recall"}
+{"text": "claim visibility — fallback to public?", "category": "architecture"}
+{"text": "MCP server statistics — request count?", "category": "debugging"}
+{"text": "wiki-absorb — handles missing citations?", "category": "decision-recall"}
+{"text": "PuntoFutura — how many claims daily?", "category": "feature-spec"}
+{"text": "entity registry — dedup strategy?", "category": "project-lookup"}
+{"text": "steward candidate scoring — what LLM?", "category": "gotcha-recall"}
+{"text": "donde esta el codigo del entity extractor?", "category": "architecture"}
+{"text": "OmniRemote — command audit trail?", "category": "debugging"}
+{"text": "claim conflicted — manual resolution workflow?", "category": "decision-recall"}
+{"text": "Qdrant similarity threshold — default?", "category": "feature-spec"}
+{"text": "el dream-seed — where does it write files?", "category": "project-lookup"}
+{"text": "MercadoPago — transaction scope?", "category": "gotcha-recall"}
+{"text": "wiki article body — prose length minimum?", "category": "architecture"}
+{"text": "MCP citation text — max length?", "category": "debugging"}
+{"text": "claim superseded search — includes them?", "category": "decision-recall"}
+{"text": "Venezia integration — async or blocking?", "category": "feature-spec"}
+{"text": "sensitivity filter false negatives — known issues?", "category": "project-lookup"}
+{"text": "steward LLM error handling — retry logic?", "category": "gotcha-recall"}
+{"text": "donde esta el runner para steward cycle?", "category": "architecture"}
+{"text": "PuntoFutura — claims most queried?", "category": "debugging"}
+{"text": "OmniRemote — backup claims database?", "category": "decision-recall"}
+{"text": "claim tier automatic demotion — frequency?", "category": "feature-spec"}
+{"text": "el linter — orphan detection algo?", "category": "project-lookup"}
+{"text": "MercadoPago webhook signature algo?", "category": "gotcha-recall"}
+{"text": "claim archived retention — GDPR compliant?", "category": "architecture"}
+{"text": "wiki-cleanup — sentence splitting method?", "category": "debugging"}
+{"text": "entity registry — indexed by type?", "category": "decision-recall"}
+{"text": "Qdrant — max vector dimensions?", "category": "feature-spec"}
+{"text": "steward — batch size for LLM calls?", "category": "project-lookup"}
+{"text": "OmniRemote — geographic distribution?", "category": "gotcha-recall"}
+{"text": "donde esta el configurator para LLM provider?", "category": "architecture"}
+{"text": "claim visibility inherited from entity?", "category": "debugging"}
+{"text": "MCP server — graceful shutdown?", "category": "decision-recall"}
+{"text": "Venezia POS — multi-tenant or single?", "category": "feature-spec"}
+{"text": "sensitivity filter — updates frequency?", "category": "project-lookup"}
+{"text": "el dream-bridge — concurrent exports?", "category": "gotcha-recall"}
+{"text": "claim text search — case sensitive?", "category": "architecture"}
+{"text": "MercadoPago — payment confirmation scope?", "category": "debugging"}
+{"text": "wiki article — link dest validation?", "category": "decision-recall"}
+{"text": "PuntoFutura scope — is it hardcoded?", "category": "feature-spec"}
+{"text": "steward candidate — human override possible?", "category": "project-lookup"}
+{"text": "OmniRemote state machine — in claims?", "category": "gotcha-recall"}
+{"text": "donde esta el handler para MCP ingest?", "category": "architecture"}
+{"text": "claim supersedes — bi-directional link?", "category": "debugging"}
+{"text": "el linter — what contradictions are detected?", "category": "decision-recall"}
+{"text": "Qdrant — does it cache embeddings?", "category": "feature-spec"}
+{"text": "entity extractor — confidence distribution?", "category": "project-lookup"}
+{"text": "sensitivity filter — whitelist override?", "category": "gotcha-recall"}
+{"text": "claim linked chains — max follow depth?", "category": "architecture"}
+{"text": "MCP citation builder — includes timestamp?", "category": "debugging"}
+{"text": "wiki-absorb output — Obsidian compatible?", "category": "decision-recall"}
+{"text": "Venezia — real-time dashboard?", "category": "feature-spec"}
+{"text": "steward LLM — which Haiku version?", "category": "project-lookup"}
+{"text": "OmniRemote — claims per user?", "category": "gotcha-recall"}
+{"text": "donde esta el test suite para memorymaster?", "category": "architecture"}
+{"text": "claim archived — compression applied?", "category": "debugging"}
+{"text": "el recall hook — memory format JSON?", "category": "decision-recall"}
+{"text": "MercadoPago — webhook delivery retry?", "category": "feature-spec"}
+{"text": "PuntoFutura — claims retention policy?", "category": "project-lookup"}
+{"text": "sensitivity filter — command injection patterns?", "category": "gotcha-recall"}
+{"text": "claim visibility modes documented?", "category": "architecture"}
+{"text": "MCP tool documentation — auto-generated?", "category": "debugging"}
+{"text": "wiki article images — allowed?", "category": "decision-recall"}
+{"text": "steward — conflict resolution LLM?", "category": "feature-spec"}
+{"text": "donde esta el settings file para steward?", "category": "project-lookup"}
+{"text": "OmniRemote — claims API versioned?", "category": "gotcha-recall"}
+{"text": "claim source multiplicity — deduplicated?", "category": "architecture"}
+{"text": "el compactor — preserves claim metadata?", "category": "debugging"}
+{"text": "Qdrant endpoint HTTPS?", "category": "decision-recall"}
+{"text": "entity registry — shared across projects?", "category": "feature-spec"}
+{"text": "MercadoPago — idempotent webhook handling?", "category": "project-lookup"}
+{"text": "sensitivity filter — regex performance?", "category": "gotcha-recall"}
+{"text": "claim tier recompute — blocking?", "category": "architecture"}
+{"text": "donde esta el logging config?", "category": "debugging"}
+{"text": "PuntoFutura — predictive analytics uses memorymaster?", "category": "decision-recall"}
+{"text": "wiki-cleanup — writing concurrency?", "category": "feature-spec"}
+{"text": "steward — checkpoint on progress?", "category": "project-lookup"}
+{"text": "OmniRemote — atomic state transitions?", "category": "gotcha-recall"}
+{"text": "claim text length — soft limit?", "category": "architecture"}
+{"text": "MCP server — connection state?", "category": "debugging"}
+{"text": "el linter — reports to stdout or file?", "category": "decision-recall"}
+{"text": "Venezia — order tracking as claims?", "category": "feature-spec"}
+{"text": "sensitivity filter — known false positives?", "category": "project-lookup"}
+{"text": "claim conflicted — how long persists?", "category": "gotcha-recall"}
+{"text": "donde esta el deployment config?", "category": "architecture"}
+{"text": "MercadoPago — transaction ID scope?", "category": "debugging"}
+{"text": "wiki article — LaTeX math?", "category": "decision-recall"}
+{"text": "steward LLM — context window size?", "category": "feature-spec"}
+{"text": "entity extractor — extraction accuracy?", "category": "project-lookup"}
+{"text": "OmniRemote — command history as claims?", "category": "gotcha-recall"}
+{"text": "claim visibility defaults per project?", "category": "architecture"}
+{"text": "el recall hook — injection point in code?", "category": "debugging"}
+{"text": "PuntoFutura scope — data isolation?", "category": "decision-recall"}
+{"text": "MCP auto-citation — multiple sources?", "category": "feature-spec"}
+{"text": "donde esta el docker config para memorymaster?", "category": "project-lookup"}

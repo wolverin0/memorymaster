@@ -453,17 +453,60 @@ def call_llm(prompt: str, text: str) -> str:
 
 
 def parse_json_response(text: str) -> list[dict]:
-    """Parse LLM response as JSON array, handling markdown code fences."""
+    """Parse LLM response as JSON array, handling markdown code fences and prose preambles.
+
+    Resilient to four common LLM output shapes:
+      1. raw JSON array: ``[{...}, {...}]``
+      2. fenced JSON: ``\u0060\u0060\u0060json\\n[...]\\n\u0060\u0060\u0060``
+      3. prose preamble + fenced: ``Here is the answer:\\n\u0060\u0060\u0060json\\n[...]\u0060\u0060\u0060``
+      4. prose preamble + raw: ``The entities are: [...]``
+
+    Strategy: try direct parse, then try fenced-strip from start, then fall back
+    to greedy-extracting the largest ``[...]`` block in the text.
+    """
     text = text.strip()
+    # Shape 2 — strict fenced from the very start.
     if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\n?", "", text)
-        text = re.sub(r"\n?```$", "", text)
+        stripped = re.sub(r"^```(?:json)?\n?", "", text)
+        stripped = re.sub(r"\n?```$", "", stripped)
+        try:
+            result = json.loads(stripped)
+            return _coerce_to_list(result)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # Shape 1 — direct parse.
     try:
         result = json.loads(text)
-        if isinstance(result, list):
-            return result
-        if isinstance(result, dict):
-            return [result]
-        return []
+        return _coerce_to_list(result)
     except (json.JSONDecodeError, ValueError):
-        return []
+        pass
+
+    # Shapes 3 + 4 — find the first ``\u0060\u0060\u0060json``/``\u0060\u0060\u0060`` block; if absent, the largest ``[...]``.
+    fenced_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+    if fenced_match:
+        try:
+            result = json.loads(fenced_match.group(1).strip())
+            return _coerce_to_list(result)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # Greedy: first ``[`` to last matching ``]``. Defensive against prose with stray brackets.
+    first = text.find("[")
+    last = text.rfind("]")
+    if first != -1 and last > first:
+        try:
+            result = json.loads(text[first : last + 1])
+            return _coerce_to_list(result)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    return []
+
+
+def _coerce_to_list(result) -> list[dict]:
+    if isinstance(result, list):
+        return result
+    if isinstance(result, dict):
+        return [result]
+    return []
