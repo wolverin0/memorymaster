@@ -15,11 +15,17 @@ flag in a future patch without re-touching this module.
 """
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# v3.9.1 S2 — once-per-process so the missing-table warning doesn't spam recall callers.
+_MISSING_TABLE_WARNED: bool = False
 
 __all__ = [
     "ensure_claim_edges_schema",
@@ -195,8 +201,20 @@ def walk_neighbors(
                         (cid,),
                     )
                     ids.update(int(r[0]) for r in cursor.fetchall())
-            except sqlite3.OperationalError:
-                # claim_edges table missing — just bail
+            except sqlite3.OperationalError as exc:
+                # v3.9.1 S2 — surface the missing-table case once per process
+                # so the user knows to bootstrap with rebuild_edges(). We
+                # still bail (returning {}) to keep the recall hook's
+                # silent-fail invariant.
+                global _MISSING_TABLE_WARNED
+                if not _MISSING_TABLE_WARNED:
+                    logger.warning(
+                        "claim_edges table missing or unreadable (%s) — F8 "
+                        "two-pass walks will return empty results until you "
+                        "run memorymaster.claim_edges.rebuild_edges(db_path).",
+                        exc,
+                    )
+                    _MISSING_TABLE_WARNED = True
                 return {}
             for n in ids:
                 if n in seen:

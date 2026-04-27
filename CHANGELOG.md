@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.0] - 2026-04-27
+
+Honest-null + honest-negative release. Wired F6/F8 into the recall hook (so they're actually consumed, not just dormant tables) and measured the v3.9.0 features against the N=953 prompt set. Result: F1/F5/F8 produce null deltas (±0.001). **F6 is actively harmful** with the constant-score scoring (-0.018 to -0.044 absolute precision@5). Defaults stay at 0.0 across all four new weights; all three new env-gates default to OFF. Legacy ranking remains bit-identical. Full report in `artifacts/recall-measurement-v3.10-2026-04-27.md`.
+
+### Added
+
+- **W1 — Closets stream wired into `context_hook.recall()`** (env-gate `MEMORYMASTER_RECALL_CLOSETS=1`). Calls `search_closets(query)`; for each matched wiki article, hydrates its `claim_ids` as new rows annotated `closet_score=1.0`, or boosts the score on already-recalled rows. New `W_CLOSETS` weight (default 0.0). Tests: `tests/test_closets_recall_integration.py` (+ extended).
+- **W2 — F8 claim_edges walker wired into the F5 two-pass stream** (env-gate `MEMORYMASTER_RECALL_TWO_PASS_USE_EDGES=1`). When the two-pass stream is on AND this flag is set, the structural-edges BFS runs alongside the entity-fanout walk. Distances are minimised across the two sources so the closer reference wins.
+- **F5 two-pass score is now distance-decayed** (`1/(1+hops)`) instead of constant 1.0. Only matters when `_two_pass_use_edges()` is on; the entity-fanout walker still produces hop=1 distances so behaviour is unchanged for `RECALL_TWO_PASS=1` alone.
+- **`artifacts/recall-measurement-v3.10-2026-04-27.md`** — full sweep results + decisions + next-levers for v3.11.
+
+### Fixed (S items from v3.9.0 F9 audit)
+
+- **S1 — verbatim_recall import failure now logs WARNING once** at module load (`memorymaster/context_hook.py`). Previously silently fell back to no-op lambdas; users couldn't tell that even with `MEMORYMASTER_RECALL_VERBATIM=1` set the stream was effectively OFF. New module-level `_VERBATIM_IMPORT_WARNED` flag prevents log spam.
+- **S2 — claim_edges missing-table now logs WARNING once** in `walk_neighbors` (`memorymaster/claim_edges.py`). Same pattern: module-level `_MISSING_TABLE_WARNED` flag, hint to run `rebuild_edges()`. Previously silently returned `{}` so callers didn't know to bootstrap.
+- Tests: `tests/test_v391_strict_warnings.py` (6 cases) verify both warnings fire once and only once per process.
+
+### Measurement results (vs N=953 baseline precision@5=0.104)
+
+| Config | precision@5 | Δ |
+|---|---|---|
+| baseline | 0.104 | — |
+| F1 W=0.3 | 0.104 | 0.000 |
+| F5 entities W=0.3 | 0.103 | -0.001 |
+| F5+F8 edges W=0.3 | 0.103 | -0.001 |
+| F6 closets W=0.1 | **0.086** | **-0.018** |
+| F6 closets W=1.0 | **0.060** | **-0.044** |
+| Combined | 0.086 | -0.018 |
+
+**F6 root cause:** `closet_score = 1.0` constant means each of the 5 closet hits × ~10 claim_ids/article = ~50 candidates flooding the top-5 with article-membership noise. The fix is to scale by FTS5 BM25 score (deferred to v3.11). The env-gate kept users safe in v3.9.0 because the wiring didn't exist; v3.10.0 ships the wiring with the env-gate still defaulting OFF.
+
+### Notes
+
+- Pure additive — no schema migrations applied automatically. Run `rebuild_edges` / `rebuild_closets` explicitly to populate the new tables.
+- v3.11 priorities: (a) F6 BM25-scaled scoring fix (highest), (b) F1 swap to `query_classifier.py` instead of `classify_observation`, (c) F8 entity-mediated edge kind to lift coverage from 2.7% to ~50%.
+- The negative results are themselves a deliverable — they prevent silent regressions for users who would have enabled the streams in good faith.
+
 ## [3.9.0] - 2026-04-27
 
 "Steal everything good" release. Surveyed 6 active memory/code-graph projects (gbrain, MemPalace, graphify, claude-mem, GitNexus, My-Brain-Is-Full-Crew), identified 9 portable features, shipped them all in one release with full unit + E2E coverage. Survey doc: `artifacts/steal-from-others-2026-04-27.md`. Roadmap doc: `artifacts/roadmap-v3.9.0-2026-04-27.md`.

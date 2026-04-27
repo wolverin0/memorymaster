@@ -30,6 +30,11 @@ from memorymaster.hook_log import log_hook
 
 logger = logging.getLogger(__name__)
 
+# v3.9.1 S1 — once-per-process flags so import-failure warnings don't spam.
+_VERBATIM_IMPORT_WARNED: bool = False
+# v3.9.1 S2 — once-per-process flag for missing claim_edges table.
+_CLAIM_EDGES_MISSING_WARNED: bool = False
+
 
 # Retrieval latency instrumentation (roadmap 5.1).
 #
@@ -349,6 +354,13 @@ _RECALL_WEIGHT_DEFAULTS: dict[str, float] = {
     # legacy ranking bit-identical even when the stream is on (rows are still
     # added as candidates but contribute zero to scoring).
     "W_TWO_PASS": 0.0,
+    # W_CLOSETS (v3.10 W1, ported from MemPalace v3.3.0). When the closets
+    # stream is ON (MEMORYMASTER_RECALL_CLOSETS=1), each claim_id surfaced
+    # via ``search_closets`` gets ``closet_score = 1.0`` (constant — closets
+    # are a presence boost, not a ranked score). Default 0.0 keeps ranking
+    # bit-identical even when the stream is on. MemPalace measured R@1
+    # 0.42 → 0.58 (+38%) with regex-derived closets.
+    "W_CLOSETS": 0.0,
 }
 
 
@@ -399,6 +411,18 @@ def _graph_path() -> Path:
 def _two_pass_enabled() -> bool:
     """v3.9.0 F5 — opt-in two-pass entity-fanout retrieval gate."""
     raw = os.environ.get("MEMORYMASTER_RECALL_TWO_PASS", "0").strip()
+    return raw not in ("0", "false", "False", "no", "off", "")
+
+
+def _two_pass_use_edges() -> bool:
+    """v3.10 W2 — when the two-pass stream is on, ALSO walk claim_edges in addition to entity_aliases."""
+    raw = os.environ.get("MEMORYMASTER_RECALL_TWO_PASS_USE_EDGES", "0").strip()
+    return raw not in ("0", "false", "False", "no", "off", "")
+
+
+def _closets_enabled() -> bool:
+    """v3.10 W1 — opt-in closets stream gate."""
+    raw = os.environ.get("MEMORYMASTER_RECALL_CLOSETS", "0").strip()
     return raw not in ("0", "false", "False", "no", "off", "")
 
 
@@ -1143,7 +1167,20 @@ def _recall_impl(
             is_enabled as _verbatim_enabled,
             recall_verbatim,
         )
-    except Exception:  # pragma: no cover - importless path
+    except Exception as _verbatim_import_exc:  # pragma: no cover - importless path
+        # v3.9.1 S1 — surface this rather than silently using no-op lambdas.
+        # User needs to know that even if MEMORYMASTER_RECALL_VERBATIM=1 is set,
+        # the stream is unavailable because the install is incomplete or the
+        # module raised at import time. Logged at WARNING so it surfaces in
+        # default log levels but doesn't crash recall().
+        if not _VERBATIM_IMPORT_WARNED:
+            logger.warning(
+                "verbatim_recall import failed (%s) — verbatim stream is OFF "
+                "regardless of MEMORYMASTER_RECALL_VERBATIM. Reinstall "
+                "memorymaster or check the import error.",
+                _verbatim_import_exc,
+            )
+            globals()["_VERBATIM_IMPORT_WARNED"] = True
         _verbatim_enabled = lambda: False  # type: ignore[assignment]  # noqa: E731
         recall_verbatim = lambda *a, **k: []  # type: ignore[assignment]  # noqa: E731
         hit_to_synthetic_row = None  # type: ignore[assignment]
@@ -1211,29 +1248,99 @@ def _recall_impl(
                     and getattr(c, "id", None) is not None
                 ][:10]  # cap seeds so the fanout stays bounded
                 neighbor_ids = _two_pass_neighbor_ids(svc.store, seed_ids, set(seen_ids))
-                if neighbor_ids:
-                    for nid in neighbor_ids:
-                        try:
-                            claim = svc.store.get_claim(nid)
-                        except Exception:
-                            claim = None
-                        if claim is None:
-                            continue
-                        rows.append(
-                            {
-                                "claim": claim,
-                                "lexical_score": 0.0,
-                                "freshness_score": 0.0,
-                                "confidence_score": float(getattr(claim, "confidence", 0.0) or 0.0),
-                                "vector_score": 0.0,
-                                "entity_score": 0.0,
-                                "two_pass_score": 1.0,
-                                "source": "two_pass",
-                            }
-                        )
-                        seen_ids.add(nid)
+                neighbor_distances: dict[int, int] = {n: 1 for n in neighbor_ids}
+                # v3.10 W2 — also walk claim_edges (F8 structural edges)
+                # when MEMORYMASTER_RECALL_TWO_PASS_USE_EDGES=1. Distances
+                # from the structural walk OVERRIDE entity-fanout where
+                # they're shorter (closer neighbors via explicit references).
+                if _two_pass_use_edges() and seed_ids:
+                    try:
+                        from memorymaster.claim_edges import walk_neighbors as _walk_edges
+                        edge_distances = _walk_edges(db, seed_ids, max_hops=2)
+                        for nid, hops in edge_distances.items():
+                            existing = neighbor_distances.get(nid)
+                            if existing is None or hops < existing:
+                                neighbor_distances[nid] = int(hops)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("two_pass edges walk skipped: %s", exc)
+                for nid, hops in neighbor_distances.items():
+                    if nid in seen_ids:
+                        continue
+                    try:
+                        claim = svc.store.get_claim(nid)
+                    except Exception:
+                        claim = None
+                    if claim is None:
+                        continue
+                    # Distance-decayed score so closer neighbors weigh more.
+                    score = 1.0 / (1.0 + float(hops))
+                    rows.append(
+                        {
+                            "claim": claim,
+                            "lexical_score": 0.0,
+                            "freshness_score": 0.0,
+                            "confidence_score": float(getattr(claim, "confidence", 0.0) or 0.0),
+                            "vector_score": 0.0,
+                            "entity_score": 0.0,
+                            "two_pass_score": score,
+                            "source": "two_pass",
+                        }
+                    )
+                    seen_ids.add(nid)
             except Exception as exc:  # noqa: BLE001 — defensive
                 logger.debug("two_pass stream skipped: %s", exc)
+
+    # Closets stream (v3.10 W1, MemPalace v3.3.0). Gated on
+    # MEMORYMASTER_RECALL_CLOSETS=1. Calls search_closets(query) → for each
+    # matched wiki article, hydrates its claim_ids as new rows annotated with
+    # ``closet_score = 1.0``. When a closet-hydrated claim is already in
+    # ``rows`` we BOOST its closet_score on the existing row instead of
+    # adding a duplicate.
+    if _closets_enabled():
+        with _phase_timer(phase_ms, "closets"):
+            try:
+                from memorymaster.closets import search_closets as _search_closets
+            except Exception as exc:  # noqa: BLE001 — module may be missing
+                logger.debug("closets stream skipped (import): %s", exc)
+                _search_closets = None
+            if _search_closets is not None:
+                try:
+                    closet_hits = _search_closets(db, query, limit=5)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("closets stream skipped (search): %s", exc)
+                    closet_hits = []
+                if closet_hits:
+                    existing_by_id: dict[int, dict] = {}
+                    for row in rows:
+                        c = row.get("claim")
+                        if c is not None and getattr(c, "id", None) is not None:
+                            existing_by_id[int(c.id)] = row
+                    for _slug, claim_ids in closet_hits:
+                        for cid in claim_ids:
+                            if cid in existing_by_id:
+                                # Boost: closet_score=1.0 is the constant signal
+                                existing_by_id[cid]["closet_score"] = 1.0
+                                continue
+                            try:
+                                claim = svc.store.get_claim(cid)
+                            except Exception:
+                                claim = None
+                            if claim is None:
+                                continue
+                            rows.append(
+                                {
+                                    "claim": claim,
+                                    "lexical_score": 0.0,
+                                    "freshness_score": 0.0,
+                                    "confidence_score": float(getattr(claim, "confidence", 0.0) or 0.0),
+                                    "vector_score": 0.0,
+                                    "entity_score": 0.0,
+                                    "closet_score": 1.0,
+                                    "source": "closets",
+                                }
+                            )
+                            seen_ids.add(cid)
+                            existing_by_id[cid] = rows[-1]
 
     if _graph_enabled():
         with _phase_timer(phase_ms, "graph"):
@@ -1300,6 +1407,7 @@ def _recall_impl(
     # bit-identical ranking with the 5-stream baseline.
     w_graph = _recall_weight("W_GRAPH")
     w_two_pass = _recall_weight("W_TWO_PASS")
+    w_closets = _recall_weight("W_CLOSETS")
     # W_CLAIM_TYPE (v3.9.0 F1, MemPalace "Halls"-inspired). When > 0, classify
     # the query via classify_observation() and look up its inferred claim_type;
     # rows whose claim.claim_type matches get a (1 + w_claim_type) multiplier
@@ -1479,6 +1587,10 @@ def _recall_impl(
         # F5 two-pass entity-fanout stream. W_TWO_PASS=0.0 (default) makes
         # this contribute nothing even when the stream is on.
         two_pass = float(row.get("two_pass_score") or 0.0)
+        # closet_score is non-zero only when the row was added/boosted via
+        # the v3.10 W1 closets stream. W_CLOSETS=0.0 (default) makes this
+        # contribute nothing even when MEMORYMASTER_RECALL_CLOSETS=1.
+        closets = float(row.get("closet_score") or 0.0)
         base = (
             matches * w_matches
             + phrase_bonus * w_phrase
@@ -1491,6 +1603,7 @@ def _recall_impl(
             + verbatim * w_verbatim
             + graph * w_graph
             + two_pass * w_two_pass
+            + closets * w_closets
         )
         # claim_type-aware boost (v3.9.0 F1). When w_claim_type > 0 AND the
         # query was classified into a type AND this claim's claim_type matches,
