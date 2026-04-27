@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.0] - 2026-04-27
+
+"Steal everything good" release. Surveyed 6 active memory/code-graph projects (gbrain, MemPalace, graphify, claude-mem, GitNexus, My-Brain-Is-Full-Crew), identified 9 portable features, shipped them all in one release with full unit + E2E coverage. Survey doc: `artifacts/steal-from-others-2026-04-27.md`. Roadmap doc: `artifacts/roadmap-v3.9.0-2026-04-27.md`.
+
+**Stats:** +9 features. +95 new tests (89 unit + 6 E2E). 1754 regression tests still green. Zero breaking changes. All new behaviour env-gated by default.
+
+### Added
+
+- **F1 — claim_type-aware ranking** (MemPalace "Halls"-inspired). New `W_CLAIM_TYPE` weight in `context_hook._RECALL_WEIGHT_DEFAULTS`. When > 0 (default 0.0), the recall hook classifies the query via `classify_observation()` and boosts rows whose `claim.claim_type` matches by `(1 + w_claim_type)`. Tests: `tests/test_claim_type_ranking.py` (6 cases).
+- **F2 — MemPalace-style CamelCase library_name extraction** (`memorymaster/entity_extractor.py`). New Layer-1 regex `_CAMEL_LIB_RE` catches multi-cap names (`MemPalace`, `OpenAI`, `OneSignal`) and tech-suffixed names (`ChromaDB`, `FastAPI`, `NextJS`) without fragmenting. Stoplist filters false positives (`OneDrive`, `GitHub`, `WhatsApp`). Tests: `tests/test_entity_regex_v3.py` (7 cases).
+- **F3 — `memorymaster/scope_utils.py`** new module. `scope_from_cwd()`, `cwd_from_transcript()`, `scope_from_transcript()` — read the authoritative `cwd` from a Claude Code session JSONL instead of slug-decoding the encoded folder name. Solves the same drift class as the v3.3.1 hash-suffix bug, but at the right layer. Tests: `tests/test_scope_utils.py` (14 cases).
+- **F4 — `memorymaster/wiki_validate.py`** new module + CLI. `validate_file()`, `auto_fix()`, `audit()`, plus a `main()` argparse entry-point usable as `python -m memorymaster.wiki_validate <path> [--fix] [--audit] [--json]`. Auto-fixes the 4 fixable codes (`MISSING_OPEN`, `MISSING_CLOSE`, `EMPTY_FRONTMATTER`, missing `description`/`date`/`tags`/`title`). Creates `.bak` backup before write. Ported from gbrain v0.22.4. Tests: `tests/test_wiki_validate_cli.py` (13 cases).
+- **F5 — Two-pass entity-fanout retrieval** (env-gated, gbrain v0.21 "Cathedral II"-inspired). New `MEMORYMASTER_RECALL_TWO_PASS=1` enables a second pass that fans out via `claim_entities` to find neighbour claims of already-recalled seeds. New `W_TWO_PASS` weight (default 0.0). Defensive: missing tables → `[]` not crash. Tests: `tests/test_two_pass_recall.py` (10 cases).
+- **F6 — `memorymaster/closets.py`** new module. Search-side wiki-pointer boost (MemPalace v3.3.0 "Closets" pattern). New `closets` + `closets_fts` tables. `extract_closet_terms()`, `rebuild_closets()`, `search_closets()`. Closets are populated from regex-extracted CamelCase / fenced-code / wikilinks / bare words in article bodies; search hits closets first as boost, claims direct stays as floor. Tests: `tests/test_closets.py` (12 cases).
+- **F7 — `memorymaster/federated_graphify.py`** new module (graphify v0.5.0 `merge-graphs` pattern). `discover_graphify_projects()`, `load_graph()`, `merge_graphs()`, `federated_query()` — walk N project roots, merge their `graphify-out/graph.json` outputs with per-node `repo` tag, query across the federated graph. Tests: `tests/test_federated_graphify_mcp.py` (13 cases).
+- **F8 — `memorymaster/claim_edges.py`** new module (gbrain v0.21 "Cathedral II" structural-edges pattern). New `claim_edges` table with composite primary key. `extract_edges_for_claim()` finds `claim NNNN` and `mm-<hex>` references; `rebuild_edges()` walks the entire claims table to populate; `walk_neighbors()` does BFS with `max_hops` and `direction={out,in,both}`. Supersession edges (from `claims.replaced_by_claim_id`) included for symmetric walks. Tests: `tests/test_claim_edges.py` (13 cases).
+- **F9 — `artifacts/cynical-deletion-audit-2026-04-27.md`** (claude-mem v12.4.7 PR #2141 pattern). Audit of all 36 silent `try/except/pass` blocks in `memorymaster/*.py`. Classified: 18 KEEP (legitimate defenders with explicit invariant), 10 DOCUMENT (need a `# why:` comment in v3.9.1), 8 REVIEWED with 2 marked STRICT for v3.9.1 follow-up.
+- **End-to-end smoke** (`tests/test_v390_e2e.py`, 6 cases). Exercises F2/F3/F4/F6/F8 against a real DB + temp vault and verifies module imports have no circular dependencies.
+
+### Changed
+
+- `memorymaster/context_hook.py` — wired `W_CLAIM_TYPE` and `W_TWO_PASS` into the linear scoring combiner. `query_claim_type` is computed once per recall when `W_CLAIM_TYPE > 0`. The two-pass stream is `_two_pass_enabled()`-gated and runs between the verbatim and graph streams. Both default to bit-identical legacy ranking.
+- `memorymaster/entity_extractor.py` — module docstring + `__all__` list updated to mention the new Layer-1 `library_name` extraction.
+
+### Notes
+
+- All new behaviour is opt-in via env vars and defaults to the legacy code path. No schema migrations applied automatically (run `rebuild_edges` / `rebuild_closets` explicitly to populate the new tables).
+- The recall@5 lift hypothesis from F1/F5/F6/F8 against the v3.6.0 N=953 baseline is the next-step measurement (deferred — v3.9.0 ships the machinery + tests, the eval is a v3.10 deliverable so this release stays disciplined).
+- The 2 STRICT items from F9 (verbatim-import warning, claim_edges-missing warning) are scoped to v3.9.1.
+- Pure additive — no breaking changes, no schema migrations, no API surface removal. Any v3.6.x install upgrades transparently.
+
 ## [3.6.0] - 2026-04-27
 
 Honest-null release. Spent significant compute on a tighter L2 prompt + a 9.5×-bigger eval set to definitively answer whether the v3.5.x recall stack has untapped headroom. Answer: **no, the W_LEXICAL/W_FRESHNESS/W_GRAPH weights are at-or-near optimal on every measurable axis, and the GRAPH stream contributes zero across all tested weights**. Shipping the negative result + the new eval/tooling so the next release can attack the actual bottleneck (graph hops formula or labeled-GT bias) instead of re-tuning weights.

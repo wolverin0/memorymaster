@@ -5,7 +5,8 @@ See ``artifacts/spec-entity-extraction-at-ingest-2026-04-23.md`` and the
 
 Layer 1 (``extract_patterns``): stdlib-only regex pass, kinds
     ``file``, ``env-var``, ``service``, ``port``, ``commit``, ``tool``,
-    ``package``, ``url_domain``, ``slash_command``, ``claim_id_ref``.
+    ``package``, ``url_domain``, ``slash_command``, ``claim_id_ref``,
+    ``library_name`` (CamelCase preservation, v3.9.0 F2 ported from MemPalace).
 
 Layer 2 (``extract_llm``): optional LLM pass, gated by env var
     ``MEMORYMASTER_ENTITY_LLM``. Permitted kinds:
@@ -185,6 +186,41 @@ _SLASH_COMMAND_RE = re.compile(
 # 4-6 digit numbers — only when the ``claim`` keyword precedes them.
 _CLAIM_NUM_RE = re.compile(r"\bclaims?\s+(\d{4,6})\b", re.IGNORECASE)
 _CLAIM_MM_RE = re.compile(r"\b(mm-[a-f0-9]{4,}(?:~[0-9]+)?)\b", re.IGNORECASE)
+
+# CamelCase library-name detector (v3.9.0 F2, ported from MemPalace v3.3.3).
+# Catches `MemPalace`, `ChromaDB`, `OpenAI`, `FastAPI`, `OneSignal`, `JavaScript`
+# without fragmenting them into single-word tokens. Two patterns:
+#   * Multi-cap: at least 2 capitalised segments ≥3 chars each (`MemPalace`,
+#     `OpenAI`, `OneSignal`).
+#   * Tech-suffixed: any capitalised word followed by a known tech suffix
+#     (`ChromaDB`, `FastAPI`, `NextJS`, `RestAPI`).
+# Stoplist kills false positives that ARE multi-cap but aren't libraries.
+_CAMEL_LIB_RE = re.compile(
+    r"\b("
+    # First segment ≥3 lowercase chars, then ≥1 more capitalised segment
+    # (subsequent segments may have 0 lowercase, e.g. "AI", "DB", "JS").
+    # Matches: MemPalace, OpenAI, ChromaDB, FastAPI, OneSignal, NextJS.
+    # Rejects: Apple (single seg), HTML (no lower), AB (first seg too short).
+    r"[A-Z][a-z]{2,}(?:[A-Z][a-z]*){1,}"
+    r")\b"
+)
+# False positives that match the multi-cap pattern but are not libraries —
+# common multi-word English/Spanish noun phrases that drifted into CamelCase
+# in chat. Add to this list when the eval flags noise.
+_CAMEL_STOPLIST = frozenset(
+    {
+        "OneDrive",  # generic personal storage path component
+        "GitHub",    # not a library, an org
+        "GitLab",
+        "MacOS",
+        "MacBook",
+        "iPhone",    # too generic
+        "iPad",
+        "WhatsApp",
+        "YouTube",
+        "FaceBook",
+    }
+)
 
 
 # -- Helpers ----------------------------------------------------------------
@@ -488,6 +524,19 @@ def extract_patterns(text: str) -> list[Entity]:
     for m in _CLAIM_MM_RE.finditer(text):
         surface = m.group(1)
         _add(surface, "claim_id_ref", _canonical_claim_mm(surface))
+
+    # library_name CamelCase (v3.9.0 F2). Skip stoplist; skip if surface is a
+    # substring of an already-extracted env-var or service (e.g. `OpenAi`
+    # inside `OPENAI_API_KEY`).
+    other_canonicals = {e.canonical_hint for e in found}
+    for m in _CAMEL_LIB_RE.finditer(text):
+        surface = m.group(1)
+        if surface in _CAMEL_STOPLIST:
+            continue
+        canonical = surface.lower()
+        if any(canonical in oc or oc in canonical for oc in other_canonicals if oc):
+            continue
+        _add(surface, "library_name", canonical)
 
     return found
 

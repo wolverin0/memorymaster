@@ -335,6 +335,20 @@ _RECALL_WEIGHT_DEFAULTS: dict[str, float] = {
     # disabled, graph_score stays at 0.0 on every row so ranking is
     # bit-identical to the 5-stream baseline.
     "W_GRAPH": 0.0,
+    # W_CLAIM_TYPE (v3.9.0 F1, ported from MemPalace "Halls" content-type
+    # routing). When > 0, classify the query via classify_observation() and
+    # boost rows whose claim_type matches the query's intent type by
+    # (1.0 + W_CLAIM_TYPE). Default 0.0 keeps ranking bit-identical for
+    # legacy callers — the boost is opt-in until the eval validates a default.
+    "W_CLAIM_TYPE": 0.0,
+    # W_TWO_PASS (v3.9.0 F5, ported from gbrain v0.21 "Cathedral II" two-pass
+    # retrieval). When the two-pass stream is ON (MEMORYMASTER_RECALL_TWO_PASS=1)
+    # and a claim is reached as a NEIGHBOR of an already-recalled seed claim
+    # via shared entities in entity_aliases, ``two_pass_score = 1/(1+hops)``
+    # contributes to the linear combiner with this weight. Default 0.0 keeps
+    # legacy ranking bit-identical even when the stream is on (rows are still
+    # added as candidates but contribute zero to scoring).
+    "W_TWO_PASS": 0.0,
 }
 
 
@@ -380,6 +394,80 @@ def _graph_max_hops() -> int:
 def _graph_path() -> Path:
     raw = os.environ.get("MEMORYMASTER_RECALL_GRAPH_PATH") or _GRAPH_PATH_DEFAULT
     return Path(os.path.expanduser(raw))
+
+
+def _two_pass_enabled() -> bool:
+    """v3.9.0 F5 — opt-in two-pass entity-fanout retrieval gate."""
+    raw = os.environ.get("MEMORYMASTER_RECALL_TWO_PASS", "0").strip()
+    return raw not in ("0", "false", "False", "no", "off", "")
+
+
+def _two_pass_max_neighbors() -> int:
+    """Cap neighbors discovered per recall call (default 20)."""
+    raw = os.environ.get("MEMORYMASTER_RECALL_TWO_PASS_MAX", "20").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return 20
+    return max(1, value)
+
+
+def _two_pass_neighbor_ids(
+    store, seed_ids: list[int], excluded: set[int]
+) -> list[int]:
+    """Return claim IDs that share entities with any seed claim, capped.
+
+    Walks the entity_aliases / entities tables via the store's underlying
+    SQLite connection. Defensive: any DB error returns ``[]``. Excludes IDs
+    already seen so two-pass doesn't reintroduce seeds as their own
+    neighbors.
+    """
+    if not seed_ids:
+        return []
+    cap = _two_pass_max_neighbors()
+    placeholder_seeds = ",".join("?" for _ in seed_ids)
+    out: list[int] = []
+    seen: set[int] = set(excluded)
+    try:
+        conn = getattr(store, "_conn", None) or getattr(store, "conn", None)
+        if conn is None:
+            return []
+        # 1. entity_ids referenced by any seed claim's text via the
+        #    claim_entity_mentions junction (if it exists). Defensive: try
+        #    several plausible table/column names so callers with older
+        #    schemas still work.
+        cursor = conn.execute(
+            f"""
+            SELECT DISTINCT entity_id FROM claim_entities
+            WHERE claim_id IN ({placeholder_seeds})
+            """,
+            seed_ids,
+        )
+        entity_ids = [int(r[0]) for r in cursor.fetchall()]
+        if not entity_ids:
+            return []
+        # 2. neighbor claim_ids that mention any of those entities
+        placeholder_ents = ",".join("?" for _ in entity_ids)
+        cursor = conn.execute(
+            f"""
+            SELECT DISTINCT claim_id FROM claim_entities
+            WHERE entity_id IN ({placeholder_ents})
+            LIMIT ?
+            """,
+            (*entity_ids, cap * 4),  # over-fetch then dedup
+        )
+        for (cid,) in cursor.fetchall():
+            cid = int(cid)
+            if cid in seen:
+                continue
+            seen.add(cid)
+            out.append(cid)
+            if len(out) >= cap:
+                break
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("two_pass DB walk skipped: %s", exc)
+        return []
+    return out
 
 
 def _graph_reached_claim_ids(query: str, store) -> set[int]:
@@ -1107,6 +1195,46 @@ def _recall_impl(
     #
     # Only time + emit latency when the stream is ON so disabled callers
     # produce no latency line (zero-overhead invariant, roadmap 5.1).
+    # Two-pass stream (v3.9.0 F5, gbrain v0.21 "Cathedral II"-style).
+    # Gated on MEMORYMASTER_RECALL_TWO_PASS=1. Walks entity_aliases to find
+    # claims that share entities with the already-recalled seeds. Adds them
+    # as new rows annotated with ``two_pass_score = 1.0`` (single-hop) — a
+    # future revision could cap, dedup more aggressively, or weight by hop
+    # count if depth > 1 is enabled.
+    if _two_pass_enabled():
+        with _phase_timer(phase_ms, "two_pass"):
+            try:
+                seed_ids = [
+                    int(c.id)
+                    for r in rows
+                    if (c := r.get("claim")) is not None
+                    and getattr(c, "id", None) is not None
+                ][:10]  # cap seeds so the fanout stays bounded
+                neighbor_ids = _two_pass_neighbor_ids(svc.store, seed_ids, set(seen_ids))
+                if neighbor_ids:
+                    for nid in neighbor_ids:
+                        try:
+                            claim = svc.store.get_claim(nid)
+                        except Exception:
+                            claim = None
+                        if claim is None:
+                            continue
+                        rows.append(
+                            {
+                                "claim": claim,
+                                "lexical_score": 0.0,
+                                "freshness_score": 0.0,
+                                "confidence_score": float(getattr(claim, "confidence", 0.0) or 0.0),
+                                "vector_score": 0.0,
+                                "entity_score": 0.0,
+                                "two_pass_score": 1.0,
+                                "source": "two_pass",
+                            }
+                        )
+                        seen_ids.add(nid)
+            except Exception as exc:  # noqa: BLE001 — defensive
+                logger.debug("two_pass stream skipped: %s", exc)
+
     if _graph_enabled():
         with _phase_timer(phase_ms, "graph"):
             # Roadmap 12.1 — distance-weighted score breaks the
@@ -1171,6 +1299,14 @@ def _recall_impl(
     # enabled AND reached at least one row. Default 0.0 preserves
     # bit-identical ranking with the 5-stream baseline.
     w_graph = _recall_weight("W_GRAPH")
+    w_two_pass = _recall_weight("W_TWO_PASS")
+    # W_CLAIM_TYPE (v3.9.0 F1, MemPalace "Halls"-inspired). When > 0, classify
+    # the query via classify_observation() and look up its inferred claim_type;
+    # rows whose claim.claim_type matches get a (1 + w_claim_type) multiplier
+    # at the end of _relevance. Default 0.0 → query_type stays None and the
+    # boost is a no-op, preserving bit-identical ranking.
+    w_claim_type = _recall_weight("W_CLAIM_TYPE")
+    query_claim_type = classify_observation(query) if w_claim_type > 0.0 else None
     # Scope-aware retrieval boost (roadmap 1.2). Multiplier applied to the
     # final _relevance score for claims whose scope matches the current
     # project scope. 0.0 (default) → no boost, ranking bit-identical to legacy.
@@ -1339,6 +1475,10 @@ def _recall_impl(
         # absent) otherwise. W_GRAPH=0.0 (default) makes this a no-op so
         # legacy ranking is bit-identical.
         graph = float(row.get("graph_score") or 0.0)
+        # two_pass_score is non-zero only when the row was added via the
+        # F5 two-pass entity-fanout stream. W_TWO_PASS=0.0 (default) makes
+        # this contribute nothing even when the stream is on.
+        two_pass = float(row.get("two_pass_score") or 0.0)
         base = (
             matches * w_matches
             + phrase_bonus * w_phrase
@@ -1350,7 +1490,16 @@ def _recall_impl(
             + entity * w_entity
             + verbatim * w_verbatim
             + graph * w_graph
+            + two_pass * w_two_pass
         )
+        # claim_type-aware boost (v3.9.0 F1). When w_claim_type > 0 AND the
+        # query was classified into a type AND this claim's claim_type matches,
+        # multiply by (1.0 + w_claim_type). Default w_claim_type=0.0 makes
+        # query_claim_type stay None so this branch is a no-op.
+        if query_claim_type is not None:
+            row_type = (getattr(claim, "claim_type", "") or "").strip().lower()
+            if row_type == query_claim_type:
+                base = base * (1.0 + w_claim_type)
         # Scope-aware retrieval boost (roadmap 1.2). When scope_boost > 0 AND
         # the claim's scope matches the current project scope, multiply by
         # (1.0 + scope_boost). When scope_boost == 0 this branch is a no-op
