@@ -1,0 +1,2172 @@
+[
+  {
+    "sha": "b46e5b5535b86f79",
+    "prompt": "donde esta el handler para MCP ingest?",
+    "candidates": [
+      {
+        "id": 16064,
+        "text": "Duplicate event handling requires explicit no-op suppression in the event handler."
+      },
+      {
+        "id": 14365,
+        "text": "A message handler guard clause is mandatory to prevent infinite echo loops by filtering out specific message origins."
+      },
+      {
+        "id": 7616,
+        "text": "Saleor MCP server installed at ~/.saleor-mcp using streamableHttp transport on port 6000, configured in .mcp.json but not fully working yet"
+      },
+      {
+        "id": 15887,
+        "text": "The MCP tool namespace migrated from `mcp__wezbridge__*` to `mcp__theorchestra__*` in v3.1."
+      },
+      {
+        "id": 15682,
+        "text": "The MCP tool namespace transitioned from `mcp__wezbridge__*` to `mcp__theorchestra__*` starting in v3.1."
+      },
+      {
+        "id": 11860,
+        "text": "Interonda demo/runtime schema drift included missing interaction classification fields expected by models; ensureTemplateSchema and the Chatwoot metadata migration now align handler_type/classification fields before Chatwoot projection runs."
+      },
+      {
+        "id": 11775,
+        "text": "Auto-ingest stop hook (memorymaster-auto-ingest.py) wrote to claims table via raw SQL but never inserted into citations table, so 821 of 824 candidates were born with 0 citations and permanently blocked by the steward's min_citations>=1 promotion gate."
+      },
+      {
+        "id": 15253,
+        "text": "Spawned terminal panes automatically inherit the parent's memory-ingest hooks."
+      },
+      {
+        "id": 9799,
+        "text": "Un hook de auto-ingest puede fallar silenciosamente extrayendo cero datos si la lógica de acceso a campos es demasiado restrictiva."
+      }
+    ]
+  },
+  {
+    "sha": "4d584c7fde532555",
+    "prompt": "claim supersedes — bi-directional link?",
+    "candidates": [
+      {
+        "id": 10451,
+        "text": "mcp_server.py::ingest_claim (lines 215-276) does not expose supersedes_claim_id as a parameter. When an agent wants to record a superseding claim via MCP, it cannot atomically close the bidirectional link required by claims-lifecycle.md (\"set both supersedes_claim_id on the new claim AND replaced_by"
+      },
+      {
+        "id": 9056,
+        "text": "Discovery link inference now emits deterministic topology inputs by combining LLDP/CDP, RouterOS neighbors, operator-confirmed links, and IP adjacency into canonical pair-scoped link candidates; SNMP enrichment parses netmasks into prefix lengths so adjacency is not RouterOS-only."
+      },
+      {
+        "id": 10458,
+        "text": "memorymaster MCP tool gap (2026-04-18): ingest_claim MCP tool does NOT currently expose `supersedes_claim_id` as a parameter. This means agents calling ingest_claim cannot atomically close the bidirectional supersession pair (new claim has supersedes_claim_id, old claim has replaced_by_claim_id) — t"
+      },
+      {
+        "id": 11511,
+        "text": "Addendum pattern for v3.0-decisions.md when post-launch refinements land: don't edit locked decisions; append a dated \"Addendum — YYYY-MM-DD\" section that refines/supersedes specific numbered items with reason. Example applied 2026-04-22: 7-item addendum covering (1) persistent omniclaude > one-shot"
+      },
+      {
+        "id": 9261,
+        "text": "In project app, when adding a react-router-dom Link to a page that has an existing unit test using plain render(<Page />), the test breaks with 'Cannot destructure property basename of useContext as null' because Link needs a Router context. Fix: wrap the test with <MemoryRouter>. This is the patter"
+      },
+      {
+        "id": 17283,
+        "text": "Automatic claim saving is blocked because the system cannot automatically invoke the claim ingestion function."
+      },
+      {
+        "id": 12686,
+        "text": "Forbidden IP ranges include 10.*, 172.16-31.*, 192.168.*, and link-local addresses."
+      }
+    ]
+  },
+  {
+    "sha": "d88a91628eeb855b",
+    "prompt": "el linter — what contradictions are detected?",
+    "candidates": [
+      {
+        "id": 8201,
+        "text": "obsidian-mind (breferrari/obsidian-mind) is a work/career-tracking Obsidian vault with 4 transferable patterns for MemoryMaster: (1) UserPromptSubmit classification hook using regex signal matching with Latin-letter lookarounds (?<![a-zA-Z]) instead of \\b — multilingual-safe, cheap, injects routing "
+      },
+      {
+        "id": 15141,
+        "text": "active_tasks.md (omniclaude task ledger) gets modified by external processes between in-session Edit operations. Symptom: Edit tool errors with \"File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.\" Likely culprits: memorymaster auto-inge"
+      },
+      {
+        "id": 7153,
+        "text": "## Pitfall 7: Case Sensitivity Bugs During Refactoring\n\n**What goes wrong:**\nDevelopment is on Windows (case-insensitive), deployment is on Linux Docker (case-sensitive). During refactoring, renaming a file from `Client.js` to `client.js` works locally but causes \"Cannot find module\" in production. "
+      },
+      {
+        "id": 14889,
+        "text": "Intra-process communication inherently generates redundant signals because multiple probes detect the same state change."
+      },
+      {
+        "id": 15217,
+        "text": "The contradiction regarding --channels exists specifically in v2.1.100."
+      },
+      {
+        "id": 16019,
+        "text": "The system must reliably detect genuinely idle states, preventing 'idle state blindness'."
+      },
+      {
+        "id": 11047,
+        "text": "The TUI status bar parser relies on a 30-line lookback window in the rendered grid to detect context percentage."
+      },
+      {
+        "id": 8487,
+        "text": "BUG ROOT CAUSE (2026-04-10, Installation #303): Ruben's PWA installation completion was failing with 3 errors: (1) \"No servicePlanId provided\" - frontend submit button didn't check needsPlanSelector && !selectedPlanId, so technician could click Provisionar without choosing a plan; (2) \"Invalid devic"
+      },
+      {
+        "id": 8253,
+        "text": "User UI for payments hides records with estado IN ('error_analisis','error_aprobacion'). Owner reported \"no veo ningun pago pendiente\" in his UI but 6 records exist in MySQL with these error states. UI likely filters by estado='pendiente' or 'pendiente_revision' only. The 6 historical errored paymen"
+      }
+    ]
+  },
+  {
+    "sha": "a38dcace3c472ded",
+    "prompt": "Qdrant — does it cache embeddings?",
+    "candidates": [
+      {
+        "id": 8054,
+        "text": "LongMemEval with Qdrant vector search scores 25% on 20 questions (5x improvement over 5.6% FTS5). Qdrant on VM (192.168.100.186) has high latency for writes (collection create takes 60s+, some searches timeout). Ollama for embeddings is at 192.168.100.155 not 186."
+      },
+      {
+        "id": 16615,
+        "text": "Vector embeddings must bridge semantic distance to resurface claims regardless of query terminology."
+      },
+      {
+        "id": 8029,
+        "text": "LongMemEval benchmark requires vector/semantic search to score well. FTS5 keyword search scores 0% because questions use different words than the stored conversation text. MemPalace gets 96.6% using ChromaDB vector search. MemoryMaster needs Qdrant or local embeddings for this benchmark."
+      },
+      {
+        "id": 10252,
+        "text": "Rails 8 Solid Trio schema-loading gotcha: `db/migrate/` does NOT cover Solid Cache, and may not cover all of Solid Queue / Solid Cable either — they ship as separate schema files (`db/cache_schema.rb`, `db/queue_schema.rb`, `db/cable_schema.rb`) referenced from `config/database.yml` via `migrations_"
+      },
+      {
+        "id": 15448,
+        "text": "System state is effectively locked when identical completion hashes are repeatedly served from cache."
+      },
+      {
+        "id": 12799,
+        "text": "Verbatim memories utilize dual indexing (FTS5 and Qdrant) for search."
+      },
+      {
+        "id": 11717,
+        "text": "Hybrid retrieval mode in MemoryService is silently dead in current env. torchao (used by sentence-transformers in the embeddings extra) requires torch>=2.11 but installed torch is 2.6.0+cu124, so every hybrid query raises an import-time error. The recall hook uses legacy mode so this wasn't visible."
+      },
+      {
+        "id": 7530,
+        "text": "MemoryMaster recall hook requires skip_qdrant=True on Windows environments"
+      },
+      {
+        "id": 7657,
+        "text": "Packia storefront Docker builds: NEVER use --no-cache unless package.json changed. Without --no-cache, pnpm install layer is cached and build takes ~30s instead of 3+ minutes."
+      }
+    ]
+  },
+  {
+    "sha": "aa720322f1dc537c",
+    "prompt": "entity extractor — confidence distribution?",
+    "candidates": [
+      {
+        "id": 16482,
+        "text": "Entity saturation fundamentally limits the rate of new entity insertion."
+      },
+      {
+        "id": 13140,
+        "text": "The Extractor De Transcript is constrained by its lack of MCP protocol integration."
+      },
+      {
+        "id": 15390,
+        "text": "The transcript extractor lacks MCP integration, preventing automated claim saving."
+      },
+      {
+        "id": 14082,
+        "text": "The transcript extractor cannot automate claim saving due to missing MCP integration."
+      },
+      {
+        "id": 2420,
+        "text": "## Supabase\n\n- [Supabase RLS Performance Best Practices](https://supabase.com/docs/guides/troubleshooting/rls-performance-and-best-practices-Z5Jjwv) -- HIGH confidence\n- [Supabase Custom Claims RBAC](https://supabase.com/docs/guides/database/postgres/custom-claims-and-role-based-access-control-rbac)"
+      },
+      {
+        "id": 13139,
+        "text": "Entity saturation fundamentally limits the rate of new entity insertion (growth deceleration)."
+      },
+      {
+        "id": 15369,
+        "text": "The rate of unique entity insertion drops drastically as canonical entity saturation increases."
+      },
+      {
+        "id": 2424,
+        "text": "## UX Patterns\n\n- [Progressive Disclosure - NN/g](https://www.nngroup.com/articles/progressive-disclosure/) -- HIGH confidence\n- [Multi-Step Form Best Practices 2025](https://www.webstacks.com/blog/multi-step-form) -- MEDIUM confidence"
+      },
+      {
+        "id": 13353,
+        "text": "Hot-module-replacement systems can mask visual regressions, creating false confidence in changes."
+      }
+    ]
+  },
+  {
+    "sha": "7a3229bced41810d",
+    "prompt": "sensitivity filter — whitelist override?",
+    "candidates": [
+      {
+        "id": 17341,
+        "text": "The sensitivity filter is a mandatory firewall that operates at ingest time."
+      },
+      {
+        "id": 13298,
+        "text": "The sensitivity filter blocks sensitive patterns before they reach the claims database."
+      },
+      {
+        "id": 13746,
+        "text": "The sensitivity filter rules are governed by external documentation, specifically the project's security boundary and the sensitivity-filter guide."
+      },
+      {
+        "id": 14051,
+        "text": "The canonicalization filter is self-correcting, automatically normalizing over-extraction errors."
+      },
+      {
+        "id": 16395,
+        "text": "Lower configuration scopes override higher scopes."
+      },
+      {
+        "id": 15384,
+        "text": "Explicitly restating override logic at the start of a session is necessary to bypass rigid adherence to base-level system instructions."
+      },
+      {
+        "id": 8760,
+        "text": "Paperclip shadow/staging/live rollout state machine design (Round 4). No precedent in Paperclip — has only active|paused|error status. Correct approach: gate enforcement in API endpoints (NOT agent code). Agents always try to execute normally. /api/comms/send, /api/dunning/render etc read X-Papercli"
+      },
+      {
+        "id": 10051,
+        "text": "Paperclip 2026.416 `POST /companies/:id/export` is SAFE to commit to git: the server strips agent `adapterConfig` down to a whitelist (`dangerouslySkipPermissions`, `extraArgs`, `maxTurnsPerRun`, `model`, `timeoutSec`). All `env`, `cwd`, `instructionsFilePath`, `instructionsRootPath` etc. are remove"
+      },
+      {
+        "id": 10922,
+        "text": "Admin-override merges are appropriate for documentation-only changes when CI is incapacitated by infrastructure blockers."
+      }
+    ]
+  },
+  {
+    "sha": "22ccf2541c392b2b",
+    "prompt": "claim linked chains — max follow depth?",
+    "candidates": [
+      {
+        "id": 10451,
+        "text": "mcp_server.py::ingest_claim (lines 215-276) does not expose supersedes_claim_id as a parameter. When an agent wants to record a superseding claim via MCP, it cannot atomically close the bidirectional link required by claims-lifecycle.md (\"set both supersedes_claim_id on the new claim AND replaced_by"
+      },
+      {
+        "id": 10458,
+        "text": "memorymaster MCP tool gap (2026-04-18): ingest_claim MCP tool does NOT currently expose `supersedes_claim_id` as a parameter. This means agents calling ingest_claim cannot atomically close the bidirectional supersession pair (new claim has supersedes_claim_id, old claim has replaced_by_claim_id) — t"
+      },
+      {
+        "id": 17283,
+        "text": "Automatic claim saving is blocked because the system cannot automatically invoke the claim ingestion function."
+      },
+      {
+        "id": 11184,
+        "text": "CSS recipe for sticky-bottom pagination inside a full-viewport flex panel: ALL ancestors must propagate flex height or the sticky-bottom child collapses / ignores bottom: 0. Required chain (in Nereidas admin panel): outer wrapper (min-h-[calc(100vh-HEADER)]) → Card (flex flex-col min-h-...) → CardCo"
+      },
+      {
+        "id": 9261,
+        "text": "In project app, when adding a react-router-dom Link to a page that has an existing unit test using plain render(<Page />), the test breaks with 'Cannot destructure property basename of useContext as null' because Link needs a Router context. Fix: wrap the test with <MemoryRouter>. This is the patter"
+      },
+      {
+        "id": 12686,
+        "text": "Forbidden IP ranges include 10.*, 172.16-31.*, 192.168.*, and link-local addresses."
+      },
+      {
+        "id": 10195,
+        "text": "Shell-frame layouts require a strict flex-chain pattern to maintain responsive height across nested panes."
+      },
+      {
+        "id": 9258,
+        "text": "OmniRemote TLS SPKI pinning constraint: the agent's verify_pinned_cert() (tls_pin.py) checks ONLY the leaf cert, not the chain. Behind Cloudflare Tunnel the leaf rotates every ~3 months (Google Trust Services / ZeroSSL), so pinning is fragile — agents would fail closed on every CF cert renewal. Deci"
+      },
+      {
+        "id": 9056,
+        "text": "Discovery link inference now emits deterministic topology inputs by combining LLDP/CDP, RouterOS neighbors, operator-confirmed links, and IP adjacency into canonical pair-scoped link candidates; SNMP enrichment parses netmasks into prefix lengths so adjacency is not RouterOS-only."
+      }
+    ]
+  },
+  {
+    "sha": "d5b020e6d5629d0c",
+    "prompt": "MCP citation builder — includes timestamp?",
+    "candidates": [
+      {
+        "id": 10995,
+        "text": "The `memorymaster` CLI (typically at `~/AppData/Local/Programs/Python/Python312/Scripts/memorymaster` on Windows) has an `ingest` subcommand with flags that map 1:1 onto the `mcp__memorymaster__ingest_claim` MCP tool: `--text`, `--claim-type`, `--subject`, `--predicate`, `--object`, `--idempotency-k"
+      },
+      {
+        "id": 8421,
+        "text": "graphify (github.com/safishamsi/graphify, pip install graphifyy) is a knowledge graph builder for codebases+docs+PDFs+images+video. AST extraction via tree-sitter (20 langs, no LLM) + Claude subagents for docs/images + Leiden clustering (topology-based, no embeddings). Outputs interactive HTML graph"
+      },
+      {
+        "id": 7616,
+        "text": "Saleor MCP server installed at ~/.saleor-mcp using streamableHttp transport on port 6000, configured in .mcp.json but not fully working yet"
+      },
+      {
+        "id": 11864,
+        "text": "theorchestra Claude Code 2.1.117+ has --fork-session flag + /fork slash + CLAUDE_CODE_FORK_SUBAGENT=1 env for forked subagents. User evaluated for theorchestra: NOT replacing current spawn_session (fresh persona + [PEER-PANE CONTEXT] header) with fork-inheritance because fresh spawn is SEMANTICALLY "
+      },
+      {
+        "id": 15682,
+        "text": "The MCP tool namespace transitioned from `mcp__wezbridge__*` to `mcp__theorchestra__*` starting in v3.1."
+      },
+      {
+        "id": 15887,
+        "text": "The MCP tool namespace migrated from `mcp__wezbridge__*` to `mcp__theorchestra__*` in v3.1."
+      },
+      {
+        "id": 16357,
+        "text": "Successful retrieval and citation validation by the harness does not guarantee true claim reproducibility."
+      },
+      {
+        "id": 11759,
+        "text": "Steward 0/200 promotion rate is UPSTREAM ingest bug, not steward tuning (Wave 2-F analysis 2026-04-22). 816/876 live candidates (93%) have zero citations — they can never cross the min_citations=1 gate regardless of threshold tuning. Root cause is in dream_bridge + mcp_server.ingest_claim auto-citat"
+      },
+      {
+        "id": 12083,
+        "text": "Next.js 14 standalone Dockerfile gotcha: the runner stage `COPY --from=builder /app/public ./public` fails with \"not found\" if the frontend has no public/ directory. Many modern Next.js projects ship without one. Fix: ensure the public/ exists (even empty) before docker build — `mkdir -p frontend/pu"
+      }
+    ]
+  },
+  {
+    "sha": "4d29800c492ccaae",
+    "prompt": "wiki-absorb output — Obsidian compatible?",
+    "candidates": [
+      {
+        "id": 11692,
+        "text": "Steward 429 root cause (verified 2026-04-22): gemini-3.1-flash-lite-preview free-tier daily limit is 500 requests (metric: generativelanguage.googleapis.com/generate_content_free_tier_requests). wiki-absorb enumerates ~1943 subjects per run; even with the <2 claims filter, each valid absorb fires 1-"
+      },
+      {
+        "id": 16794,
+        "text": "Created an Obsidian vault project pack under obsidian-vault/Pather with index, review, roadmap, architecture, testing, guardrails notes plus a Pather Notes.base view and a Pather Roadmap.canvas visual map."
+      },
+      {
+        "id": 16793,
+        "text": "Installed Kepano Obsidian skills globally via npx skills add: defuddle, json-canvas, obsidian-bases, obsidian-cli, and obsidian-markdown; current session manually read their SKILL.md files because newly installed skills load automatically only in a fresh agent session."
+      },
+      {
+        "id": 8857,
+        "text": "Roasbeef/obsidian-claude-code is an Obsidian plugin that embeds Claude (via Claude Agent SDK) inside the Obsidian sidebar with an Obsidian-specific MCP server (open_file, create_note, execute_command, get_vault_stats) and auto-loads skills from vault/.claude/skills/. Includes a vault-search skill us"
+      },
+      {
+        "id": 9858,
+        "text": "Automated monitoring of CLI output is prone to false negatives if grep patterns are too rigid for variable command output formats."
+      },
+      {
+        "id": 9856,
+        "text": "Automated monitoring of CLI output is prone to failure if grep patterns are too rigid for minor variations in tool output format."
+      },
+      {
+        "id": 7966,
+        "text": "curate-vault and export-vault are deprecated — wiki-absorb with compiled truth + timeline replaces both. Steward cron uses wiki-absorb now."
+      },
+      {
+        "id": 10501,
+        "text": "Reference — created `~/.claude/skills/project-curate/SKILL.md` (506 lines) on 2026-04-18, codifying the per-project curation pattern from 2 pilots (elbraserito + memorymaster). 9-step procedure: (0) ensure ECC repo cloned, (1) preflight with auto-run of all intelligence layers — GitNexus auto-indexe"
+      },
+      {
+        "id": 11728,
+        "text": "Briefer output structure is inconsistent regarding 'Active issues' when constraints are present."
+      }
+    ]
+  },
+  {
+    "sha": "655a11266aac8d16",
+    "prompt": "Venezia — real-time dashboard?",
+    "candidates": [
+      {
+        "id": 7021,
+        "text": "## Commit 2: Dashboard Controllers/Routes (74820f9b)\n\n- dashboard/controllers/activeIssuesController.js\n- dashboard/controllers/base.js\n- dashboard/controllers/cleanupController.js\n- dashboard/controllers/complaintController.js\n- dashboard/controllers/consultasController.js\n- dashboard/controllers/d"
+      },
+      {
+        "id": 14186,
+        "text": "Venezia deployment requires strict migration governance."
+      },
+      {
+        "id": 11126,
+        "text": "Venezia CSS var --primary in src/styles/globals.css is already bound to hsl(140 35% 30%) (Venezia green) and --primary-foreground to hsl(36 40% 98%) (cream). That means shadcn Button/Badge with default variant render in Venezia green automatically — no need to override with bg-venezia-green on brand"
+      },
+      {
+        "id": 11127,
+        "text": "Venezia brand logo staging: venezia.png at repo root (1.4 MB) was copied to public/venezia.png so Vite serves it at /venezia.png. AuthLayout.jsx references it via <img src=\"/venezia.png\">. 1.4 MB is oversized for a logo; compress (target <100 KB) or swap for an SVG before production. The onError han"
+      },
+      {
+        "id": 8045,
+        "text": "Paperclip agents NOT suitable for real-time WhatsApp conversations. CRM crons (opener_scheduler, queue_worker, bolsas_followup) handle all outreach autonomously. Paperclip agents repurposed to daily monitoring/auditing only. Conversational agents (SalesDirector, WAConversationalist, ResponseHandlers"
+      },
+      {
+        "id": 16194,
+        "text": "The system requires minimal latency and real-time task triggering."
+      },
+      {
+        "id": 14655,
+        "text": "Ambient learning and real-time validation require continuous, non-phased memory operations."
+      },
+      {
+        "id": 11360,
+        "text": "Tabla `wa_messages` del CRM PuntoFutura usa columna `timestamp` (no `created_at`). La tabla `local_biz_leads` usa columna `lead_channel` (no `channel`). El usuario de postgres del container `dashboard-postgres` es `dashboard` (no `postgres` ni `dashuser`), DB `dashboard`. Acceso vía `docker exec das"
+      },
+      {
+        "id": 4387,
+        "text": "## Key Files to Modify\n\n**Header Management:**\n- `dashboard/react-app/src/components/layout/Header.tsx` - Update routeConfig\n\n**Pages Needing Fixes:**\n- `dashboard/react-app/src/pages/CampaignAnalyticsPage.tsx`\n- `dashboard/react-app/src/pages/CampaignBuilderPage.tsx`\n- `dashboard/react-app/src/page"
+      }
+    ]
+  },
+  {
+    "sha": "19606e47c07de724",
+    "prompt": "steward LLM — which Haiku version?",
+    "candidates": [
+      {
+        "id": 17259,
+        "text": "Haiku is implemented as an LLM-of-service to enable high-frequency entity extraction."
+      },
+      {
+        "id": 17204,
+        "text": "LLM inference is decoupled from database I/O using Haiku (LLM-as-a-service)."
+      },
+      {
+        "id": 16174,
+        "text": "The system decouples LLM inference from database I/O using Haiku (LLM-as-a-service)."
+      },
+      {
+        "id": 16126,
+        "text": "Claude Haiku is the designated core LLM for claim extraction and validation."
+      },
+      {
+        "id": 12497,
+        "text": "The steward classifier automatically promotes candidate claims to 'confirmed' status during steward cycles."
+      },
+      {
+        "id": 13854,
+        "text": "The MemoryMaster steward classifier automatically promotes candidate claims to 'confirmed' status during steward cycles."
+      },
+      {
+        "id": 12765,
+        "text": "The steward classifier uses a LogisticRegression model."
+      },
+      {
+        "id": 16156,
+        "text": "Haiku was selected for its high-throughput and low-latency performance."
+      },
+      {
+        "id": 14071,
+        "text": "Haiku was selected specifically for its high-throughput and low-latency performance characteristics."
+      }
+    ]
+  },
+  {
+    "sha": "a24574057dd0a644",
+    "prompt": "OmniRemote — claims per user?",
+    "candidates": [
+      {
+        "id": 7535,
+        "text": "OmniRemote deployed at omniremote.puntofutura.com.ar via Cloudflare Tunnel. CP=8080, Agent=8001, Dashboard=80/443, PostgreSQL=5432, Prometheus=9090, Grafana=3000, RustDesk hbbs=21116"
+      },
+      {
+        "id": 14836,
+        "text": "Omniremote is in a known P0 state of critical instability."
+      },
+      {
+        "id": 10451,
+        "text": "mcp_server.py::ingest_claim (lines 215-276) does not expose supersedes_claim_id as a parameter. When an agent wants to record a superseding claim via MCP, it cannot atomically close the bidirectional link required by claims-lifecycle.md (\"set both supersedes_claim_id on the new claim AND replaced_by"
+      },
+      {
+        "id": 10458,
+        "text": "memorymaster MCP tool gap (2026-04-18): ingest_claim MCP tool does NOT currently expose `supersedes_claim_id` as a parameter. This means agents calling ingest_claim cannot atomically close the bidirectional supersession pair (new claim has supersedes_claim_id, old claim has replaced_by_claim_id) — t"
+      },
+      {
+        "id": 14988,
+        "text": "Ingestion uses concurrency gating (per-device and per-target) to prevent cascading failures."
+      },
+      {
+        "id": 14990,
+        "text": "Data ingestion combines series-registry deduplication with per-device and per-target concurrency gating."
+      },
+      {
+        "id": 13663,
+        "text": "Ingestion must combine series-registry deduplication with granular concurrency gating (per-device and per-target)."
+      },
+      {
+        "id": 17283,
+        "text": "Automatic claim saving is blocked because the system cannot automatically invoke the claim ingestion function."
+      }
+    ]
+  },
+  {
+    "sha": "2b6d30272907b79f",
+    "prompt": "donde esta el test suite para memorymaster?",
+    "candidates": [
+      {
+        "id": 15426,
+        "text": "The test suite acts as an implicit enforcer of the `child.against_sales_order` relationship."
+      },
+      {
+        "id": 17309,
+        "text": "The test suite creates implicit enforcement, making it brittle and highly coupled to specific schema structures."
+      },
+      {
+        "id": 17310,
+        "text": "The test suite does not explicitly validate the relationship itself, only the presence of a structural column proxy."
+      },
+      {
+        "id": 16163,
+        "text": "MemoryMaster must use file-based persistence to survive process crashes."
+      },
+      {
+        "id": 7530,
+        "text": "MemoryMaster recall hook requires skip_qdrant=True on Windows environments"
+      },
+      {
+        "id": 10993,
+        "text": "Decision 2026-04-20: theorchestra v3.0-native MemoryMaster integration (Cat E §9 of v3.0-plan.md) ships as an SSE bus subscriber that writes JSONL claims into `vault/_memorymaster/inbox.jsonl`, NOT as a per-event shell-out to `memorymaster ingest`. Rationale: decouples theorchestra from any specific"
+      },
+      {
+        "id": 16927,
+        "text": "Clawtrol test database name is `clawtrolplayground_test` (env: CLAWTROLPLAYGROUND_TEST_DB_NAME), NOT `clawdeck_test` despite the dev DB being `clawdeck_development`. Configured in config/database.yml under the test: block. The clawdeck_test_0..15 databases on dashboard-postgres are leftover parallel"
+      },
+      {
+        "id": 1820,
+        "text": "## 9.2 Authentication Tests\n\n- [ ] Test signup flow\n- [ ] Test login flow\n- [ ] Test logout\n- [ ] Test password reset (if applicable)\n- [ ] Test session persistence"
+      },
+      {
+        "id": 9477,
+        "text": "Node --test gotcha on Windows (2026-04-15): `node --test test/` interprets `test` as a MODULE NAME and fails with MODULE_NOT_FOUND. Fix: explicit glob `node --test test/*.test.cjs`. On Linux the directory form works. For portable npm scripts, always use the explicit glob pattern."
+      }
+    ]
+  },
+  {
+    "sha": "c46b96559a673211",
+    "prompt": "claim archived — compression applied?",
+    "candidates": [
+      {
+        "id": 9650,
+        "text": "Rate-limit reasoning flaw to avoid: \"user is on flat-rate plan, so token compression has no value\" is wrong. Rate limits on Claude Max/Pro are measured in tokens — 80% compression = ~5x effective turns-per-window before throttling. Never dismiss a compression tool on \"cost\" alone when the user is on"
+      },
+      {
+        "id": 16481,
+        "text": "Unvalidated claims are quarantined in a 'candidate' status until promoted or archived."
+      },
+      {
+        "id": 10451,
+        "text": "mcp_server.py::ingest_claim (lines 215-276) does not expose supersedes_claim_id as a parameter. When an agent wants to record a superseding claim via MCP, it cannot atomically close the bidirectional link required by claims-lifecycle.md (\"set both supersedes_claim_id on the new claim AND replaced_by"
+      },
+      {
+        "id": 17283,
+        "text": "Automatic claim saving is blocked because the system cannot automatically invoke the claim ingestion function."
+      },
+      {
+        "id": 10458,
+        "text": "memorymaster MCP tool gap (2026-04-18): ingest_claim MCP tool does NOT currently expose `supersedes_claim_id` as a parameter. This means agents calling ingest_claim cannot atomically close the bidirectional supersession pair (new claim has supersedes_claim_id, old claim has replaced_by_claim_id) — t"
+      },
+      {
+        "id": 12645,
+        "text": "PNG compression on Venezia repo (Windows): sharp and ImageMagick aren't installed, but ffmpeg is. Use `ffmpeg -y -i in.png -vf \"scale=400:-1\" -compression_level 100 out.png` to compress + downscale. Achieved 1.4 MB → 134 KB (90% reduction) on venezia.png at 400px width — visually identical at h-40 ("
+      },
+      {
+        "id": 3092,
+        "text": "## Requirements Archive: v2.0 Webshop Customer Features\n\n**Archived:** 2026-01-25\n**Status:** SHIPPED\n\nThis is the archived requirements specification for v2.0.\nFor current requirements, see `.planning/REQUIREMENTS.md` (created for next milestone).\n\n---"
+      },
+      {
+        "id": 11890,
+        "text": "Interonda documentation governance was consolidated: ROADMAP.md is the only live guide, recent auxiliary plans were moved to docs/archived, and open checkboxes in archived docs no longer count as active pending work."
+      },
+      {
+        "id": 8974,
+        "text": "Monitoring storage now uses a metric_series registry with series_id-based sample tables plus explicit raw/1m/5m/1h storage policies and retention/compression metadata."
+      }
+    ]
+  },
+  {
+    "sha": "61f8eab95676b727",
+    "prompt": "el recall hook — memory format JSON?",
+    "candidates": [
+      {
+        "id": 11712,
+        "text": "Hook observability gap (audit 2026-04-22): of the 7 MemoryMaster hooks, only auto-ingest and precompact write to ~/.memorymaster/hook_state/hook.log. recall, classify, validate-wiki, session-start, and steward-cycle are black boxes — no log entries, no way to prove they fire. 58 session _last_save f"
+      },
+      {
+        "id": 13219,
+        "text": "MemoryMaster's recall system has a structural ceiling of ~70% precision@5."
+      },
+      {
+        "id": 15413,
+        "text": "External hook usage requires anticipating failures due to mismatches between documented and actual hook schemas."
+      },
+      {
+        "id": 15530,
+        "text": "Hook synchronization requires adherence to canonical source templates."
+      },
+      {
+        "id": 16284,
+        "text": "The MemoryMaster query system has a hard recall ceiling of approximately 70%."
+      },
+      {
+        "id": 13279,
+        "text": "State introspection must be achieved without corrupting conversation memory."
+      },
+      {
+        "id": 16611,
+        "text": "FTS5 is fundamentally insufficient for conversational memory retrieval at scale."
+      },
+      {
+        "id": 15006,
+        "text": "Traditional keyword search (FTS5) is fundamentally insufficient for conversational memory retrieval."
+      },
+      {
+        "id": 16612,
+        "text": "FTS5 recall drops significantly (e.g., ~10%) when managing thousands of claims."
+      }
+    ]
+  },
+  {
+    "sha": "90039cfac483f071",
+    "prompt": "MercadoPago — webhook delivery retry?",
+    "candidates": [
+      {
+        "id": 8189,
+        "text": "Telegram Bot API: webhook and getUpdates polling are mutually exclusive. If a bot has a webhook set, getUpdates returns HTTP 409 Conflict. Check webhook with GET /bot<token>/getWebhookInfo. Delete with GET /bot<token>/deleteWebhook?drop_pending_updates=true. The futura_outreach_bridge_bot had a webh"
+      },
+      {
+        "id": 10487,
+        "text": "Public delivery tracking endpoints must be secured via HMAC signing."
+      },
+      {
+        "id": 8651,
+        "text": "Flask webhook shared-secret validation now fails closed with HTTP 503 when the expected secret is missing, instead of silently allowing unauthenticated webhook processing."
+      },
+      {
+        "id": 1313,
+        "text": "## Payment System\n\nMercadoPago integration for subscription payments:\n- Payment server: [server/payment-server.cjs](server/payment-server.cjs)\n- Service layer: [src/lib/mercadopago-service.ts](src/lib/mercadopago-service.ts)\n- Payment result pages: [src/pages/payment/](src/pages/payment/)"
+      },
+      {
+        "id": 10515,
+        "text": "venezia POS delivery atomicity RPC (P4.25, 2026-04-18): `rpc_create_sale_with_delivery(p_store_id, p_items jsonb, p_discount, p_payment_method, p_customer_id, p_notes, p_delivery jsonb)` wraps `rpc_create_sale` + inserts `delivery_addresses` + `delivery_orders` (order_source='POS') + `delivery_statu"
+      },
+      {
+        "id": 8701,
+        "text": "Inbound webhook failures are now persisted in the webhook_events table and can be reviewed or replayed from the admin route /admin/tools/webhook-events after applying migration 20260411_phase3_webhook_events.sql."
+      },
+      {
+        "id": 10373,
+        "text": "venezia delivery_orders schema reality (P4.7 findings, 2026-04-18): delivery_statuses seed contains 5 statuses (not 7) in ENGLISH: `Preparing, Ready, Out for Delivery, Delivered, Cancelled`. UI displays Spanish labels via i18n (`statuses.delivery.preparing` etc.). `delivery_orders` table has NO `tot"
+      },
+      {
+        "id": 1133,
+        "text": "## Server-only (NEVER use EXPO_PUBLIC_ prefix - would expose secrets to all users):\n\nSUPABASE_SERVICE_ROLE_KEY\nMERCADOPAGO_ACCESS_TOKEN\nMERCADOPAGO_WEBHOOK_SECRET\n```"
+      },
+      {
+        "id": 2770,
+        "text": "## Environment Configuration\n\nRequired environment variables:\n```\nVITE_SUPABASE_URL - Supabase project URL\nVITE_SUPABASE_ANON_KEY - Supabase anonymous key\nVITE_MERCADOPAGO_PUBLIC_KEY - MercadoPago public key (for payment processing)\nVITE_MERCADOPAGO_ACCESS_TOKEN - MercadoPago access token (for API c"
+      }
+    ]
+  },
+  {
+    "sha": "9af6c2038082641c",
+    "prompt": "PuntoFutura — claims retention policy?",
+    "candidates": [
+      {
+        "id": 14404,
+        "text": "Daily salt rotation with a 90-day retention policy balances security and data utility."
+      },
+      {
+        "id": 7927,
+        "text": "PuntoFutura contact info: Instagram @futurasistemas.com.ar, WhatsApp +5491178271949, Products: gimnasio.puntofutura.com.ar, delivery.puntofutura.com.ar. Landing page prompt at E:\\PROMPT.md"
+      },
+      {
+        "id": 8155,
+        "text": "OmniRemote now persists retention-backed remote activity records for file uploads/downloads and terminal transcripts, with expiry timestamps derived from REMOTE_ACTIVITY_RETENTION_DAYS."
+      },
+      {
+        "id": 14402,
+        "text": "Daily salt rotation with a 90-day retention period balances security and data utility."
+      },
+      {
+        "id": 730,
+        "text": "🌐 Bypass de Cloudflare Access: view.puntofutura.com.ar (Update 12:04)\\n- **Problema**: `clawtrol.puntofutura.com.ar` y `mc.puntofutura.com.ar` están bloqueados por la capa de Cloudflare Access (403/Re"
+      },
+      {
+        "id": 17283,
+        "text": "Automatic claim saving is blocked because the system cannot automatically invoke the claim ingestion function."
+      },
+      {
+        "id": 10451,
+        "text": "mcp_server.py::ingest_claim (lines 215-276) does not expose supersedes_claim_id as a parameter. When an agent wants to record a superseding claim via MCP, it cannot atomically close the bidirectional link required by claims-lifecycle.md (\"set both supersedes_claim_id on the new claim AND replaced_by"
+      },
+      {
+        "id": 10458,
+        "text": "memorymaster MCP tool gap (2026-04-18): ingest_claim MCP tool does NOT currently expose `supersedes_claim_id` as a parameter. This means agents calling ingest_claim cannot atomically close the bidirectional supersession pair (new claim has supersedes_claim_id, old claim has replaced_by_claim_id) — t"
+      },
+      {
+        "id": 628,
+        "text": "Tracking Links\n- **Problema**: `resell.puntofutura.com.ar/r/<slug>` daba 404 porque el handler está en wisp-bot (3003), no en Saleor storefront (4012)\n- **Fix**: Nuevo subdominio `track.puntofutura.com.ar` → wisp-bot:3003 vía Cloudflare tunnel\n- `track.puntofutura.com.ar/r/<slug>` → 302 hacia `resel"
+      }
+    ]
+  },
+  {
+    "sha": "9909286659acd0c8",
+    "prompt": "sensitivity filter — command injection patterns?",
+    "candidates": [
+      {
+        "id": 13298,
+        "text": "The sensitivity filter blocks sensitive patterns before they reach the claims database."
+      },
+      {
+        "id": 17341,
+        "text": "The sensitivity filter is a mandatory firewall that operates at ingest time."
+      },
+      {
+        "id": 16964,
+        "text": "The hook triggers false positives when multi-file listings follow a path change command."
+      },
+      {
+        "id": 13746,
+        "text": "The sensitivity filter rules are governed by external documentation, specifically the project's security boundary and the sensitivity-filter guide."
+      },
+      {
+        "id": 14051,
+        "text": "The canonicalization filter is self-correcting, automatically normalizing over-extraction errors."
+      },
+      {
+        "id": 12783,
+        "text": "MCP server authentication requires environment-level injection at startup."
+      },
+      {
+        "id": 13525,
+        "text": "Attaching to a pane can trigger race conditions or duplicate command execution."
+      },
+      {
+        "id": 14200,
+        "text": "Wezbridge MCP requires environment variable injection for all authentication tokens."
+      },
+      {
+        "id": 12858,
+        "text": "The mobile APK build step is executed using the specific command ./gradlew assembleDebug."
+      },
+      {
+        "id": 12864,
+        "text": "Claude Code supports persona injection via multiple mechanisms, requiring awareness of all available methods."
+      }
+    ]
+  },
+  {
+    "sha": "570a62d55c40dc93",
+    "prompt": "claim visibility modes documented?",
+    "candidates": [
+      {
+        "id": 10458,
+        "text": "memorymaster MCP tool gap (2026-04-18): ingest_claim MCP tool does NOT currently expose `supersedes_claim_id` as a parameter. This means agents calling ingest_claim cannot atomically close the bidirectional supersession pair (new claim has supersedes_claim_id, old claim has replaced_by_claim_id) — t"
+      },
+      {
+        "id": 13356,
+        "text": "Shortcuts operate within separate visibility scopes, preventing global visibility."
+      },
+      {
+        "id": 17283,
+        "text": "Automatic claim saving is blocked because the system cannot automatically invoke the claim ingestion function."
+      },
+      {
+        "id": 10451,
+        "text": "mcp_server.py::ingest_claim (lines 215-276) does not expose supersedes_claim_id as a parameter. When an agent wants to record a superseding claim via MCP, it cannot atomically close the bidirectional link required by claims-lifecycle.md (\"set both supersedes_claim_id on the new claim AND replaced_by"
+      },
+      {
+        "id": 16900,
+        "text": "The Execution Board must enable real-time visibility into progress for all contributors."
+      },
+      {
+        "id": 12934,
+        "text": "Two irreducible failure modes prevent further improvement."
+      },
+      {
+        "id": 13368,
+        "text": "Quota exhaustion is the primary root cause of silent failure modes."
+      },
+      {
+        "id": 16802,
+        "text": "Workspace shortcuts operate within separate visibility scopes and are not globally propagated."
+      },
+      {
+        "id": 17145,
+        "text": "Exceeding the throughput ceiling leads to predictable failure modes (Signal Stagnation + Waddling State)."
+      }
+    ]
+  },
+  {
+    "sha": "3af1576300924887",
+    "prompt": "MCP tool documentation — auto-generated?",
+    "candidates": [
+      {
+        "id": 15887,
+        "text": "The MCP tool namespace migrated from `mcp__wezbridge__*` to `mcp__theorchestra__*` in v3.1."
+      },
+      {
+        "id": 15682,
+        "text": "The MCP tool namespace transitioned from `mcp__wezbridge__*` to `mcp__theorchestra__*` starting in v3.1."
+      },
+      {
+        "id": 13866,
+        "text": "MCP tool availability in LLM context can be stale after system rollbacks, requiring explicit runtime verification rather than relying on cached tool lists."
+      },
+      {
+        "id": 14193,
+        "text": "Documentation references obsolete file structures, preventing accurate implementation."
+      },
+      {
+        "id": 7616,
+        "text": "Saleor MCP server installed at ~/.saleor-mcp using streamableHttp transport on port 6000, configured in .mcp.json but not fully working yet"
+      },
+      {
+        "id": 14154,
+        "text": "Plugin disconnection causes immediate, unannounced tool failure, bypassing graceful degradation."
+      },
+      {
+        "id": 10725,
+        "text": "Co-versioning documentation with code in a single repository is preferred over fragmented documentation to ensure consistency."
+      },
+      {
+        "id": 13435,
+        "text": "Co-versioning eliminates the need for separate documentation deployment pipelines."
+      },
+      {
+        "id": 10237,
+        "text": "Device tool invocation endpoint: POST /devices/{deviceID}/actions/run-tool with JSON body {tool, args}. Supported tool IDs: ping, traceroute, bandwidth-test, arp. Backend enforces an allow-list (blueprint §13.4) and audits every run. Frontend wrapper is runDeviceTool(deviceId, tool, args?) at fronte"
+      }
+    ]
+  },
+  {
+    "sha": "a0133e6a756de182",
+    "prompt": "wiki article images — allowed?",
+    "candidates": [
+      {
+        "id": 12852,
+        "text": "Wiki article rewriting is forbidden if the source claims violate the established sensitivity rules."
+      },
+      {
+        "id": 16428,
+        "text": "Public Docker Hub images are prohibited because they are pinned to unsupported Baileys versions."
+      },
+      {
+        "id": 9163,
+        "text": "MemoryMaster v3.4.0 shipped 2026-04-13. Implements Memory Bundle pattern (Marcosomma dev.to article): bidirectional claim↔wiki binding. New claims.wiki_article column + index, wiki_engine._stamp_wiki_binding() fires after each _write_article in absorb(), context_hook.recall() appends \"(compiled in ["
+      },
+      {
+        "id": 15633,
+        "text": "The scope of the 'Service' article requires a decision: whether to remain focused on the pnpm dev pattern or expand to cover environment setup."
+      },
+      {
+        "id": 17005,
+        "text": "Building images on the host system is explicitly prohibited."
+      },
+      {
+        "id": 17307,
+        "text": "Cleanup policies must be implemented for dangling images and stopped containers."
+      },
+      {
+        "id": 15949,
+        "text": "The author decided to halt writing the article pending verification."
+      },
+      {
+        "id": 7966,
+        "text": "curate-vault and export-vault are deprecated — wiki-absorb with compiled truth + timeline replaces both. Steward cron uses wiki-absorb now."
+      }
+    ]
+  },
+  {
+    "sha": "43ef8f7e9730f006",
+    "prompt": "steward — conflict resolution LLM?",
+    "candidates": [
+      {
+        "id": 15691,
+        "text": "Conflict resolution is mandatory to prevent deadlocks and pane refusal during parallel execution."
+      },
+      {
+        "id": 15896,
+        "text": "PRD orchestration requires explicit constraint embedding, dependency translation, and conflict resolution."
+      },
+      {
+        "id": 12497,
+        "text": "The steward classifier automatically promotes candidate claims to 'confirmed' status during steward cycles."
+      },
+      {
+        "id": 13854,
+        "text": "The MemoryMaster steward classifier automatically promotes candidate claims to 'confirmed' status during steward cycles."
+      },
+      {
+        "id": 12765,
+        "text": "The steward classifier uses a LogisticRegression model."
+      },
+      {
+        "id": 16173,
+        "text": "Observed latency variability suggests entity resolution relies on an external service."
+      },
+      {
+        "id": 16337,
+        "text": "Role resolution logic must always check canonical app metadata to determine permissions."
+      },
+      {
+        "id": 12896,
+        "text": "Mixing dynamic key generation with hardcoded configuration settings creates a fatal architectural conflict."
+      },
+      {
+        "id": 16151,
+        "text": "Wait clauses must be converted to explicit preconditions for reliable dependency resolution."
+      }
+    ]
+  },
+  {
+    "sha": "f58822dd6ccaff59",
+    "prompt": "donde esta el settings file para steward?",
+    "candidates": [
+      {
+        "id": 14761,
+        "text": "File traversal latency is compounded because each file operation incurs network I/O."
+      },
+      {
+        "id": 10123,
+        "text": "The Settings page (/settings) was rewritten from a legacy .panel/.field/.input/.primary-button CSS overlay to a proper shadcn Card/Input/Button/Select/Table/Dialog/Tabs stack. Navigation uses Radix Tabs with TabsContent (not a data-attribute grid-hide trick). A shared SettingsSection helper at featu"
+      },
+      {
+        "id": 12497,
+        "text": "The steward classifier automatically promotes candidate claims to 'confirmed' status during steward cycles."
+      },
+      {
+        "id": 13854,
+        "text": "The MemoryMaster steward classifier automatically promotes candidate claims to 'confirmed' status during steward cycles."
+      },
+      {
+        "id": 12765,
+        "text": "The steward classifier uses a LogisticRegression model."
+      },
+      {
+        "id": 14286,
+        "text": "Local scope settings (current directory) always override global MCP settings."
+      },
+      {
+        "id": 16534,
+        "text": "The extension cannot interact with OS-level native file dialogs or file pickers."
+      },
+      {
+        "id": 7613,
+        "text": "Playwright works for Facebook file uploads but Chrome extension (claude-in-chrome) does NOT because it cannot handle native file dialogs"
+      },
+      {
+        "id": 16391,
+        "text": "Local scope settings defined by .mcp.json override global configurations."
+      }
+    ]
+  },
+  {
+    "sha": "a38c1a1d232372ec",
+    "prompt": "OmniRemote — claims API versioned?",
+    "candidates": [
+      {
+        "id": 7920,
+        "text": "GLM API key is ZHIPU_API_KEY from ~/.openclaw/workspace/.env. Pass as GLM_API_KEY env var. Model: glm-4.7. Endpoint: https://api.z.ai/api/coding/paas/v4/chat/completions. Also works via z.ai anthropic endpoint for Claude Code wrapper."
+      },
+      {
+        "id": 7535,
+        "text": "OmniRemote deployed at omniremote.puntofutura.com.ar via Cloudflare Tunnel. CP=8080, Agent=8001, Dashboard=80/443, PostgreSQL=5432, Prometheus=9090, Grafana=3000, RustDesk hbbs=21116"
+      },
+      {
+        "id": 14836,
+        "text": "Omniremote is in a known P0 state of critical instability."
+      },
+      {
+        "id": 16635,
+        "text": "damore2 frontend optimistic-locking convention `__version` envelope (introduced 2026-04-27 by FE remediation for audit F-7.2): all useUpdate* hooks accept payload field `__version: number | null` (note the underscore-prefix to distinguish from the entity's own `version` column on the response). Hook"
+      },
+      {
+        "id": 17283,
+        "text": "Automatic claim saving is blocked because the system cannot automatically invoke the claim ingestion function."
+      },
+      {
+        "id": 12965,
+        "text": "The conflicting status was observed specifically in version v2.1.100."
+      },
+      {
+        "id": 14187,
+        "text": "Version control must include application code, configuration, and build artifacts."
+      },
+      {
+        "id": 10451,
+        "text": "mcp_server.py::ingest_claim (lines 215-276) does not expose supersedes_claim_id as a parameter. When an agent wants to record a superseding claim via MCP, it cannot atomically close the bidirectional link required by claims-lifecycle.md (\"set both supersedes_claim_id on the new claim AND replaced_by"
+      },
+      {
+        "id": 10458,
+        "text": "memorymaster MCP tool gap (2026-04-18): ingest_claim MCP tool does NOT currently expose `supersedes_claim_id` as a parameter. This means agents calling ingest_claim cannot atomically close the bidirectional supersession pair (new claim has supersedes_claim_id, old claim has replaced_by_claim_id) — t"
+      },
+      {
+        "id": 8981,
+        "text": "Dashboard routeRegistry auto-mounts '/api/' prefix for routes under dashboard/routes/api/*. Route handlers inside that folder must use prefix-relative paths (e.g. '/comms/send' not '/api/comms/send'), otherwise requests 404 due to double-prefix (/api/api/comms/send)."
+      }
+    ]
+  },
+  {
+    "sha": "f897209e5d697f0a",
+    "prompt": "claim source multiplicity — deduplicated?",
+    "candidates": [
+      {
+        "id": 14203,
+        "text": "The setup utility incorrectly assumes source templates are the single source of truth."
+      },
+      {
+        "id": 15527,
+        "text": "The hook setup utility incorrectly assumes source templates are the single source of truth."
+      },
+      {
+        "id": 12786,
+        "text": "The utility incorrectly assumes that source templates are the single source of truth, ignoring installed hook divergence."
+      },
+      {
+        "id": 17283,
+        "text": "Automatic claim saving is blocked because the system cannot automatically invoke the claim ingestion function."
+      },
+      {
+        "id": 10451,
+        "text": "mcp_server.py::ingest_claim (lines 215-276) does not expose supersedes_claim_id as a parameter. When an agent wants to record a superseding claim via MCP, it cannot atomically close the bidirectional link required by claims-lifecycle.md (\"set both supersedes_claim_id on the new claim AND replaced_by"
+      },
+      {
+        "id": 10458,
+        "text": "memorymaster MCP tool gap (2026-04-18): ingest_claim MCP tool does NOT currently expose `supersedes_claim_id` as a parameter. This means agents calling ingest_claim cannot atomically close the bidirectional supersession pair (new claim has supersedes_claim_id, old claim has replaced_by_claim_id) — t"
+      },
+      {
+        "id": 17158,
+        "text": "Pane burst and A2A probe events must be explicitly deduplicated to prevent system overload."
+      },
+      {
+        "id": 8959,
+        "text": "Monitoring foundation defends against cardinality explosion with a deduplicated metric_series registry and hard cap, and against SNMP/session exhaustion with per-device and per-target concurrency limits covered by tests."
+      },
+      {
+        "id": 9672,
+        "text": "REFERENCE: Nightly audit cron confirmed working on schedule 2026-04-16T02:00Z (23:00 ART). Script nightly-audit.sh emitted identical events to the manual --now run 12min earlier — OmniClaude correctly deduplicated by skipping the cron run (same commits, no new work). This dedup logic is currently ma"
+      }
+    ]
+  },
+  {
+    "sha": "d08bcf79cc8c3d33",
+    "prompt": "el compactor — preserves claim metadata?",
+    "candidates": [
+      {
+        "id": 10451,
+        "text": "mcp_server.py::ingest_claim (lines 215-276) does not expose supersedes_claim_id as a parameter. When an agent wants to record a superseding claim via MCP, it cannot atomically close the bidirectional link required by claims-lifecycle.md (\"set both supersedes_claim_id on the new claim AND replaced_by"
+      },
+      {
+        "id": 10983,
+        "text": "Venezia customer-sweep E2E 403 root cause: the spec put the 'customer' role under `user_metadata.role`, but backend/middleware/auth.js resolves business role exclusively from `payload.app_metadata.role`. user_metadata is user-editable per Supabase docs, app_metadata is admin-only and lives in the JW"
+      },
+      {
+        "id": 17283,
+        "text": "Automatic claim saving is blocked because the system cannot automatically invoke the claim ingestion function."
+      },
+      {
+        "id": 10458,
+        "text": "memorymaster MCP tool gap (2026-04-18): ingest_claim MCP tool does NOT currently expose `supersedes_claim_id` as a parameter. This means agents calling ingest_claim cannot atomically close the bidirectional supersession pair (new claim has supersedes_claim_id, old claim has replaced_by_claim_id) — t"
+      },
+      {
+        "id": 15521,
+        "text": "The function selectively preserves the sequence 'de' during normalization."
+      },
+      {
+        "id": 12506,
+        "text": "frappe.scrub() preserves the word 'de' in string transformations"
+      },
+      {
+        "id": 13231,
+        "text": "frappe.scrub() selectively preserves certain words (e.g., 'de') during string normalization."
+      },
+      {
+        "id": 14234,
+        "text": "Authorization decisions must always consult the canonical app_metadata source."
+      },
+      {
+        "id": 9626,
+        "text": "REFERENCE: AlertHistory schema supports ack + resolve natively via existing columns (`acknowledged_at`, `acknowledged_by`, `resolved_at`, `resolved_by`, `resolution`, `auto_resolved`), but has NO snooze_until / investigating_at / investigating_by columns. Pattern used for AC2 alerts: store those sof"
+      }
+    ]
+  },
+  {
+    "sha": "89c78225c4983146",
+    "prompt": "Qdrant endpoint HTTPS?",
+    "candidates": [
+      {
+        "id": 4783,
+        "text": "## 3. Test health endpoint\n\ncurl http://localhost:3003/health"
+      },
+      {
+        "id": 8054,
+        "text": "LongMemEval with Qdrant vector search scores 25% on 20 questions (5x improvement over 5.6% FTS5). Qdrant on VM (192.168.100.186) has high latency for writes (collection create takes 60s+, some searches timeout). Ollama for embeddings is at 192.168.100.155 not 186."
+      },
+      {
+        "id": 12799,
+        "text": "Verbatim memories utilize dual indexing (FTS5 and Qdrant) for search."
+      },
+      {
+        "id": 12414,
+        "text": "Backend services expose a dedicated health endpoint for verification."
+      },
+      {
+        "id": 13749,
+        "text": "Service readiness must be verified using the dedicated health check endpoint."
+      },
+      {
+        "id": 9931,
+        "text": "whatsappbot bot /health has graduated states: client.ready=false initially returns HTTP 200 with status:\"ok\" during grace period (~200s), then transitions to HTTP 503 with status:\"unavailable\" and reason:\"WhatsApp client disconnected too long\" once downtimeSeconds crosses ~5-6min. OmniClaude's bot-h"
+      },
+      {
+        "id": 7530,
+        "text": "MemoryMaster recall hook requires skip_qdrant=True on Windows environments"
+      }
+    ]
+  },
+  {
+    "sha": "11191ed79ca70d31",
+    "prompt": "entity registry — shared across projects?",
+    "candidates": [
+      {
+        "id": 16482,
+        "text": "Entity saturation fundamentally limits the rate of new entity insertion."
+      },
+      {
+        "id": 12561,
+        "text": "The theorchestra registry may contain panes that are no longer active in the current mission."
+      },
+      {
+        "id": 8423,
+        "text": "CONSTRAINT: When deploying new files that bot/services/ or bot/stages/ depend on from shared/ directory, MUST also deploy those shared/ files to server. The shared/ directory is now volume-mounted (./shared:/app/shared) as of 2026-04-10, but previously was NOT mounted — any file added to shared/ aft"
+      },
+      {
+        "id": 9341,
+        "text": "docker-compose.yml for wisp-bot volume-mounts individual bot subdirectories (./bot/index.js, ./bot/core, ./bot/stages, ./bot/services, ./packages, etc.) but NOT the top-level ./shared/ directory. Any bot code that requires a module under ../../shared/ (e.g. shared/middleware/correlation, shared/midd"
+      },
+      {
+        "id": 13139,
+        "text": "Entity saturation fundamentally limits the rate of new entity insertion (growth deceleration)."
+      },
+      {
+        "id": 15369,
+        "text": "The rate of unique entity insertion drops drastically as canonical entity saturation increases."
+      },
+      {
+        "id": 8974,
+        "text": "Monitoring storage now uses a metric_series registry with series_id-based sample tables plus explicit raw/1m/5m/1h storage policies and retention/compression metadata."
+      },
+      {
+        "id": 16588,
+        "text": "Series-registry deduplication must be used to prevent duplicate data processing."
+      },
+      {
+        "id": 7066,
+        "text": "## Component Boundaries\n\n| Component | Responsibility | May Import |\n|-----------|---------------|------------|\n| `packages/shared-models/` | Sequelize model definitions for tables used by both services | sequelize (peer dep) |\n| `packages/shared-services/` | Business logic needed by both bot and da"
+      }
+    ]
+  },
+  {
+    "sha": "071ccbce2fc88dd3",
+    "prompt": "MercadoPago — idempotent webhook handling?",
+    "candidates": [
+      {
+        "id": 8189,
+        "text": "Telegram Bot API: webhook and getUpdates polling are mutually exclusive. If a bot has a webhook set, getUpdates returns HTTP 409 Conflict. Check webhook with GET /bot<token>/getWebhookInfo. Delete with GET /bot<token>/deleteWebhook?drop_pending_updates=true. The futura_outreach_bridge_bot had a webh"
+      },
+      {
+        "id": 8651,
+        "text": "Flask webhook shared-secret validation now fails closed with HTTP 503 when the expected secret is missing, instead of silently allowing unauthenticated webhook processing."
+      },
+      {
+        "id": 1313,
+        "text": "## Payment System\n\nMercadoPago integration for subscription payments:\n- Payment server: [server/payment-server.cjs](server/payment-server.cjs)\n- Service layer: [src/lib/mercadopago-service.ts](src/lib/mercadopago-service.ts)\n- Payment result pages: [src/pages/payment/](src/pages/payment/)"
+      },
+      {
+        "id": 13161,
+        "text": "User actions that create stateful objects must be predictable and idempotent."
+      },
+      {
+        "id": 14109,
+        "text": "User actions must be designed to be idempotent to ensure predictable behavior."
+      },
+      {
+        "id": 14560,
+        "text": "A2A consumers must implement idempotent deduplication logic to handle message duplication."
+      },
+      {
+        "id": 8701,
+        "text": "Inbound webhook failures are now persisted in the webhook_events table and can be reviewed or replayed from the admin route /admin/tools/webhook-events after applying migration 20260411_phase3_webhook_events.sql."
+      },
+      {
+        "id": 1133,
+        "text": "## Server-only (NEVER use EXPO_PUBLIC_ prefix - would expose secrets to all users):\n\nSUPABASE_SERVICE_ROLE_KEY\nMERCADOPAGO_ACCESS_TOKEN\nMERCADOPAGO_WEBHOOK_SECRET\n```"
+      },
+      {
+        "id": 2770,
+        "text": "## Environment Configuration\n\nRequired environment variables:\n```\nVITE_SUPABASE_URL - Supabase project URL\nVITE_SUPABASE_ANON_KEY - Supabase anonymous key\nVITE_MERCADOPAGO_PUBLIC_KEY - MercadoPago public key (for payment processing)\nVITE_MERCADOPAGO_ACCESS_TOKEN - MercadoPago access token (for API c"
+      }
+    ]
+  },
+  {
+    "sha": "c4e9d73a7aa182ca",
+    "prompt": "sensitivity filter — regex performance?",
+    "candidates": [
+      {
+        "id": 17341,
+        "text": "The sensitivity filter is a mandatory firewall that operates at ingest time."
+      },
+      {
+        "id": 13298,
+        "text": "The sensitivity filter blocks sensitive patterns before they reach the claims database."
+      },
+      {
+        "id": 13746,
+        "text": "The sensitivity filter rules are governed by external documentation, specifically the project's security boundary and the sensitivity-filter guide."
+      },
+      {
+        "id": 15107,
+        "text": "Bus regex patterns can falsely match literal templates contained within spawn prompts."
+      },
+      {
+        "id": 15100,
+        "text": "Bus regex patterns can trigger false positives by matching literal envelope templates embedded within spawn prompts."
+      },
+      {
+        "id": 14051,
+        "text": "The canonicalization filter is self-correcting, automatically normalizing over-extraction errors."
+      },
+      {
+        "id": 13187,
+        "text": "Polling mechanisms caused performance overhead in v3."
+      },
+      {
+        "id": 16140,
+        "text": "The extraction process exhibits high performance variance."
+      },
+      {
+        "id": 14078,
+        "text": "The performance degradation is amplified when using batch insertions."
+      },
+      {
+        "id": 15266,
+        "text": "Regex-based prompt matching can trigger false positives on stale text residing in the scrollback buffer."
+      }
+    ]
+  },
+  {
+    "sha": "eed2cfc7870c486d",
+    "prompt": "claim tier recompute — blocking?",
+    "candidates": [
+      {
+        "id": 11899,
+        "text": "REFERENCE: Akshay Pachaar's X thread 2026-04-13 (x.com/akshay_pachaar/status/2043745099792953508) walks agent memory from Python list → markdown → vector → graph+vector, pitching Cognee (github.com/topoteretes/cognee) as the unified solution. Three-store architecture (relational + vector + graph) vi"
+      },
+      {
+        "id": 10455,
+        "text": "memorymaster canonical enum values (verified 2026-04-18 via grep of memorymaster/models.py and cli_handlers_basic.py): CLAIM_STATUSES = (\"candidate\", \"confirmed\", \"stale\", \"superseded\", \"conflicted\", \"archived\") — these are the ONLY 6 valid status values, enforced by schema.sql CHECK constraint. Tie"
+      },
+      {
+        "id": 17283,
+        "text": "Automatic claim saving is blocked because the system cannot automatically invoke the claim ingestion function."
+      },
+      {
+        "id": 10839,
+        "text": "elduderino remaining parity gaps after sweep #6 (to be tackled in sweep #7 once Claude API quota resets): RouterOS security finding detail drawer (O), Suspicious-config heatmap (S), RouterOS deploy-to-device workflow (S), MIB upload+validation dialog (O), Settings Backup/restore platform-level dialo"
+      },
+      {
+        "id": 10451,
+        "text": "mcp_server.py::ingest_claim (lines 215-276) does not expose supersedes_claim_id as a parameter. When an agent wants to record a superseding claim via MCP, it cannot atomically close the bidirectional link required by claims-lifecycle.md (\"set both supersedes_claim_id on the new claim AND replaced_by"
+      },
+      {
+        "id": 10458,
+        "text": "memorymaster MCP tool gap (2026-04-18): ingest_claim MCP tool does NOT currently expose `supersedes_claim_id` as a parameter. This means agents calling ingest_claim cannot atomically close the bidirectional supersession pair (new claim has supersedes_claim_id, old claim has replaced_by_claim_id) — t"
+      },
+      {
+        "id": 11904,
+        "text": "Gemini free-tier quota limits necessitate a hard policy_limit constraint to prevent service interruption."
+      },
+      {
+        "id": 10862,
+        "text": "elduderino Dude-parity scoreboard effectively at 100% as of commit 418ce26. M-tier 58/58 shipped. O-tier all 30 shipped (some through matrix-correctness flips, some through sweeps #5-#7b). S-tier has 2 explicit deferrals: Scheduled reports (worker-backed, deferred until report worker ships) and Pane"
+      }
+    ]
+  },
+  {
+    "sha": "66c92a4c0e930cf8",
+    "prompt": "donde esta el logging config?",
+    "candidates": [
+      {
+        "id": 9649,
+        "text": "Claude Desktop MCP config lives at %APPDATA%\\Claude\\claude_desktop_config.json — separate from Claude Code's ~/.claude.json. Both support stdio MCP servers via command/args/env, but Claude Desktop has historically supported stdio ONLY (no http type). Context7 uses type=http in Claude Code's config; "
+      },
+      {
+        "id": 8942,
+        "text": "In the home Codex config, disabling broken MCP entries in config.toml is an effective way to avoid startup warnings when local endpoints are down or OAuth refresh is broken."
+      },
+      {
+        "id": 10932,
+        "text": "The nereidas repo had a local git config override (user.email=otacon@futurasistemas.com.ar, user.name=Otacon) that overrode the user's global config. Commits silently went out under the wrong identity, which caused Vercel Hobby to block deployments. Check `git config --local --list | grep user` when"
+      },
+      {
+        "id": 16746,
+        "text": "Use the actual container name ('wisp-bot') for runtime inspection and logging commands."
+      },
+      {
+        "id": 15775,
+        "text": "All execution failures within extract_llm return empty values instead of raising exceptions or logging errors."
+      },
+      {
+        "id": 11920,
+        "text": "Silent failures in extraction pipelines mask upstream provider errors; explicit logging or fallback triggers are required."
+      },
+      {
+        "id": 12979,
+        "text": "The function silently masks execution failures by returning empty results instead of raising exceptions or logging errors."
+      }
+    ]
+  },
+  {
+    "sha": "2715318a4a270d38",
+    "prompt": "PuntoFutura — predictive analytics uses memorymaster?",
+    "candidates": [
+      {
+        "id": 14444,
+        "text": "Version 1 of the classifier uses LogisticRegression as its core predictive model."
+      },
+      {
+        "id": 7927,
+        "text": "PuntoFutura contact info: Instagram @futurasistemas.com.ar, WhatsApp +5491178271949, Products: gimnasio.puntofutura.com.ar, delivery.puntofutura.com.ar. Landing page prompt at E:\\PROMPT.md"
+      },
+      {
+        "id": 8655,
+        "text": "Brainstorming next dev phase (2026-04-11): User priorities are STABILITY + AUTONOMY (\"the ISP that runs itself\"). All pain points apply: manual interventions, fragmented info, reactive ops, revenue leakage. Recommended Approach C \"Autonomous Operations in Layers\" — 3 layers: (1) Self-Healing automat"
+      },
+      {
+        "id": 3644,
+        "text": "## Files Created/Modified\n\n- `app/views/dashboard.py` - Added WebshopAnalyticsRepository import, fetches 7-day analytics, adds webshop_stats to stats dict\n- `app/templates/dashboard/index.html` - Added Webshop Analytics card with 4 info boxes, sparkline chart, and link to detailed analytics"
+      },
+      {
+        "id": 730,
+        "text": "🌐 Bypass de Cloudflare Access: view.puntofutura.com.ar (Update 12:04)\\n- **Problema**: `clawtrol.puntofutura.com.ar` y `mc.puntofutura.com.ar` están bloqueados por la capa de Cloudflare Access (403/Re"
+      },
+      {
+        "id": 14724,
+        "text": "Ignoring temporal distribution shifts leads to a false sense of predictive power and catastrophic performance degradation on newer data."
+      },
+      {
+        "id": 3579,
+        "text": "---\nphase: 10-webshop-analytics-dashboard\nplan: 02\nsubsystem: database\ntags: [python, supabase, analytics, repository-pattern]"
+      },
+      {
+        "id": 3564,
+        "text": "---\nphase: 10-webshop-analytics-dashboard\nplan: 01\nsubsystem: database\ntags: [postgresql, supabase, analytics, visitor-tracking, rls]"
+      },
+      {
+        "id": 628,
+        "text": "Tracking Links\n- **Problema**: `resell.puntofutura.com.ar/r/<slug>` daba 404 porque el handler está en wisp-bot (3003), no en Saleor storefront (4012)\n- **Fix**: Nuevo subdominio `track.puntofutura.com.ar` → wisp-bot:3003 vía Cloudflare tunnel\n- `track.puntofutura.com.ar/r/<slug>` → 302 hacia `resel"
+      }
+    ]
+  },
+  {
+    "sha": "467f43841c386da3",
+    "prompt": "wiki-cleanup — writing concurrency?",
+    "candidates": [
+      {
+        "id": 15331,
+        "text": "The core concurrency strategy decouples LLM inference from database writing to manage contention."
+      },
+      {
+        "id": 9109,
+        "text": "Benchmark 8 cases (real Claude Code transcripts): Gemini 2.5 Flash Lite extracted 24 claims (3.0/case) vs Gemma 4 e4b with thinking extracted 8 claims (1.0/case) — 3x productivity gap at identical warm latency (~2.7s). Flash Lite had 100% schema compliance and varied claim_types (decision/bug_root_c"
+      },
+      {
+        "id": 14767,
+        "text": "The defined concurrency strategy for the migration process is destructive."
+      },
+      {
+        "id": 17205,
+        "text": "Concurrency is managed via small-round parallelization, typically limiting processing to 3 batches."
+      },
+      {
+        "id": 15949,
+        "text": "The author decided to halt writing the article pending verification."
+      },
+      {
+        "id": 17234,
+        "text": "Simultaneous writing to the same file without locks causes data corruption."
+      },
+      {
+        "id": 13114,
+        "text": "Simultaneous writing to shared batch files without proper locking mechanisms will result in data corruption."
+      }
+    ]
+  },
+  {
+    "sha": "e97dce21e7fd352d",
+    "prompt": "steward — checkpoint on progress?",
+    "candidates": [
+      {
+        "id": 14066,
+        "text": "Progress tracking must be adaptive, accounting for variable batch composition rather than assuming uniform composition."
+      },
+      {
+        "id": 12497,
+        "text": "The steward classifier automatically promotes candidate claims to 'confirmed' status during steward cycles."
+      },
+      {
+        "id": 13854,
+        "text": "The MemoryMaster steward classifier automatically promotes candidate claims to 'confirmed' status during steward cycles."
+      },
+      {
+        "id": 12765,
+        "text": "The steward classifier uses a LogisticRegression model."
+      },
+      {
+        "id": 14545,
+        "text": "Pending reviewer status (62c62339) acts as a blocking constraint for checkpoint progression."
+      },
+      {
+        "id": 14595,
+        "text": "Reviewer latency is a blocking constraint for checkpoint finalization."
+      },
+      {
+        "id": 13337,
+        "text": "Progress monitoring must be constrained to prevent misleading status signals."
+      },
+      {
+        "id": 14592,
+        "text": "Reviewer latency is a blocking constraint for checkpoint finalization in the current pipeline."
+      },
+      {
+        "id": 14050,
+        "text": "The stability of entity-to-alias expansion ratios across rounds helps mitigate overall progress variability."
+      }
+    ]
+  },
+  {
+    "sha": "08dfb1bda2b3e1a7",
+    "prompt": "OmniRemote — atomic state transitions?",
+    "candidates": [
+      {
+        "id": 14836,
+        "text": "Omniremote is in a known P0 state of critical instability."
+      },
+      {
+        "id": 7535,
+        "text": "OmniRemote deployed at omniremote.puntofutura.com.ar via Cloudflare Tunnel. CP=8080, Agent=8001, Dashboard=80/443, PostgreSQL=5432, Prometheus=9090, Grafana=3000, RustDesk hbbs=21116"
+      },
+      {
+        "id": 11123,
+        "text": "Atomic JSON persistence is a prerequisite for reliable CLI state management."
+      },
+      {
+        "id": 15871,
+        "text": "Updating an Issue requires the 'comment' field to perform atomic updates."
+      },
+      {
+        "id": 10092,
+        "text": "Settings rewrites can be successfully executed in a single atomic pass."
+      },
+      {
+        "id": 14932,
+        "text": "State mapping must be transparent to maintain accurate session state associations."
+      },
+      {
+        "id": 14504,
+        "text": "The current in-memory state management violates the requirement for durable state tracking."
+      },
+      {
+        "id": 10105,
+        "text": "State propagation must be idempotent to prevent redundant triggers during concurrent state changes."
+      }
+    ]
+  },
+  {
+    "sha": "e9ffb00a98b9ecfb",
+    "prompt": "claim text length — soft limit?",
+    "candidates": [
+      {
+        "id": 10311,
+        "text": "Windows file system path length limits can cause silent build failures in deep directory structures."
+      },
+      {
+        "id": 10451,
+        "text": "mcp_server.py::ingest_claim (lines 215-276) does not expose supersedes_claim_id as a parameter. When an agent wants to record a superseding claim via MCP, it cannot atomically close the bidirectional link required by claims-lifecycle.md (\"set both supersedes_claim_id on the new claim AND replaced_by"
+      },
+      {
+        "id": 17283,
+        "text": "Automatic claim saving is blocked because the system cannot automatically invoke the claim ingestion function."
+      },
+      {
+        "id": 10458,
+        "text": "memorymaster MCP tool gap (2026-04-18): ingest_claim MCP tool does NOT currently expose `supersedes_claim_id` as a parameter. This means agents calling ingest_claim cannot atomically close the bidirectional supersession pair (new claim has supersedes_claim_id, old claim has replaced_by_claim_id) — t"
+      },
+      {
+        "id": 10986,
+        "text": "WCAG AA contrast cheatsheet for Tailwind text-on-white: fails AA 4.5:1 → text-emerald-600 (4.01), text-yellow-600 (3.35), text-yellow-500 (2.28), text-amber-600 (3.62), text-amber-500 (2.43). Safe swaps (≥4.5:1): text-emerald-700 (5.18), text-yellow-700 (4.59), text-amber-700 (4.52). text-red-600 (4"
+      },
+      {
+        "id": 15626,
+        "text": "Nereidas adapto-* token system bulk-migration patterns (validated across P5/P6/P9 = 9 files migrated): on dark Adaptogenos pages, the canonical replacements are #242424 → bg-adapto-bg-alt, #2a2a2a → bg-adapto-bg-alt (collapse — visual hierarchy via border or shadow, not bg shade), #1a1a1a or #1e1e1e"
+      },
+      {
+        "id": 12821,
+        "text": "The backend rejects short session identifiers (SIDs), enforcing a minimum length requirement."
+      },
+      {
+        "id": 14374,
+        "text": "ADR documentation requires a minimum length threshold (120-180 units) to be considered complete."
+      },
+      {
+        "id": 11183,
+        "text": "Nereidas StandardModal.tsx renderInline mode had hardcoded light-theme backgrounds: `bg-white dark:bg-gray-900` on outer div and `text-blue-600 dark:text-blue-400` on icons, plus `text-gray-900 dark:text-white` on title. These clash with the brand-dark/brand-gold theme when StandardModal is used as "
+      }
+    ]
+  },
+  {
+    "sha": "42f1a9385c4dd62a",
+    "prompt": "MCP server — connection state?",
+    "candidates": [
+      {
+        "id": 7616,
+        "text": "Saleor MCP server installed at ~/.saleor-mcp using streamableHttp transport on port 6000, configured in .mcp.json but not fully working yet"
+      },
+      {
+        "id": 7919,
+        "text": "NEVER run scripts/processes on the server. Run everything LOCAL on this PC. Only use server for SSH file operations (scp, mkdir) and DB queries. NO nohup, NO background python on server."
+      },
+      {
+        "id": 15845,
+        "text": "Connection strings must not embed both network identifiers and credentials."
+      },
+      {
+        "id": 15887,
+        "text": "The MCP tool namespace migrated from `mcp__wezbridge__*` to `mcp__theorchestra__*` in v3.1."
+      },
+      {
+        "id": 15682,
+        "text": "The MCP tool namespace transitioned from `mcp__wezbridge__*` to `mcp__theorchestra__*` starting in v3.1."
+      },
+      {
+        "id": 15751,
+        "text": "The utility fails to properly distinguish between actual connection states when run unauthenticated."
+      },
+      {
+        "id": 1313,
+        "text": "## Payment System\n\nMercadoPago integration for subscription payments:\n- Payment server: [server/payment-server.cjs](server/payment-server.cjs)\n- Service layer: [src/lib/mercadopago-service.ts](src/lib/mercadopago-service.ts)\n- Payment result pages: [src/pages/payment/](src/pages/payment/)"
+      },
+      {
+        "id": 14076,
+        "text": "The system must enforce the WAL pragma at connection time to ensure initial storage safety."
+      },
+      {
+        "id": 1305,
+        "text": "## Backend Services\n\n```bash\nnpm run server           # Start payment server (MercadoPago)\nnpm run dev:full         # Start both frontend and payment server concurrently\n```"
+      }
+    ]
+  },
+  {
+    "sha": "1cdd81745c4db869",
+    "prompt": "el linter — reports to stdout or file?",
+    "candidates": [
+      {
+        "id": 15141,
+        "text": "active_tasks.md (omniclaude task ledger) gets modified by external processes between in-session Edit operations. Symptom: Edit tool errors with \"File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.\" Likely culprits: memorymaster auto-inge"
+      },
+      {
+        "id": 7153,
+        "text": "## Pitfall 7: Case Sensitivity Bugs During Refactoring\n\n**What goes wrong:**\nDevelopment is on Windows (case-insensitive), deployment is on Linux Docker (case-sensitive). During refactoring, renaming a file from `Client.js` to `client.js` works locally but causes \"Cannot find module\" in production. "
+      },
+      {
+        "id": 12435,
+        "text": "Frappe Desk SPA fuzzy report navigation gotcha 2026-04-25 (Damore Wave E Agent P): when navigating to a Script Report via the Desk URL pattern `/app/query-report/<name>`, Frappe's frappe.set_route does fuzzy prefix-matching on the loaded report list. With 4+ reports sharing a 'Damore ' prefix and fr"
+      },
+      {
+        "id": 8201,
+        "text": "obsidian-mind (breferrari/obsidian-mind) is a work/career-tracking Obsidian vault with 4 transferable patterns for MemoryMaster: (1) UserPromptSubmit classification hook using regex signal matching with Latin-letter lookarounds (?<![a-zA-Z]) instead of \\b — multilingual-safe, cheap, injects routing "
+      },
+      {
+        "id": 16358,
+        "text": "The idle detector relies solely on observing text arrival on stdout/stderr."
+      },
+      {
+        "id": 11208,
+        "text": "V3 architecture lacks a standalone subscriber script for streaming WebSocket pane-state events to stdout."
+      },
+      {
+        "id": 15397,
+        "text": "GOTCHA universal Python en Windows: hooks/scripts que escriben caracteres no-ASCII (acentos, box chars, emojis) a stdout fallan con `UnicodeEncodeError: 'charmap' codec can't encode character '\\u2713'` porque Windows console default encoding es cp1252. Fix mandatory en cualquier hook script Python q"
+      },
+      {
+        "id": 15510,
+        "text": "Any new report naming or routing layer refactoring must account for the prefix-matching constraint."
+      },
+      {
+        "id": 13779,
+        "text": "The Purchase Report catalog is strictly modeled over four core entities: suppliers, invoices, payment orders, and payments."
+      }
+    ]
+  },
+  {
+    "sha": "21faf6cb1e3651f5",
+    "prompt": "Venezia — order tracking as claims?",
+    "candidates": [
+      {
+        "id": 2768,
+        "text": "## Data Layer\n\n**Custom Hooks** (`src/hooks/`)\n- `useProducts` - Product CRUD operations and state management\n- `useReceipts` - Receipt persistence and retrieval\n- `useOrders` - Order management operations\n- `useContacts` - Customer contact management\n- `useAnalytics` - Sales and metrics data proces"
+      },
+      {
+        "id": 14186,
+        "text": "Venezia deployment requires strict migration governance."
+      },
+      {
+        "id": 10487,
+        "text": "Public delivery tracking endpoints must be secured via HMAC signing."
+      },
+      {
+        "id": 10491,
+        "text": "Public-facing delivery tracking requires HMAC-signed URLs to ensure security."
+      },
+      {
+        "id": 11126,
+        "text": "Venezia CSS var --primary in src/styles/globals.css is already bound to hsl(140 35% 30%) (Venezia green) and --primary-foreground to hsl(36 40% 98%) (cream). That means shadcn Button/Badge with default variant render in Venezia green automatically — no need to override with bg-venezia-green on brand"
+      },
+      {
+        "id": 11127,
+        "text": "Venezia brand logo staging: venezia.png at repo root (1.4 MB) was copied to public/venezia.png so Vite serves it at /venezia.png. AuthLayout.jsx references it via <img src=\"/venezia.png\">. 1.4 MB is oversized for a logo; compress (target <100 KB) or swap for an SVG before production. The onError han"
+      },
+      {
+        "id": 3468,
+        "text": "## Files Created/Modified\n\n- `app/templates/emails/order_status.html` - Email template with status-specific messages, order details, shipping address, and product list\n- `app/services/email_service.py` - Added send_order_status_email method with Spanish status labels\n- `app/services/online_order_ser"
+      },
+      {
+        "id": 12959,
+        "text": "Playwright is preferred for scenarios requiring precise browser state tracking."
+      }
+    ]
+  },
+  {
+    "sha": "13e5cfc55dfc2563",
+    "prompt": "sensitivity filter — known false positives?",
+    "candidates": [
+      {
+        "id": 17341,
+        "text": "The sensitivity filter is a mandatory firewall that operates at ingest time."
+      },
+      {
+        "id": 13298,
+        "text": "The sensitivity filter blocks sensitive patterns before they reach the claims database."
+      },
+      {
+        "id": 16736,
+        "text": "System issues can result in false positives, false negatives, and redundant re-triggering."
+      },
+      {
+        "id": 12923,
+        "text": "Failure to provide explicit credentials can lead to false positives and false negatives."
+      },
+      {
+        "id": 16973,
+        "text": "The ambiguity leads to both false positives (reporting down when up) and false negatives (reporting up when down)."
+      },
+      {
+        "id": 13746,
+        "text": "The sensitivity filter rules are governed by external documentation, specifically the project's security boundary and the sensitivity-filter guide."
+      },
+      {
+        "id": 16031,
+        "text": "The noise floor of false-positive idle events is known to be 6–10 per active pane."
+      },
+      {
+        "id": 14051,
+        "text": "The canonicalization filter is self-correcting, automatically normalizing over-extraction errors."
+      },
+      {
+        "id": 16735,
+        "text": "Classifier accuracy and caching/throttling logic are known system weaknesses."
+      },
+      {
+        "id": 15693,
+        "text": "The system has known session persistence bugs that require fixing."
+      }
+    ]
+  },
+  {
+    "sha": "910cbab875ccdc3f",
+    "prompt": "claim conflicted — how long persists?",
+    "candidates": [
+      {
+        "id": 14083,
+        "text": "State persistence during long processes requires external hooks or manual intervention."
+      },
+      {
+        "id": 10458,
+        "text": "memorymaster MCP tool gap (2026-04-18): ingest_claim MCP tool does NOT currently expose `supersedes_claim_id` as a parameter. This means agents calling ingest_claim cannot atomically close the bidirectional supersession pair (new claim has supersedes_claim_id, old claim has replaced_by_claim_id) — t"
+      },
+      {
+        "id": 16179,
+        "text": "Long-running sessions require reliance on exit hooks to capture and save the final state."
+      },
+      {
+        "id": 17283,
+        "text": "Automatic claim saving is blocked because the system cannot automatically invoke the claim ingestion function."
+      },
+      {
+        "id": 10451,
+        "text": "mcp_server.py::ingest_claim (lines 215-276) does not expose supersedes_claim_id as a parameter. When an agent wants to record a superseding claim via MCP, it cannot atomically close the bidirectional link required by claims-lifecycle.md (\"set both supersedes_claim_id on the new claim AND replaced_by"
+      },
+      {
+        "id": 15691,
+        "text": "Conflict resolution is mandatory to prevent deadlocks and pane refusal during parallel execution."
+      },
+      {
+        "id": 12896,
+        "text": "Mixing dynamic key generation with hardcoded configuration settings creates a fatal architectural conflict."
+      },
+      {
+        "id": 15896,
+        "text": "PRD orchestration requires explicit constraint embedding, dependency translation, and conflict resolution."
+      },
+      {
+        "id": 13205,
+        "text": "Long-running processes inherently accumulate memory leaks and stale state, leading to reliability degradation."
+      }
+    ]
+  },
+  {
+    "sha": "ad4c88e1f7517495",
+    "prompt": "donde esta el deployment config?",
+    "candidates": [
+      {
+        "id": 15664,
+        "text": "Deployment configurations must eliminate default credentials and hardcoded secrets."
+      },
+      {
+        "id": 10932,
+        "text": "The nereidas repo had a local git config override (user.email=otacon@futurasistemas.com.ar, user.name=Otacon) that overrode the user's global config. Commits silently went out under the wrong identity, which caused Vercel Hobby to block deployments. Check `git config --local --list | grep user` when"
+      },
+      {
+        "id": 9649,
+        "text": "Claude Desktop MCP config lives at %APPDATA%\\Claude\\claude_desktop_config.json — separate from Claude Code's ~/.claude.json. Both support stdio MCP servers via command/args/env, but Claude Desktop has historically supported stdio ONLY (no http type). Context7 uses type=http in Claude Code's config; "
+      },
+      {
+        "id": 8942,
+        "text": "In the home Codex config, disabling broken MCP entries in config.toml is an effective way to avoid startup warnings when local endpoints are down or OAuth refresh is broken."
+      },
+      {
+        "id": 13417,
+        "text": "Deployment must be consolidated within the designated directory, which is the sole active in-repo deployment surface."
+      },
+      {
+        "id": 7837,
+        "text": "The only active in-repo deployment surface is deployment/. The former parallel deploy/ stack was archived under archive/deploy-legacy/ and should not be treated as an active runtime path."
+      },
+      {
+        "id": 7801,
+        "text": "The official in-repo deployment path for final-inpla is deployment/, while deploy/ is treated as a legacy/manual path to be removed when the new clean repository is cut."
+      }
+    ]
+  },
+  {
+    "sha": "9f0dd5e863d75495",
+    "prompt": "MercadoPago — transaction ID scope?",
+    "candidates": [
+      {
+        "id": 9267,
+        "text": "SQL idiom for migrating hash-suffixed scopes back to canonical: UPDATE claims SET scope = substr(scope, 1, length(scope) - 9) WHERE scope GLOB 'project:*:????????' — the ???????? GLOB matches exactly 8 chars (any). Critical exclusion: AND scope NOT LIKE 'project:pauol:%' because that scope is not a "
+      },
+      {
+        "id": 1313,
+        "text": "## Payment System\n\nMercadoPago integration for subscription payments:\n- Payment server: [server/payment-server.cjs](server/payment-server.cjs)\n- Service layer: [src/lib/mercadopago-service.ts](src/lib/mercadopago-service.ts)\n- Payment result pages: [src/pages/payment/](src/pages/payment/)"
+      },
+      {
+        "id": 13074,
+        "text": "L2 backfill HTTP calls must not be executed inside transaction locks."
+      },
+      {
+        "id": 14708,
+        "text": "The incompatibility causes transaction boundaries to be ignored during schema application."
+      },
+      {
+        "id": 12123,
+        "text": "L2 backfill HTTP calls inside a transaction lock cause massive latency and potential deadlocks."
+      },
+      {
+        "id": 15249,
+        "text": "Scope discipline requires flagging cross-role bugs rather than attempting out-of-scope remediation."
+      },
+      {
+        "id": 11865,
+        "text": "Interonda multi-city no longer waits for legacy schema; the chosen model is Usuario.scope_cities as canonical city scope, with representatives implemented as normal role users restricted by scope_cities and dataScope.cities in session."
+      },
+      {
+        "id": 1133,
+        "text": "## Server-only (NEVER use EXPO_PUBLIC_ prefix - would expose secrets to all users):\n\nSUPABASE_SERVICE_ROLE_KEY\nMERCADOPAGO_ACCESS_TOKEN\nMERCADOPAGO_WEBHOOK_SECRET\n```"
+      },
+      {
+        "id": 2770,
+        "text": "## Environment Configuration\n\nRequired environment variables:\n```\nVITE_SUPABASE_URL - Supabase project URL\nVITE_SUPABASE_ANON_KEY - Supabase anonymous key\nVITE_MERCADOPAGO_PUBLIC_KEY - MercadoPago public key (for payment processing)\nVITE_MERCADOPAGO_ACCESS_TOKEN - MercadoPago access token (for API c"
+      }
+    ]
+  },
+  {
+    "sha": "30f787444350ebe0",
+    "prompt": "wiki article — LaTeX math?",
+    "candidates": [
+      {
+        "id": 12852,
+        "text": "Wiki article rewriting is forbidden if the source claims violate the established sensitivity rules."
+      },
+      {
+        "id": 9163,
+        "text": "MemoryMaster v3.4.0 shipped 2026-04-13. Implements Memory Bundle pattern (Marcosomma dev.to article): bidirectional claim↔wiki binding. New claims.wiki_article column + index, wiki_engine._stamp_wiki_binding() fires after each _write_article in absorb(), context_hook.recall() appends \"(compiled in ["
+      },
+      {
+        "id": 15633,
+        "text": "The scope of the 'Service' article requires a decision: whether to remain focused on the pnpm dev pattern or expand to cover environment setup."
+      },
+      {
+        "id": 11159,
+        "text": "User feedback 2026-04-20 (strong): Claude kept reimplementing v2.7 features from scratch in React when `src/dashboard.html` already had working, shipping code for every piece. This pattern cost multiple round-trips on DesktopTab (drag, min/max, tile math). RULE for any v2.7→v3.0 port: BEFORE writing"
+      },
+      {
+        "id": 11174,
+        "text": "Avoid reimplementing existing logic; porting verbatim from stable legacy code (v2.7) prevents regression of edge-case math."
+      },
+      {
+        "id": 15949,
+        "text": "The author decided to halt writing the article pending verification."
+      },
+      {
+        "id": 10980,
+        "text": "The Phase 11 Playwright script for theorchestra (`scripts/v3-phase11-playwright.ts`) must pick its ephemeral port from the 5000+ range, not 4300-4699, because the dev backend already binds to :4300. Default `4300 + Math.floor(Math.random() * 400)` causes silent boot failures when the random roll hit"
+      },
+      {
+        "id": 7966,
+        "text": "curate-vault and export-vault are deprecated — wiki-absorb with compiled truth + timeline replaces both. Steward cron uses wiki-absorb now."
+      }
+    ]
+  },
+  {
+    "sha": "a22d5502619e6a68",
+    "prompt": "steward LLM — context window size?",
+    "candidates": [
+      {
+        "id": 12497,
+        "text": "The steward classifier automatically promotes candidate claims to 'confirmed' status during steward cycles."
+      },
+      {
+        "id": 13854,
+        "text": "The MemoryMaster steward classifier automatically promotes candidate claims to 'confirmed' status during steward cycles."
+      },
+      {
+        "id": 12765,
+        "text": "The steward classifier uses a LogisticRegression model."
+      },
+      {
+        "id": 12465,
+        "text": "Autonomous loop closure requires templating context files to correctly route tool calls back to the orchestrator's context."
+      },
+      {
+        "id": 13335,
+        "text": "Context utilization is strictly capped at 33%."
+      },
+      {
+        "id": 17204,
+        "text": "LLM inference is decoupled from database I/O using Haiku (LLM-as-a-service)."
+      },
+      {
+        "id": 16174,
+        "text": "The system decouples LLM inference from database I/O using Haiku (LLM-as-a-service)."
+      },
+      {
+        "id": 16126,
+        "text": "Claude Haiku is the designated core LLM for claim extraction and validation."
+      }
+    ]
+  },
+  {
+    "sha": "14e79f2e511c4891",
+    "prompt": "entity extractor — extraction accuracy?",
+    "candidates": [
+      {
+        "id": 16482,
+        "text": "Entity saturation fundamentally limits the rate of new entity insertion."
+      },
+      {
+        "id": 17236,
+        "text": "LLM extraction produces significant over-extraction of data."
+      },
+      {
+        "id": 13140,
+        "text": "The Extractor De Transcript is constrained by its lack of MCP protocol integration."
+      },
+      {
+        "id": 15390,
+        "text": "The transcript extractor lacks MCP integration, preventing automated claim saving."
+      },
+      {
+        "id": 14057,
+        "text": "The extraction pipeline is subject to significant over-extraction, mandating downstream canonicalization filters."
+      },
+      {
+        "id": 15361,
+        "text": "LLM-based extraction can lead to significant over-extraction, identifying more entities than intended."
+      },
+      {
+        "id": 14082,
+        "text": "The transcript extractor cannot automate claim saving due to missing MCP integration."
+      },
+      {
+        "id": 13139,
+        "text": "Entity saturation fundamentally limits the rate of new entity insertion (growth deceleration)."
+      },
+      {
+        "id": 15369,
+        "text": "The rate of unique entity insertion drops drastically as canonical entity saturation increases."
+      }
+    ]
+  },
+  {
+    "sha": "3c325a1e7698dce3",
+    "prompt": "OmniRemote — command history as claims?",
+    "candidates": [
+      {
+        "id": 7535,
+        "text": "OmniRemote deployed at omniremote.puntofutura.com.ar via Cloudflare Tunnel. CP=8080, Agent=8001, Dashboard=80/443, PostgreSQL=5432, Prometheus=9090, Grafana=3000, RustDesk hbbs=21116"
+      },
+      {
+        "id": 14836,
+        "text": "Omniremote is in a known P0 state of critical instability."
+      },
+      {
+        "id": 16964,
+        "text": "The hook triggers false positives when multi-file listings follow a path change command."
+      },
+      {
+        "id": 17001,
+        "text": "Secrets remain accessible via git history unless the history is explicitly rewritten."
+      },
+      {
+        "id": 14124,
+        "text": "Shared workspace commit history must avoid fixup commits."
+      },
+      {
+        "id": 13525,
+        "text": "Attaching to a pane can trigger race conditions or duplicate command execution."
+      },
+      {
+        "id": 12858,
+        "text": "The mobile APK build step is executed using the specific command ./gradlew assembleDebug."
+      },
+      {
+        "id": 13160,
+        "text": "The primary goal of the merge strategy is maintaining a strictly linear commit history."
+      }
+    ]
+  },
+  {
+    "sha": "92ad3ad5b523e682",
+    "prompt": "claim visibility defaults per project?",
+    "candidates": [
+      {
+        "id": 10451,
+        "text": "mcp_server.py::ingest_claim (lines 215-276) does not expose supersedes_claim_id as a parameter. When an agent wants to record a superseding claim via MCP, it cannot atomically close the bidirectional link required by claims-lifecycle.md (\"set both supersedes_claim_id on the new claim AND replaced_by"
+      },
+      {
+        "id": 13356,
+        "text": "Shortcuts operate within separate visibility scopes, preventing global visibility."
+      },
+      {
+        "id": 10458,
+        "text": "memorymaster MCP tool gap (2026-04-18): ingest_claim MCP tool does NOT currently expose `supersedes_claim_id` as a parameter. This means agents calling ingest_claim cannot atomically close the bidirectional supersession pair (new claim has supersedes_claim_id, old claim has replaced_by_claim_id) — t"
+      },
+      {
+        "id": 16802,
+        "text": "Workspace shortcuts operate within separate visibility scopes and are not globally propagated."
+      },
+      {
+        "id": 17283,
+        "text": "Automatic claim saving is blocked because the system cannot automatically invoke the claim ingestion function."
+      },
+      {
+        "id": 16900,
+        "text": "The Execution Board must enable real-time visibility into progress for all contributors."
+      },
+      {
+        "id": 14684,
+        "text": "Classic Topology is established as the system-wide default for workflow visualization."
+      },
+      {
+        "id": 15187,
+        "text": "The default behavior of the ping subcommand is to attempt an unauthenticated connection."
+      },
+      {
+        "id": 7536,
+        "text": "OmniRemote admin password was changed from default 'admin' during security hardening. Cannot test API with default credentials"
+      }
+    ]
+  },
+  {
+    "sha": "16d90577b4fe3a54",
+    "prompt": "el recall hook — injection point in code?",
+    "candidates": [
+      {
+        "id": 12864,
+        "text": "Claude Code supports persona injection via multiple mechanisms, requiring awareness of all available methods."
+      },
+      {
+        "id": 11712,
+        "text": "Hook observability gap (audit 2026-04-22): of the 7 MemoryMaster hooks, only auto-ingest and precompact write to ~/.memorymaster/hook_state/hook.log. recall, classify, validate-wiki, session-start, and steward-cycle are black boxes — no log entries, no way to prove they fire. 58 session _last_save f"
+      },
+      {
+        "id": 15413,
+        "text": "External hook usage requires anticipating failures due to mismatches between documented and actual hook schemas."
+      },
+      {
+        "id": 13219,
+        "text": "MemoryMaster's recall system has a structural ceiling of ~70% precision@5."
+      },
+      {
+        "id": 15530,
+        "text": "Hook synchronization requires adherence to canonical source templates."
+      },
+      {
+        "id": 12783,
+        "text": "MCP server authentication requires environment-level injection at startup."
+      },
+      {
+        "id": 14200,
+        "text": "Wezbridge MCP requires environment variable injection for all authentication tokens."
+      },
+      {
+        "id": 16612,
+        "text": "FTS5 recall drops significantly (e.g., ~10%) when managing thousands of claims."
+      },
+      {
+        "id": 16284,
+        "text": "The MemoryMaster query system has a hard recall ceiling of approximately 70%."
+      }
+    ]
+  },
+  {
+    "sha": "8228f806e8f55659",
+    "prompt": "PuntoFutura scope — data isolation?",
+    "candidates": [
+      {
+        "id": 7927,
+        "text": "PuntoFutura contact info: Instagram @futurasistemas.com.ar, WhatsApp +5491178271949, Products: gimnasio.puntofutura.com.ar, delivery.puntofutura.com.ar. Landing page prompt at E:\\PROMPT.md"
+      },
+      {
+        "id": 9267,
+        "text": "SQL idiom for migrating hash-suffixed scopes back to canonical: UPDATE claims SET scope = substr(scope, 1, length(scope) - 9) WHERE scope GLOB 'project:*:????????' — the ???????? GLOB matches exactly 8 chars (any). Critical exclusion: AND scope NOT LIKE 'project:pauol:%' because that scope is not a "
+      },
+      {
+        "id": 13622,
+        "text": "The absence of timeout logic allows test/seed data and records from archived clients to persist alongside active operational data."
+      },
+      {
+        "id": 11865,
+        "text": "Interonda multi-city no longer waits for legacy schema; the chosen model is Usuario.scope_cities as canonical city scope, with representatives implemented as normal role users restricted by scope_cities and dataScope.cities in session."
+      },
+      {
+        "id": 16132,
+        "text": "Canonicalization is a mandatory data processing step required to maintain data integrity."
+      },
+      {
+        "id": 16610,
+        "text": "The system design guarantees derived data consistency with the source, eliminating data drift between layers."
+      },
+      {
+        "id": 730,
+        "text": "🌐 Bypass de Cloudflare Access: view.puntofutura.com.ar (Update 12:04)\\n- **Problema**: `clawtrol.puntofutura.com.ar` y `mc.puntofutura.com.ar` están bloqueados por la capa de Cloudflare Access (403/Re"
+      },
+      {
+        "id": 15249,
+        "text": "Scope discipline requires flagging cross-role bugs rather than attempting out-of-scope remediation."
+      },
+      {
+        "id": 628,
+        "text": "Tracking Links\n- **Problema**: `resell.puntofutura.com.ar/r/<slug>` daba 404 porque el handler está en wisp-bot (3003), no en Saleor storefront (4012)\n- **Fix**: Nuevo subdominio `track.puntofutura.com.ar` → wisp-bot:3003 vía Cloudflare tunnel\n- `track.puntofutura.com.ar/r/<slug>` → 302 hacia `resel"
+      }
+    ]
+  },
+  {
+    "sha": "0a109d0f07313cdc",
+    "prompt": "MCP auto-citation — multiple sources?",
+    "candidates": [
+      {
+        "id": 15462,
+        "text": "Multiple agents must operate on separate git worktrees to prevent conflicts."
+      },
+      {
+        "id": 14298,
+        "text": "All heterogeneous data sources must use synchronized nanosecond-precision timestamps (ts_ns) for alignment."
+      },
+      {
+        "id": 7616,
+        "text": "Saleor MCP server installed at ~/.saleor-mcp using streamableHttp transport on port 6000, configured in .mcp.json but not fully working yet"
+      },
+      {
+        "id": 16419,
+        "text": "All data sources must use synchronized nanosecond-precision timestamps (ts_ns) for accurate alignment."
+      },
+      {
+        "id": 11759,
+        "text": "Steward 0/200 promotion rate is UPSTREAM ingest bug, not steward tuning (Wave 2-F analysis 2026-04-22). 816/876 live candidates (93%) have zero citations — they can never cross the min_citations=1 gate regardless of threshold tuning. Root cause is in dream_bridge + mcp_server.ingest_claim auto-citat"
+      },
+      {
+        "id": 15887,
+        "text": "The MCP tool namespace migrated from `mcp__wezbridge__*` to `mcp__theorchestra__*` in v3.1."
+      },
+      {
+        "id": 15682,
+        "text": "The MCP tool namespace transitioned from `mcp__wezbridge__*` to `mcp__theorchestra__*` starting in v3.1."
+      },
+      {
+        "id": 12866,
+        "text": "The architecture integrates multiple, disparate technologies (Python, React, PostgreSQL, Rust, multiple LLMs) into a single RMM platform."
+      },
+      {
+        "id": 8101,
+        "text": "Wiki skill now has sources/ (per-source summaries), entities/ (cross-source people/tools/orgs), and _sources.json (prevents re-ingesting). Interactive mode shows 3-5 takeaways before writing unless --auto flag. Absorbed from Second-Brain project without overlapping existing topic-based articles."
+      },
+      {
+        "id": 12528,
+        "text": "Multiple indexable homepage variants (6) exist, requiring careful canonicalization."
+      }
+    ]
+  },
+  {
+    "sha": "564227d8fe3a7f8a",
+    "prompt": "donde esta el docker config para memorymaster?",
+    "candidates": [
+      {
+        "id": 8142,
+        "text": "Docker containers with restart: unless-stopped in their docker-compose.yml will come back even after docker stop + docker update --restart=no. The compose policy wins when any docker-compose up happens (even implicit). Permanent removal requires one of: (1) docker compose down + rename docker-compos"
+      },
+      {
+        "id": 9649,
+        "text": "Claude Desktop MCP config lives at %APPDATA%\\Claude\\claude_desktop_config.json — separate from Claude Code's ~/.claude.json. Both support stdio MCP servers via command/args/env, but Claude Desktop has historically supported stdio ONLY (no http type). Context7 uses type=http in Claude Code's config; "
+      },
+      {
+        "id": 16163,
+        "text": "MemoryMaster must use file-based persistence to survive process crashes."
+      },
+      {
+        "id": 7530,
+        "text": "MemoryMaster recall hook requires skip_qdrant=True on Windows environments"
+      },
+      {
+        "id": 7879,
+        "text": "Dashboard code and bot code are volume-mounted in Docker. Deploy by scp file to server path + docker restart. New directories need docker-compose volume mount + docker compose up -d. docker restart does NOT pick up new volume mounts."
+      },
+      {
+        "id": 10932,
+        "text": "The nereidas repo had a local git config override (user.email=otacon@futurasistemas.com.ar, user.name=Otacon) that overrode the user's global config. Commits silently went out under the wrong identity, which caused Vercel Hobby to block deployments. Check `git config --local --list | grep user` when"
+      },
+      {
+        "id": 10993,
+        "text": "Decision 2026-04-20: theorchestra v3.0-native MemoryMaster integration (Cat E §9 of v3.0-plan.md) ships as an SSE bus subscriber that writes JSONL claims into `vault/_memorymaster/inbox.jsonl`, NOT as a per-event shell-out to `memorymaster ingest`. Rationale: decouples theorchestra from any specific"
+      },
+      {
+        "id": 10540,
+        "text": "docker-compose bot service name is 'bot' (not 'wisp-bot' — that's the container name). Commands using `docker compose` (v2) need the service name from `docker compose config --services`: loki, mysql, mysql-backup, uptime-kuma, bot, dashboard, evolution-api. Container names (wisp-bot, whatsappbot-das"
+      }
+    ]
+  }
+]
