@@ -22,8 +22,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 from memorymaster.steward_features import (
     FEATURE_KEYS,
     FEATURE_VERSION,
@@ -134,6 +132,11 @@ def predict_promote_probability(
     legacy additive formula."""
     clf = classifier or load_classifier()
     if clf is None:
+        return None
+    try:
+        import numpy as np
+    except ImportError:
+        _LOG.warning("numpy missing — classifier disabled. `pip install memorymaster[ml]`.")
         return None
     try:
         feats = extract_features(claim, conn)
