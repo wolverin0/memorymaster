@@ -554,12 +554,21 @@ def run_steward(
     conn.row_factory = sqlite3.Row
 
     candidates = conn.execute(
-        "SELECT id, text FROM claims WHERE status = 'candidate' "
+        "SELECT id, text, scope FROM claims WHERE status = 'candidate' "
         "AND text IS NOT NULL ORDER BY id LIMIT ?",
         (limit,),
     ).fetchall()
 
     confirmed_claim_ids: list[int] = []
+
+    from memorymaster.candidate_dedupe import (
+        find_near_duplicate,
+        is_enabled as _dedupe_enabled,
+        is_shadow_mode as _dedupe_shadow,
+    )
+
+    dedupe_on = _dedupe_enabled()
+    dedupe_shadow = _dedupe_shadow()
 
     stats = {
         "total": len(candidates),
@@ -570,12 +579,20 @@ def run_steward(
         "provider": provider,
         "model": model,
         "key_count": key_rotator.key_count if key_rotator else 1,
+        "dedupe_enabled": dedupe_on,
+        "dedupe_shadow": dedupe_shadow,
+        "dedupe_archived": 0,
+        "dedupe_would_archive": 0,
+        "dedupe_passthrough": 0,
+        "dedupe_score_sum": 0.0,
+        "dedupe_score_count": 0,
         "results": [],
     }
 
     for row in candidates:
         claim_id = row["id"]
         text = row["text"] or ""
+        scope = row["scope"] or ""
 
         if len(text.strip()) < 10:
             if not dry_run:
@@ -590,6 +607,52 @@ def run_steward(
                 )
             stats["archived"] += 1
             continue
+
+        if dedupe_on and scope:
+            dedupe = find_near_duplicate(
+                conn,
+                candidate_id=claim_id,
+                candidate_text=text,
+                candidate_scope=scope,
+            )
+            if dedupe.jaccard_score is not None:
+                stats["dedupe_score_sum"] += dedupe.jaccard_score
+                stats["dedupe_score_count"] += 1
+            if dedupe.action == "archive":
+                if dedupe_shadow:
+                    stats["dedupe_would_archive"] += 1
+                    stats["dedupe_passthrough"] += 1
+                else:
+                    if not dry_run:
+                        conn.execute(
+                            "UPDATE claims SET status = 'archived', "
+                            "replaced_by_claim_id = ?, updated_at = datetime('now') "
+                            "WHERE id = ?",
+                            (dedupe.canonical_claim_id, claim_id),
+                        )
+                        conn.execute(
+                            "UPDATE claims SET access_count = COALESCE(access_count, 0) + 1, "
+                            "updated_at = datetime('now') WHERE id = ?",
+                            (dedupe.canonical_claim_id,),
+                        )
+                        conn.execute(
+                            "INSERT INTO events (claim_id, event_type, details, created_at) "
+                            "VALUES (?, 'transition', ?, datetime('now'))",
+                            (claim_id, f"dedupe-archived: {dedupe.reason}"),
+                        )
+                    stats["dedupe_archived"] += 1
+                    stats["archived"] += 1
+                    stats["results"].append({
+                        "claim_id": claim_id,
+                        "dedupe": {
+                            "canonical_id": dedupe.canonical_claim_id,
+                            "score": dedupe.jaccard_score,
+                            "reason": dedupe.reason,
+                        },
+                    })
+                    continue
+            else:
+                stats["dedupe_passthrough"] += 1
 
         try:
             result = extract_claim(
@@ -729,6 +792,15 @@ def run_steward(
         except Exception as e:
             log.warning("Auto-validation failed (non-fatal): %s", e)
             stats["auto_validation"] = {"error": str(e)}
+
+    if stats["dedupe_score_count"] > 0:
+        stats["dedupe_avg_jaccard"] = (
+            stats["dedupe_score_sum"] / stats["dedupe_score_count"]
+        )
+    else:
+        stats["dedupe_avg_jaccard"] = None
+    del stats["dedupe_score_sum"]
+    del stats["dedupe_score_count"]
 
     return stats
 

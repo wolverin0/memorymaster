@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.13.0] - 2026-04-29
+
+**Pre-steward candidate dedupe.** Adds a Jaccard-on-tokens dedupe tier that runs *before* the steward LLM. Candidates that overlap >= 85% with an existing same-scope claim get archived via SQL with no Haiku call. Inspired by Mendral's "We Upgraded to a Frontier Model and Our Costs Went Down" (2026-03-06): cheap-deterministic-first, expensive-LLM-second.
+
+Default OFF (`MEMORYMASTER_DEDUPE_ENABLED=0`). When enabled, default is shadow mode (`_SHADOW=1` — counts but does not act). Operators flip both off after one observation cycle.
+
+### Added
+
+- **`memorymaster/candidate_dedupe.py`** — `find_near_duplicate(conn, *, candidate_id, candidate_text, candidate_scope)`. Two-stage: FTS5 OR-query top-K filter, then token Jaccard score. Returns archive when the best canonical match scores >= threshold; otherwise passthrough.
+- **`memorymaster/llm_steward.py`** — wires dedupe into `run_steward()` between the too-short check and `extract_claim()`. Adds `dedupe_enabled`, `dedupe_shadow`, `dedupe_archived`, `dedupe_would_archive`, `dedupe_passthrough`, `dedupe_avg_jaccard` to the stats dict.
+- **`scripts/measure_dedupe_thresholds.py`** — sweeps thresholds [0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95] over the live candidate set, prints archive count + score distribution + sample pairs for manual precision check.
+- **`tests/test_candidate_dedupe.py`** — 14 unit tests covering env flags, FTS5 absent, scope isolation, archived-excluded, threshold gating, candidate-vs-candidate, Jaccard math, immutability.
+- **`tests/test_v313_e2e.py`** — 4 E2E tests through `run_steward`: archives paraphrase without LLM, disabled-passes-to-LLM, shadow-mode-doesn't-act, 30-paraphrase synthetic corpus.
+
+### Env flags (defaults)
+
+| Var | Default | Meaning |
+|-----|---------|---------|
+| `MEMORYMASTER_DEDUPE_ENABLED` | `0` | Off until operator opts in |
+| `MEMORYMASTER_DEDUPE_SHADOW` | `1` | Count would-archive without acting |
+| `MEMORYMASTER_DEDUPE_JACCARD_HIGH` | `0.85` | Token-set Jaccard threshold |
+
+### Threshold tuning evidence
+
+Sweep over 2,000 candidates against the live 14k-claim corpus:
+
+| threshold | archive rate | precision (n=10 sample) |
+|-----------|-------------:|-------------------------|
+| 0.95      |  0.3%        | (n too small)           |
+| 0.90      |  2.0%        | 100% (subset of 0.85)   |
+| **0.85**  |  **3.7%**    | **100%**                |
+| 0.80      |  6.5%        | ~95% (samples 1-10 ok)  |
+| 0.75      |  9.3%        | ~80% (some borderline)  |
+| 0.70      | 11.6%        | not validated           |
+
+0.85 chosen as default for high-precision conservative archive. Lower thresholds available via env override; precision drops gradually but recall climbs ~2× per 0.05 step.
+
+### Why Jaccard, not BM25
+
+Initial implementation used SQLite FTS5 `bm25()` directly. BM25 collapses to ~0 on small corpora (IDF degenerates when most tokens appear in every doc). Token Jaccard is corpus-independent and behaves the same on a 2-doc test fixture and a 14k-claim DB. FTS5 still narrows the search space cheaply; Jaccard scores the final match.
+
+### Why this is shipped OFF by default
+
+The post-LLM (subject, predicate) dedup at `llm_steward.py:627-643` is the existing safety net — every paraphrase that passes through pre-LLM dedup still gets a chance to dedup after extraction. Pre-LLM dedup is purely an optimisation, never load-bearing for correctness. Operators with no Haiku-cost concern can leave it off forever.
+
+### Architecture compliance
+
+- No schema migration. Reuses existing `claims_fts` virtual table + `replaced_by_claim_id` FK.
+- SQLite-only. Postgres backend has no FTS at all (no `tsvector`); dedup is a no-op there. No parity drift since no new columns.
+- All 1,796 existing tests still pass. 14 + 4 = 18 new tests added.
+
 ## [3.12.0] - 2026-04-27
 
 **Definitive end of the recall-feature track.** v3.10 hypothesised the labeled GT was too narrow to detect lift from new candidates. v3.12 tested it: re-labeled 953 prompts against the top-50 candidates per prompt (was top-15). Result: baseline jumps **0.104 → 0.470** (+0.366), confirming the GT-coverage bottleneck was real. **But every v3.9-v3.11 feature is STILL NEGATIVE on the wider GT.** F1 −0.001, F6 boost-only −0.005 to −0.013, F5+F8 −0.033 to −0.058. The features don't aport signal at top-5 on this corpus, regardless of label coverage.
