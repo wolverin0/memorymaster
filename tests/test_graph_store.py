@@ -235,6 +235,7 @@ class TestBackfillScript:
         assert "dry_run=True" in result.stdout
 
     def test_live_run_writes_edges(self, tmp_path: Path):
+        pytest.importorskip("kuzu", reason="graph extra not installed")
         db_path = tmp_path / "seed.db"
         expected = _seed_db_for_backfill(db_path)
         graph_path = tmp_path / "graph.kuzu"
