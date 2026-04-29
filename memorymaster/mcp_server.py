@@ -696,6 +696,88 @@ if FastMCP is not None:
         }
 
     @mcp.tool()
+    def read_active_tasks(
+        project_root: str = ".",
+    ) -> dict[str, Any]:
+        """Read and parse <project_root>/vault/active_tasks.md (or active_tasks.md at root).
+
+        Returns the active task pointer (first in_progress, falling back to first
+        pending) and the full task list. Goose-side equivalent of legacy
+        wezbridge/src/task-parser.cjs — used by recipes that need to know what
+        the user is currently working on. Path resolution:
+            1. <project_root>/vault/active_tasks.md
+            2. <project_root>/active_tasks.md
+            3. None → returns ok=False with reason
+
+        Output shape:
+            {
+              "ok": True,
+              "active_task": {"id": "T-001", "title": "...", "status": "in_progress",
+                              "narrative": "...", "yaml_block": {...}}  | None,
+              "all_tasks": [ ... same shape ... ],
+              "source_file": "<resolved path>",
+            }
+        """
+        import re as _re
+        from pathlib import Path as _Path
+        candidates = [
+            _Path(project_root) / "vault" / "active_tasks.md",
+            _Path(project_root) / "active_tasks.md",
+        ]
+        source = next((c for c in candidates if c.is_file()), None)
+        if source is None:
+            return {"ok": False, "reason": "no active_tasks.md found", "candidates": [str(c) for c in candidates]}
+
+        try:
+            text = source.read_text(encoding="utf-8")
+        except Exception as exc:
+            return {"ok": False, "reason": f"read failed: {exc}", "source_file": str(source)}
+
+        # Parse: split on "## " headers, each section has a ```yaml block``` + narrative.
+        header_re = _re.compile(r"^##\s+(?:Task:\s+)?(.+?)\s*$", _re.MULTILINE)
+        positions = [(m.start(), m.end(), m.group(1).strip()) for m in header_re.finditer(text)]
+
+        all_tasks: list[dict[str, Any]] = []
+        for i, (start, end, title) in enumerate(positions):
+            body_start = end
+            body_end = positions[i + 1][0] if i + 1 < len(positions) else len(text)
+            body = text[body_start:body_end]
+
+            yaml_block = {}
+            ym = _re.search(r"```yaml\s*\n(.*?)\n```", body, _re.DOTALL)
+            if ym:
+                for line in ym.group(1).splitlines():
+                    kv = _re.match(r"^([A-Za-z0-9_]+)\s*:\s*(.*)$", line.strip())
+                    if kv:
+                        yaml_block[kv.group(1)] = kv.group(2).strip().strip('"\'')
+
+            # Narrative = body with yaml block stripped
+            narrative = _re.sub(r"```yaml\s*\n.*?\n```", "", body, flags=_re.DOTALL).strip()
+
+            # Try to extract a task id from the title (e.g. "T-001 · Title" or "Task: foo")
+            id_match = _re.search(r"\b(T-?\d+)\b", title)
+            task_id = id_match.group(1) if id_match else f"task-{i+1}"
+
+            all_tasks.append({
+                "id": task_id,
+                "title": title,
+                "status": yaml_block.get("status", "unknown"),
+                "narrative": narrative,
+                "yaml": yaml_block,
+            })
+
+        in_progress = next((t for t in all_tasks if t["status"] == "in_progress"), None)
+        pending = next((t for t in all_tasks if t["status"] == "pending"), None)
+        active = in_progress or pending
+
+        return {
+            "ok": True,
+            "active_task": active,
+            "all_tasks": all_tasks,
+            "source_file": str(source),
+        }
+
+    @mcp.tool()
     def list_claims(
         db: str = "memorymaster.db",
         workspace: str = ".",
