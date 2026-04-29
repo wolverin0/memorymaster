@@ -19,6 +19,13 @@ os.environ["MEMORYMASTER_LLM_MODEL"] = "claude-haiku-4-5-20251001"
 os.environ["MEMORYMASTER_LLM_FALLBACK_PROVIDER"] = "ollama"
 os.environ["MEMORYMASTER_LLM_FALLBACK_MODEL"] = "gemma4:e4b"
 
+# v3.13 pre-steward Jaccard dedupe — shadow mode (count would-archive but
+# never act). Direct assignment so an inherited shell env can't accidentally
+# flip _SHADOW=0 and start archiving without operator review.
+os.environ["MEMORYMASTER_DEDUPE_ENABLED"] = "1"
+os.environ["MEMORYMASTER_DEDUPE_SHADOW"] = "1"
+os.environ["MEMORYMASTER_DEDUPE_JACCARD_HIGH"] = "0.85"
+
 os.chdir(PROJECT_ROOT)
 
 try:
