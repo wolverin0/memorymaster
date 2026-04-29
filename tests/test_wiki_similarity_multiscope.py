@@ -19,7 +19,9 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.wiki_similarity import (
+pytest.importorskip("numpy", reason="ml extra not installed")
+
+from memorymaster.wiki_similarity import (  # noqa: E402
     _discover_scope_dirs,
     _scope_to_dirname,
     compute_wiki_similarity,

@@ -18,10 +18,11 @@ import os
 import sqlite3
 from pathlib import Path
 
-import numpy as np
 import pytest
 
-from memorymaster.steward_features import (
+np = pytest.importorskip("numpy", reason="ml extra not installed")
+
+from memorymaster.steward_features import (  # noqa: E402
     FEATURE_KEYS,
     FEATURE_VERSION,
     extract_features,
