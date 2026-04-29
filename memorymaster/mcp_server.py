@@ -645,6 +645,57 @@ if FastMCP is not None:
         return response
 
     @mcp.tool()
+    def query_for_task(
+        task_description: str,
+        project_scope: str = "",
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+        token_budget: int = 800,
+        skip_qdrant: bool = True,
+    ) -> dict[str, Any]:
+        """Look-ahead L1 — task-aware briefing for an upcoming PRD task.
+
+        Wraps query_for_context with a `<task_briefing>` XML envelope so the
+        receiving model sees the task context as a structured briefing block
+        rather than generic memory recall.
+
+        Use this in pre-prompt hooks / recipes to auto-inject relevant memory
+        when starting work on a specific task. Sanitizes the task description
+        (drops stop-words like "extend"/"implement", removes dashes from
+        identifiers, OR-joins remaining tokens) so FTS5 returns broader matches.
+
+        Returns: {"ok": True, "briefing": "<xml>...</xml>", "elapsed_ms": int}.
+        Returns empty briefing when no claims match.
+        """
+        import time as _time
+        from memorymaster.context_hook import query_for_task as _qft
+
+        t0 = _time.perf_counter()
+        # Use scope from arg, else env, else derived from workspace.
+        effective_scope = (project_scope or "").strip()
+        if not effective_scope:
+            from os.path import basename, normpath
+            effective_scope = f"project:{basename(normpath(_resolve_workspace(workspace)))}"
+
+        try:
+            briefing = _qft(
+                task_description,
+                effective_scope,
+                db_path=_resolve_db(db),
+                token_budget=token_budget,
+                skip_qdrant=skip_qdrant,
+            )
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)[:300], "briefing": ""}
+
+        return {
+            "ok": True,
+            "briefing": briefing or "",
+            "scope": effective_scope,
+            "elapsed_ms": int((_time.perf_counter() - t0) * 1000),
+        }
+
+    @mcp.tool()
     def list_claims(
         db: str = "memorymaster.db",
         workspace: str = ".",
