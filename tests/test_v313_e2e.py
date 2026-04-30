@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import sqlite3
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -197,6 +195,14 @@ def test_dedupe_shadow_mode_does_not_archive(
     ).fetchone()
     con.close()
     assert row[0] != "archived" or stats["archived"] >= 1
+
+    shadow_results = [r for r in stats["results"] if "dedupe" in r]
+    assert shadow_results, "shadow mode should record would-archive pair details"
+    sample = shadow_results[0]
+    assert sample["dedupe"]["would_archive"] is True
+    assert sample["dedupe"]["canonical_id"] == canonical_id
+    assert sample["dedupe"]["score"] is not None
+    assert sample["claim_id"] == paraphrase_id
 
 
 def test_dedupe_synthetic_corpus_30_dupes(
