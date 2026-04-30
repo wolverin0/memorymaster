@@ -265,7 +265,10 @@ class MemoryService:
             limit=policy_limit,
         )
         extract_res = extractor.run(self.store)
-        dedupe_res = candidate_dedupe.run(self.store, limit=policy_limit)
+        # Match validator's scan size (200) so every candidate the validator
+        # would touch gets a chance to dedupe first. policy_limit is for
+        # revalidation cadence, not candidate sweep — different concept.
+        dedupe_res = candidate_dedupe.run(self.store)
         deterministic_res = deterministic.run(
             self.store,
             workspace_root=self.workspace_root,
