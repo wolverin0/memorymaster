@@ -6,6 +6,7 @@ from pathlib import Path
 import logging
 import os
 
+from memorymaster import candidate_dedupe
 from memorymaster.embeddings import create_best_provider
 from memorymaster.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, validator
 from memorymaster.models import CitationInput, Claim, ClaimLink, Event
@@ -264,6 +265,7 @@ class MemoryService:
             limit=policy_limit,
         )
         extract_res = extractor.run(self.store)
+        dedupe_res = candidate_dedupe.run(self.store, limit=policy_limit)
         deterministic_res = deterministic.run(
             self.store,
             workspace_root=self.workspace_root,
@@ -294,6 +296,7 @@ class MemoryService:
                 "selected": len(policy_selection.selected),
             },
             "extractor": extract_res,
+            "dedupe": dedupe_res,
             "deterministic": deterministic_res,
             "validator": validate_res,
             "decay": decay_res,

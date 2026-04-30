@@ -192,3 +192,97 @@ def find_near_duplicate(
         jaccard_score=best_score,
         reason=f"jaccard<{threshold:.2f}",
     )
+
+
+def run(store, *, limit: int = 200) -> dict[str, object]:
+    """Pre-validator candidate dedupe stage for MemoryService.run_cycle.
+
+    Scans status='candidate' claims, finds near-duplicates of existing
+    same-scope claims via FTS5+Jaccard, and either archives them (active
+    mode) or counts them (shadow mode). Returns a stats dict that
+    run_cycle merges into its result under the 'dedupe' key.
+
+    No-op when MEMORYMASTER_DEDUPE_ENABLED != "1".
+    """
+    if not is_enabled():
+        return {
+            "enabled": False,
+            "shadow": False,
+            "archived": 0,
+            "would_archive": 0,
+            "passthrough": 0,
+            "avg_jaccard": None,
+            "results": [],
+        }
+
+    shadow = is_shadow_mode()
+    threshold = jaccard_high_threshold()
+
+    candidates = store.find_by_status("candidate", limit=limit)
+    archived = 0
+    would_archive = 0
+    passthrough = 0
+    score_sum = 0.0
+    score_count = 0
+    results: list[dict[str, object]] = []
+
+    with store.connect() as conn:
+        for claim in candidates:
+            if not claim.text or not claim.scope:
+                passthrough += 1
+                continue
+            decision = find_near_duplicate(
+                conn,
+                candidate_id=claim.id,
+                candidate_text=claim.text,
+                candidate_scope=claim.scope,
+                jaccard_high=threshold,
+            )
+            if decision.jaccard_score is not None:
+                score_sum += decision.jaccard_score
+                score_count += 1
+            if decision.action != "archive":
+                passthrough += 1
+                continue
+
+            results.append({
+                "claim_id": claim.id,
+                "canonical_id": decision.canonical_claim_id,
+                "score": decision.jaccard_score,
+                "reason": decision.reason,
+                "would_archive": shadow,
+            })
+
+            if shadow:
+                would_archive += 1
+                continue
+
+            conn.execute(
+                "UPDATE claims SET status = 'archived', "
+                "replaced_by_claim_id = ?, updated_at = datetime('now') "
+                "WHERE id = ?",
+                (decision.canonical_claim_id, claim.id),
+            )
+            conn.execute(
+                "UPDATE claims SET access_count = COALESCE(access_count, 0) + 1, "
+                "updated_at = datetime('now') WHERE id = ?",
+                (decision.canonical_claim_id,),
+            )
+            conn.execute(
+                "INSERT INTO events (claim_id, event_type, details, created_at) "
+                "VALUES (?, 'transition', ?, datetime('now'))",
+                (claim.id, f"dedupe-archived: {decision.reason}"),
+            )
+            archived += 1
+        conn.commit()
+
+    avg_jaccard = score_sum / score_count if score_count > 0 else None
+    return {
+        "enabled": True,
+        "shadow": shadow,
+        "archived": archived,
+        "would_archive": would_archive,
+        "passthrough": passthrough,
+        "avg_jaccard": avg_jaccard,
+        "results": results,
+    }
