@@ -1030,6 +1030,128 @@ def recall(
         _emit_recall_latency(phase_ms, total_start)
 
 
+def query_for_task(
+    task_description: str,
+    project_scope: str,
+    *,
+    db_path: str = "",
+    token_budget: int = 800,
+    skip_qdrant: bool = True,
+) -> str:
+    """Look-ahead L1 — task-aware briefing for an upcoming PRD task.
+
+    Wraps recall() with a task framing envelope so the receiving model
+    sees the task context as a structured briefing block rather than
+    generic memory recall.
+
+    Parameters
+    ----------
+    task_description:
+        Natural-language description of the upcoming task (e.g.
+        "Implement OAuth callback in app/auth/google.ts").
+    project_scope:
+        Scope filter, e.g. ``"project:wezbridge"``. Only claims matching
+        this scope (or its parents) are considered. If empty, no scope
+        filter is applied (legacy behavior).
+    db_path:
+        DB to query (default: env MEMORYMASTER_DEFAULT_DB).
+    token_budget:
+        Max TOKENS of inner content (default 500 ≈ 2KB chars). Outer
+        XML wrapper adds ~80 chars on top.
+    skip_qdrant:
+        Default True — vector search adds latency; FTS5 + ranking are
+        sufficient for most task briefings.
+
+    Returns
+    -------
+    str
+        Rendered XML briefing of the form::
+
+            <task_briefing project="..." budget_used="N">
+              <task>...</task>
+              <relevant_memory>
+                # Memory Context
+                - claim 1
+                - claim 2
+              </relevant_memory>
+            </task_briefing>
+
+        Empty string if no relevant claims found.
+    """
+    if not task_description:
+        return ""
+
+    # Sanitize for FTS5:
+    # 1. Replace dashes/underscores/slashes with spaces so identifiers tokenize
+    #    e.g. "memorymaster-recall" -> "memorymaster recall"
+    # 2. FTS5 default is AND-match (all terms required), which over-filters when
+    #    the query has common verbs ("extend", "to", "and") that don't appear
+    #    in target claims. Convert to explicit OR between tokens of length >=3
+    #    after dropping stop-words. This is closer to "find me any claim that
+    #    mentions at least one of these distinctive terms."
+    raw = re.sub(r"[-_/]+", " ", task_description)
+    raw = re.sub(r"[^\w\s]", " ", raw)  # strip remaining punctuation
+    tokens = [t for t in raw.split() if len(t) >= 3]
+    _STOP = {
+        "the", "and", "for", "with", "that", "this", "into", "from", "have",
+        "has", "are", "was", "were", "will", "would", "should", "could",
+        "via", "use", "uses", "using", "make", "makes", "via", "per",
+        "extend", "implement", "build", "add", "fix", "update",
+    }
+    keep = [t.lower() for t in tokens if t.lower() not in _STOP]
+    if not keep:
+        return ""
+    # Cap to 12 strongest tokens to keep FTS5 query bounded
+    keep = list(dict.fromkeys(keep))[:12]
+    sanitized = " OR ".join(keep)
+
+    # Use MemoryService.query_for_context directly so we can pass scope_allowlist —
+    # recall() doesn't expose that parameter. Scope filtering is essential for
+    # task briefings: claims from other projects would be noise.
+    from memorymaster.service import MemoryService
+
+    db = db_path or os.environ.get("MEMORYMASTER_DEFAULT_DB") or "memorymaster.db"
+    svc = MemoryService(db_target=db, workspace_root=Path.cwd())
+
+    scope_filter = [project_scope] if project_scope else None
+    # Query in legacy mode (FTS5 only) when skip_qdrant=True for latency.
+    retrieval_mode = "legacy" if skip_qdrant else "hybrid"
+
+    try:
+        result = svc.query_for_context(
+            sanitized,
+            token_budget=token_budget,
+            output_format="text",
+            scope_allowlist=scope_filter,
+            retrieval_mode=retrieval_mode,
+        )
+    except Exception:
+        return ""
+
+    inner = result.output if hasattr(result, "output") else str(result)
+    if not inner or not inner.strip():
+        return ""
+
+    # Skip empty-result blocks: pack_context emits a "(no claims fit...)" placeholder.
+    # We don't want to inject empty briefings; better to inject nothing.
+    if "no claims fit" in inner.lower() or "0/0 claims" in inner:
+        return ""
+
+    # XML envelope. Escape minimal — recall output is markdown, not HTML.
+    # We use CDATA-free wrapping; the model parses the whole block as text
+    # and the tags give it structural cues.
+    safe_task = task_description.replace("<", "&lt;").replace(">", "&gt;")
+    safe_scope = project_scope.replace("<", "&lt;").replace(">", "&gt;")
+    return (
+        f'<task_briefing project="{safe_scope}" budget_used="{len(inner)}">\n'
+        f'  <task>{safe_task}</task>\n'
+        f'  <relevant_memory>\n'
+        f'{inner}\n'
+        f'  </relevant_memory>\n'
+        f'</task_briefing>'
+    )
+
+
 def _recall_impl(
     query: str,
     *,

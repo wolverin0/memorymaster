@@ -619,6 +619,15 @@ def run_steward(
                 stats["dedupe_score_sum"] += dedupe.jaccard_score
                 stats["dedupe_score_count"] += 1
             if dedupe.action == "archive":
+                stats["results"].append({
+                    "claim_id": claim_id,
+                    "dedupe": {
+                        "canonical_id": dedupe.canonical_claim_id,
+                        "score": dedupe.jaccard_score,
+                        "reason": dedupe.reason,
+                        "would_archive": dedupe_shadow,
+                    },
+                })
                 if dedupe_shadow:
                     stats["dedupe_would_archive"] += 1
                     stats["dedupe_passthrough"] += 1
@@ -642,14 +651,6 @@ def run_steward(
                         )
                     stats["dedupe_archived"] += 1
                     stats["archived"] += 1
-                    stats["results"].append({
-                        "claim_id": claim_id,
-                        "dedupe": {
-                            "canonical_id": dedupe.canonical_claim_id,
-                            "score": dedupe.jaccard_score,
-                            "reason": dedupe.reason,
-                        },
-                    })
                     continue
             else:
                 stats["dedupe_passthrough"] += 1
