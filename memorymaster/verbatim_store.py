@@ -10,7 +10,6 @@ Search modes:
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -61,14 +60,17 @@ def store_verbatim(
         return None
 
     now = timestamp or datetime.now(timezone.utc).isoformat()
-    content_hash = hashlib.sha256(content[:500].lower().encode()).hexdigest()[:16]
 
     conn = _connect(db_path)
-    # Dedup by content hash within same session
+    # Dedup by exact content within the same session. Uses idx_verbatim_session
+    # so the lookup is O(rows-in-session), not table-scan. The previous FTS5-based
+    # dedup query passed a sha256 hex prefix to MATCH which never resolves —
+    # the FTS5 index stores the content text, not its hash. Result: 9M+ rows
+    # accumulated for orchestrator sessions because every Stop event re-inserted
+    # every message. Fixed 2026-05-03; see mm-0c43.
     existing = conn.execute(
-        "SELECT id FROM verbatim_memories WHERE session_id = ? AND id IN "
-        "(SELECT rowid FROM verbatim_fts WHERE verbatim_fts MATCH ?)",
-        (session_id, content_hash),
+        "SELECT id FROM verbatim_memories WHERE session_id = ? AND content = ? LIMIT 1",
+        (session_id, content),
     ).fetchone()
     if existing:
         conn.close()
