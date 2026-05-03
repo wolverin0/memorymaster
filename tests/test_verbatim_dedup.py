@@ -11,7 +11,6 @@ These tests guard the fix: a direct content compare on (session_id, content).
 from __future__ import annotations
 
 import sqlite3
-import tempfile
 from pathlib import Path
 
 import pytest
