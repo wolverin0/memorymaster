@@ -36,6 +36,27 @@ def main():
     # guard against path traversal / weird chars just in case
     safe_session = "".join(c if c.isalnum() or c in "-_" else "_" for c in str(session_id))[:64]
     marker_path = os.path.join(STATE_DIR, f"warned_{safe_session}.marker")
+    autosave_path = os.path.join(STATE_DIR, f"{session_id}_last_save")
+
+    # Bypass: if the auto-ingest stop-hook has fired recently for this session,
+    # the session is being auto-saved every 15 messages — manual save warning
+    # is redundant. Pass through silently. Fixes the deadlock where /compact
+    # is blocked while the user is trying to recover from an unrelated error
+    # (e.g. oversized image breaks tool calls → can't manually save → can't compact).
+    AUTOSAVE_RECENT_THRESHOLD = 60 * 60  # 1 hour
+    try:
+        autosave_mtime = os.path.getmtime(autosave_path)
+        if (now - autosave_mtime) < AUTOSAVE_RECENT_THRESHOLD:
+            try:
+                with open(os.path.join(STATE_DIR, "hook.log"), "a") as f:
+                    f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] PRE-COMPACT ALLOWED (auto-ingest fired {int(now - autosave_mtime)}s ago) for {safe_session}\n")
+            except Exception:
+                pass
+            sys.exit(0)
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
 
     # Has this session already been warned within TTL?
     already_warned = False
