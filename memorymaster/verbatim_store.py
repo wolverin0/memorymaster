@@ -152,6 +152,26 @@ def store_transcript(
     return stats
 
 
+def _row_dedup_key(r: dict) -> tuple:
+    """Stable unique key for hybrid-mode search-result dedup.
+
+    F-3 fix (overnight audit 2026-05-04): the previous merge keyed on
+    `content[:100]`, which collides massively on templated content. Verified
+    against the live DB: 4258 distinct 100-char prefixes collide; the worst
+    offender (orchestrator <task-notification> templates) had 25,894 rows
+    sharing one prefix. Hybrid mode silently collapsed all 25,894 distinct
+    messages into a single returned row.
+
+    Prefer the row id (always unique). Fall back to (session_id, content)
+    tuple when id is missing — happens for vector results from Qdrant which
+    didn't pull point.id into the payload dict.
+    """
+    rid = r.get("id")
+    if rid is not None:
+        return ("id", rid)
+    return ("sc", r.get("session_id", ""), r.get("content", ""))
+
+
 def search_verbatim(
     db_path: str,
     query: str,
@@ -170,12 +190,13 @@ def search_verbatim(
 
     if mode in ("vector", "hybrid"):
         vector_results = _search_vector(query, scope, limit)
-        # Merge: dedupe by content hash
-        seen = {r["content"][:100] for r in results}
+        # Merge: dedupe by stable row-id key (see _row_dedup_key for F-3 context)
+        seen = {_row_dedup_key(r) for r in results}
         for vr in vector_results:
-            if vr["content"][:100] not in seen:
+            key = _row_dedup_key(vr)
+            if key not in seen:
                 results.append(vr)
-                seen.add(vr["content"][:100])
+                seen.add(key)
 
     # Sort by score descending, limit
     results.sort(key=lambda x: -x.get("score", 0))
