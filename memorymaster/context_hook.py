@@ -1906,7 +1906,7 @@ def observe(
     *,
     source: str = "session",
     db_path: str = "",
-    scope: str = "project",
+    scope: str | None = None,
     auto_classify: bool = True,
     force: bool = False,
 ) -> dict:
@@ -1915,8 +1915,16 @@ def observe(
     If auto_classify=True, only ingests text that matches observation patterns.
     If force=True, ingests regardless of pattern matching.
 
+    `scope` defaults to scope_from_cwd(Path.cwd()) when not given — produces
+    `project:<slug>` matching the rest of the system. Previous default was the
+    literal string `"project"` which created orphan claims unreachable from
+    any `project:<slug>` recall path (overnight audit F-5, mm-d24c context).
+
     Returns: {"ingested": bool, "claim_type": str, "claim_id": int | None}
     """
+    if scope is None:
+        from memorymaster.scope_utils import scope_from_cwd
+        scope = scope_from_cwd(Path.cwd())
     # Check if worth remembering
     claim_type = None
     if auto_classify:
@@ -1953,12 +1961,17 @@ def observe_llm(
     *,
     source: str = "session",
     db_path: str = "",
-    scope: str = "project",
+    scope: str | None = None,
 ) -> dict:
     """Use LLM to extract structured claims from conversation text.
 
     More thorough than rule-based observe() but slower (~5s per call).
+    `scope` defaults to scope_from_cwd(Path.cwd()) when not given — see
+    observe() docstring for the F-5 background.
     """
+    if scope is None:
+        from memorymaster.scope_utils import scope_from_cwd
+        scope = scope_from_cwd(Path.cwd())
     from memorymaster.auto_extractor import extract_claims_from_text
     from memorymaster.models import CitationInput
     from memorymaster.service import MemoryService
