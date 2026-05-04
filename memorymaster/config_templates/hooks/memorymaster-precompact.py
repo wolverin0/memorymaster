@@ -15,6 +15,7 @@ warning is sufficient.
 """
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -33,10 +34,17 @@ def main():
     session_id = data.get("session_id", "unknown")
     now = time.time()
     # Sanitize session_id for filename — session IDs are typically UUIDs but
-    # guard against path traversal / weird chars just in case
+    # guard against path traversal / weird chars just in case.
     safe_session = "".join(c if c.isalnum() or c in "-_" else "_" for c in str(session_id))[:64]
     marker_path = os.path.join(STATE_DIR, f"warned_{safe_session}.marker")
-    autosave_path = os.path.join(STATE_DIR, f"{session_id}_last_save")
+    # F-6 fix (overnight audit 2026-05-04): the auto-ingest stop hook STRIPS
+    # forbidden chars (re.sub(r"[^a-zA-Z0-9_-]", "", session_id)) when writing
+    # its {session_id}_last_save marker. Previously we read it via the RAW
+    # session_id, so any non-alphanumeric char in the id (rare but possible)
+    # caused a path mismatch → bypass silently failed → /compact deadlock
+    # re-emerges (mm-d24c regression). Use the same strip-form auto-ingest uses.
+    ai_safe_session = re.sub(r"[^a-zA-Z0-9_-]", "", str(session_id)) or "unknown"
+    autosave_path = os.path.join(STATE_DIR, f"{ai_safe_session}_last_save")
 
     # Bypass: if the auto-ingest stop-hook has fired recently for this session,
     # the session is being auto-saved every 15 messages — manual save warning
