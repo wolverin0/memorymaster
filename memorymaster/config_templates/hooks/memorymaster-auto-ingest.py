@@ -24,11 +24,28 @@ sys.path.insert(0, PROJECT_ROOT)
 
 os.makedirs(STATE_DIR, exist_ok=True)
 
-SENSITIVE = re.compile(
-    r"(?i)password\s*(?:is|=|:)\s*\S+|secret[:=]\s*\S{8,}|token[:=]\s*\S{20,}"
-    r"|sk-[A-Za-z0-9\-]{20,}|ghp_[A-Za-z0-9]{20,}|192\.168\.\d"
-    r"|\d{8,}:[A-Za-z0-9_-]{30,}|ubuntu@|ssh\s+\w+@"
-)
+# Sensitivity filtering delegated to memorymaster.security.redact_text — the
+# canonical 25+ pattern set. The previous local SENSITIVE regex covered ~6 of
+# them and missed bearer/JWT/AWS/Stripe/Slack tokens, home path username
+# leaks, and card numbers. Discovered 2026-05-04 by overnight audit (F-2).
+# Import is deferred into _is_sensitive_claim() because sys.path.insert above
+# runs at module load — keeping the import lazy avoids ImportError at hook
+# install time when the package isn't on PYTHONPATH yet.
+def _is_sensitive_claim(c: dict) -> bool:
+    """Return True if any of (text, subject, predicate, object_value) trips
+    the canonical sensitivity filter. Caller drops the claim entirely."""
+    try:
+        from memorymaster.security import redact_text
+    except ImportError:
+        # Fail-closed: if the canonical filter can't be imported, refuse the
+        # claim. Prevents shipping unreviewed text on a broken install.
+        return True
+    joined = " | ".join(
+        str(c.get(k, "") or "")
+        for k in ("text", "subject", "predicate", "object_value")
+    )
+    _, findings = redact_text(joined)
+    return bool(findings)
 
 
 def _count_human_messages(transcript_path):
@@ -116,7 +133,7 @@ Only: bug root causes, decisions, gotchas, constraints. Never: credentials, IPs,
 
         response = call_llm(prompt, assistant_text)
         claims = parse_json_response(response)
-        claims = [c for c in claims if not SENSITIVE.search(c.get("text", ""))][:3]
+        claims = [c for c in claims if not _is_sensitive_claim(c)][:3]
 
         if not claims or not os.path.exists(DB_PATH):
             return
