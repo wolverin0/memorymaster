@@ -689,10 +689,15 @@ def run_steward(
                 f_obj = first.get("object_value")
                 f_conf = min(1.0, max(0.0, float(first.get("confidence", 0.7))))
                 if not dry_run:
+                    # F-1 fix (mm-d53d, 2026-05-04): scope must match the source
+                    # claim's scope, not the literal 'project' which never appears
+                    # in real data (every claim uses 'project:<slug>'). Same bug
+                    # class as mm-5e6d's broken FTS5-hash query — query that
+                    # filters on a hardcoded value the data never contains.
                     dup = conn.execute(
                         "SELECT id FROM claims WHERE subject = ? AND predicate = ? "
-                        "AND status = 'confirmed' AND scope = 'project' AND id != ? LIMIT 1",
-                        (f_subj, f_pred, claim_id),
+                        "AND status = 'confirmed' AND scope = ? AND id != ? LIMIT 1",
+                        (f_subj, f_pred, scope, claim_id),
                     ).fetchone()
                     if dup:
                         conn.execute(
@@ -725,10 +730,12 @@ def run_steward(
                         obj_val = extra.get("object_value")
                         conf = min(1.0, max(0.0, float(extra.get("confidence", 0.7))))
 
+                        # F-1 fix (mm-d53d, 2026-05-04): same as above — scope
+                        # is the source claim's scope, not the literal 'project'.
                         existing = conn.execute(
                             "SELECT id FROM claims WHERE subject = ? AND predicate = ? "
-                            "AND status = 'confirmed' AND scope = 'project' LIMIT 1",
-                            (subj, pred),
+                            "AND status = 'confirmed' AND scope = ? LIMIT 1",
+                            (subj, pred, scope),
                         ).fetchone()
 
                         if existing:
@@ -740,11 +747,14 @@ def run_steward(
                             confirmed_claim_ids.append(existing["id"])
                         else:
                             try:
+                                # F-1 fix: use source claim's scope here too, so
+                                # newly-inserted extra extractions are reachable
+                                # from the same recall path as their source.
                                 cursor = conn.execute(
                                     "INSERT INTO claims (text, subject, predicate, object_value, "
                                     "confidence, status, scope, created_at, updated_at) "
-                                    "VALUES (?, ?, ?, ?, ?, 'confirmed', 'project', datetime('now'), datetime('now'))",
-                                    (text[:200], subj, pred, obj_val, conf),
+                                    "VALUES (?, ?, ?, ?, ?, 'confirmed', ?, datetime('now'), datetime('now'))",
+                                    (text[:200], subj, pred, obj_val, conf, scope),
                                 )
                                 new_id = cursor.lastrowid
                                 conn.execute(
