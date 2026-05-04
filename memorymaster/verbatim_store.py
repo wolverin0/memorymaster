@@ -32,6 +32,22 @@ def _contains_sensitive(text: str) -> bool:
     _, findings = _redact_text(text)
     return bool(findings)
 
+
+def _row_has_sensitive_field(role: str, source_agent: str, content: str) -> bool:
+    """Defense-in-depth: check role and source_agent in addition to content.
+
+    F-4 fix (overnight audit 2026-05-04): role and source_agent are
+    user-controlled in some upstream paths (CLI flags, dream-bridge config,
+    transcript miner). A maliciously crafted or misconfigured
+    source_agent='Bearer ghp_xxx...' would persist a token to
+    verbatim_memories undetected if we only checked content. The canonical
+    redact_text covers all three fields here — refuse the whole row if any
+    finding appears anywhere. Don't redact-and-store; just drop.
+    """
+    joined = " | ".join(filter(None, (role, source_agent, content)))
+    _, findings = _redact_text(joined)
+    return bool(findings)
+
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://192.168.100.186:6333")
 QDRANT_COLLECTION = "memorymaster-verbatim"
 EMBED_DIM = 1536  # text-embedding-3-small
@@ -56,7 +72,7 @@ def store_verbatim(
     """Store a verbatim conversation turn. Returns row ID or None if filtered."""
     if not content or len(content) < 20:
         return None
-    if _contains_sensitive(content):
+    if _row_has_sensitive_field(role or "", source_agent or "", content):
         return None
 
     now = timestamp or datetime.now(timezone.utc).isoformat()
