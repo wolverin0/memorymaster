@@ -24,8 +24,28 @@ def run(store, limit: int = 200, stale_threshold: float | None = None) -> dict[s
 
     for claim in claims:
         updated_dt = _parse_iso(claim.updated_at)
-        age_days = max((now - updated_dt).total_seconds() / 86400.0, 0.0)
+        raw_age_seconds = (now - updated_dt).total_seconds()
+        age_days = max(raw_age_seconds / 86400.0, 0.0)
         if age_days <= 0:
+            # F-10 fix (overnight audit 2026-05-04): when raw_age_seconds < 0
+            # the claim's updated_at is in the FUTURE — clock skew, malformed
+            # ISO, or DST glitch. Previously this was silently swallowed
+            # forever (no decay, no event, no log) and the corrupted timestamp
+            # never surfaced. Record a "decay" event so operators can find
+            # these via SELECT * FROM events WHERE event_type='decay' AND
+            # details LIKE 'skipped:future%'. Cheap, defensive, no behavior
+            # change for normal claims (raw_age_seconds=0 just-touched still
+            # silently continues).
+            if raw_age_seconds < 0:
+                try:
+                    store.record_event(
+                        claim_id=claim.id,
+                        event_type="decay",
+                        details=f"skipped: future updated_at={claim.updated_at}",
+                    )
+                except Exception:
+                    # Don't let event recording failure crash the decay loop
+                    pass
             continue
 
         rate = decay_rates.get(claim.volatility, decay_rates["medium"])
