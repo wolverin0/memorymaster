@@ -629,8 +629,17 @@ def run_steward(
                     },
                 })
                 if dedupe_shadow:
+                    # F-8 fix (overnight audit, mm-d24c context): treat
+                    # would_archive as terminal in shadow mode. Previously this
+                    # also incremented passthrough AND fell through to LLM
+                    # extract — operator reading the stats saw inflated
+                    # passthrough numbers AND wasted Haiku tokens re-processing
+                    # claims that were going to be archived anyway. Continue
+                    # gives shadow mode the same flow as active mode minus
+                    # the actual archive write — exactly the "what would
+                    # have happened" semantics shadow is supposed to model.
                     stats["dedupe_would_archive"] += 1
-                    stats["dedupe_passthrough"] += 1
+                    continue
                 else:
                     if not dry_run:
                         conn.execute(
