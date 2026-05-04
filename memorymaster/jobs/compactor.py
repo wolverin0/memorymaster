@@ -19,7 +19,15 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _summary_node_id(subject: str | None, predicate: str | None, scope: str | None) -> str:
-    raw = "|".join([(subject or "").strip(), (predicate or "").strip(), (scope or "project").strip()])
+    # F-9 fix (overnight audit 2026-05-04): use a sentinel for None instead
+    # of aliasing to 'project'. Bare 'project' is a real (orphan) scope
+    # produced by the old observe() default — F-5 fixed that, but until
+    # the orphan rows are cleaned up, two cohorts (scope=None and
+    # scope='project') would hash to the same summary node and lose
+    # provenance. Sentinel '<unscoped>' is impossible to collide because
+    # '<>' chars are forbidden in real scope strings.
+    scope_key = (scope.strip() if scope and scope.strip() else "<unscoped>")
+    raw = "|".join([(subject or "").strip(), (predicate or "").strip(), scope_key])
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
     return f"summary:{digest}"
 
