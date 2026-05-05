@@ -67,6 +67,7 @@ def test_atlas_contract_payload_shape() -> None:
     "propose-actions",
     "action-proposals",
     "resolve-action-proposal",
+    "edit-action-proposal",
     "export-actions",
     "atlas-version",
 ])
@@ -384,6 +385,140 @@ def test_whatsapp_basic_fixture_full_pipeline(tmp_path: Path, capsys) -> None:
     sp = json.loads(output.read_text(encoding="utf-8"))
     assert sp["format"] == "atlas-super-productivity-bridge-v1"
     assert sp["tasks"], "expected exported task in bridge file"
+
+
+def test_edit_action_proposal_envelope(tmp_path: Path, capsys) -> None:
+    fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
+    db = tmp_path / "atlas.db"
+    main(["--db", str(db), "init-db"])
+    main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
+    main(["--db", str(db), "propose-actions"])
+    capsys.readouterr()
+    main(["--db", str(db), "--json", "action-proposals"])
+    listed = json.loads(capsys.readouterr().out.strip())
+    proposal_id = listed["data"][0]["id"]
+    original_status = listed["data"][0]["status"]
+
+    capsys.readouterr()
+    env = _run_cli(
+        "--db", str(db), "--json", "edit-action-proposal",
+        "--proposal-id", str(proposal_id),
+        "--title", "Renamed by LifeAgent",
+        "--description", "Updated description",
+        "--suggested-due-at", "2026-06-01T09:00:00-03:00",
+        "--confidence", "0.85",
+        capsys=capsys,
+    )
+    _assert_envelope(env, subcommand="edit-action-proposal")
+    assert env["data"]["id"] == proposal_id
+    assert env["data"]["title"] == "Renamed by LifeAgent"
+    assert env["data"]["description"] == "Updated description"
+    assert env["data"]["suggested_due_at"] == "2026-06-01T09:00:00-03:00"
+    assert env["data"]["confidence"] == 0.85
+    # Critical: lifecycle fields MUST be untouched
+    assert env["data"]["status"] == original_status
+    assert env["data"]["external_ref"] is None
+    assert env["data"]["exported_at"] is None
+
+
+def test_edit_action_proposal_partial_update(tmp_path: Path, capsys) -> None:
+    """Partial edits leave omitted fields untouched."""
+    fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
+    db = tmp_path / "atlas.db"
+    main(["--db", str(db), "init-db"])
+    main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
+    main(["--db", str(db), "propose-actions"])
+    capsys.readouterr()
+    main(["--db", str(db), "--json", "action-proposals"])
+    listed = json.loads(capsys.readouterr().out.strip())
+    original = listed["data"][0]
+    proposal_id = original["id"]
+
+    capsys.readouterr()
+    env = _run_cli(
+        "--db", str(db), "--json", "edit-action-proposal",
+        "--proposal-id", str(proposal_id),
+        "--description", "Only description changed",
+        capsys=capsys,
+    )
+    _assert_envelope(env, subcommand="edit-action-proposal")
+    assert env["data"]["description"] == "Only description changed"
+    assert env["data"]["title"] == original["title"]
+    assert env["data"]["suggested_due_at"] == original["suggested_due_at"]
+    assert env["data"]["confidence"] == original["confidence"]
+
+
+def test_edit_action_proposal_records_audit_event(tmp_path: Path) -> None:
+    """Every successful edit MUST record an action_proposal event."""
+    from memorymaster.cli import main as cli_main
+    from memorymaster.service import MemoryService
+    fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
+    db = tmp_path / "atlas.db"
+    cli_main(["--db", str(db), "init-db"])
+    cli_main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
+    cli_main(["--db", str(db), "propose-actions"])
+
+    service = MemoryService(db, workspace_root=tmp_path)
+    proposals = service.list_action_proposals()
+    assert proposals, "expected proposal from fixture"
+    proposal = proposals[0]
+    events_before = service.list_events(event_type="action_proposal")
+    n_before = len(events_before)
+
+    service.update_action_proposal_fields(proposal.id, title="Audited edit")
+    events_after = service.list_events(event_type="action_proposal")
+    assert len(events_after) == n_before + 1, "expected one new action_proposal event"
+    new_event = events_after[0]  # newest first
+    assert new_event.details == "action_proposal_fields_updated"
+    payload = json.loads(new_event.payload_json or "{}")
+    assert payload["proposal_id"] == proposal.id
+    assert "title" in payload["changed"]
+
+
+def test_edit_action_proposal_noop_records_no_event(tmp_path: Path) -> None:
+    """Edit with all fields equal to current values is a no-op (no event)."""
+    from memorymaster.cli import main as cli_main
+    from memorymaster.service import MemoryService
+    fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
+    db = tmp_path / "atlas.db"
+    cli_main(["--db", str(db), "init-db"])
+    cli_main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
+    cli_main(["--db", str(db), "propose-actions"])
+
+    service = MemoryService(db, workspace_root=tmp_path)
+    proposal = service.list_action_proposals()[0]
+    n_before = len(service.list_events(event_type="action_proposal"))
+    service.update_action_proposal_fields(proposal.id, title=proposal.title)
+    n_after = len(service.list_events(event_type="action_proposal"))
+    assert n_after == n_before, "no-op edit must not record an event"
+
+
+def test_edit_action_proposal_rejects_blank_title(tmp_path: Path) -> None:
+    from memorymaster.cli import main as cli_main
+    from memorymaster.service import MemoryService
+    fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
+    db = tmp_path / "atlas.db"
+    cli_main(["--db", str(db), "init-db"])
+    cli_main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
+    cli_main(["--db", str(db), "propose-actions"])
+    service = MemoryService(db, workspace_root=tmp_path)
+    proposal = service.list_action_proposals()[0]
+    with pytest.raises(ValueError, match="title cannot be blank"):
+        service.update_action_proposal_fields(proposal.id, title="   ")
+
+
+def test_edit_action_proposal_rejects_no_fields(tmp_path: Path) -> None:
+    from memorymaster.cli import main as cli_main
+    from memorymaster.service import MemoryService
+    fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
+    db = tmp_path / "atlas.db"
+    cli_main(["--db", str(db), "init-db"])
+    cli_main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
+    cli_main(["--db", str(db), "propose-actions"])
+    service = MemoryService(db, workspace_root=tmp_path)
+    proposal = service.list_action_proposals()[0]
+    with pytest.raises(ValueError, match="at least one field"):
+        service.update_action_proposal_fields(proposal.id)
 
 
 def test_whatsapp_fixture_idempotent_reimport(tmp_path: Path, capsys) -> None:

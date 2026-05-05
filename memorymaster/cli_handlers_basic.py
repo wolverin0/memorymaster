@@ -432,6 +432,35 @@ def _handle_resolve_action_proposal(
     return 0
 
 
+def _handle_edit_action_proposal(
+    args: argparse.Namespace,
+    service,
+    parser: argparse.ArgumentParser,
+    effective_db: str,
+) -> int:
+    from memorymaster.atlas_contract import atlas_meta
+
+    t0 = time.perf_counter()
+    proposal = service.update_action_proposal_fields(
+        args.proposal_id,
+        title=args.title,
+        description=args.description,
+        suggested_due_at=args.suggested_due_at,
+        confidence=args.confidence,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(
+            asdict(proposal),
+            total=1,
+            query_ms=elapsed_ms,
+            extra_meta=atlas_meta("edit-action-proposal"),
+        ))
+    else:
+        print(f"proposal #{proposal.id} title='{proposal.title}' due={proposal.suggested_due_at or '-'} confidence={proposal.confidence:.2f}")
+    return 0
+
+
 def _handle_export_actions(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.action_exporters import export_approved_actions
     from memorymaster.atlas_contract import atlas_meta

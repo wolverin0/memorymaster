@@ -408,6 +408,96 @@ class _SourceItemsMixin:
             raise RuntimeError("Failed to update action proposal.")
         return self._row_to_action_proposal(row)
 
+    def update_action_proposal_fields(
+        self,
+        proposal_id: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        suggested_due_at: str | None = None,
+        confidence: float | None = None,
+        payload_json: dict[str, Any] | str | None = None,
+    ) -> ActionProposal:
+        """Edit user-facing proposal fields without touching status/lifecycle.
+
+        Each kwarg is OPT-IN: pass ``None`` (or omit) to leave the field
+        unchanged. Use ``update_action_proposal_status`` for state transitions.
+        Status/external_ref/exported_at/claim_id/source_item_id/evidence_item_id
+        are intentionally NOT editable here — those are lifecycle/structural
+        fields that have their own paths.
+        """
+        if proposal_id <= 0:
+            raise ValueError("proposal_id must be positive.")
+        if title is None and description is None and suggested_due_at is None and confidence is None and payload_json is None:
+            raise ValueError("at least one field must be provided to update.")
+
+        normalized_title = title.strip() if title is not None else None
+        if normalized_title is not None and not normalized_title:
+            raise ValueError("title cannot be blank when provided.")
+        bounded = _bounded_confidence(confidence) if confidence is not None else None
+        payload = _json_or_none(payload_json) if payload_json is not None else None
+
+        now = utc_now()
+        with self.connect() as conn:
+            current = conn.execute("SELECT * FROM action_proposals WHERE id = ?", (proposal_id,)).fetchone()
+            if current is None:
+                raise ValueError(f"Action proposal {proposal_id} does not exist.")
+
+            updates: list[str] = []
+            params: list[object] = []
+            changed: dict[str, object] = {}
+            if normalized_title is not None and normalized_title != current["title"]:
+                updates.append("title = ?")
+                params.append(normalized_title)
+                changed["title"] = normalized_title
+            if description is not None and description != current["description"]:
+                updates.append("description = ?")
+                params.append(description)
+                changed["description"] = description
+            if suggested_due_at is not None and suggested_due_at != current["suggested_due_at"]:
+                updates.append("suggested_due_at = ?")
+                params.append(suggested_due_at)
+                changed["suggested_due_at"] = suggested_due_at
+            if bounded is not None and bounded != current["confidence"]:
+                updates.append("confidence = ?")
+                params.append(bounded)
+                changed["confidence"] = bounded
+            if payload is not None and payload != current["payload_json"]:
+                updates.append("payload_json = ?")
+                params.append(payload)
+                changed["payload_json_updated"] = True
+
+            if not updates:
+                # No-op update — return current row, do not record event.
+                return self._row_to_action_proposal(current)
+
+            updates.append("updated_at = ?")
+            params.append(now)
+            params.append(proposal_id)
+
+            conn.execute(
+                f"UPDATE action_proposals SET {', '.join(updates)} WHERE id = ?",
+                params,
+            )
+            self._insert_event_row(
+                conn,
+                claim_id=current["claim_id"],
+                event_type="action_proposal",
+                from_status=current["status"],
+                to_status=current["status"],
+                details="action_proposal_fields_updated",
+                payload_json=json.dumps(
+                    {"proposal_id": proposal_id, "changed": list(changed.keys())},
+                    sort_keys=True,
+                ),
+                created_at=now,
+            )
+            row = conn.execute("SELECT * FROM action_proposals WHERE id = ?", (proposal_id,)).fetchone()
+            conn.commit()
+        if row is None:
+            raise RuntimeError("Failed to update action proposal fields.")
+        return self._row_to_action_proposal(row)
+
     def list_action_proposals(
         self,
         *,

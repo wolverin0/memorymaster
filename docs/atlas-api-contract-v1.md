@@ -1,4 +1,4 @@
-# Atlas Inbox API/CLI Contract — v1.1.0
+# Atlas Inbox API/CLI Contract — v1.2.0
 
 **Audience:** LifeAgent (and any other Atlas frontend) consuming MemoryMaster's Atlas Inbox backend.
 
@@ -72,6 +72,7 @@ Non-Atlas subcommands (the rest of MemoryMaster) emit the same envelope **withou
 | `propose-actions` | `--destination` (def `super-productivity`), `--limit` (def 200) | `{scanned, matched, created, existing, proposals:[ActionProposal]}` | `created` |
 | `action-proposals` | `--status` (one of `candidate/approved/rejected/exported/failed`), `--destination`, `--limit` (def 100) | `[ActionProposal]` | `len(data)` |
 | `resolve-action-proposal` | `--proposal-id <int>` (req), `--status` (one of statuses, req), `--external-ref` | `ActionProposal` | `1` |
+| `edit-action-proposal` | `--proposal-id <int>` (req), `--title` (non-blank if provided), `--description`, `--suggested-due-at` (ISO-8601), `--confidence` (0.0-1.0). At least one field required. | `ActionProposal` | `1` |
 | `export-actions` | `--output <path>` (req), `--destination` (def `super-productivity`), `--limit` (def 100), `--dry-run` | `{destination, output_path, exported, proposal_ids:[int]}` | `exported` |
 | `atlas-version` | (none) | `{atlas_contract_version, atlas_contract_name, subcommands, endpoints, breaking_changes_since}` | `1` |
 
