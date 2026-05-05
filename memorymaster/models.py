@@ -326,6 +326,36 @@ class EvidenceItem:
     created_at: str
 
 
+MEDIA_RETRY_STATUSES = ("pending", "retrying", "expired", "done", "failed")
+"""Allowed values for media_retry_queue.status.
+
+- pending: enqueued by LifeAgent/wacli, awaiting next_attempt_time
+- retrying: claimed by process-media-retry-queue tick; LifeAgent should fetch
+- done: LifeAgent reported success (media_path now points at the local file)
+- expired: WhatsApp returned terminal HTTP 403/410 (media gone, no retry)
+- failed: max attempts hit OR LifeAgent reported a non-terminal failure it
+  has decided to give up on
+"""
+
+
+@dataclass(slots=True)
+class MediaRetryItem:
+    id: int
+    source_item_id: int
+    media_key: str
+    chat_id: str | None
+    media_type: str | None
+    media_path: str | None
+    media_url: str | None
+    status: str
+    attempt_count: int
+    last_http_status: int | None
+    last_error: str | None
+    next_attempt_time: str | None
+    created_at: str
+    updated_at: str
+
+
 @dataclass(slots=True)
 class ActionProposal:
     id: int

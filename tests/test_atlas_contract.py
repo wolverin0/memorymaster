@@ -70,6 +70,10 @@ def test_atlas_contract_payload_shape() -> None:
     "edit-action-proposal",
     "label-source-item",
     "label-evidence-item",
+    "enqueue-media-retry",
+    "process-media-retry-queue",
+    "record-media-retry-outcome",
+    "list-media-retries",
     "export-actions",
     "atlas-version",
 ])
@@ -631,6 +635,150 @@ def test_sensitivity_no_event_on_noop(tmp_path: Path) -> None:
     svc.set_source_item_sensitivity(sid, "low")  # no-op
     n_after = len(svc.list_events(event_type="source_import"))
     assert n_after == n_before, "no-op label set must not record event"
+
+
+# ---------------------------------------------------------------------------
+# Media retry queue (v1.4.0)
+# ---------------------------------------------------------------------------
+
+
+def _seed_with_source_item(tmp_path: Path) -> tuple[Path, int]:
+    fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
+    db = tmp_path / "atlas.db"
+    main(["--db", str(db), "init-db"])
+    main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
+    from memorymaster.service import MemoryService
+    svc = MemoryService(db, workspace_root=tmp_path)
+    with svc.store.connect() as conn:
+        rows = conn.execute("SELECT id FROM source_items WHERE item_type='audio' LIMIT 1").fetchall()
+        assert rows, "expected an audio source_item from fixture"
+        return db, int(rows[0]["id"])
+
+
+def test_enqueue_media_retry_envelope(tmp_path: Path, capsys) -> None:
+    db, sid = _seed_with_source_item(tmp_path)
+    capsys.readouterr()
+    env = _run_cli(
+        "--db", str(db), "--json", "enqueue-media-retry",
+        "--source-item-id", str(sid),
+        "--media-key", "wamid.audio.test1",
+        "--media-type", "audio",
+        "--media-url", "https://example/m1.ogg",
+        capsys=capsys,
+    )
+    _assert_envelope(env, subcommand="enqueue-media-retry")
+    expected = {
+        "id", "source_item_id", "media_key", "chat_id", "media_type",
+        "media_path", "media_url", "status", "attempt_count",
+        "last_http_status", "last_error", "next_attempt_time",
+        "created_at", "updated_at",
+    }
+    assert set(env["data"].keys()) >= expected
+    assert env["data"]["status"] == "pending"
+    assert env["data"]["attempt_count"] == 0
+
+
+def test_enqueue_idempotent_does_not_increment_attempts(tmp_path: Path, capsys) -> None:
+    db, sid = _seed_with_source_item(tmp_path)
+    main([
+        "--db", str(db), "enqueue-media-retry",
+        "--source-item-id", str(sid), "--media-key", "k1", "--media-type", "audio",
+    ])
+    capsys.readouterr()
+    env = _run_cli(
+        "--db", str(db), "--json", "enqueue-media-retry",
+        "--source-item-id", str(sid), "--media-key", "k1", "--chat-id", "updated-chat",
+        capsys=capsys,
+    )
+    _assert_envelope(env, subcommand="enqueue-media-retry")
+    assert env["data"]["attempt_count"] == 0
+    assert env["data"]["chat_id"] == "updated-chat"
+
+
+def test_process_media_retry_queue_envelope(tmp_path: Path, capsys) -> None:
+    db, sid = _seed_with_source_item(tmp_path)
+    main([
+        "--db", str(db), "enqueue-media-retry",
+        "--source-item-id", str(sid), "--media-key", "k-process", "--media-type", "audio",
+    ])
+    capsys.readouterr()
+    env = _run_cli(
+        "--db", str(db), "--json", "process-media-retry-queue", "--limit", "10",
+        capsys=capsys,
+    )
+    _assert_envelope(env, subcommand="process-media-retry-queue")
+    expected = {"attempted", "expired", "recovered", "failed", "pending_remaining", "rows"}
+    assert set(env["data"].keys()) >= expected
+    assert env["data"]["attempted"] == 1
+    assert env["data"]["rows"][0]["status"] == "retrying"
+    assert env["data"]["rows"][0]["attempt_count"] == 1
+
+
+def test_record_outcome_expired_requires_no_path(tmp_path: Path, capsys) -> None:
+    """HTTP 410 / 403 = terminal expired. Must not require media_path."""
+    db, sid = _seed_with_source_item(tmp_path)
+    main([
+        "--db", str(db), "enqueue-media-retry",
+        "--source-item-id", str(sid), "--media-key", "k-expired", "--media-type", "audio",
+    ])
+    main(["--db", str(db), "process-media-retry-queue"])
+    capsys.readouterr()
+    main(["--db", str(db), "--json", "list-media-retries", "--status", "retrying"])
+    listed = json.loads(capsys.readouterr().out.strip())
+    retry_id = listed["data"][0]["id"]
+    capsys.readouterr()
+    env = _run_cli(
+        "--db", str(db), "--json", "record-media-retry-outcome",
+        "--retry-id", str(retry_id),
+        "--status", "expired",
+        "--last-http-status", "410",
+        "--last-error", "Gone",
+        capsys=capsys,
+    )
+    _assert_envelope(env, subcommand="record-media-retry-outcome")
+    assert env["data"]["status"] == "expired"
+    assert env["data"]["last_http_status"] == 410
+
+
+def test_record_outcome_done_requires_media_path(tmp_path: Path) -> None:
+    from memorymaster.service import MemoryService
+    db, sid = _seed_with_source_item(tmp_path)
+    svc = MemoryService(db, workspace_root=tmp_path)
+    item = svc.enqueue_media_retry(source_item_id=sid, media_key="k-done", media_type="audio")
+    svc.claim_pending_media_retries()
+    with pytest.raises(ValueError, match="media_path is required"):
+        svc.record_media_retry_outcome(item.id, status="done")
+
+
+def test_text_import_unaffected_by_media_failure(tmp_path: Path, capsys) -> None:
+    """Critical: text/source import must work even if media isn't fetchable.
+
+    The wacli fixture has 3 text rows + 1 audio + 1 image + 1 dupe. Text rows
+    must be importable and queryable regardless of media retry state.
+    """
+    db, _ = _seed_with_source_item(tmp_path)
+    capsys.readouterr()
+    env = _run_cli("--db", str(db), "--json", "extract-atlas-claims",
+                   "--scope", "project:atlas-test", capsys=capsys)
+    _assert_envelope(env, subcommand="extract-atlas-claims")
+    # Text-only evidence still produces matched claims; media retry state is independent
+    assert env["data"]["scanned"] >= 3, "text evidence must be scanned regardless of media state"
+
+
+def test_list_media_retries_filters_by_status(tmp_path: Path, capsys) -> None:
+    db, sid = _seed_with_source_item(tmp_path)
+    main(["--db", str(db), "enqueue-media-retry", "--source-item-id", str(sid),
+          "--media-key", "k-a", "--media-type", "audio"])
+    main(["--db", str(db), "enqueue-media-retry", "--source-item-id", str(sid),
+          "--media-key", "k-b", "--media-type", "audio"])
+    main(["--db", str(db), "process-media-retry-queue", "--limit", "10"])
+    capsys.readouterr()
+    env_pending = _run_cli("--db", str(db), "--json", "list-media-retries",
+                           "--status", "pending", capsys=capsys)
+    env_retrying = _run_cli("--db", str(db), "--json", "list-media-retries",
+                            "--status", "retrying", capsys=capsys)
+    assert len(env_pending["data"]) == 0
+    assert len(env_retrying["data"]) == 2
 
 
 def test_whatsapp_fixture_idempotent_reimport(tmp_path: Path, capsys) -> None:

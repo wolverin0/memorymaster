@@ -9,6 +9,7 @@ from memorymaster.models import (
     ActionProposal,
     CLAIM_LINK_TYPES,
     CLAIM_STATUSES,
+    MEDIA_RETRY_STATUSES,
     STATUS_TRANSITION_EVENT_TYPES,
     Citation,
     CitationInput,
@@ -17,6 +18,7 @@ from memorymaster.models import (
     EvidenceItem,
     Event,
     ExternalSource,
+    MediaRetryItem,
     SourceItem,
     validate_event_payload,
     validate_event_type,
@@ -2082,6 +2084,232 @@ class PostgresStore(SQLiteStore):
                 created_at=now,
             )
         return self._row_to_evidence_item(row)
+
+    # ----------------------------------------------------------------------
+    # Media retry queue (Atlas v1.4.0) — Postgres mirror of SQLite mixin
+    # ----------------------------------------------------------------------
+
+    @classmethod
+    def _row_to_media_retry(cls, row: dict[str, object]) -> MediaRetryItem:
+        return MediaRetryItem(
+            id=int(row["id"]),
+            source_item_id=int(row["source_item_id"]),
+            media_key=str(row["media_key"]),
+            chat_id=cls._as_text(row.get("chat_id")),
+            media_type=cls._as_text(row.get("media_type")),
+            media_path=cls._as_text(row.get("media_path")),
+            media_url=cls._as_text(row.get("media_url")),
+            status=str(row["status"]),
+            attempt_count=int(row["attempt_count"]),
+            last_http_status=int(row["last_http_status"]) if row.get("last_http_status") is not None else None,
+            last_error=cls._as_text(row.get("last_error")),
+            next_attempt_time=cls._as_iso(row.get("next_attempt_time")),
+            created_at=cls._as_iso(row["created_at"]) or "",
+            updated_at=cls._as_iso(row["updated_at"]) or "",
+        )
+
+    def enqueue_media_retry(
+        self,
+        *,
+        source_item_id: int,
+        media_key: str,
+        chat_id: str | None = None,
+        media_type: str | None = None,
+        media_path: str | None = None,
+        media_url: str | None = None,
+        status: str = "pending",
+        next_attempt_time: str | None = None,
+    ) -> MediaRetryItem:
+        if source_item_id <= 0:
+            raise ValueError("source_item_id must be positive.")
+        normalized_key = (media_key or "").strip()
+        if not normalized_key:
+            raise ValueError("media_key must be non-empty.")
+        if status not in MEDIA_RETRY_STATUSES:
+            raise ValueError(f"status must be one of: {', '.join(MEDIA_RETRY_STATUSES)}.")
+        now = utc_now()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM media_retry_queue WHERE source_item_id = %s AND media_key = %s",
+                (source_item_id, normalized_key),
+            )
+            existing = cur.fetchone()
+            if existing is not None:
+                cur.execute(
+                    """
+                    UPDATE media_retry_queue
+                    SET chat_id = COALESCE(%s, chat_id),
+                        media_type = COALESCE(%s, media_type),
+                        media_path = COALESCE(%s, media_path),
+                        media_url = COALESCE(%s, media_url),
+                        next_attempt_time = COALESCE(%s, next_attempt_time),
+                        updated_at = %s
+                    WHERE id = %s
+                    RETURNING *
+                    """,
+                    (chat_id, media_type, media_path, media_url, next_attempt_time, now, int(existing["id"])),
+                )
+                row = cur.fetchone()
+                return self._row_to_media_retry(row)
+            cur.execute(
+                """
+                INSERT INTO media_retry_queue (
+                    source_item_id, media_key, chat_id, media_type, media_path, media_url,
+                    status, attempt_count, last_http_status, last_error, next_attempt_time,
+                    created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 0, NULL, NULL, %s, %s, %s)
+                RETURNING *
+                """,
+                (
+                    source_item_id, normalized_key, chat_id, media_type, media_path, media_url,
+                    status, next_attempt_time, now, now,
+                ),
+            )
+            row = cur.fetchone()
+            self._insert_event_row(
+                conn,
+                claim_id=None,
+                event_type="media_process",
+                from_status=None,
+                to_status=status,
+                details="media_retry_enqueued",
+                payload={"retry_id": int(row["id"]), "source_item_id": source_item_id, "media_key": normalized_key},
+                created_at=now,
+            )
+        return self._row_to_media_retry(row)
+
+    def claim_pending_media_retries(self, limit: int = 25) -> list[MediaRetryItem]:
+        if limit <= 0:
+            return []
+        now = utc_now()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE media_retry_queue
+                SET status = 'retrying',
+                    attempt_count = attempt_count + 1,
+                    updated_at = %s
+                WHERE id IN (
+                    SELECT id FROM media_retry_queue
+                    WHERE status = 'pending'
+                      AND (next_attempt_time IS NULL OR next_attempt_time <= %s)
+                    ORDER BY id ASC
+                    LIMIT %s
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING *
+                """,
+                (now, now, limit),
+            )
+            rows = cur.fetchall()
+            for row in rows:
+                self._insert_event_row(
+                    conn,
+                    claim_id=None,
+                    event_type="media_process",
+                    from_status="pending",
+                    to_status="retrying",
+                    details="media_retry_claimed",
+                    payload={"retry_id": int(row["id"])},
+                    created_at=now,
+                )
+        return [self._row_to_media_retry(r) for r in rows]
+
+    def record_media_retry_outcome(
+        self,
+        retry_id: int,
+        *,
+        status: str,
+        media_path: str | None = None,
+        last_http_status: int | None = None,
+        last_error: str | None = None,
+        next_attempt_time: str | None = None,
+    ) -> MediaRetryItem:
+        if retry_id <= 0:
+            raise ValueError("retry_id must be positive.")
+        if status not in MEDIA_RETRY_STATUSES:
+            raise ValueError(f"status must be one of: {', '.join(MEDIA_RETRY_STATUSES)}.")
+        if status == "done" and not media_path:
+            raise ValueError("media_path is required when status='done'.")
+        now = utc_now()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM media_retry_queue WHERE id = %s", (retry_id,))
+            current = cur.fetchone()
+            if current is None:
+                raise ValueError(f"media_retry_queue row {retry_id} does not exist.")
+            new_path = media_path if media_path is not None else current["media_path"]
+            new_http = last_http_status if last_http_status is not None else current["last_http_status"]
+            new_err = last_error if last_error is not None else current["last_error"]
+            new_next = next_attempt_time if next_attempt_time is not None else current["next_attempt_time"]
+            cur.execute(
+                """
+                UPDATE media_retry_queue
+                SET status = %s,
+                    media_path = %s,
+                    last_http_status = %s,
+                    last_error = %s,
+                    next_attempt_time = %s,
+                    updated_at = %s
+                WHERE id = %s
+                RETURNING *
+                """,
+                (status, new_path, new_http, new_err, new_next, now, retry_id),
+            )
+            row = cur.fetchone()
+            self._insert_event_row(
+                conn,
+                claim_id=None,
+                event_type="media_process",
+                from_status=str(current["status"]),
+                to_status=status,
+                details=f"media_retry_outcome_{status}",
+                payload={
+                    "retry_id": retry_id,
+                    "http_status": last_http_status,
+                    "has_path": bool(new_path),
+                },
+                created_at=now,
+            )
+        return self._row_to_media_retry(row)
+
+    def list_media_retries(
+        self,
+        *,
+        status: str | None = None,
+        source_item_id: int | None = None,
+        limit: int = 100,
+    ) -> list[MediaRetryItem]:
+        clauses: list[str] = []
+        params: list[object] = []
+        if status:
+            if status not in MEDIA_RETRY_STATUSES:
+                raise ValueError(f"status must be one of: {', '.join(MEDIA_RETRY_STATUSES)}.")
+            clauses.append("status = %s")
+            params.append(status)
+        if source_item_id is not None:
+            if source_item_id <= 0:
+                raise ValueError("source_item_id must be positive.")
+            clauses.append("source_item_id = %s")
+            params.append(source_item_id)
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT * FROM media_retry_queue {where_sql} ORDER BY updated_at DESC, id DESC LIMIT %s",
+                params,
+            )
+            rows = cur.fetchall()
+        return [self._row_to_media_retry(r) for r in rows]
+
+    def media_retry_status_counts(self) -> dict[str, int]:
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT status, COUNT(*) AS n FROM media_retry_queue GROUP BY status")
+            rows = cur.fetchall()
+        counts = {s: 0 for s in MEDIA_RETRY_STATUSES}
+        for r in rows:
+            counts[str(r["status"])] = int(r["n"])
+        return counts
 
     def update_action_proposal_fields(
         self,
