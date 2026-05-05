@@ -79,6 +79,8 @@ def build_parser() -> argparse.ArgumentParser:
     export_actions.add_argument("--limit", type=int, default=100, help="Maximum approved proposals")
     export_actions.add_argument("--dry-run", action="store_true", help="Write file but keep proposals approved")
 
+    sub.add_parser("atlas-version", help="Print Atlas API/CLI contract version and full spec")
+
     cycle = sub.add_parser("run-cycle", help="Run extractor, validator, decay, and optional compact")
     cycle.add_argument("--with-compact", action="store_true", help="Run compactor at the end of cycle")
     cycle.add_argument("--with-dream-sync", action="store_true", help="Sync claims with Claude Code Auto Dream after cycle")

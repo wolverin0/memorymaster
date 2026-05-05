@@ -11,6 +11,7 @@ import time
 
 from memorymaster.cli_handlers_basic import (
     _handle_action_proposals,
+    _handle_atlas_version,
     _handle_check_staleness,
     _handle_compact,
     _handle_compact_summaries,
@@ -641,6 +642,7 @@ COMMAND_HANDLERS: dict[str, object] = {
     "action-proposals": _handle_action_proposals,
     "resolve-action-proposal": _handle_resolve_action_proposal,
     "export-actions": _handle_export_actions,
+    "atlas-version": _handle_atlas_version,
     "run-cycle": _handle_run_cycle,
     "query": _handle_query,
     "context": _handle_context,

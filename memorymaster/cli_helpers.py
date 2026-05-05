@@ -40,9 +40,22 @@ def _claim_to_dict(claim) -> dict:
     return asdict(claim) if is_dataclass(claim) else dict(claim)
 
 
-def _json_envelope(data, *, total: int | None = None, query_ms: float) -> str:
-    """Format the standard JSON envelope for --json output."""
+def _json_envelope(
+    data,
+    *,
+    total: int | None = None,
+    query_ms: float,
+    extra_meta: dict | None = None,
+) -> str:
+    """Format the standard JSON envelope for --json output.
+
+    ``extra_meta`` is merged into ``meta`` and is the supported way for
+    domain-specific subcommands (Atlas, etc.) to add stable meta fields like
+    ``atlas_contract_version`` without forking the envelope.
+    """
     meta: dict = {"query_ms": round(query_ms, 2), **({"total": total} if total is not None else {})}
+    if extra_meta:
+        meta.update(extra_meta)
     return json.dumps({"ok": True, "data": data, "meta": meta}, indent=2, default=_json_default)
 
 
