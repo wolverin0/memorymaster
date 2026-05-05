@@ -1,4 +1,4 @@
-# Atlas Inbox API/CLI Contract — v1.4.0
+# Atlas Inbox API/CLI Contract — v1.5.0
 
 **Audience:** LifeAgent (and any other Atlas frontend) consuming MemoryMaster's Atlas Inbox backend.
 
@@ -79,6 +79,8 @@ Non-Atlas subcommands (the rest of MemoryMaster) emit the same envelope **withou
 | `process-media-retry-queue` | `--limit <int>` (def 25) | `{attempted, expired, recovered, failed, pending_remaining, rows:[MediaRetryItem]}` | `attempted` |
 | `record-media-retry-outcome` | `--retry-id <int>` (req), `--status {pending,retrying,expired,done,failed}` (req), `--media-path` (required for `done`), `--last-http-status`, `--last-error`, `--next-attempt-time` | `MediaRetryItem` | `1` |
 | `list-media-retries` | `--status`, `--source-item-id`, `--limit` (def 100) | `list[MediaRetryItem]` | `len(data)` |
+| `transcribe-source-item` | `--source-item-id <int>` (req), `--provider {mock,openai}` (def `mock`) | `{source_item_id, created, evidence, error, provider}` | `1 if evidence else 0` |
+| `ocr-source-item` | `--source-item-id <int>` (req), `--provider {mock,tesseract}` (def `mock`) | same shape | same |
 | `export-actions` | `--output <path>` (req), `--destination` (def `super-productivity`), `--limit` (def 100), `--dry-run` | `{destination, output_path, exported, proposal_ids:[int]}` | `exported` |
 | `atlas-version` | (none) | `{atlas_contract_version, atlas_contract_name, subcommands, endpoints, breaking_changes_since}` | `1` |
 
@@ -98,6 +100,39 @@ Both tables expose a `sensitivity` field. Allowed values:
 Set via `label-source-item` / `label-evidence-item` CLIs, or via the service methods `set_source_item_sensitivity` / `set_evidence_item_sensitivity`. **Re-importing a labeled `source_item` via `import-whatsapp` PRESERVES the label** unless the importer explicitly passes a new sensitivity — operator decisions are sticky.
 
 LifeAgent should treat these as authoritative backend labels and use them to filter/display review surfaces.
+
+### Real provider adapters (v1.5.0)
+
+`memorymaster/media_providers.py` ships two real adapters behind the existing `TranscriptionProvider` / `OcrProvider` `Protocol`s. Mock providers remain the default.
+
+| Adapter | Class | Optional dependency | Env vars |
+|---|---|---|---|
+| OpenAI Whisper transcription | `OpenAIWhisperTranscriptionProvider` | None (stdlib only — urllib + manual multipart) | `OPENAI_API_KEY` (required at call time), `OPENAI_BASE_URL` (default `https://api.openai.com/v1`) |
+| Tesseract OCR | `TesseractOcrProvider` | `pytesseract` Python package + system `tesseract` binary | None |
+
+**Lazy validation:** importing the module never fails. Optional dependencies are checked only when `.transcribe(path)` / `.extract(path)` is called. Missing deps raise `RuntimeError` with a helpful install message — `_process_media` catches it and records a `media_process_failed` event so the source_item is preserved.
+
+**Factory:**
+
+```python
+from memorymaster.media_providers import get_transcription_provider, get_ocr_provider
+provider = get_transcription_provider("openai")    # or "mock"
+provider = get_ocr_provider("tesseract")            # or "mock"
+```
+
+**CLI:**
+
+```bash
+# Transcribe an audio source_item via Whisper
+python -m memorymaster --db /data/atlas-inbox.db --json transcribe-source-item \
+  --source-item-id 42 --provider openai
+
+# OCR an image source_item via tesseract
+python -m memorymaster --db /data/atlas-inbox.db --json ocr-source-item \
+  --source-item-id 99 --provider tesseract
+```
+
+Both CLIs run the existing `process_transcription` / `process_ocr` pipeline — failures are recorded as `media_process` events with `details="media_process_failed"`, never raised. Re-running on a source_item that already has the corresponding evidence type returns `created=false` and the existing evidence row.
 
 ### Media retry queue (v1.4.0)
 

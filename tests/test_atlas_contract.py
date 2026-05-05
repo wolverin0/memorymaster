@@ -74,6 +74,8 @@ def test_atlas_contract_payload_shape() -> None:
     "process-media-retry-queue",
     "record-media-retry-outcome",
     "list-media-retries",
+    "transcribe-source-item",
+    "ocr-source-item",
     "export-actions",
     "atlas-version",
 ])
@@ -779,6 +781,124 @@ def test_list_media_retries_filters_by_status(tmp_path: Path, capsys) -> None:
                             "--status", "retrying", capsys=capsys)
     assert len(env_pending["data"]) == 0
     assert len(env_retrying["data"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Real provider adapters (v1.5.0)
+# ---------------------------------------------------------------------------
+
+
+def test_provider_factory_returns_mock() -> None:
+    from memorymaster.media_providers import get_ocr_provider, get_transcription_provider
+    assert get_transcription_provider("mock").provider_name == "mock-transcription"
+    assert get_ocr_provider("mock").provider_name == "mock-ocr"
+
+
+def test_provider_factory_rejects_unknown() -> None:
+    from memorymaster.media_providers import get_ocr_provider, get_transcription_provider
+    with pytest.raises(ValueError, match="Unknown transcription provider"):
+        get_transcription_provider("nonexistent")
+    with pytest.raises(ValueError, match="Unknown OCR provider"):
+        get_ocr_provider("nonexistent")
+
+
+def test_openai_whisper_class_lazy_imports() -> None:
+    """Class must instantiate without OPENAI_API_KEY in env (lazy validation)."""
+    import os
+    saved = os.environ.pop("OPENAI_API_KEY", None)
+    try:
+        from memorymaster.media_providers import OpenAIWhisperTranscriptionProvider
+        provider = OpenAIWhisperTranscriptionProvider()
+        assert provider.provider_name == "openai-whisper"
+        with pytest.raises(RuntimeError, match="requires OPENAI_API_KEY"):
+            provider.transcribe("/nonexistent/path.mp3")
+    finally:
+        if saved is not None:
+            os.environ["OPENAI_API_KEY"] = saved
+
+
+def test_tesseract_class_lazy_imports() -> None:
+    """Class must instantiate without pytesseract installed; check is lazy."""
+    from memorymaster.media_providers import TesseractOcrProvider
+    provider = TesseractOcrProvider()
+    assert provider.provider_name == "tesseract"
+
+
+def test_transcribe_source_item_mock_envelope(tmp_path: Path, capsys) -> None:
+    fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
+    db = tmp_path / "atlas.db"
+    main(["--db", str(db), "init-db"])
+    main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
+    from memorymaster.service import MemoryService
+    svc = MemoryService(db, workspace_root=tmp_path)
+    audio_item = next((i for i in svc.list_evidence_items() if i.evidence_type == "message_text"), None)
+    # Find the audio source_item
+    with svc.store.connect() as conn:
+        rows = conn.execute("SELECT id FROM source_items WHERE item_type='audio' LIMIT 1").fetchall()
+        sid = int(rows[0]["id"])
+
+    capsys.readouterr()
+    env = _run_cli(
+        "--db", str(db), "--json", "transcribe-source-item",
+        "--source-item-id", str(sid), "--provider", "mock",
+        capsys=capsys,
+    )
+    _assert_envelope(env, subcommand="transcribe-source-item")
+    assert set(env["data"].keys()) >= {"source_item_id", "created", "evidence", "error", "provider"}
+    assert env["data"]["provider"] == "mock-transcription"
+    assert env["data"]["evidence"] is not None
+    assert env["data"]["evidence"]["evidence_type"] == "transcript"
+
+
+def test_ocr_source_item_mock_envelope(tmp_path: Path, capsys) -> None:
+    fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
+    db = tmp_path / "atlas.db"
+    main(["--db", str(db), "init-db"])
+    main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
+    from memorymaster.service import MemoryService
+    svc = MemoryService(db, workspace_root=tmp_path)
+    with svc.store.connect() as conn:
+        rows = conn.execute("SELECT id FROM source_items WHERE item_type='image' LIMIT 1").fetchall()
+        sid = int(rows[0]["id"])
+
+    capsys.readouterr()
+    env = _run_cli(
+        "--db", str(db), "--json", "ocr-source-item",
+        "--source-item-id", str(sid), "--provider", "mock",
+        capsys=capsys,
+    )
+    _assert_envelope(env, subcommand="ocr-source-item")
+    assert env["data"]["provider"] == "mock-ocr"
+    assert env["data"]["evidence"]["evidence_type"] == "ocr"
+
+
+def test_transcribe_failure_records_event_does_not_crash(tmp_path: Path) -> None:
+    """Provider failure must be recorded as media_process event, not raised."""
+    from memorymaster.media_processing import process_transcription
+    from memorymaster.service import MemoryService
+
+    fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
+    db = tmp_path / "atlas.db"
+    main(["--db", str(db), "init-db"])
+    main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
+    svc = MemoryService(db, workspace_root=tmp_path)
+    with svc.store.connect() as conn:
+        rows = conn.execute("SELECT id FROM source_items WHERE item_type='audio' LIMIT 1").fetchall()
+        sid = int(rows[0]["id"])
+
+    class _AlwaysFails:
+        provider_name = "test-failure"
+        def transcribe(self, path):  # noqa: ARG002
+            raise RuntimeError("simulated provider failure")
+
+    n_before = len(svc.list_events(event_type="media_process"))
+    outcome = process_transcription(svc, sid, _AlwaysFails())
+    assert outcome.evidence is None
+    assert "simulated provider failure" in (outcome.error or "")
+    n_after = len(svc.list_events(event_type="media_process"))
+    assert n_after > n_before, "failure must be recorded as media_process event"
+    failure_events = [e for e in svc.list_events(event_type="media_process") if e.details == "media_process_failed"]
+    assert failure_events, "expected a media_process_failed event"
 
 
 def test_whatsapp_fixture_idempotent_reimport(tmp_path: Path, capsys) -> None:
