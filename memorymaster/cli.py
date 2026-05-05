@@ -90,6 +90,32 @@ def build_parser() -> argparse.ArgumentParser:
     label_evidence.add_argument("--sensitivity", choices=["none", "low", "medium", "high", "redacted", "clear"], required=True,
                                 help="'clear' resets to NULL (unlabeled).")
 
+    enqueue_retry = sub.add_parser("enqueue-media-retry", help="Enqueue a media-retry row (LifeAgent calls when wacli reports a missing media)")
+    enqueue_retry.add_argument("--source-item-id", type=int, required=True, help="source_items.id")
+    enqueue_retry.add_argument("--media-key", required=True, help="External media identifier (e.g. wacli message id)")
+    enqueue_retry.add_argument("--chat-id", default=None)
+    enqueue_retry.add_argument("--media-type", default=None, help="audio|image|document|video")
+    enqueue_retry.add_argument("--media-path", default=None, help="Local path if already partially downloaded")
+    enqueue_retry.add_argument("--media-url", default=None, help="Remote URL hint")
+    enqueue_retry.add_argument("--next-attempt-time", default=None, help="ISO-8601; row stays 'pending' until this passes")
+
+    process_retry = sub.add_parser("process-media-retry-queue", help="Claim pending media-retry rows for LifeAgent to fetch (transitions pending->retrying, returns counts)")
+    process_retry.add_argument("--limit", type=int, default=25, help="Max rows to claim this tick")
+
+    record_outcome = sub.add_parser("record-media-retry-outcome", help="Record LifeAgent's fetch result for a media-retry row")
+    record_outcome.add_argument("--retry-id", type=int, required=True, help="media_retry_queue.id")
+    record_outcome.add_argument("--status", choices=["pending", "retrying", "expired", "done", "failed"], required=True,
+                                help="'done' requires --media-path. 'expired' is terminal (HTTP 403/410).")
+    record_outcome.add_argument("--media-path", default=None, help="Local path of the fetched file (required for 'done')")
+    record_outcome.add_argument("--last-http-status", type=int, default=None)
+    record_outcome.add_argument("--last-error", default=None)
+    record_outcome.add_argument("--next-attempt-time", default=None, help="ISO-8601; for retry-later semantics")
+
+    list_retries = sub.add_parser("list-media-retries", help="List media-retry rows")
+    list_retries.add_argument("--status", choices=["pending", "retrying", "expired", "done", "failed"], default=None)
+    list_retries.add_argument("--source-item-id", type=int, default=None)
+    list_retries.add_argument("--limit", type=int, default=100)
+
     export_actions = sub.add_parser("export-actions", help="Export approved Atlas action proposals")
     export_actions.add_argument("--output", required=True, help="Output JSON path")
     export_actions.add_argument("--destination", default="super-productivity", help="Destination filter")

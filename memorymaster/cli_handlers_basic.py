@@ -432,6 +432,135 @@ def _handle_resolve_action_proposal(
     return 0
 
 
+def _handle_enqueue_media_retry(
+    args: argparse.Namespace,
+    service,
+    parser: argparse.ArgumentParser,
+    effective_db: str,
+) -> int:
+    from memorymaster.atlas_contract import atlas_meta
+
+    t0 = time.perf_counter()
+    item = service.enqueue_media_retry(
+        source_item_id=args.source_item_id,
+        media_key=args.media_key,
+        chat_id=args.chat_id,
+        media_type=args.media_type,
+        media_path=args.media_path,
+        media_url=args.media_url,
+        next_attempt_time=args.next_attempt_time,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(
+            asdict(item),
+            total=1,
+            query_ms=elapsed_ms,
+            extra_meta=atlas_meta("enqueue-media-retry"),
+        ))
+    else:
+        print(f"retry #{item.id} status={item.status} attempts={item.attempt_count} key={item.media_key}")
+    return 0
+
+
+def _handle_process_media_retry_queue(
+    args: argparse.Namespace,
+    service,
+    parser: argparse.ArgumentParser,
+    effective_db: str,
+) -> int:
+    from memorymaster.atlas_contract import atlas_meta
+
+    t0 = time.perf_counter()
+    claimed = service.claim_pending_media_retries(limit=args.limit)
+    counts = service.media_retry_status_counts()
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    payload = {
+        "attempted": len(claimed),
+        "expired": counts.get("expired", 0),
+        "recovered": counts.get("done", 0),
+        "failed": counts.get("failed", 0),
+        "pending_remaining": counts.get("pending", 0),
+        "rows": [asdict(r) for r in claimed],
+    }
+    if args.json_output:
+        print(_json_envelope(
+            payload,
+            total=payload["attempted"],
+            query_ms=elapsed_ms,
+            extra_meta=atlas_meta("process-media-retry-queue"),
+        ))
+    else:
+        print(
+            f"media-retry tick: attempted={payload['attempted']} "
+            f"expired={payload['expired']} recovered={payload['recovered']} "
+            f"failed={payload['failed']} pending_remaining={payload['pending_remaining']}"
+        )
+        for r in claimed:
+            print(f"  retry #{r.id} attempt={r.attempt_count} key={r.media_key} src={r.source_item_id}")
+    return 0
+
+
+def _handle_record_media_retry_outcome(
+    args: argparse.Namespace,
+    service,
+    parser: argparse.ArgumentParser,
+    effective_db: str,
+) -> int:
+    from memorymaster.atlas_contract import atlas_meta
+
+    t0 = time.perf_counter()
+    item = service.record_media_retry_outcome(
+        args.retry_id,
+        status=args.status,
+        media_path=args.media_path,
+        last_http_status=args.last_http_status,
+        last_error=args.last_error,
+        next_attempt_time=args.next_attempt_time,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(
+            asdict(item),
+            total=1,
+            query_ms=elapsed_ms,
+            extra_meta=atlas_meta("record-media-retry-outcome"),
+        ))
+    else:
+        print(f"retry #{item.id} status={item.status} attempts={item.attempt_count} http={item.last_http_status or '-'}")
+    return 0
+
+
+def _handle_list_media_retries(
+    args: argparse.Namespace,
+    service,
+    parser: argparse.ArgumentParser,
+    effective_db: str,
+) -> int:
+    from memorymaster.atlas_contract import atlas_meta
+
+    t0 = time.perf_counter()
+    rows = service.list_media_retries(
+        status=args.status,
+        source_item_id=args.source_item_id,
+        limit=args.limit,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    payload = [asdict(r) for r in rows]
+    if args.json_output:
+        print(_json_envelope(
+            payload,
+            total=len(payload),
+            query_ms=elapsed_ms,
+            extra_meta=atlas_meta("list-media-retries"),
+        ))
+    else:
+        for r in rows:
+            print(f"#{r.id} [{r.status}] attempts={r.attempt_count} src={r.source_item_id} key={r.media_key}")
+        print(f"{len(rows)} retry row(s)")
+    return 0
+
+
 def _handle_label_source_item(
     args: argparse.Namespace,
     service,

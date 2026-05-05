@@ -202,3 +202,27 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_action_proposals_idempotency_key
     WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_source_items_sensitivity ON source_items(sensitivity);
 CREATE INDEX IF NOT EXISTS idx_evidence_items_sensitivity ON evidence_items(sensitivity);
+
+CREATE TABLE IF NOT EXISTS media_retry_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_item_id INTEGER NOT NULL,
+    media_key TEXT NOT NULL,
+    chat_id TEXT,
+    media_type TEXT,
+    media_path TEXT,
+    media_url TEXT,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'retrying', 'expired', 'done', 'failed')),
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_http_status INTEGER,
+    last_error TEXT,
+    next_attempt_time TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (source_item_id) REFERENCES source_items(id) ON DELETE CASCADE,
+    UNIQUE (source_item_id, media_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_media_retry_status ON media_retry_queue(status);
+CREATE INDEX IF NOT EXISTS idx_media_retry_next_attempt ON media_retry_queue(next_attempt_time);
+CREATE INDEX IF NOT EXISTS idx_media_retry_source_item ON media_retry_queue(source_item_id);

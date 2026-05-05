@@ -1,4 +1,4 @@
-# Atlas Inbox API/CLI Contract — v1.3.0
+# Atlas Inbox API/CLI Contract — v1.4.0
 
 **Audience:** LifeAgent (and any other Atlas frontend) consuming MemoryMaster's Atlas Inbox backend.
 
@@ -75,6 +75,10 @@ Non-Atlas subcommands (the rest of MemoryMaster) emit the same envelope **withou
 | `edit-action-proposal` | `--proposal-id <int>` (req), `--title` (non-blank if provided), `--description`, `--suggested-due-at` (ISO-8601), `--confidence` (0.0-1.0). At least one field required. | `ActionProposal` | `1` |
 | `label-source-item` | `--source-item-id <int>` (req), `--sensitivity {none,low,medium,high,redacted,clear}` (req) | `SourceItem` | `1` |
 | `label-evidence-item` | `--evidence-item-id <int>` (req), `--sensitivity {none,low,medium,high,redacted,clear}` (req) | `EvidenceItem` | `1` |
+| `enqueue-media-retry` | `--source-item-id <int>` (req), `--media-key <str>` (req), `--chat-id`, `--media-type`, `--media-path`, `--media-url`, `--next-attempt-time` (ISO-8601) | `MediaRetryItem` | `1` |
+| `process-media-retry-queue` | `--limit <int>` (def 25) | `{attempted, expired, recovered, failed, pending_remaining, rows:[MediaRetryItem]}` | `attempted` |
+| `record-media-retry-outcome` | `--retry-id <int>` (req), `--status {pending,retrying,expired,done,failed}` (req), `--media-path` (required for `done`), `--last-http-status`, `--last-error`, `--next-attempt-time` | `MediaRetryItem` | `1` |
+| `list-media-retries` | `--status`, `--source-item-id`, `--limit` (def 100) | `list[MediaRetryItem]` | `len(data)` |
 | `export-actions` | `--output <path>` (req), `--destination` (def `super-productivity`), `--limit` (def 100), `--dry-run` | `{destination, output_path, exported, proposal_ids:[int]}` | `exported` |
 | `atlas-version` | (none) | `{atlas_contract_version, atlas_contract_name, subcommands, endpoints, breaking_changes_since}` | `1` |
 
@@ -94,6 +98,34 @@ Both tables expose a `sensitivity` field. Allowed values:
 Set via `label-source-item` / `label-evidence-item` CLIs, or via the service methods `set_source_item_sensitivity` / `set_evidence_item_sensitivity`. **Re-importing a labeled `source_item` via `import-whatsapp` PRESERVES the label** unless the importer explicitly passes a new sensitivity — operator decisions are sticky.
 
 LifeAgent should treat these as authoritative backend labels and use them to filter/display review surfaces.
+
+### Media retry queue (v1.4.0)
+
+**Architecture:** MemoryMaster owns durable queue STATE; LifeAgent/wacli owns the actual WhatsApp media download. There is **no HTTP fetcher in MemoryMaster**.
+
+**Workflow:**
+
+1. wacli reports a missing/failing media → LifeAgent calls `enqueue-media-retry` (idempotent on `(source_item_id, media_key)`).
+2. Periodic tick: LifeAgent calls `process-media-retry-queue --limit N`. Pending rows whose `next_attempt_time` has passed are atomically promoted to `retrying` and `attempt_count++`. Returns the claimed rows so LifeAgent knows what to fetch.
+3. LifeAgent fetches each via wacli, then calls `record-media-retry-outcome --retry-id N --status X` per row:
+   - `done` → success; **`--media-path` required**.
+   - `expired` → terminal (HTTP 403/410 — WhatsApp media is gone).
+   - `failed` → gave up but not WhatsApp-terminal.
+   - `pending` → transient failure, retry later (set `--next-attempt-time`).
+
+**Status semantics:**
+
+| Status | Meaning |
+|---|---|
+| `pending` | Enqueued, awaiting `next_attempt_time` |
+| `retrying` | Claimed by `process-media-retry-queue`; LifeAgent is fetching |
+| `done` | LifeAgent reported success; `media_path` populated |
+| `expired` | Terminal — WhatsApp returned 403/410 |
+| `failed` | LifeAgent gave up (max attempts, etc.) |
+
+**Critical guarantee:** Text/source imports continue working even when media retries fail. The queue tracks ONLY media-fetch state; it does not block claim extraction or proposal generation from text evidence.
+
+**Audit:** every state transition records a `media_process` event with `from_status` / `to_status` and a payload including `retry_id`. Inspectable via `list-events --event-type media_process`.
 
 ### `ActionProposal` row shape
 

@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from typing import Any
 
-ATLAS_CONTRACT_VERSION = "1.3.0"
+ATLAS_CONTRACT_VERSION = "1.4.0"
 """Semver string for the Atlas API/CLI contract.
 
 LifeAgent and any other consumer MUST refuse to start if the major component
@@ -169,6 +169,59 @@ ATLAS_SUBCOMMANDS: list[dict[str, Any]] = [
         "data_keys": "EvidenceItem",
         "meta_total": "1",
         "note": "Records a media_process event (details='evidence_item_sensitivity_set') when the value changes; no-op records nothing.",
+    },
+    {
+        "name": "enqueue-media-retry",
+        "description": "Enqueue a media-retry row. LifeAgent/wacli calls this when a WhatsApp media is missing or fetch failed. Idempotent on (source_item_id, media_key).",
+        "inputs": {
+            "--source-item-id": {"type": "int", "required": True},
+            "--media-key": {"type": "str", "required": True, "note": "External media identifier (wacli message id)."},
+            "--chat-id": {"type": "str", "required": False},
+            "--media-type": {"type": "str", "required": False, "note": "audio|image|document|video"},
+            "--media-path": {"type": "str", "required": False, "note": "Local path if partially downloaded."},
+            "--media-url": {"type": "str", "required": False, "note": "Remote URL hint."},
+            "--next-attempt-time": {"type": "str", "required": False, "note": "ISO-8601; row stays 'pending' until this passes."},
+        },
+        "data_keys": "MediaRetryItem",
+        "meta_total": "1",
+    },
+    {
+        "name": "process-media-retry-queue",
+        "description": "Claim up to N pending media-retry rows whose next_attempt_time has passed. Transitions pending -> retrying, increments attempt_count, returns claimed rows + queue counts. LifeAgent then fetches each via wacli and reports back via record-media-retry-outcome.",
+        "inputs": {
+            "--limit": {"type": "int", "required": False, "default": 25, "min": 1},
+        },
+        "data_keys": ["attempted", "expired", "recovered", "failed", "pending_remaining", "rows"],
+        "meta_total": "attempted",
+    },
+    {
+        "name": "record-media-retry-outcome",
+        "description": "Record LifeAgent's fetch result for a media-retry row. 'done' requires --media-path. 'expired' is terminal (HTTP 403/410). Records audit event with from/to status.",
+        "inputs": {
+            "--retry-id": {"type": "int", "required": True},
+            "--status": {
+                "type": "str",
+                "required": True,
+                "allowed": ["pending", "retrying", "expired", "done", "failed"],
+            },
+            "--media-path": {"type": "str", "required": False, "note": "Required when status='done'."},
+            "--last-http-status": {"type": "int", "required": False},
+            "--last-error": {"type": "str", "required": False},
+            "--next-attempt-time": {"type": "str", "required": False},
+        },
+        "data_keys": "MediaRetryItem",
+        "meta_total": "1",
+    },
+    {
+        "name": "list-media-retries",
+        "description": "List media-retry rows; filter by status and/or source_item_id.",
+        "inputs": {
+            "--status": {"type": "str", "required": False, "allowed": ["pending", "retrying", "expired", "done", "failed"]},
+            "--source-item-id": {"type": "int", "required": False},
+            "--limit": {"type": "int", "required": False, "default": 100},
+        },
+        "data_keys": "list[MediaRetryItem]",
+        "meta_total": "len(data)",
     },
     {
         "name": "edit-action-proposal",
