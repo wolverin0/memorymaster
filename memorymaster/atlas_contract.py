@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from typing import Any
 
-ATLAS_CONTRACT_VERSION = "1.1.0"
+ATLAS_CONTRACT_VERSION = "1.2.0"
 """Semver string for the Atlas API/CLI contract.
 
 LifeAgent and any other consumer MUST refuse to start if the major component
@@ -139,6 +139,20 @@ ATLAS_SUBCOMMANDS: list[dict[str, Any]] = [
         },
         "data_keys": "ActionProposal",
         "meta_total": "1",
+    },
+    {
+        "name": "edit-action-proposal",
+        "description": "Edit user-facing fields of an Atlas action proposal (title/description/due/confidence). Status/external_ref/exported_at are NOT editable here — use resolve-action-proposal for those.",
+        "inputs": {
+            "--proposal-id": {"type": "int", "required": True},
+            "--title": {"type": "str", "required": False, "default": None, "note": "Non-blank if provided."},
+            "--description": {"type": "str", "required": False, "default": None},
+            "--suggested-due-at": {"type": "str", "required": False, "default": None, "note": "ISO-8601."},
+            "--confidence": {"type": "float", "required": False, "default": None, "min": 0.0, "max": 1.0},
+        },
+        "data_keys": "ActionProposal",
+        "meta_total": "1",
+        "note": "Records an action_proposal event with details='action_proposal_fields_updated' and a payload listing the changed field names. No-op (no fields differ from current) does NOT record an event.",
     },
     {
         "name": "export-actions",

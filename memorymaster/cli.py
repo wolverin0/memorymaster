@@ -73,6 +73,13 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_action.add_argument("--status", choices=["candidate", "approved", "rejected", "exported", "failed"], required=True)
     resolve_action.add_argument("--external-ref", default=None, help="External task/action id after export")
 
+    edit_action = sub.add_parser("edit-action-proposal", help="Edit user-facing fields of an Atlas action proposal (title/description/due/confidence)")
+    edit_action.add_argument("--proposal-id", type=int, required=True, help="Action proposal id")
+    edit_action.add_argument("--title", default=None, help="New title (non-blank if provided)")
+    edit_action.add_argument("--description", default=None, help="New description")
+    edit_action.add_argument("--suggested-due-at", default=None, help="New suggested due date (ISO-8601)")
+    edit_action.add_argument("--confidence", type=float, default=None, help="New confidence (0.0-1.0)")
+
     export_actions = sub.add_parser("export-actions", help="Export approved Atlas action proposals")
     export_actions.add_argument("--output", required=True, help="Output JSON path")
     export_actions.add_argument("--destination", default="super-productivity", help="Destination filter")

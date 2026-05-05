@@ -909,6 +909,25 @@ class MemoryService:
             limit=limit,
         )
 
+    def update_action_proposal_fields(
+        self,
+        proposal_id: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        suggested_due_at: str | None = None,
+        confidence: float | None = None,
+        payload_json: dict[str, object] | str | None = None,
+    ) -> ActionProposal:
+        return self.store.update_action_proposal_fields(
+            proposal_id,
+            title=title,
+            description=description,
+            suggested_due_at=suggested_due_at,
+            confidence=confidence,
+            payload_json=payload_json,
+        )
+
     def add_claim_link(self, source_id: int, target_id: int, link_type: str) -> ClaimLink:
         for cid in (source_id, target_id):
             claim = self.store.get_claim(cid, include_citations=False)

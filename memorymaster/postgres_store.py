@@ -1992,6 +1992,86 @@ class PostgresStore(SQLiteStore):
             raise RuntimeError("Failed to update action proposal.")
         return self._row_to_action_proposal(row)
 
+    def update_action_proposal_fields(
+        self,
+        proposal_id: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        suggested_due_at: str | None = None,
+        confidence: float | None = None,
+        payload_json: dict[str, object] | str | None = None,
+    ) -> ActionProposal:
+        """Postgres mirror of SQLite update_action_proposal_fields."""
+        _, _, Jsonb = self._load_psycopg()
+        if proposal_id <= 0:
+            raise ValueError("proposal_id must be positive.")
+        if title is None and description is None and suggested_due_at is None and confidence is None and payload_json is None:
+            raise ValueError("at least one field must be provided to update.")
+
+        normalized_title = title.strip() if title is not None else None
+        if normalized_title is not None and not normalized_title:
+            raise ValueError("title cannot be blank when provided.")
+        bounded = max(0.0, min(1.0, float(confidence))) if confidence is not None else None
+        payload = self._json_payload(payload_json) if payload_json is not None else None
+
+        now = utc_now()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM action_proposals WHERE id = %s", (proposal_id,))
+            current = cur.fetchone()
+            if current is None:
+                raise ValueError(f"Action proposal {proposal_id} does not exist.")
+
+            updates: list[str] = []
+            params: list[object] = []
+            changed: list[str] = []
+            if normalized_title is not None and normalized_title != current["title"]:
+                updates.append("title = %s")
+                params.append(normalized_title)
+                changed.append("title")
+            if description is not None and description != current["description"]:
+                updates.append("description = %s")
+                params.append(description)
+                changed.append("description")
+            if suggested_due_at is not None and suggested_due_at != current["suggested_due_at"]:
+                updates.append("suggested_due_at = %s")
+                params.append(suggested_due_at)
+                changed.append("suggested_due_at")
+            if bounded is not None and bounded != current["confidence"]:
+                updates.append("confidence = %s")
+                params.append(bounded)
+                changed.append("confidence")
+            if payload is not None and payload != current["payload_json"]:
+                updates.append("payload_json = %s")
+                params.append(Jsonb(payload))
+                changed.append("payload_json")
+
+            if not changed:
+                return self._row_to_action_proposal(current)
+
+            updates.append("updated_at = %s")
+            params.append(now)
+            params.append(proposal_id)
+
+            cur.execute(
+                f"UPDATE action_proposals SET {', '.join(updates)} WHERE id = %s RETURNING *",
+                params,
+            )
+            row = cur.fetchone()
+            self._insert_event_row(
+                conn,
+                claim_id=int(current["claim_id"]) if current["claim_id"] is not None else None,
+                event_type="action_proposal",
+                from_status=str(current["status"]),
+                to_status=str(current["status"]),
+                details="action_proposal_fields_updated",
+                payload={"proposal_id": proposal_id, "changed": changed},
+                created_at=now,
+            )
+        if row is None:
+            raise RuntimeError("Failed to update action proposal fields.")
+        return self._row_to_action_proposal(row)
+
     def list_action_proposals(
         self,
         *,
