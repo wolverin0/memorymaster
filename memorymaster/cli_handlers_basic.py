@@ -264,12 +264,18 @@ def _handle_export_metrics(args: argparse.Namespace, service, parser: argparse.A
 
 
 def _handle_init_db(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.atlas_contract import atlas_meta
+
     t0 = time.perf_counter()
     service.init_db()
     elapsed_ms = (time.perf_counter() - t0) * 1000
     db_path = effective_db if "://" in effective_db else str(Path(effective_db).resolve())
     if args.json_output:
-        print(_json_envelope({"db": db_path, "stealth": _stealth_active(args)}, query_ms=elapsed_ms))
+        print(_json_envelope(
+            {"db": db_path, "stealth": _stealth_active(args)},
+            query_ms=elapsed_ms,
+            extra_meta=atlas_meta("init-db"),
+        ))
     else:
         print(f"initialized db: {db_path}{' (stealth)' if _stealth_active(args) else ''}")
     return 0
