@@ -80,6 +80,16 @@ def build_parser() -> argparse.ArgumentParser:
     edit_action.add_argument("--suggested-due-at", default=None, help="New suggested due date (ISO-8601)")
     edit_action.add_argument("--confidence", type=float, default=None, help="New confidence (0.0-1.0)")
 
+    label_source = sub.add_parser("label-source-item", help="Set sensitivity label on an Atlas source_item")
+    label_source.add_argument("--source-item-id", type=int, required=True, help="source_items.id")
+    label_source.add_argument("--sensitivity", choices=["none", "low", "medium", "high", "redacted", "clear"], required=True,
+                              help="'clear' resets to NULL (unlabeled).")
+
+    label_evidence = sub.add_parser("label-evidence-item", help="Set sensitivity label on an Atlas evidence_item")
+    label_evidence.add_argument("--evidence-item-id", type=int, required=True, help="evidence_items.id")
+    label_evidence.add_argument("--sensitivity", choices=["none", "low", "medium", "high", "redacted", "clear"], required=True,
+                                help="'clear' resets to NULL (unlabeled).")
+
     export_actions = sub.add_parser("export-actions", help="Export approved Atlas action proposals")
     export_actions.add_argument("--output", required=True, help="Output JSON path")
     export_actions.add_argument("--destination", default="super-productivity", help="Destination filter")

@@ -432,6 +432,54 @@ def _handle_resolve_action_proposal(
     return 0
 
 
+def _handle_label_source_item(
+    args: argparse.Namespace,
+    service,
+    parser: argparse.ArgumentParser,
+    effective_db: str,
+) -> int:
+    from memorymaster.atlas_contract import atlas_meta
+
+    sensitivity = None if args.sensitivity == "clear" else args.sensitivity
+    t0 = time.perf_counter()
+    item = service.set_source_item_sensitivity(args.source_item_id, sensitivity)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(
+            asdict(item),
+            total=1,
+            query_ms=elapsed_ms,
+            extra_meta=atlas_meta("label-source-item"),
+        ))
+    else:
+        print(f"source_item #{item.id} sensitivity={item.sensitivity or '(none)'}")
+    return 0
+
+
+def _handle_label_evidence_item(
+    args: argparse.Namespace,
+    service,
+    parser: argparse.ArgumentParser,
+    effective_db: str,
+) -> int:
+    from memorymaster.atlas_contract import atlas_meta
+
+    sensitivity = None if args.sensitivity == "clear" else args.sensitivity
+    t0 = time.perf_counter()
+    item = service.set_evidence_item_sensitivity(args.evidence_item_id, sensitivity)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(
+            asdict(item),
+            total=1,
+            query_ms=elapsed_ms,
+            extra_meta=atlas_meta("label-evidence-item"),
+        ))
+    else:
+        print(f"evidence_item #{item.id} sensitivity={item.sensitivity or '(none)'}")
+    return 0
+
+
 def _handle_edit_action_proposal(
     args: argparse.Namespace,
     service,

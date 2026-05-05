@@ -68,6 +68,8 @@ def test_atlas_contract_payload_shape() -> None:
     "action-proposals",
     "resolve-action-proposal",
     "edit-action-proposal",
+    "label-source-item",
+    "label-evidence-item",
     "export-actions",
     "atlas-version",
 ])
@@ -519,6 +521,116 @@ def test_edit_action_proposal_rejects_no_fields(tmp_path: Path) -> None:
     proposal = service.list_action_proposals()[0]
     with pytest.raises(ValueError, match="at least one field"):
         service.update_action_proposal_fields(proposal.id)
+
+
+def _seed_with_proposal(tmp_path: Path) -> tuple[Path, int, int]:
+    fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
+    db = tmp_path / "atlas.db"
+    main(["--db", str(db), "init-db"])
+    main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
+    from memorymaster.service import MemoryService
+    svc = MemoryService(db, workspace_root=tmp_path)
+    items = svc.store.connect()
+    with svc.store.connect() as conn:
+        rows = conn.execute("SELECT id FROM source_items LIMIT 1").fetchall()
+        source_item_id = int(rows[0]["id"])
+        rows = conn.execute("SELECT id FROM evidence_items LIMIT 1").fetchall()
+        evidence_item_id = int(rows[0]["id"])
+    return db, source_item_id, evidence_item_id
+
+
+def test_label_source_item_envelope(tmp_path: Path, capsys) -> None:
+    db, sid, _ = _seed_with_proposal(tmp_path)
+    capsys.readouterr()
+    env = _run_cli(
+        "--db", str(db), "--json", "label-source-item",
+        "--source-item-id", str(sid),
+        "--sensitivity", "high",
+        capsys=capsys,
+    )
+    _assert_envelope(env, subcommand="label-source-item")
+    assert env["data"]["id"] == sid
+    assert env["data"]["sensitivity"] == "high"
+
+
+def test_label_evidence_item_envelope(tmp_path: Path, capsys) -> None:
+    db, _, eid = _seed_with_proposal(tmp_path)
+    capsys.readouterr()
+    env = _run_cli(
+        "--db", str(db), "--json", "label-evidence-item",
+        "--evidence-item-id", str(eid),
+        "--sensitivity", "redacted",
+        capsys=capsys,
+    )
+    _assert_envelope(env, subcommand="label-evidence-item")
+    assert env["data"]["id"] == eid
+    assert env["data"]["sensitivity"] == "redacted"
+
+
+def test_label_clear_resets_to_null(tmp_path: Path, capsys) -> None:
+    db, sid, _ = _seed_with_proposal(tmp_path)
+    main([
+        "--db", str(db), "label-source-item",
+        "--source-item-id", str(sid), "--sensitivity", "medium",
+    ])
+    capsys.readouterr()
+    env = _run_cli(
+        "--db", str(db), "--json", "label-source-item",
+        "--source-item-id", str(sid), "--sensitivity", "clear",
+        capsys=capsys,
+    )
+    _assert_envelope(env, subcommand="label-source-item")
+    assert env["data"]["sensitivity"] is None
+
+
+def test_sensitivity_preserved_on_reimport(tmp_path: Path) -> None:
+    """Re-importing a fixture must NOT wipe operator-applied labels."""
+    from memorymaster.service import MemoryService
+    fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
+    db = tmp_path / "atlas.db"
+    main(["--db", str(db), "init-db"])
+    main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
+    svc = MemoryService(db, workspace_root=tmp_path)
+    item = svc.list_evidence_items(limit=1)[0]
+    source_item = svc.get_source_item_by_id(item.source_item_id)
+    svc.set_source_item_sensitivity(source_item.id, "high")
+
+    main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
+    refreshed = svc.get_source_item_by_id(source_item.id)
+    assert refreshed.sensitivity == "high", "import must preserve operator label"
+
+
+def test_sensitivity_rejects_invalid_value(tmp_path: Path) -> None:
+    from memorymaster.service import MemoryService
+    db, sid, _ = _seed_with_proposal(tmp_path)
+    svc = MemoryService(db, workspace_root=tmp_path)
+    with pytest.raises(ValueError, match="sensitivity must be one of"):
+        svc.set_source_item_sensitivity(sid, "extreme")
+
+
+def test_sensitivity_records_audit_event_on_change(tmp_path: Path) -> None:
+    from memorymaster.service import MemoryService
+    db, sid, _ = _seed_with_proposal(tmp_path)
+    svc = MemoryService(db, workspace_root=tmp_path)
+    n_before = len(svc.list_events(event_type="source_import"))
+    svc.set_source_item_sensitivity(sid, "low")
+    n_after = len(svc.list_events(event_type="source_import"))
+    assert n_after == n_before + 1
+    new_event = svc.list_events(event_type="source_import")[0]  # newest first
+    assert new_event.details == "source_item_sensitivity_set"
+    payload = json.loads(new_event.payload_json or "{}")
+    assert payload["to"] == "low"
+
+
+def test_sensitivity_no_event_on_noop(tmp_path: Path) -> None:
+    from memorymaster.service import MemoryService
+    db, sid, _ = _seed_with_proposal(tmp_path)
+    svc = MemoryService(db, workspace_root=tmp_path)
+    svc.set_source_item_sensitivity(sid, "low")
+    n_before = len(svc.list_events(event_type="source_import"))
+    svc.set_source_item_sensitivity(sid, "low")  # no-op
+    n_after = len(svc.list_events(event_type="source_import"))
+    assert n_after == n_before, "no-op label set must not record event"
 
 
 def test_whatsapp_fixture_idempotent_reimport(tmp_path: Path, capsys) -> None:

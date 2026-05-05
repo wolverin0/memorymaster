@@ -1,4 +1,4 @@
-# Atlas Inbox API/CLI Contract — v1.2.0
+# Atlas Inbox API/CLI Contract — v1.3.0
 
 **Audience:** LifeAgent (and any other Atlas frontend) consuming MemoryMaster's Atlas Inbox backend.
 
@@ -73,8 +73,27 @@ Non-Atlas subcommands (the rest of MemoryMaster) emit the same envelope **withou
 | `action-proposals` | `--status` (one of `candidate/approved/rejected/exported/failed`), `--destination`, `--limit` (def 100) | `[ActionProposal]` | `len(data)` |
 | `resolve-action-proposal` | `--proposal-id <int>` (req), `--status` (one of statuses, req), `--external-ref` | `ActionProposal` | `1` |
 | `edit-action-proposal` | `--proposal-id <int>` (req), `--title` (non-blank if provided), `--description`, `--suggested-due-at` (ISO-8601), `--confidence` (0.0-1.0). At least one field required. | `ActionProposal` | `1` |
+| `label-source-item` | `--source-item-id <int>` (req), `--sensitivity {none,low,medium,high,redacted,clear}` (req) | `SourceItem` | `1` |
+| `label-evidence-item` | `--evidence-item-id <int>` (req), `--sensitivity {none,low,medium,high,redacted,clear}` (req) | `EvidenceItem` | `1` |
 | `export-actions` | `--output <path>` (req), `--destination` (def `super-productivity`), `--limit` (def 100), `--dry-run` | `{destination, output_path, exported, proposal_ids:[int]}` | `exported` |
 | `atlas-version` | (none) | `{atlas_contract_version, atlas_contract_name, subcommands, endpoints, breaking_changes_since}` | `1` |
+
+### Sensitivity labels on `source_items` and `evidence_items`
+
+Both tables expose a `sensitivity` field. Allowed values:
+
+| Value | Meaning |
+|---|---|
+| `null` | Unlabeled — never inspected |
+| `"none"` | Inspected, verified non-sensitive |
+| `"low"` | Mildly sensitive |
+| `"medium"` | Moderately sensitive |
+| `"high"` | High sensitivity |
+| `"redacted"` | Content has been redacted at the application layer |
+
+Set via `label-source-item` / `label-evidence-item` CLIs, or via the service methods `set_source_item_sensitivity` / `set_evidence_item_sensitivity`. **Re-importing a labeled `source_item` via `import-whatsapp` PRESERVES the label** unless the importer explicitly passes a new sensitivity — operator decisions are sticky.
+
+LifeAgent should treat these as authoritative backend labels and use them to filter/display review surfaces.
 
 ### `ActionProposal` row shape
 

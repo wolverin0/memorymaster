@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from typing import Any
 
-ATLAS_CONTRACT_VERSION = "1.2.0"
+ATLAS_CONTRACT_VERSION = "1.3.0"
 """Semver string for the Atlas API/CLI contract.
 
 LifeAgent and any other consumer MUST refuse to start if the major component
@@ -139,6 +139,36 @@ ATLAS_SUBCOMMANDS: list[dict[str, Any]] = [
         },
         "data_keys": "ActionProposal",
         "meta_total": "1",
+    },
+    {
+        "name": "label-source-item",
+        "description": "Set sensitivity label on an Atlas source_item. 'clear' resets to NULL.",
+        "inputs": {
+            "--source-item-id": {"type": "int", "required": True},
+            "--sensitivity": {
+                "type": "str",
+                "required": True,
+                "allowed": ["none", "low", "medium", "high", "redacted", "clear"],
+            },
+        },
+        "data_keys": "SourceItem",
+        "meta_total": "1",
+        "note": "Records a source_import event (details='source_item_sensitivity_set') when the value changes; no-op records nothing. Re-importing a labeled source_item via import-whatsapp PRESERVES the label unless the importer explicitly passes a new sensitivity.",
+    },
+    {
+        "name": "label-evidence-item",
+        "description": "Set sensitivity label on an Atlas evidence_item. 'clear' resets to NULL.",
+        "inputs": {
+            "--evidence-item-id": {"type": "int", "required": True},
+            "--sensitivity": {
+                "type": "str",
+                "required": True,
+                "allowed": ["none", "low", "medium", "high", "redacted", "clear"],
+            },
+        },
+        "data_keys": "EvidenceItem",
+        "meta_total": "1",
+        "note": "Records a media_process event (details='evidence_item_sensitivity_set') when the value changes; no-op records nothing.",
     },
     {
         "name": "edit-action-proposal",
