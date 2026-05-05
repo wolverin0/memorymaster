@@ -79,6 +79,7 @@ class _SchemaMixin:
                 text TEXT,
                 payload_json TEXT,
                 content_hash TEXT,
+                sensitivity TEXT CHECK (sensitivity IS NULL OR sensitivity IN ('none','low','medium','high','redacted')),
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (source_id) REFERENCES external_sources(id) ON DELETE CASCADE,
@@ -94,6 +95,7 @@ class _SchemaMixin:
                 provider TEXT,
                 confidence REAL CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
                 payload_json TEXT,
+                sensitivity TEXT CHECK (sensitivity IS NULL OR sensitivity IN ('none','low','medium','high','redacted')),
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (source_item_id) REFERENCES source_items(id) ON DELETE CASCADE
             );
@@ -134,8 +136,19 @@ class _SchemaMixin:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_action_proposals_idempotency_key
                 ON action_proposals(idempotency_key)
                 WHERE idempotency_key IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_source_items_sensitivity ON source_items(sensitivity);
+            CREATE INDEX IF NOT EXISTS idx_evidence_items_sensitivity ON evidence_items(sensitivity);
             """
         )
+        # Forward-migrate Atlas DBs that pre-date the sensitivity column
+        # (early-adopter window — Atlas tables shipped in PR #20). The
+        # idempotent ALTER TABLE pattern matches _ensure_claim_idempotency_schema.
+        for table in ("source_items", "evidence_items"):
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN sensitivity TEXT")
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
 
 
     @staticmethod

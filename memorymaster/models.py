@@ -285,6 +285,15 @@ class ExternalSource:
     updated_at: str
 
 
+ATLAS_SENSITIVITY_LEVELS = ("none", "low", "medium", "high", "redacted")
+"""Allowed values for source_items.sensitivity / evidence_items.sensitivity.
+
+NULL = unlabeled (never inspected). 'none' = inspected and verified
+non-sensitive. The other levels are operator-applied during review.
+LifeAgent (or any frontend) uses these to filter and display.
+"""
+
+
 @dataclass(slots=True)
 class SourceItem:
     id: int
@@ -298,6 +307,7 @@ class SourceItem:
     text: str | None
     payload_json: str | None
     content_hash: str | None
+    sensitivity: str | None
     created_at: str
     updated_at: str
 
@@ -312,6 +322,7 @@ class EvidenceItem:
     provider: str | None
     confidence: float | None
     payload_json: str | None
+    sensitivity: str | None
     created_at: str
 
 

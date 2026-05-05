@@ -11,7 +11,26 @@ import sqlite3
 from typing import Any
 
 from memorymaster._storage_shared import utc_now
-from memorymaster.models import ActionProposal, EvidenceItem, ExternalSource, SourceItem
+from memorymaster.models import (
+    ATLAS_SENSITIVITY_LEVELS,
+    ActionProposal,
+    EvidenceItem,
+    ExternalSource,
+    SourceItem,
+)
+
+
+def _normalize_sensitivity(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    if text not in ATLAS_SENSITIVITY_LEVELS:
+        raise ValueError(
+            f"sensitivity must be one of: {', '.join(ATLAS_SENSITIVITY_LEVELS)} (or None)."
+        )
+    return text
 
 
 def _json_or_none(value: dict[str, Any] | str | None) -> str | None:
@@ -79,6 +98,7 @@ class _SourceItemsMixin:
         text: str | None = None,
         payload_json: dict[str, Any] | str | None = None,
         content_hash: str | None = None,
+        sensitivity: str | None = None,
     ) -> SourceItem:
         normalized_source_item_id = source_item_id.strip()
         normalized_item_type = item_type.strip().lower()
@@ -88,6 +108,7 @@ class _SourceItemsMixin:
             raise ValueError("source_item_id must be non-empty.")
         if not normalized_item_type:
             raise ValueError("item_type must be non-empty.")
+        normalized_sensitivity = _normalize_sensitivity(sensitivity)
 
         now = utc_now()
         payload = _json_or_none(payload_json)
@@ -96,13 +117,19 @@ class _SourceItemsMixin:
                 "SELECT id FROM source_items WHERE source_id = ? AND source_item_id = ?",
                 (source_id, normalized_source_item_id),
             ).fetchone()
+            # Preserve existing sensitivity on re-import unless caller passed one
+            preserve_sensitivity_clause = (
+                "sensitivity = excluded.sensitivity"
+                if sensitivity is not None
+                else "sensitivity = source_items.sensitivity"
+            )
             conn.execute(
-                """
+                f"""
                 INSERT INTO source_items (
                     source_id, source_item_id, item_type, chat_id, sender_id, sender_name,
-                    occurred_at, text, payload_json, content_hash, created_at, updated_at
+                    occurred_at, text, payload_json, content_hash, sensitivity, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(source_id, source_item_id) DO UPDATE SET
                     item_type = excluded.item_type,
                     chat_id = excluded.chat_id,
@@ -112,6 +139,7 @@ class _SourceItemsMixin:
                     text = excluded.text,
                     payload_json = excluded.payload_json,
                     content_hash = excluded.content_hash,
+                    {preserve_sensitivity_clause},
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -125,6 +153,7 @@ class _SourceItemsMixin:
                     text,
                     payload,
                     content_hash,
+                    normalized_sensitivity,
                     now,
                     now,
                 ),
@@ -186,12 +215,14 @@ class _SourceItemsMixin:
         provider: str | None = None,
         confidence: float | None = None,
         payload_json: dict[str, Any] | str | None = None,
+        sensitivity: str | None = None,
     ) -> EvidenceItem:
         normalized_evidence_type = evidence_type.strip().lower()
         if source_item_id <= 0:
             raise ValueError("source_item_id must be positive.")
         if not normalized_evidence_type:
             raise ValueError("evidence_type must be non-empty.")
+        normalized_sensitivity = _normalize_sensitivity(sensitivity)
 
         now = utc_now()
         payload = _json_or_none(payload_json)
@@ -201,11 +232,11 @@ class _SourceItemsMixin:
                 """
                 INSERT INTO evidence_items (
                     source_item_id, evidence_type, text, media_path, provider,
-                    confidence, payload_json, created_at
+                    confidence, payload_json, sensitivity, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (source_item_id, normalized_evidence_type, text, media_path, provider, bounded, payload, now),
+                (source_item_id, normalized_evidence_type, text, media_path, provider, bounded, payload, normalized_sensitivity, now),
             )
             evidence_id = int(cur.lastrowid)
             self._insert_event_row(
@@ -408,6 +439,80 @@ class _SourceItemsMixin:
             raise RuntimeError("Failed to update action proposal.")
         return self._row_to_action_proposal(row)
 
+    def set_source_item_sensitivity(
+        self,
+        source_item_row_id: int,
+        sensitivity: str | None,
+    ) -> SourceItem:
+        if source_item_row_id <= 0:
+            raise ValueError("source_item_row_id must be positive.")
+        normalized = _normalize_sensitivity(sensitivity)
+        now = utc_now()
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM source_items WHERE id = ?", (source_item_row_id,)).fetchone()
+            if row is None:
+                raise ValueError(f"Source item {source_item_row_id} does not exist.")
+            current = row["sensitivity"] if "sensitivity" in row.keys() else None
+            if current == normalized:
+                return self._row_to_source_item(row)
+            conn.execute(
+                "UPDATE source_items SET sensitivity = ?, updated_at = ? WHERE id = ?",
+                (normalized, now, source_item_row_id),
+            )
+            self._insert_event_row(
+                conn,
+                claim_id=None,
+                event_type="source_import",
+                from_status=None,
+                to_status=None,
+                details="source_item_sensitivity_set",
+                payload_json=json.dumps(
+                    {"source_item_id": source_item_row_id, "from": current, "to": normalized},
+                    sort_keys=True,
+                ),
+                created_at=now,
+            )
+            updated = conn.execute("SELECT * FROM source_items WHERE id = ?", (source_item_row_id,)).fetchone()
+            conn.commit()
+        return self._row_to_source_item(updated)
+
+    def set_evidence_item_sensitivity(
+        self,
+        evidence_item_row_id: int,
+        sensitivity: str | None,
+    ) -> EvidenceItem:
+        if evidence_item_row_id <= 0:
+            raise ValueError("evidence_item_row_id must be positive.")
+        normalized = _normalize_sensitivity(sensitivity)
+        now = utc_now()
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM evidence_items WHERE id = ?", (evidence_item_row_id,)).fetchone()
+            if row is None:
+                raise ValueError(f"Evidence item {evidence_item_row_id} does not exist.")
+            current = row["sensitivity"] if "sensitivity" in row.keys() else None
+            if current == normalized:
+                return self._row_to_evidence_item(row)
+            conn.execute(
+                "UPDATE evidence_items SET sensitivity = ? WHERE id = ?",
+                (normalized, evidence_item_row_id),
+            )
+            self._insert_event_row(
+                conn,
+                claim_id=None,
+                event_type="media_process",
+                from_status=None,
+                to_status=None,
+                details="evidence_item_sensitivity_set",
+                payload_json=json.dumps(
+                    {"evidence_item_id": evidence_item_row_id, "from": current, "to": normalized},
+                    sort_keys=True,
+                ),
+                created_at=now,
+            )
+            updated = conn.execute("SELECT * FROM evidence_items WHERE id = ?", (evidence_item_row_id,)).fetchone()
+            conn.commit()
+        return self._row_to_evidence_item(updated)
+
     def update_action_proposal_fields(
         self,
         proposal_id: int,
@@ -547,6 +652,7 @@ class _SourceItemsMixin:
             text=row["text"],
             payload_json=row["payload_json"],
             content_hash=row["content_hash"],
+            sensitivity=row["sensitivity"] if "sensitivity" in row.keys() else None,
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
         )
@@ -563,6 +669,7 @@ class _SourceItemsMixin:
             provider=row["provider"],
             confidence=float(confidence) if confidence is not None else None,
             payload_json=row["payload_json"],
+            sensitivity=row["sensitivity"] if "sensitivity" in row.keys() else None,
             created_at=str(row["created_at"]),
         )
 

@@ -793,6 +793,7 @@ class MemoryService:
         text: str | None = None,
         payload_json: dict[str, object] | str | None = None,
         content_hash: str | None = None,
+        sensitivity: str | None = None,
     ) -> SourceItem:
         return self.store.upsert_source_item(
             source_id=source_id,
@@ -805,6 +806,7 @@ class MemoryService:
             text=text,
             payload_json=payload_json,
             content_hash=content_hash,
+            sensitivity=sensitivity,
         )
 
     def get_source_item(self, *, source_id: int, source_item_id: str) -> SourceItem | None:
@@ -823,6 +825,7 @@ class MemoryService:
         provider: str | None = None,
         confidence: float | None = None,
         payload_json: dict[str, object] | str | None = None,
+        sensitivity: str | None = None,
     ) -> EvidenceItem:
         return self.store.add_evidence_item(
             source_item_id=source_item_id,
@@ -832,7 +835,14 @@ class MemoryService:
             provider=provider,
             confidence=confidence,
             payload_json=payload_json,
+            sensitivity=sensitivity,
         )
+
+    def set_source_item_sensitivity(self, source_item_row_id: int, sensitivity: str | None) -> SourceItem:
+        return self.store.set_source_item_sensitivity(source_item_row_id, sensitivity)
+
+    def set_evidence_item_sensitivity(self, evidence_item_row_id: int, sensitivity: str | None) -> EvidenceItem:
+        return self.store.set_evidence_item_sensitivity(evidence_item_row_id, sensitivity)
 
     def list_evidence_items(
         self,

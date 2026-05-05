@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS source_items (
     text TEXT,
     payload_json TEXT,
     content_hash TEXT,
+    sensitivity TEXT CHECK (sensitivity IS NULL OR sensitivity IN ('none','low','medium','high','redacted')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (source_id) REFERENCES external_sources(id) ON DELETE CASCADE,
@@ -148,6 +149,7 @@ CREATE TABLE IF NOT EXISTS evidence_items (
     provider TEXT,
     confidence REAL CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
     payload_json TEXT,
+    sensitivity TEXT CHECK (sensitivity IS NULL OR sensitivity IN ('none','low','medium','high','redacted')),
     created_at TEXT NOT NULL,
     FOREIGN KEY (source_item_id) REFERENCES source_items(id) ON DELETE CASCADE
 );
@@ -198,3 +200,5 @@ CREATE INDEX IF NOT EXISTS idx_action_proposals_destination ON action_proposals(
 CREATE UNIQUE INDEX IF NOT EXISTS idx_action_proposals_idempotency_key
     ON action_proposals(idempotency_key)
     WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_source_items_sensitivity ON source_items(sensitivity);
+CREATE INDEX IF NOT EXISTS idx_evidence_items_sensitivity ON evidence_items(sensitivity);
