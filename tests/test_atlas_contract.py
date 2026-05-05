@@ -61,6 +61,7 @@ def test_atlas_contract_payload_shape() -> None:
 
 
 @pytest.mark.parametrize("name", [
+    "init-db",
     "import-whatsapp",
     "extract-atlas-claims",
     "propose-actions",
@@ -284,3 +285,123 @@ def test_atlas_version_endpoint_payload_matches_cli() -> None:
     assert payload["atlas_contract_name"] == ATLAS_CONTRACT_NAME
     listed_endpoints = {(ep["method"], ep["path"]) for ep in payload["endpoints"]}
     assert ("GET", "/api/atlas/version") in listed_endpoints
+
+
+# ---------------------------------------------------------------------------
+# init-db envelope
+# ---------------------------------------------------------------------------
+
+
+def test_init_db_envelope(tmp_path: Path, capsys) -> None:
+    db = tmp_path / "atlas.db"
+    capsys.readouterr()
+    env = _run_cli("--db", str(db), "--json", "init-db", capsys=capsys)
+    _assert_envelope(env, subcommand="init-db")
+    assert set(env["data"].keys()) >= {"db", "stealth"}
+    assert env["data"]["db"].endswith("atlas.db")
+    assert db.exists()
+
+
+# ---------------------------------------------------------------------------
+# WhatsApp fixture-based contract test
+# ---------------------------------------------------------------------------
+
+
+_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "atlas"
+
+
+def test_whatsapp_basic_fixture_full_pipeline(tmp_path: Path, capsys) -> None:
+    """End-to-end contract test using the canonical WhatsApp wacli fixture.
+
+    LifeAgent and other consumers should be able to mirror this fixture in
+    their own test suite to lock the import → extract → propose → list →
+    resolve → export pipeline. Any breakage here is a contract break.
+    """
+    fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
+    assert fixture.exists(), f"fixture missing: {fixture}"
+    db = tmp_path / "atlas.db"
+    main(["--db", str(db), "init-db"])
+
+    # Import → must dedupe the trailing duplicate row
+    capsys.readouterr()
+    env_import = _run_cli(
+        "--db", str(db), "--json", "import-whatsapp", "--input", str(fixture),
+        capsys=capsys,
+    )
+    _assert_envelope(env_import, subcommand="import-whatsapp")
+    data = env_import["data"]
+    assert data["source_items_seen"] == 5, "fixture has 6 raw rows but 1 is a dupe"
+    assert data["source_items_imported"] == 5
+    assert data["duplicates_seen"] == 1
+
+    # Extract → 4 of 5 evidence items match an extractor template (3 spanish text + 1 with caption text? wait the audio has no text yet)
+    capsys.readouterr()
+    env_extract = _run_cli(
+        "--db", str(db), "--json", "extract-atlas-claims", "--scope", "project:atlas-fixture",
+        capsys=capsys,
+    )
+    _assert_envelope(env_extract, subcommand="extract-atlas-claims")
+    assert env_extract["data"]["scanned"] >= 3, "expected at least 3 text-bearing evidence items scanned"
+    assert env_extract["data"]["matched"] >= 1, "expected at least one extractor match"
+
+    # Propose → at least 1 action (the 'recordame' message)
+    capsys.readouterr()
+    env_propose = _run_cli(
+        "--db", str(db), "--json", "propose-actions",
+        capsys=capsys,
+    )
+    _assert_envelope(env_propose, subcommand="propose-actions")
+    assert env_propose["data"]["created"] >= 1
+
+    # List
+    capsys.readouterr()
+    env_list = _run_cli("--db", str(db), "--json", "action-proposals", capsys=capsys)
+    _assert_envelope(env_list, subcommand="action-proposals")
+    assert isinstance(env_list["data"], list)
+    assert env_list["data"], "expected at least one proposal"
+    proposal_id = env_list["data"][0]["id"]
+
+    # Resolve
+    capsys.readouterr()
+    env_resolve = _run_cli(
+        "--db", str(db), "--json", "resolve-action-proposal",
+        "--proposal-id", str(proposal_id), "--status", "approved",
+        capsys=capsys,
+    )
+    _assert_envelope(env_resolve, subcommand="resolve-action-proposal")
+    assert env_resolve["data"]["status"] == "approved"
+
+    # Export
+    output = tmp_path / "sp.json"
+    capsys.readouterr()
+    env_export = _run_cli(
+        "--db", str(db), "--json", "export-actions", "--output", str(output),
+        capsys=capsys,
+    )
+    _assert_envelope(env_export, subcommand="export-actions")
+    assert env_export["data"]["exported"] >= 1
+    assert output.exists()
+    sp = json.loads(output.read_text(encoding="utf-8"))
+    assert sp["format"] == "atlas-super-productivity-bridge-v1"
+    assert sp["tasks"], "expected exported task in bridge file"
+
+
+def test_whatsapp_fixture_idempotent_reimport(tmp_path: Path, capsys) -> None:
+    """Re-importing the same fixture twice must not duplicate rows."""
+    fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
+    db = tmp_path / "atlas.db"
+    main(["--db", str(db), "init-db"])
+
+    capsys.readouterr()
+    env1 = _run_cli(
+        "--db", str(db), "--json", "import-whatsapp", "--input", str(fixture),
+        capsys=capsys,
+    )
+    capsys.readouterr()
+    env2 = _run_cli(
+        "--db", str(db), "--json", "import-whatsapp", "--input", str(fixture),
+        capsys=capsys,
+    )
+    # Second import sees the same items but updates rather than inserts
+    assert env2["data"]["source_items_imported"] == 0
+    assert env2["data"]["source_items_updated"] == env1["data"]["source_items_imported"]

@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from typing import Any
 
-ATLAS_CONTRACT_VERSION = "1.0.0"
+ATLAS_CONTRACT_VERSION = "1.1.0"
 """Semver string for the Atlas API/CLI contract.
 
 LifeAgent and any other consumer MUST refuse to start if the major component
@@ -58,6 +58,14 @@ ATLAS_CONTRACT_NAME = "atlas-inbox-v1"
 # ---------------------------------------------------------------------------
 
 ATLAS_SUBCOMMANDS: list[dict[str, Any]] = [
+    {
+        "name": "init-db",
+        "description": "Initialize the MemoryMaster DB at --db path (creates ALL tables including Atlas).",
+        "inputs": {},
+        "data_keys": ["db", "stealth"],
+        "meta_total": "(omitted)",
+        "note": "init-db is general MemoryMaster, not Atlas-specific, but listed here so consumers like LifeAgent can call it as part of their bootstrap.",
+    },
     {
         "name": "import-whatsapp",
         "description": "Import WhatsApp messages from a wacli JSON/JSONL export.",

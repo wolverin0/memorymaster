@@ -1,0 +1,69 @@
+[
+  {
+    "id": "wamid.CONTACT001_msg1",
+    "chat_id": "5491155500001@c.us",
+    "chat_name": "Cliente — Soporte ISP",
+    "sender_id": "5491155500001@c.us",
+    "sender_name": "Mariana",
+    "timestamp": "2026-05-04T14:32:18-03:00",
+    "type": "text",
+    "text": "Hola, necesito el presupuesto para la instalacion de fibra para mañana"
+  },
+  {
+    "id": "wamid.CONTACT001_msg2",
+    "chat_id": "5491155500001@c.us",
+    "sender_id": "5491155500001@c.us",
+    "sender_name": "Mariana",
+    "timestamp": "2026-05-04T14:35:02-03:00",
+    "type": "text",
+    "text": "Tambien recordame que tengo que pagar la factura el viernes"
+  },
+  {
+    "id": "wamid.CONTACT002_msg1",
+    "chat_id": "5491155500002@c.us",
+    "chat_name": "Soporte tecnico",
+    "sender_id": "5491155500002@c.us",
+    "sender_name": "Pedro",
+    "timestamp": "2026-05-04T15:10:44-03:00",
+    "type": "text",
+    "text": "El router no funciona desde ayer, podes mandarme un tecnico?"
+  },
+  {
+    "id": "wamid.CONTACT003_msg1",
+    "chat_id": "5491155500003@c.us",
+    "sender_id": "5491155500003@c.us",
+    "sender_name": "Diego",
+    "timestamp": "2026-05-04T16:00:11-03:00",
+    "type": "audio",
+    "media_type": "audio",
+    "media": {
+      "path": "media/CONTACT003_msg1.ogg",
+      "mime": "audio/ogg",
+      "duration_seconds": 12
+    }
+  },
+  {
+    "id": "wamid.CONTACT003_msg2",
+    "chat_id": "5491155500003@c.us",
+    "sender_id": "5491155500003@c.us",
+    "sender_name": "Diego",
+    "timestamp": "2026-05-04T16:01:22-03:00",
+    "type": "image",
+    "media_type": "image",
+    "caption": "Comprobante de pago",
+    "media": {
+      "path": "media/CONTACT003_msg2.jpg",
+      "mime": "image/jpeg"
+    }
+  },
+  {
+    "id": "wamid.CONTACT001_msg1",
+    "chat_id": "5491155500001@c.us",
+    "sender_id": "5491155500001@c.us",
+    "sender_name": "Mariana",
+    "timestamp": "2026-05-04T14:32:18-03:00",
+    "type": "text",
+    "text": "Hola, necesito el presupuesto para la instalacion de fibra para mañana",
+    "_note": "Duplicate of msg1 — importer must dedupe by source_item_id."
+  }
+]

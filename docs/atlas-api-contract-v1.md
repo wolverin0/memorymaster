@@ -1,4 +1,4 @@
-# Atlas Inbox API/CLI Contract — v1.0.0
+# Atlas Inbox API/CLI Contract — v1.1.0
 
 **Audience:** LifeAgent (and any other Atlas frontend) consuming MemoryMaster's Atlas Inbox backend.
 
@@ -66,6 +66,7 @@ Non-Atlas subcommands (the rest of MemoryMaster) emit the same envelope **withou
 
 | Subcommand | Inputs | `data` shape | `meta.total` |
 |---|---|---|---|
+| `init-db` | (none) | `{db, stealth}` | (omitted) |
 | `import-whatsapp` | `--input <path>` (req), `--display-name` (def `WhatsApp`), `--chat-id` | `{source_id, source_items_seen, source_items_imported, source_items_updated, evidence_items_added, duplicates_seen}` | `source_items_seen` |
 | `extract-atlas-claims` | `--scope` (def: derives `project:<cwd-basename>`), `--limit` (def 200) | `{scanned, matched, ingested, claims:[Claim]}` | `ingested` |
 | `propose-actions` | `--destination` (def `super-productivity`), `--limit` (def 200) | `{scanned, matched, created, existing, proposals:[ActionProposal]}` | `created` |
@@ -197,6 +198,23 @@ Response:
 ```
 
 ---
+
+## 5b. Canonical fixture for consumer tests
+
+`tests/fixtures/atlas/whatsapp_wacli_basic.json` is the canonical wacli-style
+WhatsApp fixture. It contains:
+
+- 3 plain text messages (Spanish, including action-trigger and complaint
+  patterns the deterministic extractors recognize)
+- 1 audio message with media metadata
+- 1 image message with media metadata + caption
+- 1 duplicate row that must be deduplicated by the importer
+
+LifeAgent (and any other consumer) is welcome to copy this fixture into its
+own test suite for end-to-end pipeline assertions. `tests/test_atlas_contract.py`
+exercises the full `import → extract → propose → list → resolve → export`
+chain against this fixture and pins the envelope shapes — break the chain in
+MemoryMaster and the test fails.
 
 ## 6. Out-of-scope
 
