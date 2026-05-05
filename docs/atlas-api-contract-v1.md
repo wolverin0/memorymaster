@@ -1,0 +1,222 @@
+# Atlas Inbox API/CLI Contract — v1.0.0
+
+**Audience:** LifeAgent (and any other Atlas frontend) consuming MemoryMaster's Atlas Inbox backend.
+
+**Stable since:** 2026-05-05.
+
+**Source of truth:** `memorymaster/atlas_contract.py`. The values in this doc must match that module — the test suite (`tests/test_atlas_contract.py`) enforces the match.
+
+---
+
+## 1. Versioning policy
+
+The contract uses semver. Consumers MUST refuse to start if the **major** version returned by `GET /api/atlas/version` (or `python -m memorymaster --json atlas-version`) does not match the major they were compiled against.
+
+| Bump kind | When | Consumer action |
+|---|---|---|
+| **MAJOR** | Removed/renamed CLI flag, removed envelope field, type change, removed HTTP endpoint, method change, semantics change | Refuse to start; reimplement |
+| **MINOR** | Added new CLI subcommand, added new HTTP endpoint, added new envelope field (additive only) | Continue to work; opt-in to new field |
+| **PATCH** | Behavioural fix that does not change the contract surface | No change required |
+
+`atlas_contract.BREAKING_CHANGES_SINCE` lists every MAJOR bump in chronological order. Empty in 1.0.0 — the contract was born here.
+
+---
+
+## 2. Discover the contract at runtime
+
+Every consumer should hit one of these on startup and log/refuse on major mismatch:
+
+- **CLI:** `python -m memorymaster --json atlas-version`
+- **HTTP:** `GET /api/atlas/version`
+
+Both return the full contract spec (subcommands, endpoints, version, breaking-change history). The dashboard response wraps it as `{"ok": true, ...spec}`; the CLI wraps it in the standard envelope (see §3).
+
+---
+
+## 3. Standard CLI JSON envelope
+
+Every Atlas CLI subcommand invoked with `--json` returns:
+
+```json
+{
+  "ok": true,
+  "data": <subcommand-specific>,
+  "meta": {
+    "query_ms": <float>,
+    "total": <int|omitted>,
+    "atlas_contract_version": "1.0.0",
+    "atlas_subcommand": "<subcommand-name>"
+  }
+}
+```
+
+Stable field guarantees:
+
+- `ok` is always present and is `true` on success. Errors come on stderr / non-zero exit.
+- `data` is always present.
+- `meta.atlas_contract_version` and `meta.atlas_subcommand` are guaranteed on every Atlas subcommand and let the consumer cross-check the producer.
+- `meta.query_ms` is always present (rounded to 2 decimals).
+- `meta.total` is present where the subcommand has a natural "row count" — see the `meta_total` column in §4.
+
+Non-Atlas subcommands (the rest of MemoryMaster) emit the same envelope **without** the `atlas_contract_version`/`atlas_subcommand` fields. Consumers should not assume those fields outside Atlas.
+
+---
+
+## 4. CLI subcommands
+
+| Subcommand | Inputs | `data` shape | `meta.total` |
+|---|---|---|---|
+| `import-whatsapp` | `--input <path>` (req), `--display-name` (def `WhatsApp`), `--chat-id` | `{source_id, source_items_seen, source_items_imported, source_items_updated, evidence_items_added, duplicates_seen}` | `source_items_seen` |
+| `extract-atlas-claims` | `--scope` (def: derives `project:<cwd-basename>`), `--limit` (def 200) | `{scanned, matched, ingested, claims:[Claim]}` | `ingested` |
+| `propose-actions` | `--destination` (def `super-productivity`), `--limit` (def 200) | `{scanned, matched, created, existing, proposals:[ActionProposal]}` | `created` |
+| `action-proposals` | `--status` (one of `candidate/approved/rejected/exported/failed`), `--destination`, `--limit` (def 100) | `[ActionProposal]` | `len(data)` |
+| `resolve-action-proposal` | `--proposal-id <int>` (req), `--status` (one of statuses, req), `--external-ref` | `ActionProposal` | `1` |
+| `export-actions` | `--output <path>` (req), `--destination` (def `super-productivity`), `--limit` (def 100), `--dry-run` | `{destination, output_path, exported, proposal_ids:[int]}` | `exported` |
+| `atlas-version` | (none) | `{atlas_contract_version, atlas_contract_name, subcommands, endpoints, breaking_changes_since}` | `1` |
+
+### `ActionProposal` row shape
+
+Every CLI/endpoint that returns an action proposal returns this dict shape:
+
+```jsonc
+{
+  "id": 42,
+  "proposal_type": "task",                 // task|reminder|follow_up|draft_reply|support_ticket
+  "title": "Send installation quote",
+  "description": "Source-backed action proposal extracted from evidence...",
+  "source_item_id": 7,                     // FK into source_items, may be null after delete
+  "evidence_item_id": 11,                  // FK into evidence_items, may be null
+  "claim_id": 36320,                       // FK into claims, may be null
+  "suggested_due_at": "2026-05-06T12:00:00-03:00",  // ISO-8601 or null
+  "destination": "super-productivity",
+  "status": "candidate",                   // candidate|approved|rejected|exported|failed
+  "confidence": 0.81,
+  "payload_json": "{\"extractor\":\"atlas-rule-v1\",...}",
+  "exported_at": null,                     // ISO-8601 once exported
+  "external_ref": null,                    // e.g. "file:./out.json#proposal-42" after export
+  "idempotency_key": "evidence:11:task:abc123def456...",
+  "created_at": "2026-05-05T15:00:00+00:00",
+  "updated_at": "2026-05-05T15:00:00+00:00"
+}
+```
+
+### `Claim` row shape
+
+Atlas-extracted claims follow the standard MemoryMaster `Claim` shape (see `memorymaster/models.py:Claim`). The Atlas-specific guarantees:
+
+- Every Atlas claim has at least one `Citation` whose `source` is `whatsapp://source/<source-id>/item/<external-id>` and `locator` is `evidence:<evidence-id>`.
+- `status` starts at `"candidate"`.
+- `scope` defaults to `project:<cwd-basename>` derived from the working directory; pass `--scope` to override.
+
+### Super-Productivity bridge JSON (`export-actions --output`)
+
+The exported file is consumed by Super Productivity (or any equivalent task system). Shape:
+
+```jsonc
+{
+  "format": "atlas-super-productivity-bridge-v1",
+  "destination": "super-productivity",
+  "tasks": [
+    {
+      "title": "Send installation quote",
+      "notes": "Source-backed action proposal...\n\nAtlas source_item_id: 7\nAtlas evidence_item_id: 11",
+      "due": "2026-05-06T12:00:00-03:00",   // ISO-8601 or null
+      "atlas_proposal_id": 42,
+      "atlas_confidence": 0.81,
+      "atlas_payload": {"extractor": "atlas-rule-v1", "...": "..."}
+    }
+  ]
+}
+```
+
+The `format` string is the contract handshake — bump it to `atlas-super-productivity-bridge-v2` on any breaking change to this file.
+
+---
+
+## 5. Dashboard HTTP endpoints
+
+Default base URL when `python -m memorymaster --db memorymaster.db dashboard` is running: `http://localhost:8765` (configurable).
+
+### `GET /api/action-proposals`
+
+List Atlas action proposals.
+
+| Query param | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `status` | str | no | (any) | One of `candidate/approved/rejected/exported/failed` |
+| `destination` | str | no | (any) | e.g. `super-productivity` |
+| `limit` | int | no | 100 | clamped to `[1, 500]` |
+
+Response:
+
+```json
+{
+  "ok": true,
+  "rows": <int>,
+  "proposals": [<ActionProposal>, ...]
+}
+```
+
+### `POST /api/action-proposals/status`
+
+Update an Atlas action proposal status (approve/reject/export/fail).
+
+Request body:
+
+```json
+{
+  "proposal_id": <int>,                  // required, > 0
+  "status": "approved",                  // required, one of candidate/approved/rejected/exported/failed
+  "external_ref": "sp-task-1"            // optional
+}
+```
+
+Response:
+
+```json
+{ "ok": true, "proposal": <ActionProposal> }
+```
+
+Errors return `{"ok": false, "error": "<message>"}` with HTTP 400 on validation errors and 404 on not-found.
+
+### `GET /api/atlas/version`
+
+Returns the full Atlas contract spec for runtime version handshake.
+
+Response:
+
+```json
+{
+  "ok": true,
+  "atlas_contract_version": "1.0.0",
+  "atlas_contract_name": "atlas-inbox-v1",
+  "subcommands": [...],
+  "endpoints": [...],
+  "breaking_changes_since": []
+}
+```
+
+---
+
+## 6. Out-of-scope
+
+What this contract does **not** cover (handled elsewhere):
+
+- **Frontend dashboard / review UI** — owned by LifeAgent. MemoryMaster only ships backend.
+- **MemoryMaster's general claim/citation/event API** — see `memorymaster/service.py:MemoryService`. Atlas extracted claims live in the regular `claims` table and are reachable via the standard MemoryMaster query/wiki tooling.
+- **Real transcription/OCR provider implementations** — only `Mock*` ship in v1.0.0. Real adapters will plug into the existing `TranscriptionProvider`/`OcrProvider` `Protocol`s in `memorymaster/media_processing.py`.
+- **Connector lifecycle (auth, sync, push)** — v1.0.0 ships only the wacli JSON/JSONL importer (`import-whatsapp`). Future connectors are independent additions.
+
+---
+
+## 7. How to evolve the contract safely
+
+When you need to ship a change:
+
+1. Read `memorymaster/atlas_contract.py` and decide MAJOR/MINOR/PATCH per §1.
+2. Update the relevant entry in `ATLAS_SUBCOMMANDS` or `ATLAS_ENDPOINTS`.
+3. Bump `ATLAS_CONTRACT_VERSION`.
+4. If MAJOR: append to `BREAKING_CHANGES_SINCE` with `{version, summary, date}`.
+5. Update this doc in the same PR.
+6. Update `tests/test_atlas_contract.py` with new field assertions (additive) or version bump.
+7. Run `python -m pytest tests/test_atlas_contract.py -q` — must be green before merge.

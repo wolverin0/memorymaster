@@ -294,6 +294,7 @@ def _handle_ingest(args: argparse.Namespace, service, parser: argparse.ArgumentP
 
 
 def _handle_import_whatsapp(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.atlas_contract import atlas_meta
     from memorymaster.connectors.whatsapp import import_wacli_json
 
     t0 = time.perf_counter()
@@ -306,7 +307,12 @@ def _handle_import_whatsapp(args: argparse.Namespace, service, parser: argparse.
     elapsed_ms = (time.perf_counter() - t0) * 1000
     payload = result.to_dict()
     if args.json_output:
-        print(_json_envelope(payload, total=result.source_items_seen, query_ms=elapsed_ms))
+        print(_json_envelope(
+            payload,
+            total=result.source_items_seen,
+            query_ms=elapsed_ms,
+            extra_meta=atlas_meta("import-whatsapp"),
+        ))
     else:
         print(
             f"whatsapp import complete: seen={result.source_items_seen} "
@@ -318,13 +324,19 @@ def _handle_import_whatsapp(args: argparse.Namespace, service, parser: argparse.
 
 def _handle_propose_actions(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.action_extractor import propose_actions_from_evidence
+    from memorymaster.atlas_contract import atlas_meta
 
     t0 = time.perf_counter()
     result = propose_actions_from_evidence(service, destination=args.destination, limit=args.limit)
     elapsed_ms = (time.perf_counter() - t0) * 1000
     payload = result.to_dict()
     if args.json_output:
-        print(_json_envelope(payload, total=result.created, query_ms=elapsed_ms))
+        print(_json_envelope(
+            payload,
+            total=result.created,
+            query_ms=elapsed_ms,
+            extra_meta=atlas_meta("propose-actions"),
+        ))
     else:
         print(
             f"action proposals: scanned={result.scanned} matched={result.matched} "
@@ -338,13 +350,19 @@ def _handle_propose_actions(args: argparse.Namespace, service, parser: argparse.
 
 def _handle_extract_atlas_claims(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.atlas_claim_extractor import extract_atlas_claims_from_evidence
+    from memorymaster.atlas_contract import atlas_meta
 
     t0 = time.perf_counter()
     result = extract_atlas_claims_from_evidence(service, scope=args.scope, limit=args.limit)
     elapsed_ms = (time.perf_counter() - t0) * 1000
     payload = result.to_dict()
     if args.json_output:
-        print(_json_envelope(payload, total=result.ingested, query_ms=elapsed_ms))
+        print(_json_envelope(
+            payload,
+            total=result.ingested,
+            query_ms=elapsed_ms,
+            extra_meta=atlas_meta("extract-atlas-claims"),
+        ))
     else:
         print(
             f"atlas claims: scanned={result.scanned} matched={result.matched} "
@@ -356,6 +374,8 @@ def _handle_extract_atlas_claims(args: argparse.Namespace, service, parser: argp
 
 
 def _handle_action_proposals(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.atlas_contract import atlas_meta
+
     t0 = time.perf_counter()
     proposals = service.list_action_proposals(
         status=args.status,
@@ -365,7 +385,12 @@ def _handle_action_proposals(args: argparse.Namespace, service, parser: argparse
     elapsed_ms = (time.perf_counter() - t0) * 1000
     payload = [asdict(proposal) for proposal in proposals]
     if args.json_output:
-        print(_json_envelope(payload, total=len(payload), query_ms=elapsed_ms))
+        print(_json_envelope(
+            payload,
+            total=len(payload),
+            query_ms=elapsed_ms,
+            extra_meta=atlas_meta("action-proposals"),
+        ))
     else:
         for proposal in proposals:
             due = f" due={proposal.suggested_due_at}" if proposal.suggested_due_at else ""
@@ -380,6 +405,8 @@ def _handle_resolve_action_proposal(
     parser: argparse.ArgumentParser,
     effective_db: str,
 ) -> int:
+    from memorymaster.atlas_contract import atlas_meta
+
     t0 = time.perf_counter()
     proposal = service.update_action_proposal_status(
         args.proposal_id,
@@ -388,7 +415,12 @@ def _handle_resolve_action_proposal(
     )
     elapsed_ms = (time.perf_counter() - t0) * 1000
     if args.json_output:
-        print(_json_envelope(asdict(proposal), total=1, query_ms=elapsed_ms))
+        print(_json_envelope(
+            asdict(proposal),
+            total=1,
+            query_ms=elapsed_ms,
+            extra_meta=atlas_meta("resolve-action-proposal"),
+        ))
     else:
         print(f"proposal #{proposal.id} status={proposal.status} external_ref={proposal.external_ref or ''}")
     return 0
@@ -396,6 +428,7 @@ def _handle_resolve_action_proposal(
 
 def _handle_export_actions(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.action_exporters import export_approved_actions
+    from memorymaster.atlas_contract import atlas_meta
 
     t0 = time.perf_counter()
     result = export_approved_actions(
@@ -408,10 +441,35 @@ def _handle_export_actions(args: argparse.Namespace, service, parser: argparse.A
     elapsed_ms = (time.perf_counter() - t0) * 1000
     payload = result.to_dict()
     if args.json_output:
-        print(_json_envelope(payload, total=result.exported, query_ms=elapsed_ms))
+        print(_json_envelope(
+            payload,
+            total=result.exported,
+            query_ms=elapsed_ms,
+            extra_meta=atlas_meta("export-actions"),
+        ))
     else:
         label = "prepared" if args.dry_run else "exported"
         print(f"{label} {result.exported} action(s) -> {result.output_path}")
+    return 0
+
+
+def _handle_atlas_version(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.atlas_contract import atlas_contract_payload, atlas_meta
+
+    t0 = time.perf_counter()
+    payload = atlas_contract_payload()
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(
+            payload,
+            total=1,
+            query_ms=elapsed_ms,
+            extra_meta=atlas_meta("atlas-version"),
+        ))
+    else:
+        print(f"atlas_contract_version={payload['atlas_contract_version']}")
+        print(f"atlas_contract_name={payload['atlas_contract_name']}")
+        print(f"subcommands={len(payload['subcommands'])} endpoints={len(payload['endpoints'])}")
     return 0
 
 

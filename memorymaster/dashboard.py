@@ -159,6 +159,7 @@ def _build_get_route_map(handler: Any) -> dict[str, callable]:
         "/api/conflicts": lambda qs: handler._handle_conflicts(qs),
         "/api/review-queue": lambda qs: handler._handle_review_queue(qs),
         "/api/action-proposals": lambda qs: handler._handle_action_proposals(qs),
+        "/api/atlas/version": lambda qs: handler._handle_atlas_version(qs),
         "/api/retrieval": lambda qs: handler._handle_retrieval(qs),
         "/api/audit": lambda qs: handler._handle_audit(qs),
         "/api/namespaces": lambda qs: handler._handle_namespaces(qs),
@@ -737,6 +738,12 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
                 "proposals": [asdict(proposal) for proposal in proposals],
             }
         )
+
+    def _handle_atlas_version(self, query_string: str) -> None:
+        from memorymaster.atlas_contract import atlas_contract_payload
+
+        payload = atlas_contract_payload()
+        self._write_json({"ok": True, **payload})
 
     def _handle_action_proposal_status(self, payload: dict[str, Any]) -> None:
         proposal_id = int(payload.get("proposal_id") or 0)
