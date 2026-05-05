@@ -152,6 +152,79 @@ CREATE INDEX IF NOT EXISTS idx_citations_claim_id ON citations(claim_id);
 CREATE INDEX IF NOT EXISTS idx_events_claim_id ON events(claim_id);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
 
+CREATE TABLE IF NOT EXISTS external_sources (
+    id BIGSERIAL PRIMARY KEY,
+    source_type TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    config_json JSONB,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    UNIQUE (source_type, display_name)
+);
+
+CREATE TABLE IF NOT EXISTS source_items (
+    id BIGSERIAL PRIMARY KEY,
+    source_id BIGINT NOT NULL REFERENCES external_sources(id) ON DELETE CASCADE,
+    source_item_id TEXT NOT NULL,
+    item_type TEXT NOT NULL,
+    chat_id TEXT,
+    sender_id TEXT,
+    sender_name TEXT,
+    occurred_at TIMESTAMPTZ,
+    text TEXT,
+    payload_json JSONB,
+    content_hash TEXT,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    UNIQUE (source_id, source_item_id)
+);
+
+CREATE TABLE IF NOT EXISTS evidence_items (
+    id BIGSERIAL PRIMARY KEY,
+    source_item_id BIGINT NOT NULL REFERENCES source_items(id) ON DELETE CASCADE,
+    evidence_type TEXT NOT NULL,
+    text TEXT,
+    media_path TEXT,
+    provider TEXT,
+    confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
+    payload_json JSONB,
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS action_proposals (
+    id BIGSERIAL PRIMARY KEY,
+    proposal_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    source_item_id BIGINT REFERENCES source_items(id) ON DELETE SET NULL,
+    evidence_item_id BIGINT REFERENCES evidence_items(id) ON DELETE SET NULL,
+    claim_id BIGINT REFERENCES claims(id) ON DELETE SET NULL,
+    suggested_due_at TIMESTAMPTZ,
+    destination TEXT NOT NULL DEFAULT 'manual',
+    status TEXT NOT NULL DEFAULT 'candidate'
+        CHECK (status IN ('candidate', 'approved', 'rejected', 'exported', 'failed')),
+    confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5 CHECK (confidence >= 0.0 AND confidence <= 1.0),
+    payload_json JSONB,
+    exported_at TIMESTAMPTZ,
+    external_ref TEXT,
+    idempotency_key TEXT,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_external_sources_type ON external_sources(source_type);
+CREATE INDEX IF NOT EXISTS idx_source_items_source_id ON source_items(source_id);
+CREATE INDEX IF NOT EXISTS idx_source_items_chat_id ON source_items(chat_id);
+CREATE INDEX IF NOT EXISTS idx_source_items_occurred_at ON source_items(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_source_items_content_hash ON source_items(content_hash);
+CREATE INDEX IF NOT EXISTS idx_evidence_items_source_item_id ON evidence_items(source_item_id);
+CREATE INDEX IF NOT EXISTS idx_evidence_items_type ON evidence_items(evidence_type);
+CREATE INDEX IF NOT EXISTS idx_action_proposals_status ON action_proposals(status);
+CREATE INDEX IF NOT EXISTS idx_action_proposals_destination ON action_proposals(destination);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_action_proposals_idempotency_key
+    ON action_proposals(idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS claim_links (
     id BIGSERIAL PRIMARY KEY,
     source_id BIGINT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,

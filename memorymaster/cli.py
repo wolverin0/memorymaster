@@ -50,6 +50,35 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--valid-from", default=None, help="ISO-8601 timestamp: start of the claim validity window")
     ingest.add_argument("--valid-until", default=None, help="ISO-8601 timestamp: end of the validity window (omit if still current)")
 
+    import_whatsapp = sub.add_parser("import-whatsapp", help="Import WhatsApp messages from a wacli JSON/JSONL export")
+    import_whatsapp.add_argument("--input", required=True, help="Path to wacli JSON or JSONL export")
+    import_whatsapp.add_argument("--display-name", default="WhatsApp", help="External source display name")
+    import_whatsapp.add_argument("--chat-id", default=None, help="Fallback chat id when the export omits one")
+
+    propose_actions = sub.add_parser("propose-actions", help="Create reviewable action proposals from source evidence")
+    propose_actions.add_argument("--destination", default="super-productivity", help="Target destination label")
+    propose_actions.add_argument("--limit", type=int, default=200, help="Maximum evidence rows to scan")
+
+    extract_atlas_claims = sub.add_parser("extract-atlas-claims", help="Extract candidate claims from Atlas evidence")
+    extract_atlas_claims.add_argument("--scope", default=None, help="Claim scope (defaults to project:<cwd-basename>)")
+    extract_atlas_claims.add_argument("--limit", type=int, default=200, help="Maximum evidence rows to scan")
+
+    action_proposals = sub.add_parser("action-proposals", help="List Atlas action proposals")
+    action_proposals.add_argument("--status", default=None, help="Filter by status")
+    action_proposals.add_argument("--destination", default=None, help="Filter by destination")
+    action_proposals.add_argument("--limit", type=int, default=100, help="Maximum proposals")
+
+    resolve_action = sub.add_parser("resolve-action-proposal", help="Update an Atlas action proposal status")
+    resolve_action.add_argument("--proposal-id", type=int, required=True, help="Action proposal id")
+    resolve_action.add_argument("--status", choices=["candidate", "approved", "rejected", "exported", "failed"], required=True)
+    resolve_action.add_argument("--external-ref", default=None, help="External task/action id after export")
+
+    export_actions = sub.add_parser("export-actions", help="Export approved Atlas action proposals")
+    export_actions.add_argument("--output", required=True, help="Output JSON path")
+    export_actions.add_argument("--destination", default="super-productivity", help="Destination filter")
+    export_actions.add_argument("--limit", type=int, default=100, help="Maximum approved proposals")
+    export_actions.add_argument("--dry-run", action="store_true", help="Write file but keep proposals approved")
+
     cycle = sub.add_parser("run-cycle", help="Run extractor, validator, decay, and optional compact")
     cycle.add_argument("--with-compact", action="store_true", help="Run compactor at the end of cycle")
     cycle.add_argument("--with-dream-sync", action="store_true", help="Sync claims with Claude Code Auto Dream after cycle")

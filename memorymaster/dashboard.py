@@ -158,6 +158,7 @@ def _build_get_route_map(handler: Any) -> dict[str, callable]:
         "/api/timeline": lambda qs: handler._handle_timeline(qs),
         "/api/conflicts": lambda qs: handler._handle_conflicts(qs),
         "/api/review-queue": lambda qs: handler._handle_review_queue(qs),
+        "/api/action-proposals": lambda qs: handler._handle_action_proposals(qs),
         "/api/retrieval": lambda qs: handler._handle_retrieval(qs),
         "/api/audit": lambda qs: handler._handle_audit(qs),
         "/api/namespaces": lambda qs: handler._handle_namespaces(qs),
@@ -422,6 +423,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 return
             if route == "/api/operator/control":
                 self._handle_operator_control(payload)
+                return
+            if route == "/api/action-proposals/status":
+                self._handle_action_proposal_status(payload)
                 return
             self._write_json({"ok": False, "error": "Not found"}, status=HTTPStatus.NOT_FOUND)
         except ValueError as exc:
@@ -715,6 +719,37 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
                 continue
             out.append(item)
         self._write_json({"ok": True, "rows": len(out), "items": out})
+
+    def _handle_action_proposals(self, query_string: str) -> None:
+        query = parse_qs(query_string)
+        limit = _parse_int(_first_query_value(query, "limit"), default=100, minimum=1, maximum=500)
+        status = _first_query_value(query, "status")
+        destination = _first_query_value(query, "destination")
+        proposals = self._server.service.list_action_proposals(
+            status=status,
+            destination=destination,
+            limit=limit,
+        )
+        self._write_json(
+            {
+                "ok": True,
+                "rows": len(proposals),
+                "proposals": [asdict(proposal) for proposal in proposals],
+            }
+        )
+
+    def _handle_action_proposal_status(self, payload: dict[str, Any]) -> None:
+        proposal_id = int(payload.get("proposal_id") or 0)
+        status = str(payload.get("status") or "").strip().lower()
+        external_ref = payload.get("external_ref")
+        if proposal_id <= 0:
+            raise ValueError("proposal_id must be positive")
+        proposal = self._server.service.update_action_proposal_status(
+            proposal_id,
+            status=status,
+            external_ref=str(external_ref) if external_ref not in (None, "") else None,
+        )
+        self._write_json({"ok": True, "proposal": asdict(proposal)})
 
     def _handle_retrieval(self, query_string: str) -> None:
         params = _parse_retrieval_query_params(query_string)

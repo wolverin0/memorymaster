@@ -293,6 +293,128 @@ def _handle_ingest(args: argparse.Namespace, service, parser: argparse.ArgumentP
     return 0
 
 
+def _handle_import_whatsapp(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.connectors.whatsapp import import_wacli_json
+
+    t0 = time.perf_counter()
+    result = import_wacli_json(
+        service,
+        args.input,
+        display_name=args.display_name,
+        chat_id=args.chat_id,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    payload = result.to_dict()
+    if args.json_output:
+        print(_json_envelope(payload, total=result.source_items_seen, query_ms=elapsed_ms))
+    else:
+        print(
+            f"whatsapp import complete: seen={result.source_items_seen} "
+            f"imported={result.source_items_imported} updated={result.source_items_updated} "
+            f"evidence_added={result.evidence_items_added} duplicates={result.duplicates_seen}"
+        )
+    return 0
+
+
+def _handle_propose_actions(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.action_extractor import propose_actions_from_evidence
+
+    t0 = time.perf_counter()
+    result = propose_actions_from_evidence(service, destination=args.destination, limit=args.limit)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    payload = result.to_dict()
+    if args.json_output:
+        print(_json_envelope(payload, total=result.created, query_ms=elapsed_ms))
+    else:
+        print(
+            f"action proposals: scanned={result.scanned} matched={result.matched} "
+            f"created={result.created} existing={result.existing}"
+        )
+        for proposal in result.proposals[:20]:
+            due = f" due={proposal.suggested_due_at}" if proposal.suggested_due_at else ""
+            print(f"  #{proposal.id} [{proposal.status}] {proposal.title}{due}")
+    return 0
+
+
+def _handle_extract_atlas_claims(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.atlas_claim_extractor import extract_atlas_claims_from_evidence
+
+    t0 = time.perf_counter()
+    result = extract_atlas_claims_from_evidence(service, scope=args.scope, limit=args.limit)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    payload = result.to_dict()
+    if args.json_output:
+        print(_json_envelope(payload, total=result.ingested, query_ms=elapsed_ms))
+    else:
+        print(
+            f"atlas claims: scanned={result.scanned} matched={result.matched} "
+            f"ingested={result.ingested}"
+        )
+        for claim in result.claims[:20]:
+            print(f"  #{claim.id} [{claim.status}] {claim.text}")
+    return 0
+
+
+def _handle_action_proposals(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    t0 = time.perf_counter()
+    proposals = service.list_action_proposals(
+        status=args.status,
+        destination=args.destination,
+        limit=args.limit,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    payload = [asdict(proposal) for proposal in proposals]
+    if args.json_output:
+        print(_json_envelope(payload, total=len(payload), query_ms=elapsed_ms))
+    else:
+        for proposal in proposals:
+            due = f" due={proposal.suggested_due_at}" if proposal.suggested_due_at else ""
+            print(f"#{proposal.id} [{proposal.status}] {proposal.destination} {proposal.title}{due}")
+        print(f"{len(proposals)} proposal(s)")
+    return 0
+
+
+def _handle_resolve_action_proposal(
+    args: argparse.Namespace,
+    service,
+    parser: argparse.ArgumentParser,
+    effective_db: str,
+) -> int:
+    t0 = time.perf_counter()
+    proposal = service.update_action_proposal_status(
+        args.proposal_id,
+        status=args.status,
+        external_ref=args.external_ref,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(asdict(proposal), total=1, query_ms=elapsed_ms))
+    else:
+        print(f"proposal #{proposal.id} status={proposal.status} external_ref={proposal.external_ref or ''}")
+    return 0
+
+
+def _handle_export_actions(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.action_exporters import export_approved_actions
+
+    t0 = time.perf_counter()
+    result = export_approved_actions(
+        service,
+        args.output,
+        destination=args.destination,
+        limit=args.limit,
+        mark_exported=not args.dry_run,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    payload = result.to_dict()
+    if args.json_output:
+        print(_json_envelope(payload, total=result.exported, query_ms=elapsed_ms))
+    else:
+        label = "prepared" if args.dry_run else "exported"
+        print(f"{label} {result.exported} action(s) -> {result.output_path}")
+    return 0
+
+
 def _handle_run_cycle(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     t0 = time.perf_counter()
     result = service.run_cycle(run_compactor=args.with_compact, min_citations=args.min_citations,

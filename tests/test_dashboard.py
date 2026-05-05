@@ -52,6 +52,20 @@ def _get_json(url: str) -> tuple[int, dict[str, str], dict[str, object]]:
     return status, headers, payload
 
 
+def _post_json(url: str, payload: dict[str, object]) -> tuple[int, dict[str, str], dict[str, object]]:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=3) as response:
+        status = int(response.status)
+        headers = {k: v for k, v in response.headers.items()}
+        response_payload = json.loads(response.read().decode("utf-8"))
+    return status, headers, response_payload
+
+
 def test_dashboard_health_and_html() -> None:
     db = _case_db("sqlite-dashboard-health")
     service = MemoryService(db, workspace_root=Path.cwd())
@@ -161,6 +175,38 @@ def test_dashboard_data_endpoints() -> None:
         assert {"claim_id", "priority", "reason", "citations_count"} <= set(items[0])
 
 
+def test_dashboard_action_proposal_endpoints() -> None:
+    db = _case_db("sqlite-dashboard-actions")
+    service = MemoryService(db, workspace_root=Path.cwd())
+    service.init_db()
+    proposal = service.create_action_proposal(
+        proposal_type="task",
+        title="Send installation quote",
+        destination="super-productivity",
+        confidence=0.8,
+        idempotency_key="dashboard-action-1",
+    )
+
+    operator_log = Path(".tmp_cases") / "dashboard-actions-operator.jsonl"
+    operator_log.parent.mkdir(parents=True, exist_ok=True)
+    operator_log.write_text("", encoding="utf-8")
+
+    with _running_server(service, operator_log) as base_url:
+        status, _, payload = _get_json(f"{base_url}/api/action-proposals?status=candidate&limit=10")
+        assert status == 200
+        assert payload["ok"] is True
+        assert payload["rows"] == 1
+        assert payload["proposals"][0]["id"] == proposal.id
+
+        update_status, _, update_payload = _post_json(
+            f"{base_url}/api/action-proposals/status",
+            {"proposal_id": proposal.id, "status": "approved"},
+        )
+        assert update_status == 200
+        assert update_payload["ok"] is True
+        assert update_payload["proposal"]["status"] == "approved"
+
+
 def test_dashboard_operator_stream_sse_replays_log() -> None:
     db = _case_db("sqlite-dashboard-stream")
     service = MemoryService(db, workspace_root=Path.cwd())
@@ -201,4 +247,3 @@ def test_dashboard_operator_stream_sse_replays_log() -> None:
         streamed_payload = json.loads(data_lines[0][len("data: ") :])
         assert streamed_payload["turn_id"] == "turn-1"
         assert streamed_payload["processed_events"] == 1
-

@@ -44,9 +44,10 @@ from memorymaster._storage_schema import _SchemaMixin
 from memorymaster._storage_read import _ReadMixin
 from memorymaster._storage_write_claims import _WriteClaimsMixin
 from memorymaster._storage_lifecycle import _LifecycleMixin
+from memorymaster._storage_sources import _SourceItemsMixin
 
 
-class SQLiteStore(_SchemaMixin, _ReadMixin, _WriteClaimsMixin, _LifecycleMixin):
+class SQLiteStore(_SchemaMixin, _ReadMixin, _WriteClaimsMixin, _LifecycleMixin, _SourceItemsMixin):
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = str(db_path)
     def connect(self) -> sqlite3.Connection:
@@ -91,6 +92,7 @@ class SQLiteStore(_SchemaMixin, _ReadMixin, _WriteClaimsMixin, _LifecycleMixin):
             self._ensure_binding_columns(conn)
             self._ensure_version_column(conn)
             self._ensure_embeddings_schema(conn)
+            self._ensure_atlas_source_schema(conn)
             # Entity registry (GBrain-inspired canonical entities + alias resolution)
             from memorymaster.entity_registry import ensure_entity_schema
             ensure_entity_schema(conn)

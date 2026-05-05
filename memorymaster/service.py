@@ -9,7 +9,7 @@ import os
 from memorymaster import candidate_dedupe
 from memorymaster.embeddings import create_best_provider
 from memorymaster.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, validator
-from memorymaster.models import CitationInput, Claim, ClaimLink, Event
+from memorymaster.models import ActionProposal, CitationInput, Claim, ClaimLink, Event, EvidenceItem, ExternalSource, SourceItem
 from memorymaster.policy import select_revalidation_candidates
 from memorymaster.context_optimizer import ContextResult, pack_context
 from memorymaster.retrieval import VectorSearchHook, rank_claim_rows
@@ -765,6 +765,148 @@ class MemoryService:
             claim_id=claim_id,
             limit=limit,
             event_type=event_type,
+        )
+
+    def upsert_external_source(
+        self,
+        *,
+        source_type: str,
+        display_name: str,
+        config_json: dict[str, object] | str | None = None,
+    ) -> ExternalSource:
+        return self.store.upsert_external_source(
+            source_type=source_type,
+            display_name=display_name,
+            config_json=config_json,
+        )
+
+    def upsert_source_item(
+        self,
+        *,
+        source_id: int,
+        source_item_id: str,
+        item_type: str,
+        chat_id: str | None = None,
+        sender_id: str | None = None,
+        sender_name: str | None = None,
+        occurred_at: str | None = None,
+        text: str | None = None,
+        payload_json: dict[str, object] | str | None = None,
+        content_hash: str | None = None,
+    ) -> SourceItem:
+        return self.store.upsert_source_item(
+            source_id=source_id,
+            source_item_id=source_item_id,
+            item_type=item_type,
+            chat_id=chat_id,
+            sender_id=sender_id,
+            sender_name=sender_name,
+            occurred_at=occurred_at,
+            text=text,
+            payload_json=payload_json,
+            content_hash=content_hash,
+        )
+
+    def get_source_item(self, *, source_id: int, source_item_id: str) -> SourceItem | None:
+        return self.store.get_source_item(source_id=source_id, source_item_id=source_item_id)
+
+    def get_source_item_by_id(self, source_item_row_id: int) -> SourceItem | None:
+        return self.store.get_source_item_by_id(source_item_row_id)
+
+    def add_evidence_item(
+        self,
+        *,
+        source_item_id: int,
+        evidence_type: str,
+        text: str | None = None,
+        media_path: str | None = None,
+        provider: str | None = None,
+        confidence: float | None = None,
+        payload_json: dict[str, object] | str | None = None,
+    ) -> EvidenceItem:
+        return self.store.add_evidence_item(
+            source_item_id=source_item_id,
+            evidence_type=evidence_type,
+            text=text,
+            media_path=media_path,
+            provider=provider,
+            confidence=confidence,
+            payload_json=payload_json,
+        )
+
+    def list_evidence_items(
+        self,
+        *,
+        source_item_id: int | None = None,
+        evidence_type: str | None = None,
+        limit: int = 100,
+    ) -> list[EvidenceItem]:
+        return self.store.list_evidence_items(
+            source_item_id=source_item_id,
+            evidence_type=evidence_type,
+            limit=limit,
+        )
+
+    def create_action_proposal(
+        self,
+        *,
+        proposal_type: str,
+        title: str,
+        description: str | None = None,
+        source_item_id: int | None = None,
+        evidence_item_id: int | None = None,
+        claim_id: int | None = None,
+        suggested_due_at: str | None = None,
+        destination: str = "manual",
+        confidence: float = 0.5,
+        payload_json: dict[str, object] | str | None = None,
+        idempotency_key: str | None = None,
+    ) -> ActionProposal:
+        return self.store.create_action_proposal(
+            proposal_type=proposal_type,
+            title=title,
+            description=description,
+            source_item_id=source_item_id,
+            evidence_item_id=evidence_item_id,
+            claim_id=claim_id,
+            suggested_due_at=suggested_due_at,
+            destination=destination,
+            confidence=confidence,
+            payload_json=payload_json,
+            idempotency_key=idempotency_key,
+        )
+
+    def get_action_proposal_by_idempotency_key(self, idempotency_key: str) -> ActionProposal | None:
+        return self.store.get_action_proposal_by_idempotency_key(idempotency_key)
+
+    def update_action_proposal_status(
+        self,
+        proposal_id: int,
+        *,
+        status: str,
+        external_ref: str | None = None,
+        exported_at: str | None = None,
+        payload_json: dict[str, object] | str | None = None,
+    ) -> ActionProposal:
+        return self.store.update_action_proposal_status(
+            proposal_id,
+            status=status,
+            external_ref=external_ref,
+            exported_at=exported_at,
+            payload_json=payload_json,
+        )
+
+    def list_action_proposals(
+        self,
+        *,
+        status: str | None = None,
+        destination: str | None = None,
+        limit: int = 100,
+    ) -> list[ActionProposal]:
+        return self.store.list_action_proposals(
+            status=status,
+            destination=destination,
+            limit=limit,
         )
 
     def add_claim_link(self, source_id: int, target_id: int, link_type: str) -> ClaimLink:
