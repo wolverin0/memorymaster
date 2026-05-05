@@ -432,6 +432,82 @@ def _handle_resolve_action_proposal(
     return 0
 
 
+def _handle_transcribe_source_item(
+    args: argparse.Namespace,
+    service,
+    parser: argparse.ArgumentParser,
+    effective_db: str,
+) -> int:
+    from memorymaster.atlas_contract import atlas_meta
+    from memorymaster.media_processing import process_transcription
+    from memorymaster.media_providers import get_transcription_provider
+
+    provider = get_transcription_provider(args.provider)
+    t0 = time.perf_counter()
+    outcome = process_transcription(service, args.source_item_id, provider)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    payload = {
+        "source_item_id": outcome.source_item_id,
+        "created": outcome.created,
+        "evidence": asdict(outcome.evidence) if outcome.evidence else None,
+        "error": outcome.error,
+        "provider": provider.provider_name,
+    }
+    if args.json_output:
+        print(_json_envelope(
+            payload,
+            total=1 if outcome.evidence else 0,
+            query_ms=elapsed_ms,
+            extra_meta=atlas_meta("transcribe-source-item"),
+        ))
+    else:
+        if outcome.evidence:
+            label = "created" if outcome.created else "existing"
+            print(f"transcript {label}: evidence #{outcome.evidence.id} provider={provider.provider_name} "
+                  f"len={len(outcome.evidence.text or '')}")
+        else:
+            print(f"transcription failed via {provider.provider_name}: {outcome.error}")
+    return 0
+
+
+def _handle_ocr_source_item(
+    args: argparse.Namespace,
+    service,
+    parser: argparse.ArgumentParser,
+    effective_db: str,
+) -> int:
+    from memorymaster.atlas_contract import atlas_meta
+    from memorymaster.media_processing import process_ocr
+    from memorymaster.media_providers import get_ocr_provider
+
+    provider = get_ocr_provider(args.provider)
+    t0 = time.perf_counter()
+    outcome = process_ocr(service, args.source_item_id, provider)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    payload = {
+        "source_item_id": outcome.source_item_id,
+        "created": outcome.created,
+        "evidence": asdict(outcome.evidence) if outcome.evidence else None,
+        "error": outcome.error,
+        "provider": provider.provider_name,
+    }
+    if args.json_output:
+        print(_json_envelope(
+            payload,
+            total=1 if outcome.evidence else 0,
+            query_ms=elapsed_ms,
+            extra_meta=atlas_meta("ocr-source-item"),
+        ))
+    else:
+        if outcome.evidence:
+            label = "created" if outcome.created else "existing"
+            print(f"ocr {label}: evidence #{outcome.evidence.id} provider={provider.provider_name} "
+                  f"len={len(outcome.evidence.text or '')}")
+        else:
+            print(f"ocr failed via {provider.provider_name}: {outcome.error}")
+    return 0
+
+
 def _handle_enqueue_media_retry(
     args: argparse.Namespace,
     service,

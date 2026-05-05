@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from typing import Any
 
-ATLAS_CONTRACT_VERSION = "1.4.0"
+ATLAS_CONTRACT_VERSION = "1.5.0"
 """Semver string for the Atlas API/CLI contract.
 
 LifeAgent and any other consumer MUST refuse to start if the major component
@@ -211,6 +211,28 @@ ATLAS_SUBCOMMANDS: list[dict[str, Any]] = [
         },
         "data_keys": "MediaRetryItem",
         "meta_total": "1",
+    },
+    {
+        "name": "transcribe-source-item",
+        "description": "Run transcription on a source_item via the chosen provider; stores transcript as an evidence_item. Mock is default. Real provider 'openai' uses Whisper API via OPENAI_API_KEY + OPENAI_BASE_URL.",
+        "inputs": {
+            "--source-item-id": {"type": "int", "required": True},
+            "--provider": {"type": "str", "required": False, "default": "mock", "allowed": ["mock", "openai"]},
+        },
+        "data_keys": ["source_item_id", "created", "evidence", "error", "provider"],
+        "meta_total": "1 if evidence else 0",
+        "note": "Provider failures are recorded as media_process events with details='media_process_failed'; the source_item is preserved.",
+    },
+    {
+        "name": "ocr-source-item",
+        "description": "Run OCR on a source_item via the chosen provider; stores OCR text as an evidence_item. Mock is default. Real provider 'tesseract' requires the pytesseract Python package AND a system 'tesseract' binary on PATH.",
+        "inputs": {
+            "--source-item-id": {"type": "int", "required": True},
+            "--provider": {"type": "str", "required": False, "default": "mock", "allowed": ["mock", "tesseract"]},
+        },
+        "data_keys": ["source_item_id", "created", "evidence", "error", "provider"],
+        "meta_total": "1 if evidence else 0",
+        "note": "Provider failures are recorded as media_process events with details='media_process_failed'.",
     },
     {
         "name": "list-media-retries",
