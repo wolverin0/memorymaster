@@ -784,6 +784,94 @@ def test_list_media_retries_filters_by_status(tmp_path: Path, capsys) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Stale-DB migration (v1.5.1 fix for LifeAgent's "no such column: sensitivity")
+# ---------------------------------------------------------------------------
+
+
+def test_init_db_migrates_stale_atlas_db_without_sensitivity_column(tmp_path: Path) -> None:
+    """Regression for LifeAgent's blocker: existing Atlas DB from PR #20 era
+    (no sensitivity column) must migrate cleanly via init-db.
+
+    The bug (v1.5.0): schema.sql had CREATE INDEX ON source_items(sensitivity)
+    which fired before the ALTER TABLE migration in _ensure_atlas_source_schema.
+    On stale DBs the index creation hit "no such column: sensitivity" and
+    fell into storage.py's lenient fallback (silently swallowing all DDL errors).
+    The fix (v1.5.1): sensitivity indexes moved out of schema.sql; the
+    _ensure_atlas_source_schema migration runs ALTER first, then indexes.
+    """
+    import sqlite3
+    db = tmp_path / "atlas-stale.db"
+    pre_sensitivity_schema = """
+    CREATE TABLE external_sources (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, source_type TEXT NOT NULL,
+        display_name TEXT NOT NULL, config_json TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        UNIQUE (source_type, display_name)
+    );
+    CREATE TABLE source_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER NOT NULL,
+        source_item_id TEXT NOT NULL, item_type TEXT NOT NULL,
+        chat_id TEXT, sender_id TEXT, sender_name TEXT, occurred_at TEXT,
+        text TEXT, payload_json TEXT, content_hash TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        FOREIGN KEY (source_id) REFERENCES external_sources(id) ON DELETE CASCADE,
+        UNIQUE (source_id, source_item_id)
+    );
+    CREATE TABLE evidence_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, source_item_id INTEGER NOT NULL,
+        evidence_type TEXT NOT NULL, text TEXT, media_path TEXT,
+        provider TEXT, confidence REAL, payload_json TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (source_item_id) REFERENCES source_items(id) ON DELETE CASCADE
+    );
+    CREATE TABLE action_proposals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, proposal_type TEXT NOT NULL,
+        title TEXT NOT NULL, description TEXT,
+        source_item_id INTEGER, evidence_item_id INTEGER, claim_id INTEGER,
+        suggested_due_at TEXT, destination TEXT NOT NULL DEFAULT 'manual',
+        status TEXT NOT NULL DEFAULT 'candidate',
+        confidence REAL NOT NULL DEFAULT 0.5,
+        payload_json TEXT, exported_at TEXT, external_ref TEXT,
+        idempotency_key TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    INSERT INTO external_sources (source_type, display_name, created_at, updated_at)
+        VALUES ('whatsapp', 'primary', '2026-05-04T00:00:00Z', '2026-05-04T00:00:00Z');
+    INSERT INTO source_items (source_id, source_item_id, item_type, text, created_at, updated_at)
+        VALUES (1, 'msg-pre', 'message', 'pre-existing data', '2026-05-04T00:00:00Z', '2026-05-04T00:00:00Z');
+    """
+    conn = sqlite3.connect(str(db))
+    try:
+        conn.executescript(pre_sensitivity_schema)
+        conn.commit()
+    finally:
+        conn.close()
+
+    from memorymaster.service import MemoryService
+    svc = MemoryService(db, workspace_root=tmp_path)
+    svc.init_db()  # MUST not raise
+
+    conn = sqlite3.connect(str(db))
+    try:
+        cols_src = {row[1] for row in conn.execute("PRAGMA table_info(source_items)").fetchall()}
+        cols_ev = {row[1] for row in conn.execute("PRAGMA table_info(evidence_items)").fetchall()}
+        assert "sensitivity" in cols_src
+        assert "sensitivity" in cols_ev
+        rows = conn.execute("SELECT id, source_item_id, text FROM source_items").fetchall()
+        assert rows == [(1, "msg-pre", "pre-existing data")]
+        idx_names = {row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'"
+        ).fetchall()}
+        assert "idx_source_items_sensitivity" in idx_names
+        assert "idx_evidence_items_sensitivity" in idx_names
+    finally:
+        conn.close()
+
+    # Idempotent: re-run on already-migrated DB.
+    svc.init_db()
+
+
+# ---------------------------------------------------------------------------
 # Real provider adapters (v1.5.0)
 # ---------------------------------------------------------------------------
 

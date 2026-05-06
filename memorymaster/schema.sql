@@ -200,8 +200,10 @@ CREATE INDEX IF NOT EXISTS idx_action_proposals_destination ON action_proposals(
 CREATE UNIQUE INDEX IF NOT EXISTS idx_action_proposals_idempotency_key
     ON action_proposals(idempotency_key)
     WHERE idempotency_key IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_source_items_sensitivity ON source_items(sensitivity);
-CREATE INDEX IF NOT EXISTS idx_evidence_items_sensitivity ON evidence_items(sensitivity);
+-- sensitivity indexes are created by _storage_schema._ensure_atlas_source_schema
+-- AFTER its idempotent ALTER TABLE migration. Keeping them here would fail on
+-- stale Atlas DBs (PR #20 era) that don't yet have the sensitivity column,
+-- triggering the storage.py lenient-fallback path. See PR #27 / claim mm-ce8b.
 
 CREATE TABLE IF NOT EXISTS media_retry_queue (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

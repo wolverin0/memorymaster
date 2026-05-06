@@ -226,6 +226,14 @@ CREATE INDEX IF NOT EXISTS idx_action_proposals_destination ON action_proposals(
 CREATE UNIQUE INDEX IF NOT EXISTS idx_action_proposals_idempotency_key
     ON action_proposals(idempotency_key)
     WHERE idempotency_key IS NOT NULL;
+-- Forward-migrate sensitivity column on stale Atlas DBs (PR #20 era)
+-- BEFORE creating indexes that reference it. Postgres supports
+-- ADD COLUMN IF NOT EXISTS natively; SQLite uses an ALTER+catch in
+-- _storage_schema._ensure_atlas_source_schema. See PR #27 / claim mm-ce8b.
+ALTER TABLE source_items ADD COLUMN IF NOT EXISTS sensitivity TEXT
+    CHECK (sensitivity IS NULL OR sensitivity IN ('none','low','medium','high','redacted'));
+ALTER TABLE evidence_items ADD COLUMN IF NOT EXISTS sensitivity TEXT
+    CHECK (sensitivity IS NULL OR sensitivity IN ('none','low','medium','high','redacted'));
 CREATE INDEX IF NOT EXISTS idx_source_items_sensitivity ON source_items(sensitivity);
 CREATE INDEX IF NOT EXISTS idx_evidence_items_sensitivity ON evidence_items(sensitivity);
 
