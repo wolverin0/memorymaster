@@ -154,6 +154,35 @@ def _yaml_escape(value: str) -> str:
     return v
 
 
+_EXPLORED_RE = re.compile(r"^explored\s*:\s*(true|false|yes|no|1|0)\s*$", re.IGNORECASE | re.MULTILINE)
+
+
+def _read_existing_explored(filepath: Path) -> bool | None:
+    """Parse the ``explored`` frontmatter flag from an existing article.
+
+    Returns the bool if the field is present, ``None`` otherwise. Used to
+    preserve an operator's "explored: true" decision across re-absorbs —
+    same pattern as the sensitivity re-upsert preservation (claim mm-3e07).
+    """
+    if not filepath.exists():
+        return None
+    try:
+        content = filepath.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    if not content.startswith("---"):
+        return None
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return None
+    fm = parts[1]
+    match = _EXPLORED_RE.search(fm)
+    if not match:
+        return None
+    val = match.group(1).strip().lower()
+    return val in ("true", "yes", "1")
+
+
 def _write_article(wiki_dir: Path, scope_dir: str, slug: str, title: str,
                     body: str, article_type: str, scope: str,
                     claim_ids: list[int], related: list[str],
@@ -165,6 +194,10 @@ def _write_article(wiki_dir: Path, scope_dir: str, slug: str, title: str,
       - title, type, scope, claims, created, last_updated, date, related
       - description (~150 char summary for Bases + SessionStart hook)
       - tags (for Obsidian graph + Bases filters)
+      - explored (true|false): operator-set human-review marker. Defaults
+        to false on new articles; PRESERVED on re-absorb if the existing
+        article has explored: true (operators reviewed and approved).
+        Pattern borrowed from shannhk/llm-wiki — see claim mm-09b4.
     """
     dest = wiki_dir / scope_dir
     dest.mkdir(parents=True, exist_ok=True)
@@ -175,6 +208,10 @@ def _write_article(wiki_dir: Path, scope_dir: str, slug: str, title: str,
         description = _extract_description(body)
 
     tags = _build_tags(article_type, scope, claim_types or [])
+
+    filepath = dest / f"{slug}.md"
+    existing_explored = _read_existing_explored(filepath)
+    explored = existing_explored if existing_explored is not None else False
 
     lines = ["---"]
     lines.append(f"title: {_yaml_escape(title)}")
@@ -187,6 +224,7 @@ def _write_article(wiki_dir: Path, scope_dir: str, slug: str, title: str,
     lines.append(f"created: {now}")
     lines.append(f"last_updated: {now}")
     lines.append(f"date: {now}")
+    lines.append(f"explored: {str(explored).lower()}")
     if related:
         lines.append(f"related: {json.dumps(related[:10])}")
     lines.append("---")
@@ -195,9 +233,50 @@ def _write_article(wiki_dir: Path, scope_dir: str, slug: str, title: str,
     lines.append("")
     lines.append(body)
 
-    filepath = dest / f"{slug}.md"
     filepath.write_text("\n".join(lines), encoding="utf-8")
     return filepath
+
+
+def _build_contradiction_callout(claims: list[dict]) -> str:
+    """Detect (subject, predicate) contradictions within a single article's
+    claim cluster and render them as Obsidian ``> [!contradiction]`` callouts
+    that surface inline at read time.
+
+    Empty string if no contradictions. The detector is shared with
+    ``vault_linter._detect_contradictions`` so wiki-absorb and lint-vault
+    agree on what counts as a contradiction. Pattern from shannhk/llm-wiki —
+    see claim mm-09b4.
+    """
+    if not claims or len(claims) < 2:
+        return ""
+    try:
+        from memorymaster.vault_linter import _detect_contradictions
+    except ImportError:
+        return ""
+    contradictions = _detect_contradictions(claims)
+    if not contradictions:
+        return ""
+
+    lines: list[str] = []
+    for c in contradictions:
+        # key is "subject|predicate"; render predicate alone since the
+        # whole article is about the subject.
+        predicate = c["key"].split("|", 1)[-1] or c["key"]
+        lines.append(f"> [!contradiction] Conflicting claims on `{predicate}`")
+        lines.append("> ")
+        lines.append(
+            f"> {len(c['claims'])} claims disagree on this. "
+            "Higher-confidence first; review and supersede or mark conflicted."
+        )
+        lines.append("> ")
+        for cl in c["claims"][:6]:
+            hid = cl.get("human_id") or f"#{cl['id']}"
+            val = (cl.get("value") or "").replace("\n", " ").strip()[:120]
+            conf = cl.get("confidence")
+            conf_str = f"conf={conf:.2f}" if isinstance(conf, (int, float)) else ""
+            lines.append(f"> - **{hid}** ({conf_str}): {val}")
+        lines.append("")
+    return "\n".join(lines)
 
 
 def _stamp_wiki_binding(db_path: str, claim_ids: list[int], slug: str) -> None:
@@ -321,7 +400,11 @@ Return ONLY the updated compiled truth (no frontmatter, no title, no timeline)."
                 if new_timeline_entries:
                     timeline_section += "\n" + "\n\n".join(new_timeline_entries) + "\n"
 
-                full_body = new_truth + "\n\n---\n\n" + timeline_section
+                contradiction_block = _build_contradiction_callout(claims)
+                truth_with_callouts = (
+                    f"{contradiction_block}\n{new_truth}" if contradiction_block else new_truth
+                )
+                full_body = truth_with_callouts + "\n\n---\n\n" + timeline_section
                 claim_type_list = [c.get("claim_type") or "fact" for c in claims]
                 _write_article(wiki, scope_dir, slug, subject.title(), full_body,
                               article_type, scope, claim_ids, related_links,
@@ -333,8 +416,12 @@ Return ONLY the updated compiled truth (no frontmatter, no title, no timeline)."
             context = f"Subject: {subject}\nScope: {scope}\nClaims ({len(claims)}):\n{claims_text}"
             body = _call_llm(ABSORB_PROMPT, context)
             if body and len(body) > 50:
+                contradiction_block = _build_contradiction_callout(claims)
+                body_with_callouts = (
+                    f"{contradiction_block}\n{body}" if contradiction_block else body
+                )
                 claim_type_list = [c.get("claim_type") or "fact" for c in claims]
-                _write_article(wiki, scope_dir, slug, subject.title(), body,
+                _write_article(wiki, scope_dir, slug, subject.title(), body_with_callouts,
                               article_type, scope, claim_ids, related_links,
                               claim_types=claim_type_list)
                 _stamp_wiki_binding(db_path, claim_ids, slug)

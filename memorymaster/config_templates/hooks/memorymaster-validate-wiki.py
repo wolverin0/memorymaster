@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 REQUIRED_FIELDS = ["title", "type", "scope"]
-RECOMMENDED_FIELDS = ["description", "date", "tags"]
+RECOMMENDED_FIELDS = ["description", "date", "tags", "explored"]
 
 # Files that are index/nav pages — exempt from the wikilink rule
 EXEMPT_BASENAMES = {"_index.md", "MEMORY.md", "README.md", "log.md"}
