@@ -285,6 +285,15 @@ class ExternalSource:
     updated_at: str
 
 
+ATLAS_SENSITIVITY_LEVELS = ("none", "low", "medium", "high", "redacted")
+"""Allowed values for source_items.sensitivity / evidence_items.sensitivity.
+
+NULL = unlabeled (never inspected). 'none' = inspected and verified
+non-sensitive. The other levels are operator-applied during review.
+LifeAgent (or any frontend) uses these to filter and display.
+"""
+
+
 @dataclass(slots=True)
 class SourceItem:
     id: int
@@ -298,6 +307,7 @@ class SourceItem:
     text: str | None
     payload_json: str | None
     content_hash: str | None
+    sensitivity: str | None
     created_at: str
     updated_at: str
 
@@ -312,7 +322,38 @@ class EvidenceItem:
     provider: str | None
     confidence: float | None
     payload_json: str | None
+    sensitivity: str | None
     created_at: str
+
+
+MEDIA_RETRY_STATUSES = ("pending", "retrying", "expired", "done", "failed")
+"""Allowed values for media_retry_queue.status.
+
+- pending: enqueued by LifeAgent/wacli, awaiting next_attempt_time
+- retrying: claimed by process-media-retry-queue tick; LifeAgent should fetch
+- done: LifeAgent reported success (media_path now points at the local file)
+- expired: WhatsApp returned terminal HTTP 403/410 (media gone, no retry)
+- failed: max attempts hit OR LifeAgent reported a non-terminal failure it
+  has decided to give up on
+"""
+
+
+@dataclass(slots=True)
+class MediaRetryItem:
+    id: int
+    source_item_id: int
+    media_key: str
+    chat_id: str | None
+    media_type: str | None
+    media_path: str | None
+    media_url: str | None
+    status: str
+    attempt_count: int
+    last_http_status: int | None
+    last_error: str | None
+    next_attempt_time: str | None
+    created_at: str
+    updated_at: str
 
 
 @dataclass(slots=True)

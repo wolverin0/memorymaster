@@ -73,11 +73,66 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_action.add_argument("--status", choices=["candidate", "approved", "rejected", "exported", "failed"], required=True)
     resolve_action.add_argument("--external-ref", default=None, help="External task/action id after export")
 
+    edit_action = sub.add_parser("edit-action-proposal", help="Edit user-facing fields of an Atlas action proposal (title/description/due/confidence)")
+    edit_action.add_argument("--proposal-id", type=int, required=True, help="Action proposal id")
+    edit_action.add_argument("--title", default=None, help="New title (non-blank if provided)")
+    edit_action.add_argument("--description", default=None, help="New description")
+    edit_action.add_argument("--suggested-due-at", default=None, help="New suggested due date (ISO-8601)")
+    edit_action.add_argument("--confidence", type=float, default=None, help="New confidence (0.0-1.0)")
+
+    label_source = sub.add_parser("label-source-item", help="Set sensitivity label on an Atlas source_item")
+    label_source.add_argument("--source-item-id", type=int, required=True, help="source_items.id")
+    label_source.add_argument("--sensitivity", choices=["none", "low", "medium", "high", "redacted", "clear"], required=True,
+                              help="'clear' resets to NULL (unlabeled).")
+
+    label_evidence = sub.add_parser("label-evidence-item", help="Set sensitivity label on an Atlas evidence_item")
+    label_evidence.add_argument("--evidence-item-id", type=int, required=True, help="evidence_items.id")
+    label_evidence.add_argument("--sensitivity", choices=["none", "low", "medium", "high", "redacted", "clear"], required=True,
+                                help="'clear' resets to NULL (unlabeled).")
+
+    enqueue_retry = sub.add_parser("enqueue-media-retry", help="Enqueue a media-retry row (LifeAgent calls when wacli reports a missing media)")
+    enqueue_retry.add_argument("--source-item-id", type=int, required=True, help="source_items.id")
+    enqueue_retry.add_argument("--media-key", required=True, help="External media identifier (e.g. wacli message id)")
+    enqueue_retry.add_argument("--chat-id", default=None)
+    enqueue_retry.add_argument("--media-type", default=None, help="audio|image|document|video")
+    enqueue_retry.add_argument("--media-path", default=None, help="Local path if already partially downloaded")
+    enqueue_retry.add_argument("--media-url", default=None, help="Remote URL hint")
+    enqueue_retry.add_argument("--next-attempt-time", default=None, help="ISO-8601; row stays 'pending' until this passes")
+
+    process_retry = sub.add_parser("process-media-retry-queue", help="Claim pending media-retry rows for LifeAgent to fetch (transitions pending->retrying, returns counts)")
+    process_retry.add_argument("--limit", type=int, default=25, help="Max rows to claim this tick")
+
+    record_outcome = sub.add_parser("record-media-retry-outcome", help="Record LifeAgent's fetch result for a media-retry row")
+    record_outcome.add_argument("--retry-id", type=int, required=True, help="media_retry_queue.id")
+    record_outcome.add_argument("--status", choices=["pending", "retrying", "expired", "done", "failed"], required=True,
+                                help="'done' requires --media-path. 'expired' is terminal (HTTP 403/410).")
+    record_outcome.add_argument("--media-path", default=None, help="Local path of the fetched file (required for 'done')")
+    record_outcome.add_argument("--last-http-status", type=int, default=None)
+    record_outcome.add_argument("--last-error", default=None)
+    record_outcome.add_argument("--next-attempt-time", default=None, help="ISO-8601; for retry-later semantics")
+
+    list_retries = sub.add_parser("list-media-retries", help="List media-retry rows")
+    list_retries.add_argument("--status", choices=["pending", "retrying", "expired", "done", "failed"], default=None)
+    list_retries.add_argument("--source-item-id", type=int, default=None)
+    list_retries.add_argument("--limit", type=int, default=100)
+
+    transcribe_evidence = sub.add_parser("transcribe-source-item", help="Run transcription on a source_item via the chosen provider; stores transcript as evidence_item")
+    transcribe_evidence.add_argument("--source-item-id", type=int, required=True, help="source_items.id")
+    transcribe_evidence.add_argument("--provider", choices=["mock", "openai"], default="mock",
+                                      help="'openai' uses Whisper API via OPENAI_API_KEY + OPENAI_BASE_URL.")
+
+    ocr_evidence = sub.add_parser("ocr-source-item", help="Run OCR on a source_item via the chosen provider; stores OCR text as evidence_item")
+    ocr_evidence.add_argument("--source-item-id", type=int, required=True, help="source_items.id")
+    ocr_evidence.add_argument("--provider", choices=["mock", "tesseract"], default="mock",
+                              help="'tesseract' requires pytesseract package + system tesseract binary.")
+
     export_actions = sub.add_parser("export-actions", help="Export approved Atlas action proposals")
     export_actions.add_argument("--output", required=True, help="Output JSON path")
     export_actions.add_argument("--destination", default="super-productivity", help="Destination filter")
     export_actions.add_argument("--limit", type=int, default=100, help="Maximum approved proposals")
     export_actions.add_argument("--dry-run", action="store_true", help="Write file but keep proposals approved")
+
+    sub.add_parser("atlas-version", help="Print Atlas API/CLI contract version and full spec")
 
     cycle = sub.add_parser("run-cycle", help="Run extractor, validator, decay, and optional compact")
     cycle.add_argument("--with-compact", action="store_true", help="Run compactor at the end of cycle")

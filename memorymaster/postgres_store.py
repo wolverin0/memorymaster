@@ -9,6 +9,7 @@ from memorymaster.models import (
     ActionProposal,
     CLAIM_LINK_TYPES,
     CLAIM_STATUSES,
+    MEDIA_RETRY_STATUSES,
     STATUS_TRANSITION_EVENT_TYPES,
     Citation,
     CitationInput,
@@ -17,6 +18,7 @@ from memorymaster.models import (
     EvidenceItem,
     Event,
     ExternalSource,
+    MediaRetryItem,
     SourceItem,
     validate_event_payload,
     validate_event_type,
@@ -1436,6 +1438,7 @@ class PostgresStore(SQLiteStore):
             text=cls._as_text(row.get("text")),
             payload_json=cls._json_text(row.get("payload_json")),
             content_hash=cls._as_text(row.get("content_hash")),
+            sensitivity=cls._as_text(row.get("sensitivity")),
             created_at=cls._as_iso(row["created_at"]) or "",
             updated_at=cls._as_iso(row["updated_at"]) or "",
         )
@@ -1452,6 +1455,7 @@ class PostgresStore(SQLiteStore):
             provider=cls._as_text(row.get("provider")),
             confidence=float(confidence) if confidence is not None else None,
             payload_json=cls._json_text(row.get("payload_json")),
+            sensitivity=cls._as_text(row.get("sensitivity")),
             created_at=cls._as_iso(row["created_at"]) or "",
         )
 
@@ -1664,7 +1668,10 @@ class PostgresStore(SQLiteStore):
         text: str | None = None,
         payload_json: dict[str, object] | str | None = None,
         content_hash: str | None = None,
+        sensitivity: str | None = None,
     ) -> SourceItem:
+        from memorymaster._storage_sources import _normalize_sensitivity
+
         _, _, Jsonb = self._load_psycopg()
         normalized_source_item_id = source_item_id.strip()
         normalized_item_type = item_type.strip().lower()
@@ -1674,8 +1681,15 @@ class PostgresStore(SQLiteStore):
             raise ValueError("source_item_id must be non-empty.")
         if not normalized_item_type:
             raise ValueError("item_type must be non-empty.")
+        normalized_sensitivity = _normalize_sensitivity(sensitivity)
         now = utc_now()
         payload = self._json_payload(payload_json)
+        # Preserve existing sensitivity on re-import unless caller passed one
+        preserve_sensitivity_clause = (
+            "sensitivity = EXCLUDED.sensitivity"
+            if sensitivity is not None
+            else "sensitivity = source_items.sensitivity"
+        )
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(
                 "SELECT id FROM source_items WHERE source_id = %s AND source_item_id = %s",
@@ -1683,12 +1697,12 @@ class PostgresStore(SQLiteStore):
             )
             existing = cur.fetchone()
             cur.execute(
-                """
+                f"""
                 INSERT INTO source_items (
                     source_id, source_item_id, item_type, chat_id, sender_id, sender_name,
-                    occurred_at, text, payload_json, content_hash, created_at, updated_at
+                    occurred_at, text, payload_json, content_hash, sensitivity, created_at, updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(source_id, source_item_id) DO UPDATE SET
                     item_type = EXCLUDED.item_type,
                     chat_id = EXCLUDED.chat_id,
@@ -1698,6 +1712,7 @@ class PostgresStore(SQLiteStore):
                     text = EXCLUDED.text,
                     payload_json = EXCLUDED.payload_json,
                     content_hash = EXCLUDED.content_hash,
+                    {preserve_sensitivity_clause},
                     updated_at = EXCLUDED.updated_at
                 RETURNING *
                 """,
@@ -1712,6 +1727,7 @@ class PostgresStore(SQLiteStore):
                     text,
                     Jsonb(payload) if payload is not None else None,
                     content_hash,
+                    normalized_sensitivity,
                     now,
                     now,
                 ),
@@ -1768,13 +1784,17 @@ class PostgresStore(SQLiteStore):
         provider: str | None = None,
         confidence: float | None = None,
         payload_json: dict[str, object] | str | None = None,
+        sensitivity: str | None = None,
     ) -> EvidenceItem:
+        from memorymaster._storage_sources import _normalize_sensitivity
+
         _, _, Jsonb = self._load_psycopg()
         normalized_evidence_type = evidence_type.strip().lower()
         if source_item_id <= 0:
             raise ValueError("source_item_id must be positive.")
         if not normalized_evidence_type:
             raise ValueError("evidence_type must be non-empty.")
+        normalized_sensitivity = _normalize_sensitivity(sensitivity)
         now = utc_now()
         bounded = None if confidence is None else max(0.0, min(1.0, float(confidence)))
         payload = self._json_payload(payload_json)
@@ -1783,9 +1803,9 @@ class PostgresStore(SQLiteStore):
                 """
                 INSERT INTO evidence_items (
                     source_item_id, evidence_type, text, media_path, provider,
-                    confidence, payload_json, created_at
+                    confidence, payload_json, sensitivity, created_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING *
                 """,
                 (
@@ -1796,6 +1816,7 @@ class PostgresStore(SQLiteStore):
                     provider,
                     bounded,
                     Jsonb(payload) if payload is not None else None,
+                    normalized_sensitivity,
                     now,
                 ),
             )
@@ -1990,6 +2011,384 @@ class PostgresStore(SQLiteStore):
             )
         if row is None:
             raise RuntimeError("Failed to update action proposal.")
+        return self._row_to_action_proposal(row)
+
+    def set_source_item_sensitivity(
+        self,
+        source_item_row_id: int,
+        sensitivity: str | None,
+    ) -> SourceItem:
+        from memorymaster._storage_sources import _normalize_sensitivity
+
+        if source_item_row_id <= 0:
+            raise ValueError("source_item_row_id must be positive.")
+        normalized = _normalize_sensitivity(sensitivity)
+        now = utc_now()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM source_items WHERE id = %s", (source_item_row_id,))
+            current = cur.fetchone()
+            if current is None:
+                raise ValueError(f"Source item {source_item_row_id} does not exist.")
+            current_sensitivity = current.get("sensitivity")
+            if current_sensitivity == normalized:
+                return self._row_to_source_item(current)
+            cur.execute(
+                "UPDATE source_items SET sensitivity = %s, updated_at = %s WHERE id = %s RETURNING *",
+                (normalized, now, source_item_row_id),
+            )
+            row = cur.fetchone()
+            self._insert_event_row(
+                conn,
+                claim_id=None,
+                event_type="source_import",
+                from_status=None,
+                to_status=None,
+                details="source_item_sensitivity_set",
+                payload={"source_item_id": source_item_row_id, "from": current_sensitivity, "to": normalized},
+                created_at=now,
+            )
+        return self._row_to_source_item(row)
+
+    def set_evidence_item_sensitivity(
+        self,
+        evidence_item_row_id: int,
+        sensitivity: str | None,
+    ) -> EvidenceItem:
+        from memorymaster._storage_sources import _normalize_sensitivity
+
+        if evidence_item_row_id <= 0:
+            raise ValueError("evidence_item_row_id must be positive.")
+        normalized = _normalize_sensitivity(sensitivity)
+        now = utc_now()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM evidence_items WHERE id = %s", (evidence_item_row_id,))
+            current = cur.fetchone()
+            if current is None:
+                raise ValueError(f"Evidence item {evidence_item_row_id} does not exist.")
+            current_sensitivity = current.get("sensitivity")
+            if current_sensitivity == normalized:
+                return self._row_to_evidence_item(current)
+            cur.execute(
+                "UPDATE evidence_items SET sensitivity = %s WHERE id = %s RETURNING *",
+                (normalized, evidence_item_row_id),
+            )
+            row = cur.fetchone()
+            self._insert_event_row(
+                conn,
+                claim_id=None,
+                event_type="media_process",
+                from_status=None,
+                to_status=None,
+                details="evidence_item_sensitivity_set",
+                payload={"evidence_item_id": evidence_item_row_id, "from": current_sensitivity, "to": normalized},
+                created_at=now,
+            )
+        return self._row_to_evidence_item(row)
+
+    # ----------------------------------------------------------------------
+    # Media retry queue (Atlas v1.4.0) — Postgres mirror of SQLite mixin
+    # ----------------------------------------------------------------------
+
+    @classmethod
+    def _row_to_media_retry(cls, row: dict[str, object]) -> MediaRetryItem:
+        return MediaRetryItem(
+            id=int(row["id"]),
+            source_item_id=int(row["source_item_id"]),
+            media_key=str(row["media_key"]),
+            chat_id=cls._as_text(row.get("chat_id")),
+            media_type=cls._as_text(row.get("media_type")),
+            media_path=cls._as_text(row.get("media_path")),
+            media_url=cls._as_text(row.get("media_url")),
+            status=str(row["status"]),
+            attempt_count=int(row["attempt_count"]),
+            last_http_status=int(row["last_http_status"]) if row.get("last_http_status") is not None else None,
+            last_error=cls._as_text(row.get("last_error")),
+            next_attempt_time=cls._as_iso(row.get("next_attempt_time")),
+            created_at=cls._as_iso(row["created_at"]) or "",
+            updated_at=cls._as_iso(row["updated_at"]) or "",
+        )
+
+    def enqueue_media_retry(
+        self,
+        *,
+        source_item_id: int,
+        media_key: str,
+        chat_id: str | None = None,
+        media_type: str | None = None,
+        media_path: str | None = None,
+        media_url: str | None = None,
+        status: str = "pending",
+        next_attempt_time: str | None = None,
+    ) -> MediaRetryItem:
+        if source_item_id <= 0:
+            raise ValueError("source_item_id must be positive.")
+        normalized_key = (media_key or "").strip()
+        if not normalized_key:
+            raise ValueError("media_key must be non-empty.")
+        if status not in MEDIA_RETRY_STATUSES:
+            raise ValueError(f"status must be one of: {', '.join(MEDIA_RETRY_STATUSES)}.")
+        now = utc_now()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM media_retry_queue WHERE source_item_id = %s AND media_key = %s",
+                (source_item_id, normalized_key),
+            )
+            existing = cur.fetchone()
+            if existing is not None:
+                cur.execute(
+                    """
+                    UPDATE media_retry_queue
+                    SET chat_id = COALESCE(%s, chat_id),
+                        media_type = COALESCE(%s, media_type),
+                        media_path = COALESCE(%s, media_path),
+                        media_url = COALESCE(%s, media_url),
+                        next_attempt_time = COALESCE(%s, next_attempt_time),
+                        updated_at = %s
+                    WHERE id = %s
+                    RETURNING *
+                    """,
+                    (chat_id, media_type, media_path, media_url, next_attempt_time, now, int(existing["id"])),
+                )
+                row = cur.fetchone()
+                return self._row_to_media_retry(row)
+            cur.execute(
+                """
+                INSERT INTO media_retry_queue (
+                    source_item_id, media_key, chat_id, media_type, media_path, media_url,
+                    status, attempt_count, last_http_status, last_error, next_attempt_time,
+                    created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 0, NULL, NULL, %s, %s, %s)
+                RETURNING *
+                """,
+                (
+                    source_item_id, normalized_key, chat_id, media_type, media_path, media_url,
+                    status, next_attempt_time, now, now,
+                ),
+            )
+            row = cur.fetchone()
+            self._insert_event_row(
+                conn,
+                claim_id=None,
+                event_type="media_process",
+                from_status=None,
+                to_status=status,
+                details="media_retry_enqueued",
+                payload={"retry_id": int(row["id"]), "source_item_id": source_item_id, "media_key": normalized_key},
+                created_at=now,
+            )
+        return self._row_to_media_retry(row)
+
+    def claim_pending_media_retries(self, limit: int = 25) -> list[MediaRetryItem]:
+        if limit <= 0:
+            return []
+        now = utc_now()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE media_retry_queue
+                SET status = 'retrying',
+                    attempt_count = attempt_count + 1,
+                    updated_at = %s
+                WHERE id IN (
+                    SELECT id FROM media_retry_queue
+                    WHERE status = 'pending'
+                      AND (next_attempt_time IS NULL OR next_attempt_time <= %s)
+                    ORDER BY id ASC
+                    LIMIT %s
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING *
+                """,
+                (now, now, limit),
+            )
+            rows = cur.fetchall()
+            for row in rows:
+                self._insert_event_row(
+                    conn,
+                    claim_id=None,
+                    event_type="media_process",
+                    from_status="pending",
+                    to_status="retrying",
+                    details="media_retry_claimed",
+                    payload={"retry_id": int(row["id"])},
+                    created_at=now,
+                )
+        return [self._row_to_media_retry(r) for r in rows]
+
+    def record_media_retry_outcome(
+        self,
+        retry_id: int,
+        *,
+        status: str,
+        media_path: str | None = None,
+        last_http_status: int | None = None,
+        last_error: str | None = None,
+        next_attempt_time: str | None = None,
+    ) -> MediaRetryItem:
+        if retry_id <= 0:
+            raise ValueError("retry_id must be positive.")
+        if status not in MEDIA_RETRY_STATUSES:
+            raise ValueError(f"status must be one of: {', '.join(MEDIA_RETRY_STATUSES)}.")
+        if status == "done" and not media_path:
+            raise ValueError("media_path is required when status='done'.")
+        now = utc_now()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM media_retry_queue WHERE id = %s", (retry_id,))
+            current = cur.fetchone()
+            if current is None:
+                raise ValueError(f"media_retry_queue row {retry_id} does not exist.")
+            new_path = media_path if media_path is not None else current["media_path"]
+            new_http = last_http_status if last_http_status is not None else current["last_http_status"]
+            new_err = last_error if last_error is not None else current["last_error"]
+            new_next = next_attempt_time if next_attempt_time is not None else current["next_attempt_time"]
+            cur.execute(
+                """
+                UPDATE media_retry_queue
+                SET status = %s,
+                    media_path = %s,
+                    last_http_status = %s,
+                    last_error = %s,
+                    next_attempt_time = %s,
+                    updated_at = %s
+                WHERE id = %s
+                RETURNING *
+                """,
+                (status, new_path, new_http, new_err, new_next, now, retry_id),
+            )
+            row = cur.fetchone()
+            self._insert_event_row(
+                conn,
+                claim_id=None,
+                event_type="media_process",
+                from_status=str(current["status"]),
+                to_status=status,
+                details=f"media_retry_outcome_{status}",
+                payload={
+                    "retry_id": retry_id,
+                    "http_status": last_http_status,
+                    "has_path": bool(new_path),
+                },
+                created_at=now,
+            )
+        return self._row_to_media_retry(row)
+
+    def list_media_retries(
+        self,
+        *,
+        status: str | None = None,
+        source_item_id: int | None = None,
+        limit: int = 100,
+    ) -> list[MediaRetryItem]:
+        clauses: list[str] = []
+        params: list[object] = []
+        if status:
+            if status not in MEDIA_RETRY_STATUSES:
+                raise ValueError(f"status must be one of: {', '.join(MEDIA_RETRY_STATUSES)}.")
+            clauses.append("status = %s")
+            params.append(status)
+        if source_item_id is not None:
+            if source_item_id <= 0:
+                raise ValueError("source_item_id must be positive.")
+            clauses.append("source_item_id = %s")
+            params.append(source_item_id)
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT * FROM media_retry_queue {where_sql} ORDER BY updated_at DESC, id DESC LIMIT %s",
+                params,
+            )
+            rows = cur.fetchall()
+        return [self._row_to_media_retry(r) for r in rows]
+
+    def media_retry_status_counts(self) -> dict[str, int]:
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT status, COUNT(*) AS n FROM media_retry_queue GROUP BY status")
+            rows = cur.fetchall()
+        counts = {s: 0 for s in MEDIA_RETRY_STATUSES}
+        for r in rows:
+            counts[str(r["status"])] = int(r["n"])
+        return counts
+
+    def update_action_proposal_fields(
+        self,
+        proposal_id: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        suggested_due_at: str | None = None,
+        confidence: float | None = None,
+        payload_json: dict[str, object] | str | None = None,
+    ) -> ActionProposal:
+        """Postgres mirror of SQLite update_action_proposal_fields."""
+        _, _, Jsonb = self._load_psycopg()
+        if proposal_id <= 0:
+            raise ValueError("proposal_id must be positive.")
+        if title is None and description is None and suggested_due_at is None and confidence is None and payload_json is None:
+            raise ValueError("at least one field must be provided to update.")
+
+        normalized_title = title.strip() if title is not None else None
+        if normalized_title is not None and not normalized_title:
+            raise ValueError("title cannot be blank when provided.")
+        bounded = max(0.0, min(1.0, float(confidence))) if confidence is not None else None
+        payload = self._json_payload(payload_json) if payload_json is not None else None
+
+        now = utc_now()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM action_proposals WHERE id = %s", (proposal_id,))
+            current = cur.fetchone()
+            if current is None:
+                raise ValueError(f"Action proposal {proposal_id} does not exist.")
+
+            updates: list[str] = []
+            params: list[object] = []
+            changed: list[str] = []
+            if normalized_title is not None and normalized_title != current["title"]:
+                updates.append("title = %s")
+                params.append(normalized_title)
+                changed.append("title")
+            if description is not None and description != current["description"]:
+                updates.append("description = %s")
+                params.append(description)
+                changed.append("description")
+            if suggested_due_at is not None and suggested_due_at != current["suggested_due_at"]:
+                updates.append("suggested_due_at = %s")
+                params.append(suggested_due_at)
+                changed.append("suggested_due_at")
+            if bounded is not None and bounded != current["confidence"]:
+                updates.append("confidence = %s")
+                params.append(bounded)
+                changed.append("confidence")
+            if payload is not None and payload != current["payload_json"]:
+                updates.append("payload_json = %s")
+                params.append(Jsonb(payload))
+                changed.append("payload_json")
+
+            if not changed:
+                return self._row_to_action_proposal(current)
+
+            updates.append("updated_at = %s")
+            params.append(now)
+            params.append(proposal_id)
+
+            cur.execute(
+                f"UPDATE action_proposals SET {', '.join(updates)} WHERE id = %s RETURNING *",
+                params,
+            )
+            row = cur.fetchone()
+            self._insert_event_row(
+                conn,
+                claim_id=int(current["claim_id"]) if current["claim_id"] is not None else None,
+                event_type="action_proposal",
+                from_status=str(current["status"]),
+                to_status=str(current["status"]),
+                details="action_proposal_fields_updated",
+                payload={"proposal_id": proposal_id, "changed": changed},
+                created_at=now,
+            )
+        if row is None:
+            raise RuntimeError("Failed to update action proposal fields.")
         return self._row_to_action_proposal(row)
 
     def list_action_proposals(

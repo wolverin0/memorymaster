@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS source_items (
     text TEXT,
     payload_json TEXT,
     content_hash TEXT,
+    sensitivity TEXT CHECK (sensitivity IS NULL OR sensitivity IN ('none','low','medium','high','redacted')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (source_id) REFERENCES external_sources(id) ON DELETE CASCADE,
@@ -148,6 +149,7 @@ CREATE TABLE IF NOT EXISTS evidence_items (
     provider TEXT,
     confidence REAL CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
     payload_json TEXT,
+    sensitivity TEXT CHECK (sensitivity IS NULL OR sensitivity IN ('none','low','medium','high','redacted')),
     created_at TEXT NOT NULL,
     FOREIGN KEY (source_item_id) REFERENCES source_items(id) ON DELETE CASCADE
 );
@@ -198,3 +200,31 @@ CREATE INDEX IF NOT EXISTS idx_action_proposals_destination ON action_proposals(
 CREATE UNIQUE INDEX IF NOT EXISTS idx_action_proposals_idempotency_key
     ON action_proposals(idempotency_key)
     WHERE idempotency_key IS NOT NULL;
+-- sensitivity indexes are created by _storage_schema._ensure_atlas_source_schema
+-- AFTER its idempotent ALTER TABLE migration. Keeping them here would fail on
+-- stale Atlas DBs (PR #20 era) that don't yet have the sensitivity column,
+-- triggering the storage.py lenient-fallback path. See PR #27 / claim mm-ce8b.
+
+CREATE TABLE IF NOT EXISTS media_retry_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_item_id INTEGER NOT NULL,
+    media_key TEXT NOT NULL,
+    chat_id TEXT,
+    media_type TEXT,
+    media_path TEXT,
+    media_url TEXT,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'retrying', 'expired', 'done', 'failed')),
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_http_status INTEGER,
+    last_error TEXT,
+    next_attempt_time TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (source_item_id) REFERENCES source_items(id) ON DELETE CASCADE,
+    UNIQUE (source_item_id, media_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_media_retry_status ON media_retry_queue(status);
+CREATE INDEX IF NOT EXISTS idx_media_retry_next_attempt ON media_retry_queue(next_attempt_time);
+CREATE INDEX IF NOT EXISTS idx_media_retry_source_item ON media_retry_queue(source_item_id);

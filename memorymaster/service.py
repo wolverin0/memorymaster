@@ -9,7 +9,7 @@ import os
 from memorymaster import candidate_dedupe
 from memorymaster.embeddings import create_best_provider
 from memorymaster.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, validator
-from memorymaster.models import ActionProposal, CitationInput, Claim, ClaimLink, Event, EvidenceItem, ExternalSource, SourceItem
+from memorymaster.models import ActionProposal, CitationInput, Claim, ClaimLink, Event, EvidenceItem, ExternalSource, MediaRetryItem, SourceItem
 from memorymaster.policy import select_revalidation_candidates
 from memorymaster.context_optimizer import ContextResult, pack_context
 from memorymaster.retrieval import VectorSearchHook, rank_claim_rows
@@ -793,6 +793,7 @@ class MemoryService:
         text: str | None = None,
         payload_json: dict[str, object] | str | None = None,
         content_hash: str | None = None,
+        sensitivity: str | None = None,
     ) -> SourceItem:
         return self.store.upsert_source_item(
             source_id=source_id,
@@ -805,6 +806,7 @@ class MemoryService:
             text=text,
             payload_json=payload_json,
             content_hash=content_hash,
+            sensitivity=sensitivity,
         )
 
     def get_source_item(self, *, source_id: int, source_item_id: str) -> SourceItem | None:
@@ -823,6 +825,7 @@ class MemoryService:
         provider: str | None = None,
         confidence: float | None = None,
         payload_json: dict[str, object] | str | None = None,
+        sensitivity: str | None = None,
     ) -> EvidenceItem:
         return self.store.add_evidence_item(
             source_item_id=source_item_id,
@@ -832,7 +835,75 @@ class MemoryService:
             provider=provider,
             confidence=confidence,
             payload_json=payload_json,
+            sensitivity=sensitivity,
         )
+
+    def set_source_item_sensitivity(self, source_item_row_id: int, sensitivity: str | None) -> SourceItem:
+        return self.store.set_source_item_sensitivity(source_item_row_id, sensitivity)
+
+    def set_evidence_item_sensitivity(self, evidence_item_row_id: int, sensitivity: str | None) -> EvidenceItem:
+        return self.store.set_evidence_item_sensitivity(evidence_item_row_id, sensitivity)
+
+    def enqueue_media_retry(
+        self,
+        *,
+        source_item_id: int,
+        media_key: str,
+        chat_id: str | None = None,
+        media_type: str | None = None,
+        media_path: str | None = None,
+        media_url: str | None = None,
+        status: str = "pending",
+        next_attempt_time: str | None = None,
+    ) -> MediaRetryItem:
+        return self.store.enqueue_media_retry(
+            source_item_id=source_item_id,
+            media_key=media_key,
+            chat_id=chat_id,
+            media_type=media_type,
+            media_path=media_path,
+            media_url=media_url,
+            status=status,
+            next_attempt_time=next_attempt_time,
+        )
+
+    def claim_pending_media_retries(self, limit: int = 25) -> list[MediaRetryItem]:
+        return self.store.claim_pending_media_retries(limit=limit)
+
+    def record_media_retry_outcome(
+        self,
+        retry_id: int,
+        *,
+        status: str,
+        media_path: str | None = None,
+        last_http_status: int | None = None,
+        last_error: str | None = None,
+        next_attempt_time: str | None = None,
+    ) -> MediaRetryItem:
+        return self.store.record_media_retry_outcome(
+            retry_id,
+            status=status,
+            media_path=media_path,
+            last_http_status=last_http_status,
+            last_error=last_error,
+            next_attempt_time=next_attempt_time,
+        )
+
+    def list_media_retries(
+        self,
+        *,
+        status: str | None = None,
+        source_item_id: int | None = None,
+        limit: int = 100,
+    ) -> list[MediaRetryItem]:
+        return self.store.list_media_retries(
+            status=status,
+            source_item_id=source_item_id,
+            limit=limit,
+        )
+
+    def media_retry_status_counts(self) -> dict[str, int]:
+        return self.store.media_retry_status_counts()
 
     def list_evidence_items(
         self,
@@ -907,6 +978,25 @@ class MemoryService:
             status=status,
             destination=destination,
             limit=limit,
+        )
+
+    def update_action_proposal_fields(
+        self,
+        proposal_id: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        suggested_due_at: str | None = None,
+        confidence: float | None = None,
+        payload_json: dict[str, object] | str | None = None,
+    ) -> ActionProposal:
+        return self.store.update_action_proposal_fields(
+            proposal_id,
+            title=title,
+            description=description,
+            suggested_due_at=suggested_due_at,
+            confidence=confidence,
+            payload_json=payload_json,
         )
 
     def add_claim_link(self, source_id: int, target_id: int, link_type: str) -> ClaimLink:

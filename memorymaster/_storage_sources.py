@@ -11,7 +11,28 @@ import sqlite3
 from typing import Any
 
 from memorymaster._storage_shared import utc_now
-from memorymaster.models import ActionProposal, EvidenceItem, ExternalSource, SourceItem
+from memorymaster.models import (
+    ATLAS_SENSITIVITY_LEVELS,
+    MEDIA_RETRY_STATUSES,
+    ActionProposal,
+    EvidenceItem,
+    ExternalSource,
+    MediaRetryItem,
+    SourceItem,
+)
+
+
+def _normalize_sensitivity(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    if text not in ATLAS_SENSITIVITY_LEVELS:
+        raise ValueError(
+            f"sensitivity must be one of: {', '.join(ATLAS_SENSITIVITY_LEVELS)} (or None)."
+        )
+    return text
 
 
 def _json_or_none(value: dict[str, Any] | str | None) -> str | None:
@@ -79,6 +100,7 @@ class _SourceItemsMixin:
         text: str | None = None,
         payload_json: dict[str, Any] | str | None = None,
         content_hash: str | None = None,
+        sensitivity: str | None = None,
     ) -> SourceItem:
         normalized_source_item_id = source_item_id.strip()
         normalized_item_type = item_type.strip().lower()
@@ -88,6 +110,7 @@ class _SourceItemsMixin:
             raise ValueError("source_item_id must be non-empty.")
         if not normalized_item_type:
             raise ValueError("item_type must be non-empty.")
+        normalized_sensitivity = _normalize_sensitivity(sensitivity)
 
         now = utc_now()
         payload = _json_or_none(payload_json)
@@ -96,13 +119,19 @@ class _SourceItemsMixin:
                 "SELECT id FROM source_items WHERE source_id = ? AND source_item_id = ?",
                 (source_id, normalized_source_item_id),
             ).fetchone()
+            # Preserve existing sensitivity on re-import unless caller passed one
+            preserve_sensitivity_clause = (
+                "sensitivity = excluded.sensitivity"
+                if sensitivity is not None
+                else "sensitivity = source_items.sensitivity"
+            )
             conn.execute(
-                """
+                f"""
                 INSERT INTO source_items (
                     source_id, source_item_id, item_type, chat_id, sender_id, sender_name,
-                    occurred_at, text, payload_json, content_hash, created_at, updated_at
+                    occurred_at, text, payload_json, content_hash, sensitivity, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(source_id, source_item_id) DO UPDATE SET
                     item_type = excluded.item_type,
                     chat_id = excluded.chat_id,
@@ -112,6 +141,7 @@ class _SourceItemsMixin:
                     text = excluded.text,
                     payload_json = excluded.payload_json,
                     content_hash = excluded.content_hash,
+                    {preserve_sensitivity_clause},
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -125,6 +155,7 @@ class _SourceItemsMixin:
                     text,
                     payload,
                     content_hash,
+                    normalized_sensitivity,
                     now,
                     now,
                 ),
@@ -186,12 +217,14 @@ class _SourceItemsMixin:
         provider: str | None = None,
         confidence: float | None = None,
         payload_json: dict[str, Any] | str | None = None,
+        sensitivity: str | None = None,
     ) -> EvidenceItem:
         normalized_evidence_type = evidence_type.strip().lower()
         if source_item_id <= 0:
             raise ValueError("source_item_id must be positive.")
         if not normalized_evidence_type:
             raise ValueError("evidence_type must be non-empty.")
+        normalized_sensitivity = _normalize_sensitivity(sensitivity)
 
         now = utc_now()
         payload = _json_or_none(payload_json)
@@ -201,11 +234,11 @@ class _SourceItemsMixin:
                 """
                 INSERT INTO evidence_items (
                     source_item_id, evidence_type, text, media_path, provider,
-                    confidence, payload_json, created_at
+                    confidence, payload_json, sensitivity, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (source_item_id, normalized_evidence_type, text, media_path, provider, bounded, payload, now),
+                (source_item_id, normalized_evidence_type, text, media_path, provider, bounded, payload, normalized_sensitivity, now),
             )
             evidence_id = int(cur.lastrowid)
             self._insert_event_row(
@@ -408,6 +441,451 @@ class _SourceItemsMixin:
             raise RuntimeError("Failed to update action proposal.")
         return self._row_to_action_proposal(row)
 
+    def set_source_item_sensitivity(
+        self,
+        source_item_row_id: int,
+        sensitivity: str | None,
+    ) -> SourceItem:
+        if source_item_row_id <= 0:
+            raise ValueError("source_item_row_id must be positive.")
+        normalized = _normalize_sensitivity(sensitivity)
+        now = utc_now()
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM source_items WHERE id = ?", (source_item_row_id,)).fetchone()
+            if row is None:
+                raise ValueError(f"Source item {source_item_row_id} does not exist.")
+            current = row["sensitivity"] if "sensitivity" in row.keys() else None
+            if current == normalized:
+                return self._row_to_source_item(row)
+            conn.execute(
+                "UPDATE source_items SET sensitivity = ?, updated_at = ? WHERE id = ?",
+                (normalized, now, source_item_row_id),
+            )
+            self._insert_event_row(
+                conn,
+                claim_id=None,
+                event_type="source_import",
+                from_status=None,
+                to_status=None,
+                details="source_item_sensitivity_set",
+                payload_json=json.dumps(
+                    {"source_item_id": source_item_row_id, "from": current, "to": normalized},
+                    sort_keys=True,
+                ),
+                created_at=now,
+            )
+            updated = conn.execute("SELECT * FROM source_items WHERE id = ?", (source_item_row_id,)).fetchone()
+            conn.commit()
+        return self._row_to_source_item(updated)
+
+    def set_evidence_item_sensitivity(
+        self,
+        evidence_item_row_id: int,
+        sensitivity: str | None,
+    ) -> EvidenceItem:
+        if evidence_item_row_id <= 0:
+            raise ValueError("evidence_item_row_id must be positive.")
+        normalized = _normalize_sensitivity(sensitivity)
+        now = utc_now()
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM evidence_items WHERE id = ?", (evidence_item_row_id,)).fetchone()
+            if row is None:
+                raise ValueError(f"Evidence item {evidence_item_row_id} does not exist.")
+            current = row["sensitivity"] if "sensitivity" in row.keys() else None
+            if current == normalized:
+                return self._row_to_evidence_item(row)
+            conn.execute(
+                "UPDATE evidence_items SET sensitivity = ? WHERE id = ?",
+                (normalized, evidence_item_row_id),
+            )
+            self._insert_event_row(
+                conn,
+                claim_id=None,
+                event_type="media_process",
+                from_status=None,
+                to_status=None,
+                details="evidence_item_sensitivity_set",
+                payload_json=json.dumps(
+                    {"evidence_item_id": evidence_item_row_id, "from": current, "to": normalized},
+                    sort_keys=True,
+                ),
+                created_at=now,
+            )
+            updated = conn.execute("SELECT * FROM evidence_items WHERE id = ?", (evidence_item_row_id,)).fetchone()
+            conn.commit()
+        return self._row_to_evidence_item(updated)
+
+    # ----------------------------------------------------------------------
+    # Media retry queue (Atlas v1.4.0)
+    #
+    # Architecture: MemoryMaster owns DURABLE STATE; LifeAgent/wacli owns the
+    # actual HTTP fetch. process-media-retry-queue claims pending rows by
+    # transitioning them to 'retrying' so LifeAgent picks them up; LifeAgent
+    # then calls record-media-retry-outcome with the result.
+    # ----------------------------------------------------------------------
+
+    def enqueue_media_retry(
+        self,
+        *,
+        source_item_id: int,
+        media_key: str,
+        chat_id: str | None = None,
+        media_type: str | None = None,
+        media_path: str | None = None,
+        media_url: str | None = None,
+        status: str = "pending",
+        next_attempt_time: str | None = None,
+    ) -> MediaRetryItem:
+        """Enqueue (or re-enqueue) a media-retry row.
+
+        Idempotent on (source_item_id, media_key) — a second call updates the
+        existing row's metadata WITHOUT clobbering attempt_count/status.
+        Use record_media_retry_outcome to advance state.
+        """
+        if source_item_id <= 0:
+            raise ValueError("source_item_id must be positive.")
+        normalized_key = (media_key or "").strip()
+        if not normalized_key:
+            raise ValueError("media_key must be non-empty.")
+        if status not in MEDIA_RETRY_STATUSES:
+            raise ValueError(
+                f"status must be one of: {', '.join(MEDIA_RETRY_STATUSES)}."
+            )
+        now = utc_now()
+        with self.connect() as conn:
+            existing = conn.execute(
+                "SELECT * FROM media_retry_queue WHERE source_item_id = ? AND media_key = ?",
+                (source_item_id, normalized_key),
+            ).fetchone()
+            if existing is not None:
+                # Update metadata only (do NOT clobber attempt_count/status).
+                conn.execute(
+                    """
+                    UPDATE media_retry_queue
+                    SET chat_id = COALESCE(?, chat_id),
+                        media_type = COALESCE(?, media_type),
+                        media_path = COALESCE(?, media_path),
+                        media_url = COALESCE(?, media_url),
+                        next_attempt_time = COALESCE(?, next_attempt_time),
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (chat_id, media_type, media_path, media_url, next_attempt_time, now, int(existing["id"])),
+                )
+                row = conn.execute("SELECT * FROM media_retry_queue WHERE id = ?", (int(existing["id"]),)).fetchone()
+                conn.commit()
+                return self._row_to_media_retry(row)
+            cur = conn.execute(
+                """
+                INSERT INTO media_retry_queue (
+                    source_item_id, media_key, chat_id, media_type, media_path, media_url,
+                    status, attempt_count, last_http_status, last_error, next_attempt_time,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?, ?, ?)
+                """,
+                (
+                    source_item_id, normalized_key, chat_id, media_type, media_path, media_url,
+                    status, next_attempt_time, now, now,
+                ),
+            )
+            retry_id = int(cur.lastrowid)
+            self._insert_event_row(
+                conn,
+                claim_id=None,
+                event_type="media_process",
+                from_status=None,
+                to_status=status,
+                details="media_retry_enqueued",
+                payload_json=json.dumps(
+                    {"retry_id": retry_id, "source_item_id": source_item_id, "media_key": normalized_key},
+                    sort_keys=True,
+                ),
+                created_at=now,
+            )
+            row = conn.execute("SELECT * FROM media_retry_queue WHERE id = ?", (retry_id,)).fetchone()
+            conn.commit()
+        return self._row_to_media_retry(row)
+
+    def claim_pending_media_retries(self, limit: int = 25) -> list[MediaRetryItem]:
+        """Atomically claim up to N pending rows whose next_attempt_time is past.
+
+        Transitions claimed rows from 'pending' to 'retrying' and increments
+        attempt_count. Returns the claimed rows so LifeAgent can fetch them.
+        """
+        if limit <= 0:
+            return []
+        now = utc_now()
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id FROM media_retry_queue
+                WHERE status = 'pending'
+                  AND (next_attempt_time IS NULL OR next_attempt_time <= ?)
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (now, limit),
+            ).fetchall()
+            ids = [int(r["id"]) for r in rows]
+            if not ids:
+                conn.commit()
+                return []
+            placeholders = ",".join("?" for _ in ids)
+            conn.execute(
+                f"""
+                UPDATE media_retry_queue
+                SET status = 'retrying',
+                    attempt_count = attempt_count + 1,
+                    updated_at = ?
+                WHERE id IN ({placeholders})
+                """,
+                [now, *ids],
+            )
+            for retry_id in ids:
+                self._insert_event_row(
+                    conn,
+                    claim_id=None,
+                    event_type="media_process",
+                    from_status="pending",
+                    to_status="retrying",
+                    details="media_retry_claimed",
+                    payload_json=json.dumps(
+                        {"retry_id": retry_id},
+                        sort_keys=True,
+                    ),
+                    created_at=now,
+                )
+            updated = conn.execute(
+                f"SELECT * FROM media_retry_queue WHERE id IN ({placeholders}) ORDER BY id ASC",
+                ids,
+            ).fetchall()
+            conn.commit()
+        return [self._row_to_media_retry(r) for r in updated]
+
+    def record_media_retry_outcome(
+        self,
+        retry_id: int,
+        *,
+        status: str,
+        media_path: str | None = None,
+        last_http_status: int | None = None,
+        last_error: str | None = None,
+        next_attempt_time: str | None = None,
+    ) -> MediaRetryItem:
+        """Record the outcome of LifeAgent's fetch attempt.
+
+        Status semantics:
+        - 'done': success. media_path is required.
+        - 'expired': terminal — WhatsApp returned 403/410 or similar.
+        - 'failed': non-terminal failure but LifeAgent gave up (max attempts).
+        - 'pending': transient failure, retry later (set next_attempt_time).
+        - 'retrying': uncommon — generally set by claim_pending; pass it back
+          if LifeAgent wants to keep ownership without yet declaring outcome.
+        """
+        if retry_id <= 0:
+            raise ValueError("retry_id must be positive.")
+        if status not in MEDIA_RETRY_STATUSES:
+            raise ValueError(
+                f"status must be one of: {', '.join(MEDIA_RETRY_STATUSES)}."
+            )
+        if status == "done" and not media_path:
+            raise ValueError("media_path is required when status='done'.")
+        now = utc_now()
+        with self.connect() as conn:
+            current = conn.execute(
+                "SELECT * FROM media_retry_queue WHERE id = ?", (retry_id,)
+            ).fetchone()
+            if current is None:
+                raise ValueError(f"media_retry_queue row {retry_id} does not exist.")
+            new_path = media_path if media_path is not None else current["media_path"]
+            new_http = last_http_status if last_http_status is not None else current["last_http_status"]
+            new_err = last_error if last_error is not None else current["last_error"]
+            new_next = next_attempt_time if next_attempt_time is not None else current["next_attempt_time"]
+            conn.execute(
+                """
+                UPDATE media_retry_queue
+                SET status = ?,
+                    media_path = ?,
+                    last_http_status = ?,
+                    last_error = ?,
+                    next_attempt_time = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (status, new_path, new_http, new_err, new_next, now, retry_id),
+            )
+            self._insert_event_row(
+                conn,
+                claim_id=None,
+                event_type="media_process",
+                from_status=current["status"],
+                to_status=status,
+                details=f"media_retry_outcome_{status}",
+                payload_json=json.dumps(
+                    {
+                        "retry_id": retry_id,
+                        "http_status": last_http_status,
+                        "has_path": bool(new_path),
+                    },
+                    sort_keys=True,
+                ),
+                created_at=now,
+            )
+            row = conn.execute("SELECT * FROM media_retry_queue WHERE id = ?", (retry_id,)).fetchone()
+            conn.commit()
+        return self._row_to_media_retry(row)
+
+    def list_media_retries(
+        self,
+        *,
+        status: str | None = None,
+        source_item_id: int | None = None,
+        limit: int = 100,
+    ) -> list[MediaRetryItem]:
+        clauses: list[str] = []
+        params: list[object] = []
+        if status:
+            if status not in MEDIA_RETRY_STATUSES:
+                raise ValueError(
+                    f"status must be one of: {', '.join(MEDIA_RETRY_STATUSES)}."
+                )
+            clauses.append("status = ?")
+            params.append(status)
+        if source_item_id is not None:
+            if source_item_id <= 0:
+                raise ValueError("source_item_id must be positive.")
+            clauses.append("source_item_id = ?")
+            params.append(source_item_id)
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM media_retry_queue {where_sql} ORDER BY updated_at DESC, id DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return [self._row_to_media_retry(r) for r in rows]
+
+    def media_retry_status_counts(self) -> dict[str, int]:
+        """Return {status: count} aggregated across the queue."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) AS n FROM media_retry_queue GROUP BY status"
+            ).fetchall()
+        counts = {s: 0 for s in MEDIA_RETRY_STATUSES}
+        for r in rows:
+            counts[str(r["status"])] = int(r["n"])
+        return counts
+
+    @staticmethod
+    def _row_to_media_retry(row: sqlite3.Row) -> MediaRetryItem:
+        return MediaRetryItem(
+            id=int(row["id"]),
+            source_item_id=int(row["source_item_id"]),
+            media_key=str(row["media_key"]),
+            chat_id=row["chat_id"],
+            media_type=row["media_type"],
+            media_path=row["media_path"],
+            media_url=row["media_url"],
+            status=str(row["status"]),
+            attempt_count=int(row["attempt_count"]),
+            last_http_status=int(row["last_http_status"]) if row["last_http_status"] is not None else None,
+            last_error=row["last_error"],
+            next_attempt_time=row["next_attempt_time"],
+            created_at=str(row["created_at"]),
+            updated_at=str(row["updated_at"]),
+        )
+
+    def update_action_proposal_fields(
+        self,
+        proposal_id: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        suggested_due_at: str | None = None,
+        confidence: float | None = None,
+        payload_json: dict[str, Any] | str | None = None,
+    ) -> ActionProposal:
+        """Edit user-facing proposal fields without touching status/lifecycle.
+
+        Each kwarg is OPT-IN: pass ``None`` (or omit) to leave the field
+        unchanged. Use ``update_action_proposal_status`` for state transitions.
+        Status/external_ref/exported_at/claim_id/source_item_id/evidence_item_id
+        are intentionally NOT editable here — those are lifecycle/structural
+        fields that have their own paths.
+        """
+        if proposal_id <= 0:
+            raise ValueError("proposal_id must be positive.")
+        if title is None and description is None and suggested_due_at is None and confidence is None and payload_json is None:
+            raise ValueError("at least one field must be provided to update.")
+
+        normalized_title = title.strip() if title is not None else None
+        if normalized_title is not None and not normalized_title:
+            raise ValueError("title cannot be blank when provided.")
+        bounded = _bounded_confidence(confidence) if confidence is not None else None
+        payload = _json_or_none(payload_json) if payload_json is not None else None
+
+        now = utc_now()
+        with self.connect() as conn:
+            current = conn.execute("SELECT * FROM action_proposals WHERE id = ?", (proposal_id,)).fetchone()
+            if current is None:
+                raise ValueError(f"Action proposal {proposal_id} does not exist.")
+
+            updates: list[str] = []
+            params: list[object] = []
+            changed: dict[str, object] = {}
+            if normalized_title is not None and normalized_title != current["title"]:
+                updates.append("title = ?")
+                params.append(normalized_title)
+                changed["title"] = normalized_title
+            if description is not None and description != current["description"]:
+                updates.append("description = ?")
+                params.append(description)
+                changed["description"] = description
+            if suggested_due_at is not None and suggested_due_at != current["suggested_due_at"]:
+                updates.append("suggested_due_at = ?")
+                params.append(suggested_due_at)
+                changed["suggested_due_at"] = suggested_due_at
+            if bounded is not None and bounded != current["confidence"]:
+                updates.append("confidence = ?")
+                params.append(bounded)
+                changed["confidence"] = bounded
+            if payload is not None and payload != current["payload_json"]:
+                updates.append("payload_json = ?")
+                params.append(payload)
+                changed["payload_json_updated"] = True
+
+            if not updates:
+                # No-op update — return current row, do not record event.
+                return self._row_to_action_proposal(current)
+
+            updates.append("updated_at = ?")
+            params.append(now)
+            params.append(proposal_id)
+
+            conn.execute(
+                f"UPDATE action_proposals SET {', '.join(updates)} WHERE id = ?",
+                params,
+            )
+            self._insert_event_row(
+                conn,
+                claim_id=current["claim_id"],
+                event_type="action_proposal",
+                from_status=current["status"],
+                to_status=current["status"],
+                details="action_proposal_fields_updated",
+                payload_json=json.dumps(
+                    {"proposal_id": proposal_id, "changed": list(changed.keys())},
+                    sort_keys=True,
+                ),
+                created_at=now,
+            )
+            row = conn.execute("SELECT * FROM action_proposals WHERE id = ?", (proposal_id,)).fetchone()
+            conn.commit()
+        if row is None:
+            raise RuntimeError("Failed to update action proposal fields.")
+        return self._row_to_action_proposal(row)
+
     def list_action_proposals(
         self,
         *,
@@ -457,6 +935,7 @@ class _SourceItemsMixin:
             text=row["text"],
             payload_json=row["payload_json"],
             content_hash=row["content_hash"],
+            sensitivity=row["sensitivity"] if "sensitivity" in row.keys() else None,
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
         )
@@ -473,6 +952,7 @@ class _SourceItemsMixin:
             provider=row["provider"],
             confidence=float(confidence) if confidence is not None else None,
             payload_json=row["payload_json"],
+            sensitivity=row["sensitivity"] if "sensitivity" in row.keys() else None,
             created_at=str(row["created_at"]),
         )
 

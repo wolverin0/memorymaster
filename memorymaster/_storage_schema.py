@@ -54,7 +54,24 @@ class _SchemaMixin:
 
     @staticmethod
     def _ensure_atlas_source_schema(conn: sqlite3.Connection) -> None:
-        """Ensure Atlas Inbox external source/evidence/action proposal tables exist."""
+        """Ensure Atlas Inbox external source/evidence/action proposal tables exist.
+
+        Critical ordering (forward-migration aware):
+          1. CREATE TABLE IF NOT EXISTS — idempotent on existing tables
+             but does NOT add new columns to pre-existing tables.
+          2. ALTER TABLE ADD COLUMN — forward-migrate columns added in
+             later versions (idempotent via duplicate-column catch).
+          3. CREATE INDEX IF NOT EXISTS — runs LAST, after columns are
+             guaranteed to exist on both fresh and stale DBs.
+
+        Bug history: in v1.5.0, the index-on-new-column statements were
+        in the same executescript as CREATE TABLE, which fired BEFORE
+        the ALTER. On a stale Atlas DB (pre-sensitivity), CREATE INDEX
+        ON source_items(sensitivity) failed with 'no such column'. v1.5.1
+        splits the script and runs ALTER between the table and index
+        phases. See PR #27 / claim mm-ce8b.
+        """
+        # Phase 1: tables (idempotent — IF NOT EXISTS)
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS external_sources (
@@ -79,6 +96,7 @@ class _SchemaMixin:
                 text TEXT,
                 payload_json TEXT,
                 content_hash TEXT,
+                sensitivity TEXT CHECK (sensitivity IS NULL OR sensitivity IN ('none','low','medium','high','redacted')),
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (source_id) REFERENCES external_sources(id) ON DELETE CASCADE,
@@ -94,6 +112,7 @@ class _SchemaMixin:
                 provider TEXT,
                 confidence REAL CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
                 payload_json TEXT,
+                sensitivity TEXT CHECK (sensitivity IS NULL OR sensitivity IN ('none','low','medium','high','redacted')),
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (source_item_id) REFERENCES source_items(id) ON DELETE CASCADE
             );
@@ -122,6 +141,42 @@ class _SchemaMixin:
                 FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE SET NULL
             );
 
+            CREATE TABLE IF NOT EXISTS media_retry_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_item_id INTEGER NOT NULL,
+                media_key TEXT NOT NULL,
+                chat_id TEXT,
+                media_type TEXT,
+                media_path TEXT,
+                media_url TEXT,
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'retrying', 'expired', 'done', 'failed')),
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                last_http_status INTEGER,
+                last_error TEXT,
+                next_attempt_time TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (source_item_id) REFERENCES source_items(id) ON DELETE CASCADE,
+                UNIQUE (source_item_id, media_key)
+            );
+            """
+        )
+
+        # Phase 2: forward-migrate columns added in later versions.
+        # Pattern matches _ensure_claim_idempotency_schema. MUST run BEFORE
+        # any indexes that reference these columns (otherwise stale DBs
+        # fail with 'no such column').
+        for table in ("source_items", "evidence_items"):
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN sensitivity TEXT")
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+
+        # Phase 3: indexes (now safe — all columns guaranteed to exist).
+        conn.executescript(
+            """
             CREATE INDEX IF NOT EXISTS idx_external_sources_type ON external_sources(source_type);
             CREATE INDEX IF NOT EXISTS idx_source_items_source_id ON source_items(source_id);
             CREATE INDEX IF NOT EXISTS idx_source_items_chat_id ON source_items(chat_id);
@@ -134,6 +189,11 @@ class _SchemaMixin:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_action_proposals_idempotency_key
                 ON action_proposals(idempotency_key)
                 WHERE idempotency_key IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_source_items_sensitivity ON source_items(sensitivity);
+            CREATE INDEX IF NOT EXISTS idx_evidence_items_sensitivity ON evidence_items(sensitivity);
+            CREATE INDEX IF NOT EXISTS idx_media_retry_status ON media_retry_queue(status);
+            CREATE INDEX IF NOT EXISTS idx_media_retry_next_attempt ON media_retry_queue(next_attempt_time);
+            CREATE INDEX IF NOT EXISTS idx_media_retry_source_item ON media_retry_queue(source_item_id);
             """
         )
 
