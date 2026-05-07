@@ -111,6 +111,71 @@ CREATE TABLE IF NOT EXISTS claim_embeddings (
     FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS external_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_type TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    config_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (source_type, display_name)
+);
+
+CREATE TABLE IF NOT EXISTS source_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id INTEGER NOT NULL,
+    source_item_id TEXT NOT NULL,
+    item_type TEXT NOT NULL,
+    chat_id TEXT,
+    sender_id TEXT,
+    sender_name TEXT,
+    occurred_at TEXT,
+    text TEXT,
+    payload_json TEXT,
+    content_hash TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (source_id) REFERENCES external_sources(id) ON DELETE CASCADE,
+    UNIQUE (source_id, source_item_id)
+);
+
+CREATE TABLE IF NOT EXISTS evidence_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_item_id INTEGER NOT NULL,
+    evidence_type TEXT NOT NULL,
+    text TEXT,
+    media_path TEXT,
+    provider TEXT,
+    confidence REAL CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
+    payload_json TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (source_item_id) REFERENCES source_items(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS action_proposals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    proposal_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    source_item_id INTEGER,
+    evidence_item_id INTEGER,
+    claim_id INTEGER,
+    suggested_due_at TEXT,
+    destination TEXT NOT NULL DEFAULT 'manual',
+    status TEXT NOT NULL DEFAULT 'candidate'
+        CHECK (status IN ('candidate', 'approved', 'rejected', 'exported', 'failed')),
+    confidence REAL NOT NULL DEFAULT 0.5 CHECK (confidence >= 0.0 AND confidence <= 1.0),
+    payload_json TEXT,
+    exported_at TEXT,
+    external_ref TEXT,
+    idempotency_key TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (source_item_id) REFERENCES source_items(id) ON DELETE SET NULL,
+    FOREIGN KEY (evidence_item_id) REFERENCES evidence_items(id) ON DELETE SET NULL,
+    FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE SET NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status);
 CREATE INDEX IF NOT EXISTS idx_claims_updated_at ON claims(updated_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_idempotency_key ON claims(idempotency_key);
@@ -121,3 +186,15 @@ CREATE INDEX IF NOT EXISTS idx_events_claim_id ON events(claim_id);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
 CREATE INDEX IF NOT EXISTS idx_embeddings_updated_at ON claim_embeddings(updated_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id);
+CREATE INDEX IF NOT EXISTS idx_external_sources_type ON external_sources(source_type);
+CREATE INDEX IF NOT EXISTS idx_source_items_source_id ON source_items(source_id);
+CREATE INDEX IF NOT EXISTS idx_source_items_chat_id ON source_items(chat_id);
+CREATE INDEX IF NOT EXISTS idx_source_items_occurred_at ON source_items(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_source_items_content_hash ON source_items(content_hash);
+CREATE INDEX IF NOT EXISTS idx_evidence_items_source_item_id ON evidence_items(source_item_id);
+CREATE INDEX IF NOT EXISTS idx_evidence_items_type ON evidence_items(evidence_type);
+CREATE INDEX IF NOT EXISTS idx_action_proposals_status ON action_proposals(status);
+CREATE INDEX IF NOT EXISTS idx_action_proposals_destination ON action_proposals(destination);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_action_proposals_idempotency_key
+    ON action_proposals(idempotency_key)
+    WHERE idempotency_key IS NOT NULL;

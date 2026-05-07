@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from memorymaster.embeddings import EmbeddingProvider, cosine_similarity
 from memorymaster.models import (
+    ActionProposal,
     CLAIM_LINK_TYPES,
     CLAIM_STATUSES,
     STATUS_TRANSITION_EVENT_TYPES,
@@ -13,7 +14,10 @@ from memorymaster.models import (
     CitationInput,
     Claim,
     ClaimLink,
+    EvidenceItem,
     Event,
+    ExternalSource,
+    SourceItem,
     validate_event_payload,
     validate_event_type,
     validate_transition_event_type,
@@ -1400,6 +1404,80 @@ class PostgresStore(SQLiteStore):
         )
 
     @classmethod
+    def _json_text(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+    @classmethod
+    def _row_to_external_source(cls, row: dict[str, object]) -> ExternalSource:
+        return ExternalSource(
+            id=int(row["id"]),
+            source_type=str(row["source_type"]),
+            display_name=str(row["display_name"]),
+            config_json=cls._json_text(row.get("config_json")),
+            created_at=cls._as_iso(row["created_at"]) or "",
+            updated_at=cls._as_iso(row["updated_at"]) or "",
+        )
+
+    @classmethod
+    def _row_to_source_item(cls, row: dict[str, object]) -> SourceItem:
+        return SourceItem(
+            id=int(row["id"]),
+            source_id=int(row["source_id"]),
+            source_item_id=str(row["source_item_id"]),
+            item_type=str(row["item_type"]),
+            chat_id=cls._as_text(row.get("chat_id")),
+            sender_id=cls._as_text(row.get("sender_id")),
+            sender_name=cls._as_text(row.get("sender_name")),
+            occurred_at=cls._as_iso(row.get("occurred_at")),
+            text=cls._as_text(row.get("text")),
+            payload_json=cls._json_text(row.get("payload_json")),
+            content_hash=cls._as_text(row.get("content_hash")),
+            created_at=cls._as_iso(row["created_at"]) or "",
+            updated_at=cls._as_iso(row["updated_at"]) or "",
+        )
+
+    @classmethod
+    def _row_to_evidence_item(cls, row: dict[str, object]) -> EvidenceItem:
+        confidence = row.get("confidence")
+        return EvidenceItem(
+            id=int(row["id"]),
+            source_item_id=int(row["source_item_id"]),
+            evidence_type=str(row["evidence_type"]),
+            text=cls._as_text(row.get("text")),
+            media_path=cls._as_text(row.get("media_path")),
+            provider=cls._as_text(row.get("provider")),
+            confidence=float(confidence) if confidence is not None else None,
+            payload_json=cls._json_text(row.get("payload_json")),
+            created_at=cls._as_iso(row["created_at"]) or "",
+        )
+
+    @classmethod
+    def _row_to_action_proposal(cls, row: dict[str, object]) -> ActionProposal:
+        return ActionProposal(
+            id=int(row["id"]),
+            proposal_type=str(row["proposal_type"]),
+            title=str(row["title"]),
+            description=cls._as_text(row.get("description")),
+            source_item_id=int(row["source_item_id"]) if row.get("source_item_id") is not None else None,
+            evidence_item_id=int(row["evidence_item_id"]) if row.get("evidence_item_id") is not None else None,
+            claim_id=int(row["claim_id"]) if row.get("claim_id") is not None else None,
+            suggested_due_at=cls._as_iso(row.get("suggested_due_at")),
+            destination=str(row["destination"]),
+            status=str(row["status"]),
+            confidence=float(row["confidence"]),
+            payload_json=cls._json_text(row.get("payload_json")),
+            exported_at=cls._as_iso(row.get("exported_at")),
+            external_ref=cls._as_text(row.get("external_ref")),
+            idempotency_key=cls._as_text(row.get("idempotency_key")),
+            created_at=cls._as_iso(row["created_at"]) or "",
+            updated_at=cls._as_iso(row["updated_at"]) or "",
+        )
+
+    @classmethod
     def _row_to_claim_link(cls, row: dict[str, object]) -> ClaimLink:
         return ClaimLink(
             id=int(row["id"]),
@@ -1519,6 +1597,425 @@ class PostgresStore(SQLiteStore):
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_claims_wiki_article ON claims(wiki_article)"
             )
+
+    @staticmethod
+    def _json_payload(value: dict[str, object] | str | None) -> object | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError:
+                return stripped
+        return value
+
+    def upsert_external_source(
+        self,
+        *,
+        source_type: str,
+        display_name: str,
+        config_json: dict[str, object] | str | None = None,
+    ) -> ExternalSource:
+        _, _, Jsonb = self._load_psycopg()
+        normalized_source_type = source_type.strip().lower()
+        normalized_display_name = display_name.strip()
+        if not normalized_source_type:
+            raise ValueError("source_type must be non-empty.")
+        if not normalized_display_name:
+            raise ValueError("display_name must be non-empty.")
+        now = utc_now()
+        payload = self._json_payload(config_json)
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO external_sources (source_type, display_name, config_json, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT(source_type, display_name) DO UPDATE SET
+                    config_json = EXCLUDED.config_json,
+                    updated_at = EXCLUDED.updated_at
+                RETURNING *
+                """,
+                (
+                    normalized_source_type,
+                    normalized_display_name,
+                    Jsonb(payload) if payload is not None else None,
+                    now,
+                    now,
+                ),
+            )
+            row = cur.fetchone()
+        if row is None:
+            raise RuntimeError("Failed to upsert external source.")
+        return self._row_to_external_source(row)
+
+    def upsert_source_item(
+        self,
+        *,
+        source_id: int,
+        source_item_id: str,
+        item_type: str,
+        chat_id: str | None = None,
+        sender_id: str | None = None,
+        sender_name: str | None = None,
+        occurred_at: str | None = None,
+        text: str | None = None,
+        payload_json: dict[str, object] | str | None = None,
+        content_hash: str | None = None,
+    ) -> SourceItem:
+        _, _, Jsonb = self._load_psycopg()
+        normalized_source_item_id = source_item_id.strip()
+        normalized_item_type = item_type.strip().lower()
+        if source_id <= 0:
+            raise ValueError("source_id must be positive.")
+        if not normalized_source_item_id:
+            raise ValueError("source_item_id must be non-empty.")
+        if not normalized_item_type:
+            raise ValueError("item_type must be non-empty.")
+        now = utc_now()
+        payload = self._json_payload(payload_json)
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM source_items WHERE source_id = %s AND source_item_id = %s",
+                (source_id, normalized_source_item_id),
+            )
+            existing = cur.fetchone()
+            cur.execute(
+                """
+                INSERT INTO source_items (
+                    source_id, source_item_id, item_type, chat_id, sender_id, sender_name,
+                    occurred_at, text, payload_json, content_hash, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT(source_id, source_item_id) DO UPDATE SET
+                    item_type = EXCLUDED.item_type,
+                    chat_id = EXCLUDED.chat_id,
+                    sender_id = EXCLUDED.sender_id,
+                    sender_name = EXCLUDED.sender_name,
+                    occurred_at = EXCLUDED.occurred_at,
+                    text = EXCLUDED.text,
+                    payload_json = EXCLUDED.payload_json,
+                    content_hash = EXCLUDED.content_hash,
+                    updated_at = EXCLUDED.updated_at
+                RETURNING *
+                """,
+                (
+                    source_id,
+                    normalized_source_item_id,
+                    normalized_item_type,
+                    chat_id,
+                    sender_id,
+                    sender_name,
+                    occurred_at,
+                    text,
+                    Jsonb(payload) if payload is not None else None,
+                    content_hash,
+                    now,
+                    now,
+                ),
+            )
+            row = cur.fetchone()
+            if existing is None:
+                self._insert_event_row(
+                    conn,
+                    claim_id=None,
+                    event_type="source_import",
+                    from_status=None,
+                    to_status=None,
+                    details="source_item_imported",
+                    payload={
+                        "source_id": source_id,
+                        "source_item_id": normalized_source_item_id,
+                        "item_type": normalized_item_type,
+                    },
+                    created_at=now,
+                )
+        if row is None:
+            raise RuntimeError("Failed to upsert source item.")
+        return self._row_to_source_item(row)
+
+    def get_source_item(self, *, source_id: int, source_item_id: str) -> SourceItem | None:
+        normalized_source_item_id = source_item_id.strip()
+        if source_id <= 0:
+            raise ValueError("source_id must be positive.")
+        if not normalized_source_item_id:
+            return None
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM source_items WHERE source_id = %s AND source_item_id = %s",
+                (source_id, normalized_source_item_id),
+            )
+            row = cur.fetchone()
+        return self._row_to_source_item(row) if row is not None else None
+
+    def get_source_item_by_id(self, source_item_row_id: int) -> SourceItem | None:
+        if source_item_row_id <= 0:
+            raise ValueError("source_item_row_id must be positive.")
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM source_items WHERE id = %s", (source_item_row_id,))
+            row = cur.fetchone()
+        return self._row_to_source_item(row) if row is not None else None
+
+    def add_evidence_item(
+        self,
+        *,
+        source_item_id: int,
+        evidence_type: str,
+        text: str | None = None,
+        media_path: str | None = None,
+        provider: str | None = None,
+        confidence: float | None = None,
+        payload_json: dict[str, object] | str | None = None,
+    ) -> EvidenceItem:
+        _, _, Jsonb = self._load_psycopg()
+        normalized_evidence_type = evidence_type.strip().lower()
+        if source_item_id <= 0:
+            raise ValueError("source_item_id must be positive.")
+        if not normalized_evidence_type:
+            raise ValueError("evidence_type must be non-empty.")
+        now = utc_now()
+        bounded = None if confidence is None else max(0.0, min(1.0, float(confidence)))
+        payload = self._json_payload(payload_json)
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO evidence_items (
+                    source_item_id, evidence_type, text, media_path, provider,
+                    confidence, payload_json, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                (
+                    source_item_id,
+                    normalized_evidence_type,
+                    text,
+                    media_path,
+                    provider,
+                    bounded,
+                    Jsonb(payload) if payload is not None else None,
+                    now,
+                ),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise RuntimeError("Failed to add evidence item.")
+            self._insert_event_row(
+                conn,
+                claim_id=None,
+                event_type="media_process",
+                from_status=None,
+                to_status=None,
+                details="evidence_item_added",
+                payload={
+                    "source_item_id": source_item_id,
+                    "evidence_item_id": int(row["id"]),
+                    "evidence_type": normalized_evidence_type,
+                },
+                created_at=now,
+            )
+        return self._row_to_evidence_item(row)
+
+    def list_evidence_items(
+        self,
+        *,
+        source_item_id: int | None = None,
+        evidence_type: str | None = None,
+        limit: int = 100,
+    ) -> list[EvidenceItem]:
+        clauses: list[str] = []
+        params: list[object] = []
+        if source_item_id is not None:
+            if source_item_id <= 0:
+                raise ValueError("source_item_id must be positive.")
+            clauses.append("source_item_id = %s")
+            params.append(source_item_id)
+        if evidence_type:
+            clauses.append("evidence_type = %s")
+            params.append(evidence_type.strip().lower())
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT * FROM evidence_items {where_sql} ORDER BY created_at ASC, id ASC LIMIT %s",
+                params,
+            )
+            rows = cur.fetchall()
+        return [self._row_to_evidence_item(row) for row in rows]
+
+    def create_action_proposal(
+        self,
+        *,
+        proposal_type: str,
+        title: str,
+        description: str | None = None,
+        source_item_id: int | None = None,
+        evidence_item_id: int | None = None,
+        claim_id: int | None = None,
+        suggested_due_at: str | None = None,
+        destination: str = "manual",
+        confidence: float = 0.5,
+        payload_json: dict[str, object] | str | None = None,
+        idempotency_key: str | None = None,
+    ) -> ActionProposal:
+        _, _, Jsonb = self._load_psycopg()
+        normalized_type = proposal_type.strip().lower()
+        normalized_title = title.strip()
+        normalized_destination = destination.strip() or "manual"
+        normalized_idempotency_key = (idempotency_key or "").strip() or None
+        if not normalized_type:
+            raise ValueError("proposal_type must be non-empty.")
+        if not normalized_title:
+            raise ValueError("title must be non-empty.")
+        if normalized_idempotency_key:
+            existing = self.get_action_proposal_by_idempotency_key(normalized_idempotency_key)
+            if existing is not None:
+                return existing
+        now = utc_now()
+        bounded = max(0.0, min(1.0, float(confidence)))
+        payload = self._json_payload(payload_json)
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO action_proposals (
+                    proposal_type, title, description, source_item_id, evidence_item_id,
+                    claim_id, suggested_due_at, destination, status, confidence, payload_json,
+                    exported_at, external_ref, idempotency_key, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'candidate', %s, %s, NULL, NULL, %s, %s, %s)
+                RETURNING *
+                """,
+                (
+                    normalized_type,
+                    normalized_title,
+                    description,
+                    source_item_id,
+                    evidence_item_id,
+                    claim_id,
+                    suggested_due_at,
+                    normalized_destination,
+                    bounded,
+                    Jsonb(payload) if payload is not None else None,
+                    normalized_idempotency_key,
+                    now,
+                    now,
+                ),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise RuntimeError("Failed to create action proposal.")
+            self._insert_event_row(
+                conn,
+                claim_id=claim_id,
+                event_type="action_proposal",
+                from_status=None,
+                to_status="candidate",
+                details="action_proposal_created",
+                payload={
+                    "proposal_id": int(row["id"]),
+                    "proposal_type": normalized_type,
+                    "destination": normalized_destination,
+                },
+                created_at=now,
+            )
+        return self._row_to_action_proposal(row)
+
+    def get_action_proposal_by_idempotency_key(self, idempotency_key: str) -> ActionProposal | None:
+        normalized = idempotency_key.strip()
+        if not normalized:
+            return None
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM action_proposals WHERE idempotency_key = %s", (normalized,))
+            row = cur.fetchone()
+        return self._row_to_action_proposal(row) if row is not None else None
+
+    def update_action_proposal_status(
+        self,
+        proposal_id: int,
+        *,
+        status: str,
+        external_ref: str | None = None,
+        exported_at: str | None = None,
+        payload_json: dict[str, object] | str | None = None,
+    ) -> ActionProposal:
+        _, _, Jsonb = self._load_psycopg()
+        normalized_status = status.strip().lower()
+        if proposal_id <= 0:
+            raise ValueError("proposal_id must be positive.")
+        if normalized_status not in {"candidate", "approved", "rejected", "exported", "failed"}:
+            raise ValueError("status must be one of: candidate, approved, rejected, exported, failed.")
+        now = utc_now()
+        payload = self._json_payload(payload_json)
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM action_proposals WHERE id = %s", (proposal_id,))
+            current = cur.fetchone()
+            if current is None:
+                raise ValueError(f"Action proposal {proposal_id} does not exist.")
+            final_exported_at = exported_at if exported_at is not None else current["exported_at"]
+            if normalized_status == "exported" and final_exported_at is None:
+                final_exported_at = now
+            if payload is not None:
+                final_payload = Jsonb(payload)
+            elif current["payload_json"] is not None:
+                final_payload = Jsonb(current["payload_json"])
+            else:
+                final_payload = None
+            final_external_ref = external_ref if external_ref is not None else current["external_ref"]
+            cur.execute(
+                """
+                UPDATE action_proposals
+                SET status = %s,
+                    external_ref = %s,
+                    exported_at = %s,
+                    payload_json = %s,
+                    updated_at = %s
+                WHERE id = %s
+                RETURNING *
+                """,
+                (normalized_status, final_external_ref, final_exported_at, final_payload, now, proposal_id),
+            )
+            row = cur.fetchone()
+            event_type = "action_export" if normalized_status == "exported" else "action_proposal"
+            self._insert_event_row(
+                conn,
+                claim_id=int(current["claim_id"]) if current["claim_id"] is not None else None,
+                event_type=event_type,
+                from_status=str(current["status"]),
+                to_status=normalized_status,
+                details="action_proposal_status_updated",
+                payload={"proposal_id": proposal_id, "status": normalized_status},
+                created_at=now,
+            )
+        if row is None:
+            raise RuntimeError("Failed to update action proposal.")
+        return self._row_to_action_proposal(row)
+
+    def list_action_proposals(
+        self,
+        *,
+        status: str | None = None,
+        destination: str | None = None,
+        limit: int = 100,
+    ) -> list[ActionProposal]:
+        clauses: list[str] = []
+        params: list[object] = []
+        if status:
+            clauses.append("status = %s")
+            params.append(status.strip().lower())
+        if destination:
+            clauses.append("destination = %s")
+            params.append(destination.strip())
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT * FROM action_proposals {where_sql} ORDER BY updated_at DESC, id DESC LIMIT %s",
+                params,
+            )
+            rows = cur.fetchall()
+        return [self._row_to_action_proposal(row) for row in rows]
 
     def get_claim_by_human_id(self, human_id: str, include_citations: bool = True) -> Claim | None:
         """Look up a claim by its human-readable ID (e.g. ``mm-a3f8``)."""

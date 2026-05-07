@@ -31,9 +31,13 @@ EVENT_TYPES = (
     "unpin",
     "audit",
     "sync",
+    "source_import",
     "system",
     "transition",
     "staleness",
+    "media_process",
+    "action_proposal",
+    "action_export",
 )
 
 STATUS_TRANSITION_EVENT_TYPES = (
@@ -269,6 +273,67 @@ class Event:
     details: str | None
     payload_json: str | None
     created_at: str
+
+
+@dataclass(slots=True)
+class ExternalSource:
+    id: int
+    source_type: str
+    display_name: str
+    config_json: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(slots=True)
+class SourceItem:
+    id: int
+    source_id: int
+    source_item_id: str
+    item_type: str
+    chat_id: str | None
+    sender_id: str | None
+    sender_name: str | None
+    occurred_at: str | None
+    text: str | None
+    payload_json: str | None
+    content_hash: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(slots=True)
+class EvidenceItem:
+    id: int
+    source_item_id: int
+    evidence_type: str
+    text: str | None
+    media_path: str | None
+    provider: str | None
+    confidence: float | None
+    payload_json: str | None
+    created_at: str
+
+
+@dataclass(slots=True)
+class ActionProposal:
+    id: int
+    proposal_type: str
+    title: str
+    description: str | None
+    source_item_id: int | None
+    evidence_item_id: int | None
+    claim_id: int | None
+    suggested_due_at: str | None
+    destination: str
+    status: str
+    confidence: float
+    payload_json: str | None
+    exported_at: str | None
+    external_ref: str | None
+    idempotency_key: str | None
+    created_at: str
+    updated_at: str
 
 
 CLAIM_LINK_TYPES = (
