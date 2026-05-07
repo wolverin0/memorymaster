@@ -73,6 +73,11 @@ autoresearch*.log
 # Labeled eval fixtures are checked in
 !tests/fixtures/*.jsonl
 memorymaster.db.corrupted
+# DB backups created by ad-hoc scripts (e.g. *.db.bak.pre-l2-backfill-*) —
+# they're large and contain local claim data; never commit. Codex P1, mm-54e6.
+*.db.bak*
+# Windows crash dumps from bash/python — never useful in repo
+*.stackdump
 benchmarks/longmemeval_bench.db
 benchmarks/longmemeval_output.jsonl
 benchmarks/longmemeval_vector_output.jsonl
