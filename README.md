@@ -6,9 +6,9 @@ Lifecycle-managed claims with citations, conflict detection, steward governance,
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-1029-green.svg)]()
-[![MCP Tools](https://img.shields.io/badge/MCP%20tools-22-purple.svg)]()
-[![CLI Commands](https://img.shields.io/badge/CLI%20commands-64-orange.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1953-green.svg)]()
+[![MCP Tools](https://img.shields.io/badge/MCP%20tools-24-purple.svg)]()
+[![CLI Commands](https://img.shields.io/badge/CLI%20commands-86-orange.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memorymaster.svg)](https://pypi.org/project/memorymaster/)
 
 MemoryMaster prevents the #1 problem with agent memory: **drift, stale assumptions, and unsafe disclosure**. It gives Claude Code, Codex, and any MCP-compatible agent persistent, verifiable memory with a full claim lifecycle, citation tracking, conflict detection, and human-in-the-loop governance.
@@ -22,7 +22,7 @@ MemoryMaster prevents the #1 problem with agent memory: **drift, stale assumptio
 │                        Agent Runtime                            │
 │  (Claude Code / Codex / any MCP-compatible agent)               │
 └────────────┬────────────────────────────────┬───────────────────┘
-             │ MCP (22 tools)                 │ CLI (64 commands)
+             │ MCP (24 tools)                 │ CLI (86 commands)
              v                                v
 ┌─────────────────────────────────────────────────────────────────┐
 │                      MemoryMaster Core                          │
@@ -50,7 +50,8 @@ MemoryMaster prevents the #1 problem with agent memory: **drift, stale assumptio
 - **Steward governance**: multi-probe validators (filesystem, format, citation, semantic, tool) with proposal review
 - **Conflict resolution**: 5-tier auto (confidence > freshness > citations > LLM > manual)
 - **Auto-redaction** at ingest: JWT, GitHub tokens, Bearer, AWS keys, SSH keys, custom patterns
-- **LLM Wiki**: compiled-truth + append-only timeline articles with progressive-disclosure frontmatter
+- **LLM Wiki**: compiled-truth + append-only timeline articles with progressive-disclosure frontmatter, `explored: true|false` operator-review marker, and inline `> [!contradiction]` Obsidian callouts
+- **Atlas Inbox V1** (new in v3.13.0): WhatsApp ingestion → source/evidence/action proposal lifecycle → Super-Productivity export. Versioned API/CLI contract for downstream consumers (LifeAgent, etc.) — see [`docs/atlas-api-contract-v1.md`](docs/atlas-api-contract-v1.md). Real provider adapters (`OpenAIWhisperTranscriptionProvider`, `TesseractOcrProvider`) behind `Protocol`s; mock providers stay default.
 - **Dual backend**: SQLite (zero-config) and Postgres (full feature parity with pgvector)
 - **Dream Bridge** for bidirectional sync with Claude Code's Auto Dream
 - **7-hook stack**: recall, classify, validate-wiki, session-start, auto-ingest, precompact, steward-cron
