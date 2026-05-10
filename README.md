@@ -60,18 +60,20 @@ Full feature index lives in [`docs/handbook.md`](docs/handbook.md).
 
 ## Prerequisites
 
-**Required**
+**Required (the package won't function without these)**
 
 - Python **3.10+** with `pip`
 - Claude Code, Codex, or any MCP-compatible agent
+- **An LLM provider** — pick one: Claude Code OAuth (free if you're a subscriber, set `MEMORYMASTER_LLM_PROVIDER=claude_cli`), a free Gemini API key from [aistudio.google.com](https://aistudio.google.com), OpenAI, Anthropic API, or local Ollama. The steward, auto-ingest, and wiki-absorb cycles all need an LLM — without one, claims pile up as `candidate` and never get validated, deduped, or compiled into the wiki.
 
-**Optional**
+**Strongly recommended (you'll lose ~80% of the value without these)**
 
-- **Already a Claude Code subscriber?** No API key needed — set `MEMORYMASTER_LLM_PROVIDER=claude_cli` and the steward + auto-ingest hooks will use your existing OAuth via the local `claude --print` binary
-- A free Gemini API key from [aistudio.google.com](https://aistudio.google.com) — powers the auto-ingest hook at ~zero cost
-- **Node.js 18+** for graphify and GitNexus
-- **Obsidian 1.6+** with the Bases core plugin (for visual wiki browsing)
-- **Docker** for Qdrant (SQLite FTS5 is the default and works out of the box)
+- **Node.js 18+** for [graphify](https://github.com/wolverin0/graphify) and [GitNexus](https://github.com/wolverin0/gitnexus) — these are the cached intelligence layers that make MemoryMaster cheap to query. Without them, every "what does this codebase do?" question burns tokens cold-exploring files the graph already mapped. The `intelligence-first` workflow in `CLAUDE.md` assumes both are installed.
+- **Obsidian 1.6+** with the [Bases](https://help.obsidian.md/Plugins/Bases) core plugin — the wiki engine writes plain Markdown so any editor works, but Obsidian's backlinks, graph view, and Bases dashboards are how you actually navigate `wiki-absorb` output. Without Obsidian, the wiki is just a folder of files.
+
+**Optional (nice to have)**
+
+- **Docker** for Qdrant — vector retrieval. SQLite FTS5 is the default and works out of the box; add Qdrant when you want semantic recall on top of keyword search.
 
 ## Quick start
 
