@@ -91,7 +91,7 @@ def test_utf8_emoji_roundtrip(monkeypatch):
     monkeypatch.setattr(llm_provider.shutil, "which", lambda _: "/fake/claude")
     captured = {}
 
-    def _fake(args, input, capture_output, text, timeout, encoding, errors):
+    def _fake(args, input, capture_output, text, timeout, encoding, errors, **_kw):
         captured["input"] = input
         captured["encoding"] = encoding
         return _completed(stdout="hola 👋 ñoño  \n", returncode=0)

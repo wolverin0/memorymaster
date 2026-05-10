@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import urllib.request
 import urllib.error
 from typing import Any
@@ -170,6 +171,17 @@ def _call_claude_cli(prompt: str, text: str) -> str:
     timeout_s = int(_env("MEMORYMASTER_CLAUDE_CLI_TIMEOUT", "120"))
     full_prompt = f"{prompt}\n\n{text}"
 
+    # On Windows, prevent a console window from popping up for every
+    # subprocess.run call. Without this flag, when the parent process is
+    # pythonw.exe (no console) — e.g. the MemoryMasterSteward scheduled
+    # task running silently — Windows creates a NEW console for each
+    # `claude --print` child, producing one popup window per claim
+    # processed. CREATE_NO_WINDOW (0x08000000) suppresses that.
+    # No-op on non-Windows.
+    extra_kwargs: dict = {}
+    if sys.platform == "win32":
+        extra_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
     try:
         result = subprocess.run(
             [bin_path, "--print", "--model", model],
@@ -179,6 +191,7 @@ def _call_claude_cli(prompt: str, text: str) -> str:
             timeout=timeout_s,
             encoding="utf-8",
             errors="replace",
+            **extra_kwargs,
         )
     except subprocess.TimeoutExpired:
         log.warning("claude_cli: timed out after %ds", timeout_s)
