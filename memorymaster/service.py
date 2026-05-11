@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 
 import logging
@@ -12,12 +13,73 @@ from memorymaster.jobs import compact_summaries, compactor, decay, dedup, determ
 from memorymaster.models import ActionProposal, CitationInput, Claim, ClaimLink, Event, EvidenceItem, ExternalSource, MediaRetryItem, SourceItem
 from memorymaster.policy import select_revalidation_candidates
 from memorymaster.context_optimizer import ContextResult, pack_context
-from memorymaster.retrieval import VectorSearchHook, rank_claim_rows
+from memorymaster.config import get_config
+from memorymaster.retrieval import VectorSearchHook, _tier_bonus, rank_claim_rows
 from memorymaster.security import is_sensitive_claim, resolve_allow_sensitive_access, sanitize_claim_input
 from memorymaster.store_factory import create_store
 import contextlib
 
 logger = logging.getLogger(__name__)
+
+RetrievalWeights = tuple[float, float, float, float]
+
+RETRIEVAL_PROFILES: dict[str, RetrievalWeights] = {
+    "recall": (0.6, 0.2, 0.1, 0.1),
+    "precision": (0.2, 0.6, 0.1, 0.1),
+    "fresh": (0.2, 0.2, 0.5, 0.1),
+    "semantic": (0.2, 0.2, 0.1, 0.5),
+}
+
+
+def _retrieval_profile_weights(profile: str | None) -> RetrievalWeights | None:
+    if not profile:
+        return None
+    try:
+        return RETRIEVAL_PROFILES[profile]
+    except KeyError as exc:
+        choices = ", ".join(sorted(RETRIEVAL_PROFILES))
+        raise ValueError(f"Unknown retrieval profile: {profile!r}. Expected one of: {choices}") from exc
+
+
+def _rerank_with_profile(
+    ranked_rows,
+    *,
+    weights: RetrievalWeights | None,
+    limit: int,
+):
+    if weights is None:
+        return ranked_rows[:limit]
+
+    cfg = get_config()
+
+    def _linear(row, row_weights: RetrievalWeights) -> float:
+        w_l, w_c, w_f, w_v = row_weights
+        return (
+            w_l * row.lexical_score
+            + w_c * row.confidence_score
+            + w_f * row.freshness_score
+            + w_v * row.vector_score
+        )
+
+    profiled = []
+    for row in ranked_rows:
+        bonus = (cfg.pinned_bonus if row.claim.pinned else 0.0) + _tier_bonus(row.claim)
+        profiled.append(replace(row, score=_linear(row, weights) + bonus))
+
+    profiled.sort(
+        key=lambda row: (
+            row.score,
+            row.lexical_score,
+            row.confidence_score,
+            row.freshness_score,
+            row.claim.updated_at,
+            row.claim.id,
+        ),
+        reverse=True,
+    )
+    return profiled[:limit]
+
+
 
 class MemoryService:
     def __init__(
@@ -317,6 +379,7 @@ class MemoryService:
         include_candidates: bool = False,
         retrieval_mode: str = "legacy",
         vector_hook: VectorSearchHook | None = None,
+        retrieval_profile: str | None = None,
         allow_sensitive: bool = False,
         scope_allowlist: list[str] | None = None,
     ) -> list[Claim]:
@@ -328,6 +391,7 @@ class MemoryService:
             include_candidates=include_candidates,
             retrieval_mode=retrieval_mode,
             vector_hook=vector_hook,
+            retrieval_profile=retrieval_profile,
             allow_sensitive=allow_sensitive,
             scope_allowlist=scope_allowlist,
         )
@@ -439,6 +503,7 @@ class MemoryService:
         include_candidates: bool = False,
         retrieval_mode: str = "legacy",
         vector_hook: VectorSearchHook | None = None,
+        retrieval_profile: str | None = None,
         allow_sensitive: bool = False,
         scope_allowlist: list[str] | None = None,
         enrich_with_entities: bool = False,
@@ -460,6 +525,9 @@ class MemoryService:
 
         statuses = self._build_query_statuses(include_stale, include_conflicted, include_candidates)
         normalized_scopes = self._normalize_scope_allowlist(scope_allowlist)
+        profile_weights = _retrieval_profile_weights(retrieval_profile)
+        if profile_weights is not None and retrieval_mode == "legacy":
+            retrieval_mode = "hybrid"
 
         if retrieval_mode == "legacy":
             return self._query_legacy_mode(query_text, limit, statuses, normalized_scopes, include_sensitive, requesting_agent)
@@ -485,9 +553,14 @@ class MemoryService:
             query_text,
             candidates,
             mode=retrieval_mode,
-            limit=limit,
+            limit=len(candidates) if profile_weights is not None else limit,
             vector_hook=vector_hook,
             semantic_vectors=semantic,
+        )
+        ranked_rows = _rerank_with_profile(
+            ranked_rows,
+            weights=profile_weights,
+            limit=limit,
         )
         results = [
             {
@@ -588,6 +661,7 @@ class MemoryService:
         include_conflicted: bool = True,
         include_candidates: bool = False,
         retrieval_mode: str = "hybrid",
+        retrieval_profile: str | None = None,
         allow_sensitive: bool = False,
         scope_allowlist: list[str] | None = None,
     ) -> ContextResult:
@@ -618,6 +692,7 @@ class MemoryService:
             include_conflicted=include_conflicted,
             include_candidates=include_candidates,
             retrieval_mode=retrieval_mode,
+            retrieval_profile=retrieval_profile,
             allow_sensitive=allow_sensitive,
             scope_allowlist=scope_allowlist,
         )

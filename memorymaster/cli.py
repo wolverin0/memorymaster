@@ -16,7 +16,7 @@ from memorymaster.cli_helpers import (  # noqa: F401 — re-export for backward 
 from memorymaster.context_optimizer import OUTPUT_FORMATS
 from memorymaster.models import CLAIM_LINK_TYPES, CLAIM_STATUSES, VOLATILITY_LEVELS
 from memorymaster.retrieval import RETRIEVAL_MODES
-from memorymaster.service import MemoryService
+from memorymaster.service import RETRIEVAL_PROFILES, MemoryService
 
 # Import dispatch table — this also triggers the late dispatch additions for daily/dream/ghost
 from memorymaster.cli_handlers_curation import COMMAND_HANDLERS
@@ -147,6 +147,7 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--exclude-conflicted", action="store_true", help="Only return confirmed/stale")
     query.add_argument("--include-candidates", action="store_true", help="Also search candidate (unverified) claims")
     query.add_argument("--retrieval-mode", choices=list(RETRIEVAL_MODES), default="legacy", help="Retrieval mode (legacy SQL ordering or hybrid lexical/confidence/freshness ranking)")
+    query.add_argument("--profile", choices=list(RETRIEVAL_PROFILES), default=None, help="Per-query hybrid retrieval profile")
     query.add_argument("--allow-sensitive", action="store_true", help="Include claims that look sensitive (default excludes them)")
     query.add_argument("--scope-allowlist", default="", help="Comma-separated scopes to include (e.g. project,team_x)")
     query.add_argument("--as-of", default="", help="Temporal query: show claims valid at this ISO timestamp")
@@ -161,6 +162,7 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("--exclude-conflicted", action="store_true", help="Exclude conflicted claims")
     context.add_argument("--include-candidates", action="store_true", help="Include candidate (unverified) claims")
     context.add_argument("--retrieval-mode", choices=list(RETRIEVAL_MODES), default="hybrid", help="Retrieval mode (default: hybrid)")
+    context.add_argument("--profile", choices=list(RETRIEVAL_PROFILES), default=None, help="Per-query hybrid retrieval profile")
     context.add_argument("--allow-sensitive", action="store_true", help="Include sensitive claims")
     context.add_argument("--scope-allowlist", default="", help="Comma-separated scopes to include")
 
