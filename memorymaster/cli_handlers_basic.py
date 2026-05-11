@@ -7,10 +7,13 @@ COMMAND_HANDLERS dispatch table defined in `cli_handlers_curation.py`.
 from __future__ import annotations
 
 import argparse
+import csv
+from datetime import datetime, timedelta
 import json
 import os
 from dataclasses import asdict
 from pathlib import Path
+import sys
 import time
 
 from memorymaster.cli_helpers import (
@@ -260,6 +263,28 @@ def _handle_export_metrics(args: argparse.Namespace, service, parser: argparse.A
         "events_total": int(c.get("events_total", 0)), "transitions_total": int(c.get("transitions_total", 0)),
         "status_total": int(c.get("status_total", 0)),
         "out_prom": args.out_prom, "out_json": args.out_json}, indent=2))
+    return 0
+
+
+def _parse_mcp_usage_since(value: str) -> datetime:
+    cleaned = value.strip()
+    if cleaned.endswith("d") and cleaned[:-1].isdigit():
+        return datetime.utcnow() - timedelta(days=int(cleaned[:-1]))
+    return datetime.fromisoformat(cleaned.replace("Z", "+00:00"))
+
+
+def handle_mcp_usage_report(args: argparse.Namespace, db_path) -> int:
+    if args.format != "csv":
+        raise ValueError("only csv format is supported")
+
+    from memorymaster.mcp_usage import query_window
+
+    rows = query_window(db_path, _parse_mcp_usage_since(args.since))
+    fieldnames = ["tool_name", "timestamp", "latency_ms", "tenant_id", "result_status"]
+    writer = csv.DictWriter(sys.stdout, fieldnames=fieldnames, lineterminator="\n")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({name: row.get(name) for name in fieldnames})
     return 0
 
 

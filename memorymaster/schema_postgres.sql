@@ -214,6 +214,15 @@ CREATE TABLE IF NOT EXISTS action_proposals (
     updated_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS mcp_usage (
+    id SERIAL PRIMARY KEY,
+    tool_name TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    latency_ms INTEGER,
+    tenant_id TEXT,
+    result_status TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_external_sources_type ON external_sources(source_type);
 CREATE INDEX IF NOT EXISTS idx_source_items_source_id ON source_items(source_id);
 CREATE INDEX IF NOT EXISTS idx_source_items_chat_id ON source_items(chat_id);
