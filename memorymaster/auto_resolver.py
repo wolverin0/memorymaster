@@ -3,26 +3,23 @@
 When two claims contradict (same subject/predicate, different object_value),
 asks an LLM to evaluate which one has stronger evidence and should be kept.
 
-Uses Ollama or any OpenAI-compatible endpoint. The loser gets superseded,
-not deleted — preserving full audit trail.
+Provider routing goes through `memorymaster.llm_provider.call_llm`, which
+honors `MEMORYMASTER_LLM_PROVIDER` (claude_cli / google / openai / anthropic
+/ ollama) instead of the previous hardcoded Ollama-only path. The loser
+gets superseded, not deleted — preserving full audit trail.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
-import urllib.error
-import urllib.request
 from typing import Any
 
 from memorymaster.lifecycle import transition_claim
+from memorymaster.llm_provider import call_llm
 from memorymaster.models import Claim
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_OLLAMA_URL = "http://localhost:11434"
-DEFAULT_MODEL = "deepseek-coder-v2:16b"
 
 RESOLUTION_PROMPT = """You are a memory quality evaluator. Two claims contradict each other.
 Decide which one should be KEPT based on:
@@ -47,48 +44,33 @@ Return JSON only: {{"winner": "A" or "B", "reason": "brief explanation"}}"""
 
 
 def _llm_evaluate(prompt: str, model: str = "", base_url: str = "") -> dict:
-    """Call LLM and parse JSON response.
+    """Ask the configured LLM to pick the winner and parse its JSON response.
 
-    Returns empty dict {} if LLM returns invalid JSON or connection fails.
+    Returns empty dict {} if the LLM returns invalid JSON or the call fails.
+    The `model` and `base_url` kwargs are kept for backwards compatibility but
+    are no longer consulted — provider routing is centralized in llm_provider.
     """
-    url = (base_url or os.environ.get("OLLAMA_URL") or DEFAULT_OLLAMA_URL).rstrip("/")
-    mdl = model or os.environ.get("RESOLVER_LLM_MODEL") or DEFAULT_MODEL
-
-    body = json.dumps({
-        "model": mdl,
-        "messages": [{"role": "user", "content": prompt}],
-        "stream": False,
-        "options": {"temperature": 0.1, "num_predict": 200},
-    }).encode()
-
-    req = urllib.request.Request(
-        f"{url}/api/chat",
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read())
-            raw = result.get("message", {}).get("content", "")
-            # Parse JSON from response
-            text = raw.strip()
-            if text.startswith("```"):
-                lines = text.split("\n")
-                lines = [line for line in lines if not line.strip().startswith("```")]
-                text = "\n".join(lines)
-            try:
-                parsed = json.loads(text)
-                if not isinstance(parsed, dict):
-                    logger.warning("LLM returned non-dict JSON: %s", type(parsed))
-                    return {}
-                return parsed
-            except json.JSONDecodeError as exc:
-                logger.warning("LLM returned invalid JSON: %s (text: %s)", exc, text[:100])
-                return {}
+        raw = call_llm(prompt, "")
     except Exception as exc:
         logger.warning("LLM conflict evaluation failed: %s", exc)
         return {}
+
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        lines = [line for line in text.split("\n") if not line.strip().startswith("```")]
+        text = "\n".join(lines)
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        logger.warning("LLM returned invalid JSON: %s (text: %s)", exc, text[:100])
+        return {}
+
+    if not isinstance(parsed, dict):
+        logger.warning("LLM returned non-dict JSON: %s", type(parsed))
+        return {}
+    return parsed
 
 
 def _cite_summary(claim: Claim) -> str:

@@ -50,37 +50,29 @@ class TestCiteSummary:
 
 
 class TestLlmEvaluate:
-    """Test LLM evaluation."""
+    """Test LLM evaluation via the centralized llm_provider.call_llm."""
 
-    @patch("memorymaster.auto_resolver.urllib.request.urlopen")
-    def test_llm_evaluate_success(self, mock_urlopen):
+    @patch("memorymaster.auto_resolver.call_llm")
+    def test_llm_evaluate_success(self, mock_call_llm):
         """Successful LLM evaluation returns parsed JSON."""
-        mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "message": {"content": '{"winner": "A", "reason": "more recent"}'}
-        }).encode()
-        mock_urlopen.return_value.__enter__.return_value = mock_response
+        mock_call_llm.return_value = '{"winner": "A", "reason": "more recent"}'
 
         result = _llm_evaluate("test prompt")
         assert result["winner"] == "A"
         assert "more recent" in result["reason"]
 
-    @patch("memorymaster.auto_resolver.urllib.request.urlopen")
-    def test_llm_evaluate_with_markdown_fence(self, mock_urlopen):
+    @patch("memorymaster.auto_resolver.call_llm")
+    def test_llm_evaluate_with_markdown_fence(self, mock_call_llm):
         """LLM response with markdown fence is parsed."""
-        mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "message": {"content": '```json\n{"winner": "B", "reason": "specific"}\n```'}
-        }).encode()
-        mock_urlopen.return_value.__enter__.return_value = mock_response
+        mock_call_llm.return_value = '```json\n{"winner": "B", "reason": "specific"}\n```'
 
         result = _llm_evaluate("test prompt")
         assert result["winner"] == "B"
 
-    @patch("memorymaster.auto_resolver.urllib.request.urlopen")
-    def test_llm_evaluate_failure_returns_empty(self, mock_urlopen):
+    @patch("memorymaster.auto_resolver.call_llm")
+    def test_llm_evaluate_failure_returns_empty(self, mock_call_llm):
         """LLM failure returns empty dict."""
-        mock_urlopen.side_effect = Exception("Network error")
+        mock_call_llm.side_effect = Exception("Provider error")
         result = _llm_evaluate("test prompt")
         assert result == {}
 
