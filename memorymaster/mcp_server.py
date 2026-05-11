@@ -73,6 +73,14 @@ class IngestClaimInput(_ToolInput):
     source_agent: str = ""
 
 
+class QueryMetaDecisionsInput(_ToolInput):
+    query: str
+    claim_types: list[str] = ["decision", "architecture"]
+    top_n: int = 20
+    db: str = "memorymaster.db"
+    workspace: str = "."
+
+
 def _structured_error(error: str, code: str, field: str | None = None, **extra: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {"ok": False, "error": error, "code": code}
     if field is not None:
@@ -1169,6 +1177,38 @@ if FastMCP is not None:
         """Recompute memory tiers (core/working/peripheral) based on access patterns."""
         svc = _service(db, workspace)
         result = svc.recompute_tiers()
+        return {"ok": True, **result}
+
+    @mcp.tool()
+    def query_meta_decisions(
+        query: str,
+        claim_types: list[str] = ["decision", "architecture"],
+        top_n: int = 20,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Aggregate matching decision/architecture claims across all project scopes."""
+        request = _validate_tool_input(
+            QueryMetaDecisionsInput,
+            {
+                "query": query,
+                "claim_types": claim_types,
+                "top_n": top_n,
+                "db": db,
+                "workspace": workspace,
+            },
+        )
+        if isinstance(request, dict):
+            return request
+        if request.top_n <= 0:
+            return _structured_error("top_n must be positive.", "VALIDATION_ERROR", "top_n")
+
+        svc = _service(request.db, request.workspace)
+        result = svc.query_meta_decisions(
+            query=request.query,
+            claim_types=request.claim_types,
+            top_n=request.top_n,
+        )
         return {"ok": True, **result}
 
     @mcp.tool()

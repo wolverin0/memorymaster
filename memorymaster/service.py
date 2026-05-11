@@ -19,7 +19,6 @@ import contextlib
 
 logger = logging.getLogger(__name__)
 
-
 class MemoryService:
     def __init__(
         self,
@@ -627,6 +626,177 @@ class MemoryService:
             token_budget=token_budget,
             output_format=output_format,
         )
+
+    def query_meta_decisions(
+        self,
+        query: str,
+        *,
+        claim_types: list[str] = ["decision", "architecture"],
+        top_n: int = 20,
+    ) -> dict[str, object]:
+        """Aggregate matching decision/architecture claims across project scopes."""
+        if top_n <= 0:
+            return {"groups": []}
+
+        import re
+        from collections import Counter
+
+        normalized_types = {
+            claim_type.strip().lower()
+            for claim_type in claim_types
+            if claim_type and claim_type.strip()
+        }
+        candidate_limit = max(top_n * 10, 100)
+        query_text = query.strip()
+        statuses = self._build_query_statuses(
+            include_stale=True,
+            include_conflicted=True,
+            include_candidates=True,
+        )
+        if query_text:
+            rows = self.query_rows(
+                query_text=query_text,
+                limit=candidate_limit,
+                include_stale=True,
+                include_conflicted=True,
+                include_candidates=True,
+                scope_allowlist=None,
+            )
+            candidates = [row["claim"] for row in rows]
+        else:
+            candidates = self.store.list_claims(
+                limit=candidate_limit,
+                status_in=statuses,
+                include_archived=False,
+                include_citations=False,
+                tenant_id=self.tenant_id,
+            )
+
+        stopwords = {
+            "about",
+            "after",
+            "against",
+            "architecture",
+            "because",
+            "claim",
+            "decision",
+            "decisions",
+            "default",
+            "from",
+            "have",
+            "into",
+            "memorymaster",
+            "must",
+            "project",
+            "should",
+            "that",
+            "the",
+            "their",
+            "this",
+            "uses",
+            "with",
+        }
+
+        def tokens_for(claim: Claim) -> set[str]:
+            raw = " ".join(
+                part
+                for part in (
+                    claim.subject,
+                    claim.predicate,
+                    claim.object_value,
+                    claim.text,
+                )
+                if part
+            )
+            words = re.findall(r"[a-zA-Z][a-zA-Z0-9+._-]*", raw.lower())
+            return {
+                word.strip("._-")
+                for word in words
+                if len(word.strip("._-")) >= 3 and word.strip("._-") not in stopwords
+            }
+
+        def concept_from_tokens(tokens: set[str]) -> str:
+            if not tokens:
+                return "Uncategorized"
+            counts = Counter(sorted(tokens))
+            preferred = [word for word, _ in counts.most_common(4)]
+            return " + ".join(word.upper() if len(word) <= 4 else word.title() for word in preferred)
+
+        groups: list[dict[str, object]] = []
+        for claim in candidates:
+            if is_sensitive_claim(claim):
+                continue
+            scope = (claim.scope or "").strip()
+            if not scope.startswith("project:"):
+                continue
+            claim_type = (claim.claim_type or "").strip().lower()
+            if normalized_types and claim_type not in normalized_types:
+                continue
+
+            subject = (claim.subject or "").strip()
+            subject_key = subject.lower()
+            tokens = tokens_for(claim)
+            match: dict[str, object] | None = None
+            best_overlap = 0
+            for group in groups:
+                group_subject = str(group.get("_subject_key") or "")
+                if subject_key and group_subject == subject_key:
+                    match = group
+                    break
+                group_tokens = group.get("_tokens")
+                if not isinstance(group_tokens, set) or not tokens:
+                    continue
+                overlap = len(tokens & group_tokens)
+                if overlap > best_overlap and (overlap >= 2 or overlap >= min(len(tokens), len(group_tokens))):
+                    best_overlap = overlap
+                    match = group
+            if match is None:
+                match = {
+                    "concept": subject or concept_from_tokens(tokens),
+                    "claim_count": 0,
+                    "scopes": set(),
+                    "exemplar_claim_ids": [],
+                    "_tokens": set(tokens),
+                    "_subject_key": subject_key,
+                    "_first_seen": len(groups),
+                }
+                groups.append(match)
+            else:
+                group_tokens = match.get("_tokens")
+                if isinstance(group_tokens, set):
+                    group_tokens.update(tokens)
+                if subject and not match.get("_subject_key"):
+                    match["concept"] = subject
+                    match["_subject_key"] = subject_key
+
+            match["claim_count"] = int(match["claim_count"]) + 1
+            scopes = match["scopes"]
+            if isinstance(scopes, set):
+                scopes.add(scope)
+            exemplar_ids = match["exemplar_claim_ids"]
+            if isinstance(exemplar_ids, list) and len(exemplar_ids) < 5:
+                exemplar_ids.append(claim.id)
+
+        groups.sort(
+            key=lambda group: (
+                -int(group["claim_count"]),
+                -len(group["scopes"]) if isinstance(group["scopes"], set) else 0,
+                int(group["_first_seen"]),
+            )
+        )
+        return {
+            "groups": [
+                {
+                    "concept": str(group["concept"]),
+                    "claim_count": int(group["claim_count"]),
+                    "scopes": sorted(group["scopes"]) if isinstance(group["scopes"], set) else [],
+                    "exemplar_claim_ids": list(group["exemplar_claim_ids"])
+                    if isinstance(group["exemplar_claim_ids"], list)
+                    else [],
+                }
+                for group in groups[:top_n]
+            ]
+        }
 
     def pin(self, claim_id: int, pin: bool = True) -> Claim:
         claim = self.store.get_claim(claim_id, include_citations=False)
