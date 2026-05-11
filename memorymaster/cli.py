@@ -20,10 +20,11 @@ from memorymaster.service import RETRIEVAL_PROFILES, MemoryService
 
 # Import dispatch table — this also triggers the late dispatch additions for daily/dream/ghost
 from memorymaster.cli_handlers_curation import COMMAND_HANDLERS
-from memorymaster.cli_handlers_basic import _handle_recompute_confidence_priors
+from memorymaster.cli_handlers_basic import _handle_recompute_confidence_priors, _handle_wiki_suggest_links
 
 
 COMMAND_HANDLERS["recompute-confidence-priors"] = _handle_recompute_confidence_priors
+COMMAND_HANDLERS["wiki-suggest-links"] = _handle_wiki_suggest_links
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -404,6 +405,12 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_freshness.add_argument("--vault", default="obsidian-vault/wiki", help="Wiki root (defaults to obsidian-vault/wiki)")
     wiki_freshness.add_argument("--below", type=float, default=None, help="Only show articles with freshness_score below this threshold (0-1)")
     wiki_freshness.add_argument("--threshold-days", type=int, default=None, help="Only show articles older than N days since last absorb (alias for --below)")
+
+    wiki_suggest = sub.add_parser("wiki-suggest-links", help="Suggest wiki article links from paragraph entities")
+    wiki_suggest.add_argument("--text", required=True, help="Current paragraph text")
+    wiki_suggest.add_argument("--wiki-root", default="obsidian-vault/wiki", help="Wiki root to scan for article slugs")
+    wiki_suggest.add_argument("--limit", type=int, default=10, help="Maximum suggestions")
+    wiki_suggest.add_argument("--hops", type=int, default=2, help="Maximum entity graph hops")
 
     mine_cmd = sub.add_parser("mine-transcript", help="Parse Claude Code transcripts into claims")
     mine_cmd.add_argument("--input", required=True, help="JSONL transcript file or directory")
