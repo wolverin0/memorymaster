@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from html import escape
 import json
 import subprocess
 import sys
@@ -172,11 +173,174 @@ def _build_get_route_map(handler: Any) -> dict[str, callable]:
 
 def _route_get_request(handler: Any, route: str, query_string: str) -> bool:
     """Route a GET request to the appropriate handler. Returns True if routed."""
+    claim_id = _parse_claim_lineage_route(route)
+    if claim_id is not None:
+        handler._handle_claim_lineage(claim_id)
+        return True
     route_map = _build_get_route_map(handler)
     if route not in route_map:
         return False
     route_map[route](query_string)
     return True
+
+
+def _parse_claim_lineage_route(route: str) -> int | None:
+    parts = [part for part in route.split("/") if part]
+    if len(parts) != 3 or parts[0] != "claim" or parts[2] != "lineage":
+        return None
+    claim_id = int(parts[1])
+    if claim_id <= 0:
+        raise ValueError("claim id must be positive")
+    return claim_id
+
+
+def _get_lineage_claim(service: Any, claim_id: int) -> Any | None:
+    store = getattr(service, "store", None)
+    get_claim = getattr(store, "get_claim", None)
+    if callable(get_claim):
+        return get_claim(claim_id, include_citations=False)
+    for claim in service.list_claims(limit=5000, include_archived=True):
+        if int(claim.id) == claim_id:
+            return claim
+    return None
+
+
+def _lineage_candidate_claims(service: Any) -> list[Any]:
+    store = getattr(service, "store", None)
+    list_claims = getattr(store, "list_claims", None) or getattr(service, "list_claims", None)
+    if not callable(list_claims):
+        return []
+    try:
+        return list_claims(limit=5000, include_archived=True, include_citations=False)
+    except TypeError:
+        return list_claims(limit=5000, include_archived=True)
+
+
+def _collect_reverse_lineage(claim_id: int, by_replacement: dict[int, list[Any]], seen: set[int]) -> list[Any]:
+    rows: list[Any] = []
+    for claim in sorted(by_replacement.get(claim_id, []), key=lambda item: int(item.id)):
+        cid = int(claim.id)
+        if cid in seen:
+            continue
+        seen.add(cid)
+        rows.extend(_collect_reverse_lineage(cid, by_replacement, seen))
+        rows.append(claim)
+    return rows
+
+
+def _build_claim_lineage(service: Any, target: Any) -> tuple[list[Any], list[tuple[int, int]]]:
+    all_claims = _lineage_candidate_claims(service)
+    by_replacement: dict[int, list[Any]] = {}
+    for claim in all_claims:
+        replacement_id = getattr(claim, "replaced_by_claim_id", None)
+        if replacement_id is not None:
+            by_replacement.setdefault(int(replacement_id), []).append(claim)
+
+    target_id = int(target.id)
+    seen = {target_id}
+    predecessors = _collect_reverse_lineage(target_id, by_replacement, seen)
+    successors: list[Any] = []
+    current = target
+    for _ in range(50):
+        next_id = getattr(current, "replaced_by_claim_id", None)
+        if next_id is None or int(next_id) in seen:
+            break
+        next_claim = _get_lineage_claim(service, int(next_id))
+        if next_claim is None:
+            break
+        seen.add(int(next_claim.id))
+        successors.append(next_claim)
+        current = next_claim
+
+    nodes = predecessors + [target] + successors
+    node_ids = {int(claim.id) for claim in nodes}
+    edges = [
+        (int(claim.id), int(claim.replaced_by_claim_id))
+        for claim in nodes
+        if getattr(claim, "replaced_by_claim_id", None) in node_ids
+    ]
+    return nodes, edges
+
+
+def _claim_lineage_title(claim: Any) -> str:
+    bits = [getattr(claim, "subject", None), getattr(claim, "predicate", None), getattr(claim, "object_value", None)]
+    title = " / ".join(str(bit) for bit in bits if bit not in (None, ""))
+    return title or str(getattr(claim, "text", ""))
+
+
+def _render_claim_lineage_svg(nodes: list[Any], edges: list[tuple[int, int]], target_id: int) -> str:
+    node_width = 220
+    node_gap = 70
+    width = max(560, 40 + len(nodes) * node_width + max(0, len(nodes) - 1) * node_gap)
+    height = 210
+    positions = {int(claim.id): 24 + index * (node_width + node_gap) for index, claim in enumerate(nodes)}
+    edge_markup = []
+    for source_id, target in edges:
+        x1 = positions[source_id] + node_width
+        x2 = positions[target]
+        edge_markup.append(
+            f'<line x1="{x1}" y1="92" x2="{x2}" y2="92" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />'
+        )
+    node_markup = []
+    for claim in nodes:
+        cid = int(claim.id)
+        x = positions[cid]
+        stroke = "#38bdf8" if cid == target_id else "#475569"
+        fill = "#0f172a" if cid == target_id else "#1e293b"
+        title = escape(_claim_lineage_title(claim)[:62])
+        status = escape(str(getattr(claim, "status", "unknown")))
+        replaced_by = getattr(claim, "replaced_by_claim_id", None)
+        node_markup.append(
+            f'<g class="claim-node{" target" if cid == target_id else ""}">'
+            f'<rect x="{x}" y="38" width="{node_width}" height="108" rx="8" fill="{fill}" stroke="{stroke}" stroke-width="2" />'
+            f'<text x="{x + 14}" y="65" fill="#f8fafc" font-size="15" font-weight="700">#{cid}</text>'
+            f'<text x="{x + 14}" y="89" fill="#cbd5e1" font-size="13">{status}</text>'
+            f'<text x="{x + 14}" y="113" fill="#94a3b8" font-size="12">{title}</text>'
+            f'<text x="{x + 14}" y="134" fill="#64748b" font-size="11">replaced_by_claim_id: {escape(str(replaced_by or "-"))}</text>'
+            "</g>"
+        )
+    return (
+        f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="Claim lineage graph">'
+        '<defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">'
+        '<path d="M0,0 L10,4 L0,8 Z" fill="#64748b" /></marker></defs>'
+        f"{''.join(edge_markup)}{''.join(node_markup)}</svg>"
+    )
+
+
+def _render_claim_lineage_html(target: Any, nodes: list[Any], edges: list[tuple[int, int]]) -> str:
+    target_id = int(target.id)
+    svg = _render_claim_lineage_svg(nodes, edges, target_id)
+    rows = []
+    for claim in nodes:
+        cid = int(claim.id)
+        rows.append(
+            "<tr>"
+            f'<td class="mono">#{cid}</td>'
+            f"<td>{escape(str(getattr(claim, 'status', 'unknown')))}</td>"
+            f"<td>{escape(_claim_lineage_title(claim))}</td>"
+            f"<td class=\"mono\">{escape(str(getattr(claim, 'replaced_by_claim_id', None) or '-'))}</td>"
+            f"<td>{'target' if cid == target_id else ''}</td>"
+            "</tr>"
+        )
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claim Lineage #{target_id}</title>
+<style>
+body{{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}}
+main{{max-width:1200px;margin:0 auto;padding:24px}}
+a{{color:#38bdf8}} h1{{margin:0 0 6px;color:#f8fafc;font-size:1.5rem}}
+.muted{{color:#94a3b8}} .panel{{border:1px solid #334155;border-radius:10px;background:#1e293b;margin-top:18px;padding:16px;overflow:auto}}
+.mono{{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}} svg{{min-width:560px;width:100%;height:auto}}
+table{{width:100%;border-collapse:collapse;margin-top:14px;font-size:.9rem}} th,td{{border-bottom:1px solid #334155;padding:8px;text-align:left}}
+th{{color:#94a3b8;font-size:.75rem;text-transform:uppercase;letter-spacing:.05em}}
+</style></head><body><main>
+<a href="/dashboard">&larr; Dashboard</a>
+<h1>Claim Lineage #{target_id}</h1>
+<div class="muted">Forward edges follow replaced_by_claim_id; reverse lookup finds older claims replaced by this chain.</div>
+<div class="panel">{svg}</div>
+<div class="panel"><table><thead><tr><th>ID</th><th>Status</th><th>Claim</th><th>Replaced By</th><th>Marker</th></tr></thead>
+<tbody>{''.join(rows)}</tbody></table></div>
+</main></body></html>"""
 
 
 def _call_retrieval_method_with_fallback(method: Any, text: str, attempts: list[dict[str, Any]]) -> Any:
@@ -452,6 +616,27 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _write_html(self, html: str, *, status: int = HTTPStatus.OK) -> None:
+        body = html.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_claim_lineage(self, claim_id: int) -> None:
+        target = _get_lineage_claim(self._server.service, claim_id)
+        if target is None:
+            self._write_html(
+                "<!doctype html><html><head><title>Claim not found</title></head>"
+                f"<body><h1>Claim #{claim_id} not found</h1></body></html>",
+                status=HTTPStatus.NOT_FOUND,
+            )
+            return
+        nodes, edges = _build_claim_lineage(self._server.service, target)
+        self._write_html(_render_claim_lineage_html(target, nodes, edges))
 
     def _write_dashboard(self) -> None:
         html = """<!doctype html>
