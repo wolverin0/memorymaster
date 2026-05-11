@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from html import escape
 import json
 import subprocess
@@ -156,6 +157,31 @@ def _claim_to_dict(claim: Any) -> dict[str, Any]:
     return asdict(claim)
 
 
+def _parse_review_queue_limit(value: str | None) -> int:
+    if value is None:
+        return 5
+    return max(1, min(int(value), 100))
+
+
+def _parse_review_queue_cursor(value: str | None) -> int | None:
+    if value is None:
+        return None
+    cursor = int(value)
+    if cursor <= 0:
+        raise ValueError("cursor must be positive")
+    return cursor
+
+
+def _claim_age_days(created_at: str, now: datetime) -> float:
+    normalized = str(created_at).strip()
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    created = datetime.fromisoformat(normalized)
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return max(0.0, (now - created.astimezone(timezone.utc)).total_seconds() / 86400.0)
+
+
 def _event_to_dict(event: Any) -> dict[str, Any]:
     payload = asdict(event)
     raw = payload.get("payload_json")
@@ -211,6 +237,7 @@ def _build_get_route_map(handler: Any) -> dict[str, callable]:
         "/api/timeline": lambda qs: handler._handle_timeline(qs),
         "/api/conflicts": lambda qs: handler._handle_conflicts(qs),
         "/api/review-queue": lambda qs: handler._handle_review_queue(qs),
+        "/api/v1/review-queue": lambda qs: handler._handle_mobile_review_queue(qs),
         "/api/action-proposals": lambda qs: handler._handle_action_proposals(qs),
         "/api/atlas/version": lambda qs: handler._handle_atlas_version(qs),
         "/api/retrieval": lambda qs: handler._handle_retrieval(qs),
@@ -963,6 +990,49 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
                 continue
             out.append(item)
         self._write_json({"ok": True, "rows": len(out), "items": out})
+
+    def _handle_mobile_review_queue(self, query_string: str) -> None:
+        query = parse_qs(query_string)
+        limit = _parse_review_queue_limit(_first_query_value(query, "n"))
+        scope = _first_query_value(query, "scope")
+        cursor = _parse_review_queue_cursor(_first_query_value(query, "cursor"))
+
+        clauses = ["archived_at IS NULL"]
+        params: list[Any] = []
+        if scope is not None:
+            clauses.append("scope = ?")
+            params.append(scope)
+        if cursor is not None:
+            clauses.append("id > ?")
+            params.append(cursor)
+        where_sql = "WHERE " + " AND ".join(clauses)
+        sql = f"""
+            SELECT id, text, created_at, scope, claim_type, confidence
+            FROM claims
+            {where_sql}
+            ORDER BY created_at ASC, id ASC
+            LIMIT ?
+        """
+        params.append(limit + 1)
+
+        with self._server.service.store.connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+
+        page_rows = rows[:limit]
+        now = datetime.now(timezone.utc)
+        queue = [
+            {
+                "id": int(row["id"]),
+                "text_preview": str(row["text"] or "")[:200],
+                "age_days": _claim_age_days(str(row["created_at"]), now),
+                "scope": row["scope"],
+                "type": row["claim_type"],
+                "score": float(row["confidence"]),
+            }
+            for row in page_rows
+        ]
+        next_cursor = int(page_rows[-1]["id"]) if len(rows) > limit and page_rows else None
+        self._write_json({"queue": queue, "cursor": next_cursor})
 
     def _handle_action_proposals(self, query_string: str) -> None:
         query = parse_qs(query_string)
