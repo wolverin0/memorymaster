@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.14.0] - 2026-05-11
+
+**Codex parallel-burn reliability and documentation release.** Consolidates the PR #31-#43 batch: full-content verbatim deduplication, safer MCP input handling, provider-routed LLM resolution, bounded dedup operations, and expanded test/documentation coverage.
+
+### Features
+
+- **MCP validation and sensitivity guard** (#32) -- adds Pydantic input validation, structured errors, and a sensitivity guard so unsafe ingest payloads are rejected before entering MemoryMaster.
+- **Incremental dedup controls** (#36) -- adds `--limit` and `--scope` CLI flags so dedup runs can be bounded by batch size and project scope.
+
+### Fixes
+
+- **Verbatim store hybrid-merge dedup** (#31) -- switches hybrid-merge dedup from prefix keys to full-content hashes to avoid false duplicate matches.
+- **Auto-resolver provider routing** (#33) -- routes `_llm_evaluate` through `llm_provider.call_llm` instead of bypassing the shared provider abstraction.
+- **Google key rotation** (#38) -- wires `KeyRotator` into `_call_google` so Gemini calls can rotate across configured environment-provided keys.
+- **Qdrant verbatim dedup keys** (#43) -- extends full-content hash dedup to Qdrant point IDs so vector-store verbatim records avoid prefix-collision failures.
+
+### Tests
+
+- **Embedding tests** (#34) -- mocks Gemini embedding calls to keep deprecated `text-embedding-004` behavior from breaking the suite through live provider calls.
+- **Decay coverage** (#37) -- adds focused regression coverage for claim decay behavior.
+- **Dashboard coverage** (#39) -- adds dashboard route coverage.
+
+### Docs
+
+- **Storage parity audit** (#35) -- documents the SQLite/Postgres parity audit for storage behavior.
+- **Dedup-key collision audit** (#40) -- adds the 2026-05-11 dedup-key audit documenting prefix-collision risk and remediation.
+- **Cookbook from gotcha claims** (#41) -- compiles operational gotchas and bug root causes from MemoryMaster claims into cookbook material.
+- **ADRs from decision claims** (#42) -- compiles architecture decision records from MemoryMaster decision claims.
+
 ## [3.13.0] - 2026-04-29
 
 **Pre-steward candidate dedupe.** Adds a Jaccard-on-tokens dedupe tier that runs *before* the steward LLM. Candidates that overlap >= 85% with an existing same-scope claim get archived via SQL with no Haiku call. Inspired by Mendral's "We Upgraded to a Frontier Model and Our Costs Went Down" (2026-03-06): cheap-deterministic-first, expensive-LLM-second.
