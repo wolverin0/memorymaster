@@ -449,6 +449,143 @@ Return ONLY the updated compiled truth (no frontmatter, no title, no timeline)."
     }
 
 
+def absorb_single_claim(
+    claim_id: int,
+    db_path: str | Path | None = None,
+    wiki_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Absorb one validated claim into its subject article immediately."""
+    import os
+
+    db_target = str(
+        db_path
+        or os.environ.get("MEMORYMASTER_DEFAULT_DB")
+        or os.environ.get("MEMORYMASTER_DB")
+        or "memorymaster.db"
+    )
+    wiki = Path(wiki_dir or os.environ.get("MEMORYMASTER_WIKI_DIR") or "obsidian-vault/wiki")
+    wiki.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(db_target)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            """SELECT id, text, claim_type, subject, predicate, object_value,
+                      scope, confidence, status, human_id
+               FROM claims
+               WHERE id = ? AND status IN ('confirmed', 'candidate')""",
+            (claim_id,),
+        ).fetchone()
+        if row is None:
+            return {"claim_id": claim_id, "absorbed": False, "reason": "not_found_or_inactive"}
+
+        subject = row["subject"] or "general"
+        scope = row["scope"] or "default"
+        if row["subject"] is None:
+            rows = conn.execute(
+                """SELECT id, text, claim_type, subject, predicate, object_value,
+                          scope, confidence, status, human_id
+                   FROM claims
+                   WHERE subject IS NULL AND scope = ? AND status IN ('confirmed', 'candidate')
+                   ORDER BY confidence DESC""",
+                (scope,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT id, text, claim_type, subject, predicate, object_value,
+                          scope, confidence, status, human_id
+                   FROM claims
+                   WHERE subject = ? AND scope = ? AND status IN ('confirmed', 'candidate')
+                   ORDER BY confidence DESC""",
+                (row["subject"], scope),
+            ).fetchall()
+    finally:
+        conn.close()
+
+    claims = [dict(r) for r in rows] or [dict(row)]
+    scope_dir = _scope_dirname(scope)
+    slug = _safe_name(subject)
+    existing_path = wiki / scope_dir / f"{slug}.md"
+    claim_ids = [int(c["id"]) for c in claims]
+    claim_types = [c.get("claim_type") or "fact" for c in claims]
+    article_type = max(set(claim_types), key=claim_types.count) if claim_types else "fact"
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    claims_text = "\n".join(
+        "- [{}] {}: {}".format(
+            c.get("claim_type", "fact"),
+            c.get("predicate", ""),
+            str(c["text"])[:200].encode("ascii", errors="replace").decode("ascii"),
+        )
+        for c in claims[:30]
+    )
+    timeline_entries = "\n\n".join(
+        "### {} | {}\n{}".format(
+            now,
+            c.get("claim_type") or "fact",
+            str(c["text"])[:100].encode("ascii", errors="replace").decode("ascii"),
+        )
+        for c in claims
+        if int(c["id"]) == claim_id
+    )
+    was_update = existing_path.exists()
+
+    if was_update:
+        existing_body = existing_path.read_text(encoding="utf-8", errors="replace")
+        existing_content = existing_body
+        frontmatter_parts = existing_body.split("---", 2)
+        if existing_body.startswith("---") and len(frontmatter_parts) >= 3:
+            existing_content = frontmatter_parts[2].lstrip()
+        body_parts = existing_content.split("\n---\n")
+        prompt = f"""Rewrite ONLY the compiled truth section of this wiki article with this validated claim.
+Do NOT include the timeline section.
+
+Existing article:
+{existing_content[:1500]}
+
+Validated claim:
+{claims_text}
+
+Return ONLY the updated compiled truth (no frontmatter, no title, no timeline)."""
+        truth = _call_llm(prompt, "")
+        if not truth or len(truth) <= 50:
+            truth = body_parts[0] if body_parts else existing_content
+        timeline_section = "## Timeline\n"
+        for part in body_parts:
+            if "###" in part and ("undated" in part.lower() or "20" in part[:40]):
+                timeline_section = part
+                break
+        if timeline_entries:
+            timeline_section += "\n" + timeline_entries + "\n"
+        body = truth + "\n\n---\n\n" + timeline_section
+    else:
+        context = f"Subject: {subject}\nScope: {scope}\nClaims ({len(claims)}):\n{claims_text}"
+        body = _call_llm(ABSORB_PROMPT, context)
+        if not body or len(body) <= 50:
+            body = (
+                f"{subject.title()} captures validated MemoryMaster claims for this scope and "
+                "keeps the compiled understanding close to the latest validator evidence.\n\n"
+                f"## Compiled Truth\n{claims_text}\n\n---\n\n## Timeline\n{timeline_entries}\n"
+            )
+
+    contradiction_block = _build_contradiction_callout(claims)
+    if contradiction_block:
+        body = f"{contradiction_block}\n{body}"
+    path = _write_article(
+        wiki, scope_dir, slug, subject.title(), body, article_type,
+        scope, claim_ids, [], claim_types=claim_types,
+    )
+    _stamp_wiki_binding(db_target, claim_ids, slug)
+    _write_backlinks(wiki)
+    return {
+        "claim_id": claim_id,
+        "absorbed": True,
+        "article": str(path),
+        "slug": slug,
+        "claims": len(claims),
+        "updated": was_update,
+    }
+
+
 def cleanup(wiki_dir: str | Path, scope_filter: str | None = None) -> dict[str, Any]:
     """Audit and rewrite weak articles."""
     wiki = Path(wiki_dir)
