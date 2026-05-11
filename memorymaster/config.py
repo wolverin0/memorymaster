@@ -55,6 +55,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
 from typing import Dict
 
@@ -73,6 +74,75 @@ def _parse_floats(raw: str, expected: int) -> list[float]:
 def _parse_volatility_dict(raw: str) -> Dict[str, float]:
     values = _parse_floats(raw, 3)
     return {"low": values[0], "medium": values[1], "high": values[2]}
+
+
+DEFAULT_INITIAL_CONFIDENCE = 0.5917
+
+INITIAL_CONFIDENCE_BY_TYPE: Dict[str, float] = {
+    "architecture": 0.9034,
+    "audit": 1.0,
+    "audit_finding": 1.0,
+    "bug": 0.6898,
+    "bug root cause": 0.7348,
+    "bug root causes": 1.0,
+    "bug_fix": 1.0,
+    "bug_root_cause": 0.8337,
+    "commitment": 0.8333,
+    "constraint": 0.6808,
+    "constraint</claim_type>\n"
+    '<parameter name="source_agent">claude-session': 1.0,
+    "constraint</claim_type>\n"
+    '<parameter name="subject">whatsappbot-monitoring-blind-spot': 1.0,
+    "convention": 1.0,
+    "correction": 1.0,
+    "decision": 0.6153,
+    "decision</claim_type>\n"
+    '<parameter name="source_agent">claude-session': 1.0,
+    "decision_pending": 1.0,
+    "environment": 0.5568,
+    "event": 0.8362,
+    "fact": 0.5113,
+    "fact_confirmed": 1.0,
+    "feedback": 1.0,
+    "filesystem_fact": 1.0,
+    "finding": 1.0,
+    "finding</claim_type>\n"
+    '<parameter name="source_agent">claude-session': 1.0,
+    "fix</claim_type>\n"
+    '<parameter name="source_agent">claude-session': 1.0,
+    "gap": 1.0,
+    "gotcha": 0.7169,
+    "gotcha</claim_type>\n"
+    '<parameter name="confidence">0.9': 1.0,
+    "gotcha</claim_type>\n"
+    '<parameter name="predicate">fork pr merge workflow when maintainercanmodify is false': 1.0,
+    "gotcha</claim_type>\n"
+    '<parameter name="source_agent">claude-session': 1.0,
+    "gotcha</claim_type>\n"
+    '<parameter name="subject">omniclaude-first-turn-protocol-not-enforced': 1.0,
+    "gotchas": 1.0,
+    "incident": 1.0,
+    "infra_fact": 0.0946,
+    "milestone": 1.0,
+    "observation": 1.0,
+    "pattern": 1.0,
+    "preference": 0.0188,
+    "procedure": 0.6087,
+    "process": 1.0,
+    "project": 0.898,
+    "project_status": 1.0,
+    "project_status</claim_type>\n"
+    '<parameter name="source_agent">claude-session': 1.0,
+    "reference": 0.7535,
+    "reference</claim_type>\n"
+    '<parameter name="source_agent">claude-session': 1.0,
+    "security_finding": 1.0,
+    "task_status": 1.0,
+    "uncategorized": 0.258,
+    "user": 1.0,
+    "user_preference": 1.0,
+    "workflow": 1.0,
+}
 
 
 @dataclass(frozen=True)
@@ -116,6 +186,12 @@ class Config:
     stale_threshold: float = 0.35
     conflict_margin: float = 0.08
     pinned_bonus: float = 0.03
+
+    # --- Initial confidence priors calibrated from validator outcomes ---
+    default_initial_confidence: float = DEFAULT_INITIAL_CONFIDENCE
+    initial_confidence_by_type: Dict[str, float] = field(
+        default_factory=lambda: dict(INITIAL_CONFIDENCE_BY_TYPE)
+    )
 
     # --- Derived convenience dicts ---
 
