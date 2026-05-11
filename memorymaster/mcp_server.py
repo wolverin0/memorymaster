@@ -6,14 +6,16 @@ import logging
 import os
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, TypeVar
 from urllib.parse import urlparse
 
-logger = logging.getLogger(__name__)
+from pydantic import BaseModel, ValidationError
 
 from memorymaster.models import CitationInput
 from memorymaster.security import redact_text, resolve_allow_sensitive_access
 from memorymaster.service import MemoryService
+
+logger = logging.getLogger(__name__)
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -23,6 +25,9 @@ except Exception:  # pragma: no cover
 
 _DEFAULT_DB = "memorymaster.db"
 _DEFAULT_WORKSPACE = "."
+_MAX_TEXT_INPUT_CHARS = 10_000
+_TEXT_LIMIT_FIELDS = {"text", "body", "content"}
+_ModelT = TypeVar("_ModelT", bound=BaseModel)
 _ENV_DEFAULT_DB = os.environ.get("MEMORYMASTER_DEFAULT_DB", "").strip()
 _ENV_DEFAULT_WORKSPACE = os.environ.get("MEMORYMASTER_WORKSPACE", "").strip()
 _ENV_DEFAULT_PROJECT_SCOPE = os.environ.get("MEMORYMASTER_DEFAULT_PROJECT_SCOPE", "").strip()
@@ -42,6 +47,103 @@ _COPY_SUFFIX_RE = re.compile(
 # adding words here changes scope identity for every workspace dirname that
 # happens to end with one.
 _CHANNEL_SUFFIX_RE = re.compile(r"-(?:final|prod|production|dev|staging|stage|qa|test)$")
+
+
+class _ToolInput(BaseModel):
+    class Config:
+        extra = "forbid"
+
+
+class IngestClaimInput(_ToolInput):
+    text: str
+    sources_json: str = "[]"
+    db: str = "memorymaster.db"
+    workspace: str = "."
+    idempotency_key: str = ""
+    claim_type: str = ""
+    subject: str = ""
+    predicate: str = ""
+    object_value: str = ""
+    scope: str = "project"
+    volatility: str = "medium"
+    confidence: float = 0.5
+    event_time: str = ""
+    valid_from: str = ""
+    valid_until: str = ""
+    source_agent: str = ""
+
+
+def _structured_error(error: str, code: str, field: str | None = None, **extra: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {"ok": False, "error": error, "code": code}
+    if field is not None:
+        payload["field"] = field
+    payload.update(extra)
+    return payload
+
+
+def _validation_field(loc: Any) -> str:
+    if isinstance(loc, (list, tuple)) and loc:
+        return str(loc[0])
+    return str(loc or "")
+
+
+def _validate_tool_input(
+    model_type: type[_ModelT],
+    payload: _ModelT | dict[str, Any],
+    *,
+    allow_raw_dict: bool = True,
+) -> _ModelT | dict[str, Any]:
+    if isinstance(payload, model_type):
+        model = payload
+    elif isinstance(payload, dict):
+        if not allow_raw_dict:
+            return _structured_error(
+                f"{model_type.__name__} must be a pydantic BaseModel instance.",
+                "INVALID_INPUT",
+                "request",
+            )
+        try:
+            model = model_type(**payload)
+        except ValidationError as exc:
+            first = exc.errors()[0] if exc.errors() else {}
+            field = _validation_field(first.get("loc"))
+            error_type = str(first.get("type", ""))
+            if error_type in {"value_error.missing", "missing"}:
+                return _structured_error(f"Missing required field: {field}", "MISSING_FIELD", field)
+            return _structured_error(str(first.get("msg", "Invalid input.")), "VALIDATION_ERROR", field or None)
+    else:
+        return _structured_error(
+            f"{model_type.__name__} must be a pydantic BaseModel instance.",
+            "INVALID_INPUT",
+            "request",
+        )
+
+    for field in _TEXT_LIMIT_FIELDS:
+        value = getattr(model, field, None)
+        if isinstance(value, str) and len(value) > _MAX_TEXT_INPUT_CHARS:
+            return _structured_error(
+                f"Input field '{field}' exceeds {_MAX_TEXT_INPUT_CHARS} characters.",
+                "INPUT_TOO_LONG",
+                field,
+                max_length=_MAX_TEXT_INPUT_CHARS,
+            )
+    return model
+
+
+def _sensitive_input_error(text: str, field: str = "text") -> dict[str, Any] | None:
+    _, findings = redact_text(text)
+    normalized_findings = list(findings)
+    if not normalized_findings:
+        return None
+    return _structured_error(
+        (
+            "Claim rejected: contains credentials or secrets "
+            f"({', '.join(normalized_findings)}). Never ingest passwords, tokens, or keys."
+        ),
+        "SENSITIVE_INPUT",
+        field,
+        findings=normalized_findings,
+    )
 
 
 def _resolve_db(db: str) -> str:
@@ -283,40 +385,62 @@ if FastMCP is not None:
           - valid_from: start of the claim validity window
           - valid_until: end of the validity window (omit if still current)
         """
-        # Block credentials from being ingested — use the canonical filter
-        # from memorymaster.security (single source of truth).
-        _, _findings = redact_text(text)
-        if _findings:
-            return {
-                "ok": False,
-                "error": (
-                    f"Claim rejected: contains credentials or secrets "
-                    f"({', '.join(_findings)}). Never ingest passwords, tokens, or keys."
-                ),
-            }
-
-        svc = _service(db, workspace)
-        citations = _parse_sources_json(sources_json)
-        if not citations:
-            citations = [CitationInput(source="mcp-session", locator=scope or "project")]
-        # Auto-detect source_agent if not provided
-        effective_source = _empty_to_none(source_agent) or "mcp-session"
-        claim = svc.ingest(
-            text=text,
-            citations=citations,
-            idempotency_key=_empty_to_none(idempotency_key),
-            claim_type=_empty_to_none(claim_type),
-            subject=_empty_to_none(subject),
-            predicate=_empty_to_none(predicate),
-            object_value=_empty_to_none(object_value),
-            scope=_effective_ingest_scope(scope, workspace),
-            volatility=volatility,
-            confidence=confidence,
-            event_time=_empty_to_none(event_time),
-            valid_from=_empty_to_none(valid_from),
-            valid_until=_empty_to_none(valid_until),
-            source_agent=effective_source,
+        request = _validate_tool_input(
+            IngestClaimInput,
+            {
+                "text": text,
+                "sources_json": sources_json,
+                "db": db,
+                "workspace": workspace,
+                "idempotency_key": idempotency_key,
+                "claim_type": claim_type,
+                "subject": subject,
+                "predicate": predicate,
+                "object_value": object_value,
+                "scope": scope,
+                "volatility": volatility,
+                "confidence": confidence,
+                "event_time": event_time,
+                "valid_from": valid_from,
+                "valid_until": valid_until,
+                "source_agent": source_agent,
+            },
         )
+        if isinstance(request, dict):
+            return request
+
+        sensitive_error = _sensitive_input_error(request.text)
+        if sensitive_error is not None:
+            return sensitive_error
+
+        try:
+            citations = _parse_sources_json(request.sources_json)
+        except ValueError as exc:
+            return _structured_error(str(exc), "VALIDATION_ERROR", "sources_json")
+        if not citations:
+            citations = [CitationInput(source="mcp-session", locator=request.scope or "project")]
+        # Auto-detect source_agent if not provided
+        effective_source = _empty_to_none(request.source_agent) or "mcp-session"
+        svc = _service(request.db, request.workspace)
+        try:
+            claim = svc.ingest(
+                text=request.text,
+                citations=citations,
+                idempotency_key=_empty_to_none(request.idempotency_key),
+                claim_type=_empty_to_none(request.claim_type),
+                subject=_empty_to_none(request.subject),
+                predicate=_empty_to_none(request.predicate),
+                object_value=_empty_to_none(request.object_value),
+                scope=_effective_ingest_scope(request.scope, request.workspace),
+                volatility=request.volatility,
+                confidence=request.confidence,
+                event_time=_empty_to_none(request.event_time),
+                valid_from=_empty_to_none(request.valid_from),
+                valid_until=_empty_to_none(request.valid_until),
+                source_agent=effective_source,
+            )
+        except ValueError as exc:
+            return _structured_error(str(exc), "VALIDATION_ERROR", "text")
         # Log to vault chronicle + cross-source synthesis
         try:
             from memorymaster.vault_log import log_ingest
