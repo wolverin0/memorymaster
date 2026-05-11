@@ -22,6 +22,70 @@ def _env(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 
 
+_GOOGLE_ENV_ROTATOR = None
+_GOOGLE_ENV_ROTATOR_KEYSET: tuple[str, ...] = ()
+
+
+def _truthy_env(key: str) -> bool:
+    return _env(key).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _split_keys(value: str) -> list[str]:
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _google_rotation_keys() -> list[str]:
+    for env_key in ("MEMORYMASTER_LLM_API_KEYS", "GEMINI_API_KEYS", "MEMORYMASTER_API_KEYS"):
+        keys = _split_keys(_env(env_key))
+        if keys:
+            return keys
+
+    single_key = _env("GEMINI_API_KEY") or _env("MEMORYMASTER_API_KEY")
+    return [single_key.strip()] if single_key.strip() else []
+
+
+def _get_google_env_rotator():
+    if not _truthy_env("MEMORYMASTER_LLM_KEY_ROTATION"):
+        return None
+
+    keys = tuple(_google_rotation_keys())
+    if not keys:
+        return None
+
+    global _GOOGLE_ENV_ROTATOR, _GOOGLE_ENV_ROTATOR_KEYSET
+    if _GOOGLE_ENV_ROTATOR is None or _GOOGLE_ENV_ROTATOR_KEYSET != keys:
+        from memorymaster.llm_steward import DEFAULT_COOLDOWN_SECONDS, KeyRotator
+
+        try:
+            cooldown = float(
+                _env(
+                    "MEMORYMASTER_LLM_KEY_COOLDOWN_SECONDS",
+                    str(DEFAULT_COOLDOWN_SECONDS),
+                )
+            )
+        except ValueError:
+            cooldown = DEFAULT_COOLDOWN_SECONDS
+        _GOOGLE_ENV_ROTATOR = KeyRotator(keys=list(keys), cooldown_seconds=cooldown)
+        _GOOGLE_ENV_ROTATOR_KEYSET = keys
+    return _GOOGLE_ENV_ROTATOR
+
+
+def _call_google_with_env_rotation(model: str, payload: dict[str, Any]) -> str | None:
+    rotator = _get_google_env_rotator()
+    if rotator is None:
+        return None
+
+    for _ in range(rotator.key_count):
+        api_key = rotator.get_key()
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        result = _http_post(url, payload, _extract_google)
+        if result:
+            rotator.clear_cooldown(api_key)
+            return result
+        rotator.mark_rate_limited(api_key)
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Provider implementations — all return raw text response
 # ---------------------------------------------------------------------------
@@ -37,9 +101,12 @@ def _call_google(prompt: str, text: str) -> str:
     ``MEMORYMASTER_LLM_MODEL``.
 
     Key source priority:
-        1. Rotator file (``~/.memorymaster/gemini-keys.env``) — rotates
+        1. Env rotation when ``MEMORYMASTER_LLM_KEY_ROTATION=1`` and multiple
+           keys are configured via ``MEMORYMASTER_LLM_API_KEYS``,
+           ``GEMINI_API_KEYS``, or ``MEMORYMASTER_API_KEYS``.
+        2. Rotator file (``~/.memorymaster/gemini-keys.env``) — rotates
            round-robin, auto-cooldown on 429, permanent skip on revoked keys.
-        2. ``GEMINI_API_KEY`` env var — singular key, no rotation.
+        3. ``GEMINI_API_KEY`` env var — singular key, no rotation.
     """
     from memorymaster.key_rotator import get_rotator
 
@@ -58,6 +125,10 @@ def _call_google(prompt: str, text: str) -> str:
         payload["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "minimal"}
     elif "gemini-2.5" in model:
         payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
+
+    env_rotated_result = _call_google_with_env_rotation(model, payload)
+    if env_rotated_result is not None:
+        return env_rotated_result
 
     rotator = get_rotator("gemini")
     if rotator and len(rotator) > 0:
