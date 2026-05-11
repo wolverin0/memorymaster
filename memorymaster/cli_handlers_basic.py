@@ -843,6 +843,7 @@ def _handle_context(args: argparse.Namespace, service, parser: argparse.Argument
         retrieval_mode=args.retrieval_mode, allow_sensitive=args.allow_sensitive,
         retrieval_profile=getattr(args, "profile", None),
         scope_allowlist=parse_scope_allowlist(args.scope_allowlist),
+        provider=getattr(args, "provider", None),
     )
     elapsed_ms = (time.perf_counter() - t0) * 1000
     if args.json_output:

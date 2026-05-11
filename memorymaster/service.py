@@ -664,6 +664,7 @@ class MemoryService:
         retrieval_profile: str | None = None,
         allow_sensitive: bool = False,
         scope_allowlist: list[str] | None = None,
+        provider: str | None = None,
     ) -> ContextResult:
         """Return a formatted text block of the most relevant claims packed
         into *token_budget* using greedy knapsack.
@@ -684,6 +685,8 @@ class MemoryService:
             Max candidate claims to rank before packing.
         retrieval_mode:
             ``"legacy"`` or ``"hybrid"`` (default).
+        provider:
+            Optional context-packing strategy for a target LLM provider.
         """
         rows = self.query_rows(
             query_text=query,
@@ -700,6 +703,7 @@ class MemoryService:
             rows,
             token_budget=token_budget,
             output_format=output_format,
+            provider=provider,
         )
 
     def query_meta_decisions(

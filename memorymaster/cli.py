@@ -13,7 +13,7 @@ from memorymaster.cli_helpers import (  # noqa: F401 — re-export for backward 
     parse_citation,
     parse_scope_allowlist,
 )
-from memorymaster.context_optimizer import OUTPUT_FORMATS
+from memorymaster.context_optimizer import OUTPUT_FORMATS, PROVIDERS
 from memorymaster.models import CLAIM_LINK_TYPES, CLAIM_STATUSES, VOLATILITY_LEVELS
 from memorymaster.retrieval import RETRIEVAL_MODES
 from memorymaster.service import RETRIEVAL_PROFILES, MemoryService
@@ -162,6 +162,7 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("text", help="Query text describing what context is needed")
     context.add_argument("--budget", type=int, default=4000, help="Maximum token budget (default: 4000)")
     context.add_argument("--format", dest="output_format", choices=list(OUTPUT_FORMATS), default="text", help="Output format: text (human-readable), xml (system prompt), json (structured)")
+    context.add_argument("--provider", choices=list(PROVIDERS), default=None, help="Provider-aware packing strategy")
     context.add_argument("--limit", type=int, default=100, help="Max candidate claims to rank")
     context.add_argument("--exclude-stale", action="store_true", help="Exclude stale claims")
     context.add_argument("--exclude-conflicted", action="store_true", help="Exclude conflicted claims")
@@ -509,7 +510,7 @@ def build_parser() -> argparse.ArgumentParser:
     entity_aliases_cmd.add_argument("entity_id", type=int, help="Entity ID")
     entity_aliases_cmd.add_argument("--add", default="", help="Add this alias to the entity")
 
-    entity_backfill = sub.add_parser("entity-backfill", help="Backfill entity_id on claims with subject but no entity")
+    sub.add_parser("entity-backfill", help="Backfill entity_id on claims with subject but no entity")
 
     return parser
 
