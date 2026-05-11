@@ -10,6 +10,7 @@ Search modes:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -162,14 +163,17 @@ def _row_dedup_key(r: dict) -> tuple:
     sharing one prefix. Hybrid mode silently collapsed all 25,894 distinct
     messages into a single returned row.
 
-    Prefer the row id (always unique). Fall back to (session_id, content)
+    Prefer the row id (always unique). Fall back to (session_id, content hash)
     tuple when id is missing — happens for vector results from Qdrant which
     didn't pull point.id into the payload dict.
     """
     rid = r.get("id")
     if rid is not None:
         return ("id", rid)
-    return ("sc", r.get("session_id", ""), r.get("content", ""))
+    content = r.get("content", "")
+    # use full-content hash instead of 100-char prefix to avoid template-collision
+    content_hash = hashlib.sha256(content.encode()).hexdigest()
+    return ("sch", r.get("session_id", ""), content_hash)
 
 
 def search_verbatim(
