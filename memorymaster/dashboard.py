@@ -100,6 +100,58 @@ def _latency_summary_from_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str
     }
 
 
+def _validation_latency_metric(service: Any) -> dict[str, Any]:
+    store = getattr(service, "store", None)
+    connect = getattr(store, "connect", None)
+    if not callable(connect):
+        return {"ok": True, "metric": "validation_latency", "unit": "seconds", "rows": 0, "p50": None, "p95": None, "p99": None}
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            WITH first_validation AS (
+                SELECT claim_id, MIN(created_at) AS validated_at
+                FROM events
+                WHERE claim_id IS NOT NULL
+                  AND event_type IN ('validator', 'deterministic_validator')
+                GROUP BY claim_id
+            )
+            SELECT
+                c.id AS claim_id,
+                c.created_at AS created_at,
+                first_validation.validated_at AS validated_at,
+                MAX(
+                    0.0,
+                    (julianday(first_validation.validated_at) - julianday(c.created_at)) * 86400.0
+                ) AS latency_seconds
+            FROM claims c
+            JOIN first_validation ON first_validation.claim_id = c.id
+            WHERE c.created_at IS NOT NULL
+              AND first_validation.validated_at IS NOT NULL
+            ORDER BY c.id
+            """
+        ).fetchall()
+    samples = [
+        {
+            "claim_id": int(row["claim_id"]),
+            "created_at": str(row["created_at"]),
+            "validated_at": str(row["validated_at"]),
+            "latency_seconds": float(row["latency_seconds"]),
+        }
+        for row in rows
+        if row["latency_seconds"] is not None
+    ]
+    values = [sample["latency_seconds"] for sample in samples]
+    return {
+        "ok": True,
+        "metric": "validation_latency",
+        "unit": "seconds",
+        "rows": len(values),
+        "p50": _percentile(values, 0.50),
+        "p95": _percentile(values, 0.95),
+        "p99": _percentile(values, 0.99),
+    }
+
+
 def _claim_to_dict(claim: Any) -> dict[str, Any]:
     return asdict(claim)
 
@@ -166,6 +218,7 @@ def _build_get_route_map(handler: Any) -> dict[str, callable]:
         "/api/namespaces": lambda qs: handler._handle_namespaces(qs),
         "/api/session-stats": lambda qs: handler._handle_session_stats(qs),
         "/api/observability": lambda qs: handler._handle_observability(qs),
+        "/metrics/validation-latency": lambda qs: handler._handle_validation_latency(qs),
         "/api/operator/status": lambda qs: handler._write_json({"ok": True, **handler._server.operator_status()}),
         "/api/operator/stream": lambda qs: handler._handle_operator_stream(qs),
     }
@@ -723,6 +776,10 @@ input[type="text"],input:not([type]){background:#0f172a;border:1px solid #475569
 <div class="section-head"><div class="icon icon-cyan">&#128200;</div><div><h2>System Health</h2><div class="desc">Operator metrics, latency, event counters</div></div></div>
 <div id="obs-box" class="scroll"><div class="empty">Waiting for data...</div></div>
 </section>
+<section>
+<div class="section-head"><div class="icon icon-lime">&#9201;</div><div><h2>Validation Latency</h2><div class="desc">Candidate claim creation to first validation event</div></div></div>
+<div id="validation-latency" class="scroll"><div class="empty">Waiting for data...</div></div>
+</section>
 <section class="wide">
 <div class="section-head"><div class="icon icon-blue">&#128203;</div><div><h2>Claims</h2><div class="desc">All stored knowledge claims with status and confidence</div></div></div>
 <div class="scroll"><table><colgroup><col style="width:50px"><col style="width:90px"><col><col style="width:80px"><col style="width:60px"><col style="width:160px"></colgroup><thead><tr><th>ID</th><th>Status</th><th>Subject / Predicate / Value</th><th>Confidence</th><th>Cites</th><th>Updated</th></tr></thead><tbody id="claims-body"><tr><td colspan="6" class="empty">No claims ingested yet</td></tr></tbody></table></div>
@@ -783,6 +840,7 @@ function fillRetr(d){const rows=Array.isArray(d.rows_data)?d.rows_data:[];const 
 function fillAudit(d){const rows=Array.isArray(d.events)?d.events:[];document.getElementById('audit-body').innerHTML=rows.map(e=>'<tr><td class="mono" style="font-size:.75rem">'+esc(e.created_at||'-')+'</td><td>'+esc(e.event_type||'-')+'</td><td class="mono">'+esc(e.claim_id||'-')+'</td><td>'+esc(e.details||'-')+'</td></tr>').join('')||'<tr><td colspan="4" class="empty">No audit events</td></tr>';}
 function fillNs(d){const ns=d.namespaces||{};const keys=Object.keys(ns);document.getElementById('namespaces-box').innerHTML=keys.length?keys.map(k=>'<div style="padding:8px 10px;border-bottom:1px solid #334155;display:flex;justify-content:space-between"><span style="color:#f1f5f9">'+esc(k)+'</span><span class="mono muted">'+esc(ns[k].count||0)+' claims</span></div>').join(''):'<div class="empty">No namespaces created yet</div>';}
 function fillStats(d){const s=d.summary||{};document.getElementById('session-stats').innerHTML='<div style="padding:10px"><div class="stat-row"><div class="stat-item"><span class="stat-value">'+esc(s.sessions||0)+'</span><span class="stat-label">Sessions</span></div><div class="stat-item"><span class="stat-value">'+esc(s.threads||0)+'</span><span class="stat-label">Threads</span></div><div class="stat-item"><span class="stat-value">'+esc(s.rows_scanned||0)+'</span><span class="stat-label">Rows scanned</span></div></div>'+(Object.keys(s.event_counts||{}).length?'<div class="muted" style="margin-top:6px;padding-top:6px;border-top:1px solid #334155">Events: '+countPills(s.event_counts||{},8)+'</div>':'')+'</div>';}
+function fillValidationLatency(d){const box=document.getElementById('validation-latency');const val=(v)=>typeof v==='number'?v.toFixed(3)+'s':'-';box.innerHTML='<div style="padding:10px"><div class="stat-row"><div class="stat-item"><span class="stat-value">'+esc(d.rows||0)+'</span><span class="stat-label">Claims</span></div><div class="stat-item"><span class="stat-value">'+esc(val(d.p50))+'</span><span class="stat-label">p50</span></div><div class="stat-item"><span class="stat-value">'+esc(val(d.p95))+'</span><span class="stat-label">p95</span></div><div class="stat-item"><span class="stat-value">'+esc(val(d.p99))+'</span><span class="stat-label">p99</span></div></div></div>';}
 function fillObs(d){const o=d.observability||{};const op=o.operator||{};const ev=o.events_recent||{};const q=o.queue||{};const latency=op.latency_ms||{};const latencyRows=Object.keys(latency).sort().map(k=>'<tr><td class="mono">'+esc(k)+'</td><td class="mono">'+esc(latency[k].count||0)+'</td><td class="mono">'+esc(f3(latency[k].p50))+'</td><td class="mono">'+esc(f3(latency[k].p95))+'</td><td class="mono">'+esc(f3(latency[k].max))+'</td></tr>').join('')||'<tr><td colspan="5" class="empty">No latency data yet</td></tr>';const topQueue=Array.isArray(q.top)?q.top:[];document.getElementById('obs-box').innerHTML='<div style="padding:10px;border-bottom:1px solid #334155"><div class="stat-row"><div class="stat-item"><span class="stat-value">'+(op.running?'<span style="color:#4ade80">&#9679; Running</span>':'<span style="color:#64748b">&#9679; Stopped</span>')+'</span><span class="stat-label">Operator</span></div>'+(op.running?'<div class="stat-item"><span class="stat-value">'+esc(op.pid)+'</span><span class="stat-label">PID</span></div>':'')+'<div class="stat-item"><span class="stat-value">'+esc(op.rows_scanned||0)+'</span><span class="stat-label">Rows</span></div><div class="stat-item"><span class="stat-value">'+esc(op.sessions||0)+'</span><span class="stat-label">Sessions</span></div></div></div><div style="padding:8px 10px;border-bottom:1px solid #334155"><span class="muted">Events:</span> '+countPills(op.event_counts||{},8)+'</div><div style="padding:8px 10px;border-bottom:1px solid #334155"><span class="muted">Tools:</span> '+countPills(op.tool_counts||{},8)+'</div><div style="padding:8px 10px;border-bottom:1px solid #334155"><span class="muted">Queue:</span> <span class="mono">total='+esc(q.rows_scanned||0)+' actionable='+esc(q.actionable||0)+' reviewed='+esc(q.triage_reviewed||0)+' suppressed='+esc(q.triage_suppressed||0)+'</span></div><div style="padding:8px 10px;border-bottom:1px solid #334155"><span class="muted">Priority queue:</span> '+(topQueue.length?topQueue.map(t=>'<span class="mono">#'+esc(t.claim_id)+' '+statusBadge(t.status)+' p='+esc(f3(t.priority))+'</span>').join(' '):'<span class="muted">empty</span>')+'</div><div style="padding:8px 10px"><table><thead><tr><th>Metric</th><th>Samples</th><th>p50</th><th>p95</th><th>Max</th></tr></thead><tbody>'+latencyRows+'</tbody></table></div>';}
 function fillOp(d){document.getElementById('op-status').innerHTML=d.running?'<span style="color:#4ade80">&#9679; Running</span> <span class="mono muted">PID '+esc(d.pid)+'</span>':'<span style="color:#64748b">&#9679; Stopped</span>';}
 async function refreshQueue(){fillQueue(await jget('/api/review-queue?limit=30&exclude_reviewed=1&exclude_suppressed=1'));}
@@ -797,7 +855,7 @@ document.getElementById('timeline-group').addEventListener('change',(ev)=>{timel
 document.getElementById('conflicts-search').addEventListener('input',(ev)=>{conflictState.search=String((ev&&ev.target&&ev.target.value)||'');renderConflicts();});
 document.getElementById('conflicts-include-stale').addEventListener('change',refreshConflicts);
 document.getElementById('conflicts-refresh').addEventListener('click',refreshConflicts);
-jget('/api/claims?limit=50').then(fillClaims).catch(()=>{});jget('/api/timeline?limit=40').then(fillTimeline).catch(()=>{});refreshConflicts().catch(()=>{});refreshQueue().catch(()=>{});jget('/api/audit?limit=40').then(fillAudit).catch(()=>{});jget('/api/namespaces?limit=200').then(fillNs).catch(()=>{});jget('/api/session-stats?limit=2000').then(fillStats).catch(()=>{});jget('/api/operator/status').then(fillOp).catch(()=>{});refreshObs().catch(()=>{});
+jget('/api/claims?limit=50').then(fillClaims).catch(()=>{});jget('/api/timeline?limit=40').then(fillTimeline).catch(()=>{});refreshConflicts().catch(()=>{});refreshQueue().catch(()=>{});jget('/api/audit?limit=40').then(fillAudit).catch(()=>{});jget('/api/namespaces?limit=200').then(fillNs).catch(()=>{});jget('/api/session-stats?limit=2000').then(fillStats).catch(()=>{});jget('/metrics/validation-latency').then(fillValidationLatency).catch(()=>{});jget('/api/operator/status').then(fillOp).catch(()=>{});refreshObs().catch(()=>{});
 const sb=document.getElementById('stream');const es=new EventSource('/api/operator/stream?last=20'); const append=(t)=>{const ex=sb.textContent.trim();sb.textContent=(ex&&ex!=='Waiting for operator to start...'?ex+'\\n':'')+t;}; ['message','stream_start','state_loaded','state_error','state_saved','json_error','turn_processed','reconcile_run','stream_exit'].forEach(n=>es.addEventListener(n,(ev)=>append(ev.data))); es.onerror=()=>append('[stream reconnecting]');
 </script></main></body></html>"""
         body = html.encode("utf-8")
@@ -1136,6 +1194,9 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
                 },
             }
         )
+
+    def _handle_validation_latency(self, query_string: str) -> None:
+        self._write_json(_validation_latency_metric(self._server.service))
 
     def _handle_triage_action(self, payload: dict[str, Any]) -> None:
         action = str(payload.get("action") or "").strip().lower()
