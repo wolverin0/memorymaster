@@ -15,6 +15,15 @@ from memorymaster.models import Claim
 from memorymaster.service import MemoryService
 
 
+@pytest.fixture(autouse=True)
+def _mock_best_embedding_provider(monkeypatch):
+    def provider_factory():
+        return EmbeddingProvider(model="hash-v1", dims=768)
+
+    monkeypatch.setattr("memorymaster.service.create_best_provider", provider_factory)
+    monkeypatch.setattr("memorymaster.jobs.dedup.create_best_provider", provider_factory)
+
+
 def _make_claim(
     id: int,
     text: str = "some claim",
