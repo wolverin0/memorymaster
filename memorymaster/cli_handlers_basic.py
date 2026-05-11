@@ -809,6 +809,7 @@ def _handle_query(args: argparse.Namespace, service, parser: argparse.ArgumentPa
         include_stale=not args.exclude_stale, include_conflicted=not args.exclude_conflicted,
         include_candidates=getattr(args, "include_candidates", False),
         retrieval_mode=args.retrieval_mode, allow_sensitive=args.allow_sensitive,
+        retrieval_profile=getattr(args, "profile", None),
         scope_allowlist=parse_scope_allowlist(args.scope_allowlist),
     )
     elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -840,6 +841,7 @@ def _handle_context(args: argparse.Namespace, service, parser: argparse.Argument
         include_conflicted=not args.exclude_conflicted,
         include_candidates=getattr(args, "include_candidates", False),
         retrieval_mode=args.retrieval_mode, allow_sensitive=args.allow_sensitive,
+        retrieval_profile=getattr(args, "profile", None),
         scope_allowlist=parse_scope_allowlist(args.scope_allowlist),
     )
     elapsed_ms = (time.perf_counter() - t0) * 1000
