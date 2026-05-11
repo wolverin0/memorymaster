@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,85 @@ def _copy_claim_citations(src: sqlite3.Connection, tgt: sqlite3.Connection, old_
         pass  # citations table might differ
 
 
+def _parse_timestamp(value: object) -> datetime:
+    if not value:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _citation_count(conn: sqlite3.Connection, claim_id: int) -> int:
+    try:
+        row = conn.execute("SELECT COUNT(*) FROM citations WHERE claim_id = ?", (claim_id,)).fetchone()
+        return int(row[0]) if row else 0
+    except sqlite3.OperationalError:
+        return 0
+
+
+def _claim_priority(conn: sqlite3.Connection, claim: dict[str, object]) -> tuple[bool, float, datetime, int, int]:
+    claim_id = int(claim["id"])
+    return (
+        bool(claim.get("pinned")),
+        float(claim.get("confidence") or 0.0),
+        _parse_timestamp(claim.get("updated_at")),
+        _citation_count(conn, claim_id),
+        claim_id,
+    )
+
+
+def _target_columns(tgt: sqlite3.Connection) -> set[str]:
+    return {col[1] for col in tgt.execute("PRAGMA table_info(claims)").fetchall()}
+
+
+def _find_conflicting_target_claims(
+    tgt: sqlite3.Connection, row: sqlite3.Row, target_cols: set[str]
+) -> list[dict[str, object]]:
+    required = {"id", "subject", "predicate", "object_value", "scope", "status"}
+    if not required.issubset(target_cols) or not required.issubset(row.keys()):
+        return []
+    if row["subject"] is None or row["predicate"] is None:
+        return []
+    conflicts = tgt.execute(
+        """
+        SELECT * FROM claims
+        WHERE status != 'archived'
+          AND COALESCE(subject, '') = COALESCE(?, '')
+          AND COALESCE(predicate, '') = COALESCE(?, '')
+          AND COALESCE(scope, '') = COALESCE(?, '')
+          AND COALESCE(object_value, '') != COALESCE(?, '')
+        """,
+        (row["subject"], row["predicate"], row["scope"], row["object_value"]),
+    ).fetchall()
+    return [dict(conflict) for conflict in conflicts]
+
+
+def _apply_conflict_resolution(
+    tgt: sqlite3.Connection,
+    source_row: sqlite3.Row,
+    new_id: int,
+    target_cols: set[str],
+    conflicts: list[dict[str, object]],
+) -> None:
+    if not conflicts or not {"status", "replaced_by_claim_id"}.issubset(target_cols):
+        return
+    merged_claim = dict(source_row)
+    merged_claim["id"] = new_id
+    winner = max([merged_claim, *conflicts], key=lambda claim: _claim_priority(tgt, claim))
+    winner_id = int(winner["id"])
+    for claim in [merged_claim, *conflicts]:
+        claim_id = int(claim["id"])
+        if claim_id != winner_id:
+            tgt.execute(
+                "UPDATE claims SET status = 'superseded', replaced_by_claim_id = ? WHERE id = ?",
+                (winner_id, claim_id),
+            )
+
+
 def _insert_claim_into_target(
     row: sqlite3.Row,
     common_cols: list[str],
@@ -61,8 +141,8 @@ def _insert_claim_into_target(
     text: str,
     src: sqlite3.Connection,
     tgt: sqlite3.Connection,
-) -> bool:
-    """Insert a single claim into target DB and copy citations. Returns True if successful."""
+) -> int | None:
+    """Insert a single claim into target DB and copy citations. Returns new id if successful."""
     try:
         cols_to_insert, values = _build_insert_values(row, common_cols, ikey)
         placeholders = ",".join("?" for _ in cols_to_insert)
@@ -75,10 +155,10 @@ def _insert_claim_into_target(
         new_id = tgt.execute("SELECT last_insert_rowid()").fetchone()[0]
 
         _copy_claim_citations(src, tgt, row["id"], new_id)
-        return True
+        return int(new_id)
     except Exception as exc:
         logger.warning("Failed to merge claim: %s", exc)
-        return False
+        return None
 
 
 def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
@@ -112,7 +192,7 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
         # Get all columns from source claims table
         src_cols = [col[1] for col in src.execute("PRAGMA table_info(claims)").fetchall()]
         # Filter to columns that exist in target
-        tgt_cols = {col[1] for col in tgt.execute("PRAGMA table_info(claims)").fetchall()}
+        tgt_cols = _target_columns(tgt)
         common_cols = [c for c in src_cols if c in tgt_cols and c != "id"]
 
         # Scan source claims
@@ -136,7 +216,10 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
                 ikey = f"merge-{_text_hash(text)}"
 
             # Insert into target
-            if _insert_claim_into_target(row, common_cols, ikey, text, src, tgt):
+            conflicts = _find_conflicting_target_claims(tgt, row, tgt_cols)
+            new_id = _insert_claim_into_target(row, common_cols, ikey, text, src, tgt)
+            if new_id is not None:
+                _apply_conflict_resolution(tgt, row, new_id, tgt_cols, conflicts)
                 existing_keys.add(ikey)
                 existing_hashes.add(_text_hash(text))
                 stats["merged"] += 1
