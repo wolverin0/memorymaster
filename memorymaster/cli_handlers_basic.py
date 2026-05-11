@@ -958,6 +958,25 @@ def _handle_recompute_confidence_priors(
     return 0
 
 
+def _handle_wiki_suggest_links(
+    args: argparse.Namespace,
+    service,
+    parser: argparse.ArgumentParser,
+    effective_db: str,
+) -> int:
+    from memorymaster.wiki_suggest import suggest_wikilinks
+
+    suggestions = suggest_wikilinks(
+        effective_db,
+        args.text,
+        wiki_root=args.wiki_root,
+        limit=args.limit,
+        hops=args.hops,
+    )
+    print(json.dumps(suggestions))
+    return 0
+
+
 def _handle_list_claims(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.list-claims")
     t0 = time.perf_counter()
