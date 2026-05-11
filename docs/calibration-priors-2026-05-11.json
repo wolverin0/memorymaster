@@ -1,0 +1,384 @@
+{
+  "default_recommended_initial_confidence": 0.5917,
+  "event_type": "validator",
+  "generated_at": "2026-05-11T16:45:13+00:00",
+  "global_empirical_validation_rate": 0.5917,
+  "priors": [
+    {
+      "claim_type": "architecture",
+      "empirical_validation_rate": 0.9034,
+      "recommended_initial_confidence": 0.9034,
+      "validated": 552,
+      "validation_attempts": 611
+    },
+    {
+      "claim_type": "audit",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 1,
+      "validation_attempts": 1
+    },
+    {
+      "claim_type": "audit_finding",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 1,
+      "validation_attempts": 1
+    },
+    {
+      "claim_type": "bug",
+      "empirical_validation_rate": 0.6898,
+      "recommended_initial_confidence": 0.6898,
+      "validated": 149,
+      "validation_attempts": 216
+    },
+    {
+      "claim_type": "bug root cause",
+      "empirical_validation_rate": 0.7348,
+      "recommended_initial_confidence": 0.7348,
+      "validated": 133,
+      "validation_attempts": 181
+    },
+    {
+      "claim_type": "bug root causes",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 8,
+      "validation_attempts": 8
+    },
+    {
+      "claim_type": "bug_fix",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 13,
+      "validation_attempts": 13
+    },
+    {
+      "claim_type": "bug_root_cause",
+      "empirical_validation_rate": 0.8337,
+      "recommended_initial_confidence": 0.8337,
+      "validated": 376,
+      "validation_attempts": 451
+    },
+    {
+      "claim_type": "commitment",
+      "empirical_validation_rate": 0.8333,
+      "recommended_initial_confidence": 0.8333,
+      "validated": 15,
+      "validation_attempts": 18
+    },
+    {
+      "claim_type": "constraint",
+      "empirical_validation_rate": 0.6808,
+      "recommended_initial_confidence": 0.6808,
+      "validated": 3760,
+      "validation_attempts": 5523
+    },
+    {
+      "claim_type": "constraint</claim_type>\n<parameter name=\"source_agent\">claude-session",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 2,
+      "validation_attempts": 2
+    },
+    {
+      "claim_type": "constraint</claim_type>\n<parameter name=\"subject\">whatsappbot-monitoring-blind-spot",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 1,
+      "validation_attempts": 1
+    },
+    {
+      "claim_type": "convention",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 3,
+      "validation_attempts": 3
+    },
+    {
+      "claim_type": "correction",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 3,
+      "validation_attempts": 3
+    },
+    {
+      "claim_type": "decision",
+      "empirical_validation_rate": 0.6153,
+      "recommended_initial_confidence": 0.6153,
+      "validated": 2255,
+      "validation_attempts": 3665
+    },
+    {
+      "claim_type": "decision</claim_type>\n<parameter name=\"source_agent\">claude-session",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 4,
+      "validation_attempts": 4
+    },
+    {
+      "claim_type": "decision_pending",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 1,
+      "validation_attempts": 1
+    },
+    {
+      "claim_type": "environment",
+      "empirical_validation_rate": 0.5568,
+      "recommended_initial_confidence": 0.5568,
+      "validated": 147,
+      "validation_attempts": 264
+    },
+    {
+      "claim_type": "event",
+      "empirical_validation_rate": 0.8362,
+      "recommended_initial_confidence": 0.8362,
+      "validated": 148,
+      "validation_attempts": 177
+    },
+    {
+      "claim_type": "fact",
+      "empirical_validation_rate": 0.5113,
+      "recommended_initial_confidence": 0.5113,
+      "validated": 8601,
+      "validation_attempts": 16821
+    },
+    {
+      "claim_type": "fact_confirmed",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 1,
+      "validation_attempts": 1
+    },
+    {
+      "claim_type": "feedback",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 108,
+      "validation_attempts": 108
+    },
+    {
+      "claim_type": "filesystem_fact",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 190,
+      "validation_attempts": 190
+    },
+    {
+      "claim_type": "finding",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 12,
+      "validation_attempts": 12
+    },
+    {
+      "claim_type": "finding</claim_type>\n<parameter name=\"source_agent\">claude-session",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 1,
+      "validation_attempts": 1
+    },
+    {
+      "claim_type": "fix</claim_type>\n<parameter name=\"source_agent\">claude-session",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 1,
+      "validation_attempts": 1
+    },
+    {
+      "claim_type": "gap",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 5,
+      "validation_attempts": 5
+    },
+    {
+      "claim_type": "gotcha",
+      "empirical_validation_rate": 0.7169,
+      "recommended_initial_confidence": 0.7169,
+      "validated": 1514,
+      "validation_attempts": 2112
+    },
+    {
+      "claim_type": "gotcha</claim_type>\n<parameter name=\"confidence\">0.9",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 1,
+      "validation_attempts": 1
+    },
+    {
+      "claim_type": "gotcha</claim_type>\n<parameter name=\"predicate\">fork pr merge workflow when maintainercanmodify is false",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 1,
+      "validation_attempts": 1
+    },
+    {
+      "claim_type": "gotcha</claim_type>\n<parameter name=\"source_agent\">claude-session",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 5,
+      "validation_attempts": 5
+    },
+    {
+      "claim_type": "gotcha</claim_type>\n<parameter name=\"subject\">omniclaude-first-turn-protocol-not-enforced",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 1,
+      "validation_attempts": 1
+    },
+    {
+      "claim_type": "gotchas",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 1,
+      "validation_attempts": 1
+    },
+    {
+      "claim_type": "incident",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 4,
+      "validation_attempts": 4
+    },
+    {
+      "claim_type": "infra_fact",
+      "empirical_validation_rate": 0.0946,
+      "recommended_initial_confidence": 0.0946,
+      "validated": 7,
+      "validation_attempts": 74
+    },
+    {
+      "claim_type": "milestone",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 5,
+      "validation_attempts": 5
+    },
+    {
+      "claim_type": "observation",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 2,
+      "validation_attempts": 2
+    },
+    {
+      "claim_type": "pattern",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 18,
+      "validation_attempts": 18
+    },
+    {
+      "claim_type": "preference",
+      "empirical_validation_rate": 0.0188,
+      "recommended_initial_confidence": 0.0188,
+      "validated": 4,
+      "validation_attempts": 213
+    },
+    {
+      "claim_type": "procedure",
+      "empirical_validation_rate": 0.6087,
+      "recommended_initial_confidence": 0.6087,
+      "validated": 42,
+      "validation_attempts": 69
+    },
+    {
+      "claim_type": "process",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 2,
+      "validation_attempts": 2
+    },
+    {
+      "claim_type": "project",
+      "empirical_validation_rate": 0.898,
+      "recommended_initial_confidence": 0.898,
+      "validated": 229,
+      "validation_attempts": 255
+    },
+    {
+      "claim_type": "project_status",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 3,
+      "validation_attempts": 3
+    },
+    {
+      "claim_type": "project_status</claim_type>\n<parameter name=\"source_agent\">claude-session",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 4,
+      "validation_attempts": 4
+    },
+    {
+      "claim_type": "reference",
+      "empirical_validation_rate": 0.7535,
+      "recommended_initial_confidence": 0.7535,
+      "validated": 642,
+      "validation_attempts": 852
+    },
+    {
+      "claim_type": "reference</claim_type>\n<parameter name=\"source_agent\">claude-session",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 5,
+      "validation_attempts": 5
+    },
+    {
+      "claim_type": "security_finding",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 1,
+      "validation_attempts": 1
+    },
+    {
+      "claim_type": "task_status",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 1,
+      "validation_attempts": 1
+    },
+    {
+      "claim_type": "uncategorized",
+      "empirical_validation_rate": 0.258,
+      "recommended_initial_confidence": 0.258,
+      "validated": 81,
+      "validation_attempts": 314
+    },
+    {
+      "claim_type": "user",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 1,
+      "validation_attempts": 1
+    },
+    {
+      "claim_type": "user_preference",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 1,
+      "validation_attempts": 1
+    },
+    {
+      "claim_type": "workflow",
+      "empirical_validation_rate": 1.0,
+      "recommended_initial_confidence": 1.0,
+      "validated": 4,
+      "validation_attempts": 4
+    }
+  ],
+  "source": "events",
+  "success_details": [
+    "revalidation_passed"
+  ],
+  "success_statuses": [
+    "confirmed"
+  ],
+  "total_attempts": 32231,
+  "total_validated": 19070,
+  "window_days": 90,
+  "window_end": "2026-05-11T16:45:13+00:00",
+  "window_start": "2026-02-10T16:45:13+00:00"
+}
