@@ -197,6 +197,8 @@ def build_parser() -> argparse.ArgumentParser:
     dedup = sub.add_parser("dedup", help="Detect and merge duplicate claims using embedding similarity")
     dedup.add_argument("--threshold", type=float, default=0.92, help="Cosine similarity threshold for duplicate detection (default: 0.92)")
     dedup.add_argument("--min-text-overlap", type=float, default=0.3, help="Minimum word-level Jaccard overlap as secondary gate (default: 0.3)")
+    dedup.add_argument("--limit", type=int, default=None, help="Maximum claims to scan, oldest first")
+    dedup.add_argument("--scope", default=None, help="Only scan claims with this exact scope")
     dedup.add_argument("--dry-run", action="store_true", help="Preview duplicates without archiving")
 
     sub.add_parser("recompute-tiers", help="Recompute memory tiers (core/working/peripheral) for all claims")

@@ -78,6 +78,8 @@ def find_duplicates(
     *,
     threshold: float = 0.92,
     min_text_overlap: float = 0.3,
+    limit: int | None = None,
+    scope_filter: str | None = None,
 ) -> list[DuplicatePair]:
     """Scan claims and return duplicate pairs above the similarity threshold.
 
@@ -88,6 +90,11 @@ def find_duplicates(
     This two-gate approach prevents false positives from hash embeddings while still
     catching true semantic duplicates when a real embedding provider is available.
     """
+    if scope_filter is not None:
+        claims = [claim for claim in claims if claim.scope == scope_filter]
+    if limit is not None:
+        claims = sorted(claims, key=lambda claim: claim.created_at)[:limit]
+
     if len(claims) < 2:
         return []
 
@@ -142,6 +149,8 @@ def run(
     min_text_overlap: float = 0.3,
     dry_run: bool = False,
     provider: EmbeddingProvider | None = None,
+    limit: int | None = None,
+    scope_filter: str | None = None,
 ) -> dict:
     """Run the deduplication engine.
 
@@ -151,6 +160,8 @@ def run(
         min_text_overlap: Minimum Jaccard word overlap as fallback gate.
         dry_run: If True, report duplicates without archiving.
         provider: Embedding provider; auto-detected if None.
+        limit: Maximum number of oldest claims to scan after scope filtering.
+        scope_filter: Optional exact claim scope to scan.
 
     Returns:
         Dict with scanned, duplicates_found, claims_archived, and pairs detail.
@@ -169,17 +180,25 @@ def run(
         include_citations=False,
     )
 
-    logger.info("Dedup: scanning %d claims (threshold=%.2f, dry_run=%s)", len(claims), threshold, dry_run)
+    filtered_claims = claims
+    if scope_filter is not None:
+        filtered_claims = [claim for claim in filtered_claims if claim.scope == scope_filter]
+    if limit is not None:
+        filtered_claims = sorted(filtered_claims, key=lambda claim: claim.created_at)[:limit]
+
+    logger.info("Dedup: scanning %d claims (threshold=%.2f, dry_run=%s)", len(filtered_claims), threshold, dry_run)
 
     pairs = find_duplicates(
         claims,
         provider,
         threshold=threshold,
         min_text_overlap=min_text_overlap,
+        limit=limit,
+        scope_filter=scope_filter,
     )
 
     result = DedupResult(
-        scanned=len(claims),
+        scanned=len(filtered_claims),
         duplicates_found=len(pairs),
         pairs=pairs,
     )
@@ -216,6 +235,8 @@ def run(
                 "generated_at": generated_at,
                 "threshold": threshold,
                 "min_text_overlap": min_text_overlap,
+                "limit": limit,
+                "scope_filter": scope_filter,
                 "dry_run": dry_run,
                 "scanned": result.scanned,
                 "duplicates_found": result.duplicates_found,
@@ -229,6 +250,8 @@ def run(
         "claims_archived": result.claims_archived,
         "dry_run": dry_run,
         "threshold": threshold,
+        "limit": limit,
+        "scope_filter": scope_filter,
         "pairs": [
             {
                 "keep_id": p.keep_id,
