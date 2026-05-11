@@ -20,6 +20,10 @@ from memorymaster.service import MemoryService
 
 # Import dispatch table — this also triggers the late dispatch additions for daily/dream/ghost
 from memorymaster.cli_handlers_curation import COMMAND_HANDLERS
+from memorymaster.cli_handlers_basic import _handle_recompute_confidence_priors
+
+
+COMMAND_HANDLERS["recompute-confidence-priors"] = _handle_recompute_confidence_priors
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -202,6 +206,13 @@ def build_parser() -> argparse.ArgumentParser:
     dedup.add_argument("--dry-run", action="store_true", help="Preview duplicates without archiving")
 
     sub.add_parser("recompute-tiers", help="Recompute memory tiers (core/working/peripheral) for all claims")
+
+    confidence_priors = sub.add_parser(
+        "recompute-confidence-priors",
+        help="Write recommended initial-confidence priors from recent validator events",
+    )
+    confidence_priors.add_argument("--window-days", type=int, default=90, help="Number of recent event days to read")
+    confidence_priors.add_argument("--output", required=True, help="JSON report path to write")
 
     list_claims = sub.add_parser("list-claims", help="List claims")
     list_claims.add_argument("--status", choices=list(CLAIM_STATUSES), help="Filter by claim status")

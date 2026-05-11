@@ -930,6 +930,32 @@ def _handle_recompute_tiers(args: argparse.Namespace, service, parser: argparse.
     return 0
 
 
+def _handle_recompute_confidence_priors(
+    args: argparse.Namespace,
+    service,
+    parser: argparse.ArgumentParser,
+    effective_db: str,
+) -> int:
+    from memorymaster.jobs.calibration import run as run_calibration
+
+    t0 = time.perf_counter()
+    report = run_calibration(
+        service.store,
+        window_days=args.window_days,
+        output=Path(args.output),
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(report, total=len(report["priors"]), query_ms=elapsed_ms))
+    else:
+        print(
+            "confidence-priors: "
+            f"types={len(report['priors'])} attempts={report['total_attempts']} "
+            f"validated={report['total_validated']} output={report['output']}"
+        )
+    return 0
+
+
 def _handle_list_claims(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.list-claims")
     t0 = time.perf_counter()
