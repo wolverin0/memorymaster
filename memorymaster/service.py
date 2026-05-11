@@ -645,6 +645,8 @@ class MemoryService:
         threshold: float = 0.92,
         min_text_overlap: float = 0.3,
         dry_run: bool = False,
+        limit: int | None = None,
+        scope_filter: str | None = None,
     ) -> dict:
         return dedup.run(
             self.store,
@@ -652,6 +654,8 @@ class MemoryService:
             min_text_overlap=min_text_overlap,
             dry_run=dry_run,
             provider=self.embedding_provider,
+            limit=limit,
+            scope_filter=scope_filter,
         )
 
     def compact(self, retain_days: int = 30, event_retain_days: int = 60) -> dict[str, int]:

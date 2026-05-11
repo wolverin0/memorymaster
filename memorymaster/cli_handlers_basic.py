@@ -900,7 +900,13 @@ def _handle_compact_summaries(args: argparse.Namespace, service, parser: argpars
 
 def _handle_dedup(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     t0 = time.perf_counter()
-    result = service.dedup(threshold=args.threshold, min_text_overlap=args.min_text_overlap, dry_run=args.dry_run)
+    result = service.dedup(
+        threshold=args.threshold,
+        min_text_overlap=args.min_text_overlap,
+        dry_run=args.dry_run,
+        limit=getattr(args, "limit", None),
+        scope_filter=getattr(args, "scope", None),
+    )
     elapsed_ms = (time.perf_counter() - t0) * 1000
     if args.json_output:
         print(_json_envelope(result, query_ms=elapsed_ms))
