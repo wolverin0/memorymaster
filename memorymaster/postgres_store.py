@@ -607,6 +607,16 @@ class PostgresStore(SQLiteStore):
             row = cur.fetchone()
         return int(row["c"]) if row is not None else 0
 
+    def list_citations_batch(self, claim_ids: list[int]) -> dict[int, list[Citation]]:
+        if not claim_ids:
+            return {}
+        return {claim_id: self.list_citations(claim_id) for claim_id in claim_ids}
+
+    def count_citations_batch(self, claim_ids: list[int]) -> dict[int, int]:
+        if not claim_ids:
+            return {}
+        return {claim_id: self.count_citations(claim_id) for claim_id in claim_ids}
+
     def set_normalized_text(self, claim_id: int, normalized_text: str) -> None:
         now = utc_now()
         with self.connect() as conn, conn.cursor() as cur:
@@ -614,6 +624,12 @@ class PostgresStore(SQLiteStore):
                 "UPDATE claims SET normalized_text = %s, updated_at = %s WHERE id = %s",
                 (normalized_text, now, claim_id),
             )
+
+    def set_normalized_texts_batch(self, updates: dict[int, str]) -> None:
+        if not updates:
+            return
+        for claim_id, normalized_text in updates.items():
+            self.set_normalized_text(claim_id, normalized_text)
 
     def redact_claim_payload(
         self,
