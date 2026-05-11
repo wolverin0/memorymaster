@@ -17,6 +17,7 @@ from typing import Any
 from memorymaster.models import Claim
 
 OUTPUT_FORMATS = ("text", "xml", "json")
+PROVIDERS = ("claude_cli", "google", "openai", "anthropic", "ollama", "auto")
 
 # Rough token estimate: 1 token ~ 4 chars (conservative for English text).
 # Works across GPT / Claude / Llama tokenisers without requiring tiktoken.
@@ -33,6 +34,42 @@ class ContextResult:
     tokens_used: int
     token_budget: int
     format: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderPackingProfile:
+    """Provider-specific packing strategy."""
+
+    provider: str
+    chunk_tokens: int
+    ordering: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PackedBlock:
+    block: str
+    row: dict[str, Any]
+    tokens: int
+    score: float
+
+
+_PROVIDER_PROFILES = {
+    "claude_cli": ProviderPackingProfile("claude_cli", chunk_tokens=1600, ordering="stable_large"),
+    "google": ProviderPackingProfile("google", chunk_tokens=300, ordering="score"),
+    "openai": ProviderPackingProfile("openai", chunk_tokens=800, ordering="score_medium"),
+    "anthropic": ProviderPackingProfile("anthropic", chunk_tokens=1600, ordering="stable_large"),
+    "ollama": ProviderPackingProfile("ollama", chunk_tokens=250, ordering="dense"),
+}
+
+_STATUS_STABILITY = {
+    "confirmed": 0,
+    "candidate": 1,
+    "stale": 2,
+    "superseded": 3,
+    "conflicted": 4,
+    "archived": 5,
+}
+_VOLATILITY_STABILITY = {"low": 0, "medium": 1, "high": 2}
 
 
 def estimate_tokens(text: str) -> int:
@@ -163,11 +200,129 @@ def _get_format_overhead(output_format: str) -> tuple[str, str, int]:
     return header, footer_template, overhead
 
 
+def _auto_provider_for_budget(token_budget: int) -> str:
+    """Infer a provider strategy from the requested context size."""
+    if token_budget <= 12_000:
+        return "ollama"
+    if token_budget <= 150_000:
+        return "openai"
+    if token_budget <= 350_000:
+        return "anthropic"
+    return "google"
+
+
+def _get_provider_profile(provider: str | None, token_budget: int) -> ProviderPackingProfile | None:
+    """Resolve an optional provider name to a packing profile."""
+    if provider is None:
+        return None
+    normalized = provider.strip().lower()
+    if not normalized:
+        return None
+    if normalized not in PROVIDERS:
+        raise ValueError(f"Unknown provider '{provider}'. Choose from: {', '.join(PROVIDERS)}")
+    if normalized == "auto":
+        normalized = _auto_provider_for_budget(token_budget)
+    return _PROVIDER_PROFILES[normalized]
+
+
+def _render_claim_block(claim: Claim, score: float, output_format: str) -> str:
+    """Render one claim in the requested output format."""
+    if output_format == "text":
+        return _claim_block_text(claim, score)
+    if output_format == "xml":
+        return _claim_xml(claim, score)
+    return json.dumps(_claim_json_entry(claim, score))
+
+
+def _build_blocks(ranked_rows: list[dict[str, Any]], output_format: str) -> list[_PackedBlock]:
+    blocks: list[_PackedBlock] = []
+    for row in ranked_rows:
+        claim: Claim = row["claim"]
+        score = float(row.get("score", 0.0))
+        block = _render_claim_block(claim, score, output_format)
+        blocks.append(_PackedBlock(block=block, row=row, tokens=estimate_tokens(block), score=score))
+    return blocks
+
+
+def _claim_sort_key(block: _PackedBlock) -> tuple[object, ...]:
+    claim: Claim = block.row["claim"]
+    return (
+        claim.scope,
+        claim.claim_type or "",
+        _VOLATILITY_STABILITY.get(claim.volatility, 9),
+        _STATUS_STABILITY.get(claim.status, 9),
+        not claim.pinned,
+        -block.score,
+        claim.id,
+    )
+
+
+def _density_sort_key(block: _PackedBlock) -> tuple[object, ...]:
+    claim: Claim = block.row["claim"]
+    density = block.score / max(1, block.tokens)
+    return (-density, not claim.pinned, -claim.confidence, block.tokens, claim.id)
+
+
+def _order_blocks(blocks: list[_PackedBlock], profile: ProviderPackingProfile) -> list[_PackedBlock]:
+    if profile.ordering == "stable_large":
+        return sorted(blocks, key=_claim_sort_key)
+    if profile.ordering == "dense":
+        return sorted(blocks, key=_density_sort_key)
+    return blocks
+
+
+def _chunk_blocks(blocks: list[_PackedBlock], chunk_tokens: int) -> list[list[_PackedBlock]]:
+    chunks: list[list[_PackedBlock]] = []
+    current: list[_PackedBlock] = []
+    current_tokens = 0
+
+    for block in blocks:
+        if current and current_tokens + block.tokens > chunk_tokens:
+            chunks.append(current)
+            current = []
+            current_tokens = 0
+        current.append(block)
+        current_tokens += block.tokens
+
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _pack_blocks(
+    blocks: list[_PackedBlock],
+    *,
+    available: int,
+    profile: ProviderPackingProfile | None,
+) -> tuple[list[tuple[str, dict[str, Any]]], int]:
+    used = 0
+    included: list[tuple[str, dict[str, Any]]] = []
+    if profile is None:
+        chunks = [[block] for block in blocks]
+    else:
+        ordered = _order_blocks(blocks, profile)
+        chunks = _chunk_blocks(ordered, profile.chunk_tokens)
+
+    for chunk in chunks:
+        chunk_tokens = sum(block.tokens for block in chunk)
+        if used + chunk_tokens <= available:
+            included.extend((block.block, block.row) for block in chunk)
+            used += chunk_tokens
+            continue
+        for block in chunk:
+            if used + block.tokens > available:
+                continue
+            included.append((block.block, block.row))
+            used += block.tokens
+    return included, used
+
+
 def pack_context(
     ranked_rows: list[dict[str, Any]],
     *,
     token_budget: int = 4000,
     output_format: str = "text",
+    provider: str | None = None,
 ) -> ContextResult:
     """Pack ranked claim rows into a token budget using greedy knapsack.
 
@@ -180,6 +335,9 @@ def pack_context(
         Maximum tokens for the output block.
     output_format:
         One of ``text``, ``xml``, ``json``.
+    provider:
+        Optional provider strategy. When omitted, preserves the historical
+        greedy row-by-row behavior.
 
     Returns
     -------
@@ -189,6 +347,7 @@ def pack_context(
         raise ValueError(f"Unknown format '{output_format}'. Choose from: {', '.join(OUTPUT_FORMATS)}")
     if token_budget <= 0:
         raise ValueError("token_budget must be positive.")
+    profile = _get_provider_profile(provider, token_budget)
 
     claims_considered = len(ranked_rows)
 
@@ -196,25 +355,8 @@ def pack_context(
     header, footer_template, overhead = _get_format_overhead(output_format)
 
     available = max(1, token_budget - overhead)
-    used = 0
-    included: list[tuple[str, dict[str, Any]]] = []
-
-    for row in ranked_rows:
-        claim: Claim = row["claim"]
-        score = float(row.get("score", 0.0))
-
-        if output_format == "text":
-            block = _claim_block_text(claim, score)
-        elif output_format == "xml":
-            block = _claim_xml(claim, score)
-        else:
-            block = json.dumps(_claim_json_entry(claim, score))
-
-        block_tokens = estimate_tokens(block)
-        if used + block_tokens > available:
-            continue  # greedy knapsack: skip, try smaller claims
-        included.append((block, row))
-        used += block_tokens
+    blocks = _build_blocks(ranked_rows, output_format)
+    included, used = _pack_blocks(blocks, available=available, profile=profile)
 
     # Assemble final output based on format
     if output_format == "text":
