@@ -20,11 +20,18 @@ from memorymaster.service import RETRIEVAL_PROFILES, MemoryService
 
 # Import dispatch table — this also triggers the late dispatch additions for daily/dream/ghost
 from memorymaster.cli_handlers_curation import COMMAND_HANDLERS
-from memorymaster.cli_handlers_basic import _handle_recompute_confidence_priors, _handle_wiki_suggest_links
+from memorymaster.cli_handlers_basic import (
+    _handle_recompute_confidence_priors,
+    _handle_wiki_suggest_links,
+    handle_mcp_usage_report,
+)
 
 
 COMMAND_HANDLERS["recompute-confidence-priors"] = _handle_recompute_confidence_priors
 COMMAND_HANDLERS["wiki-suggest-links"] = _handle_wiki_suggest_links
+COMMAND_HANDLERS["mcp-usage-report"] = (
+    lambda args, service, parser, effective_db: handle_mcp_usage_report(args, effective_db)
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -237,6 +244,10 @@ def build_parser() -> argparse.ArgumentParser:
     export_metrics.add_argument("--events-jsonl", action="append", required=True, help="Path to JSONL events input (repeat flag for multiple files)")
     export_metrics.add_argument("--out-prom", default="artifacts/metrics/metrics.prom", help="Output path for Prometheus text metrics")
     export_metrics.add_argument("--out-json", default="artifacts/metrics/metrics_snapshot.json", help="Output path for structured metrics JSON snapshot")
+
+    mcp_usage = sub.add_parser("mcp-usage-report", help="Export MCP tool usage for a time window")
+    mcp_usage.add_argument("--since", default="7d", help="Window start: 7d, 30d, 1d, or ISO date")
+    mcp_usage.add_argument("--format", default="csv", help="Output format (default: csv)")
 
     review_queue = sub.add_parser("review-queue", help="Build conflict/stale review queue")
     review_queue.add_argument("--limit", type=int, default=100, help="Maximum claims scanned for queue")
@@ -522,7 +533,7 @@ def main(argv: list[str] | None = None) -> int:
     effective_db = _resolve_db_path(args)
 
     # Commands that don't need MemoryService run first; service is lazy-created once for all others.
-    _NO_SERVICE_COMMANDS = {"stealth-status", "export-metrics", "wiki-freshness"}
+    _NO_SERVICE_COMMANDS = {"stealth-status", "export-metrics", "wiki-freshness", "mcp-usage-report"}
 
     try:
         handler = COMMAND_HANDLERS.get(args.command)

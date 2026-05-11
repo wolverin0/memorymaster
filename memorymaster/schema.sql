@@ -178,6 +178,15 @@ CREATE TABLE IF NOT EXISTS action_proposals (
     FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS mcp_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tool_name TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    latency_ms INTEGER,
+    tenant_id TEXT,
+    result_status TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status);
 CREATE INDEX IF NOT EXISTS idx_claims_updated_at ON claims(updated_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_idempotency_key ON claims(idempotency_key);
