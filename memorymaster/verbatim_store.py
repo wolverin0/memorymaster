@@ -172,7 +172,7 @@ def _row_dedup_key(r: dict) -> tuple:
         return ("id", rid)
     content = r.get("content", "")
     # use full-content hash instead of 100-char prefix to avoid template-collision
-    content_hash = hashlib.sha256(content.encode()).hexdigest()
+    content_hash = r.get("content_hash") or hashlib.sha256(content.encode()).hexdigest()
     return ("sch", r.get("session_id", ""), content_hash)
 
 
@@ -290,7 +290,9 @@ def _search_vector(query: str, scope: str | None, limit: int) -> list[dict]:
             result = json.loads(resp.read().decode())
 
         return [
-            {"content": h["payload"].get("content", ""), "scope": h["payload"].get("scope", ""),
+            {"id": h.get("id"), "content": h["payload"].get("content", ""),
+             "content_hash": h["payload"].get("content_hash", ""),
+             "scope": h["payload"].get("scope", ""),
              "session_id": h["payload"].get("session_id", ""), "role": h["payload"].get("role", ""),
              "score": h.get("score", 0), "source": "vector"}
             for h in result.get("result", [])
@@ -359,6 +361,7 @@ def sync_to_qdrant(db_path: str, batch_size: int = 50) -> dict[str, int]:
             "vector": emb,
             "payload": {
                 "content": row["content"][:2000],
+                "content_hash": hashlib.sha256(row["content"].encode()).hexdigest(),
                 "scope": row["scope"],
                 "session_id": row["session_id"],
                 "role": row["role"],
