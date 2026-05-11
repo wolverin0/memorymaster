@@ -1222,6 +1222,30 @@ def _handle_ready(args: argparse.Namespace, service, parser: argparse.ArgumentPa
     return 0
 
 
+def _handle_entity_graph_export(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.jobs.entity_graph_export import export_entity_graph
+
+    t0 = time.perf_counter()
+    result = export_entity_graph(
+        db_path=effective_db,
+        output=args.output,
+        fmt=args.format,
+        scope=args.scope,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    payload = asdict(result)
+    if args.json_output:
+        print(_json_envelope(payload, query_ms=elapsed_ms))
+    else:
+        print(
+            f"entity graph exported: {result.output}\n"
+            f"  format: {result.format}\n"
+            f"  nodes:  {result.nodes}\n"
+            f"  edges:  {result.edges}"
+        )
+    return 0
+
+
 def _handle_resolve_conflicts(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.conflict_resolver import resolve_conflicts
 

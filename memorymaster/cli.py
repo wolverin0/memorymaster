@@ -21,12 +21,14 @@ from memorymaster.service import RETRIEVAL_PROFILES, MemoryService
 # Import dispatch table — this also triggers the late dispatch additions for daily/dream/ghost
 from memorymaster.cli_handlers_curation import COMMAND_HANDLERS
 from memorymaster.cli_handlers_basic import (
+    _handle_entity_graph_export,
     _handle_recompute_confidence_priors,
     _handle_wiki_suggest_links,
     handle_mcp_usage_report,
 )
 
 
+COMMAND_HANDLERS["entity-graph-export"] = _handle_entity_graph_export
 COMMAND_HANDLERS["recompute-confidence-priors"] = _handle_recompute_confidence_priors
 COMMAND_HANDLERS["wiki-suggest-links"] = _handle_wiki_suggest_links
 COMMAND_HANDLERS["mcp-usage-report"] = (
@@ -438,6 +440,11 @@ def build_parser() -> argparse.ArgumentParser:
     entity_cmd.add_argument("--status", default="confirmed", help="Only process claims with this status")
 
     sub.add_parser("entity-stats", help="Show entity graph statistics")
+
+    entity_graph_export = sub.add_parser("entity-graph-export", help="Export entity graph relationships as DOT or GraphML")
+    entity_graph_export.add_argument("--format", choices=["dot", "graphml"], required=True, help="Graph output format")
+    entity_graph_export.add_argument("--output", required=True, help="Output file path")
+    entity_graph_export.add_argument("--scope", default=None, help="Only export graph data linked to this claim scope")
 
     sub.add_parser("feedback-stats", help="Show feedback tracking and quality score statistics")
 
