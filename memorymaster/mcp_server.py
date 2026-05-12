@@ -1,3 +1,5 @@
+import base64
+import binascii
 from dataclasses import asdict
 import hashlib
 import http.client
@@ -7,6 +9,7 @@ import os
 from pathlib import Path
 import re
 from typing import Any, TypeVar
+import unicodedata
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ValidationError
@@ -47,6 +50,31 @@ _COPY_SUFFIX_RE = re.compile(
 # adding words here changes scope identity for every workspace dirname that
 # happens to end with one.
 _CHANNEL_SUFFIX_RE = re.compile(r"-(?:final|prod|production|dev|staging|stage|qa|test)$")
+_BASE64_CANDIDATE_RE = re.compile(
+    r"(?<![A-Za-z0-9+/=_-])"
+    r"(?:[A-Za-z0-9+/]{20,}={0,2}|[A-Za-z0-9_-]{20,}={0,2})"
+    r"(?![A-Za-z0-9+/=_-])"
+)
+_HEX_ESCAPE_SEQUENCE_RE = re.compile(r"(?:\\x[0-9A-Fa-f]{2}){4,}")
+_CONFUSABLE_ASCII_MAP = str.maketrans({
+    "\u0430": "a",  # Cyrillic small a
+    "\u0410": "A",
+    "\u0435": "e",
+    "\u0415": "E",
+    "\u043e": "o",
+    "\u041e": "O",
+    "\u0440": "p",
+    "\u0420": "P",
+    "\u0441": "c",
+    "\u0421": "C",
+    "\u0445": "x",
+    "\u0425": "X",
+    "\u0443": "y",
+    "\u0423": "Y",
+    "\u0456": "i",
+    "\u0406": "I",
+})
+_MAX_SENSITIVITY_SCAN_VARIANTS = 64
 
 
 class _ToolInput(BaseModel):
@@ -138,9 +166,102 @@ def _validate_tool_input(
     return model
 
 
+def _add_sensitivity_variant(queue: list[str], seen: set[str], value: str) -> None:
+    if not value or value in seen or len(seen) + len(queue) >= _MAX_SENSITIVITY_SCAN_VARIANTS:
+        return
+    seen.add(value)
+    queue.append(value)
+
+
+def _decode_text_bytes(raw: bytes) -> str | None:
+    if not raw:
+        return None
+    try:
+        decoded = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if "\x00" in decoded:
+        return None
+    printable = sum(char.isprintable() or char in "\r\n\t" for char in decoded)
+    return decoded if printable / max(len(decoded), 1) >= 0.85 else None
+
+
+def _decode_base64_candidate(candidate: str) -> str | None:
+    if len(candidate) % 4 == 1:
+        return None
+    padded = candidate + ("=" * (-len(candidate) % 4))
+    try:
+        return _decode_text_bytes(base64.b64decode(padded, validate=True))
+    except binascii.Error:
+        try:
+            return _decode_text_bytes(base64.urlsafe_b64decode(padded))
+        except (binascii.Error, ValueError):
+            return None
+
+
+def _decode_hex_escape_sequence(candidate: str) -> str | None:
+    raw = bytes(int(pair, 16) for pair in re.findall(r"\\x([0-9A-Fa-f]{2})", candidate))
+    return _decode_text_bytes(raw)
+
+
+def _iter_json_scan_strings(value: Any):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for item in value:
+            yield from _iter_json_scan_strings(item)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            if isinstance(key, str):
+                yield key
+                if isinstance(item, (str, int, float, bool)):
+                    yield f"{key}={item}"
+            yield from _iter_json_scan_strings(item)
+
+
+def _extract_json_scan_strings(text: str):
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char not in "[{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        yield from _iter_json_scan_strings(value)
+
+
+def _sensitivity_scan_variants(text: str):
+    seen = {text}
+    queue = [text]
+    while queue:
+        current = queue.pop(0)
+        yield current
+
+        normalized = unicodedata.normalize("NFKC", current).translate(_CONFUSABLE_ASCII_MAP)
+        _add_sensitivity_variant(queue, seen, normalized)
+
+        for match in _HEX_ESCAPE_SEQUENCE_RE.finditer(current):
+            decoded = _decode_hex_escape_sequence(match.group(0))
+            if decoded:
+                _add_sensitivity_variant(queue, seen, decoded)
+
+        for match in _BASE64_CANDIDATE_RE.finditer(current):
+            decoded = _decode_base64_candidate(match.group(0))
+            if decoded:
+                _add_sensitivity_variant(queue, seen, decoded)
+
+        for nested in _extract_json_scan_strings(current):
+            _add_sensitivity_variant(queue, seen, nested)
+
+
 def _sensitive_input_error(text: str, field: str = "text") -> dict[str, Any] | None:
-    _, findings = redact_text(text)
-    normalized_findings = list(findings)
+    normalized_findings: list[str] = []
+    for variant in _sensitivity_scan_variants(text):
+        _, findings = redact_text(variant)
+        for finding in findings:
+            if finding not in normalized_findings:
+                normalized_findings.append(finding)
     if not normalized_findings:
         return None
     return _structured_error(
