@@ -26,7 +26,9 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # v2-refresh (oauth_db_row): bumped {36} -> {36,} so synthetic/longer
     # tokens embedded in SQL dumps and CSV exports still match — {36} with
     # a trailing \b missed any token whose body exceeded the canonical length.
-    ("github_token", re.compile(r"\b(ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]{36,}\b")),
+    ("github_token", re.compile(
+        r"\b(?:(?i:github[_-]?token)\s*=\s*)?(ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]{36,}\b"
+    )),
     ("github_token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b")),
     # Slack
     ("slack_token", re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b")),
