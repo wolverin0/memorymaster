@@ -103,7 +103,8 @@ def run(
     retain_days: int = 30,
     event_retain_days: int = 60,
     artifacts_dir: str | Path | None = None,
-) -> dict[str, int]:
+    dry_run: bool = False,
+) -> dict[str, Any]:
     generated_at = _utc_now_iso()
     run_id = f"compaction-{generated_at}"
     out_dir = Path(artifacts_dir) if artifacts_dir is not None else (Path("artifacts") / "compaction")
@@ -111,6 +112,24 @@ def run(
     traceability_path = out_dir / "traceability.json"
 
     archive_candidates = store.find_for_compaction(retain_days=retain_days)
+    if dry_run:
+        return {
+            "dry_run": True,
+            "candidate_claims": len(archive_candidates),
+            "archived_claims": 0,
+            "deleted_events": 0,
+            "planned_archives": [
+                {
+                    "claim_id": claim.id,
+                    "from_status": claim.status,
+                    "to_status": "archived",
+                    "summary_id": _summary_node_id(claim.subject, claim.predicate, claim.scope),
+                }
+                for claim in sorted(archive_candidates, key=lambda item: int(item.id))
+            ],
+            "artifact_files": [str(summary_graph_path), str(traceability_path)],
+        }
+
     archived = len(archive_candidates)
     claim_nodes: list[dict[str, Any]] = []
     citation_nodes: dict[str, dict[str, Any]] = {}
@@ -196,7 +215,6 @@ def run(
             }
         )
 
-    deleted_events = store.delete_old_events(event_retain_days)
     summary_nodes: list[dict[str, Any]] = []
     summary_to_source: list[dict[str, Any]] = []
     for summary_id, claim_ids in summary_claim_ids.items():
@@ -222,6 +240,8 @@ def run(
                 "source_citations": [citation_nodes[citation_id] for citation_id in citation_ids],
             }
         )
+
+    deleted_events = store.delete_old_events(event_retain_days)
 
     run_metadata: dict[str, Any] = {
         "run_id": run_id,
