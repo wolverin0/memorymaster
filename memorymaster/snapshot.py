@@ -123,6 +123,70 @@ def create_snapshot(
     )
 
 
+def backup(db_path: Path, backup_path: Path) -> Path:
+    """Copy a DB to an explicit backup file using SQLite's backup API."""
+    db_path = db_path.resolve()
+    backup_path = backup_path.resolve()
+    if not db_path.exists():
+        raise FileNotFoundError(f"Database not found: {db_path}")
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+
+    src_conn = sqlite3.connect(str(db_path))
+    try:
+        dst_conn = sqlite3.connect(str(backup_path))
+        try:
+            src_conn.backup(dst_conn)
+        finally:
+            dst_conn.close()
+    finally:
+        src_conn.close()
+    return backup_path
+
+
+def _has_restore_data(db_path: Path) -> bool:
+    """Return True when a target DB already contains restorable row data."""
+    if not db_path.exists() or db_path.stat().st_size == 0:
+        return False
+    conn = sqlite3.connect(str(db_path))
+    try:
+        for table in ("claims", "citations", "events"):
+            try:
+                row = conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+            except sqlite3.OperationalError:
+                continue
+            if row is not None:
+                return True
+    finally:
+        conn.close()
+    return False
+
+
+def restore(backup_path: Path, db_path: Path) -> Path:
+    """Restore an explicit backup file into an empty target DB.
+
+    Restore refuses dirty targets instead of merging; callers must choose a
+    fresh DB or clear the target intentionally before restoring.
+    """
+    backup_path = backup_path.resolve()
+    db_path = db_path.resolve()
+    if not backup_path.exists():
+        raise FileNotFoundError(f"Backup not found: {backup_path}")
+    if _has_restore_data(db_path):
+        raise ValueError(f"Restore target is not empty: {db_path}")
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    src_conn = sqlite3.connect(str(backup_path))
+    try:
+        dst_conn = sqlite3.connect(str(db_path))
+        try:
+            src_conn.backup(dst_conn)
+        finally:
+            dst_conn.close()
+    finally:
+        src_conn.close()
+    return db_path
+
+
 def _parse_meta(meta_path: Path) -> dict[str, str]:
     """Parse a .meta sidecar file into a dict."""
     result: dict[str, str] = {}

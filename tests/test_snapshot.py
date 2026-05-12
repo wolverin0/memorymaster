@@ -51,7 +51,8 @@ def _capture(capsys, argv: list[str]) -> dict:
 
 
 class TestCreateSnapshot:
-    def test_creates_snapshot_file(self, populated_db: Path) -> None:
+    @patch("memorymaster.snapshot.get_git_head", return_value=None)
+    def test_creates_snapshot_file(self, mock_git, populated_db: Path) -> None:
         info = create_snapshot(populated_db, message="test snap")
         assert isinstance(info, SnapshotInfo)
         assert Path(info.path).exists()
