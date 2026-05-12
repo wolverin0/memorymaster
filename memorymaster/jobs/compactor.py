@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from memorymaster.lifecycle import transition_claim
+from memorymaster._storage_shared import ConcurrentModificationError
+from memorymaster.lifecycle import can_transition, transition_claim
 
 
 def _utc_now_iso() -> str:
@@ -32,6 +33,71 @@ def _summary_node_id(subject: str | None, predicate: str | None, scope: str | No
     return f"summary:{digest}"
 
 
+def _archive_claims_sqlite_transaction(store, claims: list[Any], retain_days: int) -> int:
+    if not claims:
+        return 0
+
+    archived_at = _utc_now_iso()
+    with store.connect() as conn:
+        archived = 0
+        for claim in claims:
+            row = conn.execute(
+                "SELECT status, version, last_validated_at FROM claims WHERE id = ?",
+                (claim.id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Claim {claim.id} does not exist.")
+            current_status = str(row["status"])
+            if current_status == "archived":
+                continue
+            if not can_transition(current_status, "archived"):
+                raise ValueError(f"Invalid transition: {current_status} -> archived")
+            reason = f"compacted after inactivity ({retain_days}d) in {current_status}"
+            cur = conn.execute(
+                """
+                UPDATE claims
+                SET status = ?, updated_at = ?, last_validated_at = ?, archived_at = ?,
+                    version = version + 1
+                WHERE id = ? AND version = ?
+                """,
+                ("archived", archived_at, row["last_validated_at"], archived_at, claim.id, row["version"]),
+            )
+            if cur.rowcount == 0:
+                raise ConcurrentModificationError(
+                    f"Claim {claim.id} was modified by another writer (version mismatch). Reload and retry."
+                )
+            store._insert_event_row(
+                conn,
+                claim_id=claim.id,
+                event_type="compactor",
+                from_status=current_status,
+                to_status="archived",
+                details=reason,
+                payload_json=None,
+                created_at=archived_at,
+            )
+            archived += 1
+        conn.commit()
+    return archived
+
+
+def _archive_claims_after_artifacts(store, claims: list[Any], retain_days: int) -> int:
+    if store.__class__.__name__ == "SQLiteStore" and hasattr(store, "_insert_event_row"):
+        return _archive_claims_sqlite_transaction(store, claims, retain_days)
+
+    archived = 0
+    for claim in claims:
+        transition_claim(
+            store,
+            claim_id=claim.id,
+            to_status="archived",
+            reason=f"compacted after inactivity ({retain_days}d) in {claim.status}",
+            event_type="compactor",
+        )
+        archived += 1
+    return archived
+
+
 def run(
     store,
     retain_days: int = 30,
@@ -45,7 +111,7 @@ def run(
     traceability_path = out_dir / "traceability.json"
 
     archive_candidates = store.find_for_compaction(retain_days=retain_days)
-    archived = 0
+    archived = len(archive_candidates)
     claim_nodes: list[dict[str, Any]] = []
     citation_nodes: dict[str, dict[str, Any]] = {}
     edges: list[dict[str, str]] = []
@@ -100,14 +166,6 @@ def run(
             )
             edges.append({"type": "claim_to_citation", "from": f"claim:{claim.id}", "to": citation_id})
 
-        transition_claim(
-            store,
-            claim_id=claim.id,
-            to_status="archived",
-            reason=f"compacted after inactivity ({retain_days}d) in {claim.status}",
-            event_type="compactor",
-        )
-        archived += 1
         claim_nodes.append(
             {
                 "id": f"claim:{claim.id}",
@@ -196,6 +254,7 @@ def run(
 
     _write_json(summary_graph_path, summary_graph)
     _write_json(traceability_path, traceability)
+    archived = _archive_claims_after_artifacts(store, archive_candidates, retain_days)
     store.record_event(
         claim_id=None,
         event_type="compaction_run",
