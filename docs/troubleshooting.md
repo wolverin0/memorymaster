@@ -16,6 +16,8 @@ Cause: on Windows-default Python installs, the `python3` executable often does n
 
 Fix: patch the local Git hooks to call `python` instead of `python3`. This repo's current local hooks already use `python` for the graphify and GitNexus hook paths.
 
+Hook files are local Git state, not versioned project files. Check them in `.git/hooks/post-checkout` and `.git/hooks/post-commit` when diagnosing a new clone or a different worktree.
+
 Verify:
 
 ```powershell
@@ -55,9 +57,13 @@ if ($?) { ruff check memorymaster/ }
 
 Codex headless prompts for this repo should avoid `&&` when targeting native PowerShell.
 
+Prefer separate prompt steps for fetch, checkout, validation, commit, and push. That keeps failures visible in the command that actually failed.
+
 ## GitNexus index stale after commits
 
 Cause: GitNexus index data regenerates lazily, so a recent commit can leave the local graph behind the current worktree state.
+
+The post-commit hook may also run analysis in the background. If a later tool or session still reports stale data, refresh the index explicitly.
 
 Fix:
 
