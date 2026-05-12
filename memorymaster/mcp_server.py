@@ -1387,6 +1387,8 @@ if FastMCP is not None:
         db: str = "memorymaster.db",
         workspace: str = ".",
         limit: int = 20,
+        current_scope: str = "",
+        scope_allowlist: str = "",
     ) -> dict[str, Any]:
         """Query across ALL scopes — cross-project federation.
 
@@ -1395,7 +1397,13 @@ if FastMCP is not None:
         memory retrieval. Returns claims sorted by relevance.
         """
         svc = _service(db, workspace)
-        rows_data = svc.federated_query(query_text=query, limit=limit)
+        effective_scope = (current_scope or "").strip() or _project_scope(workspace)
+        rows_data = svc.federated_query(
+            query_text=query,
+            limit=limit,
+            current_scope=effective_scope,
+            scope_allowlist=_parse_scope_allowlist(scope_allowlist),
+        )
         claims = [row["claim"] for row in rows_data]
         serialized_rows: list[dict[str, Any]] = [
             {

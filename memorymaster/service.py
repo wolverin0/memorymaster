@@ -80,6 +80,34 @@ def _rerank_with_profile(
     return profiled[:limit]
 
 
+def _is_cross_scope_sensitive(claim: Claim, current_scope: str | None) -> bool:
+    visibility = (getattr(claim, "visibility", "public") or "public").strip().lower()
+    if visibility != "sensitive":
+        return False
+    claim_scope = (claim.scope or "").strip()
+    return not current_scope or claim_scope != current_scope
+
+
+def _is_team_scope(scope: str) -> bool:
+    return scope.startswith("team:")
+
+
+def _allow_federated_claim(
+    claim: Claim,
+    *,
+    current_scope: str | None,
+    explicit_scope_allowlist: list[str] | None,
+) -> bool:
+    claim_scope = (claim.scope or "").strip()
+    if _is_cross_scope_sensitive(claim, current_scope):
+        return False
+    if _is_team_scope(claim_scope):
+        if explicit_scope_allowlist is not None:
+            return claim_scope in explicit_scope_allowlist
+        return claim_scope == current_scope
+    return True
+
+
 
 class MemoryService:
     def __init__(
@@ -1268,16 +1296,35 @@ class MemoryService:
     def get_linked_claims(self, claim_id: int, link_type: str | None = None) -> list[ClaimLink]:
         return self.store.get_linked_claims(claim_id, link_type=link_type)
 
-    def federated_query(self, query_text: str, *, limit: int = 20) -> list[dict]:
+    def federated_query(
+        self,
+        query_text: str,
+        *,
+        limit: int = 20,
+        current_scope: str | None = None,
+        scope_allowlist: list[str] | None = None,
+    ) -> list[dict]:
         """Query across ALL scopes — cross-project federation.
 
         Returns claims from all projects, sorted by relevance.
         Unlike regular query which filters by scope_allowlist, this
         searches everything.
         """
-        return self.query_rows(
+        normalized_current_scope = (current_scope or "").strip() or None
+        normalized_scope_allowlist = self._normalize_scope_allowlist(scope_allowlist)
+        query_limit = max(limit * 10, 100) if limit > 0 else limit
+        rows = self.query_rows(
             query_text=query_text,
-            limit=limit,
-            scope_allowlist=None,  # no scope filter = all projects
+            limit=query_limit,
+            scope_allowlist=normalized_scope_allowlist,
             include_candidates=True,
         )
+        return [
+            row
+            for row in rows
+            if _allow_federated_claim(
+                row["claim"],
+                current_scope=normalized_current_scope,
+                explicit_scope_allowlist=normalized_scope_allowlist,
+            )
+        ][:limit]
