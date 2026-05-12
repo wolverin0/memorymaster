@@ -31,3 +31,16 @@ def test_t07_jwt_shape_is_redacted() -> None:
         "fakeJwtSignature_1234567890"
     )
     _assert_redacted(f"jwt={token}", "jwt_token", token)
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "postgres://fake_user:fakePass123@db.example.invalid",
+        "mysql://fake_user:fakePass123@db.example.invalid",
+        "mongodb+srv://fake_user:fakePass123@cluster.example.invalid",
+        "redis://fake_user:fakePass123@cache.example.invalid",
+    ],
+)
+def test_t07_db_connection_strings_with_credentials_are_redacted(uri: str) -> None:
+    _assert_redacted(f"DATABASE_URL={uri}", "db_url_password", uri)
