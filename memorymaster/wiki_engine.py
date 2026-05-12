@@ -69,13 +69,17 @@ def _load_claims_by_topic(db_path: str, scope_filter: str | None = None) -> dict
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     query = """SELECT id, text, claim_type, subject, predicate, object_value,
-               scope, confidence, status, human_id
+               scope, confidence, status, human_id, created_at, updated_at, event_time
                FROM claims WHERE status IN ('confirmed', 'candidate')"""
     params: list = []
     if scope_filter:
         query += " AND scope LIKE ?"
         params.append(f"{scope_filter}%")
-    query += " ORDER BY confidence DESC"
+    query += """ ORDER BY
+               COALESCE(subject, 'general') COLLATE NOCASE ASC,
+               confidence DESC,
+               COALESCE(updated_at, created_at, event_time, '') DESC,
+               id ASC"""
     rows = conn.execute(query, params).fetchall()
     conn.close()
 
@@ -84,6 +88,71 @@ def _load_claims_by_topic(db_path: str, scope_filter: str | None = None) -> dict
         subj = r["subject"] or "general"
         by_subject.setdefault(subj, []).append(dict(r))
     return by_subject
+
+
+def _parse_claim_datetime(value: Any) -> datetime | None:
+    from datetime import datetime as datetime_cls
+
+    if not value:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime_cls.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        match = re.match(r"^(\d{4}-\d{2}-\d{2})", raw)
+        if not match:
+            return None
+        try:
+            parsed = datetime_cls.fromisoformat(match.group(1))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _claim_datetime(claim: dict) -> datetime | None:
+    for key in ("event_time", "updated_at", "created_at", "valid_from"):
+        parsed = _parse_claim_datetime(claim.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _latest_claim_datetime(claims: list[dict]) -> datetime | None:
+    dates = [_claim_datetime(c) for c in claims]
+    valid_dates = [d for d in dates if d is not None]
+    return max(valid_dates) if valid_dates else None
+
+
+def _claim_sort_key(claim: dict) -> tuple[float, float, int]:
+    try:
+        confidence = float(claim.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    parsed = _claim_datetime(claim)
+    timestamp = parsed.timestamp() if parsed is not None else 0.0
+    return (-confidence, -timestamp, int(claim.get("id") or 0))
+
+
+def _claim_timeline_date(claim: dict) -> str:
+    parsed = _claim_datetime(claim)
+    return parsed.strftime("%Y-%m-%d") if parsed is not None else "undated"
+
+
+def _claim_set_date(claims: list[dict]) -> str:
+    parsed = _latest_claim_datetime(claims)
+    return parsed.strftime("%Y-%m-%d") if parsed is not None else "1970-01-01"
+
+
+def _claim_set_generated_at(articles: list[dict]) -> str:
+    dates = [_parse_claim_datetime(a.get("generated_at")) for a in articles]
+    valid_dates = [d for d in dates if d is not None]
+    if not valid_dates:
+        return "undated"
+    return max(valid_dates).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _call_llm(prompt: str, text: str) -> str:
@@ -187,7 +256,8 @@ def _write_article(wiki_dir: Path, scope_dir: str, slug: str, title: str,
                     body: str, article_type: str, scope: str,
                     claim_ids: list[int], related: list[str],
                     *, description: str = "",
-                    claim_types: list[str] | None = None) -> Path:
+                    claim_types: list[str] | None = None,
+                    date: str | None = None) -> Path:
     """Write a wiki article with frontmatter.
 
     Frontmatter schema (obsidian-mind progressive-disclosure pattern):
@@ -202,7 +272,7 @@ def _write_article(wiki_dir: Path, scope_dir: str, slug: str, title: str,
     dest = wiki_dir / scope_dir
     dest.mkdir(parents=True, exist_ok=True)
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    article_date = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     if not description:
         description = _extract_description(body)
@@ -221,9 +291,9 @@ def _write_article(wiki_dir: Path, scope_dir: str, slug: str, title: str,
     lines.append(f"scope: {scope}")
     lines.append(f"tags: {json.dumps(tags)}")
     lines.append(f"claims: {claim_ids[:20]}")
-    lines.append(f"created: {now}")
-    lines.append(f"last_updated: {now}")
-    lines.append(f"date: {now}")
+    lines.append(f"created: {article_date}")
+    lines.append(f"last_updated: {article_date}")
+    lines.append(f"date: {article_date}")
     lines.append(f"explored: {str(explored).lower()}")
     if related:
         lines.append(f"related: {json.dumps(related[:10])}")
@@ -322,7 +392,8 @@ def absorb(
     articles_updated = 0
     all_articles: list[dict] = []
 
-    for subject, claims in by_subject.items():
+    for subject in sorted(by_subject, key=lambda value: value.lower()):
+        claims = sorted(by_subject[subject], key=_claim_sort_key)
         if len(claims) < 2:
             continue
 
@@ -330,6 +401,8 @@ def absorb(
         scope_dir = _scope_dirname(scope)
         slug = _safe_name(subject)
         existing_path = wiki / scope_dir / f"{slug}.md"
+        article_date = _claim_set_date(claims)
+        article_generated_at = _latest_claim_datetime(claims)
 
         # Prepare claims text for LLM
         claims_text = "\n".join(
@@ -346,17 +419,20 @@ def absorb(
         for c in claims:
             t = c.get("claim_type") or "fact"
             type_counts[t] = type_counts.get(t, 0) + 1
-        article_type = max(type_counts, key=type_counts.get) if type_counts else "fact"
+        article_type = (
+            sorted(type_counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+            if type_counts else "fact"
+        )
 
         # Find related subjects
         related_subjects = set()
         for c in claims:
             text_lower = str(c["text"]).lower()
-            for other_subj in by_subject:
+            for other_subj in sorted(by_subject, key=lambda value: value.lower()):
                 if other_subj != subject and other_subj.lower() in text_lower:
                     related_subjects.add(other_subj)
 
-        related_links = [f"[[{_safe_name(r)}]]" for r in list(related_subjects)[:5]]
+        related_links = [f"[[{_safe_name(r)}]]" for r in sorted(related_subjects)[:5]]
         claim_ids = [c["id"] for c in claims]
 
         if existing_path.exists():
@@ -387,10 +463,9 @@ Return ONLY the updated compiled truth (no frontmatter, no title, no timeline)."
             new_truth = _call_llm(update_prompt, "")
             if new_truth and len(new_truth) > 50:
                 # Build new timeline entries from new claims
-                now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 new_timeline_entries = []
                 for c in claims[:10]:
-                    date = now
+                    date = _claim_timeline_date(c)
                     summary = str(c["text"])[:100].encode("ascii", errors="replace").decode("ascii")
                     source = c.get("claim_type", "fact")
                     new_timeline_entries.append(f"### {date} | {source}\n{summary}")
@@ -408,7 +483,7 @@ Return ONLY the updated compiled truth (no frontmatter, no title, no timeline)."
                 claim_type_list = [c.get("claim_type") or "fact" for c in claims]
                 _write_article(wiki, scope_dir, slug, subject.title(), full_body,
                               article_type, scope, claim_ids, related_links,
-                              claim_types=claim_type_list)
+                              claim_types=claim_type_list, date=article_date)
                 _stamp_wiki_binding(db_path, claim_ids, slug)
                 articles_updated += 1
         else:
@@ -423,7 +498,7 @@ Return ONLY the updated compiled truth (no frontmatter, no title, no timeline)."
                 claim_type_list = [c.get("claim_type") or "fact" for c in claims]
                 _write_article(wiki, scope_dir, slug, subject.title(), body_with_callouts,
                               article_type, scope, claim_ids, related_links,
-                              claim_types=claim_type_list)
+                              claim_types=claim_type_list, date=article_date)
                 _stamp_wiki_binding(db_path, claim_ids, slug)
                 articles_written += 1
 
@@ -432,7 +507,11 @@ Return ONLY the updated compiled truth (no frontmatter, no title, no timeline)."
             "slug": slug,
             "scope_dir": scope_dir,
             "claims": len(claims),
-            "related": list(related_subjects),
+            "related": sorted(related_subjects),
+            "generated_at": (
+                article_generated_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+                if article_generated_at is not None else article_date
+            ),
         })
 
     # Write scope indexes
@@ -707,7 +786,7 @@ def _write_indexes(wiki: Path, articles: list[dict]) -> None:
         lines = [f"# {scope_dir}", ""]
         lines.append(f"{len(scope_articles)} articles.")
         lines.append("")
-        for a in sorted(scope_articles, key=lambda x: -x["claims"]):
+        for a in sorted(scope_articles, key=lambda x: (-x["claims"], x["slug"])):
             related_str = ", ".join(f"[[{_safe_name(r)}]]" for r in a["related"][:3])
             lines.append(f"- [[{a['slug']}|{a['subject']}]] ({a['claims']} claims) {related_str}")
         lines.append("")
@@ -715,7 +794,7 @@ def _write_indexes(wiki: Path, articles: list[dict]) -> None:
 
     # Master index
     lines = ["# Wiki Master Index", ""]
-    lines.append(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}")
+    lines.append(f"Generated: {_claim_set_generated_at(articles)}")
     lines.append(f"Scopes: {len(by_scope)}")
     total = sum(len(a) for a in by_scope.values())
     lines.append(f"Total articles: {total}")
@@ -744,7 +823,7 @@ def _write_backlinks(wiki: Path) -> None:
     wikilink_re = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
     backlinks: dict[str, list[dict[str, str]]] = {}
 
-    for md_file in wiki.rglob("*.md"):
+    for md_file in sorted(wiki.rglob("*.md")):
         if md_file.name.startswith("_"):
             continue
         try:
@@ -766,10 +845,10 @@ def _write_backlinks(wiki: Path) -> None:
             continue
 
     # Dedupe by (target, from) pair
-    for target in backlinks:
+    for target in sorted(backlinks):
         seen = set()
         deduped = []
-        for entry in backlinks[target]:
+        for entry in sorted(backlinks[target], key=lambda item: (item["from"], item["context"])):
             key = entry["from"]
             if key not in seen:
                 seen.add(key)
@@ -777,6 +856,6 @@ def _write_backlinks(wiki: Path) -> None:
         backlinks[target] = deduped
 
     (wiki / "_backlinks.json").write_text(
-        json.dumps(backlinks, indent=2, ensure_ascii=False),
+        json.dumps(dict(sorted(backlinks.items())), indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
