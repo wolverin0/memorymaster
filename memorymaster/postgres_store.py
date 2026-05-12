@@ -386,6 +386,11 @@ class PostgresStore(SQLiteStore):
         volatility: str = "medium",
         confidence: float = 0.5,
         tenant_id: str | None = None,
+        event_time: str | None = None,
+        valid_from: str | None = None,
+        valid_until: str | None = None,
+        source_agent: str | None = None,
+        visibility: str = "private",
     ) -> Claim:
         if not citations:
             raise ValueError("At least one citation is required.")
@@ -2108,7 +2113,7 @@ class PostgresStore(SQLiteStore):
     # ----------------------------------------------------------------------
 
     @classmethod
-    def _row_to_media_retry(cls, row: dict[str, object]) -> MediaRetryItem:
+    def _row_to_media_retry(cls, row: Any) -> MediaRetryItem:
         return MediaRetryItem(
             id=int(row["id"]),
             source_item_id=int(row["source_item_id"]),
