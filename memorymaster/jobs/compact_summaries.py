@@ -20,6 +20,7 @@ from memorymaster.llm_steward import (
     _parse_extractions,
 )
 from memorymaster.models import CitationInput
+from memorymaster.security import redact_text
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ class CompactSummaryResult:
 
 
 def _build_claim_text_block(claims: list[Any]) -> str:
-    """Format a list of claims into a text block for the LLM prompt."""
+    """Format and redact claims into a text block for the LLM prompt."""
     lines: list[str] = []
     for i, claim in enumerate(claims, 1):
         parts = [f"[{i}]"]
@@ -71,7 +72,10 @@ def _build_claim_text_block(claims: list[Any]) -> str:
         if claim.text:
             parts.append(f"Text: {claim.text[:300]}")
         lines.append(" | ".join(parts))
-    return "\n".join(lines)
+    redacted_text, findings = redact_text("\n".join(lines))
+    if findings:
+        log.info("Redacted sensitive compact-summaries prompt fields: %s", ",".join(findings))
+    return redacted_text
 
 
 def _cluster_by_subject(claims: list[Any]) -> dict[str, list[Any]]:
