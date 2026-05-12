@@ -53,7 +53,7 @@ def capture_query_result(
     # Build the wiki page
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     slug = _slugify(query_text)
-    scope_dir_name = _SAFE_RE.sub("-", scope.lower().replace(":", "-")).strip("-") or "global"
+    _SAFE_RE.sub("-", scope.lower().replace(":", "-")).strip("-") or "global"
 
     lines = ["---"]
     lines.append(f'query: "{query_text[:100]}"')

@@ -1,5 +1,6 @@
 """Scheduled task: run MemoryMaster steward cycle."""
-import os, sys
+import os
+import sys
 
 PROJECT_ROOT = "__MEMORYMASTER_PROJECT_ROOT__"
 DB_PATH = os.path.join(PROJECT_ROOT, "memorymaster.db")
