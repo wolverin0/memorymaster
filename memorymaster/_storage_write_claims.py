@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from typing import TYPE_CHECKING
 
 from memorymaster.models import (
     CitationInput,
@@ -24,6 +25,27 @@ from memorymaster._storage_shared import (
 
 
 class _WriteClaimsMixin:
+    if TYPE_CHECKING:
+        def connect(self) -> sqlite3.Connection: ...
+
+        def _check_idempotency(self, conn: sqlite3.Connection, idempotency_key: str | None) -> Claim | None: ...
+
+        def get_claim(self, claim_id: int, include_citations: bool = True) -> Claim | None: ...
+
+        def _allocate_human_id(self, conn: sqlite3.Connection, subject: str | None, text: str, claim_id: int) -> str: ...
+
+        def _insert_event_row(
+            self,
+            conn: sqlite3.Connection,
+            *,
+            claim_id: int | None,
+            event_type: str,
+            from_status: str | None,
+            to_status: str | None,
+            details: str | None,
+            payload_json: str | None,
+            created_at: str,
+        ) -> int: ...
 
     def create_claim(
         self,
