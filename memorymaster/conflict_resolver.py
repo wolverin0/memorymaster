@@ -14,11 +14,13 @@ The loser is transitioned to 'superseded' with a full audit trail.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from memorymaster._storage_shared import utc_now
 from memorymaster.lifecycle import can_transition
 from memorymaster.models import Claim
 
@@ -43,6 +45,110 @@ class ResolutionResult:
     pairs_resolved: int = 0
     pairs_skipped: int = 0
     resolutions: list[dict[str, Any]] = field(default_factory=list)
+
+
+class SupersessionRaceLost(RuntimeError):
+    """Raised when another writer superseded the old claim first."""
+
+    def __init__(self, old_claim_id: int, current_replacement_id: int | None) -> None:
+        super().__init__(
+            f"Claim {old_claim_id} was already superseded"
+            + (f" by {current_replacement_id}." if current_replacement_id is not None else ".")
+        )
+        self.old_claim_id = old_claim_id
+        self.current_replacement_id = current_replacement_id
+
+
+def _supports_sqlite_atomic_supersede(store: Any) -> bool:
+    return (
+        store.__class__.__name__ == "SQLiteStore"
+        and callable(getattr(store, "connect", None))
+        and callable(getattr(store, "_insert_event_row", None))
+    )
+
+
+def supersede_claim(
+    store: Any,
+    *,
+    old_claim_id: int,
+    new_claim_id: int,
+    reason: str,
+    event_type: str = "supersession",
+) -> Claim:
+    """Atomically link both sides of a supersession, or report a lost race."""
+    if _supports_sqlite_atomic_supersede(store):
+        now = utc_now()
+        with store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                old = conn.execute(
+                    "SELECT id, status, replaced_by_claim_id FROM claims WHERE id = ?",
+                    (old_claim_id,),
+                ).fetchone()
+                if old is None:
+                    raise ValueError(f"Claim {old_claim_id} does not exist.")
+
+                current_replacement_id = old["replaced_by_claim_id"]
+                if old["status"] == "superseded" or current_replacement_id is not None:
+                    raise SupersessionRaceLost(old_claim_id, current_replacement_id)
+                if not can_transition(old["status"], "superseded"):
+                    raise ValueError(f"Invalid transition: {old['status']} -> superseded")
+
+                new = conn.execute("SELECT id FROM claims WHERE id = ?", (new_claim_id,)).fetchone()
+                if new is None:
+                    raise ValueError(f"Replacement claim {new_claim_id} does not exist.")
+
+                conn.execute(
+                    """
+                    UPDATE claims
+                    SET status = 'superseded',
+                        replaced_by_claim_id = ?,
+                        updated_at = ?,
+                        version = version + 1,
+                        valid_until = COALESCE(?, valid_until)
+                    WHERE id = ?
+                    """,
+                    (new_claim_id, now, now, old_claim_id),
+                )
+                conn.execute(
+                    """
+                    UPDATE claims
+                    SET supersedes_claim_id = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (old_claim_id, now, new_claim_id),
+                )
+                store._insert_event_row(
+                    conn,
+                    claim_id=old_claim_id,
+                    event_type=event_type,
+                    from_status=old["status"],
+                    to_status="superseded",
+                    details=reason,
+                    payload_json=json.dumps({"replaced_by_claim_id": new_claim_id}),
+                    created_at=now,
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        updated = store.get_claim(old_claim_id)
+        if updated is None:
+            raise RuntimeError("Failed to load claim after supersession.")
+        return updated
+
+    current = store.get_claim(old_claim_id, include_citations=False)
+    if current is None:
+        raise ValueError(f"Claim {old_claim_id} does not exist.")
+    if current.status == "superseded" or current.replaced_by_claim_id is not None:
+        raise SupersessionRaceLost(old_claim_id, current.replaced_by_claim_id)
+    store.mark_superseded(old_claim_id, new_claim_id, reason)
+    updated = store.get_claim(old_claim_id, include_citations=False)
+    if updated is None:
+        raise RuntimeError("Failed to load claim after supersession.")
+    if updated.replaced_by_claim_id != new_claim_id:
+        raise SupersessionRaceLost(old_claim_id, updated.replaced_by_claim_id)
+    return updated
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -272,8 +378,9 @@ def resolve_conflicts(
                 },
             )
 
-            # Transition the loser to superseded
-            service.store.mark_superseded(
+            # Transition the loser to superseded and link both sides atomically.
+            supersede_claim(
+                service.store,
                 old_claim_id=pair.loser.id,
                 new_claim_id=pair.winner.id,
                 reason=f"conflict_auto_resolution:{pair.reason}",
@@ -287,6 +394,10 @@ def resolve_conflicts(
 
             resolution_record["applied"] = True
             result.pairs_resolved += 1
+        except SupersessionRaceLost as exc:
+            result.pairs_skipped += 1
+            resolution_record["skip_reason"] = "lost_race"
+            resolution_record["current_replacement_id"] = exc.current_replacement_id
         except Exception as exc:
             logger.warning(
                 "Failed to resolve conflict: winner=%d loser=%d error=%s",
