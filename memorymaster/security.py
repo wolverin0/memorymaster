@@ -26,7 +26,9 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # v2-refresh (oauth_db_row): bumped {36} -> {36,} so synthetic/longer
     # tokens embedded in SQL dumps and CSV exports still match — {36} with
     # a trailing \b missed any token whose body exceeded the canonical length.
-    ("github_token", re.compile(r"\b(ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]{36,}\b")),
+    ("github_token", re.compile(
+        r"\b(?:(?i:github[_-]?token)\s*=\s*)?(ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]{36,}\b"
+    )),
     ("github_token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b")),
     # Slack
     ("slack_token", re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b")),
@@ -39,7 +41,10 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # hyphen, or dot — plain English words after 'Bearer' (e.g. "Bearer
     # authentication and will prompt") now pass. Real bearer tokens always
     # contain digits or structural chars.
-    ("bearer_token", re.compile(r"Bearer\s+(?=[A-Za-z0-9_\-\.]*[0-9_\-\.])[A-Za-z0-9_\-\.]{8,}")),
+    ("bearer_token", re.compile(
+        r"(?i)\b(?:bearer\s+|bearer\s*:\s*|bearer_token\s*=\s*)"
+        r"(?=[A-Za-z0-9_\-\.]*[0-9_\-\.])[A-Za-z0-9_\-\.]{8,}"
+    )),
     ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     # NOTE: Private IPv4 (10/8, 172.16/12, 192.168/16) is intentionally NOT
     # filtered here. Private IPs appear legitimately in infrastructure claims
