@@ -23,13 +23,13 @@ from memorymaster.models import (
     validate_transition_event_type,
 )
 
-logger = logging.getLogger(__name__)
-
 from memorymaster._storage_shared import (
     EVENT_HASH_ALGO,
     ConcurrentModificationError,
     utc_now,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class _LifecycleMixin:
@@ -102,14 +102,64 @@ class _LifecycleMixin:
         old_claim = self.get_claim(old_claim_id, include_citations=False)
         if old_claim is None:
             return
-        self.apply_status_transition(
-            old_claim,
-            to_status="superseded",
-            reason=reason,
-            event_type="supersession",
-            replaced_by_claim_id=new_claim_id,
-        )
-        self.set_supersedes(new_claim_id, old_claim_id)
+        if old_claim.status == "superseded" or old_claim.replaced_by_claim_id is not None:
+            raise ConcurrentModificationError(
+                f"Claim {old_claim_id} was already superseded. Reload and retry."
+            )
+
+        now = utc_now()
+        with self.connect() as conn:
+            target = conn.execute(
+                "SELECT supersedes_claim_id FROM claims WHERE id = ?",
+                (new_claim_id,),
+            ).fetchone()
+            if target is None:
+                raise ValueError(f"Replacement claim {new_claim_id} does not exist.")
+            if target["supersedes_claim_id"] not in {None, old_claim_id}:
+                raise ConcurrentModificationError(
+                    f"Claim {new_claim_id} already supersedes another claim. Reload and retry."
+                )
+
+            cur = conn.execute(
+                """
+                UPDATE claims
+                SET status = 'superseded', updated_at = ?, replaced_by_claim_id = ?,
+                    version = version + 1, valid_until = COALESCE(?, valid_until)
+                WHERE id = ? AND version = ? AND status != 'superseded'
+                    AND replaced_by_claim_id IS NULL
+                """,
+                (now, new_claim_id, now, old_claim_id, old_claim.version),
+            )
+            if cur.rowcount == 0:
+                raise ConcurrentModificationError(
+                    f"Claim {old_claim_id} was modified by another writer. Reload and retry."
+                )
+
+            cur = conn.execute(
+                """
+                UPDATE claims
+                SET supersedes_claim_id = ?, updated_at = ?
+                WHERE id = ? AND (supersedes_claim_id IS NULL OR supersedes_claim_id = ?)
+                """,
+                (old_claim_id, now, new_claim_id, old_claim_id),
+            )
+            if cur.rowcount == 0:
+                conn.rollback()
+                raise ConcurrentModificationError(
+                    f"Claim {new_claim_id} was modified by another writer. Reload and retry."
+                )
+
+            self._insert_event_row(
+                conn,
+                claim_id=old_claim.id,
+                event_type="supersession",
+                from_status=old_claim.status,
+                to_status="superseded",
+                details=reason,
+                payload_json=json.dumps({"replaced_by_claim_id": new_claim_id}),
+                created_at=now,
+            )
+            conn.commit()
 
 
     def delete_old_events(self, retain_days: int) -> int:
