@@ -1,307 +1,197 @@
-# Cross-Project Architectural Patterns
+# Cross-Project Federation Contract
 
-Generated from `query_meta_decisions(query="", claim_types=["decision", "architecture"], top_n=30)` on the local `memorymaster.db`.
+This document defines the current federation contract for the `query_memory`, `query_meta_decisions`, and `federated_query` MCP tools. It is behavior-derived: every contract point below cites the implementation or lifecycle rule that currently enforces it.
 
-This document is intentionally conservative. The exact query returned one qualifying concept group. The group listed 19 project scopes, but only 5 `exemplar_claim_ids`; therefore quotes are included only for those returned exemplar IDs. No claim IDs are inferred from ordinary claim lookup or invented.
+## Source Map
 
-## TL;DR
+- Scope vocabulary is defined in `.claude/rules/claims-lifecycle.md:32-40`.
+- MCP workspace scope derivation and default query scope expansion live in `memorymaster/mcp_server.py:237-289`.
+- `query_memory` is exposed in `memorymaster/mcp_server.py:592-606` and calls `MemoryService.query_rows` at `memorymaster/mcp_server.py:643-653`.
+- `query_meta_decisions` is exposed in `memorymaster/mcp_server.py:1182-1212` and calls `MemoryService.query_meta_decisions`.
+- `federated_query` is exposed in `memorymaster/mcp_server.py:1214-1248` and calls `MemoryService.federated_query`.
+- SQLite query filtering is implemented in `memorymaster/_storage_read.py:146-180`; PostgreSQL query filtering mirrors it in `memorymaster/postgres_store.py:509-560`.
 
-| Rank | Pattern | Claim count | Scope count | Returned exemplar IDs |
-|---:|---|---:|---:|---|
-| 1 | service | 65 | 19 | 10583, 10256, 9475, 21578, 19940 |
+The requested wiki source directory, `obsidian-vault/wiki/project-memorymaster/`, is not present in this worktree, so this contract uses the code and lifecycle rule sources above.
 
-No other concept groups were returned in the exact top-30 query result.
+## Scopes Overview
 
-## Query Contract
+Canonical scope forms are:
 
-- Query: empty string
-- Claim types: `decision`, `architecture`
-- Requested top N: 30
-- Qualifying filter applied in this document: `claim_count >= 3` and at least 2 `project:*` scopes
-- Returned group count: 1
-- Qualifying group count: 1
-- Source API field for IDs: `exemplar_claim_ids`
-
-## Pattern 1: service
-
-The `service` pattern is a broad operational architecture cluster. It recurs across projects as decisions about runtime topology, service ownership, deployment boundaries, and production coordination.
-
-### Shared Scopes
-
-- `project:ColdWake`
-- `project:New project`
-- `project:aimigration`
-- `project:app`
-- `project:clawtrol`
-- `project:crm-standalone`
-- `project:elbraserito`
-- `project:interonda`
-- `project:lifeagent`
-- `project:memorymaster`
-- `project:mzcopilot`
-- `project:omniremote`
-- `project:pather`
-- `project:pauol`
-- `project:personaldashboard`
-- `project:testproject-leads-crm`
-- `project:wezbridge`
-- `project:whatsapp-bot`
-- `project:whatsappbot`
-
-### Exemplar Claims Returned By The Tool
-
-The exact query returned five exemplar IDs for the `service` group. These cover four unique scopes because `project:clawtrol` had two returned exemplars.
-
-| Scope | Claim ID | Type | Subject | Representative quote |
-|---|---:|---|---|---|
-| `project:elbraserito` | 10583 | decision | service | "elbraserito final curation state (verified 2026-04-18 after coordinator takeover): single commit 0edce7f on branch `omni/fix-claude-rules-curation` containing 166 files / 25153 insertions." |
-| `project:clawtrol` | 10256 | architecture | server | "ClawTrol deployment topology (as of 2026-04-17, post-audit): Rails app runs on the HOST via systemd user service `clawtrol.service` (Type=simple), reaches Postgres at 127.0.0.1:15432 via a Docker port binding added to docker-compose.yml's db service." |
-| `project:wezbridge` | 9475 | decision | server | "wezbridge v2.4.0 TAGGED + stabilized 2026-04-15 (main commits 3a9c5ca, 990042e, 21e2554)." |
-| `project:pather` | 21578 | decision | pather | "Pather phase-12-saas branch state 2026-04-29 22:00 ART: 7 commits ahead of main (d4e0510 schema, d3ccb7f gitignore, 16a7e9f auth provider, fc7479c scaffold, f5765ae ports + RLS tests, 50d619d lemon-webhook, f0e3019 layout polygonize fix)." |
-| `project:clawtrol` | 19940 | architecture | clawtrol | "clawtrol production runtime on the home-server VM is NOT docker-compose for the Rails web tier" |
-
-### Curated Summary
-
-Across the returned exemplars, the recurring decision pattern is that services are documented as deployed operational systems, not just code modules. The claims emphasize branch state, runtime ownership, production verification, service process managers, database connectivity, and release gates.
-
-The strongest repeated architectural signal is explicit runtime topology:
-
-- `project:clawtrol` records that the Rails web tier runs under systemd user services while database connectivity is handled separately.
-- `project:wezbridge` records release stabilization around an HTTP service and its security gate.
-- `project:pather` records a SaaS deployment state across Vercel, Supabase Edge Functions, and webhook infrastructure.
-- `project:elbraserito` records curation and repository service state as the operational truth for follow-up agents.
-
-The pattern is useful for future project work because it treats service architecture as a living operational boundary. A cross-project memory consumer should look for this pattern before changing deploy scripts, runtime assumptions, monitoring, webhooks, or service ownership.
-
-### Operational Themes
-
-| Theme | Evidence from returned exemplars | Practical implication |
+| Scope | Meaning | Default `query_memory` visibility |
 |---|---|---|
-| Runtime topology | `project:clawtrol` distinguishes host systemd units from Docker services. | Do not assume `docker compose` is the runtime just because compose files exist. |
-| Release state | `project:wezbridge` and `project:pather` include branch, commit, and tag state. | Treat claims as release gates and branch-state anchors before merging or deploying. |
-| External services | `project:pather` records Vercel, Supabase, and Lemon Squeezy integration state. | Verify external platform state before changing app code that depends on it. |
-| Coordination artifacts | `project:elbraserito` records `.claude`, rules, skills, and GitNexus pointers. | Agent coordination files can be part of the effective architecture. |
-| Deployment mismatch | `project:clawtrol` has two exemplars warning that repository files can mislead runtime assumptions. | Prefer observed runtime claims over static repository assumptions when they conflict. |
+| `project:<slug>` | Per-project memory. This is the normal scope for project facts. | Included only when it matches the derived workspace project scope, or when explicitly listed in `scope_allowlist`. |
+| `user` | User-level memory such as workstyle, tool preferences, and cross-project preferences. | Not included by default. Explicitly include it with `scope_allowlist=user` or use an unscoped federation tool where applicable. |
+| `team:<name>` | Team-shared memory. | Not included by default. Explicitly include it with `scope_allowlist=team:<name>` or use `federated_query`. |
+| `global` | System-wide facts. | Included by default with the current project scope. |
 
-### Scope Coverage From Exact Result
+The scope vocabulary above comes from `.claude/rules/claims-lifecycle.md:32-40`. A blank or `project` ingest scope is resolved to the current workspace-derived `project:<slug>` by `_effective_ingest_scope` in `memorymaster/mcp_server.py:267-271`. The workspace project slug is derived from the resolved workspace directory name by `_project_scope` in `memorymaster/mcp_server.py:237-264`.
 
-The table below distinguishes scopes that had a returned exemplar from scopes that were only present in the group's `scopes` list.
+For `query_memory`, default scope precedence is:
 
-| Scope | Returned quote in this doc? | Returned exemplar ID(s) |
-|---|---|---|
-| `project:ColdWake` | No | None in exact `exemplar_claim_ids` |
-| `project:New project` | No | None in exact `exemplar_claim_ids` |
-| `project:aimigration` | No | None in exact `exemplar_claim_ids` |
-| `project:app` | No | None in exact `exemplar_claim_ids` |
-| `project:clawtrol` | Yes | 10256, 19940 |
-| `project:crm-standalone` | No | None in exact `exemplar_claim_ids` |
-| `project:elbraserito` | Yes | 10583 |
-| `project:interonda` | No | None in exact `exemplar_claim_ids` |
-| `project:lifeagent` | No | None in exact `exemplar_claim_ids` |
-| `project:memorymaster` | No | None in exact `exemplar_claim_ids` |
-| `project:mzcopilot` | No | None in exact `exemplar_claim_ids` |
-| `project:omniremote` | No | None in exact `exemplar_claim_ids` |
-| `project:pather` | Yes | 21578 |
-| `project:pauol` | No | None in exact `exemplar_claim_ids` |
-| `project:personaldashboard` | No | None in exact `exemplar_claim_ids` |
-| `project:testproject-leads-crm` | No | None in exact `exemplar_claim_ids` |
-| `project:wezbridge` | Yes | 9475 |
-| `project:whatsapp-bot` | No | None in exact `exemplar_claim_ids` |
-| `project:whatsappbot` | No | None in exact `exemplar_claim_ids` |
+1. If `scope_allowlist` is supplied, it is parsed as a comma-separated list and used as-is (`memorymaster/mcp_server.py:208-210`, `memorymaster/mcp_server.py:274-277`).
+2. If `scope_allowlist` is blank, the effective allowlist is `[current project scope, global]` (`memorymaster/mcp_server.py:274-289`).
+3. Storage applies the allowlist as `scope IN (...)` (`memorymaster/_storage_read.py:173-178`, `memorymaster/postgres_store.py:544-549`).
 
-### Scope Notes
+`global` is therefore ambient project-visible memory for `query_memory`; `user` is personal cross-project memory but is not ambiently visible unless the caller explicitly asks for it. `query_meta_decisions` is narrower than both: after retrieval it keeps only scopes beginning with `project:` (`memorymaster/service.py:804-810`). `federated_query` is broader: it passes `scope_allowlist=None`, which means no scope filter (`memorymaster/service.py:1271-1283`).
 
-#### `project:ColdWake`
+## Default Gates
 
-- Included in the `service` concept group's returned scope list.
-- The exact query did not return a claim ID for this scope.
-- No quote is emitted for this scope because the anti-hallucination rule requires IDs to come from `exemplar_claim_ids`.
-- Future improvement: increase exemplar coverage in `query_meta_decisions` so at least one exemplar per returned scope is available.
+The normal service query path builds the candidate statuses from `confirmed`, optionally `stale`, optionally `conflicted`, and optionally `candidate` (`memorymaster/service.py:446-455`). The MCP `query_memory` wrapper enables `include_stale=True`, `include_conflicted=True`, and `include_candidates=True` by default (`memorymaster/mcp_server.py:593-606`). `federated_query` also includes candidates and inherits the `query_rows` defaults for stale and conflicted claims (`memorymaster/service.py:1278-1283`, `memorymaster/service.py:496-510`).
 
-#### `project:New project`
+Archived claims are excluded from the normal query path because both legacy and hybrid paths call storage with `include_archived=False` (`memorymaster/service.py:459-467`, `memorymaster/service.py:536-543`). Storage also adds `status <> 'archived'` whenever `include_archived` is false (`memorymaster/_storage_read.py:170-171`, `memorymaster/postgres_store.py:536-537`).
 
-- Included in the `service` concept group's returned scope list.
-- The exact query did not return a claim ID for this scope.
-- No quote is emitted for this scope because the anti-hallucination rule requires IDs to come from `exemplar_claim_ids`.
-- Future improvement: normalize placeholder-like scope names if they are not intended to be durable project scopes.
+Sensitive payloads are excluded by default in the normal query path. `query_rows` resolves `allow_sensitive` with `deny_mode="filter"` (`memorymaster/service.py:520-524`), then filters claims through `is_sensitive_claim` when sensitive access is not allowed (`memorymaster/service.py:544-545`). `is_sensitive_claim` detects redacted markers and sensitive-pattern findings in `text`, `object_value`, `subject`, and `predicate` (`memorymaster/security.py:356-363`).
 
-#### `project:aimigration`
+Important current-behavior caveat: these MCP query tools do not categorically gate a claim solely because `visibility == "sensitive"`. The service's normal sensitive filter is content-based (`memorymaster/security.py:356-363`). The only visibility filter in the legacy query path runs when `requesting_agent` is supplied (`memorymaster/service.py:470-472`), and the `query_memory` MCP wrapper does not pass `requesting_agent` into `query_rows` (`memorymaster/mcp_server.py:643-653`).
 
-- Included in the `service` concept group's returned scope list.
-- The exact query did not return a claim ID for this scope.
-- No quote is emitted for this scope because the anti-hallucination rule requires IDs to come from `exemplar_claim_ids`.
-- Future improvement: expose per-scope exemplars for broad concept groups.
+## Per-Tool Contract
 
-#### `project:app`
+### `query_memory`
 
-- Included in the `service` concept group's returned scope list.
-- The exact query did not return a claim ID for this scope.
-- No quote is emitted for this scope because the anti-hallucination rule requires IDs to come from `exemplar_claim_ids`.
-- Future improvement: make generic scopes easier to disambiguate when they appear in cross-project meta summaries.
+`query_memory` is the default project recall tool. Its MCP signature includes `workspace`, `limit`, `retrieval_mode`, `include_stale`, `include_conflicted`, `include_candidates`, `allow_sensitive`, `scope_allowlist`, and `detail_level` (`memorymaster/mcp_server.py:592-606`).
 
-#### `project:clawtrol`
+Default scope filter:
 
-- Included in the `service` concept group's returned scope list.
-- Returned exemplar IDs: 10256, 19940.
-- Both exemplars describe runtime topology and deployment assumptions.
-- The recurring architecture lesson is to verify the actual runtime manager before changing service operations.
+- Blank `scope_allowlist` expands to the derived current project scope plus `global` (`memorymaster/mcp_server.py:274-289`).
+- A non-blank `scope_allowlist` replaces the default list rather than adding to it (`memorymaster/mcp_server.py:274-277`).
+- The service normalizes and deduplicates the list (`memorymaster/service.py:400-414`), then storage enforces exact scope membership (`memorymaster/_storage_read.py:173-178`, `memorymaster/postgres_store.py:544-549`).
 
-#### `project:crm-standalone`
+Included by default on the normal service path:
 
-- Included in the `service` concept group's returned scope list.
-- The exact query did not return a claim ID for this scope.
-- No quote is emitted for this scope because the anti-hallucination rule requires IDs to come from `exemplar_claim_ids`.
-- Future improvement: per-scope exemplar selection would let this doc show why the scope clustered into `service`.
+- `confirmed`, `stale`, `conflicted`, and `candidate` claims because the MCP wrapper defaults all include flags to true (`memorymaster/mcp_server.py:593-606`) and `query_rows` builds the status list accordingly (`memorymaster/service.py:446-455`, `memorymaster/service.py:526-527`).
+- Claims in the derived project scope and `global` when no explicit `scope_allowlist` is supplied (`memorymaster/mcp_server.py:274-289`).
+- Full claim dictionaries at `detail_level="standard"`; `summary` truncates to selected fields and `full` re-fetches citations (`memorymaster/mcp_server.py:560-590`, `memorymaster/mcp_server.py:654-678`).
 
-#### `project:elbraserito`
+Excluded by default on the normal service path:
 
-- Included in the `service` concept group's returned scope list.
-- Returned exemplar ID: 10583.
-- The exemplar describes repository curation state, branch state, coordination files, and the PR target.
-- The recurring architecture lesson is that agent coordination artifacts can become part of service reliability.
+- Archived claims (`memorymaster/service.py:459-467`, `memorymaster/service.py:536-543`).
+- Claims in other project scopes, `user`, and `team:<name>` unless explicitly allowlisted (`memorymaster/mcp_server.py:274-289`, `memorymaster/_storage_read.py:173-178`).
+- Content-sensitive claims unless `allow_sensitive` is true and the security override allows it (`memorymaster/service.py:520-545`, `memorymaster/security.py:193-210`).
 
-#### `project:interonda`
+How to widen:
 
-- Included in the `service` concept group's returned scope list.
-- The exact query did not return a claim ID for this scope.
-- No quote is emitted for this scope because the anti-hallucination rule requires IDs to come from `exemplar_claim_ids`.
-- Future improvement: include one exemplar per scope for every returned cross-project group.
+- Use `scope_allowlist="project:pather,user,global"` to include exactly those scopes.
+- Use `scope_allowlist="project:pather,project:wezbridge,global"` for a bounded multi-project query.
+- Use `federated_query` when the intended behavior is all-scope search.
 
-#### `project:lifeagent`
+### `query_meta_decisions`
 
-- Included in the `service` concept group's returned scope list.
-- The exact query did not return a claim ID for this scope.
-- No quote is emitted for this scope because the anti-hallucination rule requires IDs to come from `exemplar_claim_ids`.
-- Future improvement: emit enough exemplar IDs to make each scope auditable from the summary alone.
+`query_meta_decisions` aggregates decision and architecture claims across project scopes. Its MCP signature accepts `query`, `claim_types`, `top_n`, `db`, and `workspace` (`memorymaster/mcp_server.py:1182-1199`), then calls `MemoryService.query_meta_decisions` (`memorymaster/mcp_server.py:1206-1212`).
 
-#### `project:memorymaster`
+Default scope filter:
 
-- Included in the `service` concept group's returned scope list.
-- The exact query did not return a claim ID for this scope.
-- No quote is emitted for this scope because the anti-hallucination rule requires IDs to come from `exemplar_claim_ids`.
-- Future improvement: make MemoryMaster's own architectural decisions visible in cross-project summaries without separate lookup.
+- There is no caller-supplied scope filter.
+- With a non-empty query string, the service calls `query_rows(..., scope_allowlist=None)` (`memorymaster/service.py:735-743`).
+- With an empty query string, the service calls `store.list_claims` without `scope_allowlist` (`memorymaster/service.py:746-752`).
+- After retrieval, it keeps only scopes that start with `project:` (`memorymaster/service.py:804-810`).
 
-#### `project:mzcopilot`
+Included by default:
 
-- Included in the `service` concept group's returned scope list.
-- The exact query did not return a claim ID for this scope.
-- No quote is emitted for this scope because the anti-hallucination rule requires IDs to come from `exemplar_claim_ids`.
-- Future improvement: expose a representative returned claim for each scope in high-cardinality concepts.
+- `confirmed`, `stale`, `conflicted`, and `candidate` claims (`memorymaster/service.py:730-734`).
+- Only `claim_type` values in the requested `claim_types` set; defaults are `decision` and `architecture` (`memorymaster/mcp_server.py:1183-1186`, `memorymaster/service.py:723-727`, `memorymaster/service.py:811-813`).
+- Only `project:<slug>` scopes after post-filtering (`memorymaster/service.py:804-810`).
 
-#### `project:omniremote`
+Excluded by default:
 
-- Included in the `service` concept group's returned scope list.
-- The exact query did not return a claim ID for this scope.
-- No quote is emitted for this scope because the anti-hallucination rule requires IDs to come from `exemplar_claim_ids`.
-- Future improvement: separate broad operational service patterns from project-specific service names.
+- `user`, `team:<name>`, and `global` scopes, because the post-filter rejects scopes that do not start with `project:` (`memorymaster/service.py:804-810`).
+- Sensitive claims, because the aggregation loop skips `is_sensitive_claim(claim)` (`memorymaster/service.py:804-807`).
+- Archived claims, because both the query path and empty-query path use `include_archived=False` (`memorymaster/service.py:736-752`).
+- Non-decision and non-architecture claim types unless the caller expands `claim_types` (`memorymaster/mcp_server.py:1183-1186`, `memorymaster/service.py:811-813`).
 
-#### `project:pather`
+How to widen:
 
-- Included in the `service` concept group's returned scope list.
-- Returned exemplar ID: 21578.
-- The exemplar describes a SaaS branch and deployment state across frontend, Supabase, Edge Functions, and webhooks.
-- The recurring architecture lesson is to treat external integration state as part of the service boundary.
+- Use `claim_types=["decision","architecture","constraint"]` to include additional claim types.
+- There is currently no MCP parameter to include `user`, `team:<name>`, or `global` in `query_meta_decisions`; use `federated_query` or explicit `query_memory(scope_allowlist=...)` for those scopes.
 
-#### `project:pauol`
+### `federated_query`
 
-- Included in the `service` concept group's returned scope list.
-- The exact query did not return a claim ID for this scope.
-- No quote is emitted for this scope because the anti-hallucination rule requires IDs to come from `exemplar_claim_ids`.
-- Future improvement: include enough metadata to distinguish user/workspace scopes from product scopes.
+`federated_query` is the explicit all-scope recall tool. Its MCP docstring states that it searches every claim regardless of scope (`memorymaster/mcp_server.py:1214-1226`). The wrapper calls `MemoryService.federated_query` (`memorymaster/mcp_server.py:1227-1248`), and the service delegates to `query_rows` with `scope_allowlist=None` (`memorymaster/service.py:1271-1283`).
 
-#### `project:personaldashboard`
+Default scope filter:
 
-- Included in the `service` concept group's returned scope list.
-- The exact query did not return a claim ID for this scope.
-- No quote is emitted for this scope because the anti-hallucination rule requires IDs to come from `exemplar_claim_ids`.
-- Future improvement: make returned exemplars proportional to scope count.
+- None. `scope_allowlist=None` means no scope filter is passed to storage (`memorymaster/service.py:1278-1283`, `memorymaster/_storage_read.py:173-178`).
 
-#### `project:testproject-leads-crm`
+Included by default:
 
-- Included in the `service` concept group's returned scope list.
-- The exact query did not return a claim ID for this scope.
-- No quote is emitted for this scope because the anti-hallucination rule requires IDs to come from `exemplar_claim_ids`.
-- Future improvement: ensure test and production project scopes can be filtered or labeled in summaries.
+- Claims from `project:<slug>`, `user`, `team:<name>`, `global`, and any other stored scope string because no scope allowlist is applied (`memorymaster/service.py:1271-1283`).
+- `confirmed`, `stale`, `conflicted`, and `candidate` claims because `federated_query` sets `include_candidates=True` and inherits `query_rows` defaults for stale and conflicted (`memorymaster/service.py:1278-1283`, `memorymaster/service.py:496-510`).
 
-#### `project:wezbridge`
+Excluded by default:
 
-- Included in the `service` concept group's returned scope list.
-- Returned exemplar ID: 9475.
-- The exemplar describes a tagged service release and HTTP security stabilization.
-- The recurring architecture lesson is that service decisions often pair release state with security gates.
+- Archived claims through the normal `query_rows` path (`memorymaster/service.py:536-543`, `memorymaster/_storage_read.py:170-171`).
+- Content-sensitive claims through the normal `query_rows` path (`memorymaster/service.py:520-545`, `memorymaster/security.py:356-363`).
 
-#### `project:whatsapp-bot`
+How to narrow:
 
-- Included in the `service` concept group's returned scope list.
-- The exact query did not return a claim ID for this scope.
-- No quote is emitted for this scope because the anti-hallucination rule requires IDs to come from `exemplar_claim_ids`.
-- Future improvement: emit per-scope exemplars for chat/bot service patterns.
+- `federated_query` has no scope parameter. Use `query_memory(scope_allowlist="...")` when a bounded scope set is required.
 
-#### `project:whatsappbot`
+## Cross-Tenant Safety
 
-- Included in the `service` concept group's returned scope list.
-- The exact query did not return a claim ID for this scope.
-- No quote is emitted for this scope because the anti-hallucination rule requires IDs to come from `exemplar_claim_ids`.
-- Future improvement: consider scope normalization for similarly named bot projects.
+The storage and service layers have tenant filtering support when a `MemoryService` is constructed with a tenant id: the service stores `self.tenant_id` (`memorymaster/service.py:85-98`), and storage filters `tenant_id` when it is provided (`memorymaster/_storage_read.py:158-160`, `memorymaster/postgres_store.py:524-526`).
 
-## Reuse Guidance
+Current MCP behavior does not pass a tenant id into `MemoryService`. The MCP `_service` factory constructs `MemoryService(db_target=..., workspace_root=...)` without a `tenant_id` argument (`memorymaster/mcp_server.py:171-172`). Therefore, the three MCP federation tools documented here rely on scope filtering and sensitive filtering, not tenant isolation, unless a future wrapper or configuration path injects `tenant_id`.
 
-When another project has a `service`-like architectural decision, use these checks before changing it:
+### Known Gaps
 
-1. Identify the real runtime manager.
-2. Check whether deployment state is branch, tag, or external-platform dependent.
-3. Verify whether repository config files match observed production state.
-4. Look for service-specific security gates.
-5. Treat coordination files and agent instructions as operational inputs when they affect future maintenance.
+1. `query_memory(retrieval_mode="qdrant")` bypasses the normal scope, archived, sensitive, and tenant filters. The MCP wrapper returns early for qdrant mode (`memorymaster/mcp_server.py:635-641`); `_qdrant_query` calls `backend.search(query, limit=limit)` without scope or tenant filters (`memorymaster/mcp_server.py:292-300`), then rehydrates hits with direct `store.get_claim` (`memorymaster/mcp_server.py:304-329`). SQLite and PostgreSQL `get_claim` fetch by id only (`memorymaster/_storage_read.py:43-60`, `memorymaster/postgres_store.py:481-490`).
+2. MCP tenant isolation is not wired. The service supports `tenant_id` (`memorymaster/service.py:85-98`) and storage enforces it when provided (`memorymaster/_storage_read.py:158-160`, `memorymaster/postgres_store.py:524-526`), but `_service` never passes one (`memorymaster/mcp_server.py:171-172`).
+3. `visibility="sensitive"` is not itself a default gate for these MCP tools. The active sensitive predicate inspects payload text (`memorymaster/security.py:356-363`), and visibility filtering is only conditional on `requesting_agent` (`memorymaster/service.py:470-472`), which the `query_memory` MCP wrapper does not pass (`memorymaster/mcp_server.py:643-653`).
+4. `query_meta_decisions` cannot be widened to non-project scopes from the MCP surface. The service explicitly discards non-`project:` scopes (`memorymaster/service.py:804-810`) and the MCP signature has no scope parameter (`memorymaster/mcp_server.py:1182-1199`).
 
-## Data Limitations
+## Examples
 
-- The exact query returned only one top-level pattern, so the TL;DR table has one row.
-- The `service` concept is broad and likely aggregates multiple operational subpatterns.
-- The returned `exemplar_claim_ids` list is capped at five IDs.
-- The returned scope list is longer than the returned exemplar list.
-- This doc does not fetch substitute representative claims for missing scopes because that would violate the requested provenance rule.
-- The `project:clawtrol` scope appears twice in returned exemplars, reducing unique quoted scope coverage from five to four.
-
-## Provenance
-
-All claim IDs referenced above came from this exact `query_meta_decisions` result:
+Default project recall, including `global` but excluding `user` and other projects:
 
 ```json
 {
-  "groups": [
-    {
-      "concept": "service",
-      "claim_count": 65,
-      "scopes": [
-        "project:ColdWake",
-        "project:New project",
-        "project:aimigration",
-        "project:app",
-        "project:clawtrol",
-        "project:crm-standalone",
-        "project:elbraserito",
-        "project:interonda",
-        "project:lifeagent",
-        "project:memorymaster",
-        "project:mzcopilot",
-        "project:omniremote",
-        "project:pather",
-        "project:pauol",
-        "project:personaldashboard",
-        "project:testproject-leads-crm",
-        "project:wezbridge",
-        "project:whatsapp-bot",
-        "project:whatsappbot"
-      ],
-      "exemplar_claim_ids": [
-        10583,
-        10256,
-        9475,
-        21578,
-        19940
-      ]
-    }
-  ]
+  "tool": "query_memory",
+  "arguments": {
+    "query": "Supabase RLS policy gotchas",
+    "workspace": "G:/_OneDrive/OneDrive/Desktop/Py Apps/pather"
+  }
 }
 ```
+
+Bounded cross-project recall with personal preferences included:
+
+```json
+{
+  "tool": "query_memory",
+  "arguments": {
+    "query": "deployment topology",
+    "scope_allowlist": "project:pather,project:wezbridge,user,global",
+    "limit": 10
+  }
+}
+```
+
+Project-only decision clustering:
+
+```json
+{
+  "tool": "query_meta_decisions",
+  "arguments": {
+    "query": "service runtime topology",
+    "claim_types": ["decision", "architecture"],
+    "top_n": 10
+  }
+}
+```
+
+Explicit all-scope search:
+
+```json
+{
+  "tool": "federated_query",
+  "arguments": {
+    "query": "agent coordination file conventions",
+    "limit": 20
+  }
+}
+```
+
+## Follow-Up Track Candidates
+
+- Add tenant injection to the MCP `_service` factory or tool request model before treating MCP federation as tenant-isolated (`memorymaster/mcp_server.py:171-172`, `memorymaster/service.py:85-98`).
+- Add scope, tenant, archived-status, and sensitive filters to `_qdrant_query` or route qdrant hits through `query_rows`-equivalent authorization (`memorymaster/mcp_server.py:292-329`, `memorymaster/mcp_server.py:635-641`).
+- Decide whether `visibility="sensitive"` should be enforced as a first-class query gate alongside content-sensitive detection (`memorymaster/security.py:356-363`, `memorymaster/service.py:470-472`).
