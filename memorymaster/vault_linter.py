@@ -162,6 +162,7 @@ def _detect_stale_articles(
     wiki_root: Path | str,
     *,
     threshold: float | None = None,
+    now: datetime | None = None,
 ) -> list[dict]:
     """Flag wiki articles whose absorb-recency freshness is below ``threshold``.
 
@@ -183,7 +184,7 @@ def _detect_stale_articles(
         return []
 
     stale_articles: list[dict] = []
-    for snap in scan_vault(root):
+    for snap in scan_vault(root, now=now):
         if snap.freshness_score >= cutoff:
             continue
         stale_articles.append(

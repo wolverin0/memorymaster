@@ -10,6 +10,7 @@ import json
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any
 
 from memorymaster.embeddings import EmbeddingProvider, cosine_similarity
 from memorymaster.models import (
@@ -33,6 +34,27 @@ logger = logging.getLogger(__name__)
 
 
 class _LifecycleMixin:
+    if TYPE_CHECKING:
+        def connect(self) -> sqlite3.Connection: ...
+
+        def get_claim(self, claim_id: int, include_citations: bool = True) -> Claim | None: ...
+
+        def _ensure_event_integrity_schema(self, conn: sqlite3.Connection) -> None: ...
+
+        def _ensure_embeddings_schema(self, conn: sqlite3.Connection) -> None: ...
+
+        def _insert_event_row(
+            self,
+            conn: sqlite3.Connection,
+            *,
+            claim_id: int | None,
+            event_type: str,
+            from_status: str | None,
+            to_status: str | None,
+            details: str | None,
+            payload_json: str | None,
+            created_at: str,
+        ) -> int: ...
 
     def apply_status_transition(
         self,
@@ -167,8 +189,8 @@ class _LifecycleMixin:
         return 0
 
 
-    def reconcile_integrity(self, *, fix: bool = False, limit: int = 500) -> dict[str, object]:
-        report: dict[str, object] = {
+    def reconcile_integrity(self, *, fix: bool = False, limit: int = 500) -> dict[str, Any]:
+        report: dict[str, Any] = {
             "checked_at": utc_now(),
             "fix_mode": bool(fix),
             "issues": {},

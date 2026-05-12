@@ -190,7 +190,7 @@ def test_vault_linter_flags_stale_articles(tmp_path):
 
     now = datetime(2026, 4, 24, tzinfo=timezone.utc)
     vault = _fixture_vault(tmp_path, now)
-    stale = _detect_stale_articles(vault)
+    stale = _detect_stale_articles(vault, now=now)
     titles = {item["title"] for item in stale}
     assert "Stale" in titles
     # Fresh / Mid should NOT be flagged.

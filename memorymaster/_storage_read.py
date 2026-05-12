@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 from memorymaster.models import (
     Citation,
@@ -22,6 +23,10 @@ logger = logging.getLogger(__name__)
 
 
 class _ReadMixin:
+    if TYPE_CHECKING:
+        def connect(self) -> sqlite3.Connection: ...
+
+        def init_db(self) -> None: ...
 
     def _check_idempotency(self, conn: sqlite3.Connection, idempotency_key: str | None) -> Claim | None:
         """Check if a claim with this idempotency key already exists. Returns existing claim or None."""

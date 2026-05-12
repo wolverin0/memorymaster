@@ -3,12 +3,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import logging
 import os
 
 from memorymaster import candidate_dedupe, observability
-from memorymaster.embeddings import create_best_provider
+from memorymaster.embeddings import EmbeddingProvider, create_best_provider
 from memorymaster.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, validator
 from memorymaster.models import ActionProposal, CitationInput, Claim, ClaimLink, Event, EvidenceItem, ExternalSource, MediaRetryItem, SourceItem
 from memorymaster.policy import select_revalidation_candidates
@@ -120,20 +121,20 @@ class MemoryService:
     ) -> None:
         self.store = create_store(db_target)
         self.workspace_root = Path(workspace_root) if workspace_root else Path.cwd()
-        self._embedding_provider = None
+        self._embedding_provider: EmbeddingProvider | None = None
         self.policy_config = policy_config
         self.tenant_id = (tenant_id or "").strip() or None
         self.qdrant = self._init_qdrant()
 
     @property
-    def embedding_provider(self):
+    def embedding_provider(self) -> EmbeddingProvider:
         """Lazy-load embedding provider — avoids 7s startup for commands that don't need it."""
         if self._embedding_provider is None:
             self._embedding_provider = create_best_provider()
         return self._embedding_provider
 
     @embedding_provider.setter
-    def embedding_provider(self, value):
+    def embedding_provider(self, value: EmbeddingProvider | None) -> None:
         self._embedding_provider = value
 
     @staticmethod
@@ -486,7 +487,7 @@ class MemoryService:
             statuses.append("candidate")
         return statuses
 
-    def _query_legacy_mode(self, query_text: str, limit: int, statuses: list[str], normalized_scopes: list[str] | None, include_sensitive: bool, requesting_agent: str | None) -> list[dict[str, object]]:
+    def _query_legacy_mode(self, query_text: str, limit: int, statuses: list[str], normalized_scopes: list[str] | None, include_sensitive: bool, requesting_agent: str | None) -> list[dict[str, Any]]:
         """Query using legacy retrieval mode."""
         legacy = self.store.list_claims(
             limit=limit,
@@ -540,7 +541,7 @@ class MemoryService:
         scope_allowlist: list[str] | None = None,
         enrich_with_entities: bool = False,
         requesting_agent: str | None = None,
-    ) -> list[dict[str, object]]:
+    ) -> list[dict[str, Any]]:
         if limit <= 0:
             return []
 
@@ -613,8 +614,8 @@ class MemoryService:
         return results
 
     def _enrich_with_entity_graph(
-        self, results: list[dict], query_text: str, limit: int
-    ) -> list[dict]:
+        self, results: list[dict[str, Any]], query_text: str, limit: int
+    ) -> list[dict[str, Any]]:
         """Add entity-related claims to query results via knowledge graph traversal."""
         try:
             from memorymaster.entity_graph import EntityGraph
@@ -648,7 +649,7 @@ class MemoryService:
             pass  # best-effort
         return results
 
-    def _record_accesses(self, rows: list[dict[str, object]], query_text: str = "") -> None:
+    def _record_accesses(self, rows: list[dict[str, Any]], query_text: str = "") -> None:
         """Record access + feedback for each claim returned by a query."""
         claim_ids = []
         for row in rows:
@@ -773,7 +774,7 @@ class MemoryService:
                 include_candidates=True,
                 scope_allowlist=None,
             )
-            candidates = [row["claim"] for row in rows]
+            candidates: list[Claim] = [row["claim"] for row in rows]
         else:
             candidates = self.store.list_claims(
                 limit=candidate_limit,
@@ -833,7 +834,7 @@ class MemoryService:
             preferred = [word for word, _ in counts.most_common(4)]
             return " + ".join(word.upper() if len(word) <= 4 else word.title() for word in preferred)
 
-        groups: list[dict[str, object]] = []
+        groups: list[dict[str, Any]] = []
         for claim in candidates:
             if is_sensitive_claim(claim):
                 continue

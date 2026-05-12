@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from memorymaster.embeddings import EmbeddingProvider, cosine_similarity
 from memorymaster.models import (
@@ -25,7 +26,8 @@ from memorymaster.models import (
     validate_transition_event_type,
 )
 from memorymaster.retry import connect_with_retry
-from memorymaster.storage import EVENT_HASH_ALGO, SQLiteStore, generate_top_level_human_id
+from memorymaster._storage_shared import EVENT_HASH_ALGO, generate_top_level_human_id
+from memorymaster.storage import SQLiteStore
 
 POSTGRES_EVENTS_APPEND_ONLY_TRIGGERS = (
     "trg_events_append_only_update",
@@ -41,10 +43,10 @@ def utc_now() -> datetime:
 class PostgresStore(SQLiteStore):
     def __init__(self, dsn: str) -> None:
         self.dsn = dsn
-        self._psycopg = None
+        self._psycopg: Any = None
         self._vector_table_available: bool | None = None
 
-    def _load_psycopg(self):
+    def _load_psycopg(self) -> Any:
         if self._psycopg is None:
             try:
                 import psycopg  # type: ignore
@@ -57,10 +59,10 @@ class PostgresStore(SQLiteStore):
             self._psycopg = (psycopg, dict_row, Jsonb)
         return self._psycopg
 
-    def connect(self):
+    def connect(self) -> Any:
         psycopg, dict_row, _ = self._load_psycopg()
 
-        def _open():
+        def _open() -> Any:
             return psycopg.connect(self.dsn, row_factory=dict_row)
 
         return connect_with_retry(_open)
@@ -123,18 +125,20 @@ class PostgresStore(SQLiteStore):
         material = "\x1f".join(components)
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
-    def _ensure_event_integrity_schema(self, conn) -> None:
+    @staticmethod
+    def _ensure_event_integrity_schema(conn) -> None:
         with conn.cursor() as cur:
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS prev_event_hash TEXT")
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS event_hash TEXT")
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS hash_algo TEXT")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_events_event_hash ON events(event_hash)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_events_prev_event_hash ON events(prev_event_hash)")
-            self._drop_events_append_only_triggers(cur)
-            self._backfill_event_chain(conn)
-            self._ensure_events_append_only_rules(cur)
+            PostgresStore._drop_events_append_only_triggers(cur)
+            PostgresStore._backfill_event_chain(conn)
+            PostgresStore._ensure_events_append_only_rules(cur)
 
-    def _ensure_confirmed_tuple_uniqueness_schema(self, conn) -> None:
+    @staticmethod
+    def _ensure_confirmed_tuple_uniqueness_schema(conn) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -182,7 +186,7 @@ class PostgresStore(SQLiteStore):
                 $$;
                 """
             )
-            self._try_create_confirmed_tuple_unique_index(cur)
+            PostgresStore._try_create_confirmed_tuple_unique_index(cur)
 
     @staticmethod
     def _try_create_confirmed_tuple_unique_index(cur) -> None:
@@ -269,7 +273,8 @@ class PostgresStore(SQLiteStore):
             """
         )
 
-    def _backfill_event_chain(self, conn, *, rebuild_all: bool = False) -> int:
+    @staticmethod
+    def _backfill_event_chain(conn, *, rebuild_all: bool = False) -> int:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -296,12 +301,12 @@ class PostgresStore(SQLiteStore):
                 created_at = row["created_at"]
                 if not isinstance(created_at, datetime):
                     created_at = datetime.fromisoformat(str(created_at))
-                event_hash = self._compute_event_hash(
+                event_hash = PostgresStore._compute_event_hash(
                     claim_id=int(row["claim_id"]) if row["claim_id"] is not None else None,
                     event_type=str(row["event_type"]),
-                    from_status=self._as_text(row["from_status"]),
-                    to_status=self._as_text(row["to_status"]),
-                    details=self._as_text(row["details"]),
+                    from_status=PostgresStore._as_text(row["from_status"]),
+                    to_status=PostgresStore._as_text(row["to_status"]),
+                    details=PostgresStore._as_text(row["details"]),
                     payload=payload,
                     created_at=created_at,
                     prev_event_hash=prev_hash,
@@ -384,6 +389,11 @@ class PostgresStore(SQLiteStore):
         volatility: str = "medium",
         confidence: float = 0.5,
         tenant_id: str | None = None,
+        event_time: str | None = None,
+        valid_from: str | None = None,
+        valid_until: str | None = None,
+        source_agent: str | None = None,
+        visibility: str = "private",
     ) -> Claim:
         if not citations:
             raise ValueError("At least one citation is required.")
@@ -1363,7 +1373,7 @@ class PostgresStore(SQLiteStore):
         return statements
 
     @classmethod
-    def _row_to_claim(cls, row: dict[str, object]) -> Claim:
+    def _row_to_claim(cls, row: Any) -> Claim:
         return Claim(
             id=int(row["id"]),
             text=str(row["text"]),
@@ -1390,7 +1400,7 @@ class PostgresStore(SQLiteStore):
         )
 
     @classmethod
-    def _row_to_citation(cls, row: dict[str, object]) -> Citation:
+    def _row_to_citation(cls, row: Any) -> Citation:
         return Citation(
             id=int(row["id"]),
             claim_id=int(row["claim_id"]),
@@ -1401,7 +1411,7 @@ class PostgresStore(SQLiteStore):
         )
 
     @classmethod
-    def _row_to_event(cls, row: dict[str, object]) -> Event:
+    def _row_to_event(cls, row: Any) -> Event:
         payload_value = row["payload_json"]
         if payload_value is None:
             payload_json = None
@@ -1430,7 +1440,7 @@ class PostgresStore(SQLiteStore):
         return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
     @classmethod
-    def _row_to_external_source(cls, row: dict[str, object]) -> ExternalSource:
+    def _row_to_external_source(cls, row: Any) -> ExternalSource:
         return ExternalSource(
             id=int(row["id"]),
             source_type=str(row["source_type"]),
@@ -1441,7 +1451,7 @@ class PostgresStore(SQLiteStore):
         )
 
     @classmethod
-    def _row_to_source_item(cls, row: dict[str, object]) -> SourceItem:
+    def _row_to_source_item(cls, row: Any) -> SourceItem:
         return SourceItem(
             id=int(row["id"]),
             source_id=int(row["source_id"]),
@@ -1460,7 +1470,7 @@ class PostgresStore(SQLiteStore):
         )
 
     @classmethod
-    def _row_to_evidence_item(cls, row: dict[str, object]) -> EvidenceItem:
+    def _row_to_evidence_item(cls, row: Any) -> EvidenceItem:
         confidence = row.get("confidence")
         return EvidenceItem(
             id=int(row["id"]),
@@ -1476,7 +1486,7 @@ class PostgresStore(SQLiteStore):
         )
 
     @classmethod
-    def _row_to_action_proposal(cls, row: dict[str, object]) -> ActionProposal:
+    def _row_to_action_proposal(cls, row: Any) -> ActionProposal:
         return ActionProposal(
             id=int(row["id"]),
             proposal_type=str(row["proposal_type"]),
@@ -1498,7 +1508,7 @@ class PostgresStore(SQLiteStore):
         )
 
     @classmethod
-    def _row_to_claim_link(cls, row: dict[str, object]) -> ClaimLink:
+    def _row_to_claim_link(cls, row: Any) -> ClaimLink:
         return ClaimLink(
             id=int(row["id"]),
             source_id=int(row["source_id"]),
@@ -1507,7 +1517,8 @@ class PostgresStore(SQLiteStore):
             created_at=cls._as_iso(row["created_at"]) or "",
         )
 
-    def _ensure_claim_links_schema(self, conn) -> None:
+    @staticmethod
+    def _ensure_claim_links_schema(conn) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -1532,16 +1543,18 @@ class PostgresStore(SQLiteStore):
                 "CREATE INDEX IF NOT EXISTS idx_claim_links_target ON claim_links(target_id)"
             )
 
-    def _ensure_human_id_schema(self, conn) -> None:
+    @staticmethod
+    def _ensure_human_id_schema(conn) -> None:
         """Add human_id column if missing and backfill existing claims."""
         with conn.cursor() as cur:
             cur.execute("ALTER TABLE claims ADD COLUMN IF NOT EXISTS human_id TEXT")
             cur.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id)"
             )
-        self._backfill_human_ids(conn)
+        PostgresStore._backfill_human_ids(conn)
 
-    def _backfill_human_ids(self, conn) -> int:
+    @staticmethod
+    def _backfill_human_ids(conn) -> int:
         """Assign human_id to all claims that lack one."""
         with conn.cursor() as cur:
             cur.execute(
@@ -1553,9 +1566,9 @@ class PostgresStore(SQLiteStore):
             updated = 0
             for row in rows:
                 claim_id = int(row["id"])
-                subject = self._as_text(row["subject"])
+                subject = PostgresStore._as_text(row["subject"])
                 text = str(row["text"])
-                human_id = self._allocate_human_id(cur, subject, text, claim_id)
+                human_id = PostgresStore._allocate_human_id(cur, subject, text, claim_id)
                 cur.execute(
                     "UPDATE claims SET human_id = %s WHERE id = %s",
                     (human_id, claim_id),
@@ -1602,7 +1615,8 @@ class PostgresStore(SQLiteStore):
             suffix += 1
             final = f"{candidate}~{suffix}"
 
-    def _ensure_tenant_id_schema(self, conn) -> None:
+    @staticmethod
+    def _ensure_tenant_id_schema(conn) -> None:
         """Add tenant_id column if missing, with an index for tenant isolation."""
         with conn.cursor() as cur:
             cur.execute("ALTER TABLE claims ADD COLUMN IF NOT EXISTS tenant_id TEXT")
@@ -2106,7 +2120,7 @@ class PostgresStore(SQLiteStore):
     # ----------------------------------------------------------------------
 
     @classmethod
-    def _row_to_media_retry(cls, row: dict[str, object]) -> MediaRetryItem:
+    def _row_to_media_retry(cls, row: Any) -> MediaRetryItem:
         return MediaRetryItem(
             id=int(row["id"]),
             source_item_id=int(row["source_item_id"]),

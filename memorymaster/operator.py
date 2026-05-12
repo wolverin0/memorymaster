@@ -226,12 +226,12 @@ def _extract_generic_claims(raw: str, add_claim) -> None:
 
 
 class HeuristicClaimExtractor:
-    def extract(self, text: str) -> list[dict[str, object]]:
+    def extract(self, text: str) -> list[dict[str, Any]]:
         raw = text.strip()
         if not raw:
             return []
 
-        claims: list[dict[str, object]] = []
+        claims: list[dict[str, Any]] = []
         seen: set[tuple[str, str, str]] = set()
 
         def add_claim(
@@ -287,7 +287,7 @@ class MemoryOperator:
         self.extractor = extractor or HeuristicClaimExtractor()
         self._reconcile_counter = 0
 
-    def process_turn(self, turn: TurnInput) -> dict[str, object]:
+    def process_turn(self, turn: TurnInput) -> dict[str, Any]:
         if self.config.progressive_retrieval:
             tier1 = self.service.query(
                 turn.user_text,
@@ -533,9 +533,9 @@ class MemoryOperator:
             if not (queue_inbox and queue_inbox == canonical_inbox):
                 return start_offset, read_offset, acked_offset, persisted_seen_events, persisted_processed_events, pending_queue, queue_state_loaded
 
-            start_offset = max(0, int(raw_queue_state.get("read_offset", raw_queue_state.get("offset", 0))))
+            start_offset = max(0, int(raw_queue_state.get("read_offset") or raw_queue_state.get("offset") or 0))
             read_offset = start_offset
-            acked_offset = max(0, int(raw_queue_state.get("acked_offset", raw_queue_state.get("offset", read_offset))))
+            acked_offset = max(0, int(raw_queue_state.get("acked_offset") or raw_queue_state.get("offset") or read_offset))
             persisted_seen_events = max(0, int(raw_queue_state.get("seen_events", 0)))
             persisted_processed_events = max(0, int(raw_queue_state.get("processed_events", 0)))
             next_queue_id = max(1, int(raw_queue_state.get("next_queue_id", 1)))
@@ -684,7 +684,7 @@ class MemoryOperator:
     def _record_turn_processed(
         self,
         turn,
-        summary: dict[str, object],
+        summary: dict[str, Any],
         entry_id: int,
         entry_offset: int,
         seen_events: int,
@@ -848,10 +848,10 @@ class MemoryOperator:
             queue_journal_path = Path(str(self.config.queue_journal_jsonl_path).strip())
             queue_journal_path.parent.mkdir(parents=True, exist_ok=True)
 
-        def emit(event: str, payload: dict[str, object] | None = None) -> None:
+        def emit(event: str, payload: dict[str, Any] | None = None) -> None:
             if log_path is None:
                 return
-            record = {"ts": _utc_now_iso(), "event": event}
+            record: dict[str, Any] = {"ts": _utc_now_iso(), "event": event}
             if payload:
                 record.update(payload)
             with log_path.open("a", encoding="utf-8") as out:
@@ -1160,10 +1160,10 @@ class MemoryOperator:
             log_path = Path(self.config.log_jsonl_path)
             log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        def emit(event: str, payload: dict[str, object] | None = None) -> None:
+        def emit(event: str, payload: dict[str, Any] | None = None) -> None:
             if log_path is None:
                 return
-            record = {"ts": _utc_now_iso(), "event": event}
+            record: dict[str, Any] = {"ts": _utc_now_iso(), "event": event}
             if payload:
                 record.update(payload)
             with log_path.open("a", encoding="utf-8") as out:
