@@ -44,3 +44,8 @@ def test_t07_jwt_shape_is_redacted() -> None:
 )
 def test_t07_db_connection_strings_with_credentials_are_redacted(uri: str) -> None:
     _assert_redacted(f"DATABASE_URL={uri}", "db_url_password", uri)
+
+
+def test_t07_aws_access_key_shape_is_redacted() -> None:
+    token = "AKIAFAKEFAKEFAKE1234"
+    _assert_redacted(f"AWS_ACCESS_KEY_ID={token}", "aws_access_key", token)
