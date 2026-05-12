@@ -17,28 +17,22 @@ MemoryMaster prevents the #1 problem with agent memory: **drift, stale assumptio
 
 ## Architecture
 
+MemoryMaster is layered around MCP/CLI entry points, the `MemoryService` facade, SQLite/Postgres
+storage, optional Qdrant vector search, scheduled jobs, and the Obsidian wiki/vault layer. The
+canonical ingest path is:
+
+```text
+MCP/CLI -> sensitivity filter -> MemoryService.ingest -> store write -> FTS5 index
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Agent Runtime                            │
-│  (Claude Code / Codex / any MCP-compatible agent)               │
-└────────────┬────────────────────────────────┬───────────────────┘
-             │ MCP (24 tools)                 │ CLI (86 commands)
-             v                                v
-┌─────────────────────────────────────────────────────────────────┐
-│                      MemoryMaster Core                          │
-│  ┌──────────┐  ┌───────────┐  ┌──────────┐  ┌───────────────┐  │
-│  │ Ingestor │  │ Extractor │  │ Validator │  │ State Engine  │  │
-│  │ (events) │->│ (claims)  │->│ (probes)  │->│ (6-state FSM) │  │
-│  └──────────┘  └───────────┘  └──────────┘  └───────────────┘  │
-│  ┌──────────┐  ┌───────────┐  ┌──────────┐  ┌───────────────┐  │
-│  │ Retrieval│  │ Compactor │  │ Steward  │  │  Dashboard    │  │
-│  │ (hybrid) │  │ (archive) │  │ (govern) │  │  (HTML+SSE)   │  │
-│  └──────────┘  └───────────┘  └──────────┘  └───────────────┘  │
-└────────┬──────────────┬──────────────┬──────────┬───────────────┘
-         v              v              v          v
-   SQLite/Postgres   Qdrant      Ollama/CLI    Claude Code
-                    (vectors)   (LLM stack)   Auto Dream + Vault
+
+The query path is:
+
+```text
+query_memory -> MemoryService.query -> storage reads + optional Qdrant candidates -> ranked context
 ```
+
+See [docs/architecture.md](docs/architecture.md) for the current module map, data-flow details,
+recent PR status, and sensitivity-filter invariants.
 
 ## Key features
 
