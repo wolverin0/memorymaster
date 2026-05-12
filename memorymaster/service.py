@@ -7,7 +7,7 @@ from pathlib import Path
 import logging
 import os
 
-from memorymaster import candidate_dedupe
+from memorymaster import candidate_dedupe, observability
 from memorymaster.embeddings import create_best_provider
 from memorymaster.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, validator
 from memorymaster.models import ActionProposal, CitationInput, Claim, ClaimLink, Event, EvidenceItem, ExternalSource, MediaRetryItem, SourceItem
@@ -219,6 +219,7 @@ class MemoryService:
         if normalized_idempotency_key is not None and hasattr(self.store, "get_claim_by_idempotency_key"):
             existing_claim = self.store.get_claim_by_idempotency_key(normalized_idempotency_key)
             if existing_claim is not None:
+                observability.bump_claim_ingested(source_agent)
                 return existing_claim
         # Dedup by content hash (catch duplicates without idempotency key)
         # Include scope + tenant to avoid cross-tenant/cross-scope dedup
@@ -229,6 +230,7 @@ class MemoryService:
         if hasattr(self.store, "get_claim_by_idempotency_key"):
             existing_by_hash = self.store.get_claim_by_idempotency_key(content_hash)
             if existing_by_hash is not None:
+                observability.bump_claim_ingested(source_agent)
                 return existing_by_hash
         # Set content hash as idempotency key if none provided
         if normalized_idempotency_key is None:
@@ -314,6 +316,7 @@ class MemoryService:
             except Exception:
                 pass
         if sanitized.is_sensitive:
+            observability.bump_claim_filtered_findings(sanitized.findings)
             self.store.record_event(
                 claim_id=claim.id,
                 event_type="policy_decision",
@@ -337,6 +340,7 @@ class MemoryService:
             )
         except Exception:
             pass
+        observability.bump_claim_ingested(source_agent)
         return claim
 
     def run_cycle(

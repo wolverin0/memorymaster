@@ -14,6 +14,7 @@ from typing import Any, TypeVar
 import unicodedata
 from urllib.parse import urlparse
 
+from memorymaster import observability
 from pydantic import BaseModel, ValidationError
 
 from memorymaster.models import CitationInput
@@ -272,6 +273,7 @@ def _sensitive_input_error(text: str, field: str = "text") -> dict[str, Any] | N
                 normalized_findings.append(finding)
     if not normalized_findings:
         return None
+    observability.bump_claim_filtered_findings(normalized_findings)
     return _structured_error(
         (
             "Claim rejected: contains credentials or secrets "
