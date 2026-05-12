@@ -6,6 +6,8 @@ For a fresh local database, run `init-db` first. Examples that reference claim I
 
 Requested aliases checked against the parser: `restore` is currently `rollback`, `redact-claim-payload` is currently `redact-claim`, and `list-steward-proposals` is currently `steward-proposals`. `query-meta-decisions`, `find-related`, and standalone `decay` are not CLI subcommands in the current parser.
 
+Coverage was checked by comparing every `###` heading with `build_parser()` subparser choices and parsing each example command with argparse.
+
 ## Query & Recall
 
 ### query
