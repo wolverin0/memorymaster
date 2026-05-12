@@ -17,6 +17,7 @@ This index lists the claim-derived ADRs compiled from `project:memorymaster` dec
 11. [0011 Recall Ranking Features Stay Measured and Gated](0011-recall-ranking-features-stay-measured-and-gated.md)
 12. [0012 README Stays Concise, Handbook Holds Operator Depth](0012-readme-stays-concise-handbook-holds-operator-depth.md)
 13. [0013 Context Loading Is Two Phase](0013-context-loading-is-two-phase.md)
+14. [0014 Wiki Articles Auto-Promote After N Successful Validations](0014-wiki-articles-auto-promote-after-n-successful-validations.md)
 
 ## Existing ADR Notes
 
