@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from memorymaster.embeddings import EmbeddingProvider, cosine_similarity
 from memorymaster.models import (
@@ -25,7 +26,8 @@ from memorymaster.models import (
     validate_transition_event_type,
 )
 from memorymaster.retry import connect_with_retry
-from memorymaster.storage import EVENT_HASH_ALGO, SQLiteStore, generate_top_level_human_id
+from memorymaster._storage_shared import EVENT_HASH_ALGO, generate_top_level_human_id
+from memorymaster.storage import SQLiteStore
 
 POSTGRES_EVENTS_APPEND_ONLY_TRIGGERS = (
     "trg_events_append_only_update",
@@ -41,10 +43,10 @@ def utc_now() -> datetime:
 class PostgresStore(SQLiteStore):
     def __init__(self, dsn: str) -> None:
         self.dsn = dsn
-        self._psycopg = None
+        self._psycopg: Any = None
         self._vector_table_available: bool | None = None
 
-    def _load_psycopg(self):
+    def _load_psycopg(self) -> Any:
         if self._psycopg is None:
             try:
                 import psycopg  # type: ignore
@@ -57,10 +59,10 @@ class PostgresStore(SQLiteStore):
             self._psycopg = (psycopg, dict_row, Jsonb)
         return self._psycopg
 
-    def connect(self):
+    def connect(self) -> Any:
         psycopg, dict_row, _ = self._load_psycopg()
 
-        def _open():
+        def _open() -> Any:
             return psycopg.connect(self.dsn, row_factory=dict_row)
 
         return connect_with_retry(_open)
