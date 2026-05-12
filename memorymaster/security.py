@@ -39,7 +39,10 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # hyphen, or dot — plain English words after 'Bearer' (e.g. "Bearer
     # authentication and will prompt") now pass. Real bearer tokens always
     # contain digits or structural chars.
-    ("bearer_token", re.compile(r"Bearer\s+(?=[A-Za-z0-9_\-\.]*[0-9_\-\.])[A-Za-z0-9_\-\.]{8,}")),
+    ("bearer_token", re.compile(
+        r"(?i)\b(?:bearer\s+|bearer\s*:\s*|bearer_token\s*=\s*)"
+        r"(?=[A-Za-z0-9_\-\.]*[0-9_\-\.])[A-Za-z0-9_\-\.]{8,}"
+    )),
     ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     # NOTE: Private IPv4 (10/8, 172.16/12, 192.168/16) is intentionally NOT
     # filtered here. Private IPs appear legitimately in infrastructure claims
