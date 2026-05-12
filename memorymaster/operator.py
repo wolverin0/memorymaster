@@ -226,12 +226,12 @@ def _extract_generic_claims(raw: str, add_claim) -> None:
 
 
 class HeuristicClaimExtractor:
-    def extract(self, text: str) -> list[dict[str, object]]:
+    def extract(self, text: str) -> list[dict[str, Any]]:
         raw = text.strip()
         if not raw:
             return []
 
-        claims: list[dict[str, object]] = []
+        claims: list[dict[str, Any]] = []
         seen: set[tuple[str, str, str]] = set()
 
         def add_claim(
@@ -287,7 +287,7 @@ class MemoryOperator:
         self.extractor = extractor or HeuristicClaimExtractor()
         self._reconcile_counter = 0
 
-    def process_turn(self, turn: TurnInput) -> dict[str, object]:
+    def process_turn(self, turn: TurnInput) -> dict[str, Any]:
         if self.config.progressive_retrieval:
             tier1 = self.service.query(
                 turn.user_text,
