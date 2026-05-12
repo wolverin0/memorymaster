@@ -6,6 +6,8 @@ import logging
 import os
 from pathlib import Path
 import re
+import threading
+import time
 from typing import Any, TypeVar
 from urllib.parse import urlparse
 
@@ -34,6 +36,12 @@ _ENV_DEFAULT_PROJECT_SCOPE = os.environ.get("MEMORYMASTER_DEFAULT_PROJECT_SCOPE"
 _ENV_QUERY_INCLUDE_LEGACY_PROJECT = (
     os.environ.get("MEMORYMASTER_QUERY_INCLUDE_LEGACY_PROJECT", "1").strip().lower() not in {"0", "false", "no"}
 )
+_DEFAULT_INGEST_RATE_LIMIT_PER_MIN = 60
+_INGEST_RATE_LIMIT_ENV = "MM_INGEST_RATE_LIMIT_PER_MIN"
+_ANONYMOUS_SOURCE_AGENT = "_anonymous"
+_INGEST_RATE_BUCKETS: dict[str, tuple[float, float]] = {}
+_INGEST_RATE_BUCKETS_LOCK = threading.Lock()
+_monotonic = time.monotonic
 _SCOPE_SAFE_RE = re.compile(r"[^a-z0-9_-]+")
 # Windows / macOS "Copy" artefacts and trailing "(1)"-style numeric variants.
 # Applied to the workspace dirname BEFORE slug derivation so `foo - Copy - Copy`
@@ -152,6 +160,43 @@ def _sensitive_input_error(text: str, field: str = "text") -> dict[str, Any] | N
         field,
         findings=normalized_findings,
     )
+
+
+def _ingest_rate_limit_per_min() -> int:
+    raw = os.getenv(_INGEST_RATE_LIMIT_ENV, str(_DEFAULT_INGEST_RATE_LIMIT_PER_MIN)).strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return _DEFAULT_INGEST_RATE_LIMIT_PER_MIN
+
+
+def _check_ingest_rate_limit(source_agent: str, now: float | None = None) -> dict[str, Any] | None:
+    limit = _ingest_rate_limit_per_min()
+    if limit == 0:
+        return None
+
+    timestamp = _monotonic() if now is None else now
+    key = _empty_to_none(source_agent) or _ANONYMOUS_SOURCE_AGENT
+    with _INGEST_RATE_BUCKETS_LOCK:
+        tokens, last_refill = _INGEST_RATE_BUCKETS.get(key, (float(limit), timestamp))
+        elapsed = max(0.0, timestamp - last_refill)
+        refill_rate = limit / 60.0
+        tokens = min(float(limit), tokens + elapsed * refill_rate)
+
+        if tokens < 1.0:
+            retry_after_ms = max(1, int(((1.0 - tokens) / refill_rate) * 1000))
+            _INGEST_RATE_BUCKETS[key] = (tokens, timestamp)
+            return _structured_error(
+                f"ingest_claim rate limit exceeded for source_agent '{key}'.",
+                "RATE_LIMITED",
+                "source_agent",
+                retry_after_ms=retry_after_ms,
+                source_agent=key,
+                limit_per_min=limit,
+            )
+
+        _INGEST_RATE_BUCKETS[key] = (tokens - 1.0, timestamp)
+    return None
 
 
 def _resolve_db(db: str) -> str:
@@ -416,6 +461,10 @@ if FastMCP is not None:
         )
         if isinstance(request, dict):
             return request
+
+        rate_limit_error = _check_ingest_rate_limit(request.source_agent)
+        if rate_limit_error is not None:
+            return rate_limit_error
 
         sensitive_error = _sensitive_input_error(request.text)
         if sensitive_error is not None:
