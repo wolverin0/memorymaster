@@ -14,6 +14,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+from memorymaster.security import redact_text as _redact_text
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -23,8 +25,6 @@ log = logging.getLogger(__name__)
 # and vendor-specific keys that security.py doesn't need for general ingest
 # filtering but we want to block from being seeded into dream memory.
 # ---------------------------------------------------------------------------
-
-from memorymaster.security import redact_text as _redact_text
 
 _DREAM_EXTRA_PATTERNS = re.compile(
     r"(?i)"
@@ -39,6 +39,10 @@ _DREAM_EXTRA_PATTERNS = re.compile(
     # Public IPs in connection strings (non-localhost, non-example)
     r"|\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+"
     r"|ubuntu@\d{1,3}\.\d{1,3}"
+    # Private IPs should not cross the dream-memory boundary.
+    r"|\b(?:10\.(?:\d{1,3}\.){2}\d{1,3}"
+    r"|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+    r"|192\.168\.\d{1,3}\.\d{1,3})\b"
     # Deployment artefacts
     r"|cat\s*>\s*/tmp/.*(?:pw|pass|key|cred)"
     r"|ENDPW"
@@ -98,9 +102,9 @@ def _is_sensitive(text: str) -> bool:
     if _NOISE_PATTERNS.search(text.strip()):
         return True
     # Reject texts that are mostly code (>60% lines start with common code chars)
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
     if len(lines) >= 3:
-        code_lines = sum(1 for l in lines if l.startswith(("$", "#!", "cd ", "pip ", "npm ",
+        code_lines = sum(1 for line in lines if line.startswith(("$", "#!", "cd ", "pip ", "npm ",
                          "curl ", "docker ", "git ", "scp ", "rsync ", "cat ", "echo ",
                          "sudo ", "chmod ", "mkdir ", "wget ")))
         if code_lines / len(lines) > 0.5:
@@ -593,7 +597,6 @@ def dream_ingest(
 
             dream_type = meta.get("type", "project")
             name = meta.get("name", md_file.stem)
-            description = meta.get("description", "")
 
             # Check for duplicates by looking for source marker
             source_marker = f"auto-dream:{md_file.name}"
@@ -607,6 +610,10 @@ def dream_ingest(
 
             # Build claim text from body (strip source lines)
             claim_text = body.strip()
+            if _is_sensitive(claim_text):
+                skipped += 1
+                continue
+
             if len(claim_text) > 2000:
                 claim_text = claim_text[:2000]
 
