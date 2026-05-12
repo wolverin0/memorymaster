@@ -22,6 +22,14 @@ from memorymaster.schema import load_schema_sql
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "EVENT_HASH_ALGO",
+    "SQLiteStore",
+    "generate_human_id_hash",
+    "generate_top_level_human_id",
+    "utc_now",
+]
+
 
 class SQLiteStore(_SchemaMixin, _ReadMixin, _WriteClaimsMixin, _LifecycleMixin, _SourceItemsMixin):
     def __init__(self, db_path: str | Path) -> None:

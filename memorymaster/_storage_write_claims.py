@@ -16,12 +16,11 @@ from memorymaster.models import (
     Claim,
     validate_event_payload,
 )
-
-logger = logging.getLogger(__name__)
-
 from memorymaster._storage_shared import (
     utc_now,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class _WriteClaimsMixin:
