@@ -21,6 +21,7 @@ from memorymaster.service import RETRIEVAL_PROFILES, MemoryService
 # Import dispatch table — this also triggers the late dispatch additions for daily/dream/ghost
 from memorymaster.cli_handlers_curation import COMMAND_HANDLERS
 from memorymaster.cli_handlers_basic import (
+    _handle_decay,
     _handle_entity_graph_export,
     _handle_recompute_confidence_priors,
     _handle_wiki_suggest_links,
@@ -31,6 +32,7 @@ from memorymaster.cli_handlers_basic import (
 COMMAND_HANDLERS["entity-graph-export"] = _handle_entity_graph_export
 COMMAND_HANDLERS["recompute-confidence-priors"] = _handle_recompute_confidence_priors
 COMMAND_HANDLERS["wiki-suggest-links"] = _handle_wiki_suggest_links
+COMMAND_HANDLERS["decay"] = _handle_decay
 COMMAND_HANDLERS["mcp-usage-report"] = (
     lambda args, service, parser, effective_db: handle_mcp_usage_report(args, effective_db)
 )
@@ -197,6 +199,7 @@ def build_parser() -> argparse.ArgumentParser:
     compact = sub.add_parser("compact", help="Archive stale/superseded/conflicted claims and trim old events")
     compact.add_argument("--retain-days", type=int, default=30, help="Days before archiving stale/superseded/conflicted claims")
     compact.add_argument("--event-retain-days", type=int, default=60, help="Days to retain event history")
+    compact.add_argument("--dry-run", action="store_true", help="Preview compaction without archiving claims, deleting events, or writing artifacts")
 
     compact_sum = sub.add_parser("compact-summaries", help="Summarize groups of archived claims into higher-level summary claims using LLM")
     compact_sum.add_argument("--provider", default="gemini", choices=["gemini", "openai", "anthropic", "ollama", "custom"], help="LLM provider (default: gemini)")
@@ -217,6 +220,11 @@ def build_parser() -> argparse.ArgumentParser:
     dedup.add_argument("--limit", type=int, default=None, help="Maximum claims to scan, oldest first")
     dedup.add_argument("--scope", default=None, help="Only scan claims with this exact scope")
     dedup.add_argument("--dry-run", action="store_true", help="Preview duplicates without archiving")
+
+    decay_cmd = sub.add_parser("decay", help="Apply confidence decay and mark low-confidence claims stale")
+    decay_cmd.add_argument("--limit", type=int, default=200, help="Maximum confirmed claims to process")
+    decay_cmd.add_argument("--stale-threshold", type=float, default=None, help="Confidence threshold below which claims become stale")
+    decay_cmd.add_argument("--dry-run", action="store_true", help="Preview confidence decay and stale transitions without writing")
 
     sub.add_parser("recompute-tiers", help="Recompute memory tiers (core/working/peripheral) for all claims")
 

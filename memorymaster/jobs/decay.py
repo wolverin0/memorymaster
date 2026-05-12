@@ -12,13 +12,72 @@ def _parse_iso(dt: str) -> datetime:
     return parsed
 
 
-def run(store, limit: int = 200, stale_threshold: float | None = None) -> dict[str, int]:
+def run(
+    store,
+    limit: int = 200,
+    stale_threshold: float | None = None,
+    dry_run: bool = False,
+) -> dict:
     cfg = get_config()
     if stale_threshold is None:
         stale_threshold = cfg.stale_threshold
     decay_rates = cfg.decay_rates
     claims = store.find_for_decay(limit=limit)
     now = datetime.now(timezone.utc)
+
+    if dry_run:
+        planned_decay = []
+        skipped_future = []
+        decayed = 0
+        transitioned = 0
+
+        for claim in claims:
+            updated_dt = _parse_iso(claim.updated_at)
+            raw_age_seconds = (now - updated_dt).total_seconds()
+            age_days = max(raw_age_seconds / 86400.0, 0.0)
+            if age_days <= 0:
+                if raw_age_seconds < 0:
+                    skipped_future.append({"claim_id": claim.id, "updated_at": claim.updated_at})
+                continue
+
+            rate = decay_rates.get(claim.volatility, decay_rates["medium"])
+            new_conf = max(0.0, claim.confidence - (rate * age_days))
+            will_stale = new_conf < stale_threshold
+            planned_decay.append(
+                {
+                    "claim_id": claim.id,
+                    "from_status": claim.status,
+                    "to_status": "stale" if will_stale else claim.status,
+                    "old_confidence": claim.confidence,
+                    "new_confidence": new_conf,
+                    "age_days": age_days,
+                    "decay_rate": rate,
+                }
+            )
+            decayed += 1
+            if will_stale:
+                transitioned += 1
+
+        return {
+            "dry_run": True,
+            "processed": len(claims),
+            "decayed": decayed,
+            "to_stale": transitioned,
+            "planned_decay": planned_decay,
+            "planned_transitions": [
+                {
+                    "claim_id": row["claim_id"],
+                    "from_status": row["from_status"],
+                    "to_status": row["to_status"],
+                    "old_confidence": row["old_confidence"],
+                    "new_confidence": row["new_confidence"],
+                }
+                for row in planned_decay
+                if row["to_status"] == "stale"
+            ],
+            "skipped_future": skipped_future,
+        }
+
     decayed = 0
     transitioned = 0
 

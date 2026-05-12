@@ -893,8 +893,57 @@ def _handle_redact_claim(args: argparse.Namespace, service, parser: argparse.Arg
 
 
 def _handle_compact(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    result = service.compact(retain_days=args.retain_days, event_retain_days=args.event_retain_days)
-    print(json.dumps(result, indent=2))
+    from memorymaster.jobs import compactor
+
+    result = compactor.run(
+        service.store,
+        retain_days=args.retain_days,
+        event_retain_days=args.event_retain_days,
+        artifacts_dir=service.workspace_root / "artifacts" / "compaction",
+        dry_run=args.dry_run,
+    )
+    if args.json_output:
+        print(_json_envelope(result))
+    elif args.dry_run:
+        print("[DRY RUN] No claims archived, events deleted, or artifacts written.")
+        print(
+            f"compact [DRY RUN] candidates={result['candidate_claims']} "
+            f"planned_archives={len(result['planned_archives'])}"
+        )
+        for item in result["planned_archives"]:
+            print(f"  claim={item['claim_id']} {item['from_status']} -> {item['to_status']}")
+        for artifact in result["artifact_files"]:
+            print(f"  artifact: {artifact}")
+    else:
+        print(json.dumps(result, indent=2))
+    return 0
+
+
+def _handle_decay(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.jobs import decay
+
+    t0 = time.perf_counter()
+    result = decay.run(
+        service.store,
+        limit=args.limit,
+        stale_threshold=args.stale_threshold,
+        dry_run=args.dry_run,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        if args.dry_run:
+            print("[DRY RUN] No confidence or status changes applied.")
+        print(
+            f"decay [{'DRY RUN' if args.dry_run else 'APPLIED'}] processed={result['processed']} "
+            f"decayed={result['decayed']} to_stale={result['to_stale']}"
+        )
+        for item in result.get("planned_transitions", []):
+            print(
+                f"  claim={item['claim_id']} {item['from_status']} -> {item['to_status']} "
+                f"confidence={item['old_confidence']:.3f}->{item['new_confidence']:.3f}"
+            )
     return 0
 
 
