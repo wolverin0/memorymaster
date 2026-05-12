@@ -9,6 +9,7 @@ import subprocess
 import time
 from typing import Any, Literal
 
+from memorymaster import observability
 from memorymaster.lifecycle import transition_claim
 from memorymaster.security import is_sensitive_claim
 from memorymaster.service import MemoryService
@@ -1536,20 +1537,21 @@ def run_steward(
                 git_unavailable_polls = int(trigger_meta.get("git_unavailable_polls", git_unavailable_polls))
         trigger_counts[trigger_kind] = trigger_counts.get(trigger_kind, 0) + 1
         cycle_started = _utc_now()
-        cycle_payload = _run_cycle(
-            service,
-            allow_sensitive=allow_sensitive,
-            apply=apply,
-            max_claims=max_claims,
-            max_proposals=max_proposals,
-            max_probe_files=max_probe_files,
-            max_probe_file_bytes=max_probe_file_bytes,
-            max_tool_probes=max_tool_probes,
-            probe_timeout_seconds=probe_timeout_seconds,
-            probe_failure_threshold=probe_failure_threshold,
-            enable_semantic_probe=enable_semantic_probe,
-            enable_tool_probe=enable_tool_probe,
-        )
+        with observability.steward_cycle_timer():
+            cycle_payload = _run_cycle(
+                service,
+                allow_sensitive=allow_sensitive,
+                apply=apply,
+                max_claims=max_claims,
+                max_proposals=max_proposals,
+                max_probe_files=max_probe_files,
+                max_probe_file_bytes=max_probe_file_bytes,
+                max_tool_probes=max_tool_probes,
+                probe_timeout_seconds=probe_timeout_seconds,
+                probe_failure_threshold=probe_failure_threshold,
+                enable_semantic_probe=enable_semantic_probe,
+                enable_tool_probe=enable_tool_probe,
+            )
         cycle_payload["cycle"] = cycle_index
         cycle_payload["started_at"] = cycle_started
         cycle_payload["finished_at"] = _utc_now()

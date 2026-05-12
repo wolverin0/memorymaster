@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from memorymaster import observability
 from memorymaster._storage_shared import ConcurrentModificationError
 from memorymaster.lifecycle import can_transition, transition_claim
 
@@ -290,4 +291,5 @@ def run(
             },
         },
     )
+    observability.bump_compactor_run("success")
     return {"archived_claims": archived, "deleted_events": deleted_events}
