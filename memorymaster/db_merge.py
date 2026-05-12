@@ -75,15 +75,19 @@ def _citation_count(conn: sqlite3.Connection, claim_id: int) -> int:
         return 0
 
 
-def _claim_priority(conn: sqlite3.Connection, claim: dict[str, object]) -> tuple[bool, float, datetime, int, int]:
+def _claim_priority(conn: sqlite3.Connection, claim: dict[str, object]) -> tuple[bool, datetime, float, int, int]:
     claim_id = int(claim["id"])
     return (
         bool(claim.get("pinned")),
-        float(claim.get("confidence") or 0.0),
         _parse_timestamp(claim.get("updated_at")),
+        float(claim.get("confidence") or 0.0),
         _citation_count(conn, claim_id),
-        claim_id,
+        -claim_id,
     )
+
+
+def _sync_priority(claim: dict[str, object]) -> tuple[datetime, int]:
+    return (_parse_timestamp(claim.get("updated_at")), -int(claim["id"]))
 
 
 def _target_columns(tgt: sqlite3.Connection) -> set[str]:
@@ -110,6 +114,41 @@ def _find_conflicting_target_claims(
         (row["subject"], row["predicate"], row["scope"], row["object_value"]),
     ).fetchall()
     return [dict(conflict) for conflict in conflicts]
+
+
+def _find_existing_target_claim(
+    tgt: sqlite3.Connection,
+    ikey: object,
+    text: str,
+) -> dict[str, object] | None:
+    if ikey:
+        row = tgt.execute("SELECT * FROM claims WHERE idempotency_key = ?", (ikey,)).fetchone()
+        if row:
+            return dict(row)
+
+    text_hash = _text_hash(text)
+    for row in tgt.execute("SELECT * FROM claims").fetchall():
+        if _text_hash(row["text"]) == text_hash:
+            return dict(row)
+    return None
+
+
+def _reconcile_existing_claim(
+    tgt: sqlite3.Connection,
+    source_row: sqlite3.Row,
+    target_claim: dict[str, object],
+    target_cols: set[str],
+) -> None:
+    required = {"id", "confidence", "updated_at"}
+    if not required.issubset(target_cols) or not required.issubset(source_row.keys()):
+        return
+    source_claim = dict(source_row)
+    if _sync_priority(source_claim) <= _sync_priority(target_claim):
+        return
+    tgt.execute(
+        "UPDATE claims SET confidence = ?, updated_at = ? WHERE id = ?",
+        (source_row["confidence"], source_row["updated_at"], target_claim["id"]),
+    )
 
 
 def _apply_conflict_resolution(
@@ -203,11 +242,11 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
             ikey = row["idempotency_key"] if "idempotency_key" in row.keys() else None
             text = row["text"]
 
-            # Skip if already exists
-            if ikey and ikey in existing_keys:
-                stats["skipped"] += 1
-                continue
-            if _text_hash(text) in existing_hashes:
+            # Reconcile duplicates deterministically instead of letting merge order win.
+            if (ikey and ikey in existing_keys) or _text_hash(text) in existing_hashes:
+                existing_claim = _find_existing_target_claim(tgt, ikey, text)
+                if existing_claim:
+                    _reconcile_existing_claim(tgt, row, existing_claim, tgt_cols)
                 stats["skipped"] += 1
                 continue
 
