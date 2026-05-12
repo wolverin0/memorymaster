@@ -6,11 +6,12 @@ import os
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 from memorymaster.dashboard import create_dashboard_server
 from memorymaster.models import CitationInput
@@ -28,6 +29,7 @@ def _case_db(prefix: str) -> Path:
 def _running_server(service: MemoryService, operator_log_jsonl: Path) -> Iterator[str]:
     server = create_dashboard_server(
         service=service,
+        db_target="memorymaster-dashboard-test.db",
         host="127.0.0.1",
         port=0,
         operator_log_jsonl=operator_log_jsonl,
@@ -52,6 +54,14 @@ def _get_json(url: str) -> tuple[int, dict[str, str], dict[str, object]]:
     return status, headers, payload
 
 
+def _get_json_allow_error(url: str) -> tuple[int, dict[str, str], dict[str, object]]:
+    try:
+        return _get_json(url)
+    except urllib.error.HTTPError as exc:
+        payload = json.loads(exc.read().decode("utf-8"))
+        return int(exc.code), {k: v for k, v in exc.headers.items()}, payload
+
+
 def _post_json(url: str, payload: dict[str, object]) -> tuple[int, dict[str, str], dict[str, object]]:
     request = urllib.request.Request(
         url,
@@ -64,6 +74,91 @@ def _post_json(url: str, payload: dict[str, object]) -> tuple[int, dict[str, str
         headers = {k: v for k, v in response.headers.items()}
         response_payload = json.loads(response.read().decode("utf-8"))
     return status, headers, response_payload
+
+
+def test_dashboard_healthz_does_not_require_db() -> None:
+    class NoDbService:
+        pass
+
+    operator_log = Path(".tmp_cases") / "dashboard-healthz-no-db-operator.jsonl"
+    operator_log.parent.mkdir(parents=True, exist_ok=True)
+    operator_log.write_text("", encoding="utf-8")
+
+    with _running_server(NoDbService(), operator_log) as base_url:  # type: ignore[arg-type]
+        status, headers, payload = _get_json(f"{base_url}/healthz")
+
+    assert status == 200
+    assert headers["Content-Type"].startswith("application/json")
+    assert payload["status"] == "ok"
+    assert "version" in payload
+
+
+def test_dashboard_readyz_with_healthy_db(monkeypatch: Any) -> None:
+    monkeypatch.delenv("QDRANT_URL", raising=False)
+    db = _case_db("sqlite-dashboard-readyz")
+    service = MemoryService(db, workspace_root=Path.cwd())
+    service.init_db()
+
+    operator_log = Path(".tmp_cases") / "dashboard-readyz-operator.jsonl"
+    operator_log.parent.mkdir(parents=True, exist_ok=True)
+    operator_log.write_text("", encoding="utf-8")
+
+    with _running_server(service, operator_log) as base_url:
+        status, _, payload = _get_json(f"{base_url}/readyz")
+
+    assert status == 200
+    assert payload["status"] == "ready"
+    checks = payload["checks"]
+    assert isinstance(checks, dict)
+    assert checks["db"]["status"] == "ok"
+    assert checks["qdrant"]["status"] == "skipped"
+
+
+def test_dashboard_readyz_with_unreachable_db(monkeypatch: Any) -> None:
+    class BrokenStore:
+        db_path = "broken"
+
+        def connect(self) -> None:
+            raise RuntimeError("db unavailable")
+
+    class BrokenService:
+        store = BrokenStore()
+
+    monkeypatch.delenv("QDRANT_URL", raising=False)
+    operator_log = Path(".tmp_cases") / "dashboard-readyz-db-fail-operator.jsonl"
+    operator_log.parent.mkdir(parents=True, exist_ok=True)
+    operator_log.write_text("", encoding="utf-8")
+
+    with _running_server(BrokenService(), operator_log) as base_url:  # type: ignore[arg-type]
+        status, _, payload = _get_json_allow_error(f"{base_url}/readyz")
+
+    assert status == 503
+    assert payload["status"] == "not_ready"
+    checks = payload["checks"]
+    assert isinstance(checks, dict)
+    assert checks["db"]["status"] == "fail"
+    assert checks["qdrant"]["status"] == "skipped"
+
+
+def test_dashboard_readyz_with_unreachable_qdrant(monkeypatch: Any) -> None:
+    monkeypatch.setenv("QDRANT_URL", "http://127.0.0.1:1")
+    db = _case_db("sqlite-dashboard-readyz-qdrant")
+    service = MemoryService(db, workspace_root=Path.cwd())
+    service.init_db()
+
+    operator_log = Path(".tmp_cases") / "dashboard-readyz-qdrant-fail-operator.jsonl"
+    operator_log.parent.mkdir(parents=True, exist_ok=True)
+    operator_log.write_text("", encoding="utf-8")
+
+    with _running_server(service, operator_log) as base_url:
+        status, _, payload = _get_json_allow_error(f"{base_url}/readyz")
+
+    assert status == 503
+    assert payload["status"] == "not_ready"
+    checks = payload["checks"]
+    assert isinstance(checks, dict)
+    assert checks["db"]["status"] == "ok"
+    assert checks["qdrant"]["status"] == "fail"
 
 
 def test_dashboard_health_and_html() -> None:

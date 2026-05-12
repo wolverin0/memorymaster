@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 from html import escape
+import importlib.metadata
 import json
+import os
 import subprocess
 import sys
 import time
@@ -13,6 +15,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+import urllib.error
+import urllib.request
 from urllib.parse import parse_qs, urlparse
 
 from memorymaster.config import get_config
@@ -230,6 +234,8 @@ def _build_get_route_map(handler: Any) -> dict[str, callable]:
     """Build a mapping of routes to handler callables."""
     return {
         "/health": lambda qs: handler._write_json({"ok": True, "service": "memorymaster-dashboard"}),
+        "/healthz": lambda qs: handler._handle_healthz(),
+        "/readyz": lambda qs: handler._handle_readyz(),
         "/": lambda qs: handler._write_dashboard(),
         "/dashboard": lambda qs: handler._write_dashboard(),
         "/api/claims": lambda qs: handler._handle_claims(qs),
@@ -501,6 +507,55 @@ def _extract_claims_from_rows(rows_data: Any) -> tuple[list[Any], dict[int, dict
     return claims, scored_by_claim_id
 
 
+def _package_version() -> str | None:
+    try:
+        return importlib.metadata.version("memorymaster")
+    except importlib.metadata.PackageNotFoundError:
+        try:
+            from memorymaster import __version__
+        except Exception:
+            return None
+        return str(__version__)
+
+
+def _check_dashboard_db(service: Any) -> dict[str, Any]:
+    store = getattr(service, "store", None)
+    connect = getattr(store, "connect", None)
+    if not callable(connect):
+        return {"status": "fail", "error": "store connection is unavailable"}
+    try:
+        with connect() as conn:
+            conn.execute("SELECT 1")
+    except Exception as exc:
+        return {"status": "fail", "error": str(exc)}
+    return {"status": "ok"}
+
+
+def _qdrant_request_headers() -> dict[str, str]:
+    api_key = os.environ.get("QDRANT_API_KEY")
+    return {"api-key": api_key} if api_key else {}
+
+
+def _check_qdrant(qdrant_url: str | None) -> dict[str, Any]:
+    if not qdrant_url:
+        return {"status": "skipped", "reason": "QDRANT_URL not set"}
+    base_url = qdrant_url.rstrip("/")
+    headers = _qdrant_request_headers()
+    last_error = ""
+    for path in ("/healthz", "/collections"):
+        request = urllib.request.Request(f"{base_url}{path}", headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=0.5) as response:
+                if 200 <= int(response.status) < 300:
+                    return {"status": "ok", "endpoint": path}
+                last_error = f"HTTP {response.status} from {path}"
+        except urllib.error.HTTPError as exc:
+            last_error = f"HTTP {exc.code} from {path}"
+        except Exception as exc:
+            last_error = str(exc)
+    return {"status": "fail", "error": last_error or "Qdrant probe failed"}
+
+
 def _compute_claim_row(claim: Any, query_tokens: set[str], scored_by_claim_id: dict[int, dict[str, Any]], triage_flags: dict[int, dict[str, bool]]) -> dict[str, Any]:
     """Compute a single claim row with scores and annotations."""
     claim_id = int(claim.id)
@@ -705,6 +760,25 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _handle_healthz(self) -> None:
+        payload: dict[str, Any] = {"status": "ok"}
+        version = _package_version()
+        if version is not None:
+            payload["version"] = version
+        self._write_json(payload)
+
+    def _handle_readyz(self) -> None:
+        checks = {
+            "db": _check_dashboard_db(self._server.service),
+            "qdrant": _check_qdrant(os.environ.get("QDRANT_URL")),
+        }
+        ready = all(check.get("status") in {"ok", "skipped"} for check in checks.values())
+        status = HTTPStatus.OK if ready else HTTPStatus.SERVICE_UNAVAILABLE
+        self._write_json(
+            {"status": "ready" if ready else "not_ready", "checks": checks},
+            status=status,
+        )
 
     def _handle_claim_lineage(self, claim_id: int) -> None:
         target = _get_lineage_claim(self._server.service, claim_id)
