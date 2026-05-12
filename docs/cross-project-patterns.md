@@ -1,4 +1,4 @@
-﻿# Cross-Project Federation Contract
+# Cross-Project Federation Contract
 
 This document defines the current federation contract for the `query_memory`, `query_meta_decisions`, and `federated_query` MCP tools. It is behavior-derived: every contract point below cites the implementation or lifecycle rule that currently enforces it.
 
@@ -102,3 +102,96 @@ How to widen:
 
 - Use `claim_types=["decision","architecture","constraint"]` to include additional claim types.
 - There is currently no MCP parameter to include `user`, `team:<name>`, or `global` in `query_meta_decisions`; use `federated_query` or explicit `query_memory(scope_allowlist=...)` for those scopes.
+
+### `federated_query`
+
+`federated_query` is the explicit all-scope recall tool. Its MCP docstring states that it searches every claim regardless of scope (`memorymaster/mcp_server.py:1214-1226`). The wrapper calls `MemoryService.federated_query` (`memorymaster/mcp_server.py:1227-1248`), and the service delegates to `query_rows` with `scope_allowlist=None` (`memorymaster/service.py:1271-1283`).
+
+Default scope filter:
+
+- None. `scope_allowlist=None` means no scope filter is passed to storage (`memorymaster/service.py:1278-1283`, `memorymaster/_storage_read.py:173-178`).
+
+Included by default:
+
+- Claims from `project:<slug>`, `user`, `team:<name>`, `global`, and any other stored scope string because no scope allowlist is applied (`memorymaster/service.py:1271-1283`).
+- `confirmed`, `stale`, `conflicted`, and `candidate` claims because `federated_query` sets `include_candidates=True` and inherits `query_rows` defaults for stale and conflicted (`memorymaster/service.py:1278-1283`, `memorymaster/service.py:496-510`).
+
+Excluded by default:
+
+- Archived claims through the normal `query_rows` path (`memorymaster/service.py:536-543`, `memorymaster/_storage_read.py:170-171`).
+- Content-sensitive claims through the normal `query_rows` path (`memorymaster/service.py:520-545`, `memorymaster/security.py:356-363`).
+
+How to narrow:
+
+- `federated_query` has no scope parameter. Use `query_memory(scope_allowlist="...")` when a bounded scope set is required.
+
+## Cross-Tenant Safety
+
+The storage and service layers have tenant filtering support when a `MemoryService` is constructed with a tenant id: the service stores `self.tenant_id` (`memorymaster/service.py:85-98`), and storage filters `tenant_id` when it is provided (`memorymaster/_storage_read.py:158-160`, `memorymaster/postgres_store.py:524-526`).
+
+Current MCP behavior does not pass a tenant id into `MemoryService`. The MCP `_service` factory constructs `MemoryService(db_target=..., workspace_root=...)` without a `tenant_id` argument (`memorymaster/mcp_server.py:171-172`). Therefore, the three MCP federation tools documented here rely on scope filtering and sensitive filtering, not tenant isolation, unless a future wrapper or configuration path injects `tenant_id`.
+
+### Known Gaps
+
+1. `query_memory(retrieval_mode="qdrant")` bypasses the normal scope, archived, sensitive, and tenant filters. The MCP wrapper returns early for qdrant mode (`memorymaster/mcp_server.py:635-641`); `_qdrant_query` calls `backend.search(query, limit=limit)` without scope or tenant filters (`memorymaster/mcp_server.py:292-300`), then rehydrates hits with direct `store.get_claim` (`memorymaster/mcp_server.py:304-329`). SQLite and PostgreSQL `get_claim` fetch by id only (`memorymaster/_storage_read.py:43-60`, `memorymaster/postgres_store.py:481-490`).
+2. MCP tenant isolation is not wired. The service supports `tenant_id` (`memorymaster/service.py:85-98`) and storage enforces it when provided (`memorymaster/_storage_read.py:158-160`, `memorymaster/postgres_store.py:524-526`), but `_service` never passes one (`memorymaster/mcp_server.py:171-172`).
+3. `visibility="sensitive"` is not itself a default gate for these MCP tools. The active sensitive predicate inspects payload text (`memorymaster/security.py:356-363`), and visibility filtering is only conditional on `requesting_agent` (`memorymaster/service.py:470-472`), which the `query_memory` MCP wrapper does not pass (`memorymaster/mcp_server.py:643-653`).
+4. `query_meta_decisions` cannot be widened to non-project scopes from the MCP surface. The service explicitly discards non-`project:` scopes (`memorymaster/service.py:804-810`) and the MCP signature has no scope parameter (`memorymaster/mcp_server.py:1182-1199`).
+
+## Examples
+
+Default project recall, including `global` but excluding `user` and other projects:
+
+```json
+{
+  "tool": "query_memory",
+  "arguments": {
+    "query": "Supabase RLS policy gotchas",
+    "workspace": "G:/_OneDrive/OneDrive/Desktop/Py Apps/pather"
+  }
+}
+```
+
+Bounded cross-project recall with personal preferences included:
+
+```json
+{
+  "tool": "query_memory",
+  "arguments": {
+    "query": "deployment topology",
+    "scope_allowlist": "project:pather,project:wezbridge,user,global",
+    "limit": 10
+  }
+}
+```
+
+Project-only decision clustering:
+
+```json
+{
+  "tool": "query_meta_decisions",
+  "arguments": {
+    "query": "service runtime topology",
+    "claim_types": ["decision", "architecture"],
+    "top_n": 10
+  }
+}
+```
+
+Explicit all-scope search:
+
+```json
+{
+  "tool": "federated_query",
+  "arguments": {
+    "query": "agent coordination file conventions",
+    "limit": 20
+  }
+}
+```
+
+## Follow-Up Track Candidates
+
+- Add tenant injection to the MCP `_service` factory or tool request model before treating MCP federation as tenant-isolated (`memorymaster/mcp_server.py:171-172`, `memorymaster/service.py:85-98`).
+- Add scope, tenant, archived-status, and sensitive filters to `_qdrant_query` or route qdrant hits through `query_rows`-equivalent authorization (`memorymaster/mcp_server.py:292-329`, `memorymaster/mcp_server.py:635-641`).
+- Decide whether `visibility="sensitive"` should be enforced as a first-class query gate alongside content-sensitive detection (`memorymaster/security.py:356-363`, `memorymaster/service.py:470-472`).
