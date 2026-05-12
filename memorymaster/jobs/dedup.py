@@ -28,13 +28,30 @@ class DuplicatePair:
 
 
 @dataclass(slots=True)
+class ConflictPair:
+    """A pair of claims with matching keys but conflicting values."""
+
+    claim_a_id: int
+    claim_b_id: int
+    similarity: float
+    text_overlap: float
+    subject: str
+    predicate: str
+    object_value_a: str
+    object_value_b: str
+
+
+@dataclass(slots=True)
 class DedupResult:
     """Summary of a dedup run."""
 
     scanned: int = 0
     duplicates_found: int = 0
     claims_archived: int = 0
+    conflicts_found: int = 0
+    claims_conflicted: int = 0
     pairs: list[DuplicatePair] = field(default_factory=list)
+    conflict_pairs: list[ConflictPair] = field(default_factory=list)
 
 
 def _text_overlap(a: str, b: str) -> float:
@@ -56,6 +73,17 @@ def _subject_predicate_match(a: Claim, b: Claim) -> bool:
             and a.predicate.strip().lower() == b.predicate.strip().lower()
         )
     return False
+
+
+def _normalized_object_value(claim: Claim) -> str:
+    return (claim.object_value or "").strip().casefold()
+
+
+def _object_values_conflict(a: Claim, b: Claim) -> bool:
+    """Return True when matching subject/predicate claims assert different values."""
+    a_value = _normalized_object_value(a)
+    b_value = _normalized_object_value(b)
+    return bool(a_value and b_value and a_value != b_value)
 
 
 def _pick_survivor(a: Claim, b: Claim) -> tuple[Claim, Claim]:
@@ -124,6 +152,8 @@ def find_duplicates(
             sp_match = _subject_predicate_match(claims[i], claims[j])
             if not sp_match and overlap < min_text_overlap:
                 continue
+            if sp_match and _object_values_conflict(claims[i], claims[j]):
+                continue
 
             keep, archive = _pick_survivor(claims[i], claims[j])
             archived_ids.add(archive.id)
@@ -137,6 +167,56 @@ def find_duplicates(
                     archive_confidence=archive.confidence,
                     keep_text=keep.text,
                     archive_text=archive.text,
+                )
+            )
+    return pairs
+
+
+def find_conflicts(
+    claims: list[Claim],
+    provider: EmbeddingProvider,
+    *,
+    threshold: float = 0.92,
+    limit: int | None = None,
+    scope_filter: str | None = None,
+) -> list[ConflictPair]:
+    """Scan claims and return subject/predicate matches with different object values."""
+    if scope_filter is not None:
+        claims = [claim for claim in claims if claim.scope == scope_filter]
+    if limit is not None:
+        claims = sorted(claims, key=lambda claim: claim.created_at)[:limit]
+
+    if len(claims) < 2:
+        return []
+
+    embeddings: list[list[float]] = []
+    for claim in claims:
+        embed_text = claim.text
+        if claim.subject and claim.predicate:
+            embed_text = f"{claim.subject} {claim.predicate} {claim.object_value or ''} {claim.text}"
+        embeddings.append(provider.embed(embed_text))
+
+    pairs: list[ConflictPair] = []
+    for i in range(len(claims)):
+        for j in range(i + 1, len(claims)):
+            sim = cosine_similarity(embeddings[i], embeddings[j])
+            if sim < threshold:
+                continue
+            if not _subject_predicate_match(claims[i], claims[j]):
+                continue
+            if not _object_values_conflict(claims[i], claims[j]):
+                continue
+
+            pairs.append(
+                ConflictPair(
+                    claim_a_id=claims[i].id,
+                    claim_b_id=claims[j].id,
+                    similarity=round(sim, 4),
+                    text_overlap=round(_text_overlap(claims[i].text, claims[j].text), 4),
+                    subject=(claims[i].subject or "").strip(),
+                    predicate=(claims[i].predicate or "").strip(),
+                    object_value_a=(claims[i].object_value or "").strip(),
+                    object_value_b=(claims[j].object_value or "").strip(),
                 )
             )
     return pairs
@@ -196,14 +276,47 @@ def run(
         limit=limit,
         scope_filter=scope_filter,
     )
+    conflict_pairs = find_conflicts(
+        claims,
+        provider,
+        threshold=threshold,
+        limit=limit,
+        scope_filter=scope_filter,
+    )
+    conflicted_ids = {
+        claim_id
+        for pair in conflict_pairs
+        for claim_id in (pair.claim_a_id, pair.claim_b_id)
+    }
+    if conflicted_ids:
+        pairs = [
+            pair
+            for pair in pairs
+            if pair.keep_id not in conflicted_ids and pair.archive_id not in conflicted_ids
+        ]
 
     result = DedupResult(
         scanned=len(filtered_claims),
         duplicates_found=len(pairs),
+        conflicts_found=len(conflict_pairs),
         pairs=pairs,
+        conflict_pairs=conflict_pairs,
     )
 
     if not dry_run:
+        for claim_id in sorted(conflicted_ids):
+            try:
+                transition_claim(
+                    store,
+                    claim_id=claim_id,
+                    to_status="conflicted",
+                    reason="same subject/predicate has conflicting object_value",
+                    event_type="dedup",
+                )
+                result.claims_conflicted += 1
+            except Exception as exc:
+                logger.warning("Failed to mark conflicting claim %d: %s", claim_id, exc)
+
         for pair in pairs:
             try:
                 transition_claim(
@@ -241,6 +354,8 @@ def run(
                 "scanned": result.scanned,
                 "duplicates_found": result.duplicates_found,
                 "claims_archived": result.claims_archived,
+                "conflicts_found": result.conflicts_found,
+                "claims_conflicted": result.claims_conflicted,
             },
         )
 
@@ -252,6 +367,8 @@ def run(
         "threshold": threshold,
         "limit": limit,
         "scope_filter": scope_filter,
+        "conflicts_found": result.conflicts_found,
+        "claims_conflicted": result.claims_conflicted,
         "pairs": [
             {
                 "keep_id": p.keep_id,
@@ -264,5 +381,18 @@ def run(
                 "archive_text": p.archive_text,
             }
             for p in result.pairs
+        ],
+        "conflict_pairs": [
+            {
+                "claim_a_id": p.claim_a_id,
+                "claim_b_id": p.claim_b_id,
+                "similarity": p.similarity,
+                "text_overlap": p.text_overlap,
+                "subject": p.subject,
+                "predicate": p.predicate,
+                "object_value_a": p.object_value_a,
+                "object_value_b": p.object_value_b,
+            }
+            for p in result.conflict_pairs
         ],
     }
