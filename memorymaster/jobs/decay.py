@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from memorymaster import observability
 from memorymaster.config import get_config
 from memorymaster.lifecycle import transition_claim
 
@@ -67,4 +68,5 @@ def run(store, limit: int = 200, stale_threshold: float | None = None) -> dict[s
             )
             transitioned += 1
 
+    observability.bump_decay_run("success")
     return {"processed": len(claims), "decayed": decayed, "to_stale": transitioned}
