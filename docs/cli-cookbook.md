@@ -2,6 +2,8 @@
 
 Every example below uses the current `memorymaster/cli.py` argparse surface and keeps the default `memorymaster.db` database path explicit.
 
+For a fresh local database, run `init-db` first. Examples that reference claim IDs, snapshot IDs, source item IDs, or input files assume those records or files already exist in the session.
+
 Requested aliases checked against the parser: `restore` is currently `rollback`, `redact-claim-payload` is currently `redact-claim`, and `list-steward-proposals` is currently `steward-proposals`. `query-meta-decisions`, `find-related`, and standalone `decay` are not CLI subcommands in the current parser.
 
 ## Query & Recall
