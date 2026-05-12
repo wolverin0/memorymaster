@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from memorymaster._storage_shared import utc_now
 from memorymaster.models import (
@@ -51,6 +51,22 @@ def _bounded_confidence(confidence: float | None) -> float | None:
 
 
 class _SourceItemsMixin:
+    if TYPE_CHECKING:
+        def connect(self) -> sqlite3.Connection: ...
+
+        def _insert_event_row(
+            self,
+            conn: sqlite3.Connection,
+            *,
+            claim_id: int | None,
+            event_type: str,
+            from_status: str | None,
+            to_status: str | None,
+            details: str | None,
+            payload_json: str | None,
+            created_at: str,
+        ) -> int: ...
+
     def upsert_external_source(
         self,
         *,
