@@ -1365,7 +1365,7 @@ class PostgresStore(SQLiteStore):
         return statements
 
     @classmethod
-    def _row_to_claim(cls, row: dict[str, object]) -> Claim:
+    def _row_to_claim(cls, row: Any) -> Claim:
         return Claim(
             id=int(row["id"]),
             text=str(row["text"]),
@@ -1392,7 +1392,7 @@ class PostgresStore(SQLiteStore):
         )
 
     @classmethod
-    def _row_to_citation(cls, row: dict[str, object]) -> Citation:
+    def _row_to_citation(cls, row: Any) -> Citation:
         return Citation(
             id=int(row["id"]),
             claim_id=int(row["claim_id"]),
@@ -1403,7 +1403,7 @@ class PostgresStore(SQLiteStore):
         )
 
     @classmethod
-    def _row_to_event(cls, row: dict[str, object]) -> Event:
+    def _row_to_event(cls, row: Any) -> Event:
         payload_value = row["payload_json"]
         if payload_value is None:
             payload_json = None
@@ -1432,7 +1432,7 @@ class PostgresStore(SQLiteStore):
         return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
     @classmethod
-    def _row_to_external_source(cls, row: dict[str, object]) -> ExternalSource:
+    def _row_to_external_source(cls, row: Any) -> ExternalSource:
         return ExternalSource(
             id=int(row["id"]),
             source_type=str(row["source_type"]),
@@ -1443,7 +1443,7 @@ class PostgresStore(SQLiteStore):
         )
 
     @classmethod
-    def _row_to_source_item(cls, row: dict[str, object]) -> SourceItem:
+    def _row_to_source_item(cls, row: Any) -> SourceItem:
         return SourceItem(
             id=int(row["id"]),
             source_id=int(row["source_id"]),
@@ -1462,7 +1462,7 @@ class PostgresStore(SQLiteStore):
         )
 
     @classmethod
-    def _row_to_evidence_item(cls, row: dict[str, object]) -> EvidenceItem:
+    def _row_to_evidence_item(cls, row: Any) -> EvidenceItem:
         confidence = row.get("confidence")
         return EvidenceItem(
             id=int(row["id"]),
@@ -1478,7 +1478,7 @@ class PostgresStore(SQLiteStore):
         )
 
     @classmethod
-    def _row_to_action_proposal(cls, row: dict[str, object]) -> ActionProposal:
+    def _row_to_action_proposal(cls, row: Any) -> ActionProposal:
         return ActionProposal(
             id=int(row["id"]),
             proposal_type=str(row["proposal_type"]),
@@ -1500,7 +1500,7 @@ class PostgresStore(SQLiteStore):
         )
 
     @classmethod
-    def _row_to_claim_link(cls, row: dict[str, object]) -> ClaimLink:
+    def _row_to_claim_link(cls, row: Any) -> ClaimLink:
         return ClaimLink(
             id=int(row["id"]),
             source_id=int(row["source_id"]),
