@@ -15,6 +15,7 @@ import json
 import logging
 from typing import Any
 
+from memorymaster._storage_shared import ConcurrentModificationError
 from memorymaster.lifecycle import transition_claim
 from memorymaster.llm_provider import call_llm
 from memorymaster.models import Claim
@@ -114,7 +115,7 @@ def resolve_conflict_pair(
     loser = claim_b if winner_letter == "A" else claim_a
 
     try:
-        transition_claim(
+        updated = transition_claim(
             store,
             claim_id=loser.id,
             to_status="superseded",
@@ -122,12 +123,35 @@ def resolve_conflict_pair(
             event_type="validator",
             replaced_by_claim_id=winner.id,
         )
+        current_replacement_id = getattr(updated, "replaced_by_claim_id", None)
+        if current_replacement_id != winner.id:
+            return {
+                "resolved": False,
+                "reason": "lost_race",
+                "winner_id": winner.id,
+                "loser_id": loser.id,
+                "current_replacement_id": current_replacement_id,
+            }
+        if hasattr(store, "set_supersedes"):
+            store.set_supersedes(winner.id, loser.id)
         return {
             "resolved": True,
             "winner_id": winner.id,
             "loser_id": loser.id,
             "reason": reason,
         }
+    except ConcurrentModificationError as exc:
+        current = store.get_claim(loser.id, include_citations=False)
+        if current is not None and current.status == "superseded":
+            return {
+                "resolved": False,
+                "reason": "lost_race",
+                "winner_id": winner.id,
+                "loser_id": loser.id,
+                "current_replacement_id": current.replaced_by_claim_id,
+            }
+        logger.warning("Failed to resolve conflict %d vs %d: %s", claim_a.id, claim_b.id, exc)
+        return {"resolved": False, "reason": str(exc)}
     except Exception as exc:
         logger.warning("Failed to resolve conflict %d vs %d: %s", claim_a.id, claim_b.id, exc)
         return {"resolved": False, "reason": str(exc)}
