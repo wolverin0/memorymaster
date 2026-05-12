@@ -49,3 +49,15 @@ def test_t07_db_connection_strings_with_credentials_are_redacted(uri: str) -> No
 def test_t07_aws_access_key_shape_is_redacted() -> None:
     token = "AKIAFAKEFAKEFAKE1234"
     _assert_redacted(f"AWS_ACCESS_KEY_ID={token}", "aws_access_key", token)
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "ghp_fakefakefakefakefakefakefakefakefake",
+        "gho_fakefakefakefakefakefakefakefakefake",
+        "ghu_fakefakefakefakefakefakefakefakefake",
+    ],
+)
+def test_t07_github_pat_shapes_are_redacted(token: str) -> None:
+    _assert_redacted(f"GITHUB_TOKEN={token}", "github_token", token)
