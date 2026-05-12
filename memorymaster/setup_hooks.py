@@ -309,7 +309,7 @@ def setup_steward_cron():
             print(f"  Error: {e}")
     else:
         cron_line = f"0 */6 * * * {PYTHON_EXE} {steward_script} >> /var/log/memorymaster-steward.log 2>&1"
-        print(f"  Add this to your crontab (crontab -e):")
+        print("  Add this to your crontab (crontab -e):")
         print(f"  {cron_line}")
 
 

@@ -1,4 +1,6 @@
-import json, os, sys
+import json
+import os
+import sys
 
 PROJECT_ROOT = "__MEMORYMASTER_PROJECT_ROOT__"
 DB_PATH = os.path.join(PROJECT_ROOT, "memorymaster.db")
