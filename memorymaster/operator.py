@@ -533,9 +533,9 @@ class MemoryOperator:
             if not (queue_inbox and queue_inbox == canonical_inbox):
                 return start_offset, read_offset, acked_offset, persisted_seen_events, persisted_processed_events, pending_queue, queue_state_loaded
 
-            start_offset = max(0, int(raw_queue_state.get("read_offset", raw_queue_state.get("offset", 0))))
+            start_offset = max(0, int(raw_queue_state.get("read_offset") or raw_queue_state.get("offset") or 0))
             read_offset = start_offset
-            acked_offset = max(0, int(raw_queue_state.get("acked_offset", raw_queue_state.get("offset", read_offset))))
+            acked_offset = max(0, int(raw_queue_state.get("acked_offset") or raw_queue_state.get("offset") or read_offset))
             persisted_seen_events = max(0, int(raw_queue_state.get("seen_events", 0)))
             persisted_processed_events = max(0, int(raw_queue_state.get("processed_events", 0)))
             next_queue_id = max(1, int(raw_queue_state.get("next_queue_id", 1)))
@@ -684,7 +684,7 @@ class MemoryOperator:
     def _record_turn_processed(
         self,
         turn,
-        summary: dict[str, object],
+        summary: dict[str, Any],
         entry_id: int,
         entry_offset: int,
         seen_events: int,
@@ -848,10 +848,10 @@ class MemoryOperator:
             queue_journal_path = Path(str(self.config.queue_journal_jsonl_path).strip())
             queue_journal_path.parent.mkdir(parents=True, exist_ok=True)
 
-        def emit(event: str, payload: dict[str, object] | None = None) -> None:
+        def emit(event: str, payload: dict[str, Any] | None = None) -> None:
             if log_path is None:
                 return
-            record = {"ts": _utc_now_iso(), "event": event}
+            record: dict[str, Any] = {"ts": _utc_now_iso(), "event": event}
             if payload:
                 record.update(payload)
             with log_path.open("a", encoding="utf-8") as out:
@@ -1160,10 +1160,10 @@ class MemoryOperator:
             log_path = Path(self.config.log_jsonl_path)
             log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        def emit(event: str, payload: dict[str, object] | None = None) -> None:
+        def emit(event: str, payload: dict[str, Any] | None = None) -> None:
             if log_path is None:
                 return
-            record = {"ts": _utc_now_iso(), "event": event}
+            record: dict[str, Any] = {"ts": _utc_now_iso(), "event": event}
             if payload:
                 record.update(payload)
             with log_path.open("a", encoding="utf-8") as out:
