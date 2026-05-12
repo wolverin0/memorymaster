@@ -125,18 +125,20 @@ class PostgresStore(SQLiteStore):
         material = "\x1f".join(components)
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
-    def _ensure_event_integrity_schema(self, conn) -> None:
+    @staticmethod
+    def _ensure_event_integrity_schema(conn) -> None:
         with conn.cursor() as cur:
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS prev_event_hash TEXT")
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS event_hash TEXT")
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS hash_algo TEXT")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_events_event_hash ON events(event_hash)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_events_prev_event_hash ON events(prev_event_hash)")
-            self._drop_events_append_only_triggers(cur)
-            self._backfill_event_chain(conn)
-            self._ensure_events_append_only_rules(cur)
+            PostgresStore._drop_events_append_only_triggers(cur)
+            PostgresStore._backfill_event_chain(conn)
+            PostgresStore._ensure_events_append_only_rules(cur)
 
-    def _ensure_confirmed_tuple_uniqueness_schema(self, conn) -> None:
+    @staticmethod
+    def _ensure_confirmed_tuple_uniqueness_schema(conn) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -184,7 +186,7 @@ class PostgresStore(SQLiteStore):
                 $$;
                 """
             )
-            self._try_create_confirmed_tuple_unique_index(cur)
+            PostgresStore._try_create_confirmed_tuple_unique_index(cur)
 
     @staticmethod
     def _try_create_confirmed_tuple_unique_index(cur) -> None:
@@ -271,7 +273,8 @@ class PostgresStore(SQLiteStore):
             """
         )
 
-    def _backfill_event_chain(self, conn, *, rebuild_all: bool = False) -> int:
+    @staticmethod
+    def _backfill_event_chain(conn, *, rebuild_all: bool = False) -> int:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -298,12 +301,12 @@ class PostgresStore(SQLiteStore):
                 created_at = row["created_at"]
                 if not isinstance(created_at, datetime):
                     created_at = datetime.fromisoformat(str(created_at))
-                event_hash = self._compute_event_hash(
+                event_hash = PostgresStore._compute_event_hash(
                     claim_id=int(row["claim_id"]) if row["claim_id"] is not None else None,
                     event_type=str(row["event_type"]),
-                    from_status=self._as_text(row["from_status"]),
-                    to_status=self._as_text(row["to_status"]),
-                    details=self._as_text(row["details"]),
+                    from_status=PostgresStore._as_text(row["from_status"]),
+                    to_status=PostgresStore._as_text(row["to_status"]),
+                    details=PostgresStore._as_text(row["details"]),
                     payload=payload,
                     created_at=created_at,
                     prev_event_hash=prev_hash,
@@ -1514,7 +1517,8 @@ class PostgresStore(SQLiteStore):
             created_at=cls._as_iso(row["created_at"]) or "",
         )
 
-    def _ensure_claim_links_schema(self, conn) -> None:
+    @staticmethod
+    def _ensure_claim_links_schema(conn) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -1539,16 +1543,18 @@ class PostgresStore(SQLiteStore):
                 "CREATE INDEX IF NOT EXISTS idx_claim_links_target ON claim_links(target_id)"
             )
 
-    def _ensure_human_id_schema(self, conn) -> None:
+    @staticmethod
+    def _ensure_human_id_schema(conn) -> None:
         """Add human_id column if missing and backfill existing claims."""
         with conn.cursor() as cur:
             cur.execute("ALTER TABLE claims ADD COLUMN IF NOT EXISTS human_id TEXT")
             cur.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id)"
             )
-        self._backfill_human_ids(conn)
+        PostgresStore._backfill_human_ids(conn)
 
-    def _backfill_human_ids(self, conn) -> int:
+    @staticmethod
+    def _backfill_human_ids(conn) -> int:
         """Assign human_id to all claims that lack one."""
         with conn.cursor() as cur:
             cur.execute(
@@ -1560,9 +1566,9 @@ class PostgresStore(SQLiteStore):
             updated = 0
             for row in rows:
                 claim_id = int(row["id"])
-                subject = self._as_text(row["subject"])
+                subject = PostgresStore._as_text(row["subject"])
                 text = str(row["text"])
-                human_id = self._allocate_human_id(cur, subject, text, claim_id)
+                human_id = PostgresStore._allocate_human_id(cur, subject, text, claim_id)
                 cur.execute(
                     "UPDATE claims SET human_id = %s WHERE id = %s",
                     (human_id, claim_id),
@@ -1609,7 +1615,8 @@ class PostgresStore(SQLiteStore):
             suffix += 1
             final = f"{candidate}~{suffix}"
 
-    def _ensure_tenant_id_schema(self, conn) -> None:
+    @staticmethod
+    def _ensure_tenant_id_schema(conn) -> None:
         """Add tenant_id column if missing, with an index for tenant isolation."""
         with conn.cursor() as cur:
             cur.execute("ALTER TABLE claims ADD COLUMN IF NOT EXISTS tenant_id TEXT")
