@@ -22,6 +22,7 @@ import time
 import urllib.request
 import urllib.error
 from dataclasses import dataclass, field
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -524,7 +525,7 @@ def run_steward(
     cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS,
     auto_validate: bool = True,
     workspace_root: str = "",
-) -> dict:
+) -> dict[str, Any]:
     """Process candidate claims through LLM extraction and curation.
 
     Args:
@@ -570,7 +571,7 @@ def run_steward(
     dedupe_on = _dedupe_enabled()
     dedupe_shadow = _dedupe_shadow()
 
-    stats = {
+    stats: dict[str, Any] = {
         "total": len(candidates),
         "confirmed": 0,
         "archived": 0,
@@ -766,6 +767,8 @@ def run_steward(
                                     (text[:200], subj, pred, obj_val, conf, scope),
                                 )
                                 new_id = cursor.lastrowid
+                                if new_id is None:
+                                    raise RuntimeError("SQLite did not return a claim id.")
                                 conn.execute(
                                     "INSERT INTO events (claim_id, event_type, details, created_at) "
                                     "VALUES (?, 'transition', ?, datetime('now'))",
