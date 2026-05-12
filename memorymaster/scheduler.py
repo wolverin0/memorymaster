@@ -16,6 +16,15 @@ def utc_now() -> str:
 def get_git_head(workspace_root: Path) -> str | None:
     resolved = workspace_root.resolve()
     try:
+        root_proc = subprocess.run(
+            ["git", "-C", str(resolved), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        if root_proc.returncode != 0 or Path(root_proc.stdout.strip()).resolve() != resolved:
+            return None
         proc = subprocess.run(
             ["git", "-C", str(resolved), "rev-parse", "HEAD"],
             capture_output=True,
