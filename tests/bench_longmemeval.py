@@ -306,8 +306,12 @@ def run_full(data: list[dict[str, Any]], retrieval_results: list[RetrievalResult
     for idx, item in enumerate(selected, start=1):
         qid = str(item["question_id"])
         retrieval = by_id[qid]
-        hypothesis = answer_question(str(item["question"]), retrieval.top_contexts, api_key)
-        verdict = judge_answer(str(item["answer"]), hypothesis, api_key)
+        try:
+            hypothesis = answer_question(str(item["question"]), retrieval.top_contexts, api_key)
+            verdict = judge_answer(str(item["answer"]), hypothesis, api_key)
+        except RuntimeError as exc:
+            print(f"[full] stopping after {len(details)} completed questions: {exc}")
+            break
         correct = verdict == "YES"
         qtype = str(item.get("question_type") or "unknown")
         by_type[qtype]["total"] += 1
@@ -343,7 +347,9 @@ def run_full(data: list[dict[str, Any]], retrieval_results: list[RetrievalResult
     payload = {
         "mode": "full",
         "judge_model": JUDGE_MODEL,
+        "status": "complete" if total == len(selected) else "partial" if total else "deferred",
         "questions": total,
+        "requested_questions": len(selected),
         "accuracy": correct_total / total if total else 0.0,
         "correct": correct_total,
         "by_question_type": breakdown,
@@ -380,7 +386,10 @@ def main() -> None:
     retrieval_payload, retrieval_results = run_retrieval(data, limit=args.limit)
     if args.full:
         full_payload = run_full(data, retrieval_results, limit=args.limit)
-        print(f"RESULT_QA_ACCURACY={full_payload['accuracy']:.4f}")
+        if full_payload.get("status") == "deferred":
+            print("RESULT_QA_ACCURACY=deferred")
+        else:
+            print(f"RESULT_QA_ACCURACY={full_payload['accuracy']:.4f}")
     else:
         print("RESULT_QA_ACCURACY=deferred")
     metrics = retrieval_payload["metrics"]
