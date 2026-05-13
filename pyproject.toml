@@ -22,7 +22,10 @@ classifiers = [
 ]
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "requests>=2.31",
+    "tenacity>=8.2",
+]
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2"]
