@@ -2,7 +2,7 @@
 
 ## TL;DR
 
-MemoryMaster v3.14.0 on LongMemEval-S cleaned, full retrieval run dated 2026-05-13: N=500, R@5 **0.8940**, R@10 **0.9420**, MRR **0.7992**. Full QA accuracy is **partial only**: 0/3 judged correctly before Gemini quota stopped the fallback judge.
+MemoryMaster v3.14.0 on LongMemEval-S cleaned, full retrieval run dated 2026-05-13: N=500, R@5 **0.8940**, R@10 **0.9420**, MRR **0.7992**. Full QA accuracy is still blocked by judge infrastructure: GPT-4o and Gemini saturated quota, and the follow-up Sonnet run could not start because `ANTHROPIC_API_KEY` was unavailable in the Codex process environment.
 
 ## Methodology
 
@@ -13,16 +13,17 @@ MemoryMaster v3.14.0 on LongMemEval-S cleaned, full retrieval run dated 2026-05-
 - Store isolation: each question uses a fresh temporary SQLite database and does not read or write `memorymaster.db`.
 - Top-K: 10 for retrieval metrics; top-5 retrieved claims are used as context for full QA mode.
 - Metric definition: R@K is counted as a hit if any `answer_session_id` appears in the top K retrieved session ids. MRR uses the rank of the first relevant session.
-- Judge path: `gpt-4o` with tenacity retries first; after OpenAI exhausted retries, the harness switched to `gemini-2.5-flash`. Gemini quota stopped QA after 3/500 questions, so QA is not a full benchmark number.
+- Judge path: `gpt-4o` with tenacity retries first; after OpenAI exhausted retries, the harness switched to `gemini-2.5-flash`. Gemini quota stopped QA after 3/500 questions, so QA is not a full benchmark number. Follow-up code adds `claude-sonnet-4-5` as the default primary judge with fallback order Sonnet -> Gemini -> GPT-4o, but the Sonnet run was blocked by missing `ANTHROPIC_API_KEY` in the execution environment.
 
 ## Results
 
 | Scope | Date | Questions | R@5 | R@10 | MRR | Full-QA accuracy |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | MemoryMaster v3.14.0 | 2026-05-13 | 500 | 0.8940 | 0.9420 | 0.7992 | 0.0000 (3/500 partial) |
+| QA Accuracy, Sonnet judge | 2026-05-13 | 500 requested | n/a | n/a | n/a | blocked (0/500; missing `ANTHROPIC_API_KEY`) |
 | agentmemory published reference | n/a | 500 | 0.9520 | 0.9860 | 0.8820 | n/a |
 
-Reference comparison is included for orientation only. The MemoryMaster row is N=500 retrieval; its QA cell is a tiny partial and should not be compared as a full accuracy score.
+Reference comparison is included for orientation only. The MemoryMaster row is N=500 retrieval; its QA cell is a tiny partial and should not be compared as a full accuracy score. The Sonnet row records judge infrastructure status, not a benchmark score.
 
 ## Breakdown
 
@@ -43,13 +44,14 @@ Reference comparison is included for orientation only. The MemoryMaster row is N
 | --- | ---: | ---: | ---: |
 | single-session-user | 3 | 0 | 0.0000 |
 
-QA stopped at 3/500 because both OpenAI retries and the Gemini fallback quota were exhausted during the run.
+QA stopped at 3/500 because both OpenAI retries and the Gemini fallback quota were exhausted during the first run. The Sonnet follow-up did not complete any QA items because the Anthropic key was not visible to the run environment.
 
 ## Reproduce
 
 ```powershell
 python tests\bench_longmemeval.py --retrieval-only
 python tests\bench_longmemeval.py --full
+python tests\bench_longmemeval.py --qa-only --judge sonnet
 ```
 
 The dataset is downloaded on demand to `benchmark/data/longmemeval_s_cleaned.json`, which is gitignored. Results are written to `benchmark/longmemeval_s_results.json`.
@@ -58,6 +60,7 @@ The dataset is downloaded on demand to `benchmark/data/longmemeval_s_cleaned.jso
 
 - Retrieval: 500 questions in 1,069.787 seconds.
 - End-to-end run: 1,175.810 seconds.
-- Judge models used: `gpt-4o` attempted first, then `gemini-2.5-flash` for completed QA calls.
+- Judge model history: `gpt-4o` attempted first (429 saturated) -> `gemini-2.5-flash` fallback (also 429 saturated) -> `claude-sonnet-4-5` follow-up configured but blocked by missing `ANTHROPIC_API_KEY` in the Codex execution environment.
 - Tokens consumed in completed judge calls: 14,948.
+- Anthropic API tokens consumed: 0.
 - QA status: partial, 3/500 judged, stopped by Gemini quota after fallback.
