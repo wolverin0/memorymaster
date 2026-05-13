@@ -505,6 +505,8 @@ def run_full(
     payload = {
         "mode": "full",
         "judge_model": judge.judge_used_label,
+        "judge_retry_policy": "OpenAI uses tenacity: 5 attempts, exponential backoff 2-60s, 429 retry-after honored; Gemini fallback after OpenAI exhaustion",
+        "judge_pacing_seconds": judge_pacing_seconds,
         "status": status,
         "questions": total,
         "requested_questions": len(selected),
