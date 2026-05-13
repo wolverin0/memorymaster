@@ -34,6 +34,7 @@ memorymaster.db
 # Artifacts (generated, not committed)
 artifacts/
 data/
+benchmark/data/
 test_results.txt
 test_output.txt
 *.log
