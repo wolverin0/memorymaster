@@ -1,7 +1,7 @@
 ---
 name: memorymaster-release-discipline
-description: Cut a memorymaster release with measurement-first methodology and honest-null acceptance. Use when prepping v3.X release — survey adjacent tools, measure precision@k against ≥953-prompt eval, ship null/harmful results honestly, avoid cloud /schedule for local-DB tasks. Encodes the v3.5–v3.13 release pattern.
-when-to-use: User says "cut a release" / "bump version" / "release v3.X" / "ship the next memorymaster version" in the memorymaster repo. Also fires before proposing any new recall/ranking feature to remind the agent that measurement-first is mandatory in this project.
+description: Cut a memorymaster release that introduces or modifies recall/ranking/scoring behavior — apply measurement-first methodology and honest-null acceptance. Use BEFORE shipping any change that touches the recall pipeline, ranker, query_memory, or scoring weights. Survey adjacent tools, measure precision@k against ≥953-prompt eval, ship null/harmful results honestly, avoid cloud /schedule for local-DB tasks. Encodes the v3.5–v3.13 release pattern.
+when-to-use: User proposes or starts work on a new recall/ranking/scoring feature, or asks to ship a release whose changeset touches `query_memory`, recall weights (W_LEXICAL, W_FRESHNESS, W_GRAPH, etc.), scoring functions, or the ranker. Do NOT fire on feature-heavy / docs / hotfix releases that don't touch recall behavior (e.g. v3.14.0's 32-PR session was correctly out of scope).
 allowed-tools: [Bash, Read, Grep, Edit]
 ---
 
@@ -109,7 +109,7 @@ After release tag:
 git log --oneline -1                                     # confirm release commit landed
 gh release view v<X.Y.Z>                                 # confirm GitHub release exists
 python -m pytest tests/ -q                               # full suite green
-python scripts/eval-precision.py --n 953 --top-k 50      # if methodology change, re-run
+python scripts/eval_recall_precision_at_5.py --n 953 --top-k 50  # if methodology change, re-run
 ```
 
 Then update CHANGELOG.md with the eval delta line and link to the relevant claim IDs.
