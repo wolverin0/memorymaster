@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- **LongMemEval-S harness**: canonicalized the benchmark runner at `tests/bench_longmemeval.py`, removed the duplicate `scripts/run_longmemeval.py`, and added the full N=500 retrieval artifact at `benchmark/longmemeval_s_results.json`.
+
 ## [3.14.0] - 2026-05-11
 
 **Codex parallel-burn reliability and documentation release.** Consolidates the PR #31-#43 batch: full-content verbatim deduplication, safer MCP input handling, provider-routed LLM resolution, bounded dedup operations, and expanded test/documentation coverage.
