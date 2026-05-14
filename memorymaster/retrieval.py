@@ -8,6 +8,7 @@ from typing import Callable, Mapping
 
 from memorymaster.config import get_config
 from memorymaster.models import Claim
+from memorymaster.recall_fusion import RRF_K_DEFAULT, rrf_fuse
 
 RETRIEVAL_MODES = ("legacy", "hybrid")
 
@@ -180,6 +181,69 @@ def apply_session_diversity_cap(ranked: list[RankedClaim], cap: int) -> list[Ran
     return result
 
 
+def _component_rankings(rows: list[RankedClaim]) -> dict[str, list[int]]:
+    original_positions = {row.claim.id: index for index, row in enumerate(rows)}
+
+    def ranked_ids(score_attr: str) -> list[int]:
+        ordered = sorted(
+            rows,
+            key=lambda row: (
+                -float(getattr(row, score_attr)),
+                original_positions[row.claim.id],
+            ),
+        )
+        return [row.claim.id for row in ordered]
+
+    return {
+        "lexical": ranked_ids("lexical_score"),
+        "vector": ranked_ids("vector_score"),
+        "confidence": ranked_ids("confidence_score"),
+        "freshness": ranked_ids("freshness_score"),
+    }
+
+
+def apply_rrf_tiebreaker(
+    ranked: list[RankedClaim],
+    *,
+    threshold: float = 0.01,
+    k: int = RRF_K_DEFAULT,
+    enabled: bool = True,
+) -> list[RankedClaim]:
+    if not enabled or len(ranked) < 2:
+        return ranked
+
+    threshold = max(0.0, threshold)
+    threshold_epsilon = 1e-12
+    head_count = min(10, len(ranked))
+    result = list(ranked)
+    index = 0
+
+    while index < head_count:
+        group_end = index + 1
+        while (
+            group_end < head_count
+            and abs(ranked[group_end - 1].score - ranked[group_end].score)
+            <= threshold + threshold_epsilon
+        ):
+            group_end += 1
+
+        if group_end - index > 1:
+            group = ranked[index:group_end]
+            original_positions = {row.claim.id: offset for offset, row in enumerate(group)}
+            rrf_scores = rrf_fuse(_component_rankings(group), k=k)
+            result[index:group_end] = sorted(
+                group,
+                key=lambda row: (
+                    -rrf_scores.get(row.claim.id, 0.0),
+                    original_positions[row.claim.id],
+                ),
+            )
+
+        index = group_end
+
+    return result
+
+
 def rank_claim_rows(
     query_text: str,
     claims: list[Claim],
@@ -261,6 +325,12 @@ def rank_claim_rows(
             row.claim.id,
         ),
         reverse=True,
+    )
+    cfg = get_config()
+    ranked = apply_rrf_tiebreaker(
+        ranked,
+        threshold=cfg.rrf_tiebreaker_threshold,
+        enabled=cfg.rrf_tiebreaker_enabled,
     )
     ranked = apply_session_diversity_cap(ranked, get_config().session_diversity_cap)
     return ranked[:limit]

@@ -59,6 +59,14 @@ MEMORYMASTER_LLM_RERANK
     Enable Gemini cross-encoder reranking over the top retrieval candidates.
     Default: ``0``
 
+MEMORYMASTER_RRF_TIEBREAKER
+    Enable RRF near-tie reordering after linear retrieval ranking.
+    Default: ``0``
+
+MEMORYMASTER_RRF_TIEBREAKER_THRESHOLD
+    Maximum adjacent score gap considered a near tie.
+    Default: ``0.01``
+
 MEMORYMASTER_CONFIG_FILE
     Path to a JSON config file. Keys match attribute names on ``Config``.
 """
@@ -201,6 +209,8 @@ class Config:
     pinned_bonus: float = 0.03
     session_diversity_cap: int = 3
     llm_rerank: bool = False
+    rrf_tiebreaker_enabled: bool = False
+    rrf_tiebreaker_threshold: float = 0.01
 
     # --- Initial confidence priors calibrated from validator outcomes ---
     default_initial_confidence: float = DEFAULT_INITIAL_CONFIDENCE
@@ -351,6 +361,8 @@ def load_config(config_path: str | Path | None = None) -> Config:
     _apply_env_float(overrides, "MEMORYMASTER_PINNED_BONUS", "pinned_bonus")
     _apply_env_int(overrides, "MEMORYMASTER_SESSION_DIVERSITY_CAP", "session_diversity_cap")
     _apply_env_bool(overrides, "MEMORYMASTER_LLM_RERANK", "llm_rerank")
+    _apply_env_bool(overrides, "MEMORYMASTER_RRF_TIEBREAKER", "rrf_tiebreaker_enabled")
+    _apply_env_float(overrides, "MEMORYMASTER_RRF_TIEBREAKER_THRESHOLD", "rrf_tiebreaker_threshold")
 
     # Filter to only valid Config fields
     valid_fields = {f.name for f in Config.__dataclass_fields__.values()}
