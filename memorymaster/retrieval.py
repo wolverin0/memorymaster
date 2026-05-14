@@ -152,6 +152,34 @@ def _compute_claim_score(claim: Claim, lexical: float, confidence: float, freshn
     return score
 
 
+def _source_session_key(row: RankedClaim) -> str:
+    claim = row.claim
+    if claim.source_agent:
+        return claim.source_agent
+    if claim.citations:
+        source = claim.citations[0].source
+        if source:
+            return source
+    if claim.subject:
+        return claim.subject
+    return f"claim:{claim.id}"
+
+
+def apply_session_diversity_cap(ranked: list[RankedClaim], cap: int) -> list[RankedClaim]:
+    if cap <= 0:
+        return ranked
+    counts: dict[str, int] = {}
+    result: list[RankedClaim] = []
+    for row in ranked:
+        source_session = _source_session_key(row)
+        count = counts.get(source_session, 0)
+        if count >= cap:
+            continue
+        counts[source_session] = count + 1
+        result.append(row)
+    return result
+
+
 def rank_claim_rows(
     query_text: str,
     claims: list[Claim],
@@ -167,7 +195,7 @@ def rank_claim_rows(
         return []
     if mode == "legacy":
         rows: list[RankedClaim] = []
-        for claim in claims[:limit]:
+        for claim in claims:
             lexical = _lexical_score(query_text, claim) if query_text.strip() else 0.0
             confidence = max(0.0, min(1.0, claim.confidence))
             freshness = _freshness_score(claim)
@@ -182,7 +210,7 @@ def rank_claim_rows(
                     vector_score=0.0,
                 )
             )
-        return rows
+        return apply_session_diversity_cap(rows, get_config().session_diversity_cap)[:limit]
 
     vector_scores: Mapping[int, float] = {}
     if vector_hook is not None:
@@ -234,4 +262,5 @@ def rank_claim_rows(
         ),
         reverse=True,
     )
+    ranked = apply_session_diversity_cap(ranked, get_config().session_diversity_cap)
     return ranked[:limit]
