@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [3.16.0] - 2026-05-14
+
+### Headline
+
+LongMemEval-S R@5 unchanged at **0.966** — same level as v3.15.0, still leading agentmemory's published 0.952. v3.16.0 ships the **architectural unblock for future retrieval tuning** plus a documented honest-null on RRF-as-tiebreaker.
+
+### Methodology
+
+Two experiments dispatched per the v3.16 roadmap (`docs/v316-roadmap.md`). Same release-discipline pattern as v3.15.0: each experiment is a measurement against a fixed metric, honest-null acceptance, plateau-stop on diminishing returns.
+
+### Experiments (PRs #102-#103)
+
+| # | Experiment | Verdict | R@5 |
+|---|---|---|---|
+| S1 | Unify W_LEX/W_VEC/W_CONF/W_FRESH constants across `retrieval.py`'s lexical-only and semantic-aware ranking paths | **KEEP** (architectural neutral) | 0.966 (unchanged) |
+| S2 | RRF as tiebreaker for near-tie pairs (within 0.01 score gap) over the 4 component rankings | NULL | 0.966 (unchanged) |
+
+### What S1 unblocks
+
+Before S1, the `MEMORYMASTER_RETRIEVAL_WEIGHTS` env override only reached the lexical-only ranking path — the semantic-aware hybrid path had hardcoded weights. This made every weight-tuning experiment unreliable (E05 in v3.15.0 REVERTed because of this). S1 threads a single canonical weight source through both paths, with a regression test (`tests/test_retrieval_weights.py`) that asserts the override now affects both. Future weight sweeps will produce trustworthy deltas.
+
+### Why S2 is a NULL
+
+The RRF tiebreaker activates on near-tie pairs as designed (3 unit tests pass) but at R@5 = 0.966 the top-5 ranking is already well-determined by the linear blend — reshuffles within 0.01-score neighborhoods don't change which sessions land in top-5. Production default stays OFF; the flag is opt-in for future experiments where the score distribution might be flatter.
+
+### Architecture findings
+
+- The override-bench from S1 (with `MEMORYMASTER_W_LEX=0.55`) confirmed E05's finding: bumping W_LEX HURTS at vector-enabled baseline (R@5 drops to 0.956). The dominant-lever hypothesis for S3 (per-question-type retrieval profiles) is now known-bad for the W_LEX axis. S3 demoted from "highest-leverage" to "small experiment worth one shot".
+- The path forward for non-trivial R@5 gains is not in fusion/ranking tuning. The next genuinely meaningful work is **A1 (full QA judge accuracy)** — blocked on `ANTHROPIC_API_KEY` configuration in the shell env.
+
+### Comparison to industry baseline
+
+| | v3.16.0 | agentmemory (published) | Δ |
+|---|---|---|---|
+| R@5 | **0.966** | 0.952 | +0.014 ★ |
+| R@10 | 0.984 | 0.986 | -0.002 |
+| MRR | **0.902** | 0.882 | +0.020 ★ |
+
+v3.16.0 maintains v3.15.0's lead on R@5 and MRR.
+
 ## [3.15.1] - 2026-05-14
 
 ### Added
