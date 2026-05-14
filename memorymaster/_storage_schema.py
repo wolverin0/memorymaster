@@ -338,7 +338,8 @@ class _SchemaMixin:
                 predicate,
                 object_value,
                 content='claims',
-                content_rowid='id'
+                content_rowid='id',
+                tokenize='porter unicode61'
             )
             """
         )
