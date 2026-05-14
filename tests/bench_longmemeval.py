@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT))
 
 from memorymaster.models import CitationInput  # noqa: E402
 from memorymaster.embeddings import create_best_provider  # noqa: E402
+from memorymaster.config import reset_config  # noqa: E402
 from memorymaster.service import MemoryService  # noqa: E402
 
 
@@ -256,13 +257,22 @@ def ingest_haystack(service: MemoryService, item: dict[str, Any], *, chunk_chars
 
 
 def query_memory(service: MemoryService, question: str, top_k: int = 10) -> list[dict[str, Any]]:
+    service_limit = top_k if llm_rerank_available() else top_k * 3
     return service.query_rows(
         query_text=question,
-        limit=top_k * 3,
+        limit=service_limit,
         include_candidates=True,
         retrieval_mode="hybrid",
         scope_allowlist=[BENCH_SCOPE],
         allow_sensitive=True,
+    )
+
+
+def llm_rerank_available() -> bool:
+    return (
+        os.environ.get("MEMORYMASTER_LLM_RERANK", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+        and bool(os.environ.get("GEMINI_API_KEY", "").strip())
     )
 
 
@@ -346,10 +356,13 @@ def run_retrieval(
     selected = data[:limit] if limit else data
     results: list[RetrievalResult] = []
     start = time.time()
+    os.environ.setdefault("MEMORYMASTER_LLM_RERANK", "1")
+    reset_config()
+    use_llm_rerank = llm_rerank_available()
     embedding_provider = create_best_provider()
     print(
         f"[retrieval] embedding_provider={embedding_provider.model} "
-        f"semantic={embedding_provider.is_semantic}"
+        f"semantic={embedding_provider.is_semantic} llm_rerank={use_llm_rerank}"
     )
 
     for idx, item in enumerate(selected, start=1):
@@ -369,6 +382,11 @@ def run_retrieval(
             print(f"[retrieval] {idx}/{len(selected)} complete ({rate:.2f} q/s)")
 
     aggregate = aggregate_retrieval(results)
+    rerank_stats = {"attempts": 0, "successes": 0, "failures": 0, "disabled": 0}
+    if use_llm_rerank:
+        from memorymaster.llm_rerank import get_rerank_stats
+
+        rerank_stats = get_rerank_stats()
     payload = {
         "mode": "retrieval-only",
         "dataset": "LongMemEval-S cleaned",
@@ -376,6 +394,7 @@ def run_retrieval(
         "retrieval_path": (
             "MemoryService.query_rows hybrid lexical+vector ranker over claims "
             f"with embedding_provider={embedding_provider.model}"
+            + (" plus Gemini top-50 cross-encoder rerank" if use_llm_rerank else "")
         ),
         "ingest_path": (
             "one MemoryMaster claim per haystack session"
@@ -383,6 +402,14 @@ def run_retrieval(
             else f"MemoryMaster claims chunked at {chunk_chars} chars per haystack session"
         ),
         "metrics": aggregate,
+        "llm_rerank": {
+            "enabled": use_llm_rerank,
+            "model": "gemini-2.5-flash" if use_llm_rerank else "none",
+            "approx_calls": int(rerank_stats.get("attempts") or 0),
+            "successes": int(rerank_stats.get("successes") or 0),
+            "failures": int(rerank_stats.get("failures") or 0),
+            "disabled": bool(rerank_stats.get("disabled")),
+        },
         "results": [r.__dict__ for r in results],
         "elapsed_seconds": round(time.time() - start, 3),
     }
@@ -886,6 +913,8 @@ def main() -> None:
     print(f"RESULT_QA_ACCURACY={qa_accuracy:.4f}" if qa_accuracy is not None else "RESULT_QA_ACCURACY=deferred-2")
     print(f"RESULT_QUESTIONS_RUN={metrics['count']} out of {len(data)}")
     print(f"RESULT_JUDGE_USED={qa.get('judge_model') or 'none'}")
+    rerank_meta = (output.get("retrieval") or retrieval_payload).get("llm_rerank") or {}
+    print(f"RESULT_GEMINI_CALLS={int(rerank_meta.get('approx_calls') or 0)}")
 
 
 if __name__ == "__main__":

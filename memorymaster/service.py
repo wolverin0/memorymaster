@@ -109,6 +109,17 @@ def _allow_federated_claim(
     return True
 
 
+def _llm_rerank_enabled() -> bool:
+    if not get_config().llm_rerank or not os.environ.get("GEMINI_API_KEY", "").strip():
+        return False
+    try:
+        from memorymaster.llm_rerank import rerank_temporarily_disabled
+
+        return not rerank_temporarily_disabled()
+    except Exception:
+        return True
+
+
 
 class MemoryService:
     def __init__(
@@ -565,7 +576,8 @@ class MemoryService:
         if retrieval_mode == "legacy":
             return self._query_legacy_mode(query_text, limit, statuses, normalized_scopes, include_sensitive, requesting_agent)
 
-        candidate_limit = max(limit * 6, 60)
+        use_llm_rerank = _llm_rerank_enabled()
+        candidate_limit = max(limit * 6, 60, 50 if use_llm_rerank else 0)
         candidates = self.store.list_claims(
             limit=candidate_limit,
             status_in=statuses,
@@ -582,18 +594,20 @@ class MemoryService:
                 return self.store.vector_scores(text, claims, self.embedding_provider)
             vector_hook = _vector_hook
             semantic = self.embedding_provider.is_semantic
+        rank_limit = len(candidates) if profile_weights is not None else (max(limit, 50) if use_llm_rerank else limit)
+        final_rank_limit = max(limit, 50) if use_llm_rerank else limit
         ranked_rows = rank_claim_rows(
             query_text,
             candidates,
             mode=retrieval_mode,
-            limit=len(candidates) if profile_weights is not None else limit,
+            limit=rank_limit,
             vector_hook=vector_hook,
             semantic_vectors=semantic,
         )
         ranked_rows = _rerank_with_profile(
             ranked_rows,
             weights=profile_weights,
-            limit=limit,
+            limit=final_rank_limit,
         )
         results = [
             {
@@ -608,6 +622,10 @@ class MemoryService:
             }
             for row in ranked_rows
         ]
+        if use_llm_rerank:
+            from memorymaster.llm_rerank import rerank_with_llm
+
+            results = rerank_with_llm(query_text, results, top_k=limit)
         self._record_accesses(results, query_text=query_text)
         if enrich_with_entities:
             results = self._enrich_with_entity_graph(results, query_text, limit)

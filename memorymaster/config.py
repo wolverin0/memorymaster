@@ -51,6 +51,10 @@ MEMORYMASTER_SESSION_DIVERSITY_CAP
     final query limit. Set to ``0`` to disable.
     Default: ``3``
 
+MEMORYMASTER_LLM_RERANK
+    Enable Gemini cross-encoder reranking over the top retrieval candidates.
+    Default: ``0``
+
 MEMORYMASTER_CONFIG_FILE
     Path to a JSON config file. Keys match attribute names on ``Config``.
 """
@@ -192,6 +196,7 @@ class Config:
     conflict_margin: float = 0.08
     pinned_bonus: float = 0.03
     session_diversity_cap: int = 3
+    llm_rerank: bool = False
 
     # --- Initial confidence priors calibrated from validator outcomes ---
     default_initial_confidence: float = DEFAULT_INITIAL_CONFIDENCE
@@ -337,6 +342,7 @@ def load_config(config_path: str | Path | None = None) -> Config:
     _apply_env_float(overrides, "MEMORYMASTER_CONFLICT_MARGIN", "conflict_margin")
     _apply_env_float(overrides, "MEMORYMASTER_PINNED_BONUS", "pinned_bonus")
     _apply_env_int(overrides, "MEMORYMASTER_SESSION_DIVERSITY_CAP", "session_diversity_cap")
+    _apply_env_bool(overrides, "MEMORYMASTER_LLM_RERANK", "llm_rerank")
 
     # Filter to only valid Config fields
     valid_fields = {f.name for f in Config.__dataclass_fields__.values()}
@@ -371,3 +377,10 @@ def _apply_env_int(overrides: dict[str, object], env_var: str, key: str) -> None
     if not raw:
         return
     overrides[key] = int(raw)
+
+
+def _apply_env_bool(overrides: dict[str, object], env_var: str, key: str) -> None:
+    raw = os.environ.get(env_var, "").strip().lower()
+    if not raw:
+        return
+    overrides[key] = raw in {"1", "true", "yes", "on"}
