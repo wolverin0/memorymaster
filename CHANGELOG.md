@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [3.15.1] - 2026-05-14
+
+### Added
+
+- **README benchmarks section** — embedded SVG bar chart comparing v3.14, v3.15, and agentmemory across R@5 / R@10 / MRR, plus a comparison table. v3.15.0 leadership on R@5 (+0.014) and MRR (+0.020) is now visible at first glance on the repo home page.
+- `docs/benchmark-longmemeval.svg` — the chart asset, inline-renders in GitHub.
+- `docs/v316-roadmap.md` — concrete next-step improvement levers ranked by predicted Δ R@5: S1 unify weight constants across ranking paths (prereq), S2 RRF-as-boost not base fusion, S3 per-question-type retrieval profiles, A1 full QA-judge pass, A2 LongMemEval-M, A3 trigram lexical signal, plus deferred B-tier items.
+
+### Notes
+
+Docs-only release. Production retrieval code unchanged from v3.15.0. The R@5 = 0.966 number stands.
+
 ## [3.15.0] - 2026-05-14
 
 ### Headline
