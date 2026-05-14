@@ -136,12 +136,12 @@ def rank_claims(
 def _compute_claim_score(claim: Claim, lexical: float, confidence: float, freshness: float, vector: float, vector_enabled: bool, semantic_vectors: bool) -> float:
     """Compute relevance score for a claim."""
     cfg = get_config()
+    w_l, w_c, w_f, w_v = cfg.retrieval_weights
     if vector_enabled and semantic_vectors:
-        # Real semantic embeddings: vector is the primary relevance signal
-        score = (0.30 * lexical) + (0.20 * confidence) + (0.10 * freshness) + (0.40 * vector)
+        # Real semantic embeddings use the same configurable blend as other
+        # vector-enabled ranking so env sweeps affect both paths.
+        score = (w_l * lexical) + (w_c * confidence) + (w_f * freshness) + (w_v * vector)
     elif vector_enabled:
-        # Hash-based vectors: limited semantic value, keep lexical dominant
-        w_l, w_c, w_f, w_v = cfg.retrieval_weights
         score = (w_l * lexical) + (w_c * confidence) + (w_f * freshness) + (w_v * vector)
     else:
         w_l, w_c, w_f = cfg.retrieval_weights_no_vector

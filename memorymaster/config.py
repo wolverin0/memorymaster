@@ -8,7 +8,11 @@ Environment variables
 ---------------------
 MEMORYMASTER_RETRIEVAL_WEIGHTS
     Comma-separated floats for hybrid ranking: lexical,confidence,freshness,vector.
-    Default: ``0.45,0.30,0.15,0.10``
+    Default: ``0.30,0.20,0.10,0.40``
+
+MEMORYMASTER_W_LEX, MEMORYMASTER_W_CONF, MEMORYMASTER_W_FRESH, MEMORYMASTER_W_VEC
+    Individual overrides for the four hybrid ranking weights. These take
+    precedence over ``MEMORYMASTER_RETRIEVAL_WEIGHTS`` when set.
 
 MEMORYMASTER_RETRIEVAL_WEIGHTS_NO_VECTOR
     Weights when vector search is disabled: lexical,confidence,freshness.
@@ -159,10 +163,10 @@ class Config:
     """Immutable configuration for tunable MemoryMaster constants."""
 
     # --- Retrieval ranking weights (hybrid mode with vector) ---
-    retrieval_weight_lexical: float = 0.45
-    retrieval_weight_confidence: float = 0.30
-    retrieval_weight_freshness: float = 0.15
-    retrieval_weight_vector: float = 0.10
+    retrieval_weight_lexical: float = 0.30
+    retrieval_weight_confidence: float = 0.20
+    retrieval_weight_freshness: float = 0.10
+    retrieval_weight_vector: float = 0.40
 
     # --- Retrieval ranking weights (hybrid mode without vector) ---
     retrieval_weight_lexical_no_vector: float = 0.55
@@ -310,6 +314,10 @@ def load_config(config_path: str | Path | None = None) -> Config:
         "retrieval_weight_freshness",
         "retrieval_weight_vector",
     ])
+    _apply_env_float(overrides, "MEMORYMASTER_W_LEX", "retrieval_weight_lexical")
+    _apply_env_float(overrides, "MEMORYMASTER_W_CONF", "retrieval_weight_confidence")
+    _apply_env_float(overrides, "MEMORYMASTER_W_FRESH", "retrieval_weight_freshness")
+    _apply_env_float(overrides, "MEMORYMASTER_W_VEC", "retrieval_weight_vector")
     _apply_env_floats(overrides, "MEMORYMASTER_RETRIEVAL_WEIGHTS_NO_VECTOR", 3, [
         "retrieval_weight_lexical_no_vector",
         "retrieval_weight_confidence_no_vector",

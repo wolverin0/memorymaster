@@ -22,7 +22,7 @@ def _reset():
 class TestConfigDefaults:
     def test_default_retrieval_weights(self):
         cfg = Config()
-        assert cfg.retrieval_weights == (0.45, 0.30, 0.15, 0.10)
+        assert cfg.retrieval_weights == (0.30, 0.20, 0.10, 0.40)
 
     def test_default_no_vector_weights(self):
         cfg = Config()
@@ -57,6 +57,12 @@ class TestConfigEnvOverrides:
         monkeypatch.setenv("MEMORYMASTER_RETRIEVAL_WEIGHTS", "0.40,0.25,0.20,0.15")
         cfg = load_config()
         assert cfg.retrieval_weights == (0.40, 0.25, 0.20, 0.15)
+
+    def test_individual_retrieval_weight_env(self, monkeypatch):
+        monkeypatch.setenv("MEMORYMASTER_RETRIEVAL_WEIGHTS", "0.40,0.25,0.20,0.15")
+        monkeypatch.setenv("MEMORYMASTER_W_LEX", "0.55")
+        cfg = load_config()
+        assert cfg.retrieval_weights == (0.55, 0.25, 0.20, 0.15)
 
     def test_retrieval_weights_no_vector_env(self, monkeypatch):
         monkeypatch.setenv("MEMORYMASTER_RETRIEVAL_WEIGHTS_NO_VECTOR", "0.60,0.25,0.15")
