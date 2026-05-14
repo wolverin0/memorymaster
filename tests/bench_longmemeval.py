@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from memorymaster.models import CitationInput  # noqa: E402
+from memorymaster.embeddings import create_best_provider  # noqa: E402
 from memorymaster.service import MemoryService  # noqa: E402
 
 
@@ -205,11 +206,12 @@ def chunk_text(text: str, chunk_chars: int = DEFAULT_CHUNK_CHARS) -> list[str]:
     return [text[idx : idx + chunk_chars] for idx in range(0, len(text), chunk_chars)]
 
 
-def init_ephemeral_service(tmpdir: Path) -> MemoryService:
+def init_ephemeral_service(tmpdir: Path, embedding_provider: Any | None = None) -> MemoryService:
     db_path = tmpdir / "memorymaster-longmemeval.db"
     old_qdrant = os.environ.pop("QDRANT_URL", None)
     try:
         service = MemoryService(db_target=db_path, workspace_root=tmpdir)
+        service.embedding_provider = embedding_provider
         service.init_db()
     finally:
         if old_qdrant is not None:
@@ -259,7 +261,6 @@ def query_memory(service: MemoryService, question: str, top_k: int = 10) -> list
         limit=top_k * 3,
         include_candidates=True,
         retrieval_mode="hybrid",
-        vector_hook=lambda _text, _claims: {},
         scope_allowlist=[BENCH_SCOPE],
         allow_sensitive=True,
     )
@@ -345,10 +346,15 @@ def run_retrieval(
     selected = data[:limit] if limit else data
     results: list[RetrievalResult] = []
     start = time.time()
+    embedding_provider = create_best_provider()
+    print(
+        f"[retrieval] embedding_provider={embedding_provider.model} "
+        f"semantic={embedding_provider.is_semantic}"
+    )
 
     for idx, item in enumerate(selected, start=1):
         with tempfile.TemporaryDirectory(prefix="mm-longmemeval-", ignore_cleanup_errors=True) as tmp:
-            service = init_ephemeral_service(Path(tmp))
+            service = init_ephemeral_service(Path(tmp), embedding_provider=embedding_provider)
             try:
                 ingest_haystack(service, item, chunk_chars=chunk_chars)
                 rows = query_memory(service, str(item["question"]), top_k=10)
@@ -367,7 +373,10 @@ def run_retrieval(
         "mode": "retrieval-only",
         "dataset": "LongMemEval-S cleaned",
         "questions": len(selected),
-        "retrieval_path": "MemoryService.query_rows hybrid lexical ranker over claims with vector_hook disabled",
+        "retrieval_path": (
+            "MemoryService.query_rows hybrid lexical+vector ranker over claims "
+            f"with embedding_provider={embedding_provider.model}"
+        ),
         "ingest_path": (
             "one MemoryMaster claim per haystack session"
             if chunk_chars <= 0
