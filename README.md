@@ -52,6 +52,20 @@ recent PR status, and sensitivity-filter invariants.
 
 Full feature index lives in [`docs/handbook.md`](docs/handbook.md).
 
+## Benchmarks
+
+**LongMemEval-S (N=500, retrieval-only)** — v3.15.0 now leads the publicly-reported numbers from [agentmemory](https://github.com/rohitg00/agentmemory) on R@5 and MRR, after wiring `sentence-transformers/all-MiniLM-L6-v2` into the bench harness (the v3.14 baseline was unintentionally BM25-only).
+
+![LongMemEval-S benchmark](docs/benchmark-longmemeval.svg)
+
+| Metric | v3.14.0 | **v3.15.0** | agentmemory | Δ vs agentmemory |
+|---|---|---|---|---|
+| Recall@5 | 0.894 | **0.966** | 0.952 | **+0.014** ★ |
+| Recall@10 | 0.942 | **0.984** | 0.986 | -0.002 |
+| MRR | 0.799 | **0.902** | 0.882 | **+0.020** ★ |
+
+Reproduce: `python tests/bench_longmemeval.py --retrieval-only`. Full methodology, experiment-by-experiment deltas (1 KEEP, 2 REVERT, 3 NULL), and the architectural findings that surfaced along the way live in [`docs/longmemeval-results.md`](docs/longmemeval-results.md) and [`docs/v315-experiments/`](docs/v315-experiments/). QA-accuracy pass (with judge) is deferred until provider quotas allow.
+
 ## Prerequisites
 
 **Required (the package won't function without these)**

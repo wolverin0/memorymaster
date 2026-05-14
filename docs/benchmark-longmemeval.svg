@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 460" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <style>
+    .title { font-size: 18px; font-weight: 700; fill: #24292f; }
+    .subtitle { font-size: 12px; fill: #57606a; }
+    .axis { stroke: #d0d7de; stroke-width: 1; }
+    .gridline { stroke: #eaeef2; stroke-width: 1; }
+    .axis-label { font-size: 11px; fill: #57606a; }
+    .metric-label { font-size: 14px; font-weight: 600; fill: #24292f; text-anchor: middle; }
+    .bar-label { font-size: 11px; font-weight: 600; fill: #24292f; text-anchor: middle; }
+    .legend { font-size: 12px; fill: #24292f; }
+    .v314 { fill: #d0d7de; }
+    .v315 { fill: #218bff; }
+    .agentmemory { fill: #fb8500; }
+    .winner-mark { font-size: 14px; fill: #1a7f37; font-weight: 700; }
+  </style>
+
+  <!-- Title -->
+  <text x="400" y="32" class="title" text-anchor="middle">LongMemEval-S retrieval performance (N=500)</text>
+  <text x="400" y="52" class="subtitle" text-anchor="middle">Higher is better · MemoryMaster v3.15.0 leads agentmemory on R@5 and MRR with retrieval-only</text>
+
+  <!-- Y axis (0.0 – 1.0) -->
+  <line x1="80" y1="100" x2="80" y2="350" class="axis"/>
+  <line x1="80" y1="350" x2="730" y2="350" class="axis"/>
+
+  <!-- Y-axis gridlines + labels -->
+  <line x1="80" y1="100" x2="730" y2="100" class="gridline"/>
+  <text x="72" y="104" class="axis-label" text-anchor="end">1.0</text>
+  <line x1="80" y1="162.5" x2="730" y2="162.5" class="gridline"/>
+  <text x="72" y="166.5" class="axis-label" text-anchor="end">0.75</text>
+  <line x1="80" y1="225" x2="730" y2="225" class="gridline"/>
+  <text x="72" y="229" class="axis-label" text-anchor="end">0.5</text>
+  <line x1="80" y1="287.5" x2="730" y2="287.5" class="gridline"/>
+  <text x="72" y="291.5" class="axis-label" text-anchor="end">0.25</text>
+  <text x="72" y="354" class="axis-label" text-anchor="end">0.0</text>
+
+  <!-- Bar groups: 3 metrics × 3 systems. Each group occupies ~200px width starting at x=110 -->
+  <!-- y scale: 0 maps to 350, 1.0 maps to 100. height = (value) × 250. y = 350 - height -->
+
+  <!-- ===== Group 1: R@5 (centered at x=190) ===== -->
+  <text x="190" y="378" class="metric-label">R@5</text>
+  <!-- v3.14 = 0.894 → h=223.5 → y=126.5 -->
+  <rect x="125" y="126.5" width="40" height="223.5" class="v314"/>
+  <text x="145" y="120" class="bar-label">0.894</text>
+  <!-- v3.15 = 0.966 → h=241.5 → y=108.5 -->
+  <rect x="170" y="108.5" width="40" height="241.5" class="v315"/>
+  <text x="190" y="102" class="bar-label">0.966</text>
+  <text x="225" y="124" class="winner-mark">★</text>
+  <!-- agentmemory = 0.952 → h=238 → y=112 -->
+  <rect x="215" y="112" width="40" height="238" class="agentmemory"/>
+  <text x="235" y="105" class="bar-label">0.952</text>
+
+  <!-- ===== Group 2: R@10 (centered at x=400) ===== -->
+  <text x="400" y="378" class="metric-label">R@10</text>
+  <!-- v3.14 = 0.942 → h=235.5 → y=114.5 -->
+  <rect x="335" y="114.5" width="40" height="235.5" class="v314"/>
+  <text x="355" y="108" class="bar-label">0.942</text>
+  <!-- v3.15 = 0.984 → h=246 → y=104 -->
+  <rect x="380" y="104" width="40" height="246" class="v315"/>
+  <text x="400" y="97" class="bar-label">0.984</text>
+  <!-- agentmemory = 0.986 → h=246.5 → y=103.5 -->
+  <rect x="425" y="103.5" width="40" height="246.5" class="agentmemory"/>
+  <text x="445" y="97" class="bar-label">0.986</text>
+  <text x="465" y="115" class="winner-mark">★</text>
+
+  <!-- ===== Group 3: MRR (centered at x=610) ===== -->
+  <text x="610" y="378" class="metric-label">MRR</text>
+  <!-- v3.14 = 0.799 → h=199.75 → y=150.25 -->
+  <rect x="545" y="150.25" width="40" height="199.75" class="v314"/>
+  <text x="565" y="144" class="bar-label">0.799</text>
+  <!-- v3.15 = 0.902 → h=225.5 → y=124.5 -->
+  <rect x="590" y="124.5" width="40" height="225.5" class="v315"/>
+  <text x="610" y="118" class="bar-label">0.902</text>
+  <text x="645" y="140" class="winner-mark">★</text>
+  <!-- agentmemory = 0.882 → h=220.5 → y=129.5 -->
+  <rect x="635" y="129.5" width="40" height="220.5" class="agentmemory"/>
+  <text x="655" y="123" class="bar-label">0.882</text>
+
+  <!-- Legend -->
+  <rect x="125" y="410" width="14" height="14" class="v314"/>
+  <text x="145" y="421" class="legend">MemoryMaster v3.14</text>
+  <rect x="305" y="410" width="14" height="14" class="v315"/>
+  <text x="325" y="421" class="legend">MemoryMaster v3.15 (this release)</text>
+  <rect x="540" y="410" width="14" height="14" class="agentmemory"/>
+  <text x="560" y="421" class="legend">agentmemory (published baseline)</text>
+  <text x="695" y="421" class="winner-mark">★ = leader</text>
+</svg>
