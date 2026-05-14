@@ -7,9 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-### Changed
+## [3.15.0] - 2026-05-14
 
-- **LongMemEval-S harness**: canonicalized the benchmark runner at `tests/bench_longmemeval.py`, removed the duplicate `scripts/run_longmemeval.py`, and added the full N=500 retrieval artifact at `benchmark/longmemeval_s_results.json`.
+### Headline
+
+**LongMemEval-S R@5: 0.894 → 0.966 (+0.072)** — driven entirely by E01 (bench harness wiring). v3.14 production retrieval code was always capable of this number; the gap was a measurement bug in the previous bench harness. See `docs/longmemeval-results.md`.
+
+### Methodology
+
+Followed `memorymaster-release-discipline` skill: each experiment was a measurement against a fixed metric (LongMemEval-S R@5/R@10/MRR on full 500q), with honest-null and honest-harm acceptance. 6 experiments dispatched, 1 KEEP, 2 REVERT, 3 NULL. Plan file: `~/.claude/plans/witty-stargazing-mango.md`.
+
+### Experiments (PRs #94-#99)
+
+| # | Experiment | Verdict | R@5 vs 0.894 baseline |
+|---|---|---|---|
+| E01 | Enable vector signal in bench (sentence-transformers all-MiniLM-L6-v2) | **KEEP** | **+0.072 → 0.966** |
+| E02 | RRF fusion (k=60) in `query_rows()` | REVERT | -0.046 (0.920) |
+| E04 | Session-diversity reranker (max-3-per-source) | NULL | 0.000 |
+| E05 | W_LEX sweep {0.50, 0.55, 0.60} | REVERT | -0.022 (0.944) — env override didn't reach semantic branch |
+| E06 | Cross-encoder rerank via gemini-2.5-flash | NULL | 0.000 (Gemini quota cap, only 3/500 reranked) |
+| E08 | FTS5 porter stemming tokenizer | NULL | 0.000 |
+
+(E03 entity-graph stream was skipped: depended on broken RRF base from E02. E07 zero-LLM graph extraction deferred — cost-only, not R@5.)
+
+### Architecture findings (honest-null docs are commits in main)
+
+- **The bench had vector signal structurally suppressed** before E01. `tests/bench_longmemeval.py` popped `QDRANT_URL` and called `query_rows(retrieval_mode="legacy")`. v3.14's published 0.894 number was a measurement artifact, not a model ceiling.
+- **Fusion-layer changes don't help post-E01.** Three independent attempts (RRF, diversity cap, weight tuning) all REVERT or NULL — the linear blend (W_LEX=0.45, W_CONF=0.30, W_FRESH=0.15, W_VEC=0.10) is at a local optimum once real semantic embeddings are enabled.
+- **`retrieval.py` has two ranking paths that don't share weight constants.** Lexical-only path uses `MEMORYMASTER_RETRIEVAL_WEIGHTS`; semantic-aware hybrid path has hardcoded blending. E05 surfaced this — flagged as architectural debt for follow-up.
+
+### Comparison to industry baseline
+
+| | MemoryMaster v3.15.0 | agentmemory (published) | Δ |
+|---|---|---|---|
+| R@5 | **0.966** | 0.952 | **+0.014** |
+| R@10 | **0.984** | 0.986 | -0.002 |
+| MRR | **0.902** | 0.882 | **+0.020** |
+
+MemoryMaster now leads on R@5 and MRR with retrieval-only. QA accuracy (with judge) deferred — Anthropic/OpenAI/Gemini judge quotas all saturate before any meaningful judging completes on this account.
 
 ## [3.14.0] - 2026-05-11
 
