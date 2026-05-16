@@ -23,6 +23,7 @@ from memorymaster.cli_handlers_curation import COMMAND_HANDLERS
 from memorymaster.cli_handlers_basic import (
     _handle_decay,
     _handle_entity_graph_export,
+    _handle_ingest_daydream,
     _handle_recompute_confidence_priors,
     _handle_wiki_suggest_links,
     handle_mcp_usage_report,
@@ -33,6 +34,7 @@ COMMAND_HANDLERS["entity-graph-export"] = _handle_entity_graph_export
 COMMAND_HANDLERS["recompute-confidence-priors"] = _handle_recompute_confidence_priors
 COMMAND_HANDLERS["wiki-suggest-links"] = _handle_wiki_suggest_links
 COMMAND_HANDLERS["decay"] = _handle_decay
+COMMAND_HANDLERS["ingest-daydream"] = _handle_ingest_daydream
 COMMAND_HANDLERS["mcp-usage-report"] = (
     lambda args, service, parser, effective_db: handle_mcp_usage_report(args, effective_db)
 )
@@ -65,6 +67,12 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--event-time", default=None, help="ISO-8601 timestamp: when the fact occurred in the real world")
     ingest.add_argument("--valid-from", default=None, help="ISO-8601 timestamp: start of the claim validity window")
     ingest.add_argument("--valid-until", default=None, help="ISO-8601 timestamp: end of the validity window (omit if still current)")
+
+    ingest_daydream = sub.add_parser("ingest-daydream", help="Ingest daydream insights as candidate hypothesis claims")
+    ingest_daydream.add_argument("insights_dir", help="Daydreams directory containing insight JSON or Markdown files")
+    ingest_daydream.add_argument("--min-score", type=float, default=7.0, help="Minimum average score to ingest")
+    ingest_daydream.add_argument("--scope", default="user", help="Claim scope (default: user)")
+    ingest_daydream.add_argument("--dry-run", action="store_true", help="Preview ingest without writing claims")
 
     import_whatsapp = sub.add_parser("import-whatsapp", help="Import WhatsApp messages from a wacli JSON/JSONL export")
     import_whatsapp.add_argument("--input", required=True, help="Path to wacli JSON or JSONL export")

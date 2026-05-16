@@ -324,6 +324,29 @@ def _handle_ingest(args: argparse.Namespace, service, parser: argparse.ArgumentP
     return 0
 
 
+def _handle_ingest_daydream(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.jobs.daydream_ingest import ingest_insights
+
+    t0 = time.perf_counter()
+    result = ingest_insights(
+        service,
+        Path(args.insights_dir),
+        min_score=args.min_score,
+        scope=args.scope,
+        dry_run=args.dry_run,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        tag = " [DRY RUN]" if args.dry_run else ""
+        print(
+            f"ingest-daydream{tag}: ingested={result['ingested']} "
+            f"skipped={result['skipped']} errors={len(result['errors'])}"
+        )
+    return 0
+
+
 def _handle_import_whatsapp(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.atlas_contract import atlas_meta
     from memorymaster.connectors.whatsapp import import_wacli_json
