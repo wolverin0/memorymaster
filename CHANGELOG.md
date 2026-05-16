@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [3.17.1] - 2026-05-16
+
+### Added
+
+- **Steward auto-ingest hook for daydream**: `run_steward()` now optionally calls `ingest_insights()` at the end of its cycle, so daydream's accepted markdown notes flow into MemoryMaster as candidate claims without manual `ingest-daydream` invocation. Zero-touch closure of the vault → daydream → claims → wiki loop on the existing 6h steward cron.
+
+### Safety
+
+The hook is opt-in (default OFF) and error-isolated:
+
+- **Default OFF.** Activates only when `MEMORYMASTER_DAYDREAM_INGEST_DIR=<path>` is set.
+- **Try/except wrap.** Any exception in the daydream ingest is recorded in the steward result dict under `result["daydream"]["error"]` but never propagates — the steward cycle's other work (validation, decay, compaction) always completes.
+- **Last step.** Hook fires AFTER existing steward work, so even a hook failure doesn't lose the cycle's main output.
+- **Quiet by default.** Log lines emit only when `MEMORYMASTER_DAYDREAM_VERBOSE=1`.
+- **Graceful no-op.** Skips silently when env var unset, dir missing, dir empty, or no insights pass threshold.
+
+4 new tests in `tests/test_steward_daydream_hook.py` cover all four safety paths, including the critical "ingest exception doesn't break steward" case.
+
+### Use
+
+```bash
+# One-time setup
+export MEMORYMASTER_DAYDREAM_INGEST_DIR="/path/to/vault/Daydreams"
+export MEMORYMASTER_DAYDREAM_VERBOSE=1   # optional, default quiet
+
+# That's it — the existing steward 6h cron now also auto-ingests daydream insights
+```
+
 ## [3.17.0] - 2026-05-16
 
 ### Headline
