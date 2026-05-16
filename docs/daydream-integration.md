@@ -47,3 +47,24 @@ python -m memorymaster --db memorymaster.db ingest-daydream <vault>/Daydreams \
 ```
 
 Use `--dry-run` to preview counts without writing claims.
+
+## Auto-ingest via steward cron
+
+The steward can optionally ingest accepted daydream insights at the end of each
+`run-steward` cycle. It is disabled by default and only runs when the ingest
+directory is configured:
+
+```bash
+export MEMORYMASTER_DAYDREAM_INGEST_DIR=<vault>/Daydreams
+python -m memorymaster --db memorymaster.db run-steward
+```
+
+For visible summary or failure logs during the steward run, enable verbosity:
+
+```bash
+export MEMORYMASTER_DAYDREAM_VERBOSE=1
+```
+
+The hook runs after the normal steward cycle completes. Daydream ingest errors
+are isolated and never break the steward cycle; failures are recorded in the
+returned report under `daydream` and logged only when verbose mode is enabled.
