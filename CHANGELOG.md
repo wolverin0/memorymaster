@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [3.17.0] - 2026-05-16
+
+### Headline
+
+**Daydream → MemoryMaster claims pipeline.** Closes the loop: vault → daydream synthesizer → MemoryMaster candidate claims → steward validation → wiki-absorb → vault.
+
+### Added
+
+- `memorymaster/jobs/daydream_ingest.py` — reads accepted insights from the [glebis/daydream](https://github.com/glebis/claude-skills/tree/main/daydream) skill's output directory (markdown notes with frontmatter under `<vault>/Daydreams/`). For each insight, creates a candidate claim with:
+  - `claim_type = "hypothesis"`
+  - `confidence = 0.5`
+  - `source_agent = "daydream"`
+  - `subject` from the insight title
+  - `text` from the synthesis body
+  - Citations linking back to the source notes
+- CLI subcommand: `python -m memorymaster --db <db> ingest-daydream <insights-dir> [--min-score N] [--dry-run]`
+- 6 tests covering: above-threshold ingest, dry-run, idempotent re-ingest, malformed-input tolerance, claim-shape correctness, and citation linkage.
+- `docs/daydream-integration.md` — short usage doc.
+
+### Why this matters
+
+The user has a 2,891-note Obsidian vault with notes spanning multiple projects (memorymaster, mzcopilot, Pather, others). At that scale, manually finding cross-pollination connections is impossible. Daydream samples 50 random recency-weighted note pairs daily and surfaces the surviving ≥7.0-rated insights. Without this ingest pipeline those insights would just accumulate as dated daily notes; with it, they become first-class claims that the steward can validate, the wiki can absorb, and the recall hook can surface.
+
+### Use
+
+```bash
+# 1. In any Claude Code session inside the vault
+/daydream
+
+# 2. Then ingest the new insights
+python -m memorymaster --db memorymaster.db ingest-daydream obsidian-vault/Daydreams
+
+# 3. Steward will validate on its 6h cycle; wiki-absorb weaves
+#    confirmed insights into the wiki on the same cycle
+```
+
+Optional: chain step 2 into a hook so daydream's output auto-ingests.
+
 ## [3.16.0] - 2026-05-14
 
 ### Headline
