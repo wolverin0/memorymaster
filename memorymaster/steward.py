@@ -1625,5 +1625,27 @@ def run_steward(
         },
         "artifact_path": str(Path(artifact_path)),
     }
+    import os
+
+    daydream_dir = os.environ.get("MEMORYMASTER_DAYDREAM_INGEST_DIR")
+    if daydream_dir:
+        try:
+            import logging
+
+            from memorymaster.jobs.daydream_ingest import ingest_insights
+
+            verbose = os.environ.get("MEMORYMASTER_DAYDREAM_VERBOSE") == "1"
+            path = Path(daydream_dir)
+            if path.is_dir():
+                summary = ingest_insights(service, path, dry_run=False)
+                report["daydream"] = summary
+                if verbose:
+                    logging.getLogger(__name__).info("daydream auto-ingest: %s", summary)
+            else:
+                report["daydream"] = {"skipped": "dir-not-found", "path": str(path)}
+        except Exception as exc:
+            report["daydream"] = {"error": str(exc)[:200]}
+            if os.environ.get("MEMORYMASTER_DAYDREAM_VERBOSE") == "1":
+                logging.getLogger(__name__).warning("daydream auto-ingest failed: %s", exc)
     _write_artifact(Path(artifact_path), report)
     return report
