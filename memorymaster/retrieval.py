@@ -130,14 +130,42 @@ def rank_claims(
     limit: int = 20,
     vector_hook: VectorSearchHook | None = None,
     semantic_vectors: bool = False,
+    query_type: str | None = None,
 ) -> list[Claim]:
-    return [row.claim for row in rank_claim_rows(query_text, claims, mode=mode, limit=limit, vector_hook=vector_hook, semantic_vectors=semantic_vectors)]
+    return [
+        row.claim
+        for row in rank_claim_rows(
+            query_text,
+            claims,
+            mode=mode,
+            limit=limit,
+            vector_hook=vector_hook,
+            semantic_vectors=semantic_vectors,
+            query_type=query_type,
+        )
+    ]
 
 
-def _compute_claim_score(claim: Claim, lexical: float, confidence: float, freshness: float, vector: float, vector_enabled: bool, semantic_vectors: bool) -> float:
-    """Compute relevance score for a claim."""
+def _compute_claim_score(
+    claim: Claim,
+    lexical: float,
+    confidence: float,
+    freshness: float,
+    vector: float,
+    vector_enabled: bool,
+    semantic_vectors: bool,
+    query_type: str | None = None,
+) -> float:
+    """Compute relevance score for a claim.
+
+    When ``query_type`` matches a configured per-type profile
+    (``cfg.retrieval_profile(query_type)``), the profile's 4-tuple replaces
+    ``cfg.retrieval_weights`` for vector-enabled paths. The no-vector path
+    is unchanged — profiles only override the hybrid blend.
+    """
     cfg = get_config()
-    w_l, w_c, w_f, w_v = cfg.retrieval_weights
+    profile = cfg.retrieval_profile(query_type) if query_type else None
+    w_l, w_c, w_f, w_v = profile if profile is not None else cfg.retrieval_weights
     if vector_enabled and semantic_vectors:
         # Real semantic embeddings use the same configurable blend as other
         # vector-enabled ranking so env sweeps affect both paths.
@@ -252,6 +280,7 @@ def rank_claim_rows(
     limit: int = 20,
     vector_hook: VectorSearchHook | None = None,
     semantic_vectors: bool = False,
+    query_type: str | None = None,
 ) -> list[RankedClaim]:
     if mode not in RETRIEVAL_MODES:
         raise ValueError(f"Unknown retrieval mode: {mode}")
@@ -289,7 +318,16 @@ def rank_claim_rows(
         freshness = _freshness_score(claim)
         vector = max(0.0, min(1.0, float(vector_scores.get(claim.id, 0.0))))
 
-        score = _compute_claim_score(claim, lexical, confidence, freshness, vector, vector_enabled, semantic_vectors)
+        score = _compute_claim_score(
+            claim,
+            lexical,
+            confidence,
+            freshness,
+            vector,
+            vector_enabled,
+            semantic_vectors,
+            query_type=query_type,
+        )
 
         ranked.append(
             RankedClaim(

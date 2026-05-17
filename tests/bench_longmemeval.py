@@ -267,7 +267,13 @@ def ingest_haystack(service: MemoryService, item: dict[str, Any], *, chunk_chars
             )
 
 
-def query_memory(service: MemoryService, question: str, top_k: int = 10) -> list[dict[str, Any]]:
+def query_memory(
+    service: MemoryService,
+    question: str,
+    top_k: int = 10,
+    *,
+    query_type: str | None = None,
+) -> list[dict[str, Any]]:
     service_limit = top_k if llm_rerank_available() else top_k * 3
     return service.query_rows(
         query_text=question,
@@ -276,6 +282,7 @@ def query_memory(service: MemoryService, question: str, top_k: int = 10) -> list
         retrieval_mode="hybrid",
         scope_allowlist=[BENCH_SCOPE],
         allow_sensitive=True,
+        query_type=query_type,
     )
 
 
@@ -381,7 +388,12 @@ def run_retrieval(
             service = init_ephemeral_service(Path(tmp), embedding_provider=embedding_provider)
             try:
                 ingest_haystack(service, item, chunk_chars=chunk_chars)
-                rows = query_memory(service, str(item["question"]), top_k=10)
+                rows = query_memory(
+                    service,
+                    str(item["question"]),
+                    top_k=10,
+                    query_type=str(item.get("question_type") or "") or None,
+                )
                 results.append(score_retrieval(item, rows))
             finally:
                 del service

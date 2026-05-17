@@ -67,6 +67,17 @@ MEMORYMASTER_RRF_TIEBREAKER_THRESHOLD
     Maximum adjacent score gap considered a near tie.
     Default: ``0.01``
 
+MEMORYMASTER_RETRIEVAL_PROFILE_<TYPE>
+    Per-question-type retrieval weight override. ``<TYPE>`` is the
+    upper-snake-case form of the question type (LongMemEval-S labels:
+    SINGLE_SESSION_USER, SINGLE_SESSION_ASSISTANT, SINGLE_SESSION_PREFERENCE,
+    TEMPORAL_REASONING, KNOWLEDGE_UPDATE, MULTI_SESSION). Value format
+    matches ``MEMORYMASTER_RETRIEVAL_WEIGHTS``: comma-separated floats
+    ``lex,conf,fresh,vec``. When set, ``Config.retrieval_profile(qtype)``
+    returns the profile and ``retrieval._compute_claim_score`` consumes it
+    instead of the default weights. Profiles are opt-in; missing types fall
+    back to the global ``cfg.retrieval_weights``.
+
 MEMORYMASTER_CONFIG_FILE
     Path to a JSON config file. Keys match attribute names on ``Config``.
 """
@@ -218,6 +229,15 @@ class Config:
         default_factory=lambda: dict(INITIAL_CONFIDENCE_BY_TYPE)
     )
 
+    # --- Per-question-type retrieval weight profiles (S3, opt-in) ---
+    # Maps the canonical question_type slug (lowercase, hyphens preserved,
+    # e.g. "single-session-preference") to a (W_LEX, W_CONF, W_FRESH, W_VEC)
+    # tuple. Populated by env vars MEMORYMASTER_RETRIEVAL_PROFILE_<TYPE>.
+    # Empty by default — retrieval falls back to ``retrieval_weights``.
+    retrieval_profiles: Dict[str, tuple[float, float, float, float]] = field(
+        default_factory=dict
+    )
+
     # --- Derived convenience dicts ---
 
     @property
@@ -269,6 +289,20 @@ class Config:
             self.lexical_weight_phrase,
             self.lexical_weight_prefix,
         )
+
+    def retrieval_profile(
+        self, question_type: str | None
+    ) -> tuple[float, float, float, float] | None:
+        """Per-question-type weight override, or None to fall back to default.
+
+        Accepts the canonical bench label (e.g. ``single-session-preference``)
+        or the classifier output (e.g. ``preference``) — both lookup forms are
+        normalized to lowercase before lookup. Returning None signals the
+        caller to use ``retrieval_weights`` as usual.
+        """
+        if not question_type:
+            return None
+        return self.retrieval_profiles.get(question_type.strip().lower())
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +397,7 @@ def load_config(config_path: str | Path | None = None) -> Config:
     _apply_env_bool(overrides, "MEMORYMASTER_LLM_RERANK", "llm_rerank")
     _apply_env_bool(overrides, "MEMORYMASTER_RRF_TIEBREAKER", "rrf_tiebreaker_enabled")
     _apply_env_float(overrides, "MEMORYMASTER_RRF_TIEBREAKER_THRESHOLD", "rrf_tiebreaker_threshold")
+    _apply_env_retrieval_profiles(overrides)
 
     # Filter to only valid Config fields
     valid_fields = {f.name for f in Config.__dataclass_fields__.values()}
@@ -404,3 +439,29 @@ def _apply_env_bool(overrides: dict[str, object], env_var: str, key: str) -> Non
     if not raw:
         return
     overrides[key] = raw in {"1", "true", "yes", "on"}
+
+
+_PROFILE_PREFIX = "MEMORYMASTER_RETRIEVAL_PROFILE_"
+
+
+def _apply_env_retrieval_profiles(overrides: dict[str, object]) -> None:
+    """Collect per-type profile overrides from env into a single dict.
+
+    Scans every env var starting with ``MEMORYMASTER_RETRIEVAL_PROFILE_``.
+    The suffix becomes the question_type slug (lowercased, underscores
+    converted to hyphens to match the LongMemEval-S canonical labels like
+    ``single-session-preference``).
+    """
+    profiles: dict[str, tuple[float, float, float, float]] = {}
+    for key, raw in os.environ.items():
+        if not key.startswith(_PROFILE_PREFIX):
+            continue
+        raw = raw.strip()
+        if not raw:
+            continue
+        suffix = key[len(_PROFILE_PREFIX):]
+        qtype = suffix.lower().replace("_", "-")
+        values = _parse_floats(raw, 4)
+        profiles[qtype] = (values[0], values[1], values[2], values[3])
+    if profiles:
+        overrides["retrieval_profiles"] = profiles
