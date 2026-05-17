@@ -1,116 +1,167 @@
 # MemoryMaster — Roadmap
 
-**Posture as of v3.18.0 (2026-05-17).** R@5 = 0.972 on LongMemEval-S currently leads
-the small published set (MemPalace 0.966, agentmemory 0.952). Pushing R@5 from 0.97
-toward 1.0 saves ~10 questions out of 500 — diminishing returns on the recall axis.
+**Posture as of v3.18.0 (2026-05-17).** R@5 = 0.972 on LongMemEval-S leads the small
+published set (MemPalace 0.966, agentmemory 0.952). The recall race is approaching
+diminishing returns. The next two phases harden production-grade claims and then
+unlock the governance/MCP differentiators.
 
-The competitive advantage is NOT in another decimal of R@5. It is in the things
-none of the competitors do: lifecycle governance, multi-provider abstraction, an
-ingest pipeline with security baked in, and an MCP-first interface that drops into
-any LLM agent today. The work below reflects that priority order.
+The original v3.18.0 roadmap (governance-first) was incomplete: it assumed the
+security/ops baseline was already in place. A second-opinion review by GPT-5.4
+Thinking surfaced real hardening gaps that have to come first. This document
+merges both lenses.
 
-## Themes
+## Phase 0 / v3.19.0 — Hardening (highest urgency)
 
-### 1. Lifecycle & governance differentiator (highest leverage)
+These items lock in the "production-grade" claim. Without them, the rest of the
+roadmap is selling on a foundation that doesn't actually meet its name.
 
-What MemoryMaster does that nobody else does well: claims have a **status** (`candidate
-→ confirmed / stale / conflicted / superseded / archived`), a **tier**, **bitemporal
-fields**, and a **steward cycle** that validates, decays, and promotes them. The wiki
-("compiled truth + timeline") is downstream of this.
+### v3.19.0-H1 — LLM budget caps per cycle  **[MOST URGENT]**
 
-Gaps worth closing:
+**Problem.** No `MEMORYMASTER_MAX_LLM_CALLS_PER_CYCLE` / `MAX_TOKENS_PER_CYCLE`
+/ `MAX_PROVIDER_FAILURES_PER_CYCLE` env vars exist. Steward / wiki-absorb /
+daydream-ingest can hit ~200 LLM calls per run. Provider stuck in retry-loop
+burns quota silently. This session literally burned Claude Pro/Max quota on
+the A1 bench with no per-cycle cap.
 
-- **Conflict resolution UI.** `conflicted` claims today require manual `pin` /
-  `redact` / `supersede` actions through MCP. A dashboard view that surfaces conflict
-  pairs side-by-side and lets the operator resolve in one click would convert the
-  governance promise from "exists in code" to "exists in workflow."
-- **Steward observability.** `run_cycle` returns a result dict but there is no
-  long-running view of "what did the steward do over the last 30 days, what did it
-  promote, demote, archive?" A simple JSONL audit log + a CLI viewer would make the
-  cycle's effect legible.
-- **Wiki coverage report.** `wiki-absorb` produces articles; we have no view of
-  "which scopes have low article coverage relative to claim volume". Surfacing
-  coverage gaps drives the next absorb / breakdown cycle.
+**Scope.** Add per-cycle counters in `service.run_cycle`, `wiki_engine`, and
+`jobs/daydream_ingest.py`. Enforce hard stops with explicit reason codes.
+Emit metrics. Add circuit breaker per provider.
 
-### 2. The QA-accuracy publication (A1 follow-through)
+**Tests.** Simulate quota exhaustion, repeated provider failure, budget exhaustion.
+Assert run terminates visibly + reason logged + counters incremented.
 
-The claude_cli judge provider shipped in v3.18.0 unblocks the run. The mechanism is
-proven (smoke-10 hit 0.50 accuracy, 120/500 of an overnight run was stable at the
-same range before user-pause). Remaining work is operational, not technical:
+### v3.19.0-H2 — Dashboard auth enforcement audit + fill gaps
 
-- **Run the full 500q overnight pass** when there is the wall-clock budget and the
-  user explicitly authorizes the Claude Pro/Max consumption.
-- **Publish the number** in `docs/longmemeval-results.md` alongside the existing
-  retrieval numbers. This becomes the first published full-QA-accuracy figure for
-  any of the memory systems in this leaderboard.
-- **Add a `--judge claude_cli` mention to README** so external users can reproduce
-  without API keys.
+**Problem.** `access_control.py` exists, but coverage is partial. GET routes
+(claims, events, observability, SSE) and POST routes (proposals, operator
+control) need consistent role enforcement: `viewer` (read) vs `operator`
+(mutate). Loopback bind by default; refuse non-loopback without auth secret.
+CSRF/origin checks for browser POSTs.
 
-### 3. Per-question-type profile tuning (S3 follow-through)
+**Tests.** Anonymous / viewer / operator role matrix. SSE auth. CSRF rejection.
+Non-loopback bind refusal without secret.
 
-S3 E01 lifted the single-session-preference bucket from 0.80 → 0.90. The other
-weak-ish buckets:
+### v3.19.0-H3 — Webhook HMAC signing + replay window
 
-- **temporal-reasoning** (0.9549). E02 fresh-heavy NULLed because the bench's
-  freshness anchor is degenerate. To explore further, either (a) modify the bench
-  to use `item['session_date']` as the freshness anchor and re-test fresh-heavy,
-  or (b) try vec-heavy and accept the bucket is already near its lex+vec ceiling.
-- **single-session-user** (1.0000) and **knowledge-update** (0.9872): at or near
-  ceiling, not worth chasing.
-- **multi-session** (0.9774): unexplored. Hypothesis: a confidence-weighted
-  profile may help when the answer is reinforced across multiple sessions.
+**Problem.** Operator-emitted webhooks send claim data with no signature.
+Receivers can't tell trusted from forged.
 
-Expected ceiling for overall R@5 with full per-type tuning: ~0.985. Marginal upside
-≤ +0.013. Decide whether this is worth a session against the differentiator work.
+**Scope.** `X-MemoryMaster-Signature` (HMAC-SHA-256) + `X-MemoryMaster-Timestamp`
+on all outbound webhooks. Configurable secret. Inbound verification helper.
+Reject outside replay window.
 
-### 4. The MCP-first interface (the moat that keeps growing)
+**Tests.** Valid signature / invalid signature / altered body / replayed request.
 
-Most competitors are libraries. MemoryMaster is a 21-tool MCP server that drops into
-any Claude Code / Cursor / Codex session today. The investment areas:
+### v3.19.0-H4 — MCP mutating-tool allowlist for DB/workspace overrides
 
-- **Tool documentation surface.** `query_for_context` and `query_for_task` have
-  different shapes; new users guess which to call. A `mcp_help` tool that returns
-  the decision tree as a string would smooth onboarding.
-- **Tool-call telemetry.** No view of "which agents call which tools how often."
-  Useful both for popularity-driven tool prioritization and for catching agent
-  misuse patterns.
-- **A `replay_session` tool** that takes a transcript path and returns the claims
-  that would be ingested (without ingesting). Lets agents preview ingest decisions
-  before committing — relevant for the steward / dream-bridge pipelines.
+**Problem.** MCP tools accept caller-controlled `db` and `workspace` paths,
+including mutating tools. A caller can write to any SQLite file the process
+can reach.
 
-### 5. Operational hardening
+**Scope.** Classify tools read-only vs mutating. Remove per-call DB override
+on mutating tools, or guard behind explicit admin config. Allowlist-validate
+workspace roots. Persist actor/request id on mutations.
 
-- **Sensitivity filter golden-set tests.** Filter has unit tests but no curated
-  corpus of "things that MUST NOT pass" (real-looking API keys, JWTs, private IPs
-  in various formats). Worth a `tests/fixtures/sensitivity_corpus.txt` + matching
-  test that asserts each line is caught.
-- **Postgres parity verification harness.** `db_merge.py` and `postgres_store.py`
-  exist; no test that proves SQLite-write → Postgres-merge produces the same
-  observable behavior end-to-end. One script that ingests N claims to both, queries
-  both, asserts identical results.
-- **Setup-hooks idempotency.** `scripts/setup-hooks.py` is run twice by some users
-  on machine setup. Should be safe; should be tested.
+**Tests.** Allow/deny path resolution. Mutating tool with default DB only.
+Allowlist matches/misses.
+
+## Phase 1 / v3.20.0 — Storage discipline
+
+### v3.20.0-S1 — Versioned migrations + SQLite/Postgres parity gate
+
+**Problem.** Schema evolution today is opportunistic `ALTER TABLE` with
+try/except — no version tracking, no rollback, parity drift risk between
+SQLite and Postgres backends.
+
+**Scope.** Schema version marker table. Forward-apply migration files.
+Parity test suite for claims/citations/lifecycle/events/retrieval. CI gate.
+
+### v3.20.0-S2 — Remove remaining `sqlite3.connect` bypasses (if any)
+
+**Cross-check 2026-05-17.** Already 0 matches in `mcp_server.py`. Verify other
+modules; if all clean, mark this S-item DONE in this commit and skip the PR.
+
+## Phase 2 / v3.21.0+ — Architecture & differentiator features
+
+### v3.21.0-A1 — Split the worst oversized modules
+
+**Cross-check 2026-05-17.** 10 files >800 LOC. Top offenders:
+
+  - `postgres_store.py` 2591 LOC
+  - `context_hook.py` 2004 LOC
+  - `steward.py` 1651 LOC
+  - `dashboard.py` 1491 LOC
+  - `operator.py` 1453 LOC
+  - `mcp_server.py` 1439 LOC
+  - `cli_handlers_basic.py` 1359 LOC
+  - `service.py` 1357 LOC
+
+Split by domain workflow, not "helpers.py dumping". Maintain public CLI/MCP
+surfaces. Tests stay green.
+
+### v3.21.0-A2 — Thin `MemoryService` facade into explicit pipelines
+
+`IngestPipeline`, `RetrievalPlanner`, `LifecycleManager`, `StewardRunner`,
+`WikiProjector`. `MemoryService` becomes a stable thin facade.
+
+### v3.21.0-D1 — Conflict-resolution UI for the dashboard *(governance differentiator)*
+
+`conflicted` claims today require MCP `pin`/`redact`/`supersede` calls.
+A side-by-side conflict view that resolves in one click converts governance
+from "exists in code" to "exists in workflow." This is the differentiator
+nobody else has.
+
+### v3.21.0-D2 — Steward observability
+
+JSONL audit log + CLI viewer. "What did the steward promote, demote, archive
+over the last 30 days." Makes the cycle's effect legible.
+
+### v3.21.0-D3 — Wiki coverage report
+
+Surface scopes with low article coverage relative to claim volume.
+
+### v3.21.0-D4 — MCP self-documentation tool
+
+A `mcp_help` tool that returns the decision tree for which tool to call when
+(query_for_context vs query_for_task vs query_memory). Smooths agent onboarding.
+
+### v3.21.0-D5 — A1 full 500q publication run
+
+Mechanism shipped in v3.18.0 (#109). Run the overnight bench when budget allows
+(now safer once v3.19.0-H1 budget caps are in). Publish first full QA-accuracy
+number on LongMemEval-S; update README.
+
+### v3.21.0-D6 — Silent-except cleanup *(downgraded — cross-check shows 0 `except: pass`)*
+
+GPT-5.4 review claimed 35 silent excepts. Cross-check 2026-05-17: 0 actual
+`except: pass` patterns. The 428 `except` clauses look like proper typed handling.
+Defer — audit one module at a time during natural refactors. Don't dedicate a sprint.
 
 ## Where NOT to spend cycles
 
-- **Chasing R@5 to 0.99.** Marginal benchmark gains do not translate to user-facing
-  value once we're already at the top of the published set. The same effort spent
-  on governance or MCP yields more.
-- **Re-architecting the retrieval blend.** Linear blend at the current weights is
-  at or near its local optimum (RRF tiebreaker NULL, session-diversity cap NULL,
-  Gemini LLM rerank NULL, W_LEX sweep REVERT — all in v3.16). Don't re-explore.
+- **Chasing R@5 to 0.99.** Marginal benchmark gains don't translate to user-facing
+  value once we're already at the top of the published set. Same effort spent
+  on Phase 0 hardening yields more.
+- **Re-architecting the retrieval blend.** Linear blend at current weights is
+  at or near its local optimum (RRF tiebreaker NULL, session-diversity NULL,
+  Gemini LLM rerank NULL, W_LEX sweep REVERT — all v3.16).
 - **Adding a fifth LLM provider** unless an integration explicitly requires it.
-  The 4 + claude_cli OAuth already cover the common case.
+  The 4 + `claude_cli` OAuth already cover the common case.
+- **Marketing the differentiators (Phase 2) before Phase 0 lands.** Auth-less
+  dashboards and unbounded LLM budgets undermine any "production-grade" claim.
 
-## Suggested next-session topics
+## Order of work
 
-In rough priority order:
+1. v3.19.0-H1 (LLM budget caps) ← most urgent; do first
+2. v3.19.0-H2 (dashboard auth)
+3. v3.19.0-H3 (webhook HMAC)
+4. v3.19.0-H4 (MCP mutating allowlist)
+5. → ship v3.19.0
+6. v3.20.0-S1 (migrations + parity gate)
+7. → ship v3.20.0
+8. v3.21.0-A1 + A2 (module splits, thin MemoryService)
+9. v3.21.0-D1 (conflict-resolution UI — first differentiator user can see)
+10. v3.21.0-D5 (A1 publication run, now safe with budget caps)
+11. v3.21.0-D2/D3/D4 in any order
 
-1. Conflict resolution UI for the dashboard (governance differentiator)
-2. Steward observability — JSONL audit log + CLI viewer
-3. A1 full 500q publication run + README mention
-4. Sensitivity filter golden-set tests
-5. MCP `mcp_help` tool + tool-call telemetry
-
-Pick one based on the session's wall-clock budget. None of them require benchmark
-grinding.
+Each numbered item is a separate PR. None requires benchmark grinding.
