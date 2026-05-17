@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [3.18.0] - 2026-05-17
+
+### Added
+
+- **Per-question-type retrieval weight profiles (S3, #110).** New `MEMORYMASTER_RETRIEVAL_PROFILE_<TYPE>=lex,conf,fresh,vec` env-var family lets retrieval swap the hybrid blend weights per question type. `Config.retrieval_profile(qtype)` lookup, `MemoryService.query/query_rows` forward an optional `query_type`, `tests/bench_longmemeval.py` passes `item['question_type']` from the LongMemEval-S dataset. Mechanism is opt-in and isolated — when no profile env is set, behavior is unchanged.
+
+- **`claude_cli` judge provider for bench (A1, #109).** Fourth provider in `tests/bench_longmemeval.py:JudgeClient` routes through `memorymaster.llm_provider._call_claude_cli`, shelling out to local `claude --print` over Claude Code OAuth. Unblocks the full LongMemEval-S QA-accuracy bench for environments with no API keys.
+
+  ```bash
+  MEMORYMASTER_LLM_MODEL=claude-sonnet-4-5 \
+    python tests/bench_longmemeval.py --full --judge claude_cli \
+    --judge-pacing-seconds 0 --qa-max-seconds 30000
+  ```
+
+### Improved
+
+- **LongMemEval-S R@5: 0.966 → 0.972 (+0.006)** with the validated `single-session-preference=0.10,0.10,0.10,0.70` profile. Per-bucket apples-to-apples on same code: preference R@5 0.8000 → 0.9000 (+0.10, +12.5% relative); every other bucket unchanged (0.0000 drift). First non-NULL retrieval improvement since v3.15.0. Details: `docs/v318-experiments/E01-results.md`.
+
+### Notes
+
+- `docs/longmemeval-results.md` per-bucket table is stale (lists preference at R@5=0.40; real current baseline is 0.80). Headline overall R@5 numbers still accurate. Will refresh on next bench publication pass.
+- S3 E02 (temporal-reasoning fresh-heavy) NULLed — bench's W_FRESH axis is degenerate because all sessions ingest in a tight wall-clock window so freshness anchor is uniform.
+- A1 full 500q overnight run not included in this release — proven mechanism, but full publication run deferred.
+
 ## [3.17.1] - 2026-05-16
 
 ### Added
