@@ -37,6 +37,7 @@ OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 GEMINI_GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 OPENAI_JUDGE_MODEL = "gpt-4o"
 GEMINI_FALLBACK_MODEL = "gemini-2.5-flash"
+CLAUDE_CLI_JUDGE_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_JUDGE = "sonnet"
 DEFAULT_JUDGE_PACING_SECONDS = 1.0
 DEFAULT_QA_MAX_SECONDS = 90 * 60
@@ -126,6 +127,8 @@ class JudgeClient:
             if not self.openai_api_key:
                 raise RuntimeError("OPENAI_API_KEY is not set")
             return call_openai_chat(prompt, self.openai_api_key, max_tokens=max_tokens, temperature=temperature)
+        if provider == "claude_cli":
+            return call_claude_cli_judge(prompt, max_tokens=max_tokens, temperature=temperature)
         raise ValueError(f"Unknown judge provider: {provider}")
 
     def _record(self, response: LLMResponse) -> None:
@@ -148,6 +151,8 @@ class JudgeClient:
             return "gemini-2.5-flash"
         if self.models_used == {ANTHROPIC_JUDGE_MODEL}:
             return "sonnet"
+        if self.models_used == {CLAUDE_CLI_JUDGE_MODEL}:
+            return "claude_cli"
         return "mixed"
 
     @staticmethod
@@ -158,6 +163,10 @@ class JudgeClient:
             return ["gpt-4o", "gemini", "sonnet"]
         if primary == "gemini":
             return ["gemini", "sonnet", "gpt-4o"]
+        if primary == "claude_cli":
+            # OAuth-only via local Claude Code binary; no API keys needed.
+            # Fall back to API providers only if explicit keys are present.
+            return ["claude_cli", "gpt-4o", "gemini", "sonnet"]
         raise ValueError(f"Unknown judge: {primary}")
 
     @staticmethod
@@ -166,6 +175,8 @@ class JudgeClient:
             return ANTHROPIC_JUDGE_MODEL
         if provider == "gemini":
             return GEMINI_FALLBACK_MODEL
+        if provider == "claude_cli":
+            return CLAUDE_CLI_JUDGE_MODEL
         return OPENAI_JUDGE_MODEL
 
 
@@ -632,6 +643,43 @@ def call_anthropic_sonnet_requests(
     )
 
 
+def call_claude_cli_judge(
+    prompt: str,
+    *,
+    max_tokens: int,
+    temperature: float = 0.0,
+) -> LLMResponse:
+    """OAuth-via-CLI judge — wraps memorymaster.llm_provider._call_claude_cli.
+
+    Routes the judge prompt through the user's local `claude --print` binary so
+    the bench runs against a Claude Code subscription instead of api.anthropic.com.
+    No ANTHROPIC_API_KEY required. Per-call cold-start latency ~3-15s; budget
+    accordingly for full runs (~500 questions × 2 calls each).
+
+    `max_tokens` and `temperature` are accepted for signature parity with the
+    HTTP providers; the CLI does not honour them per-call (model defaults apply).
+    """
+    # Local import — keeps the bench importable even if memorymaster is
+    # partially broken during dev. The provider helper handles binary discovery,
+    # timeouts, and Windows console suppression.
+    from memorymaster.llm_provider import _call_claude_cli
+
+    # Pin the model the bench reports via env, so judge_used_label stays stable.
+    os.environ.setdefault("MEMORYMASTER_LLM_MODEL", CLAUDE_CLI_JUDGE_MODEL)
+    text = _call_claude_cli(prompt, "").strip()
+    if not text:
+        raise RuntimeError(
+            "claude_cli judge returned empty output — check claude binary on PATH "
+            "and OAuth session validity"
+        )
+    return LLMResponse(
+        text=text,
+        model=CLAUDE_CLI_JUDGE_MODEL,
+        provider="claude_cli",
+        tokens=0,
+    )
+
+
 def answer_question(question: str, contexts: list[str], judge: JudgeClient) -> str:
     prompt = "\n\n".join(
         [
@@ -669,7 +717,8 @@ def run_full(
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
     gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if not anthropic_key and not openai_key and not gemini_key:
+    # claude_cli judge runs entirely via local OAuth — no API keys required.
+    if judge_name != "claude_cli" and not anthropic_key and not openai_key and not gemini_key:
         print("[full] no ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY; deferring QA")
         return {
             "mode": mode,
@@ -849,9 +898,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--qa-output", type=Path, default=QA_OUTPUT, help="QA-only output JSON path")
     parser.add_argument(
         "--judge",
-        choices=["sonnet", "gpt-4o", "gemini"],
+        choices=["sonnet", "gpt-4o", "gemini", "claude_cli"],
         default=DEFAULT_JUDGE,
-        help="Primary judge model; default sonnet",
+        help="Primary judge model; default sonnet. claude_cli uses local OAuth (no API key)",
     )
     parser.add_argument(
         "--judge-pacing-seconds",
