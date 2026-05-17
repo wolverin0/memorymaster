@@ -8,7 +8,7 @@ from typing import Any
 import logging
 import os
 
-from memorymaster import candidate_dedupe, observability
+from memorymaster import candidate_dedupe, llm_budget, observability
 from memorymaster.embeddings import EmbeddingProvider, create_best_provider
 from memorymaster.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, validator
 from memorymaster.models import ActionProposal, CitationInput, Claim, ClaimLink, Event, EvidenceItem, ExternalSource, MediaRetryItem, SourceItem
@@ -364,52 +364,78 @@ class MemoryService:
         policy_mode: str = "legacy",
         policy_limit: int = 200,
     ) -> dict[str, object]:
-        policy_selection = select_revalidation_candidates(
-            self.store,
-            mode=policy_mode,
-            limit=policy_limit,
-        )
-        extract_res = extractor.run(self.store)
-        # Match validator's scan size (200) so every candidate the validator
-        # would touch gets a chance to dedupe first. policy_limit is for
-        # revalidation cadence, not candidate sweep — different concept.
-        dedupe_res = candidate_dedupe.run(self.store)
-        deterministic_res = deterministic.run(
-            self.store,
-            workspace_root=self.workspace_root,
-            revalidation_claims=policy_selection.selected,
-            policy_mode=policy_mode,
-        )
-        validate_res = validator.run(
-            self.store,
-            min_citations=min_citations,
-            min_score=min_score,
-            revalidation_claims=policy_selection.selected,
-            policy_mode=policy_mode,
-        )
-        decay_res = decay.run(self.store)
-        compact_res = (
-            compactor.run(
-                self.store,
-                artifacts_dir=self.workspace_root / "artifacts" / "compaction",
+        # Open a per-cycle LLM budget scope. When any of the caps fires
+        # (MEMORYMASTER_MAX_LLM_CALLS_PER_CYCLE / MAX_TOKENS_PER_CYCLE /
+        # MAX_PROVIDER_FAILURES_PER_CYCLE) the next call_llm raises
+        # LLMBudgetExceeded; we catch it here, surface the abort reason in
+        # the result dict, and stop cleanly. Stages that ran before the
+        # abort still have their results recorded. When all caps are unset
+        # (0/default), behavior matches pre-v3.19 — no enforcement.
+        result: dict[str, object] = {}
+        budget_snapshot: dict[str, object] = {}
+        try:
+            with llm_budget.cycle_scope() as budget:
+                policy_selection = select_revalidation_candidates(
+                    self.store,
+                    mode=policy_mode,
+                    limit=policy_limit,
+                )
+                extract_res = extractor.run(self.store)
+                result["policy"] = {
+                    "mode": policy_selection.mode,
+                    "considered": policy_selection.considered,
+                    "due": policy_selection.due,
+                    "selected": len(policy_selection.selected),
+                }
+                result["extractor"] = extract_res
+                # Match validator's scan size (200) so every candidate the
+                # validator would touch gets a chance to dedupe first.
+                dedupe_res = candidate_dedupe.run(self.store)
+                result["dedupe"] = dedupe_res
+                deterministic_res = deterministic.run(
+                    self.store,
+                    workspace_root=self.workspace_root,
+                    revalidation_claims=policy_selection.selected,
+                    policy_mode=policy_mode,
+                )
+                result["deterministic"] = deterministic_res
+                validate_res = validator.run(
+                    self.store,
+                    min_citations=min_citations,
+                    min_score=min_score,
+                    revalidation_claims=policy_selection.selected,
+                    policy_mode=policy_mode,
+                )
+                result["validator"] = validate_res
+                decay_res = decay.run(self.store)
+                result["decay"] = decay_res
+                compact_res = (
+                    compactor.run(
+                        self.store,
+                        artifacts_dir=self.workspace_root / "artifacts" / "compaction",
+                    )
+                    if run_compactor
+                    else {"archived_claims": 0, "deleted_events": 0}
+                )
+                result["compactor"] = compact_res
+                budget_snapshot = budget.snapshot()
+        except llm_budget.LLMBudgetExceeded as exc:
+            current = llm_budget.get_current()
+            if current is not None:
+                budget_snapshot = current.snapshot()
+            budget_snapshot["aborted"] = True
+            budget_snapshot["aborted_reason"] = exc.reason
+            budget_snapshot["aborted_provider"] = exc.provider
+            logger.warning(
+                "run_cycle aborted by llm budget: reason=%s provider=%s",
+                exc.reason,
+                exc.provider,
             )
-            if run_compactor
-            else {"archived_claims": 0, "deleted_events": 0}
-        )
-        result = {
-            "policy": {
-                "mode": policy_selection.mode,
-                "considered": policy_selection.considered,
-                "due": policy_selection.due,
-                "selected": len(policy_selection.selected),
-            },
-            "extractor": extract_res,
-            "dedupe": dedupe_res,
-            "deterministic": deterministic_res,
-            "validator": validate_res,
-            "decay": decay_res,
-            "compactor": compact_res,
-        }
+
+        # Always include the budget snapshot — empty if no caps were ever
+        # consulted, populated when callers opt-in via env vars.
+        budget_snapshot.setdefault("aborted", False)
+        result["budget"] = budget_snapshot
         self._qdrant_post_cycle_sync()
         return result
 

@@ -33,7 +33,51 @@ def ingest_insights(
     scope: str = "user",
     dry_run: bool = False,
 ) -> dict:
-    """Ingest accepted daydream insights as candidate hypothesis claims."""
+    """Ingest accepted daydream insights as candidate hypothesis claims.
+
+    Honours per-cycle LLM budget caps from ``llm_budget``. Today this path
+    does not itself call ``call_llm`` (insights arrive pre-scored), but the
+    wrapper is in place so downstream changes (re-scoring, paraphrase
+    detection, etc.) inherit the same abort semantics as ``service.run_cycle``
+    and ``wiki_engine.absorb``. If a parent scope is already open, defers
+    to it instead of opening a nested one.
+    """
+    from memorymaster import llm_budget
+
+    if llm_budget.get_current() is not None:
+        return _ingest_insights_impl(
+            service, insights_dir, min_score=min_score, scope=scope, dry_run=dry_run
+        )
+
+    with llm_budget.cycle_scope() as budget:
+        try:
+            result = _ingest_insights_impl(
+                service, insights_dir, min_score=min_score, scope=scope, dry_run=dry_run
+            )
+        except llm_budget.LLMBudgetExceeded as exc:
+            result = {
+                "ingested": 0,
+                "skipped": 0,
+                "errors": [
+                    f"daydream ingest aborted by llm budget: reason={exc.reason}"
+                ],
+                "aborted": True,
+                "aborted_reason": exc.reason,
+                "aborted_provider": exc.provider,
+            }
+        result["budget"] = budget.snapshot()
+        return result
+
+
+def _ingest_insights_impl(
+    service: MemoryService,
+    insights_dir: Path,
+    *,
+    min_score: float = 7.0,
+    scope: str = "user",
+    dry_run: bool = False,
+) -> dict:
+    """Original ingest_insights implementation, called inside a budget scope."""
     root = Path(insights_dir)
     result: dict[str, Any] = {"ingested": 0, "skipped": 0, "errors": []}
     if not root.exists() or not root.is_dir():
