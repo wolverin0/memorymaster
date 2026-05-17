@@ -17,6 +17,8 @@ import urllib.request
 import urllib.error
 from typing import Any
 
+from memorymaster import llm_budget
+
 
 def _env(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
@@ -489,12 +491,27 @@ def call_llm(prompt: str, text: str) -> str:
     if not primary_fn:
         return ""
 
+    # Per-cycle budget gate. If a cycle_scope() is active and the calls cap
+    # is already hit (or this provider's failure breaker is open), raise
+    # LLMBudgetExceeded so the caller can record the abort visibly instead
+    # of silently overspending. When no scope is active, this is a no-op
+    # — preserves backwards-compat for callers outside run_cycle/wiki/daydream.
+    llm_budget.check_before_call(primary_name)
+
     primary_response = primary_fn(prompt, text)
+    llm_budget.record_call(
+        primary_name,
+        tokens=llm_budget.estimate_tokens(prompt, text, primary_response),
+    )
 
     # Happy path: primary returned something that doesn't look like a quota error.
     if primary_response and not _looks_like_quota_error(primary_response):
         _FALLBACK_STATS["primary_ok"] += 1
         return primary_response
+
+    # Treat empty or quota-shaped response as a provider failure for breaker purposes.
+    # record_failure may raise if the per-provider failure cap is hit.
+    llm_budget.record_failure(primary_name)
 
     fallback_name = _env("MEMORYMASTER_LLM_FALLBACK_PROVIDER", "").lower()
     if not fallback_name:
@@ -512,6 +529,9 @@ def call_llm(prompt: str, text: str) -> str:
     log.info("llm_fallback_fired primary=%s reason=%s", primary_name, reason)
     _FALLBACK_STATS["fired"] += 1
 
+    # Budget gate for the fallback provider too.
+    llm_budget.check_before_call(fallback_name)
+
     # Swap MEMORYMASTER_LLM_MODEL to fallback model for the duration of the call.
     fallback_model = _env("MEMORYMASTER_LLM_FALLBACK_MODEL", "")
     saved_model = os.environ.get("MEMORYMASTER_LLM_MODEL")
@@ -523,6 +543,10 @@ def call_llm(prompt: str, text: str) -> str:
             # own default, not the primary's model (which may be Gemini-specific).
             del os.environ["MEMORYMASTER_LLM_MODEL"]
         fallback_response = fallback_fn(prompt, text)
+        llm_budget.record_call(
+            fallback_name,
+            tokens=llm_budget.estimate_tokens(prompt, text, fallback_response),
+        )
     finally:
         if saved_model is None:
             os.environ.pop("MEMORYMASTER_LLM_MODEL", None)
@@ -533,6 +557,8 @@ def call_llm(prompt: str, text: str) -> str:
         return fallback_response
 
     # Both failed — match legacy contract, return primary's (possibly empty) response.
+    # Record fallback failure for breaker purposes; may raise if cap is hit.
+    llm_budget.record_failure(fallback_name)
     return primary_response
 
 

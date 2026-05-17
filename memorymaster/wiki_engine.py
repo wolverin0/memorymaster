@@ -380,7 +380,47 @@ def absorb(
     *,
     scope_filter: str | None = None,
 ) -> dict[str, Any]:
-    """Absorb claims into wiki articles using LLM."""
+    """Absorb claims into wiki articles using LLM.
+
+    Honours per-cycle LLM budget caps from ``llm_budget`` — when a cap is
+    hit mid-absorption, partial results are returned with ``aborted``
+    metadata so callers can see *why* the run stopped instead of silent
+    overspend. If a parent scope is already active (e.g. wiki-absorb fired
+    from inside ``service.run_cycle`` in the future), defers to it.
+    """
+    from memorymaster import llm_budget
+
+    if llm_budget.get_current() is not None:
+        return _absorb_impl(db_path, wiki_dir, scope_filter=scope_filter)
+
+    with llm_budget.cycle_scope() as budget:
+        try:
+            result = _absorb_impl(db_path, wiki_dir, scope_filter=scope_filter)
+        except llm_budget.LLMBudgetExceeded as exc:
+            result = {
+                "subjects": 0,
+                "articles_written": 0,
+                "articles_updated": 0,
+                "aborted": True,
+                "aborted_reason": exc.reason,
+                "aborted_provider": exc.provider,
+            }
+            logger.warning(
+                "wiki_absorb aborted by llm budget: reason=%s provider=%s",
+                exc.reason,
+                exc.provider,
+            )
+        result["budget"] = budget.snapshot()
+        return result
+
+
+def _absorb_impl(
+    db_path: str,
+    wiki_dir: str | Path,
+    *,
+    scope_filter: str | None = None,
+) -> dict[str, Any]:
+    """Original wiki absorption implementation, called inside a budget scope."""
     wiki = Path(wiki_dir)
     wiki.mkdir(parents=True, exist_ok=True)
 
