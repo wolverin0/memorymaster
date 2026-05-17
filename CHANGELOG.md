@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [3.19.0] - 2026-05-17
+
+**Phase 0 hardening release.** Closes the four security/ops gaps identified
+in the GPT-5.4 review against the `docs/ROADMAP.md` Phase 0 list: LLM budget
+caps (H1), dashboard auth (H2), webhook HMAC (H3), MCP path allowlist (H4).
+All four mechanisms ship opt-in by default — no breaking behaviour changes
+for callers that don't set the new env vars.
+
+### Added
+
+- **H1: Per-cycle LLM budget caps with reason-coded hard stops** (PR #113).
+  New `memorymaster/llm_budget.py` contextvar-scoped tracker. Wraps
+  `service.run_cycle`, `wiki_engine.absorb`, `jobs/daydream_ingest.ingest_insights`.
+  Per-provider circuit breaker. Aborted runs surface `result["budget"]`
+  with reason + counters + WARNING log.
+- **H2: Dashboard HTTP auth + viewer/operator roles + CSRF + bind-safety**
+  (PR #114). New `memorymaster/dashboard_auth.py`. Bearer-token auth via
+  `hmac.compare_digest`. Operator-only routes block viewer at 403.
+  Browser POSTs validated by Origin/Referer match. Non-loopback bind
+  refuses without an auth secret unless `UNSAFE_BIND=1` explicit opt-in.
+  Health endpoints exempt.
+- **H3: Webhook HMAC-SHA-256 signing + timestamp + replay protection**
+  (PR #115). `memorymaster/webhook.py` adds `X-MemoryMaster-Signature`
+  and `X-MemoryMaster-Timestamp` headers on outbound webhooks when the
+  secret is set. New `verify_webhook_signature` helper for receivers
+  returns `(ok, reason)` with explicit `replay_window` / `bad_signature`
+  / `missing_*` codes. 5-min default replay window.
+- **H4: MCP db/workspace path allowlist + admin-mode bypass** (PR #116).
+  New `memorymaster/mcp_path_policy.py`. Validates caller-supplied paths
+  through every MCP tool via the single `_resolve_db` / `_resolve_workspace`
+  chokepoint — zero invasive changes to 14+ tool entry points. Glob
+  patterns (`fnmatch`) supported. Both denial and admin-mode bypass log
+  structured WARNING with `actor=mcp_caller` for audit.
+
+### Env vars reference
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `MEMORYMASTER_MAX_LLM_CALLS_PER_CYCLE`        | `0` (unlimited) | H1 cycle call cap |
+| `MEMORYMASTER_MAX_TOKENS_PER_CYCLE`           | `0` (unlimited) | H1 cycle token cap |
+| `MEMORYMASTER_MAX_PROVIDER_FAILURES_PER_CYCLE` | `0` (unlimited) | H1 per-provider breaker |
+| `MEMORYMASTER_DASHBOARD_TOKEN_VIEWER`         | unset (legacy)  | H2 read-only bearer |
+| `MEMORYMASTER_DASHBOARD_TOKEN_OPERATOR`       | unset (legacy)  | H2 mutating bearer |
+| `MEMORYMASTER_DASHBOARD_UNSAFE_BIND`          | unset (refuse)  | H2 non-loopback escape |
+| `MEMORYMASTER_WEBHOOK_SECRET`                 | unset (no sig)  | H3 HMAC signing key |
+| `MEMORYMASTER_MCP_DB_ALLOWLIST`               | unset (allow all) | H4 DB path allowlist |
+| `MEMORYMASTER_MCP_WORKSPACE_ALLOWLIST`        | unset (allow all) | H4 workspace allowlist |
+| `MEMORYMASTER_MCP_ADMIN_MODE`                 | unset (enforce) | H4 allowlist bypass |
+
+### Tests
+
+63 new tests across H1/H2/H3/H4:
+
+- `tests/test_llm_budget.py` — 8 tests
+- `tests/test_dashboard_auth.py` — 25 tests (19 unit + 6 end-to-end HTTP)
+- `tests/test_webhook_hmac.py` — 13 tests
+- `tests/test_mcp_path_policy.py` — 17 tests (12 unit + 5 chokepoint integration)
+
+Zero regressions on pre-existing webhook / dashboard / mcp_helpers / daydream
+test suites. Full pytest stays green at each merge.
+
+### Notes
+
+- **Phase 1 (storage discipline, migrations + parity gate) is the next
+  release target** per ROADMAP. Per-bucket retrieval profile tuning
+  intentionally deferred (only ~+0.013 R@5 ceiling left, diminishing
+  returns vs hardening leverage).
+- **A1 full LongMemEval-S QA-accuracy publication run still pending** —
+  mechanism shipped in v3.18.0 (PR #109), safer to run now that v3.19.0-H1
+  budget caps prevent runaway provider failures.
+
 ## [3.18.0] - 2026-05-17
 
 ### Added
