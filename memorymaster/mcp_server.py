@@ -14,7 +14,7 @@ from typing import Any, TypeVar
 import unicodedata
 from urllib.parse import urlparse
 
-from memorymaster import observability
+from memorymaster import mcp_path_policy, observability
 from pydantic import BaseModel, ValidationError
 
 from memorymaster.models import CitationInput
@@ -325,15 +325,24 @@ def _check_ingest_rate_limit(source_agent: str, now: float | None = None) -> dic
 def _resolve_db(db: str) -> str:
     raw = str(db or "").strip()
     if raw and (raw != _DEFAULT_DB or not _ENV_DEFAULT_DB):
-        return raw
-    return _ENV_DEFAULT_DB or _DEFAULT_DB
+        resolved = raw
+    else:
+        resolved = _ENV_DEFAULT_DB or _DEFAULT_DB
+    # v3.19.0-H4: refuse caller-supplied db paths that aren't allowlisted.
+    # No-op when MEMORYMASTER_MCP_DB_ALLOWLIST is unset (back-compat).
+    # Bypassable via MEMORYMASTER_MCP_ADMIN_MODE=1.
+    mcp_path_policy.validate_db_path(resolved, actor="mcp_caller")
+    return resolved
 
 
 def _resolve_workspace(workspace: str) -> str:
     raw = str(workspace or "").strip()
     if raw:
-        return raw
-    return _ENV_DEFAULT_WORKSPACE or _DEFAULT_WORKSPACE
+        resolved = raw
+    else:
+        resolved = _ENV_DEFAULT_WORKSPACE or _DEFAULT_WORKSPACE
+    mcp_path_policy.validate_workspace_path(resolved, actor="mcp_caller")
+    return resolved
 
 
 def _service(db: str, workspace: str) -> MemoryService:
