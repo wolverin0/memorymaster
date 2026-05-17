@@ -426,6 +426,7 @@ class MemoryService:
         retrieval_profile: str | None = None,
         allow_sensitive: bool = False,
         scope_allowlist: list[str] | None = None,
+        query_type: str | None = None,
     ) -> list[Claim]:
         rows = self.query_rows(
             query_text=query_text,
@@ -438,6 +439,7 @@ class MemoryService:
             retrieval_profile=retrieval_profile,
             allow_sensitive=allow_sensitive,
             scope_allowlist=scope_allowlist,
+            query_type=query_type,
         )
         return [row["claim"] for row in rows]
 
@@ -552,6 +554,7 @@ class MemoryService:
         scope_allowlist: list[str] | None = None,
         enrich_with_entities: bool = False,
         requesting_agent: str | None = None,
+        query_type: str | None = None,
     ) -> list[dict[str, Any]]:
         if limit <= 0:
             return []
@@ -603,6 +606,7 @@ class MemoryService:
             limit=rank_limit,
             vector_hook=vector_hook,
             semantic_vectors=semantic,
+            query_type=query_type,
         )
         ranked_rows = _rerank_with_profile(
             ranked_rows,
