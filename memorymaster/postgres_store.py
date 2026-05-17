@@ -82,6 +82,15 @@ class PostgresStore(SQLiteStore):
             self._ensure_tenant_id_schema(conn)
             self._ensure_binding_schema(conn)
 
+        # v3.20.0-S1: apply versioned migrations after the legacy init flow.
+        # The 0001 baseline is a no-op for existing schemas; future
+        # migrations (0002+) apply on top via the same runner that drives
+        # the SQLite backend, ensuring parity between the two stores.
+        from memorymaster.migrations import MigrationRunner
+
+        with self.connect() as mig_conn:
+            MigrationRunner(mig_conn, backend="postgres").apply_pending()
+
     @staticmethod
     def _canonical_payload(payload: object | None) -> str:
         if payload is None:

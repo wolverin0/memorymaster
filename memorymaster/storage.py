@@ -85,3 +85,13 @@ class SQLiteStore(_SchemaMixin, _ReadMixin, _WriteClaimsMixin, _LifecycleMixin, 
             except sqlite3.OperationalError:
                 pass  # already exists
             conn.commit()
+
+        # v3.20.0-S1: apply versioned migrations after the legacy init flow.
+        # The 0001 baseline is a no-op (existing schema IS the baseline);
+        # any future migrations (0002+) get applied on top here. Opens a
+        # fresh connection rather than reusing the one above because the
+        # migration runner manages its own transactions per-step.
+        from memorymaster.migrations import MigrationRunner
+
+        with self.connect() as mig_conn:
+            MigrationRunner(mig_conn, backend="sqlite").apply_pending()

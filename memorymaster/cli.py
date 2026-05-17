@@ -24,6 +24,7 @@ from memorymaster.cli_handlers_basic import (
     _handle_decay,
     _handle_entity_graph_export,
     _handle_ingest_daydream,
+    _handle_migrate,
     _handle_recompute_confidence_priors,
     _handle_wiki_suggest_links,
     handle_mcp_usage_report,
@@ -38,6 +39,7 @@ COMMAND_HANDLERS["ingest-daydream"] = _handle_ingest_daydream
 COMMAND_HANDLERS["mcp-usage-report"] = (
     lambda args, service, parser, effective_db: handle_mcp_usage_report(args, effective_db)
 )
+COMMAND_HANDLERS["migrate"] = _handle_migrate
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,6 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("init-db", help="Create schema in SQLite database")
+
+    migrate = sub.add_parser("migrate", help="Apply pending versioned schema migrations (v3.20.0+)")
+    migrate_mode = migrate.add_mutually_exclusive_group()
+    migrate_mode.add_argument("--list", action="store_true", help="List known migrations without touching the DB")
+    migrate_mode.add_argument("--status", action="store_true", help="Report applied vs pending per migration")
 
     sub.add_parser("stealth-status", help="Show whether stealth mode is active and which DB is in use")
 

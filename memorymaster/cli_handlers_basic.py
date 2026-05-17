@@ -1357,3 +1357,68 @@ def _handle_check_staleness(args: argparse.Namespace, service, parser: argparse.
     return 0
 
 
+def _handle_migrate(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    """v3.20.0-S1: apply pending schema migrations, or report status.
+
+    Default (no flags): apply every pending migration in version order.
+    --list: dump known migrations (version + description) without touching the DB.
+    --status: query the DB and show applied vs pending per migration.
+    """
+    from memorymaster.migrations import (
+        MigrationRunner,
+        discover_migrations,
+    )
+    from memorymaster.store_factory import is_postgres_dsn
+
+    # --list works without a DB connection at all.
+    if getattr(args, "list", False):
+        migrations = discover_migrations()
+        if args.json_output:
+            payload = [{"version": m.version, "description": m.description} for m in migrations]
+            print(_json_envelope(payload))
+        else:
+            print(f"known migrations ({len(migrations)}):")
+            for m in migrations:
+                print(f"  v{m.version:04d}  {m.description}")
+        return 0
+
+    backend = "postgres" if is_postgres_dsn(effective_db) else "sqlite"
+    store = service.store
+    with store.connect() as conn:
+        runner = MigrationRunner(conn, backend=backend)
+
+        if getattr(args, "status", False):
+            entries = runner.status()
+            if args.json_output:
+                payload = [
+                    {
+                        "version": e.version,
+                        "description": e.description,
+                        "applied": e.applied,
+                        "applied_at": e.applied_at,
+                    }
+                    for e in entries
+                ]
+                print(_json_envelope(payload))
+            else:
+                print(f"backend={backend} db={effective_db}")
+                for e in entries:
+                    marker = "[applied]" if e.applied else "[pending]"
+                    when = f" applied_at={e.applied_at}" if e.applied_at else ""
+                    print(f"  v{e.version:04d}  {marker} {e.description}{when}")
+            return 0
+
+        # Default: apply pending
+        newly = runner.apply_pending()
+        if args.json_output:
+            print(_json_envelope({"applied": newly, "backend": backend}))
+        else:
+            if not newly:
+                print(f"migrate: nothing to apply (backend={backend}, db={effective_db})")
+            else:
+                print(f"migrate: applied {len(newly)} migration(s) on backend={backend}:")
+                for v in newly:
+                    print(f"  v{v:04d}")
+    return 0
+
+
