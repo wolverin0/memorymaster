@@ -19,6 +19,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import parse_qs, urlparse
 
+from memorymaster import dashboard_auth
 from memorymaster.config import get_config
 from memorymaster.review import build_review_queue, queue_to_dicts
 from memorymaster.security import is_sensitive_claim
@@ -626,6 +627,9 @@ class DashboardHTTPServer(ThreadingHTTPServer):
         self.db_target = str(db_target) if db_target is not None else "memorymaster.db"
         self.workspace_root = Path(workspace_root) if workspace_root is not None else Path.cwd()
         self._operator_proc: subprocess.Popen[str] | None = None
+        # Pin the configured host:port string so the CSRF check can compare it
+        # against the request's Origin/Referer header in authenticate POST routes.
+        self.configured_host_port = f"{server_address[0]}:{server_address[1]}"
         super().__init__(server_address, DashboardRequestHandler)
 
     def operator_status(self) -> dict[str, Any]:
@@ -701,10 +705,45 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
     def _server(self) -> DashboardHTTPServer:
         return self.server  # type: ignore[return-value]
 
+    def _enforce_auth(self, *, method: str, route: str) -> bool:
+        """Run the v3.19.0-H2 auth + role + CSRF gates. Returns True on pass.
+
+        On failure, the JSON error response has already been written; the
+        caller must return immediately without dispatching the route.
+        Health endpoints (/health, /healthz, /readyz) are intentionally
+        exempt so external monitors can probe without credentials.
+        """
+        if route in {"/health", "/healthz", "/readyz"}:
+            return True
+
+        decision = dashboard_auth.authenticate(self.headers)
+        decision = dashboard_auth.authorize(decision, method=method, route=route)
+        if not decision.ok:
+            self._write_json(
+                {"ok": False, "error": decision.reason},
+                status=decision.status,
+            )
+            return False
+
+        if method.upper() == "POST":
+            csrf = dashboard_auth.check_csrf(
+                self.headers,
+                configured_host_port=getattr(self._server, "configured_host_port", None),
+            )
+            if not csrf.ok:
+                self._write_json(
+                    {"ok": False, "error": csrf.reason},
+                    status=csrf.status,
+                )
+                return False
+        return True
+
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         route = parsed.path
         try:
+            if not self._enforce_auth(method="GET", route=route):
+                return
             if _route_get_request(self, route, parsed.query):
                 return
             self._write_json({"ok": False, "error": "Not found"}, status=HTTPStatus.NOT_FOUND)
@@ -717,6 +756,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         route = parsed.path
         try:
+            if not self._enforce_auth(method="POST", route=route):
+                return
             payload = self._read_json_body()
             if route == "/api/triage/action":
                 self._handle_triage_action(payload)
@@ -1443,6 +1484,12 @@ def create_dashboard_server(
     port: int = 8765,
     operator_log_jsonl: str | Path = "artifacts/operator/operator_events.jsonl",
 ) -> DashboardHTTPServer:
+    # v3.19.0-H2: refuse non-loopback bind without an auth secret unless the
+    # operator explicitly opts in. Raises dashboard_auth.BindUnsafeError on
+    # an unsafe configuration; callers should let it propagate so the
+    # mistake is visible at startup instead of silently exposed.
+    dashboard_auth.check_bind_safety(host)
+
     if service is None:
         if db_target is None:
             db_target = "memorymaster.db"
