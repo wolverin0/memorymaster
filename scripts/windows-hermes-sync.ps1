@@ -102,7 +102,13 @@ try {
     # === 2. OUTBOUND: export the Windows delta for Hermes ===================
     $since = ""
     if (Test-Path $WatermarkFile) {
-        $since = (Get-Content $WatermarkFile -Raw).Trim()
+        # Strip a leading UTF-8 BOM defensively. An older build wrote the
+        # watermark with `Set-Content -Encoding utf8`, which prepends a BOM
+        # in Windows PowerShell 5.1. .Trim() does NOT remove a BOM (U+FEFF
+        # is not whitespace); a BOM-prefixed timestamp passed to
+        # `export-delta --since` sorts above every real timestamp, so the
+        # watermark would match nothing and every run would export 0 claims.
+        $since = (Get-Content $WatermarkFile -Raw).Trim().TrimStart([char]0xFEFF).Trim()
     }
     Log ("exporting Windows delta since '{0}'..." -f $(if ($since) { $since } else { "(full)" }))
 
@@ -126,7 +132,11 @@ try {
 
     # Advance the watermark only when the export actually saw rows.
     if ($ed.max_updated_at) {
-        Set-Content -Path $WatermarkFile -Value $ed.max_updated_at -Encoding utf8 -NoNewline
+        # Write with -Encoding ascii: an ISO-8601 timestamp is pure ASCII,
+        # and ascii encoding has NO byte-order mark. `Set-Content -Encoding
+        # utf8` in Windows PowerShell 5.1 prepends a BOM, which would
+        # corrupt the watermark on the next read.
+        Set-Content -Path $WatermarkFile -Value $ed.max_updated_at -Encoding ascii -NoNewline
         Log ("  advanced windows watermark -> {0}" -f $ed.max_updated_at)
     } else {
         Log "  delta is empty - watermark unchanged"
