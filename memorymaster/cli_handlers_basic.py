@@ -1422,3 +1422,30 @@ def _handle_migrate(args: argparse.Namespace, service, parser: argparse.Argument
     return 0
 
 
+def _handle_export_delta(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    """Export claims changed since a watermark into a small SQLite delta file.
+
+    The delta file is a valid `merge-db --source` input. Prints (or JSON-emits)
+    the export counts and the new watermark — callers should record
+    `max_updated_at` and pass it as `--since` on the next run.
+    """
+    from memorymaster.delta_sync import export_delta
+
+    t0 = time.perf_counter()
+    result = export_delta(effective_db, args.since, args.output)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        since_label = result["since"] or "(full export)"
+        print(
+            f"export-delta: {result['exported']} claims + {result['citations']} citations "
+            f"since {since_label} -> {args.output}"
+        )
+        if result["max_updated_at"]:
+            print(f"  next watermark (--since): {result['max_updated_at']}")
+        else:
+            print("  delta is empty — nothing changed since the watermark")
+    return 0
+
+

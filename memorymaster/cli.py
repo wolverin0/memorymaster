@@ -23,6 +23,7 @@ from memorymaster.cli_handlers_curation import COMMAND_HANDLERS
 from memorymaster.cli_handlers_basic import (
     _handle_decay,
     _handle_entity_graph_export,
+    _handle_export_delta,
     _handle_ingest_daydream,
     _handle_migrate,
     _handle_recompute_confidence_priors,
@@ -40,6 +41,7 @@ COMMAND_HANDLERS["mcp-usage-report"] = (
     lambda args, service, parser, effective_db: handle_mcp_usage_report(args, effective_db)
 )
 COMMAND_HANDLERS["migrate"] = _handle_migrate
+COMMAND_HANDLERS["export-delta"] = _handle_export_delta
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -511,6 +513,13 @@ def build_parser() -> argparse.ArgumentParser:
     merge_cmd = sub.add_parser("merge-db", help="Merge claims from a remote memorymaster DB (bidirectional sync)")
     merge_cmd.add_argument("--source", required=True, help="Path to source DB file to merge from")
 
+    delta_cmd = sub.add_parser(
+        "export-delta",
+        help="Export claims changed since a watermark into a small SQLite delta file (incremental sync)",
+    )
+    delta_cmd.add_argument("--since", default="", help="ISO-8601 watermark; export claims with updated_at after this (empty = full export)")
+    delta_cmd.add_argument("--output", required=True, help="Path to write the delta SQLite file (overwritten if it exists)")
+
     daily = sub.add_parser("daily-note", help="Generate a daily note summarizing today's activity")
     daily.add_argument("--date", default="", help="Date to generate for (YYYY-MM-DD, default: today)")
     daily.add_argument("--output", default="", help="Directory to save .md file (default: print to stdout)")
@@ -563,7 +572,7 @@ def main(argv: list[str] | None = None) -> int:
     effective_db = _resolve_db_path(args)
 
     # Commands that don't need MemoryService run first; service is lazy-created once for all others.
-    _NO_SERVICE_COMMANDS = {"stealth-status", "export-metrics", "wiki-freshness", "mcp-usage-report"}
+    _NO_SERVICE_COMMANDS = {"stealth-status", "export-metrics", "wiki-freshness", "mcp-usage-report", "export-delta"}
 
     try:
         handler = COMMAND_HANDLERS.get(args.command)
