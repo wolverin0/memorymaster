@@ -147,15 +147,87 @@ work with storage-discipline work in the same release.
 
 ---
 
+## 7. v3.21.0-R1 — Rule-shaped claims with auto-correction-extraction  *(borrows from claude-smart)*
+
+**Why.** MM's existing claims are *descriptive* — "the API uses Y". They
+work great for facts/decisions/constraints, but they don't capture the
+prescriptive shape Claude needs to actually *change behaviour next time*:
+"when doing Z, do Y because W." `ReflexioAI/claude-smart` (256 stars,
+GA 2026-04-21) ships exactly this — preferences + skills with structured
+trigger/action/rationale, auto-extracted from user corrections via session
+hooks. Their benchmark vs `claude-mem` claims 3× higher correction-to-rule
+yield. Adopting the shape inside MM (instead of running both systems and
+fighting hook conflicts) closes the gap without duplicating storage,
+dashboards, or embedders.
+
+**Scope.**
+
+- New `claim_type="rule"` (single migration via the v3.20.0-S1 framework —
+  schema-version-tracked, drift-safe).
+- Structured fields on rule-typed claims: `trigger` (when this fires),
+  `action` (what to do), `rationale` (why). Carried as JSON in a new
+  `rule_payload` column, or three discrete columns — pick during impl.
+- Auto-extraction: extend the existing `dream_bridge` LLM prompt to
+  *also* scan transcripts for correction-signaled turns ("no", "instead",
+  "actually", explicit `/learn`) and emit rule-shaped claims with
+  trigger/action/rationale set. Reuse the existing Auto Dream pipeline —
+  no new hook surface needed.
+- Recall path: `context_hook` (UserPromptSubmit) gets a small change to
+  surface matching rules with the same lexical/vector blend used for
+  other claim types, but rendered in their prescriptive form (the rule
+  is the literal text injected, no paraphrasing).
+- MCP tool: `query_rules(query, limit)` for callers that want only
+  rule-shaped hits, separate from `query_memory`.
+- Wiki integration: rules absorb into a dedicated `rules/` section per
+  scope, with the trigger/action/rationale rendered as a structured
+  table.
+
+**Why not just install claude-smart?**
+
+- Hook conflict: claude-smart and MM both want UserPromptSubmit injection;
+  double-injection bloats context.
+- Storage split: claude-smart writes `~/.reflexio/` + `~/.claude-smart/`,
+  MM writes its own DB. Same content captured twice.
+- Dashboard collision: claude-smart serves localhost:3001; MM serves 8765.
+- The genuinely new idea is the *rule shape*, not the system around it —
+  cheaper to add the shape than to maintain two memory layers.
+
+**Tests (`tests/test_rule_claims.py`):**
+
+- Round-trip: ingest a rule-typed claim → query_rules → trigger/action/
+  rationale preserved.
+- Migration: existing `fact`-typed claims unaffected; new column nullable.
+- Auto-extract: feed a synthetic transcript with a clear correction
+  ("no, use pnpm not npm") through the dream pipeline; assert a rule
+  claim was emitted with the right structured fields.
+- Recall: a query that semantically matches a rule's trigger returns the
+  rule with its prescriptive text intact.
+- Negative: a non-correction turn does NOT produce a rule claim
+  (no false positives on every "ok" or "thanks").
+
+**Verifiable end-state.** PR via `omni/v321-r1-rule-claims` merged
+`--squash --admin` with full pytest green. A canned transcript-replay
+test demonstrates extracting at least 1 rule from a known-correction
+turn, and `query_rules "when adding a new dep"` returns it.
+
+**`/goal` to paste:**
+
+```
+/goal Ship v3.21.0-R1 (rule-shaped claims with auto-correction-extraction) per docs/v320-backlog.md item 7. Borrow the prescriptive rule shape from ReflexioAI/claude-smart (256-star Claude Code plugin) without installing it. Steps: (1) new claim_type="rule" via a v3.20.0-S1 versioned migration that adds a `rule_payload` JSON column to claims (nullable, NULL for existing fact-typed claims). (2) Extend dream_bridge's LLM extraction prompt to also scan transcripts for correction-signaled turns ("no", "instead", "actually", explicit /learn) and emit rule-shaped claims with structured trigger/action/rationale. (3) MCP tool `query_rules(query, limit)` separate from query_memory for callers that want only rules. (4) context_hook (UserPromptSubmit) surfaces matching rules in their prescriptive form alongside existing claim recall. Tests in tests/test_rule_claims.py: round-trip ingest+query, migration leaves fact-typed claims untouched, auto-extract from canned correction transcript emits rule with right structured fields, recall returns matching rule, non-correction turn does NOT emit rule. PR via omni/v321-r1-rule-claims branch merged --squash --admin --delete-branch with full pytest green. Reuse patterns: commit-guard requires omni/* branch for pyproject.toml (mm-fc1b~2); admin merge tolerates worktree-attached-branch delete warning (mm-8b8d); single-chokepoint pattern for cross-cutting policy (mm-2e9b~2); writing a new migration via the v3.20.0-S1 framework (mm-2a36). Goal satisfied when the PR is merged, tests pass on main, and `query_rules "when adding a new dep"` returns at least one extracted rule.
+```
+
+---
+
 ## Order of work
 
 Sequential per ROADMAP Phase 1:
 
-1. **S1** (versioned migrations) → ship as standalone PR
+1. **S1** (versioned migrations) → ship as standalone PR ✓ *(merged 2026-05-17)*
 2. **S2** (parity gate) → depends on S1
 3. **release v3.20.0** → tag after S1+S2
 4. **A1 publication** → orthogonal, can run any time after v3.19.0
 5. **A1 module splits** → Phase 2, multi-session
 6. **D1 conflict UI** → Phase 2, multi-session
+7. **R1 rule-shaped claims** → Phase 2, depends on S1 (uses the migration framework)
 
-Items 4-6 are independent of each other; pick by interest, not order.
+Items 4-7 are independent of each other; pick by interest, not order.
