@@ -1114,6 +1114,57 @@ if FastMCP is not None:
         return {"ok": True, "rows": len(claims), "claims": [_claim_to_dict(c) for c in claims]}
 
     @mcp.tool()
+    def ingest_rule(
+        trigger: str,
+        action: str,
+        rationale: str = "",
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+        scope: str = "project",
+        source_agent: str = "mcp",
+    ) -> dict[str, Any]:
+        """Ingest a prescriptive rule-shaped claim (v3.21.0-R1).
+
+        A rule captures "when <trigger>, do <action> because <rationale>" —
+        the behavioural shape, distinct from descriptive fact claims. Stored
+        as a claim_type='rule' claim; retrieve via query_rules.
+        """
+        from memorymaster.rules import build_rule_fields
+
+        svc = _service(db, workspace)
+        fields = build_rule_fields(trigger, action, rationale)
+        # Auto-citation: a rule's provenance is the session that taught it.
+        claim = svc.ingest(
+            **fields,
+            citations=[CitationInput(source=f"agent://{source_agent}", locator="rule", excerpt=action[:200])],
+            scope=scope,
+            source_agent=source_agent,
+        )
+        return {"ok": True, "claim_id": claim.id, "human_id": claim.human_id, "rule": fields["text"]}
+
+    @mcp.tool()
+    def query_rules(
+        query: str,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+        limit: int = 10,
+        allow_sensitive: bool = False,
+    ) -> dict[str, Any]:
+        """Retrieve rule-shaped claims matching a query, in prescriptive form.
+
+        Returns each rule's trigger / action / rationale / text, ranked by the
+        hybrid retriever. Use this when you want only behavioural rules, not
+        descriptive fact claims.
+        """
+        resolve_allow_sensitive_access(
+            allow_sensitive=allow_sensitive,
+            context="mcp.query_rules",
+        )
+        svc = _service(db, workspace)
+        rules = svc.query_rules(query, limit=limit, allow_sensitive=allow_sensitive)
+        return {"ok": True, "rows": len(rules), "rules": rules}
+
+    @mcp.tool()
     def redact_claim_payload(
         claim_id: int,
         db: str = "memorymaster.db",
