@@ -469,6 +469,45 @@ class MemoryService:
         )
         return [row["claim"] for row in rows]
 
+    def query_rules(
+        self,
+        query_text: str,
+        *,
+        limit: int = 10,
+        scope_allowlist: list[str] | None = None,
+        allow_sensitive: bool = False,
+    ) -> list[dict[str, object]]:
+        """Retrieve rule-shaped claims (claim_type='rule') matching a query.
+
+        Returns each rule's parsed structure (trigger / action / rationale /
+        text / claim_id / score), ranked by the hybrid retriever. Rules are a
+        small fraction of claims, so we over-fetch candidates and filter to
+        rule-typed in Python (list_claims has no claim_type filter). See
+        memorymaster/rules.py for the storage convention.
+        """
+        from memorymaster.rules import parse_rule
+
+        rows = self.query_rows(
+            query_text=query_text,
+            limit=max(limit * 5, 25),
+            include_candidates=True,
+            include_stale=True,
+            include_conflicted=True,
+            retrieval_mode="hybrid",
+            allow_sensitive=allow_sensitive,
+            scope_allowlist=scope_allowlist,
+        )
+        out: list[dict[str, object]] = []
+        for row in rows:
+            parsed = parse_rule(row["claim"])
+            if parsed is None:
+                continue
+            parsed["score"] = row.get("score")
+            out.append(parsed)
+            if len(out) >= limit:
+                break
+        return out
+
     @staticmethod
     def _normalize_scope_allowlist(scope_allowlist: list[str] | None) -> list[str] | None:
         if not scope_allowlist:
