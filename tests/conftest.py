@@ -1,11 +1,77 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 
 _CASE_ROOT = Path(".tmp_cases")
+
+
+# ---------------------------------------------------------------------------
+# Backend parametrization for parity tests (v3.20.0-S2)
+# ---------------------------------------------------------------------------
+#
+# `parametrize_backends` yields a fresh MemoryService on each backend so the
+# SAME test body runs against both SQLite and Postgres and must produce the
+# same observable result. SQLite always runs (file-based, no server). Postgres
+# runs only when MEMORYMASTER_TEST_POSTGRES_DSN is set; otherwise that
+# parametrization is skipped so dev machines without a Postgres stay green.
+
+def _pg_dsn() -> str | None:
+    return os.getenv("MEMORYMASTER_TEST_POSTGRES_DSN")
+
+
+def _fresh_sqlite_service(tmp_path):
+    from memorymaster.service import MemoryService
+
+    db = tmp_path / "parity-sqlite.db"
+    svc = MemoryService(db, workspace_root=tmp_path)
+    svc.init_db()
+    return svc
+
+
+def _fresh_postgres_service():
+    from memorymaster.service import MemoryService
+
+    dsn = _pg_dsn()
+    if not dsn:
+        pytest.skip("MEMORYMASTER_TEST_POSTGRES_DSN is not set")
+    svc = MemoryService(dsn, workspace_root=".")
+    svc.init_db()
+    # Deterministic start: clear claims/citations/events (+ optional tables).
+    with svc.store.connect() as conn:
+        with conn.cursor() as cur:
+            for tbl in ("claim_links", "claim_embeddings"):
+                cur.execute("SELECT to_regclass(%s) AS t", (f"public.{tbl}",))
+                row = cur.fetchone()
+                present = (row["t"] if isinstance(row, dict) else row[0]) is not None
+                if present:
+                    cur.execute(f"DELETE FROM {tbl}")
+            cur.execute("DELETE FROM citations")
+            cur.execute("DELETE FROM events")
+            cur.execute("DELETE FROM claims")
+    return svc
+
+
+@pytest.fixture(
+    params=[
+        "sqlite",
+        pytest.param("postgres", marks=pytest.mark.postgres),
+    ]
+)
+def parametrize_backends(request, tmp_path):
+    """Yield (backend_name, MemoryService) for each available backend.
+
+    Use in parity tests so one test body asserts identical observable
+    behaviour on both SQLite and Postgres.
+    """
+    backend = request.param
+    if backend == "sqlite":
+        yield backend, _fresh_sqlite_service(tmp_path)
+    else:
+        yield backend, _fresh_postgres_service()
 
 
 def _prune_case_root(root: Path) -> None:
