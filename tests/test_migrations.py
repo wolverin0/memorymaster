@@ -114,41 +114,42 @@ def test_apply_pending_idempotent_rerun(sqlite_conn):
 def test_apply_pending_mid_version_applies_tail(sqlite_conn, monkeypatch):
     """Simulate a DB at v0001 only, with a synthetic v0002 pending."""
     runner = MigrationRunner(sqlite_conn, backend="sqlite")
-    runner.apply_pending()  # apply real baseline first
+    runner.apply_pending()  # apply all real migrations first
 
-    # Build a synthetic v0002 migration via Migration dataclass directly,
-    # then monkeypatch discover_migrations to return baseline + synthetic.
+    # Build a synthetic pending migration one version above the real tail,
+    # then monkeypatch discover_migrations to return the real set + synthetic.
+    real = discover_migrations()
+    next_ver = real[-1].version + 1
     sentinel = {"applied": False}
 
     def fake_apply_sqlite(conn):
         sentinel["applied"] = True
-        conn.execute("CREATE TABLE migration_test_v2(id INTEGER)")
+        conn.execute("CREATE TABLE migration_test_tail(id INTEGER)")
 
     def fake_apply_postgres(conn):  # noqa: ARG001
         sentinel["applied"] = True
 
     fake_path = Path(__file__)  # any real file — used only for checksum stability
     synthetic = Migration(
-        version=2,
+        version=next_ver,
         description="synthetic test migration",
-        module_name="tests.synthetic_v2",
+        module_name="tests.synthetic_tail",
         source_path=fake_path,
         apply_sqlite=fake_apply_sqlite,
         apply_postgres=fake_apply_postgres,
     )
 
-    real_baseline = discover_migrations()[0]
     monkeypatch.setattr(
         "memorymaster.migrations.runner.discover_migrations",
-        lambda: [real_baseline, synthetic],
+        lambda: [*real, synthetic],
     )
 
     newly = runner.apply_pending()
-    assert newly == [2]  # only the tail
+    assert newly == [next_ver]  # only the tail
     assert sentinel["applied"] is True
     # The new table actually exists in the DB
     rows = sqlite_conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='migration_test_v2'"
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='migration_test_tail'"
     ).fetchall()
     assert len(rows) == 1
 
@@ -187,31 +188,34 @@ def test_status_reports_applied_and_pending(sqlite_conn, monkeypatch):
     """status() on a partly-applied DB shows applied=True for stamped versions
     and applied=False for not-yet-applied ones."""
     runner = MigrationRunner(sqlite_conn, backend="sqlite")
-    runner.apply_pending()  # apply baseline
+    runner.apply_pending()  # apply all real migrations
 
-    # Inject a synthetic v0002 via the same monkeypatch trick
-    real_baseline = discover_migrations()[0]
+    # Inject a synthetic pending migration one version above the real tail.
+    real = discover_migrations()
+    next_ver = real[-1].version + 1
     synthetic = Migration(
-        version=2,
+        version=next_ver,
         description="pending synthetic",
-        module_name="tests.synthetic_v2",
+        module_name="tests.synthetic_tail",
         source_path=Path(__file__),
         apply_sqlite=lambda c: None,
         apply_postgres=lambda c: None,
     )
     monkeypatch.setattr(
         "memorymaster.migrations.runner.discover_migrations",
-        lambda: [real_baseline, synthetic],
+        lambda: [*real, synthetic],
     )
 
     entries = runner.status()
-    assert len(entries) == 2
+    assert len(entries) == len(real) + 1
     assert entries[0].version == 1
     assert entries[0].applied is True
     assert entries[0].applied_at is not None
-    assert entries[1].version == 2
-    assert entries[1].applied is False
-    assert entries[1].applied_at is None
+    # Every real migration is applied; only the synthetic tail is pending.
+    assert all(e.applied for e in entries[:-1])
+    assert entries[-1].version == next_ver
+    assert entries[-1].applied is False
+    assert entries[-1].applied_at is None
 
 
 # ---------------------------------------------------------------------------

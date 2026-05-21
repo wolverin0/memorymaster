@@ -343,6 +343,31 @@ def _handle_mine_transcript(args: argparse.Namespace, service, parser: argparse.
     return 0
 
 
+def _handle_mine_rules(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.rule_miner import mine_rules
+    t0 = time.perf_counter()
+    result = mine_rules(
+        effective_db,
+        service,
+        since_id=getattr(args, "since_id", None),
+        limit=getattr(args, "limit", None),
+        batch_size=getattr(args, "batch_size", 200),
+        provider=getattr(args, "provider", "claude_cli"),
+        reset=getattr(args, "reset", False),
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        abort = f", ABORTED ({result['aborted_reason']})" if result.get("aborted_reason") else ""
+        print(
+            f"Mined rules: {result['candidates']} candidates, {result['llm_calls']} llm calls, "
+            f"{result['ingested']} ingested, {result['duplicates']} dupes, {result['skipped']} skipped "
+            f"(watermark={result['last_id']}{abort}, {elapsed_ms:.0f}ms)"
+        )
+    return 0
+
+
 def _handle_wiki_breakdown(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.wiki_engine import breakdown
     t0 = time.perf_counter()
@@ -703,6 +728,7 @@ COMMAND_HANDLERS: dict[str, object] = {
     "wiki-freshness": _handle_wiki_freshness,
     "bases-generate": _handle_bases_generate,
     "mine-transcript": _handle_mine_transcript,
+    "mine-rules": _handle_mine_rules,
     "verify-claims": _handle_verify_claims,
     "extract-entities": _handle_extract_entities,
     "entity-stats": _handle_entity_stats,
