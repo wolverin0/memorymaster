@@ -142,3 +142,39 @@ def test_short_content_is_filtered_not_deduped(db_path: str) -> None:
     rid = store_verbatim(db_path, "session-1", "user", "short")
     assert rid is None
     assert _row_count(db_path) == 0
+
+
+def test_store_transcript_unwraps_claude_message_shape(db_path: str, tmp_path: Path) -> None:
+    """Real Claude Code transcripts nest role+content under ``message`` and
+    interleave non-conversation metadata lines. store_transcript must capture
+    the user/assistant turns WITH their roles and skip the metadata.
+
+    Regression for the 2026-05-21 silent-dropper: reading only top-level
+    role/content stored 0 real turns and left every row with role=''.
+    """
+    transcript = tmp_path / "claude.jsonl"
+    transcript.write_text(
+        # metadata lines (no message) — must be skipped
+        '{"type": "custom-title", "customTitle": "x", "sessionId": "s"}\n'
+        '{"type": "file-history-snapshot", "messageId": "m"}\n'
+        # real user turn (string content, nested under message)
+        '{"type": "user", "message": {"role": "user", "content": "no, dont hardcode the path, use an env var instead"}}\n'
+        # real assistant turn (list content with text + tool_use blocks)
+        '{"type": "assistant", "message": {"role": "assistant", "content": '
+        '[{"type": "text", "text": "Understood, switching to an environment variable now."}, '
+        '{"type": "tool_use", "name": "Edit", "input": {}}]}}\n',
+        encoding="utf-8",
+    )
+
+    stats = store_transcript(db_path, str(transcript), scope="project:test")
+
+    assert stats["stored"] == 2  # the two real turns; metadata skipped
+    conn = sqlite3.connect(db_path)
+    rows = conn.execute(
+        "SELECT role, content FROM verbatim_memories ORDER BY id"
+    ).fetchall()
+    conn.close()
+    roles = [r[0] for r in rows]
+    assert roles == ["user", "assistant"]  # roles captured, not empty
+    assert "hardcode" in rows[0][1]
+    assert "environment variable" in rows[1][1]  # text block kept, tool_use dropped

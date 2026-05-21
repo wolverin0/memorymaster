@@ -109,13 +109,47 @@ def store_verbatim(
     return row_id
 
 
+def _extract_role_content(entry: dict) -> tuple[str, str]:
+    """Pull ``(role, content)`` from one transcript line.
+
+    Claude Code transcripts nest the turn under ``message``
+    (``{"type":"user","message":{"role":..,"content":..}}``); older/simple
+    transcripts put role+content at the top level. Prefer the nested shape and
+    fall back to top-level. ``content`` may be a string or a list of content
+    blocks — only ``text`` blocks are kept (tool_use/tool_result are dropped).
+
+    Bug history (2026-05-21): this previously read only the top-level fields,
+    so against real Claude Code transcripts ``role`` was always empty and the
+    only rows stored were the handful of non-conversation metadata lines that
+    happen to carry a top-level ``content`` (custom titles, summaries, internal
+    prompts). 744k rows accumulated with zero real turns and zero roles.
+    """
+    msg = entry.get("message")
+    if isinstance(msg, dict):
+        role = msg.get("role", "") or ""
+        content = msg.get("content", "")
+    else:
+        role = entry.get("role", "") or ""
+        content = entry.get("content", "")
+    if isinstance(content, list):
+        content = " ".join(
+            part.get("text", "") for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+    return role, content if isinstance(content, str) else ""
+
+
 def store_transcript(
     db_path: str,
     transcript_path: str | Path,
     scope: str = "project",
     source_agent: str = "transcript",
 ) -> dict[str, int]:
-    """Ingest an entire JSONL transcript into verbatim storage."""
+    """Ingest an entire JSONL transcript into verbatim storage.
+
+    Stores only user/assistant text turns; metadata lines (titles, snapshots,
+    summaries) and tool-only turns are skipped.
+    """
     path = Path(transcript_path)
     if not path.exists():
         return {"stored": 0, "skipped": 0, "error": "file not found"}
@@ -130,15 +164,13 @@ def store_transcript(
             entry = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if not isinstance(entry, dict):
+            continue
 
-        role = entry.get("role", "")
-        content = entry.get("content", "")
-        if isinstance(content, list):
-            content = " ".join(
-                c.get("text", "") for c in content
-                if isinstance(c, dict) and c.get("type") == "text"
-            )
-
+        role, content = _extract_role_content(entry)
+        if role not in ("user", "assistant"):
+            stats["skipped"] += 1
+            continue
         if not content or len(content) < 20:
             stats["skipped"] += 1
             continue
