@@ -456,6 +456,13 @@ def build_parser() -> argparse.ArgumentParser:
     mine_cmd.add_argument("--scope", default="project", help="Scope for ingested claims")
     mine_cmd.add_argument("--max", type=int, default=100, help="Max claims to ingest")
 
+    mine_rules_cmd = sub.add_parser("mine-rules", help="Mine verbatim corrections into rule-shaped claims (v3.21.0-R1b)")
+    mine_rules_cmd.add_argument("--since-id", dest="since_id", type=int, default=None, help="Override the stored watermark; start scanning after this verbatim id")
+    mine_rules_cmd.add_argument("--limit", type=int, default=None, help="Max candidate windows to examine this run (caps LLM calls)")
+    mine_rules_cmd.add_argument("--batch-size", dest="batch_size", type=int, default=200, help="Rows fetched per SQL pre-filter page (default: 200)")
+    mine_rules_cmd.add_argument("--provider", default="claude_cli", help="LLM provider for this run (default: claude_cli)")
+    mine_rules_cmd.add_argument("--reset", action="store_true", help="Clear the stored watermark before running (re-scan from the start)")
+
     verify_cmd = sub.add_parser("verify-claims", help="Cross-check claims against current codebase")
     verify_cmd.add_argument("--scope", default="", help="Scope filter")
     verify_cmd.add_argument("--limit", type=int, default=200, help="Max claims to check")
