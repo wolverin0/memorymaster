@@ -180,6 +180,27 @@ Only: bug root causes, decisions, gotchas, constraints. Never: credentials, IPs,
         pass
 
 
+def _run_rule_extraction(transcript_path, cwd):
+    """R1b ongoing: mine the latest correction in this session into a rule claim.
+
+    Reuses memorymaster.rule_miner.mine_transcript_rules (single source of truth
+    for the correction->rule prompt + ingest path). Bounded to one window per
+    stop to keep the hook fast; rules land as low-confidence candidates."""
+    try:
+        if not transcript_path or not os.path.exists(transcript_path) or not os.path.exists(DB_PATH):
+            return
+        from memorymaster.rule_miner import mine_transcript_rules
+        from memorymaster.service import MemoryService
+
+        scope = "project:" + os.path.basename(cwd).lower().replace(" ", "-") if cwd else "global"
+        svc = MemoryService(DB_PATH, workspace_root=Path(cwd or PROJECT_ROOT))
+        stats = mine_transcript_rules(transcript_path, svc, scope=scope, max_windows=1)
+        if stats.get("ingested"):
+            sys.stderr.write(f"[MemoryMaster] mined {stats['ingested']} rule(s) from corrections\n")
+    except Exception:
+        pass
+
+
 def main():
     try:
         data = json.loads(sys.stdin.read() or "{}")
@@ -231,6 +252,9 @@ def main():
 
     # Not time to block — run passive Gemini extraction
     _run_gemini_extraction(transcript_path, cwd)
+
+    # R1b: mine the latest correction in this session into a rule claim
+    _run_rule_extraction(transcript_path, cwd)
 
     sys.stdout.write(json.dumps({"decision": "approve"}))
 

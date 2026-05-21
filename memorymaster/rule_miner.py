@@ -20,10 +20,13 @@ rule whose text trips the sensitivity filter is dropped, not stored.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterator
 
 from memorymaster import llm_budget, llm_provider
@@ -320,3 +323,121 @@ def _process_candidate(
     )
     stats["ingested"] += 1
     return "done"
+
+
+# ---------------------------------------------------------------------------
+# Ongoing extraction — mine one live session transcript (R1b PR2)
+# ---------------------------------------------------------------------------
+
+
+def _read_recent_turns(transcript_path: str, max_turns: int = 60) -> list[tuple[str, str]]:
+    """Ordered ``(role, text)`` user/assistant turns from a transcript tail.
+
+    Unwraps the Claude Code ``message`` shape (falls back to top-level), keeps
+    only text content, and drops command/system wrappers."""
+    turns: list[tuple[str, str]] = []
+    try:
+        lines = Path(transcript_path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return turns
+    for line in lines[-200:]:
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        msg = entry.get("message") if isinstance(entry.get("message"), dict) else entry
+        role = msg.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            content = " ".join(
+                p.get("text", "") for p in content
+                if isinstance(p, dict) and p.get("type") == "text"
+            )
+        if not isinstance(content, str) or len(content) < 20:
+            continue
+        if "<command-message>" in content or "<command-name>" in content:
+            continue
+        turns.append((role, content))
+    return turns[-max_turns:]
+
+
+def _correction_windows(turns: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Return ``(assistant_text, user_text)`` pairs where the user turn carries
+    a correction keyword and has a preceding assistant turn."""
+    out: list[tuple[str, str]] = []
+    for i in range(1, len(turns)):
+        role, text = turns[i]
+        if role != "user":
+            continue
+        low = text.lower()
+        if not any(kw in low for kw in _CORRECTION_KEYWORDS):
+            continue
+        prev = next((t for t in reversed(turns[:i]) if t[0] == "assistant"), None)
+        if prev is None:
+            continue
+        out.append((prev[1], text))
+    return out
+
+
+def mine_transcript_rules(
+    transcript_path: str,
+    service: Any,
+    *,
+    scope: str = "project",
+    max_windows: int = 1,
+    provider: str = "",
+) -> dict[str, Any]:
+    """Mine the latest correction(s) in one session transcript into rule claims.
+
+    The ongoing counterpart to :func:`mine_rules`: called from the Stop hook so
+    new corrections become rules without a batch run. Bounded to the most recent
+    ``max_windows`` corrections to keep the hook fast. ``provider`` empty means
+    use the ambient ``MEMORYMASTER_LLM_PROVIDER``. Returns a stats dict.
+    """
+    stats: dict[str, Any] = {"windows": 0, "llm_calls": 0, "ingested": 0, "skipped": 0}
+    windows = _correction_windows(_read_recent_turns(transcript_path))[-max_windows:]
+    if not windows:
+        return stats
+
+    saved = os.environ.get("MEMORYMASTER_LLM_PROVIDER")
+    if provider:
+        os.environ["MEMORYMASTER_LLM_PROVIDER"] = provider
+    try:
+        with llm_budget.cycle_scope():
+            for asst_text, user_text in windows:
+                stats["windows"] += 1
+                try:
+                    rule = _extract_rule(_build_window(asst_text, user_text))
+                except llm_budget.LLMBudgetExceeded:
+                    break
+                stats["llm_calls"] += 1
+                if rule is None or _is_sensitive_rule(rule):
+                    stats["skipped"] += 1
+                    continue
+                idem = "rule-stop-" + hashlib.sha256(
+                    f"{rule['trigger']}|{rule['action']}".lower().encode()
+                ).hexdigest()[:16]
+                store = getattr(service, "store", None)
+                if store is not None and hasattr(store, "get_claim_by_idempotency_key"):
+                    if store.get_claim_by_idempotency_key(idem) is not None:
+                        stats["skipped"] += 1
+                        continue
+                service.ingest(
+                    **build_rule_fields(rule["trigger"], rule["action"], rule["rationale"]),
+                    citations=[CitationInput(source="verbatim", locator=idem)],
+                    scope=scope,
+                    confidence=0.4,
+                    source_agent="rule-stop-hook",
+                    idempotency_key=idem,
+                )
+                stats["ingested"] += 1
+    finally:
+        if saved is None:
+            os.environ.pop("MEMORYMASTER_LLM_PROVIDER", None)
+        else:
+            os.environ["MEMORYMASTER_LLM_PROVIDER"] = saved
+    return stats
