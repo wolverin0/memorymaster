@@ -231,3 +231,67 @@ def test_rejects_postgres_dsn(env):
     _, svc, _ = env
     with pytest.raises(ValueError, match="SQLite-only"):
         rule_miner.mine_rules("postgresql://localhost/mm", svc)
+
+
+# ---------------------------------------------------------------------------
+# Ongoing extraction (PR2): mine one live session transcript
+# ---------------------------------------------------------------------------
+
+
+def _write_transcript(path, turns) -> None:
+    """turns: iterable of (role, text) -> Claude Code message-shaped JSONL."""
+    lines = []
+    for role, text in turns:
+        lines.append(json.dumps({"type": role, "message": {"role": role, "content": [{"type": "text", "text": text}]}}))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_mine_transcript_rules_from_session(env, tmp_path):
+    _, svc, holder = env
+    t = tmp_path / "session.jsonl"
+    _write_transcript(t, [
+        ("assistant", "I hardcoded the path /etc/foo into the config file directly."),
+        ("user", "no, dont hardcode the path like that, use an env var instead please."),
+    ])
+    holder["responses"] = [_RULE_JSON]
+
+    stats = rule_miner.mine_transcript_rules(str(t), svc, scope="project:test", provider="claude_cli")
+
+    assert stats["windows"] == 1
+    assert stats["ingested"] == 1
+    rules = _candidate_rules(svc)
+    assert any(r["action"] == "use an env var instead" for r in rules)
+
+
+def test_mine_transcript_rules_no_correction(env, tmp_path):
+    _, svc, holder = env
+    t = tmp_path / "session.jsonl"
+    _write_transcript(t, [
+        ("assistant", "I refactored the helper and split it into two functions."),
+        ("user", "thanks, that looks great, please ship it whenever you are ready."),
+    ])
+
+    stats = rule_miner.mine_transcript_rules(str(t), svc, scope="project:test", provider="claude_cli")
+
+    assert stats["windows"] == 0  # keyword pre-filter found no correction
+    assert holder["calls"] == 0
+    assert stats["ingested"] == 0
+
+
+def test_mine_transcript_rules_caps_windows(env, tmp_path):
+    _, svc, holder = env
+    t = tmp_path / "session.jsonl"
+    _write_transcript(t, [
+        ("assistant", "I committed directly to the main branch without a pull request."),
+        ("user", "no, don't commit straight to main, open a PR for review instead."),
+        ("assistant", "I also force-pushed over the shared remote branch to tidy history."),
+        ("user", "no, don't force-push shared branches, it rewrites other people's work."),
+    ])
+    holder["responses"] = [_RULE_JSON, _RULE_JSON]
+
+    # max_windows=1 (the hook default) -> only the most recent correction mined.
+    stats = rule_miner.mine_transcript_rules(str(t), svc, scope="project:test", provider="claude_cli", max_windows=1)
+
+    assert stats["windows"] == 1
+    assert stats["llm_calls"] == 1
+    assert stats["ingested"] == 1
