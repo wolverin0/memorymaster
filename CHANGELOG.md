@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [3.21.0] - 2026-05-21
+
+**Rules + reliability release.** Bundles the v3.20.0 schema/sync work and the
+v3.21.0 rule-shaped-claims line. Adds prescriptive "rule" claims, mines them
+from user corrections (borrowing the learn-from-corrections idea from
+ReflexioAI/claude-smart, natively), ships a versioned migration framework and
+incremental delta-sync, and fixes a silent verbatim-capture bug. All additions
+are opt-in / backward compatible.
+
+### Added
+
+- **Rule-shaped claims (R1a, PR #126).** New `memorymaster/rules.py`:
+  prescriptive `when <trigger>, do <action> because <rationale>` claims stored
+  as a normal claim with `claim_type="rule"` + JSON in `object_value` (no
+  schema change — safe because deterministic value-validators are
+  predicate-gated). New `ingest_rule` / `query_rules` MCP tools and
+  `service.query_rules()`.
+- **Verbatim correction miner (R1b PR1, PR #127).** New
+  `memorymaster/rule_miner.py` + `mine-rules` CLI: scans the verbatim
+  transcript archive for correction-signaled user turns (cheap SQL keyword
+  pre-filter), distills each into a rule via an LLM, and ingests it as a
+  low-confidence candidate. Bounded by the H1 per-cycle budget caps and
+  resumable via a `miner_state` watermark. SQLite-only.
+- **Ongoing correction mining (R1b PR2, PR #129).**
+  `rule_miner.mine_transcript_rules()` called from the Stop hook mines each
+  session's latest correction into a rule automatically (capped to one window
+  per stop). Sensitive rules are dropped, not stored.
+- **Versioned schema migrations (v3.20.0-S1, PR #119).** New
+  `memorymaster/migrations/` with `MigrationRunner`, `schema_versions` table,
+  sha256 drift detection, and a `migrate` CLI (`--list` / `--status`).
+  Migration `0002_miner_state` adds the miner watermark table (both backends).
+- **Incremental delta-sync (PR #121, #122, #123).** `export-delta` ships a
+  small SQLite file of claims changed since a watermark, consumable by
+  `merge-db` — cheap cross-machine sync without copying the full DB. Windows
+  delta-sync script + watermark BOM-corruption fix.
+- **SQLite/Postgres backend parity gate (v3.20.0-S2, PR #125).** New
+  `parametrize_backends` fixture and cross-backend parity tests.
+
+### Fixed
+
+- **Verbatim capture silent-dropper (PR #128).** `store_transcript` read
+  top-level `entry["role"]/["content"]`, but Claude Code transcripts nest both
+  under `message` — so it captured zero real turns and zero roles (744k rows
+  with `role=''`, only non-conversation metadata stored). Now unwraps
+  `message.{role,content}` (with a legacy top-level fallback) and stores only
+  user/assistant text turns. Prerequisite for the correction miner.
+
 ## [3.19.0] - 2026-05-17
 
 **Phase 0 hardening release.** Closes the four security/ops gaps identified
