@@ -6,7 +6,7 @@ Lifecycle-managed claims with citations, conflict detection, steward governance,
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-1953-green.svg)]()
+[![Tests](https://img.shields.io/badge/tests-2194-green.svg)]()
 [![MCP Tools](https://img.shields.io/badge/MCP%20tools-24-purple.svg)]()
 [![CLI Commands](https://img.shields.io/badge/CLI%20commands-86-orange.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memorymaster.svg)](https://pypi.org/project/memorymaster/)
@@ -41,6 +41,9 @@ recent PR status, and sensitivity-filter invariants.
 - **Hybrid retrieval**: vector (sentence-transformers / Gemini) + FTS5 + freshness + confidence
 - **Context optimizer**: `query_for_context(budget=4000)` returns auto-curated memory that fits your token budget
 - **Entity graph** with typed relationships and alias resolution
+- **Rule-shaped claims** (new in v3.21.0): prescriptive `when <trigger>, do <action> because <rationale>` claims (`ingest_rule` / `query_rules`) — the shape an agent needs to actually change behaviour next time, not just recall a fact
+- **Correction mining** (new in v3.21.0): `mine-rules` scans the verbatim transcript archive for user corrections and distills them into rule claims; the Stop hook also mines each session's latest correction automatically
+- **Versioned schema migrations** (new in v3.20.0): `migrate` applies SQLite/Postgres migrations with sha256 drift detection; incremental `export-delta` ships small claim deltas for cheap cross-machine sync
 - **Steward governance**: multi-probe validators (filesystem, format, citation, semantic, tool) with proposal review
 - **Conflict resolution**: 5-tier auto (confidence > freshness > citations > LLM > manual)
 - **Auto-redaction** at ingest: JWT, GitHub tokens, Bearer, AWS keys, SSH keys, custom patterns
@@ -141,7 +144,7 @@ For zero-cost offline use, install [Ollama](https://ollama.com), `ollama pull ll
 }
 ```
 
-22 MCP tools: `init_db`, `ingest_claim`, `run_cycle`, `run_steward`, `classify_query`, `query_memory`, `query_for_context`, `list_claims`, `redact_claim_payload`, `pin_claim`, `compact_memory`, `list_events`, `search_verbatim`, `open_dashboard`, `list_steward_proposals`, `resolve_steward_proposal`, `extract_entities`, `entity_stats`, `find_related_claims`, `quality_scores`, `recompute_tiers`, `federated_query`.
+24 MCP tools: `init_db`, `ingest_claim`, `ingest_rule`, `query_rules`, `run_cycle`, `run_steward`, `classify_query`, `query_memory`, `query_for_context`, `list_claims`, `redact_claim_payload`, `pin_claim`, `compact_memory`, `list_events`, `search_verbatim`, `open_dashboard`, `list_steward_proposals`, `resolve_steward_proposal`, `extract_entities`, `entity_stats`, `find_related_claims`, `quality_scores`, `recompute_tiers`, `federated_query`.
 
 See [`.mcp.json.example`](.mcp.json.example) for the full template.
 
