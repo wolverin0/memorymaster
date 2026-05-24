@@ -8,7 +8,7 @@ from typing import Any
 import logging
 import os
 
-from memorymaster import candidate_dedupe, llm_budget, observability
+from memorymaster import candidate_dedupe, llm_budget, observability, query_cache
 from memorymaster.embeddings import EmbeddingProvider, create_best_provider
 from memorymaster.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, validator
 from memorymaster.models import ActionProposal, CitationInput, Claim, ClaimLink, Event, EvidenceItem, ExternalSource, MediaRetryItem, SourceItem
@@ -646,6 +646,27 @@ class MemoryService:
             return self._query_legacy_mode(query_text, limit, statuses, normalized_scopes, include_sensitive, requesting_agent)
 
         use_llm_rerank = _llm_rerank_enabled()
+
+        # Correctness-safe result cache (opt-in, SQLite-only). The key folds in
+        # the query params + a config fingerprint; the entry is valid only while
+        # the corpus generation (bumped by claim-write triggers) is unchanged.
+        cache_path = None
+        cache_key = None
+        if query_cache.cache_enabled():
+            cache_path = query_cache.sqlite_db_path(self.store)
+            if cache_path:
+                cache_key = query_cache.make_cache_key(query_text, {
+                    "limit": limit, "statuses": sorted(statuses), "scopes": normalized_scopes,
+                    "mode": retrieval_mode, "profile": retrieval_profile,
+                    "sensitive": include_sensitive, "query_type": query_type,
+                    "tenant": self.tenant_id or "", "enrich": enrich_with_entities,
+                    "llm_rerank": use_llm_rerank,
+                })
+                cached = query_cache.read(cache_path, cache_key)
+                if cached is not None:
+                    rows = self._rehydrate_cached_rows(cached)
+                    self._record_accesses(rows, query_text=query_text)
+                    return rows
         candidate_limit = max(limit * 6, 60, 50 if use_llm_rerank else 0)
         candidates = self.store.list_claims(
             limit=candidate_limit,
@@ -700,7 +721,42 @@ class MemoryService:
         self._record_accesses(results, query_text=query_text)
         if enrich_with_entities:
             results = self._enrich_with_entity_graph(results, query_text, limit)
+        if cache_path and cache_key:
+            query_cache.write(cache_path, cache_key, [
+                {
+                    "id": r["claim"].id,
+                    "score": r.get("score", 0.0),
+                    "lexical_score": r.get("lexical_score", 0.0),
+                    "freshness_score": r.get("freshness_score", 0.0),
+                    "confidence_score": r.get("confidence_score", 0.0),
+                    "vector_score": r.get("vector_score", 0.0),
+                    "breakdown": r.get("breakdown"),
+                }
+                for r in results if r.get("claim") is not None
+            ])
         return results
+
+    def _rehydrate_cached_rows(self, stubs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Rebuild query_rows result dicts from cached stubs by re-fetching each
+        claim. A valid cache hit means no claim changed since write (generation
+        gate), so fetched claims are current; archived/missing are skipped."""
+        rows: list[dict[str, Any]] = []
+        for stub in stubs:
+            claim = self.store.get_claim(stub["id"], include_citations=True)
+            if claim is None or claim.status == "archived":
+                continue
+            rows.append({
+                "claim": claim,
+                "status": claim.status,
+                "annotation": self._annotation_for_claim(claim),
+                "score": stub.get("score", 0.0),
+                "lexical_score": stub.get("lexical_score", 0.0),
+                "freshness_score": stub.get("freshness_score", 0.0),
+                "confidence_score": stub.get("confidence_score", 0.0),
+                "vector_score": stub.get("vector_score", 0.0),
+                "breakdown": stub.get("breakdown"),
+            })
+        return rows
 
     def _enrich_with_entity_graph(
         self, results: list[dict[str, Any]], query_text: str, limit: int
