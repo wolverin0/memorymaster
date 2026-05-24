@@ -368,6 +368,35 @@ def _handle_mine_rules(args: argparse.Namespace, service, parser: argparse.Argum
     return 0
 
 
+def _handle_detect_contradictions(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.contradiction_probe import run_probe
+    t0 = time.perf_counter()
+    result = run_probe(
+        effective_db, service,
+        limit=getattr(args, "limit", 200),
+        sample=getattr(args, "sample", 50),
+        sim_low=getattr(args, "sim_low", 0.60),
+        sim_high=getattr(args, "sim_high", 0.92),
+        apply=getattr(args, "apply", False),
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        ci = result["rate_ci"]
+        abort = f", ABORTED ({result['aborted_reason']})" if result.get("aborted_reason") else ""
+        print(
+            f"Contradictions: {result['contradictions']}/{result['judged']} judged "
+            f"(rate={result['rate']:.2f} CI95=[{ci[0]:.2f},{ci[1]:.2f}]) from "
+            f"{result['candidate_pairs']} candidate pairs; cache_hits={result['cache_hits']}, "
+            f"errors={result['judge_errors']}, flagged={result['flagged_conflicted']}{abort} ({elapsed_ms:.0f}ms)"
+        )
+        for f in result["found"][:20]:
+            print(f"  [{f['severity']}] claims {f['claim_a_id']} <> {f['claim_b_id']} "
+                  f"(sim={f['similarity']}): {f['reason']}")
+    return 0
+
+
 def _handle_wiki_breakdown(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.wiki_engine import breakdown
     t0 = time.perf_counter()
@@ -729,6 +758,7 @@ COMMAND_HANDLERS: dict[str, object] = {
     "bases-generate": _handle_bases_generate,
     "mine-transcript": _handle_mine_transcript,
     "mine-rules": _handle_mine_rules,
+    "detect-contradictions": _handle_detect_contradictions,
     "verify-claims": _handle_verify_claims,
     "extract-entities": _handle_extract_entities,
     "entity-stats": _handle_entity_stats,
