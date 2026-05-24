@@ -464,6 +464,13 @@ def build_parser() -> argparse.ArgumentParser:
     mine_rules_cmd.add_argument("--provider", default="claude_cli", help="LLM provider for this run (default: claude_cli)")
     mine_rules_cmd.add_argument("--reset", action="store_true", help="Clear the stored watermark before running (re-scan from the start)")
 
+    detect_contra = sub.add_parser("detect-contradictions", help="Find semantic contradictions between topically-similar claims via an LLM judge (v3.22)")
+    detect_contra.add_argument("--limit", type=int, default=200, help="Max claims to load for pair sampling")
+    detect_contra.add_argument("--sample", type=int, default=50, help="Max candidate pairs to judge this run (caps LLM calls)")
+    detect_contra.add_argument("--sim-low", dest="sim_low", type=float, default=0.60, help="Lower similarity-band bound (below = unrelated)")
+    detect_contra.add_argument("--sim-high", dest="sim_high", type=float, default=0.92, help="Upper similarity-band bound (at/above = near-duplicates, dedup's job)")
+    detect_contra.add_argument("--apply", action="store_true", help="Flag the lower-confidence claim of each contradicting pair as conflicted (reversible)")
+
     verify_cmd = sub.add_parser("verify-claims", help="Cross-check claims against current codebase")
     verify_cmd.add_argument("--scope", default="", help="Scope filter")
     verify_cmd.add_argument("--limit", type=int, default=200, help="Max claims to check")
