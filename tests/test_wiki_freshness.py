@@ -240,7 +240,10 @@ def test_cli_wiki_freshness_json_smoke(tmp_path):
 
 
 def test_cli_wiki_freshness_below_filter(tmp_path):
-    now = datetime(2026, 4, 24, tzinfo=timezone.utc)
+    # The CLI subprocess scores freshness against the real wall-clock (it has
+    # no way to inject `now`), so the fixture must be anchored to the current
+    # time — a hardcoded past date rots as wall-clock advances past it.
+    now = datetime.now(timezone.utc)
     vault = _fixture_vault(tmp_path, now)
     proc = subprocess.run(
         [

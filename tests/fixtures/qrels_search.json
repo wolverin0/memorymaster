@@ -1,0 +1,32 @@
+{
+  "_doc": "Hermetic retrieval-regression fixture (gbrain v0.40.1-inspired). A small fixed corpus + hand-curated queries with the distinctive phrase the correct claim must contain. test_qrels_regression.py ingests the corpus, runs hybrid retrieval offline, and fails if top-1 accuracy or recall@5 drops below threshold. Edit corpus/qrels to extend coverage; keep markers unique to one claim.",
+  "corpus": [
+    "The production database runs PostgreSQL 16 with pgvector for embeddings.",
+    "Authentication uses JWT bearer tokens signed with the RS256 algorithm.",
+    "The CI pipeline runs pytest and ruff on every pull request via GitHub Actions.",
+    "The frontend is built with React and Vite, styled using Tailwind CSS.",
+    "API rate limiting is enforced at 100 requests per minute per key.",
+    "Background maintenance jobs are scheduled by a cron daemon every six hours.",
+    "Secrets are stored in environment variables and never committed to git.",
+    "The vector search backend is Qdrant, queried over HTTP on port 6333.",
+    "Application logs are shipped to Grafana Loki for centralized observability.",
+    "The mobile client is a React Native app targeting both iOS and Android.",
+    "Schema migrations use a versioned framework with sha256 checksum drift detection.",
+    "Query result caching uses Redis with a five minute TTL."
+  ],
+  "qrels": [
+    {"query": "which relational database does production use", "expect": "PostgreSQL 16"},
+    {"query": "how is user authentication implemented", "expect": "JWT bearer tokens"},
+    {"query": "what runs in the continuous integration pipeline", "expect": "pytest and ruff"},
+    {"query": "what is the frontend built with", "expect": "React and Vite"},
+    {"query": "what is the api rate limit", "expect": "100 requests per minute"},
+    {"query": "how often do background maintenance jobs run", "expect": "every six hours"},
+    {"query": "where are secrets stored", "expect": "environment variables"},
+    {"query": "which vector search engine do we use", "expect": "Qdrant"},
+    {"query": "where are application logs shipped", "expect": "Grafana Loki"},
+    {"query": "what is the mobile client built with", "expect": "React Native"},
+    {"query": "how do schema migrations handle drift", "expect": "checksum drift detection"},
+    {"query": "what caching layer is used for query results", "expect": "Redis"}
+  ],
+  "thresholds": {"top1_min": 0.70, "recall_at_5_min": 0.85}
+}

@@ -185,6 +185,7 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--scope-allowlist", default="", help="Comma-separated scopes to include (e.g. project,team_x)")
     query.add_argument("--as-of", default="", help="Temporal query: show claims valid at this ISO timestamp")
     query.add_argument("--auto-classify", action="store_true", help="Auto-classify query type and use optimal retrieval mode")
+    query.add_argument("--explain", action="store_true", help="Show per-stage score attribution (relevance vs. boosts, floor-gate status) for each result")
 
     context = sub.add_parser("context", help="Pack relevant claims into a token-budgeted context block for AI agents")
     context.add_argument("text", help="Query text describing what context is needed")

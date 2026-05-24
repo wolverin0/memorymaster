@@ -222,6 +222,11 @@ class Config:
     llm_rerank: bool = False
     rrf_tiebreaker_enabled: bool = False
     rrf_tiebreaker_threshold: float = 0.01
+    # Floor-ratio gate (gbrain v0.35.6 "hybrid.floor_ratio"): metadata boosts
+    # (confidence/freshness/tier/pinned) only apply to candidates whose
+    # query-relevance (lexical+vector) is >= boost_floor_ratio * top relevance.
+    # 0.0 = disabled (boosts always apply) — preserves pre-v3.22 behaviour.
+    boost_floor_ratio: float = 0.0
 
     # --- Initial confidence priors calibrated from validator outcomes ---
     default_initial_confidence: float = DEFAULT_INITIAL_CONFIDENCE
@@ -397,6 +402,7 @@ def load_config(config_path: str | Path | None = None) -> Config:
     _apply_env_bool(overrides, "MEMORYMASTER_LLM_RERANK", "llm_rerank")
     _apply_env_bool(overrides, "MEMORYMASTER_RRF_TIEBREAKER", "rrf_tiebreaker_enabled")
     _apply_env_float(overrides, "MEMORYMASTER_RRF_TIEBREAKER_THRESHOLD", "rrf_tiebreaker_threshold")
+    _apply_env_float(overrides, "MEMORYMASTER_BOOST_FLOOR_RATIO", "boost_floor_ratio")
     _apply_env_retrieval_profiles(overrides)
 
     # Filter to only valid Config fields

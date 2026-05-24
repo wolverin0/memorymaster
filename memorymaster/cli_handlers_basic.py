@@ -832,6 +832,25 @@ def _handle_run_cycle(args: argparse.Namespace, service, parser: argparse.Argume
     return 0
 
 
+def _print_score_explanation(breakdown: dict | None) -> None:
+    """Render per-stage score attribution for `query --explain`.
+
+    Shows query-relevance vs. the metadata boost terms and whether the
+    floor-ratio gate suppressed the boosts for this result.
+    """
+    if not breakdown:
+        print("    explain: (no breakdown — legacy retrieval mode)")
+        return
+    terms = breakdown.get("boost_terms", {})
+    w = breakdown.get("weights", (0, 0, 0, 0))
+    applied = breakdown.get("boosts_applied", True)
+    gate = "applied" if applied else f"GATED (relevance < floor={breakdown.get('floor', 0.0):.3f})"
+    term_str = " ".join(f"{k}={v:+.3f}" for k, v in terms.items())
+    print(f"    explain: relevance={breakdown.get('relevance', 0.0):.3f} "
+          f"boosts={breakdown.get('boosts_total', 0.0):+.3f} [{gate}] -> final={breakdown.get('final', 0.0):.3f}")
+    print(f"             weights(l,c,f,v)={tuple(round(x, 2) for x in w)}  boost_terms: {term_str}")
+
+
 def _handle_query(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.query")
     if getattr(args, "as_of", ""):
@@ -876,6 +895,8 @@ def _handle_query(args: argparse.Namespace, service, parser: argparse.ArgumentPa
                   f"vec={sc['vector_score']:.3f} "
                   f"active={int(bool(ann.get('active')))} stale={int(bool(ann.get('stale')))} "
                   f"conflicted={int(bool(ann.get('conflicted')))} pinned={int(bool(ann.get('pinned')))}")
+            if getattr(args, "explain", False):
+                _print_score_explanation(row.get("breakdown"))
         print(f"rows={len(rows_data)}")
     return 0
 
