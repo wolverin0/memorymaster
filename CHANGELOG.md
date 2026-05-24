@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [3.22.0] - 2026-05-24
+
+**Retrieval-quality release.** Ports the high-ROI ideas from a competitive
+analysis of gbrain v0.40.8.1 (Garry Tan's agent brain) against our v0.22.4
+baseline: a boost-gating fix for ranking, proactive semantic contradiction
+detection, and a correctness-safe recall cache. All additions are opt-in /
+default-off and backward compatible.
+
+### Added
+
+- **Floor-ratio boost gate (gbrain v0.35.6).** `MEMORYMASTER_BOOST_FLOOR_RATIO`
+  (default 0.0 = off): metadata boosts (confidence/freshness/pinned/tier) only
+  apply to candidates whose query-relevance (lexical+vector) is
+  `>= ratio * top relevance`. Fixes the failure mode where a fresh/confident but
+  topically-wrong claim outranks the true lexical match under a strong embedder.
+  Implemented as a two-pass in `retrieval.rank_claim_rows`.
+- **`query --explain` (gbrain v0.40.4).** Per-stage score attribution
+  (relevance vs. boost terms, weights, floor-gate status) on every `RankedClaim`
+  via a `breakdown` dict, rendered for evidence-based weight tuning.
+- **Offline qrels retrieval-regression gate (gbrain v0.40.1).**
+  `tests/fixtures/qrels_search.json` + `test_qrels_regression.py`: a
+  deterministic, no-API top-1/recall@5 gate over a fixed corpus.
+- **Semantic contradiction probe (gbrain v0.32.6).** New
+  `memorymaster/contradiction_probe.py` + `detect-contradictions` CLI: samples
+  topically-similar claim pairs in an embedding band (excluding the
+  deterministic resolver's same-subject+predicate domain), LLM-judges genuine
+  contradictions with severity, reports a Wilson-95%-CI rate (judge errors in
+  the denominator), caches verdicts (migration `0003_contradiction_verdicts`),
+  and `--apply` flags the lower-confidence claim as `conflicted`. H1-budget-capped.
+- **Correctness-safe query cache (gbrain v0.40.3).** Opt-in
+  `MEMORYMASTER_QUERY_CACHE=1` (SQLite-only). Migration `0004_query_cache` adds a
+  `corpus_generation` counter maintained by column-scoped `claims` triggers (it
+  excludes `access_count`/`last_accessed` so access recording doesn't
+  self-invalidate). Cache keys fold in a config fingerprint, so any claim write
+  or retrieval re-tune produces a miss + fresh compute — never stale.
+
+### Fixed
+
+- **De-rotted `test_cli_wiki_freshness_below_filter`.** It shelled out to the
+  CLI (real wall-clock) but hardcoded `now=2026-04-24`; once wall-clock advanced
+  it failed. Anchored the fixture to `datetime.now()`.
+
 ## [3.21.0] - 2026-05-21
 
 **Rules + reliability release.** Bundles the v3.20.0 schema/sync work and the
