@@ -598,6 +598,7 @@ class MemoryService:
                 "freshness_score": row.freshness_score,
                 "confidence_score": row.confidence_score,
                 "vector_score": row.vector_score,
+                "breakdown": row.breakdown,
             }
             for row in ranked_rows
         ]
@@ -688,6 +689,7 @@ class MemoryService:
                 "freshness_score": row.freshness_score,
                 "confidence_score": row.confidence_score,
                 "vector_score": row.vector_score,
+                "breakdown": row.breakdown,
             }
             for row in ranked_rows
         ]

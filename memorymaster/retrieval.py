@@ -52,6 +52,22 @@ class RankedClaim:
     freshness_score: float
     confidence_score: float
     vector_score: float
+    breakdown: dict | None = None
+
+
+@dataclass(slots=True)
+class _ScoreParts:
+    """Decomposed score: query-relevance vs. metadata boosts.
+
+    ``relevance`` is the query-match signal (lexical + vector); ``boosts`` is
+    everything else (confidence, freshness, tier, pinned). Keeping them
+    separate lets the floor-ratio gate suppress boosts on weak matches and
+    lets ``--explain`` show per-stage attribution.
+    """
+    relevance: float
+    boosts: float
+    weights: tuple[float, float, float, float]
+    boost_terms: dict[str, float]
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -146,6 +162,54 @@ def rank_claims(
     ]
 
 
+def _compute_score_parts(
+    claim: Claim,
+    lexical: float,
+    confidence: float,
+    freshness: float,
+    vector: float,
+    vector_enabled: bool,
+    query_type: str | None = None,
+) -> _ScoreParts:
+    """Decompose a claim's score into query-relevance and metadata boosts.
+
+    ``relevance`` = ``w_l*lexical (+ w_v*vector)`` — the part that measures
+    "does this match the query". ``boosts`` = ``w_c*confidence + w_f*freshness
+    + tier + pinned`` — the part that does not. The floor-ratio gate decides
+    (in ``rank_claim_rows``) whether ``boosts`` apply, based on relevance
+    relative to the top match.
+
+    When ``query_type`` matches a configured per-type profile
+    (``cfg.retrieval_profile(query_type)``), the profile's 4-tuple replaces
+    ``cfg.retrieval_weights`` for vector-enabled paths.
+    """
+    cfg = get_config()
+    if vector_enabled:
+        profile = cfg.retrieval_profile(query_type) if query_type else None
+        w_l, w_c, w_f, w_v = profile if profile is not None else cfg.retrieval_weights
+        relevance = (w_l * lexical) + (w_v * vector)
+    else:
+        w_l, w_c, w_f = cfg.retrieval_weights_no_vector
+        w_v = 0.0
+        relevance = w_l * lexical
+    conf_term = w_c * confidence
+    fresh_term = w_f * freshness
+    pinned_term = cfg.pinned_bonus if claim.pinned else 0.0
+    tier_term = _tier_bonus(claim)
+    boosts = conf_term + fresh_term + pinned_term + tier_term
+    return _ScoreParts(
+        relevance=relevance,
+        boosts=boosts,
+        weights=(w_l, w_c, w_f, w_v),
+        boost_terms={
+            "confidence": conf_term,
+            "freshness": fresh_term,
+            "pinned": pinned_term,
+            "tier": tier_term,
+        },
+    )
+
+
 def _compute_claim_score(
     claim: Claim,
     lexical: float,
@@ -156,29 +220,11 @@ def _compute_claim_score(
     semantic_vectors: bool,
     query_type: str | None = None,
 ) -> float:
-    """Compute relevance score for a claim.
-
-    When ``query_type`` matches a configured per-type profile
-    (``cfg.retrieval_profile(query_type)``), the profile's 4-tuple replaces
-    ``cfg.retrieval_weights`` for vector-enabled paths. The no-vector path
-    is unchanged — profiles only override the hybrid blend.
-    """
-    cfg = get_config()
-    profile = cfg.retrieval_profile(query_type) if query_type else None
-    w_l, w_c, w_f, w_v = profile if profile is not None else cfg.retrieval_weights
-    if vector_enabled and semantic_vectors:
-        # Real semantic embeddings use the same configurable blend as other
-        # vector-enabled ranking so env sweeps affect both paths.
-        score = (w_l * lexical) + (w_c * confidence) + (w_f * freshness) + (w_v * vector)
-    elif vector_enabled:
-        score = (w_l * lexical) + (w_c * confidence) + (w_f * freshness) + (w_v * vector)
-    else:
-        w_l, w_c, w_f = cfg.retrieval_weights_no_vector
-        score = (w_l * lexical) + (w_c * confidence) + (w_f * freshness)
-    if claim.pinned:
-        score += cfg.pinned_bonus
-    score += _tier_bonus(claim)
-    return score
+    """Backward-compatible total score (relevance + all boosts, no floor gate)."""
+    parts = _compute_score_parts(
+        claim, lexical, confidence, freshness, vector, vector_enabled, query_type
+    )
+    return parts.relevance + parts.boosts
 
 
 def _source_session_key(row: RankedClaim) -> str:
@@ -310,25 +356,31 @@ def rank_claim_rows(
         vector_scores = vector_hook(query_text, claims) or {}
 
     vector_enabled = bool(vector_scores)
-    ranked: list[RankedClaim] = []
+    cfg = get_config()
+    floor_ratio = max(0.0, cfg.boost_floor_ratio)
 
+    # Pass 1: compute each claim's decomposed score (relevance vs. boosts).
+    scored: list[tuple[Claim, float, float, float, float, _ScoreParts]] = []
     for claim in claims:
         lexical = _lexical_score(query_text, claim)
         confidence = max(0.0, min(1.0, claim.confidence))
         freshness = _freshness_score(claim)
         vector = max(0.0, min(1.0, float(vector_scores.get(claim.id, 0.0))))
-
-        score = _compute_claim_score(
-            claim,
-            lexical,
-            confidence,
-            freshness,
-            vector,
-            vector_enabled,
-            semantic_vectors,
-            query_type=query_type,
+        parts = _compute_score_parts(
+            claim, lexical, confidence, freshness, vector, vector_enabled, query_type
         )
+        scored.append((claim, lexical, confidence, freshness, vector, parts))
 
+    # Floor-ratio gate: boosts only apply to candidates whose query-relevance
+    # is >= floor_ratio * the top relevance. floor_ratio == 0 disables the gate
+    # (boosts always apply) — identical to pre-v3.22 behaviour.
+    max_relevance = max((p.relevance for *_, p in scored), default=0.0)
+    floor = floor_ratio * max_relevance if floor_ratio > 0.0 else 0.0
+
+    ranked: list[RankedClaim] = []
+    for claim, lexical, confidence, freshness, vector, parts in scored:
+        gated = floor_ratio > 0.0 and max_relevance > 0.0 and parts.relevance < floor
+        score = parts.relevance + (0.0 if gated else parts.boosts)
         ranked.append(
             RankedClaim(
                 claim=claim,
@@ -337,6 +389,15 @@ def rank_claim_rows(
                 freshness_score=freshness,
                 confidence_score=confidence,
                 vector_score=vector,
+                breakdown={
+                    "relevance": parts.relevance,
+                    "boosts_total": parts.boosts,
+                    "boosts_applied": not gated,
+                    "boost_terms": parts.boost_terms,
+                    "weights": parts.weights,
+                    "floor": floor,
+                    "final": score,
+                },
             )
         )
 
