@@ -24,6 +24,7 @@ ProbeType = Literal[
     "deterministic_citation_locator",
     "semantic_probe",
     "tool_probe",
+    "contradiction_probe",
 ]
 
 _TEXT_SUFFIXES = {
@@ -601,6 +602,46 @@ def _run_tool_probe(*, claim: Any, service: MemoryService, timeout_seconds: floa
     )
 
 
+def _run_contradiction_probe(
+    *, claim: Any, service: MemoryService, max_pairs: int, sim_low: float, sim_high: float,
+) -> ProbeResult:
+    """Steward-phase wrapper around contradiction_probe.probe_for_claim.
+
+    Converts the probe's normalized dict output into a ProbeResult/Reasons.
+    Fail-closed: any unexpected error returns a low-severity error reason so
+    the circuit breaker can open the probe rather than crashing the cycle.
+    """
+    from memorymaster import contradiction_probe as cp
+    started = time.monotonic()
+    try:
+        out = cp.probe_for_claim(
+            service, claim, sim_low=sim_low, sim_high=sim_high, max_pairs=max_pairs,
+        )
+    except Exception as exc:
+        return ProbeResult(
+            probe_type="contradiction_probe", passed=False,
+            metrics={
+                "timed_out": False,
+                "duration_ms": round((time.monotonic() - started) * 1000.0, 3),
+                "error": str(exc)[:120],
+            },
+            reasons=[Reason(
+                code="contradiction_probe.error", probe_type="contradiction_probe",
+                severity="low", detail=f"probe crashed: {type(exc).__name__}",
+            )],
+        )
+    return ProbeResult(
+        probe_type="contradiction_probe",
+        passed=bool(out["passed"]),
+        metrics=out["metrics"],
+        reasons=[Reason(
+            code=r["code"], probe_type="contradiction_probe",
+            severity=r.get("severity", "medium"), detail=r.get("detail", ""),
+            evidence=r.get("evidence", {}),
+        ) for r in out["reasons"]],
+    )
+
+
 def plan_claim_probes(
     claim: Any,
     *,
@@ -608,6 +649,7 @@ def plan_claim_probes(
     max_file_bytes: int,
     include_semantic_probe: bool = True,
     include_tool_probe: bool = True,
+    include_contradiction_probe: bool = True,
 ) -> ClaimProbePlan:
     needle = _normalize_text(claim.object_value) or _normalize_text(claim.text)
     if len(needle) > 160:
@@ -628,6 +670,8 @@ def plan_claim_probes(
         probes.append(ProbeSpec(probe_type="semantic_probe", params={"limit": 8}))
     if include_tool_probe:
         probes.append(ProbeSpec(probe_type="tool_probe", params={}))
+    if include_contradiction_probe:
+        probes.append(ProbeSpec(probe_type="contradiction_probe", params={"max_pairs": 5}))
     return ClaimProbePlan(claim_id=claim.id, probes=probes)
 
 
@@ -709,6 +753,12 @@ def _decision_for_claim(
     proposed_status: str | None = None
     replaced_by_claim_id: int | None = None
 
+    contradiction_found = any(
+        result.probe_type == "contradiction_probe" and not result.passed
+        and any(r.code == "contradiction_probe.semantic_pair" for r in result.reasons)
+        for result in probe_results
+    )
+
     if replacement is not None:
         decision = "superseded_candidate"
         proposed_status = "superseded"
@@ -722,17 +772,20 @@ def _decision_for_claim(
                 evidence={"replaced_by_claim_id": replacement.id},
             )
         )
-    elif claim.status == "conflicted" or has_conflict:
+    elif claim.status == "conflicted" or has_conflict or contradiction_found:
         decision = "conflicted"
         proposed_status = "conflicted"
-        reasons.append(
-            Reason(
-                code="relation.conflicting_claim",
-                probe_type="relation",
-                severity="high",
-                detail="Conflicting confirmed claim exists for same tuple.",
+        if has_conflict or claim.status == "conflicted":
+            reasons.append(
+                Reason(
+                    code="relation.conflicting_claim",
+                    probe_type="relation",
+                    severity="high",
+                    detail="Conflicting confirmed claim exists for same tuple.",
+                )
             )
-        )
+        # contradiction_probe.semantic_pair reasons are already in `reasons` via
+        # the probe_results loop above — no need to duplicate.
     else:
         no_match = any(reason.code == "filesystem_grep.no_match" for reason in reasons)
         weak_format = any(
@@ -852,6 +905,7 @@ def _run_cycle(
     probe_failure_threshold: int,
     enable_semantic_probe: bool,
     enable_tool_probe: bool,
+    enable_contradiction_probe: bool,
 ) -> dict[str, Any]:
     before = _status_snapshot(service, allow_sensitive=allow_sensitive)
 
@@ -900,6 +954,7 @@ def _run_cycle(
             max_file_bytes=max_probe_file_bytes,
             include_semantic_probe=enable_semantic_probe,
             include_tool_probe=enable_tool_probe,
+            include_contradiction_probe=enable_contradiction_probe,
         )
         probe_results: list[ProbeResult] = []
         for probe in plan.probes:
@@ -972,6 +1027,14 @@ def _run_cycle(
                     claim=claim,
                     service=service,
                     timeout_seconds=probe_timeout_seconds,
+                )
+            elif probe.probe_type == "contradiction_probe":
+                result = _run_contradiction_probe(
+                    claim=claim,
+                    service=service,
+                    max_pairs=int(probe.params.get("max_pairs", 5)),
+                    sim_low=float(probe.params.get("sim_low", 0.60)),
+                    sim_high=float(probe.params.get("sim_high", 0.92)),
                 )
 
             if result is None:
@@ -1447,6 +1510,7 @@ def run_steward(
     probe_failure_threshold: int = 3,
     enable_semantic_probe: bool = True,
     enable_tool_probe: bool = True,
+    enable_contradiction_probe: bool = True,
     artifact_path: Path | str = "artifacts/steward/steward_report.json",
 ) -> dict[str, Any]:
     if mode not in {"manual", "cadence"}:
@@ -1551,6 +1615,7 @@ def run_steward(
                 probe_failure_threshold=probe_failure_threshold,
                 enable_semantic_probe=enable_semantic_probe,
                 enable_tool_probe=enable_tool_probe,
+                enable_contradiction_probe=enable_contradiction_probe,
             )
         cycle_payload["cycle"] = cycle_index
         cycle_payload["started_at"] = cycle_started
@@ -1589,6 +1654,7 @@ def run_steward(
         "probe_failure_threshold": probe_failure_threshold,
         "enable_semantic_probe": enable_semantic_probe,
         "enable_tool_probe": enable_tool_probe,
+        "enable_contradiction_probe": enable_contradiction_probe,
         "max_tool_probes": max_tool_probes,
         "cycles_completed": len(cycles),
         "cycles": cycles,
@@ -1614,6 +1680,7 @@ def run_steward(
                 "probe_failure_threshold": probe_failure_threshold,
                 "enable_semantic_probe": enable_semantic_probe,
                 "enable_tool_probe": enable_tool_probe,
+                "enable_contradiction_probe": enable_contradiction_probe,
             },
             "cadence": {
                 "mode": mode,

@@ -1228,6 +1228,7 @@ def _handle_run_steward(args: argparse.Namespace, service, parser: argparse.Argu
         probe_failure_threshold=args.probe_failure_threshold,
         enable_semantic_probe=not args.disable_semantic_probe,
         enable_tool_probe=not args.disable_tool_probe,
+        enable_contradiction_probe=not getattr(args, "disable_contradiction_probe", False),
         artifact_path=Path(args.artifact_json),
     )
     elapsed_ms = (time.perf_counter() - t0) * 1000

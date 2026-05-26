@@ -26,6 +26,7 @@ import logging
 import math
 import os
 import sqlite3
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -33,6 +34,7 @@ from memorymaster import llm_budget, llm_provider
 from memorymaster.embeddings import EmbeddingProvider, cosine_similarity, create_best_provider
 from memorymaster.lifecycle import transition_claim
 from memorymaster.models import Claim
+from memorymaster.security import redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -324,3 +326,130 @@ def run_probe(
         lo, hi = wilson_interval(stats["contradictions"], n)
         stats["rate_ci"] = [round(lo, 4), round(hi, 4)]
     return stats
+
+
+# ---------------------------------------------------------------------------
+# Per-claim steward-phase entry point (v3.23)
+# ---------------------------------------------------------------------------
+
+
+def probe_for_claim(
+    service: Any,
+    claim: Any,
+    *,
+    sim_low: float = 0.60,
+    sim_high: float = 0.92,
+    max_pairs: int = 5,
+    peer_limit: int = 20,
+) -> dict[str, Any]:
+    """Per-claim contradiction probe for the steward cycle.
+
+    Finds topically-similar peers for ``claim`` via the existing hybrid
+    retrieval (so we reuse the embedder + ranker + cache), excludes pairs the
+    deterministic resolver / supersession owns, judges remaining candidates
+    against the verdict cache + LLM, and returns a normalized result dict the
+    steward wraps in a ``ProbeResult``.
+
+    Returns ``{passed, reasons: [...], metrics: {...}}``. ``passed`` is False
+    iff at least one contradiction was found.
+    """
+    started = time.monotonic()
+    metrics: dict[str, Any] = {
+        "pairs_checked": 0, "contradictions": 0,
+        "cache_hits": 0, "llm_calls": 0, "errors": 0,
+        "timed_out": False, "duration_ms": 0.0,
+    }
+    reasons: list[dict[str, Any]] = []
+
+    def _done(passed: bool) -> dict[str, Any]:
+        metrics["duration_ms"] = round((time.monotonic() - started) * 1000.0, 3)
+        return {"passed": passed, "reasons": reasons, "metrics": metrics}
+
+    if claim.status in _SKIP_STATUSES or not (claim.text or "").strip():
+        return _done(True)
+
+    try:
+        peers_rows = service.query_rows(
+            query_text=claim.text or "",
+            limit=peer_limit,
+            retrieval_mode="hybrid",
+            include_candidates=True,
+            include_stale=True,
+            include_conflicted=True,
+        )
+    except Exception as exc:
+        reasons.append({
+            "code": "contradiction_probe.peer_fetch.error",
+            "severity": "low",
+            "detail": f"peer fetch failed: {type(exc).__name__}",
+            "evidence": {},
+        })
+        return _done(False)
+
+    candidates: list[tuple[Any, float]] = []
+    for row in peers_rows:
+        peer = row.get("claim")
+        if peer is None or peer.id == claim.id:
+            continue
+        if peer.status in _SKIP_STATUSES:
+            continue
+        if _same_subject_predicate(claim, peer):
+            continue  # deterministic resolver's domain
+        if _already_linked(claim, peer):
+            continue
+        vs = float(row.get("vector_score") or 0.0)
+        # If vectors are present, only accept pairs in the contradiction band.
+        # If absent (pure-lexical hybrid), accept all topical peers.
+        if vs > 0.0 and not (sim_low <= vs < sim_high):
+            continue
+        candidates.append((peer, vs))
+        if len(candidates) >= max_pairs:
+            break
+
+    if not candidates:
+        return _done(True)
+
+    db_path = getattr(service.store, "db_path", None)
+    if not db_path or "://" in str(db_path):
+        return _done(True)  # verdict cache requires SQLite; skip silently on PG
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        _ensure_verdict_table(conn)
+        model = _model_key()
+        for peer, sim in candidates:
+            metrics["pairs_checked"] += 1
+            verdict = _cache_get(conn, claim.id, peer.id, model)
+            if verdict is not None:
+                metrics["cache_hits"] += 1
+            else:
+                try:
+                    verdict = _judge_llm(claim, peer)
+                except llm_budget.LLMBudgetExceeded:
+                    metrics["timed_out"] = True
+                    break
+                metrics["llm_calls"] += 1
+                if verdict is None:
+                    metrics["errors"] += 1
+                    continue
+                _cache_put(conn, claim.id, peer.id, model, verdict)
+            if not verdict.get("contradicts"):
+                continue
+            verdict_reason = verdict.get("reason", "")
+            _, leaks = redact_text(verdict_reason)
+            if leaks:
+                continue  # drop rather than surface a sensitive judge-reason
+            metrics["contradictions"] += 1
+            reasons.append({
+                "code": "contradiction_probe.semantic_pair",
+                "severity": verdict.get("severity", "medium"),
+                "detail": f"Semantic contradiction with claim {peer.id}: {verdict_reason}",
+                "evidence": {
+                    "peer_claim_id": int(peer.id),
+                    "similarity": round(float(sim), 4),
+                    "from_cache": bool(verdict.get("cached")),
+                },
+            })
+    finally:
+        conn.close()
+    return _done(metrics["contradictions"] == 0)
