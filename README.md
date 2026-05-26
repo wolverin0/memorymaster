@@ -6,7 +6,7 @@ Lifecycle-managed claims with citations, conflict detection, steward governance,
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-2214-green.svg)]()
+[![Tests](https://img.shields.io/badge/tests-2224-green.svg)]()
 [![MCP Tools](https://img.shields.io/badge/MCP%20tools-24-purple.svg)]()
 [![CLI Commands](https://img.shields.io/badge/CLI%20commands-86-orange.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memorymaster.svg)](https://pypi.org/project/memorymaster/)
@@ -45,7 +45,8 @@ recent PR status, and sensitivity-filter invariants.
 - **Correction mining** (new in v3.21.0): `mine-rules` scans the verbatim transcript archive for user corrections and distills them into rule claims; the Stop hook also mines each session's latest correction automatically
 - **Versioned schema migrations** (new in v3.20.0): `migrate` applies SQLite/Postgres migrations with sha256 drift detection; incremental `export-delta` ships small claim deltas for cheap cross-machine sync
 - **Retrieval quality** (new in v3.22.0): floor-ratio boost gate (`MEMORYMASTER_BOOST_FLOOR_RATIO`) stops fresh-but-wrong claims outranking the true match; `query --explain` shows per-stage score attribution; an opt-in correctness-safe query cache (`MEMORYMASTER_QUERY_CACHE`) with a generation gate
-- **Semantic contradiction probe** (new in v3.22.0): `detect-contradictions` finds claims that genuinely contradict each other (beyond the deterministic same-subject conflict check) via an LLM judge with a Wilson-CI rate and verdict cache
+- **Semantic contradiction probe** (new in v3.22.0, wired as a steward phase in v3.23.0): `detect-contradictions` finds claims that genuinely contradict each other (beyond the deterministic same-subject conflict check) via an LLM judge with a Wilson-CI rate and verdict cache; in v3.23 the same probe runs inside `run-steward` and emits paste-ready `conflicted` proposals
+- **Verbatim archive cleanup** (new in v3.23.0): `verbatim-cleanup` dedups the raw-transcript table and optionally purges pre-#128 junk rows, with a dry-run default and FTS5 mirror sync
 - **Steward governance**: multi-probe validators (filesystem, format, citation, semantic, tool) with proposal review
 - **Conflict resolution**: 5-tier auto (confidence > freshness > citations > LLM > manual)
 - **Auto-redaction** at ingest: JWT, GitHub tokens, Bearer, AWS keys, SSH keys, custom patterns
