@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [3.23.0] - 2026-05-26
+
+**Steward integration + verbatim cleanup.** Wires the v3.22 semantic
+contradiction probe into the nightly steward cycle (it now emits paste-ready
+proposals through the existing `list-steward-proposals` / `resolve-proposal`
+flow instead of only being a standalone CLI), and adds a `verbatim-cleanup`
+CLI for installs whose verbatim archive grew large during the pre-#128
+silent-dropper era.
+
+### Added
+
+- **Contradiction probe as a steward phase.** New
+  `contradiction_probe.probe_for_claim()` per-claim entry point reuses
+  `service.query_rows` for topical-peer sampling (inheriting the v3.22 floor
+  gate + query cache for free), excludes the deterministic resolver's
+  same-subject+predicate domain and already-superseded-linked pairs, judges
+  candidates against the existing verdict cache + LLM, and returns reasons
+  the steward elevates to a `conflicted` proposal. New
+  `run-steward --disable-contradiction-probe` flag mirrors the existing
+  `--disable-semantic-probe` / `--disable-tool-probe` pattern. Default on.
+- **`memorymaster verbatim-cleanup`** (`--analyze-only` / `--apply` /
+  `--no-dedup` / `--purge-junk`). Dedups verbatim rows by
+  `(session_id, content)` keeping the oldest id, and optionally purges rows
+  matching known pre-#128 junk prefixes (internal-LLM-prompt rows the broken
+  `store_transcript` mistakenly captured). Dry-run default, SQLite-only,
+  FTS5 mirror kept in sync on apply.
+
+### Notes
+
+- **Bench (preliminary, n=20):** v3.22 retrieval re-verified on the
+  LongMemEval-S smoke — `R@5=1.0000`, `R@10=1.0000`, `MRR=0.8708` (no
+  regression vs the v3.15 0.966/0.984/0.902 baseline). The deferred
+  QA-accuracy pass with the `claude_cli` judge ran for the first time and
+  scored `0.0500` on the 20-question subset, indicating the answerer/judge
+  pipeline (not retrieval) is the bottleneck — a real research direction,
+  not a release blocker. A larger N + alternative judges are follow-ups.
+
 ## [3.22.0] - 2026-05-24
 
 **Retrieval-quality release.** Ports the high-ROI ideas from a competitive
