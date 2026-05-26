@@ -332,6 +332,7 @@ def build_parser() -> argparse.ArgumentParser:
     steward.add_argument("--probe-failure-threshold", type=int, default=3, help="Open circuit breaker for a probe type after this many timeout/error failures")
     steward.add_argument("--disable-semantic-probe", action="store_true", help="Disable semantic retrieval probe in steward planner")
     steward.add_argument("--disable-tool-probe", action="store_true", help="Disable tool/storage probe in steward planner")
+    steward.add_argument("--disable-contradiction-probe", action="store_true", help="Disable semantic contradiction probe in steward planner (v3.23)")
     steward.add_argument("--allow-sensitive", action="store_true", help="Include sensitive claims in stewardship scan")
     steward.add_argument("--apply", action="store_true", help="Apply proposed status transitions")
     steward.add_argument("--artifact-json", default="artifacts/steward/steward_report.json", help="Path to steward JSON report artifact")
@@ -463,6 +464,12 @@ def build_parser() -> argparse.ArgumentParser:
     mine_rules_cmd.add_argument("--batch-size", dest="batch_size", type=int, default=200, help="Rows fetched per SQL pre-filter page (default: 200)")
     mine_rules_cmd.add_argument("--provider", default="claude_cli", help="LLM provider for this run (default: claude_cli)")
     mine_rules_cmd.add_argument("--reset", action="store_true", help="Clear the stored watermark before running (re-scan from the start)")
+
+    verbatim_clean = sub.add_parser("verbatim-cleanup", help="Dedup the verbatim archive + optionally purge pre-#128 capture-bug junk (v3.23)")
+    verbatim_clean.add_argument("--analyze-only", dest="analyze_only", action="store_true", help="Report composition only; do not delete")
+    verbatim_clean.add_argument("--apply", action="store_true", help="Actually delete (default is dry-run)")
+    verbatim_clean.add_argument("--no-dedup", dest="no_dedup", action="store_true", help="Skip the (session_id, content) exact-dup pass")
+    verbatim_clean.add_argument("--purge-junk", dest="purge_junk", action="store_true", help="Also delete rows matching known pre-#128 junk prefixes (wiki-absorb prompt, etc.)")
 
     detect_contra = sub.add_parser("detect-contradictions", help="Find semantic contradictions between topically-similar claims via an LLM judge (v3.22)")
     detect_contra.add_argument("--limit", type=int, default=200, help="Max claims to load for pair sampling")

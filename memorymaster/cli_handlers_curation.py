@@ -397,6 +397,42 @@ def _handle_detect_contradictions(args: argparse.Namespace, service, parser: arg
     return 0
 
 
+def _handle_verbatim_cleanup(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.verbatim_cleanup import analyze, cleanup
+    t0 = time.perf_counter()
+    if getattr(args, "analyze_only", False):
+        result = analyze(effective_db)
+    else:
+        result = cleanup(
+            effective_db,
+            dedup=not getattr(args, "no_dedup", False),
+            purge_junk=getattr(args, "purge_junk", False),
+            dry_run=not getattr(args, "apply", False),
+        )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        if not result.get("verbatim_present", True):
+            print("verbatim-cleanup: verbatim_memories table not present; nothing to do")
+        elif "before_total" in result:  # cleanup result
+            tag = "(dry-run)" if result["dry_run"] else "(applied)"
+            print(
+                f"verbatim-cleanup {tag}: dedup_deleted={result['dedup_deleted']}, "
+                f"junk_deleted={result['junk_deleted']}, "
+                f"before={result['before_total']} -> after={result['after_total']} "
+                f"({elapsed_ms:.0f}ms)"
+            )
+        else:  # analyze result
+            print(
+                f"verbatim analyze: total={result['total']}, distinct={result['distinct_content']}, "
+                f"duplicate_extras={result['duplicate_extras']}, "
+                f"empty_role={result['empty_role_rows']}, junk_prefix={result['junk_prefix_rows']} "
+                f"({elapsed_ms:.0f}ms)"
+            )
+    return 0
+
+
 def _handle_wiki_breakdown(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.wiki_engine import breakdown
     t0 = time.perf_counter()
@@ -759,6 +795,7 @@ COMMAND_HANDLERS: dict[str, object] = {
     "mine-transcript": _handle_mine_transcript,
     "mine-rules": _handle_mine_rules,
     "detect-contradictions": _handle_detect_contradictions,
+    "verbatim-cleanup": _handle_verbatim_cleanup,
     "verify-claims": _handle_verify_claims,
     "extract-entities": _handle_extract_entities,
     "entity-stats": _handle_entity_stats,
