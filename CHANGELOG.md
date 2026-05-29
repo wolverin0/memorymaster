@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [3.25.0] - 2026-05-29
+
+**Audit follow-through.** Fixes the three medium findings deferred from v3.24
+(all from the v3.21–v3.23 Workflow audit). All are reliability/cost-control
+fixes in the steward + rule-miner paths; behaviour is unchanged unless the
+per-cycle LLM caps are configured or a provider outage occurs.
+
+### Fixed
+
+- **Steward never enforced the per-cycle LLM budget** (`probe-for-claim-budget-no-scope`).
+  `_run_cycle` did not open an `llm_budget.cycle_scope`, so
+  `MEMORYMASTER_MAX_LLM_CALLS_PER_CYCLE` (and the token / provider-failure caps)
+  were a no-op for the contradiction phase, and `probe_for_claim`'s
+  `LLMBudgetExceeded` handler was unreachable in production. `_run_cycle` is now
+  wrapped with `@llm_budget.cycle_scope()`, so the cap applies across the cycle.
+- **Budget exhaustion no longer trips the probe circuit breaker**
+  (`probe-budget-counts-as-circuit-failure`). `probe_for_claim` flagged a hit
+  budget as `timed_out`, which the steward counted toward
+  `probe_failure_threshold` — disabling the probe for the rest of the cycle on
+  the very guardrail meant to bound it. It now records a distinct
+  `budget_exhausted` metric that the failure tally ignores.
+- **Rule miner no longer skips corrections on a transient provider failure**
+  (`mine-rules-silent-watermark-advance`). An empty `call_llm` response (outage)
+  was indistinguishable from a genuine "no correction" and advanced the
+  watermark, permanently skipping real corrections. `_extract_rule` now raises
+  `TransientLLMError` on an empty response (vs `None` for a non-empty
+  parsed-no-rule); the miner aborts without advancing the watermark, so the
+  candidate is retried on the next run.
+
+### Known follow-ups
+
+- 13 low-severity audit items remain (query-cache eviction/TTL + index,
+  non-sargable `LIKE` prefilter → FTS5 `MATCH`, per-claim retrieval/connection
+  in the contradiction probe, etc.).
+
 ## [3.24.0] - 2026-05-29
 
 **Audit-remediation + bench-correctness release.** A multi-agent Workflow audit
