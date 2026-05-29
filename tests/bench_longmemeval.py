@@ -4,6 +4,7 @@ import argparse
 import gc
 import json
 import os
+import re
 import tempfile
 import time
 from collections import Counter, defaultdict
@@ -706,14 +707,52 @@ def answer_question(question: str, contexts: list[str], judge: JudgeClient) -> s
     return judge.complete(prompt, max_tokens=300, temperature=0.0).text
 
 
+def _normalize_answer(text: str) -> str:
+    """Lowercase, strip markdown/punctuation/whitespace for substring matching."""
+    text = text.strip().lower().replace("*", "").replace("`", "").replace("#", "")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip(" .,:;!?\"'()[]")
+
+
+def _parse_verdict(text: str) -> str:
+    """Tolerant YES/NO extraction.
+
+    The claude_cli judge ignores ``max_tokens`` per-call (see
+    ``call_claude_cli_judge``), so a chat-tuned model emits a reasoning preamble
+    instead of a bare token. The old ``verdict.upper().startswith("YES")`` parse
+    therefore scored every prose-prefixed correct answer as NO — the dominant
+    driver of the spuriously-low QA accuracy. Match a YES/NO token anywhere near
+    the start (then anywhere) instead of requiring it to lead.
+    """
+    t = text.strip().lstrip("*#>- ").upper()
+    if t.startswith("YES"):
+        return "YES"
+    if t.startswith("NO"):
+        return "NO"
+    head = t[:80]
+    if re.search(r"\bYES\b", head):
+        return "YES"
+    if re.search(r"\bNO\b", head):
+        return "NO"
+    return "YES" if re.search(r"\bYES\b", t) else "NO"
+
+
 def judge_answer(gold: str, hypothesis: str, judge: JudgeClient) -> str:
+    # Deterministic pre-check: when the gold answer appears verbatim in the
+    # hypothesis (after normalization) it is unambiguously correct — no judge
+    # call needed, and immune to the prose-preamble parse failure. Guard on a
+    # min length so trivial tokens don't false-positive. Only ever returns YES;
+    # non-matches fall through to the LLM judge.
+    g = _normalize_answer(gold)
+    if len(g) >= 4 and g in _normalize_answer(hypothesis):
+        return "YES"
     prompt = (
-        "Given the gold answer X and the hypothesis Y, is Y correct? Reply YES or NO.\n\n"
+        "Given the gold answer X and the hypothesis Y, is Y correct? "
+        "Reply with exactly one word: YES or NO.\n\n"
         f"X: {gold}\n\n"
         f"Y: {hypothesis}"
     )
-    verdict = judge.complete(prompt, max_tokens=5, temperature=0.0).text.upper()
-    return "YES" if verdict.startswith("YES") else "NO"
+    return _parse_verdict(judge.complete(prompt, max_tokens=5, temperature=0.0).text)
 
 
 def run_full(

@@ -1,147 +1,102 @@
-"""Regression tests for the auto-ingest stop hook (#128).
+"""Regression tests for the auto-ingest stop hook citations invariant.
 
-The hook at ``config_templates/hooks/memorymaster-auto-ingest.py`` inserts
-claims via raw SQL. A 2026-04-22 audit found it never inserted the companion
-``citations`` row, so every hook-born claim failed the steward
-``min_citations >= 1`` gate and stayed unpromotable forever (~93% of live
-candidates).
+History:
+- #128 (2026-04-22 audit): the hook inserted claims via raw SQL but never
+  inserted the companion ``citations`` row, so every hook-born claim failed the
+  steward ``min_citations >= 1`` gate and stayed unpromotable forever.
+- v3.24 (F3 refactor): the hook's ``_run_gemini_extraction`` now routes through
+  ``MemoryService.ingest`` with an explicit ``CitationInput`` instead of raw
+  SQL, gaining the canonical ingest path (sensitivity sanitize, dedup, entity
+  resolution, observability) AND keeping the citation guarantee.
 
-These tests lock in two invariants:
-
-1.  **Pattern test** — the exact SQL pair the hook executes must leave every
-    claim with at least one citation.
-2.  **Source guard** — the template file must still contain an
-    ``INSERT INTO citations`` inside its claims-insert path, as a cheap
-    text-level regression tripwire against future refactors that drop it.
+The invariant under test is unchanged — **every hook-born claim must carry at
+least one citation** — but it is now enforced by the service path, not a raw
+citations INSERT. These tests verify that intent against the real service and
+guard the template's use of the service + CitationInput.
 """
 
 from __future__ import annotations
 
-import re
-import sqlite3
-from datetime import datetime, timezone
+import hashlib
 from pathlib import Path
 
 import pytest
+
+from memorymaster.models import CitationInput
+from memorymaster.service import MemoryService
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE_PATH = REPO_ROOT / "memorymaster" / "config_templates" / "hooks" / "memorymaster-auto-ingest.py"
 
 
-# Minimal schema that mirrors the columns the hook writes to. Kept inline so
-# the test does not depend on MemoryService's full schema init, which evolves
-# independently and would make this test fragile.
-_CLAIMS_DDL = """
-CREATE TABLE claims (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    text TEXT NOT NULL,
-    idempotency_key TEXT UNIQUE,
-    normalized_text TEXT,
-    claim_type TEXT,
-    subject TEXT,
-    predicate TEXT,
-    scope TEXT,
-    status TEXT,
-    confidence REAL,
-    source_agent TEXT,
-    created_at TEXT,
-    updated_at TEXT,
-    tier TEXT,
-    version INTEGER,
-    visibility TEXT
-)
-"""
-
-_CITATIONS_DDL = """
-CREATE TABLE citations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    claim_id INTEGER NOT NULL,
-    source TEXT NOT NULL,
-    locator TEXT,
-    excerpt TEXT,
-    created_at TEXT NOT NULL
-)
-"""
-
-
 @pytest.fixture
-def conn() -> sqlite3.Connection:
-    c = sqlite3.connect(":memory:")
-    c.execute(_CLAIMS_DDL)
-    c.execute(_CITATIONS_DDL)
-    yield c
-    c.close()
+def svc(tmp_path):
+    s = MemoryService(tmp_path / "hook.db", workspace_root=tmp_path)
+    s.init_db()
+    return s
 
 
-def _hook_ingest(conn: sqlite3.Connection, claim: dict, scope: str) -> int:
-    """Mirror of the fixed auto-ingest hook's per-claim DB logic.
+def _hook_ingest(svc: MemoryService, claim: dict, scope: str):
+    """Mirror of the fixed auto-ingest hook's per-claim ingest call.
 
-    Kept in-test (rather than importing the template) because the template
-    uses an unsubstituted ``__MEMORYMASTER_PROJECT_ROOT__`` placeholder and
-    cannot be imported as a module without setup-hooks processing it first.
+    Matches _run_gemini_extraction in the template exactly: route through
+    service.ingest with a CitationInput sourced to the hook, so the claim is
+    born with a citation (promotable) and through the canonical filter path.
     """
-    now = datetime.now(timezone.utc).isoformat()
-    idem = f"llm-stop-{abs(hash(claim['text'])) & 0xFFFFFFFF}"
-    cur = conn.execute(
-        """INSERT INTO claims (text, idempotency_key, normalized_text, claim_type,
-           subject, predicate, scope, status, confidence,
-           source_agent, created_at, updated_at, tier, version, visibility)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'candidate', 0.6,
-           'llm-stop-hook', ?, ?, 'working', 1, 'public')""",
-        (claim["text"], idem, claim["text"].lower(), claim.get("claim_type", "fact"),
-         claim.get("subject", "codebase"), claim.get("predicate", "observation"),
-         scope, now, now),
+    text = claim["text"]
+    text_hash = hashlib.sha256(text.strip().lower().encode()).hexdigest()[:16]
+    return svc.ingest(
+        text=text,
+        citations=[CitationInput(source="llm-stop-hook", locator=scope, excerpt=text[:200])],
+        idempotency_key=f"llm-stop-{text_hash}",
+        claim_type=claim.get("claim_type", "fact"),
+        subject=claim.get("subject", "codebase"),
+        predicate=claim.get("predicate", "observation"),
+        scope=scope,
+        confidence=0.6,
+        source_agent="llm-stop-hook",
     )
-    conn.execute(
-        """INSERT INTO citations (claim_id, source, locator, excerpt, created_at)
-           VALUES (?, 'llm-stop-hook', ?, ?, ?)""",
-        (cur.lastrowid, scope, claim["text"][:200], now),
-    )
-    return cur.lastrowid
 
 
-def test_hook_pattern_creates_citation_per_claim(conn):
+def test_hook_path_creates_citation_per_claim(svc):
     claims = [
         {"text": "Recall hook needs skip_qdrant=True on Windows environments"},
-        {"text": "Sensitivity filter F1 0.995 on adversarial corpus"},
+        {"text": "Sensitivity filter F1 0.995 on adversarial corpus example"},
         {"text": "Scope canonicalization folds Copy/dash/underscore variants"},
     ]
-    for c in claims:
-        _hook_ingest(conn, c, "project:memorymaster")
+    ids = [_hook_ingest(svc, c, "project:memorymaster").id for c in claims]
 
-    claim_count = conn.execute("SELECT COUNT(*) FROM claims").fetchone()[0]
-    citation_count = conn.execute("SELECT COUNT(*) FROM citations").fetchone()[0]
-    orphan_count = conn.execute(
-        "SELECT COUNT(*) FROM claims WHERE id NOT IN (SELECT claim_id FROM citations)"
-    ).fetchone()[0]
-
-    assert claim_count == 3
-    assert citation_count == 3
-    assert orphan_count == 0, "Every hook-born claim must have at least one citation (#128)"
+    for cid in ids:
+        fetched = svc.store.get_claim(cid, include_citations=True)
+        assert fetched is not None
+        assert fetched.citations, f"hook-born claim {cid} has no citation (#128 regression)"
 
 
-def test_hook_citation_locator_is_scope(conn):
-    """The citation's locator should carry the scope so audits can trace origin."""
-    _hook_ingest(conn, {"text": "whatever"}, "project:memorymaster")
-    row = conn.execute(
-        "SELECT source, locator FROM citations WHERE claim_id = (SELECT id FROM claims LIMIT 1)"
-    ).fetchone()
-    assert row == ("llm-stop-hook", "project:memorymaster")
+def test_hook_citation_locator_is_scope(svc):
+    """The citation's source is the hook and its locator carries the scope so
+    audits can trace origin."""
+    claim = _hook_ingest(svc, {"text": "a hook-born claim about something"}, "project:memorymaster")
+    fetched = svc.store.get_claim(claim.id, include_citations=True)
+    cite = fetched.citations[0]
+    assert cite.source == "llm-stop-hook"
+    assert cite.locator == "project:memorymaster"
 
 
-def test_template_still_contains_citation_insert():
-    """Text-level regression guard: the template must keep the citations INSERT.
-
-    Matches the exact invariant broken by the pre-fix version: claims INSERT
-    with no citations INSERT. This test will fail loudly if a future refactor
-    removes the companion write.
-    """
+def test_template_routes_claims_through_service_with_citation():
+    """Source guard: the template must ingest hook claims via MemoryService.ingest
+    with a CitationInput (the v3.24 mechanism that guarantees the citation),
+    NOT raw SQL. Tripwire against a refactor that drops the citation guarantee."""
     assert TEMPLATE_PATH.exists(), f"Template missing at {TEMPLATE_PATH}"
     src = TEMPLATE_PATH.read_text(encoding="utf-8")
-    assert "INSERT INTO claims" in src, "Template no longer inserts into claims — did it move?"
-    # Case-insensitive because we don't care about SQL keyword casing.
-    assert re.search(r"INSERT\s+INTO\s+citations", src, re.IGNORECASE), (
-        "Template inserts into claims but not citations. "
-        "This regresses #128: every hook-born claim becomes unpromotable. "
-        "See scripts/backfill_stop_hook_citations.py for the forensic story."
+    assert "MemoryService" in src and "svc.ingest(" in src, (
+        "Template no longer ingests via MemoryService.ingest — did the hook path move?"
+    )
+    assert "CitationInput(source=\"llm-stop-hook\"" in src, (
+        "Template ingests claims without a hook CitationInput. This regresses #128: "
+        "every hook-born claim becomes unpromotable (fails steward min_citations gate)."
+    )
+    # The old raw-SQL path must be gone (it bypassed the service/filter).
+    assert "INSERT INTO claims" not in src, (
+        "Template still contains a raw INSERT INTO claims — the v3.24 F3 refactor "
+        "routed gemini extraction through the service; raw SQL should be removed."
     )

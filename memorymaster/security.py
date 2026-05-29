@@ -157,6 +157,8 @@ class SanitizedClaimInput:
     is_sensitive: bool
     findings: list[str]
     encrypted_payload: str | None
+    subject: str | None = None
+    predicate: str | None = None
 
 
 def _as_bool(value: object, *, field: str) -> bool:
@@ -320,6 +322,8 @@ def sanitize_claim_input(
     text: str,
     object_value: str | None,
     citations: list[CitationInput],
+    subject: str | None = None,
+    predicate: str | None = None,
 ) -> SanitizedClaimInput:
     redacted_text, findings = _redact(text)
     redacted_object = object_value
@@ -327,6 +331,19 @@ def sanitize_claim_input(
     if object_value:
         redacted_object, object_findings = _redact(object_value)
         findings.extend(object_findings)
+
+    # subject/predicate are structured-claim fields that reach the store
+    # alongside text/object_value. They are exposed MCP ingest parameters, so a
+    # secret placed there must be caught by the ingest filter — the last line of
+    # defense — not only at display time. (audit: ingest-subject-skips-filter)
+    redacted_subject = subject
+    if subject:
+        redacted_subject, subject_findings = _redact(subject)
+        findings.extend(subject_findings)
+    redacted_predicate = predicate
+    if predicate:
+        redacted_predicate, predicate_findings = _redact(predicate)
+        findings.extend(predicate_findings)
 
     sanitized_citations: list[CitationInput] = []
     citation_findings: list[str] = []
@@ -344,6 +361,8 @@ def sanitize_claim_input(
         {
             "text": text,
             "object_value": object_value,
+            "subject": subject,
+            "predicate": predicate,
             "citations": [asdict(c) for c in citations],
         }
     ) if is_sensitive else None
@@ -355,6 +374,8 @@ def sanitize_claim_input(
         is_sensitive=is_sensitive,
         findings=dedup_findings,
         encrypted_payload=encrypted_payload,
+        subject=redacted_subject,
+        predicate=redacted_predicate,
     )
 
 

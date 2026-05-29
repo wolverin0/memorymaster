@@ -251,9 +251,15 @@ class MemoryService:
             text=text.strip(),
             object_value=object_value,
             citations=citations,
+            subject=subject,
+            predicate=predicate,
         )
         if not sanitized.citations:
             raise ValueError("At least one citation is required.")
+        # Use the sanitized subject/predicate everywhere downstream so a secret
+        # placed in those fields is redacted at rest, not just at display time.
+        subject = sanitized.subject
+        predicate = sanitized.predicate
         # Resolve subject → canonical entity (GBrain-inspired entity registry)
         # and mine text for pattern-based entities (#127 Wave 3).
         entity_id = 0
@@ -667,6 +673,11 @@ class MemoryService:
                     rows = self._rehydrate_cached_rows(cached)
                     self._record_accesses(rows, query_text=query_text)
                     return rows
+        # Capture the corpus generation BEFORE reading candidates so the cache
+        # entry is tagged with the generation it was actually computed against,
+        # not whatever it is after ranking/LLM-rerank (which a concurrent claim
+        # write could have bumped). See query_cache.write TOCTOU note.
+        cache_generation = query_cache.read_generation(cache_path) if cache_path else 0
         candidate_limit = max(limit * 6, 60, 50 if use_llm_rerank else 0)
         candidates = self.store.list_claims(
             limit=candidate_limit,
@@ -733,7 +744,7 @@ class MemoryService:
                     "breakdown": r.get("breakdown"),
                 }
                 for r in results if r.get("claim") is not None
-            ])
+            ], cache_generation)
         return results
 
     def _rehydrate_cached_rows(self, stubs: list[dict[str, Any]]) -> list[dict[str, Any]]:
