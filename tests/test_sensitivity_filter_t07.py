@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from memorymaster.security import redact_text
+from memorymaster.models import CitationInput
+from memorymaster.security import redact_text, sanitize_claim_input
 
 
 def _assert_redacted(text: str, expected_finding: str, secret: str) -> None:
@@ -61,3 +62,43 @@ def test_t07_aws_access_key_shape_is_redacted() -> None:
 )
 def test_t07_github_pat_shapes_are_redacted(token: str) -> None:
     _assert_redacted(f"GITHUB_TOKEN={token}", "github_token", token)
+
+
+# --- sanitize_claim_input: subject/predicate are filtered at ingest ---------
+# Regression for audit finding ingest-subject-skips-filter: subject/predicate
+# are exposed MCP ingest params that reached the store unredacted. The ingest
+# filter (last line of defense) must catch a secret in either field.
+
+_SECRET = "ghp_fakefakefakefakefakefakefakefakefake"
+_CITE = [CitationInput(source="s", locator="l")]
+
+
+def test_sanitize_redacts_secret_in_subject() -> None:
+    s = sanitize_claim_input(
+        text="benign claim text", object_value=None, citations=_CITE,
+        subject=f"token {_SECRET}", predicate="aspect",
+    )
+    assert s.is_sensitive
+    assert "github_token" in s.findings
+    assert _SECRET not in (s.subject or "")
+    assert "[REDACTED:github_token]" in (s.subject or "")
+
+
+def test_sanitize_redacts_secret_in_predicate() -> None:
+    s = sanitize_claim_input(
+        text="benign claim text", object_value=None, citations=_CITE,
+        subject="entity", predicate=f"uses {_SECRET}",
+    )
+    assert s.is_sensitive
+    assert _SECRET not in (s.predicate or "")
+    assert "[REDACTED:github_token]" in (s.predicate or "")
+
+
+def test_sanitize_clean_subject_predicate_pass_through() -> None:
+    s = sanitize_claim_input(
+        text="benign", object_value=None, citations=_CITE,
+        subject="database", predicate="version",
+    )
+    assert not s.is_sensitive
+    assert s.subject == "database"
+    assert s.predicate == "version"

@@ -251,9 +251,15 @@ class MemoryService:
             text=text.strip(),
             object_value=object_value,
             citations=citations,
+            subject=subject,
+            predicate=predicate,
         )
         if not sanitized.citations:
             raise ValueError("At least one citation is required.")
+        # Use the sanitized subject/predicate everywhere downstream so a secret
+        # placed in those fields is redacted at rest, not just at display time.
+        subject = sanitized.subject
+        predicate = sanitized.predicate
         # Resolve subject → canonical entity (GBrain-inspired entity registry)
         # and mine text for pattern-based entities (#127 Wave 3).
         entity_id = 0
