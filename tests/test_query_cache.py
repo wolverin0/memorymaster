@@ -125,3 +125,29 @@ def test_cache_hit_preserves_breakdown(env):
     # the key must be present on rehydrated rows).
     assert all("breakdown" in r for r in second)
     assert [r["score"] for r in first] == [r["score"] for r in second]
+
+
+def test_toctou_write_tags_compute_time_generation(env):
+    """Regression for qc-generation-toctou: a result must be tagged with the
+    generation captured BEFORE its corpus read, so a claim write that races in
+    during compute correctly invalidates the cached entry instead of being
+    served stale."""
+    db, svc, spy = env
+    g_before = query_cache.read_generation(db)
+    # A concurrent claim write lands mid-compute and bumps the generation.
+    svc.ingest(
+        text="a racing new claim about postgres tuning",
+        citations=[CitationInput(source="t", locator="l")],
+        source_agent="t",
+    )
+    g_after = query_cache.read_generation(db)
+    assert g_after > g_before
+
+    # The service tags with the COMPUTE-TIME generation (g_before). A read at the
+    # now-advanced generation must MISS the stale entry.
+    query_cache.write(db, "k-toctou", [{"id": 1, "score": 1.0}], g_before)
+    assert query_cache.read(db, "k-toctou") is None
+
+    # A result genuinely computed at the current generation is served.
+    query_cache.write(db, "k-toctou", [{"id": 1, "score": 1.0}], g_after)
+    assert query_cache.read(db, "k-toctou") is not None

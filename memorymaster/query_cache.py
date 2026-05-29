@@ -84,11 +84,31 @@ def current_generation(conn: sqlite3.Connection) -> int:
     return int(row[0]) if row else 0
 
 
+def read_generation(db_path: str) -> int:
+    """Return the current corpus generation, or 0 on any error.
+
+    Callers capture this BEFORE reading the corpus they are about to compute a
+    result from, then pass it to ``write()`` — see the TOCTOU note there."""
+    try:
+        conn = _connect(db_path)
+    except sqlite3.Error as exc:
+        logger.warning("query_cache.read_generation connect failed: %s", exc)
+        return 0
+    try:
+        return current_generation(conn)
+    except (sqlite3.Error, ValueError) as exc:
+        logger.warning("query_cache.read_generation failed: %s", exc)
+        return 0
+    finally:
+        conn.close()
+
+
 def read(db_path: str, cache_key: str) -> list[dict] | None:
     """Return cached result stubs if present AND still fresh (generation match)."""
     try:
         conn = _connect(db_path)
-    except sqlite3.Error:
+    except sqlite3.Error as exc:
+        logger.warning("query_cache.read connect failed: %s", exc)
         return None
     try:
         gen = current_generation(conn)
@@ -99,20 +119,31 @@ def read(db_path: str, cache_key: str) -> list[dict] | None:
         if row is None or int(row["generation"]) != gen:
             return None
         return json.loads(row["result_json"])
-    except (sqlite3.Error, json.JSONDecodeError, ValueError):
+    except (sqlite3.Error, json.JSONDecodeError, ValueError) as exc:
+        logger.warning("query_cache.read failed (cache disabled for this query): %s", exc)
         return None
     finally:
         conn.close()
 
 
-def write(db_path: str, cache_key: str, stub_rows: list[dict]) -> None:
-    """Store result stubs tagged with the current generation. Best-effort."""
+def write(db_path: str, cache_key: str, stub_rows: list[dict], generation: int) -> None:
+    """Store result stubs tagged with ``generation``. Best-effort.
+
+    TOCTOU correctness: ``generation`` MUST be the corpus generation captured by
+    the caller BEFORE it read the candidates it computed ``stub_rows`` from. If
+    we re-read the generation here instead, a claim write that raced in between
+    the caller's corpus read and this write would have bumped the counter, and
+    we would tag a stale (generation-G) result as the new generation (G+1) — so
+    a subsequent read at G+1 would serve the stale ranking, defeating the
+    generation gate. Tagging with the compute-time generation guarantees any
+    racing write correctly invalidates this entry. (audit: qc-generation-toctou)
+    """
     try:
         conn = _connect(db_path)
-    except sqlite3.Error:
+    except sqlite3.Error as exc:
+        logger.warning("query_cache.write connect failed: %s", exc)
         return
     try:
-        gen = current_generation(conn)
         conn.execute(
             """INSERT INTO query_cache (cache_key, result_json, generation, created_at)
                VALUES (?, ?, ?, ?)
@@ -120,10 +151,10 @@ def write(db_path: str, cache_key: str, stub_rows: list[dict]) -> None:
                    result_json = excluded.result_json,
                    generation = excluded.generation,
                    created_at = excluded.created_at""",
-            (cache_key, json.dumps(stub_rows), gen, datetime.now(timezone.utc).isoformat()),
+            (cache_key, json.dumps(stub_rows), generation, datetime.now(timezone.utc).isoformat()),
         )
         conn.commit()
-    except (sqlite3.Error, TypeError, ValueError):
-        pass
+    except (sqlite3.Error, TypeError, ValueError) as exc:
+        logger.warning("query_cache.write failed (result not cached): %s", exc)
     finally:
         conn.close()
