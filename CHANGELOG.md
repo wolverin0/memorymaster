@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [3.24.0] - 2026-05-29
+
+**Audit-remediation + bench-correctness release.** A multi-agent Workflow audit
+of the v3.21–v3.23 modules (25 agents, adversarially verified) surfaced 20
+confirmed defects; this release fixes the high-value subset (security, a shipped
+boundary violation, cache correctness) and corrects a benchmark measurement
+artifact that was under-reporting QA accuracy by 10×.
+
+### Security
+
+- **`subject`/`predicate` now pass through the ingest sensitivity filter.**
+  `sanitize_claim_input` previously redacted only `text`, `object_value`, and
+  citation excerpts; a secret placed in `subject` (an exposed MCP `ingest_claim`
+  parameter) persisted in plaintext and never tripped `is_sensitive`. The
+  sanitizer now redacts subject/predicate and `service.ingest` uses the
+  sanitized values — a single chokepoint covering all ingest paths.
+
+### Fixed
+
+- **Removed a hardcoded private LAN IP shipped as the `QDRANT_URL` default**
+  (`verbatim_store.py`). An RFC1918 home-lab address was baked into source and
+  published to PyPI, violating the "never hardcode IPs" boundary. The default is
+  now empty (vector disabled, like a missing `OPENAI_API_KEY`).
+- **Closed SQLite connection leaks** in `store_verbatim`, `_search_fts`, and
+  `sync_to_qdrant` (no `try/finally` → leaked connection + WAL lock on a raising
+  INSERT/commit/JOIN). All now use `contextlib.closing`.
+- **Query-cache TOCTOU race** (`query_cache` + `service.query_rows`): results
+  were tagged with the corpus generation re-read at write time, so a claim write
+  racing in during compute caused a stale ranking to be stored as fresh. The
+  generation is now captured before the candidate read and passed into
+  `write()`; added the missing error logging.
+- **LongMemEval-S judge mis-parse** (`tests/bench_longmemeval.py`): QA accuracy
+  of 0.05 was a measurement artifact — the verdict parser required a leading
+  literal `YES` while the `claude_cli` judge (which ignores `max_tokens`) emits a
+  reasoning preamble. Added a deterministic gold-substring pre-check and a
+  tolerant verdict parser; re-running on the same retrieval results lifted QA
+  **0.05 → 0.50** (retrieval unchanged: R@5=1.0, MRR=0.8708).
+
+### Changed
+
+- **Stop hook routes claim writes through `MemoryService.ingest`** instead of
+  raw SQL (`_run_gemini_extraction`), gaining the canonical ingest path
+  (sanitize, dedup, entity resolution, observability, webhook) and matching the
+  R1b rule-extraction path.
+
+### Known follow-ups (deferred to v3.25)
+
+- Contradiction probe: wrap the steward per-claim phase in an `llm_budget`
+  cycle scope (cap not currently enforced there) and stop counting budget
+  exhaustion as a circuit-breaker failure.
+- Rule miner: distinguish a transient LLM failure from a genuine empty result so
+  a provider outage doesn't silently advance the watermark past real corrections.
+- 13 low-severity audit items (cache eviction/TTL, non-sargable LIKE prefilter,
+  per-claim retrieval/connection in the probe, etc.).
+
 ## [3.23.0] - 2026-05-26
 
 **Steward integration + verbatim cleanup.** Wires the v3.22 semantic
