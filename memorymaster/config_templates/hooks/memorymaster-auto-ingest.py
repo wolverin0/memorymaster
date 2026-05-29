@@ -10,9 +10,8 @@ import json
 import os
 import sys
 import re
-import sqlite3
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 PROJECT_ROOT = "__MEMORYMASTER_PROJECT_ROOT__"
@@ -139,43 +138,40 @@ Only: bug root causes, decisions, gotchas, constraints. Never: credentials, IPs,
             return
 
         scope = "project:" + os.path.basename(cwd).lower().replace(" ", "-") if cwd else "global"
-        now = datetime.now(timezone.utc).isoformat()
 
-        conn = sqlite3.connect(DB_PATH)
+        # Route through MemoryService.ingest instead of raw SQL so claims gain
+        # the canonical ingest path: sensitivity sanitize (defense-in-depth on
+        # top of the _is_sensitive_claim drop above), content-hash + idempotency
+        # dedup, entity resolution, auto-citation, observability, and webhook.
+        # Mirrors _run_rule_extraction, which already uses the service.
+        from memorymaster.service import MemoryService
+        from memorymaster.models import CitationInput
+
+        svc = MemoryService(DB_PATH, workspace_root=Path(cwd or PROJECT_ROOT))
+        ingested = 0
         for c in claims:
             text = c.get("text", "")
             if not text or len(text) < 10:
                 continue
-            # Duplicate check by content hash
             text_hash = hashlib.sha256(text.strip().lower().encode()).hexdigest()[:16]
-            idem = f"llm-stop-{text_hash}"
-            if conn.execute("SELECT id FROM claims WHERE idempotency_key = ?", (idem,)).fetchone():
-                continue
-            cur = conn.execute(
-                """INSERT INTO claims (text, idempotency_key, normalized_text, claim_type,
-                   subject, predicate, scope, status, confidence,
-                   source_agent, created_at, updated_at, tier, version, visibility,
-                   valid_from)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, 'candidate', 0.6,
-                   'llm-stop-hook', ?, ?, 'working', 1, 'public', ?)""",
-                (text, idem, text.lower(), c.get("claim_type", "fact"),
-                 c.get("subject", "codebase"), c.get("predicate", "observation"),
-                 scope, now, now, now),
-            )
-            # Auto-citation: steward's min_citations>=1 gate requires at least one
-            # row per claim. Without this, every llm-stop-hook claim is born
-            # unpromotable. Source is the hook itself; locator = scope for
-            # traceability; excerpt preserves the first 200 chars of the claim.
-            conn.execute(
-                """INSERT INTO citations (claim_id, source, locator, excerpt, created_at)
-                   VALUES (?, 'llm-stop-hook', ?, ?, ?)""",
-                (cur.lastrowid, scope, text[:200], now),
-            )
-        conn.commit()
-        conn.close()
+            try:
+                svc.ingest(
+                    text=text,
+                    citations=[CitationInput(source="llm-stop-hook", locator=scope, excerpt=text[:200])],
+                    idempotency_key=f"llm-stop-{text_hash}",
+                    claim_type=c.get("claim_type", "fact"),
+                    subject=c.get("subject", "codebase"),
+                    predicate=c.get("predicate", "observation"),
+                    scope=scope,
+                    confidence=0.6,
+                    source_agent="llm-stop-hook",
+                )
+                ingested += 1
+            except Exception:
+                continue  # one bad claim must not abort the rest
 
         provider = os.environ.get("MEMORYMASTER_LLM_PROVIDER", "google")
-        sys.stderr.write(f"[MemoryMaster] {provider} extracted {len(claims)} learnings\n")
+        sys.stderr.write(f"[MemoryMaster] {provider} extracted {ingested} learnings\n")
     except Exception:
         pass
 
