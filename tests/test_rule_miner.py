@@ -152,6 +152,27 @@ def test_no_correction_no_rule(env):
     assert _candidate_rules(svc) == []
 
 
+def test_transient_llm_failure_aborts_without_advancing_watermark(env):
+    """M3 regression: an EMPTY provider response (transient outage) must abort
+    without advancing the watermark, so the candidate is retried next run —
+    NOT silently skipped (which would permanently lose real corrections during
+    an outage). Contrast test_no_correction_no_rule, where a non-empty '{}'
+    response is a genuine no-correction and DOES advance the watermark."""
+    db, svc, holder = env
+    _seed(db, _PAIR)
+    holder["responses"] = [""]  # provider returns empty -> transient failure
+
+    stats = rule_miner.mine_rules(db, svc, provider="claude_cli")
+    assert stats["aborted_reason"] == "llm_transient_failure"
+    assert stats["ingested"] == 0
+    assert stats["last_id"] == 0, "watermark must NOT advance past an un-judged candidate"
+
+    # Re-run with a working provider: the same candidate is retried and ingested.
+    holder["responses"] = [_RULE_JSON]
+    retry = rule_miner.mine_rules(db, svc, provider="claude_cli")
+    assert retry["ingested"] == 1, "candidate must be retried after a transient failure, not skipped"
+
+
 def test_keyword_prefilter_skips_non_corrections(env):
     db, svc, holder = env
     _seed(db, [
