@@ -9,7 +9,7 @@ import subprocess
 import time
 from typing import Any, Literal
 
-from memorymaster import observability
+from memorymaster import llm_budget, observability
 from memorymaster.lifecycle import transition_claim
 from memorymaster.security import is_sensitive_claim
 from memorymaster.service import MemoryService
@@ -891,6 +891,14 @@ def _make_circuit_open_result(probe: ProbeSpec, probe_type: str, probe_failure_t
     )
 
 
+# Open ONE per-cycle LLM budget scope for the whole cycle so
+# MEMORYMASTER_MAX_LLM_CALLS_PER_CYCLE (and the token / provider-failure caps)
+# apply across every LLM-using probe this cycle — notably the contradiction
+# probe's judge. cycle_scope is a @contextmanager, so it doubles as a context
+# decorator and recreates a fresh scope per call. Without this the cap was a
+# no-op for the steward and probe_for_claim's LLMBudgetExceeded handler was dead
+# in production. (audit: probe-for-claim-budget-no-scope)
+@llm_budget.cycle_scope()
 def _run_cycle(
     service: MemoryService,
     *,

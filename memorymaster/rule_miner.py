@@ -158,12 +158,26 @@ def _build_window(assistant_content: str, user_content: str) -> str:
     return f"ASSISTANT: {asst}\nUSER: {user}"
 
 
+class TransientLLMError(RuntimeError):
+    """The LLM provider returned an empty response — almost always a transient
+    failure (outage, timeout, rate-limit returning ''), NOT a genuine "no
+    correction" verdict. Callers must distinguish the two: advancing the
+    watermark past a candidate that was never actually judged would permanently
+    skip real corrections during a provider outage. (audit:
+    mine-rules-silent-watermark-advance)"""
+
+
 def _extract_rule(window: str) -> dict[str, str] | None:
     """Ask the LLM to distill a rule. Returns ``{trigger, action, rationale}``
-    or ``None`` when there is no correction. May raise ``LLMBudgetExceeded``."""
+    or ``None`` when the model responded but found no correction.
+
+    Raises ``LLMBudgetExceeded`` if the per-cycle cap is hit, and
+    ``TransientLLMError`` if the provider returned nothing (so the caller can
+    avoid advancing the watermark). A non-empty response that simply doesn't
+    parse to a rule is a genuine "no correction" (``None``), not transient."""
     raw = llm_provider.call_llm(_CORRECTION_PROMPT, window)
     if not raw or not raw.strip():
-        return None
+        raise TransientLLMError("empty LLM response")
     for item in llm_provider.parse_json_response(raw):
         if not isinstance(item, dict):
             continue
@@ -300,6 +314,12 @@ def _process_candidate(
     except llm_budget.LLMBudgetExceeded as exc:
         stats["aborted_reason"] = exc.reason
         return "aborted"
+    except TransientLLMError:
+        # Provider returned empty (likely transient outage). Abort the run WITHOUT
+        # advancing the watermark past this row, so the candidate is retried next
+        # run instead of silently skipped. Stopping is safe: mining is a batch job.
+        stats["aborted_reason"] = "llm_transient_failure"
+        return "aborted"
 
     stats["llm_calls"] += 1
     if rule is None or _is_sensitive_rule(rule):
@@ -412,7 +432,10 @@ def mine_transcript_rules(
                 stats["windows"] += 1
                 try:
                     rule = _extract_rule(_build_window(asst_text, user_text))
-                except llm_budget.LLMBudgetExceeded:
+                except (llm_budget.LLMBudgetExceeded, TransientLLMError):
+                    # Budget hit or provider returned empty — stop this best-effort
+                    # Stop-hook pass. No watermark here, so nothing to skip; a
+                    # later session re-mines its own corrections.
                     break
                 stats["llm_calls"] += 1
                 if rule is None or _is_sensitive_rule(rule):

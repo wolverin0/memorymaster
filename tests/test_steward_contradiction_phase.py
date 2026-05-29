@@ -179,3 +179,73 @@ def test_report_includes_enable_contradiction_probe_flag() -> None:
     )
     assert report["enable_contradiction_probe"] is False
     assert report["run_metadata"]["probe_settings"]["enable_contradiction_probe"] is False
+
+
+def _seed_topical_trio(service, db):
+    """3 mutually-topical claims with distinct subject+predicate (so the
+    deterministic resolver doesn't own them) — each is a contradiction peer of
+    the others for the probe."""
+    ids = []
+    specs = [
+        ("api rate limit", "value", "The public API rate limit policy is documented here."),
+        ("api throttling", "state", "The public API rate limit behaviour is described here."),
+        ("api quota", "tier", "The public API rate limit tiers are listed here."),
+    ]
+    for i, (subj, pred, text) in enumerate(specs):
+        c = service.ingest(
+            text=text, citations=[CitationInput(source="d", locator=f"l{i}")],
+            subject=subj, predicate=pred, object_value=f"v{i}", confidence=0.4 + i * 0.1,
+        )
+        _force_status(db, c.id, "confirmed", f"2026-0{i + 1}-01T00:00:00+00:00")
+        ids.append(c.id)
+    return ids
+
+
+def test_budget_cap_enforced_across_cycle_and_not_a_circuit_failure(monkeypatch) -> None:
+    """M1: the steward now opens one llm_budget cycle_scope, so
+    MEMORYMASTER_MAX_LLM_CALLS_PER_CYCLE=1 caps the contradiction judge across
+    the WHOLE cycle (exactly 1 judge call; without the scope all distinct pairs
+    judge => 3). M2: budget exhaustion is flagged budget_exhausted (not
+    timed_out) and must NOT trip the circuit breaker even at threshold=1."""
+    db = _case_db("steward-budget")
+    workspace = _case_workspace("steward-budget-ws")
+    service = MemoryService(db, workspace_root=workspace)
+    service.init_db()
+
+    calls = {"n": 0}
+
+    def _always_contradict(prompt, body):
+        calls["n"] += 1
+        return json.dumps({"contradicts": True, "severity": "high", "reason": "conflict"})
+
+    monkeypatch.setitem(llm_provider._PROVIDERS, "google", _always_contradict)
+    monkeypatch.setenv("MEMORYMASTER_MAX_LLM_CALLS_PER_CYCLE", "1")
+    reset_config()
+    _seed_topical_trio(service, db)
+
+    report = run_steward(
+        service, mode="manual", max_cycles=1, max_claims=10, max_proposals=10,
+        max_probe_files=5, apply=False, probe_failure_threshold=1,
+        artifact_path=workspace / "artifacts" / "steward_report.json",
+        enable_semantic_probe=False, enable_tool_probe=False,
+        enable_contradiction_probe=True,
+    )
+
+    # M1: the per-cycle cap held across claims — exactly one judge call total.
+    assert calls["n"] == 1, f"expected 1 judge call under cap=1, got {calls['n']}"
+
+    cycle = report["cycles"][0]
+    totals = cycle["budget"]["accounting"]["probes"]
+    # M2: budget exhaustion was not counted as a timeout/error and did not open
+    # the circuit (threshold=1 would have tripped on the first counted failure).
+    assert totals["timed_out"] == 0
+    assert totals["errored"] == 0
+    assert totals["skipped_circuit_open"] == 0
+
+    # M2: at least one claim's contradiction probe recorded budget_exhausted.
+    saw_budget_exhausted = False
+    for d in cycle["decisions"]:
+        for p in d["probes"]:
+            if p["probe_type"] == "contradiction_probe" and p["metrics"].get("budget_exhausted"):
+                saw_budget_exhausted = True
+    assert saw_budget_exhausted, "expected a contradiction probe to flag budget_exhausted"

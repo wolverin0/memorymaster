@@ -357,7 +357,7 @@ def probe_for_claim(
     metrics: dict[str, Any] = {
         "pairs_checked": 0, "contradictions": 0,
         "cache_hits": 0, "llm_calls": 0, "errors": 0,
-        "timed_out": False, "duration_ms": 0.0,
+        "timed_out": False, "budget_exhausted": False, "duration_ms": 0.0,
     }
     reasons: list[dict[str, Any]] = []
 
@@ -426,7 +426,11 @@ def probe_for_claim(
                 try:
                     verdict = _judge_llm(claim, peer)
                 except llm_budget.LLMBudgetExceeded:
-                    metrics["timed_out"] = True
+                    # Budget exhaustion is an expected guardrail, NOT a probe
+                    # failure — the steward must not count it toward the circuit
+                    # breaker (which would disable the probe for the rest of the
+                    # cycle). Flag it distinctly from a genuine timeout.
+                    metrics["budget_exhausted"] = True
                     break
                 metrics["llm_calls"] += 1
                 if verdict is None:
