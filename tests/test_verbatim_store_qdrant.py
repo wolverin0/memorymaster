@@ -68,6 +68,7 @@ def test_hybrid_search_keeps_qdrant_rows_with_same_2000_char_prefix(tmp_path, mo
         return _Response({"result": qdrant_rows})
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(verbatim_store, "QDRANT_URL", "http://test-qdrant:6333")
     monkeypatch.setattr(verbatim_store.urllib.request, "urlopen", fake_urlopen)
 
     results = verbatim_store.search_verbatim(
@@ -113,8 +114,35 @@ def test_sync_to_qdrant_payload_uses_full_content_hash(tmp_path, monkeypatch):
         return _Response({})
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(verbatim_store, "QDRANT_URL", "http://test-qdrant:6333")
     monkeypatch.setattr(verbatim_store.urllib.request, "urlopen", fake_urlopen)
 
     assert verbatim_store.sync_to_qdrant(str(db_path)) == {"synced": 1}
     assert captured_points[0]["payload"]["content"] == content[:2000]
     assert captured_points[0]["payload"]["content_hash"] == hashlib.sha256(content.encode()).hexdigest()
+
+
+def test_qdrant_url_default_is_not_a_hardcoded_private_ip():
+    """Regression: a routable private LAN IP (192.168.x) was once baked in as the
+    QDRANT_URL default and shipped to PyPI. The default must be empty (vector
+    disabled), never a hardcoded host. See audit verbatim-hardcoded-private-ip."""
+    import re as _re
+
+    src = (
+        __import__("pathlib").Path(verbatim_store.__file__).read_text(encoding="utf-8")
+    )
+    # No RFC1918 literal anywhere in the module source.
+    assert not _re.search(r"\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.", src), (
+        "private IP literal found in verbatim_store.py source"
+    )
+
+
+def test_sync_to_qdrant_disabled_when_url_unset(tmp_path, monkeypatch):
+    """Empty QDRANT_URL must disable sync (like a missing OPENAI_API_KEY), not
+    attempt a request against an empty host."""
+    db_path = tmp_path / "verbatim.db"
+    _create_verbatim_db(db_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(verbatim_store, "QDRANT_URL", "")
+    result = verbatim_store.sync_to_qdrant(str(db_path))
+    assert result == {"synced": 0, "error": "no QDRANT_URL"}

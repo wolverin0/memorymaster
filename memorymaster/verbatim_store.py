@@ -17,6 +17,7 @@ import os
 import sqlite3
 import urllib.request
 import urllib.error
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -48,7 +49,12 @@ def _row_has_sensitive_field(role: str, source_agent: str, content: str) -> bool
     _, findings = _redact_text(joined)
     return bool(findings)
 
-QDRANT_URL = os.environ.get("QDRANT_URL", "http://192.168.100.186:6333")
+# Vector search is opt-in: an unset QDRANT_URL means "vector disabled", exactly
+# like a missing OPENAI_API_KEY. NEVER hardcode a routable private LAN IP here —
+# a home-lab RFC1918 default previously shipped to PyPI, violating the
+# "never hardcode IPs" boundary and silently pointing installs at the author's
+# network. Mirror qdrant_backend.py / service.py which use empty/localhost defaults.
+QDRANT_URL = os.environ.get("QDRANT_URL", "").strip()
 QDRANT_COLLECTION = "memorymaster-verbatim"
 EMBED_DIM = 1536  # text-embedding-3-small
 
@@ -77,36 +83,37 @@ def store_verbatim(
 
     now = timestamp or datetime.now(timezone.utc).isoformat()
 
-    conn = _connect(db_path)
-    # Dedup by exact content within the same session. Uses idx_verbatim_session
-    # so the lookup is O(rows-in-session), not table-scan. The previous FTS5-based
-    # dedup query passed a sha256 hex prefix to MATCH which never resolves —
-    # the FTS5 index stores the content text, not its hash. Result: 9M+ rows
-    # accumulated for orchestrator sessions because every Stop event re-inserted
-    # every message. Fixed 2026-05-03; see mm-0c43.
-    existing = conn.execute(
-        "SELECT id FROM verbatim_memories WHERE session_id = ? AND content = ? LIMIT 1",
-        (session_id, content),
-    ).fetchone()
-    if existing:
-        conn.close()
-        return None
+    # closing() guarantees the connection (and its WAL write lock) is released
+    # even if an INSERT/commit raises (e.g. "database is locked" under
+    # concurrent MCP/Stop-hook writers) — this is the hottest write path.
+    with closing(_connect(db_path)) as conn:
+        # Dedup by exact content within the same session. Uses idx_verbatim_session
+        # so the lookup is O(rows-in-session), not table-scan. The previous FTS5-based
+        # dedup query passed a sha256 hex prefix to MATCH which never resolves —
+        # the FTS5 index stores the content text, not its hash. Result: 9M+ rows
+        # accumulated for orchestrator sessions because every Stop event re-inserted
+        # every message. Fixed 2026-05-03; see mm-0c43.
+        existing = conn.execute(
+            "SELECT id FROM verbatim_memories WHERE session_id = ? AND content = ? LIMIT 1",
+            (session_id, content),
+        ).fetchone()
+        if existing:
+            return None
 
-    cur = conn.execute(
-        """INSERT INTO verbatim_memories (session_id, role, content, scope, timestamp, source_agent)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (session_id, role, content, scope, now, source_agent),
-    )
-    row_id = cur.lastrowid
+        cur = conn.execute(
+            """INSERT INTO verbatim_memories (session_id, role, content, scope, timestamp, source_agent)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (session_id, role, content, scope, now, source_agent),
+        )
+        row_id = cur.lastrowid
 
-    # Update FTS
-    conn.execute(
-        "INSERT INTO verbatim_fts(rowid, content) VALUES (?, ?)",
-        (row_id, content),
-    )
-    conn.commit()
-    conn.close()
-    return row_id
+        # Update FTS
+        conn.execute(
+            "INSERT INTO verbatim_fts(rowid, content) VALUES (?, ?)",
+            (row_id, content),
+        )
+        conn.commit()
+        return row_id
 
 
 def _extract_role_content(entry: dict) -> tuple[str, str]:
@@ -240,40 +247,41 @@ def search_verbatim(
 
 def _search_fts(db_path: str, query: str, scope: str | None, limit: int) -> list[dict]:
     """FTS5 keyword search over verbatim memories."""
-    conn = _connect(db_path)
     # Clean query for FTS5
     clean_query = " ".join(w for w in query.split() if len(w) > 2)
     if not clean_query:
-        conn.close()
         return []
 
-    try:
-        if scope:
-            rows = conn.execute(
-                """SELECT v.id, v.session_id, v.role, v.content, v.scope, v.timestamp,
-                          rank as score
-                   FROM verbatim_fts f
-                   JOIN verbatim_memories v ON v.id = f.rowid
-                   WHERE verbatim_fts MATCH ? AND v.scope LIKE ?
-                   ORDER BY rank
-                   LIMIT ?""",
-                (clean_query, f"{scope}%", limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """SELECT v.id, v.session_id, v.role, v.content, v.scope, v.timestamp,
-                          rank as score
-                   FROM verbatim_fts f
-                   JOIN verbatim_memories v ON v.id = f.rowid
-                   WHERE verbatim_fts MATCH ?
-                   ORDER BY rank
-                   LIMIT ?""",
-                (clean_query, limit),
-            ).fetchall()
-    except sqlite3.OperationalError:
-        rows = []
+    # closing() guarantees the connection is released even if the JOIN raises a
+    # non-OperationalError (corrupt/locked DB, programming error) — the bare
+    # except below only catches OperationalError.
+    with closing(_connect(db_path)) as conn:
+        try:
+            if scope:
+                rows = conn.execute(
+                    """SELECT v.id, v.session_id, v.role, v.content, v.scope, v.timestamp,
+                              rank as score
+                       FROM verbatim_fts f
+                       JOIN verbatim_memories v ON v.id = f.rowid
+                       WHERE verbatim_fts MATCH ? AND v.scope LIKE ?
+                       ORDER BY rank
+                       LIMIT ?""",
+                    (clean_query, f"{scope}%", limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT v.id, v.session_id, v.role, v.content, v.scope, v.timestamp,
+                              rank as score
+                       FROM verbatim_fts f
+                       JOIN verbatim_memories v ON v.id = f.rowid
+                       WHERE verbatim_fts MATCH ?
+                       ORDER BY rank
+                       LIMIT ?""",
+                    (clean_query, limit),
+                ).fetchall()
+        except sqlite3.OperationalError:
+            rows = []
 
-    conn.close()
     return [
         {"id": r["id"], "session_id": r["session_id"], "role": r["role"],
          "content": r["content"], "scope": r["scope"], "timestamp": r["timestamp"],
@@ -284,6 +292,8 @@ def _search_fts(db_path: str, query: str, scope: str | None, limit: int) -> list
 
 def _search_vector(query: str, scope: str | None, limit: int) -> list[dict]:
     """Qdrant semantic search over verbatim memories."""
+    if not QDRANT_URL:
+        return []
     try:
         # Embed query with OpenAI
         api_key = os.environ.get("OPENAI_API_KEY", "")
@@ -337,85 +347,84 @@ def sync_to_qdrant(db_path: str, batch_size: int = 50) -> dict[str, int]:
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
         return {"synced": 0, "error": "no OPENAI_API_KEY"}
+    if not QDRANT_URL:
+        return {"synced": 0, "error": "no QDRANT_URL"}
 
-    conn = _connect(db_path)
-    rows = conn.execute(
-        "SELECT id, content, scope, session_id, role FROM verbatim_memories WHERE embedding_synced = 0 LIMIT ?",
-        (batch_size,),
-    ).fetchall()
+    # closing() guarantees the connection is released on every exit path,
+    # including the initial SELECT raising or the final UPDATE/commit raising.
+    with closing(_connect(db_path)) as conn:
+        rows = conn.execute(
+            "SELECT id, content, scope, session_id, role FROM verbatim_memories WHERE embedding_synced = 0 LIMIT ?",
+            (batch_size,),
+        ).fetchall()
 
-    if not rows:
-        conn.close()
-        return {"synced": 0}
+        if not rows:
+            return {"synced": 0}
 
-    # Ensure collection exists
-    try:
-        req = urllib.request.Request(f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}")
-        urllib.request.urlopen(req, timeout=5)
-    except Exception:
-        payload = {"vectors": {"size": EMBED_DIM, "distance": "Cosine"}}
-        req = urllib.request.Request(
-            f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}",
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-            method="PUT",
-        )
+        # Ensure collection exists
         try:
-            urllib.request.urlopen(req, timeout=60)
+            req = urllib.request.Request(f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}")
+            urllib.request.urlopen(req, timeout=5)
+        except Exception:
+            payload = {"vectors": {"size": EMBED_DIM, "distance": "Cosine"}}
+            req = urllib.request.Request(
+                f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}",
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+                method="PUT",
+            )
+            try:
+                urllib.request.urlopen(req, timeout=60)
+            except Exception as e:
+                return {"synced": 0, "error": str(e)}
+
+        # Embed in batches
+        texts = [r["content"][:2000] for r in rows]
+        try:
+            embed_url = "https://api.openai.com/v1/embeddings"
+            payload = {"model": "text-embedding-3-small", "input": texts}
+            req = urllib.request.Request(
+                embed_url,
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read().decode())
+            embeddings = [d["embedding"] for d in result["data"]]
         except Exception as e:
-            conn.close()
             return {"synced": 0, "error": str(e)}
 
-    # Embed in batches
-    texts = [r["content"][:2000] for r in rows]
-    try:
-        embed_url = "https://api.openai.com/v1/embeddings"
-        payload = {"model": "text-embedding-3-small", "input": texts}
-        req = urllib.request.Request(
-            embed_url,
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read().decode())
-        embeddings = [d["embedding"] for d in result["data"]]
-    except Exception as e:
-        conn.close()
-        return {"synced": 0, "error": str(e)}
+        # Upsert to Qdrant
+        points = []
+        for i, (row, emb) in enumerate(zip(rows, embeddings)):
+            points.append({
+                "id": row["id"],
+                "vector": emb,
+                "payload": {
+                    "content": row["content"][:2000],
+                    "content_hash": hashlib.sha256(row["content"].encode()).hexdigest(),
+                    "scope": row["scope"],
+                    "session_id": row["session_id"],
+                    "role": row["role"],
+                },
+            })
 
-    # Upsert to Qdrant
-    points = []
-    for i, (row, emb) in enumerate(zip(rows, embeddings)):
-        points.append({
-            "id": row["id"],
-            "vector": emb,
-            "payload": {
-                "content": row["content"][:2000],
-                "content_hash": hashlib.sha256(row["content"].encode()).hexdigest(),
-                "scope": row["scope"],
-                "session_id": row["session_id"],
-                "role": row["role"],
-            },
-        })
+        try:
+            req = urllib.request.Request(
+                f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}/points",
+                data=json.dumps({"points": points}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="PUT",
+            )
+            urllib.request.urlopen(req, timeout=30)
+        except Exception as e:
+            return {"synced": 0, "error": str(e)}
 
-    try:
-        req = urllib.request.Request(
-            f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}/points",
-            data=json.dumps({"points": points}).encode(),
-            headers={"Content-Type": "application/json"},
-            method="PUT",
-        )
-        urllib.request.urlopen(req, timeout=30)
-    except Exception as e:
-        conn.close()
-        return {"synced": 0, "error": str(e)}
+        # Mark as synced
+        ids = [r["id"] for r in rows]
+        placeholders = ",".join("?" for _ in ids)
+        conn.execute(f"UPDATE verbatim_memories SET embedding_synced = 1 WHERE id IN ({placeholders})", ids)
+        conn.commit()
 
-    # Mark as synced
-    ids = [r["id"] for r in rows]
-    placeholders = ",".join("?" for _ in ids)
-    conn.execute(f"UPDATE verbatim_memories SET embedding_synced = 1 WHERE id IN ({placeholders})", ids)
-    conn.commit()
-    conn.close()
-
-    return {"synced": len(rows)}
+        return {"synced": len(rows)}
