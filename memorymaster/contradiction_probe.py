@@ -77,9 +77,23 @@ def _canonical_pair(a_id: int, b_id: int) -> tuple[int, int]:
     return (a_id, b_id) if a_id <= b_id else (b_id, a_id)
 
 
-def _ensure_verdict_table(conn: sqlite3.Connection) -> None:
+_ensured_verdict_dbs: set[str] = set()
+
+
+def _ensure_verdict_table(conn: sqlite3.Connection, *, db_key: str | None = None) -> None:
+    """Create the verdict cache table if absent.
+
+    ``db_key`` lets per-claim callers skip the redundant ``CREATE TABLE IF NOT
+    EXISTS`` + ``commit`` on every claim in a steward cycle: once a given DB has
+    been ensured in this process we never re-issue the DDL. ``run_probe`` (one
+    DDL per whole run) passes no key and always ensures, preserving its semantics.
+    """
+    if db_key is not None and db_key in _ensured_verdict_dbs:
+        return
     conn.execute(_VERDICT_DDL)
     conn.commit()
+    if db_key is not None:
+        _ensured_verdict_dbs.add(db_key)
 
 
 def _cache_get(conn: sqlite3.Connection, a_id: int, b_id: int, model: str) -> dict | None:
@@ -164,13 +178,23 @@ def sample_candidate_pairs(
         return []
     embeddings = [provider.embed(_embed_text(c)) for c in usable]
     pairs: list[tuple[Claim, Claim, float]] = []
+    # The cosine sweep is O(n^2). Once we have already collected ``limit`` in-band
+    # pairs there is no point paying for the rest of the quadratic scan — the
+    # caller only ever consumes the first ``limit`` after the sort below, so break
+    # early instead of building (then discarding) thousands of extra pairs.
+    done = False
     for i in range(len(usable)):
+        if done:
+            break
         for j in range(i + 1, len(usable)):
             if _prefiltered(usable[i], usable[j]):
                 continue
             sim = cosine_similarity(embeddings[i], embeddings[j])
             if sim_low <= sim < sim_high:
                 pairs.append((usable[i], usable[j], round(sim, 4)))
+                if limit is not None and len(pairs) >= limit:
+                    done = True
+                    break
     pairs.sort(key=lambda p: -p[2])
     if limit is not None:
         pairs = pairs[:limit]
@@ -193,7 +217,11 @@ def _judge_llm(a: Claim, b: Claim) -> dict | None:
         if isinstance(item, dict) and "contradicts" in item:
             return {
                 "contradicts": bool(item.get("contradicts")),
-                "severity": (item.get("severity") or "low").strip().lower(),
+                # Floor empty/off-vocabulary severity to "medium" at the source
+                # (the JSON contract is advisory). Defaulting to "low" here would
+                # silently bury a real contradiction in the least-actionable tier
+                # and made the "medium" default downstream dead code.
+                "severity": _coerce_severity(item.get("severity")),
                 "reason": (item.get("reason") or "").strip(),
                 "cached": False,
             }
@@ -204,6 +232,36 @@ def _model_key() -> str:
     provider = os.environ.get("MEMORYMASTER_LLM_PROVIDER", "google").strip().lower()
     model = os.environ.get("MEMORYMASTER_LLM_MODEL", "").strip() or "default"
     return f"{provider}:{model}"
+
+
+_VALID_SEVERITIES = {"low", "medium", "high"}
+
+
+def _coerce_severity(value: Any) -> str:
+    """Normalize a verdict severity to a canonical bucket.
+
+    The LLM judge and verdict cache can both yield an empty or off-vocabulary
+    severity (the JSON contract is advisory, not enforced). When that happens we
+    floor to ``"medium"`` rather than ``"low"`` so a contradiction surfaced by
+    the probe is never silently downgraded to the least-actionable tier.
+    """
+    sev = str(value or "").strip().lower()
+    return sev if sev in _VALID_SEVERITIES else "medium"
+
+
+def _safe_judge_reason(reason: Any) -> str | None:
+    """Return the raw judge reason unless it leaks sensitive content.
+
+    Both ``probe_for_claim`` and ``run_probe(apply=True)`` persist/surface the
+    LLM judge reason. Routing both through this guard ensures a reason that the
+    sensitivity filter flags is dropped (returns ``None``) on EVERY path — the
+    events table must never receive an unredacted secret.
+    """
+    text = str(reason or "")
+    _, leaks = redact_text(text)
+    if leaks:
+        return None
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -303,15 +361,19 @@ def run_probe(
                 if verdict["contradicts"]:
                     stats["contradictions"] += 1
                     loser, winner = (a, b) if a.confidence <= b.confidence else (b, a)
+                    # Same sensitivity guard the per-claim path uses: never let an
+                    # unredacted judge reason reach the events table on apply.
+                    safe_reason = _safe_judge_reason(verdict.get("reason"))
                     stats["found"].append({
                         "claim_a_id": a.id, "claim_b_id": b.id, "similarity": sim,
-                        "severity": verdict["severity"], "reason": verdict["reason"],
+                        "severity": verdict["severity"], "reason": verdict.get("reason", ""),
                         "flag_candidate_id": loser.id,
                     })
                     if apply:
+                        detail = f" ({safe_reason})" if safe_reason else ""
                         transition_claim(
                             service.store, loser.id, "conflicted",
-                            reason=f"contradiction_probe: contradicts claim {winner.id} ({verdict['reason']})",
+                            reason=f"contradiction_probe: contradicts claim {winner.id}{detail}",
                             event_type="transition",
                         )
                         stats["flagged_conflicted"] += 1
@@ -415,7 +477,7 @@ def probe_for_claim(
 
     conn = sqlite3.connect(str(db_path))
     try:
-        _ensure_verdict_table(conn)
+        _ensure_verdict_table(conn, db_key=str(db_path))
         model = _model_key()
         for peer, sim in candidates:
             metrics["pairs_checked"] += 1
@@ -439,14 +501,13 @@ def probe_for_claim(
                 _cache_put(conn, claim.id, peer.id, model, verdict)
             if not verdict.get("contradicts"):
                 continue
-            verdict_reason = verdict.get("reason", "")
-            _, leaks = redact_text(verdict_reason)
-            if leaks:
+            verdict_reason = _safe_judge_reason(verdict.get("reason"))
+            if verdict_reason is None:
                 continue  # drop rather than surface a sensitive judge-reason
             metrics["contradictions"] += 1
             reasons.append({
                 "code": "contradiction_probe.semantic_pair",
-                "severity": verdict.get("severity", "medium"),
+                "severity": _coerce_severity(verdict.get("severity")),
                 "detail": f"Semantic contradiction with claim {peer.id}: {verdict_reason}",
                 "evidence": {
                     "peer_claim_id": int(peer.id),

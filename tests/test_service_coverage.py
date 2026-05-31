@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from memorymaster import llm_budget
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
 
@@ -57,7 +59,7 @@ class TestQdrantSync:
 
     def test_sync_upserts_for_confirmed(self, tmp_path):
         svc = self._make_svc_with_qdrant(tmp_path)
-        claim = _ingest(svc, "Test")
+        _ingest(svc, "Test")
         # qdrant.upsert_claim should have been called
         svc.qdrant.upsert_claim.assert_called()
 
@@ -150,6 +152,99 @@ class TestIngestEdgeCases:
         c1 = svc.ingest(text="First", citations=[CitationInput(source="x")], idempotency_key="key1")
         c2 = svc.ingest(text="Second", citations=[CitationInput(source="x")], idempotency_key="key1")
         assert c1.id == c2.id  # Same claim returned
+
+    def test_content_hash_dedup_without_explicit_key(self, svc):
+        first = svc.ingest(
+            text="The planner cache is safe to reuse",
+            citations=[CitationInput(source="first")],
+            scope="project:memorymaster",
+        )
+        second = svc.ingest(
+            text="  the planner cache is safe to reuse  ",
+            citations=[CitationInput(source="second")],
+            scope="project:memorymaster",
+        )
+
+        assert first.id == second.id, "content-hash dedupe prevents citation-only reimports from duplicating claims"
+        assert first.idempotency_key.startswith("hash-")
+
+    def test_sensitive_ingest_redacts_and_records_encrypted_payload(self, svc):
+        fernet = pytest.importorskip("cryptography.fernet").Fernet
+        secret = "sk_test_1234567890abcdef"
+
+        with patch.dict(os.environ, {"MEMORYMASTER_ENCRYPTION_KEY": fernet.generate_key().decode("utf-8")}):
+            claim = svc.ingest(
+                text=f"Stripe token is {secret}",
+                object_value="deploy password=SecretValue99",
+                subject=f"credential {secret}",
+                predicate="documents",
+                citations=[CitationInput(source="incident", excerpt=f"token={secret}")],
+            )
+
+        assert secret not in claim.text, "sensitive ingest must redact before storing retrievable claim text"
+        assert "[REDACTED:stripe_key]" in claim.text
+        assert claim.object_value and "[REDACTED:password_assignment]" in claim.object_value
+        assert claim.subject and "[REDACTED:stripe_key]" in claim.subject
+        assert claim.citations and secret not in (claim.citations[0].excerpt or "")
+
+        policy_events = svc.list_events(claim_id=claim.id, event_type="policy_decision")
+        encrypted_events = [event for event in policy_events if event.details == "sensitive_payload_encrypted"]
+        assert encrypted_events, "encrypted audit payload preserves forensic recovery without leaking into claim rows"
+        payload = json.loads(encrypted_events[0].payload_json or "{}")
+        assert payload["ciphertext_b64"]
+        assert secret not in encrypted_events[0].payload_json
+
+
+class TestQueryRowsCoverage:
+    def test_legacy_and_hybrid_paths_return_ranked_rows(self, svc):
+        _ingest(svc, "MemoryMaster query_rows ranks the service cache branch")
+
+        legacy_rows = svc.query_rows("query_rows service", include_candidates=True, retrieval_mode="legacy")
+        hybrid_rows = svc.query_rows(
+            "query_rows service",
+            include_candidates=True,
+            retrieval_mode="hybrid",
+            vector_hook=lambda _query, claims: {claim.id: 0.25 for claim in claims},
+        )
+
+        assert legacy_rows, "legacy mode remains the fast compatibility path for MCP callers"
+        assert hybrid_rows, "hybrid mode must keep returning the richer ranked-row contract"
+        assert {"claim", "annotation", "score", "lexical_score", "vector_score"} <= set(hybrid_rows[0])
+        assert hybrid_rows[0]["vector_score"] == pytest.approx(0.25)
+
+    def test_hybrid_cache_hit_rehydrates_rows_without_reranking(self, svc):
+        claim = _ingest(svc, "Cached hybrid query rows should be reusable")
+
+        def vector_hook(_query, claims):
+            return {row.id: 0.5 for row in claims}
+
+        with patch.dict(os.environ, {"MEMORYMASTER_QUERY_CACHE": "1"}):
+            first = svc.query_rows(
+                "cached hybrid",
+                include_candidates=True,
+                retrieval_mode="hybrid",
+                vector_hook=vector_hook,
+            )
+            with patch("memorymaster.service.rank_claim_rows", side_effect=AssertionError("cache miss reranked")):
+                second = svc.query_rows(
+                    "cached hybrid",
+                    include_candidates=True,
+                    retrieval_mode="hybrid",
+                    vector_hook=vector_hook,
+                )
+
+        assert [row["claim"].id for row in first] == [claim.id]
+        assert [row["claim"].id for row in second] == [claim.id], "cache hits must rehydrate live claims by id"
+
+
+class TestRunCycleBudgetAbort:
+    def test_run_cycle_returns_budget_abort_instead_of_raising(self, svc):
+        with patch("memorymaster.service.extractor.run", side_effect=llm_budget.LLMBudgetExceeded("calls_exhausted")):
+            result = svc.run_cycle()
+
+        assert result["budget"]["aborted"] is True, "budget caps must stop steward work without crashing callers"
+        assert result["budget"]["aborted_reason"] == "calls_exhausted"
+        assert "validator" not in result
 
 
 class TestPinErrors:

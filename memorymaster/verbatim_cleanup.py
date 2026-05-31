@@ -132,10 +132,19 @@ def cleanup(
 
         if dedup:
             # Identify ids to drop: for each (session_id, content) group, keep
-            # the smallest id (oldest), drop the rest.
+            # the smallest id (oldest), drop the rest. NOT EXISTS against a
+            # correlated "is there an older twin?" probe avoids the O(n^2)
+            # full-table anti-join that `id NOT IN (SELECT MIN(id) ...)` forces
+            # SQLite into on the cold CLI path. Results are identical: a row is
+            # dropped iff another row in the same (session_id, content) group has
+            # a strictly smaller id.
             rows = conn.execute(
-                """SELECT id FROM verbatim_memories WHERE id NOT IN (
-                       SELECT MIN(id) FROM verbatim_memories GROUP BY session_id, content
+                """SELECT id FROM verbatim_memories AS v
+                   WHERE EXISTS (
+                       SELECT 1 FROM verbatim_memories AS older
+                       WHERE older.session_id IS v.session_id
+                         AND older.content = v.content
+                         AND older.id < v.id
                    )"""
             ).fetchall()
             ids = [int(r[0]) for r in rows]

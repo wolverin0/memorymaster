@@ -22,11 +22,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# Credential detection delegated to the canonical filter in memorymaster.security.
+from memorymaster.security import redact_text as _redact_text
+
 logger = logging.getLogger(__name__)
 
-# Credential detection delegated to the canonical filter in
-# memorymaster.security — single source of truth.
-from memorymaster.security import redact_text as _redact_text
 
 
 def _contains_sensitive(text: str) -> bool:
@@ -76,6 +76,33 @@ def store_verbatim(
     timestamp: str | None = None,
 ) -> int | None:
     """Store a verbatim conversation turn. Returns row ID or None if filtered."""
+    # closing() guarantees the connection (and its WAL write lock) is released
+    # even if an INSERT/commit raises (e.g. "database is locked" under
+    # concurrent MCP/Stop-hook writers) - this is the hottest write path.
+    with closing(_connect(db_path)) as conn:
+        row_id = _store_verbatim_conn(
+            conn,
+            session_id,
+            role,
+            content,
+            scope,
+            source_agent,
+            timestamp,
+        )
+        conn.commit()
+        return row_id
+
+
+def _store_verbatim_conn(
+    conn: sqlite3.Connection,
+    session_id: str,
+    role: str,
+    content: str,
+    scope: str = "project",
+    source_agent: str = "",
+    timestamp: str | None = None,
+) -> int | None:
+    """Store one turn using an existing connection without committing."""
     if not content or len(content) < 20:
         return None
     if _row_has_sensitive_field(role or "", source_agent or "", content):
@@ -83,37 +110,32 @@ def store_verbatim(
 
     now = timestamp or datetime.now(timezone.utc).isoformat()
 
-    # closing() guarantees the connection (and its WAL write lock) is released
-    # even if an INSERT/commit raises (e.g. "database is locked" under
-    # concurrent MCP/Stop-hook writers) — this is the hottest write path.
-    with closing(_connect(db_path)) as conn:
-        # Dedup by exact content within the same session. Uses idx_verbatim_session
-        # so the lookup is O(rows-in-session), not table-scan. The previous FTS5-based
-        # dedup query passed a sha256 hex prefix to MATCH which never resolves —
-        # the FTS5 index stores the content text, not its hash. Result: 9M+ rows
-        # accumulated for orchestrator sessions because every Stop event re-inserted
-        # every message. Fixed 2026-05-03; see mm-0c43.
-        existing = conn.execute(
-            "SELECT id FROM verbatim_memories WHERE session_id = ? AND content = ? LIMIT 1",
-            (session_id, content),
-        ).fetchone()
-        if existing:
-            return None
+    # Dedup by exact content within the same session. Uses idx_verbatim_session
+    # so the lookup is O(rows-in-session), not table-scan. The previous FTS5-based
+    # dedup query passed a sha256 hex prefix to MATCH which never resolves -
+    # the FTS5 index stores the content text, not its hash. Result: 9M+ rows
+    # accumulated for orchestrator sessions because every Stop event re-inserted
+    # every message. Fixed 2026-05-03; see mm-0c43.
+    existing = conn.execute(
+        "SELECT id FROM verbatim_memories WHERE session_id = ? AND content = ? LIMIT 1",
+        (session_id, content),
+    ).fetchone()
+    if existing:
+        return None
 
-        cur = conn.execute(
-            """INSERT INTO verbatim_memories (session_id, role, content, scope, timestamp, source_agent)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (session_id, role, content, scope, now, source_agent),
-        )
-        row_id = cur.lastrowid
+    cur = conn.execute(
+        """INSERT INTO verbatim_memories (session_id, role, content, scope, timestamp, source_agent)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (session_id, role, content, scope, now, source_agent),
+    )
+    row_id = cur.lastrowid
 
-        # Update FTS
-        conn.execute(
-            "INSERT INTO verbatim_fts(rowid, content) VALUES (?, ?)",
-            (row_id, content),
-        )
-        conn.commit()
-        return row_id
+    # Update FTS
+    conn.execute(
+        "INSERT INTO verbatim_fts(rowid, content) VALUES (?, ?)",
+        (row_id, content),
+    )
+    return row_id
 
 
 def _extract_role_content(entry: dict) -> tuple[str, str]:
@@ -164,29 +186,31 @@ def store_transcript(
     stats = {"stored": 0, "skipped": 0}
     session_id = path.stem  # Use filename as session ID
 
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if not line.strip():
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(entry, dict):
-            continue
+    with closing(_connect(db_path)) as conn:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(entry, dict):
+                continue
 
-        role, content = _extract_role_content(entry)
-        if role not in ("user", "assistant"):
-            stats["skipped"] += 1
-            continue
-        if not content or len(content) < 20:
-            stats["skipped"] += 1
-            continue
+            role, content = _extract_role_content(entry)
+            if role not in ("user", "assistant"):
+                stats["skipped"] += 1
+                continue
+            if not content or len(content) < 20:
+                stats["skipped"] += 1
+                continue
 
-        row_id = store_verbatim(db_path, session_id, role, content, scope, source_agent)
-        if row_id:
-            stats["stored"] += 1
-        else:
-            stats["skipped"] += 1
+            row_id = _store_verbatim_conn(conn, session_id, role, content, scope, source_agent)
+            if row_id:
+                stats["stored"] += 1
+            else:
+                stats["skipped"] += 1
+        conn.commit()
 
     return stats
 

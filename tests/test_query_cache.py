@@ -151,3 +151,42 @@ def test_toctou_write_tags_compute_time_generation(env):
     # A result genuinely computed at the current generation is served.
     query_cache.write(db, "k-toctou", [{"id": 1, "score": 1.0}], g_after)
     assert query_cache.read(db, "k-toctou") is not None
+
+
+def test_stale_generation_rows_are_evicted_on_read_and_sweep(env):
+    db, svc, _spy = env
+    g_before = query_cache.read_generation(db)
+    query_cache.write(db, "k-stale-read", [{"id": 1, "score": 1.0}], g_before)
+
+    svc.ingest(
+        text="zeta new claim bumps cache generation",
+        citations=[CitationInput(source="t", locator="l")],
+        source_agent="t",
+    )
+
+    conn = sqlite3.connect(db)
+    before = conn.execute("SELECT COUNT(*) FROM query_cache").fetchone()[0]
+    conn.close()
+
+    assert query_cache.read(db, "k-stale-read") is None
+
+    conn = sqlite3.connect(db)
+    after = conn.execute("SELECT COUNT(*) FROM query_cache").fetchone()[0]
+    conn.close()
+    assert before == 1
+    assert after == 0
+
+    g_after = query_cache.read_generation(db)
+    query_cache.write(db, "k-stale-a", [{"id": 1, "score": 1.0}], g_before)
+    query_cache.write(db, "k-stale-b", [{"id": 2, "score": 0.5}], g_before)
+    query_cache.write(db, "k-current", [{"id": 3, "score": 0.25}], g_after)
+
+    query_cache.evict_stale(db)
+
+    conn = sqlite3.connect(db)
+    rows = conn.execute(
+        "SELECT cache_key, generation FROM query_cache ORDER BY cache_key"
+    ).fetchall()
+    conn.close()
+
+    assert rows == [("k-current", g_after)]
