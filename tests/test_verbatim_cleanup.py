@@ -136,6 +136,86 @@ def test_apply_syncs_fts_mirror(tmp_path):
     assert _row_count(db, "verbatim_fts") == 1
 
 
+def _legacy_dedup_ids(db: Path) -> list[int]:
+    """The pre-refactor `id NOT IN (SELECT MIN(id) ...)` anti-join.
+
+    Kept verbatim here so the test pins the *result set* of the new
+    NOT EXISTS query to the exact ids the old anti-join would delete — a
+    behavioural anchor, not an implementation echo. If the optimized query
+    ever diverges (e.g. mishandles NULL session_id or cross-session twins),
+    this set comparison fails.
+    """
+    conn = sqlite3.connect(str(db))
+    rows = conn.execute(
+        """SELECT id FROM verbatim_memories WHERE id NOT IN (
+               SELECT MIN(id) FROM verbatim_memories GROUP BY session_id, content
+           )"""
+    ).fetchall()
+    conn.close()
+    return sorted(int(r[0]) for r in rows)
+
+
+def test_dedup_output_matches_legacy_anti_join(tmp_path):
+    """The NOT EXISTS rewrite must delete EXACTLY the rows the old
+    `id NOT IN (SELECT MIN(id)...)` anti-join would, across the tricky cases:
+    multi-row dup groups, cross-session same-content (NOT dups), and a
+    single-occurrence row (never a dup). WHY: the refactor is a pure
+    performance change; any difference in the kept/dropped set silently
+    corrupts the verbatim archive on the cold CLI cleanup path.
+    """
+    db = _new_db(tmp_path)
+    _seed(db, [
+        ("s1", "user", "shared body"),      # id 1 - oldest in (s1, shared) -> keep
+        ("s1", "user", "shared body"),      # id 2 - dup -> drop
+        ("s1", "user", "shared body"),      # id 3 - dup -> drop
+        ("s2", "user", "shared body"),      # id 4 - different session -> keep
+        ("s2", "user", "shared body"),      # id 5 - dup of id 4 -> drop
+        ("s3", "assistant", "unique line"), # id 6 - single occurrence -> keep
+    ])
+    expected_drop = _legacy_dedup_ids(db)
+    assert expected_drop == [2, 3, 5]  # sanity-pin the legacy contract itself
+
+    survivors_before = {1, 4, 6}
+    result = cleanup(str(db), dedup=True, purge_junk=False, dry_run=False)
+    assert result["dedup_deleted"] == len(expected_drop)
+
+    conn = sqlite3.connect(str(db))
+    survivors = {int(r[0]) for r in conn.execute("SELECT id FROM verbatim_memories").fetchall()}
+    conn.close()
+    assert survivors == survivors_before
+
+
+def test_dedup_handles_null_session_id(tmp_path):
+    """NULL session_id rows with identical content are a real legacy-capture
+    signature. `id NOT IN (SELECT MIN(id) GROUP BY session_id, content)` and
+    the NOT EXISTS rewrite must agree: SQL GROUP BY buckets NULLs together,
+    so the NOT EXISTS probe uses `IS` (not `=`) to match the same grouping.
+    WHY: an `=` comparison would never match NULL=NULL and the new query would
+    wrongly keep every NULL-session duplicate, diverging from the old result.
+    """
+    db = tmp_path / "nulls.db"
+    conn = sqlite3.connect(str(db))
+    conn.executescript(_SCHEMA.replace("session_id TEXT NOT NULL", "session_id TEXT"))
+    # Insert NULL session_id duplicates directly.
+    for content in ("dup body", "dup body", "dup body", "other body"):
+        conn.execute(
+            "INSERT INTO verbatim_memories (session_id, role, content) VALUES (NULL, '', ?)",
+            (content,),
+        )
+    conn.commit()
+    conn.close()
+
+    expected_drop = _legacy_dedup_ids(db)
+    assert expected_drop == [2, 3]  # ids 2,3 are NULL-session twins of id 1
+
+    result = cleanup(str(db), dedup=True, purge_junk=False, dry_run=False)
+    assert result["dedup_deleted"] == 2
+    conn = sqlite3.connect(str(db))
+    survivors = sorted(int(r[0]) for r in conn.execute("SELECT id FROM verbatim_memories").fetchall())
+    conn.close()
+    assert survivors == [1, 4]
+
+
 def test_no_verbatim_table_returns_gracefully(tmp_path):
     db = tmp_path / "empty.db"
     sqlite3.connect(str(db)).close()  # create empty DB

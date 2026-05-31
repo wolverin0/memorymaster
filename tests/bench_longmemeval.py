@@ -696,8 +696,9 @@ def call_claude_cli_judge(
 def answer_question(question: str, contexts: list[str], judge: JudgeClient) -> str:
     prompt = "\n\n".join(
         [
-            "Answer the question using only the retrieved conversation context.",
-            "If the context does not contain the answer, say I don't know.",
+            "Answer the question using the retrieved conversation context. "
+            "Answer with the most specific relevant fact from the retrieved context; "
+            "only say I don't know if the answer is genuinely absent.",
             "Keep the answer concise.",
             "Retrieved context:",
             "\n\n---\n\n".join(contexts),

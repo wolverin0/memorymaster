@@ -151,3 +151,163 @@ def test_wilson_interval_math():
     assert lo0 == 0.0
     _, hi1 = contradiction_probe.wilson_interval(10, 10)
     assert hi1 == 1.0
+
+
+# ---------------------------------------------------------------------------
+# T01: empty/invalid verdict severity must floor to "medium", not "low".
+# WHY: a real contradiction that the judge tags with a blank/garbage severity
+# must NOT be silently demoted to the least-actionable tier — the steward
+# triages by severity, so "" -> "low" would bury genuine conflicts.
+# ---------------------------------------------------------------------------
+
+
+def test_coerce_severity_floors_blank_to_medium():
+    assert contradiction_probe._coerce_severity("") == "medium"
+    assert contradiction_probe._coerce_severity(None) == "medium"
+    assert contradiction_probe._coerce_severity("urgent") == "medium"  # off-vocab
+    assert contradiction_probe._coerce_severity("LOW") == "low"  # canonical, case-insensitive
+    assert contradiction_probe._coerce_severity("high") == "high"
+
+
+def _probe_one_claim(svc, prov_stub, target_text):
+    """Run probe_for_claim for the claim whose text contains target_text."""
+    claims = svc.store.list_claims(limit=100, include_citations=False)
+    target = next(c for c in claims if target_text in c.text)
+    return contradiction_probe.probe_for_claim(svc, target)
+
+
+def test_probe_for_claim_blank_severity_becomes_medium(env, monkeypatch):
+    db, svc, holder, prov = env
+    # Judge says it contradicts but returns a blank severity. The reason floors
+    # to "medium" rather than "low".
+    monkeypatch.setitem(
+        llm_provider._PROVIDERS, "google",
+        lambda p, t: json.dumps({"contradicts": True, "severity": "", "reason": "x vs y"}),
+    )
+    result = _probe_one_claim(svc, prov, "rate-limited")
+    contradiction_reasons = [r for r in result["reasons"]
+                             if r["code"] == "contradiction_probe.semantic_pair"]
+    assert contradiction_reasons, "expected at least one contradiction reason"
+    # The intent: a blank judge severity must NEVER be silently downgraded to the
+    # least-actionable "low" tier — it floors to "medium" so the steward triages it.
+    assert all(r["severity"] == "medium" for r in contradiction_reasons)
+
+
+# ---------------------------------------------------------------------------
+# T02: run_probe(apply=True) must redact the judge reason before it lands in the
+# events table — the same guard probe_for_claim already applies. WHY: an LLM
+# judge reason can echo back sensitive text; the transition event is persisted
+# and read by humans/wiki, so a secret there is a leak.
+# ---------------------------------------------------------------------------
+
+
+def test_safe_judge_reason_drops_leaky_text():
+    # A clean reason passes through verbatim.
+    assert contradiction_probe._safe_judge_reason("just a rate limit clash") == "just a rate limit clash"
+    assert contradiction_probe._safe_judge_reason("") == ""
+    # A reason carrying a secret is dropped (None) so it never reaches events.
+    leaky = "token is sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCD"
+    assert contradiction_probe._safe_judge_reason(leaky) is None
+
+
+def test_run_probe_apply_redacts_event_reason(env, monkeypatch):
+    db, svc, holder, prov = env
+    secret = "AKIAIOSFODNN7EXAMPLE bearer sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+    monkeypatch.setitem(
+        llm_provider._PROVIDERS, "google",
+        lambda p, t: json.dumps({
+            "contradicts": ("rate-limited" in t.lower() and "no rate limit" in t.lower()),
+            "severity": "high",
+            "reason": secret,
+        }),
+    )
+    stats = contradiction_probe.run_probe(db, svc, provider=prov, apply=True)
+    assert stats["flagged_conflicted"] == 1
+    flagged_id = stats["found"][0]["flag_candidate_id"]
+    events = svc.store.list_events(claim_id=flagged_id)
+    blob = " ".join(str(getattr(e, "reason", "")) for e in events)
+    assert "sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ" not in blob
+    assert "AKIAIOSFODNN7EXAMPLE" not in blob
+
+
+# ---------------------------------------------------------------------------
+# T03: sample_candidate_pairs must stop the O(n^2) sweep early once `limit`
+# in-band pairs are collected. WHY: on a large claim set the quadratic scan is
+# the dominant cost; building thousands of pairs only to truncate to `limit`
+# wastes work proportional to n^2.
+# ---------------------------------------------------------------------------
+
+
+def test_sample_pairs_early_break_bounds_cosine_calls(monkeypatch):
+    from memorymaster import contradiction_probe as cp
+
+    class _Claim:
+        def __init__(self, cid):
+            self.id = cid
+            self.status = "candidate"
+            self.text = f"claim {cid}"
+            self.subject = None
+            self.predicate = None
+            self.object_value = None
+            self.supersedes_claim_id = None
+            self.replaced_by_claim_id = None
+
+    claims = [_Claim(i) for i in range(50)]
+
+    class _AllInBand:
+        def embed(self, text):
+            return [1.0, 0.0]
+
+    calls = {"n": 0}
+    real_cosine = cp.cosine_similarity
+
+    def _counting_cosine(a, b):
+        calls["n"] += 1
+        return 0.7  # always in [0.60, 0.92)
+
+    monkeypatch.setattr(cp, "cosine_similarity", _counting_cosine)
+    pairs = cp.sample_candidate_pairs(claims, _AllInBand(), limit=3)
+    assert len(pairs) == 3
+    # Without early-break this would be C(50,2) = 1225 cosine calls. With the
+    # break we stop right after collecting the 3rd in-band pair.
+    assert calls["n"] <= 5, f"expected early break, got {calls['n']} cosine calls"
+    _ = real_cosine  # keep reference, silence lints
+
+
+# ---------------------------------------------------------------------------
+# T04: the verdict table DDL must be issued once per DB per process, not on
+# every per-claim probe call. WHY: a steward cycle calls probe_for_claim once
+# per claim; re-running CREATE TABLE IF NOT EXISTS + commit per claim is pure
+# overhead. Behaviour (the table existing) is unchanged.
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_verdict_table_runs_ddl_once_per_db(env, monkeypatch):
+    db, svc, holder, prov = env
+    cp = contradiction_probe
+    cp._ensured_verdict_dbs.clear()  # fresh process-cache for this DB
+
+    # sqlite3.Connection.execute is immutable (cannot be monkeypatched), so we
+    # spy on the module's own DDL helper. It must short-circuit after the first
+    # ensure for a given DB: only the FIRST per-claim call should run the
+    # CREATE TABLE + commit; the rest hit the process-cache guard and return.
+    real_ensure = cp._ensure_verdict_table
+    ddl_runs = {"n": 0}
+
+    def _spy_ensure(conn, *, db_key=None):
+        before = db_key is not None and db_key in cp._ensured_verdict_dbs
+        real_ensure(conn, db_key=db_key)
+        if not before:  # actually issued the DDL this call
+            ddl_runs["n"] += 1
+
+    monkeypatch.setattr(cp, "_ensure_verdict_table", _spy_ensure)
+
+    claims = svc.store.list_claims(limit=100, include_citations=False)
+    target = next(c for c in claims if "rate-limited" in c.text)
+    cp.probe_for_claim(svc, target)
+    cp.probe_for_claim(svc, target)
+    cp.probe_for_claim(svc, target)
+    # The DDL is issued exactly once across the three per-claim calls.
+    assert ddl_runs["n"] == 1, f"DDL issued {ddl_runs['n']} times, expected 1"
+    # And the guard now records this DB as ensured.
+    assert str(db) in cp._ensured_verdict_dbs

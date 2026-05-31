@@ -48,6 +48,11 @@ _CORRECTION_KEYWORDS = (
     "wrong", "not what", "that's not", "thats not", "revert", "undo",
     "should have", "shouldn't", "why did you", "no need", "stop ",
 )
+_CORRECTION_FTS_MATCH = (
+    '"no" OR "don" OR "do" OR "dont" OR "instead" OR "actually" OR '
+    '"wrong" OR "not" OR "revert" OR "undo" OR "should" OR "shouldn" OR '
+    '"why" OR "stop"'
+)
 
 _MINER_STATE_DDL = """
 CREATE TABLE IF NOT EXISTS miner_state (
@@ -132,6 +137,18 @@ def _candidate_batch(
     params: list[Any] = [since_id]
     params.extend(f"%{kw}%" for kw in _CORRECTION_KEYWORDS)
     params.append(batch_size)
+    try:
+        return conn.execute(
+            f"""SELECT v.id, v.session_id, v.content, v.scope FROM verbatim_fts f
+                JOIN verbatim_memories v ON v.id = f.rowid
+                WHERE verbatim_fts MATCH ?
+                  AND v.role = 'user' AND v.id > ? AND ({like_clause})
+                ORDER BY v.id ASC LIMIT ?""",
+            [_CORRECTION_FTS_MATCH, *params],
+        ).fetchall()
+    except sqlite3.Error as exc:
+        logger.debug("rule_miner: verbatim_fts pre-filter failed, using LIKE scan: %s", exc)
+
     return conn.execute(
         f"""SELECT id, session_id, content, scope FROM verbatim_memories
             WHERE role = 'user' AND id > ? AND ({like_clause})

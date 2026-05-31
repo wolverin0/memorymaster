@@ -33,15 +33,16 @@ CREATE TABLE verbatim_memories (
 """
 
 
-def _create_verbatim(db_path) -> None:
+def _create_verbatim(db_path, *, with_fts: bool = True) -> None:
     conn = sqlite3.connect(db_path)
     conn.execute(_VERBATIM_DDL)
-    conn.execute("CREATE VIRTUAL TABLE verbatim_fts USING fts5(content)")
+    if with_fts:
+        conn.execute("CREATE VIRTUAL TABLE verbatim_fts USING fts5(content)")
     conn.commit()
     conn.close()
 
 
-def _seed(db_path, rows) -> None:
+def _seed(db_path, rows, *, sync_fts: bool = True) -> None:
     """rows: iterable of (id, session_id, role, content)."""
     conn = sqlite3.connect(db_path)
     for rid, session, role, content in rows:
@@ -50,7 +51,8 @@ def _seed(db_path, rows) -> None:
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (rid, session, role, content, "project:test", "2026-05-20T00:00:00Z", "stop-hook"),
         )
-        conn.execute("INSERT INTO verbatim_fts(rowid, content) VALUES (?, ?)", (rid, content))
+        if sync_fts:
+            conn.execute("INSERT INTO verbatim_fts(rowid, content) VALUES (?, ?)", (rid, content))
     conn.commit()
     conn.close()
 
@@ -185,6 +187,51 @@ def test_keyword_prefilter_skips_non_corrections(env):
     assert stats["candidates"] == 0
     assert holder["calls"] == 0  # the LLM was never consulted
     assert stats["ingested"] == 0
+
+
+def test_candidate_batch_fts_prefilter_matches_like_fallback(tmp_path):
+    rows = [
+        (1, "s1", "assistant", "I hardcoded the path into the config file directly."),
+        (2, "s1", "user", "no, don't hardcode the path like that, use an env var instead."),
+        (3, "s2", "user", "thanks, that looks great, please ship it whenever ready."),
+        (4, "s3", "user", "Actually, that was wrong and should have stayed untouched."),
+        (5, "s4", "assistant", "no, don't scan assistant rows as candidates."),
+        (6, "s5", "user", "why did you revert that file? stop doing that."),
+    ]
+    fts_db = tmp_path / "with_fts.db"
+    like_db = tmp_path / "without_fts.db"
+    _create_verbatim(fts_db)
+    _seed(fts_db, rows)
+    _create_verbatim(like_db, with_fts=False)
+    _seed(like_db, rows, sync_fts=False)
+
+    fts_conn = sqlite3.connect(fts_db)
+    like_conn = sqlite3.connect(like_db)
+    try:
+        fts_ids = [row[0] for row in rule_miner._candidate_batch(fts_conn, 0, 20)]
+        like_ids = [row[0] for row in rule_miner._candidate_batch(like_conn, 0, 20)]
+    finally:
+        fts_conn.close()
+        like_conn.close()
+
+    assert fts_ids == like_ids == [2, 4, 6]
+
+
+def test_candidate_batch_falls_back_when_verbatim_fts_missing(tmp_path):
+    db = tmp_path / "without_fts.db"
+    _create_verbatim(db, with_fts=False)
+    _seed(db, [
+        (1, "s1", "assistant", "I committed directly to main without a pull request."),
+        (2, "s1", "user", "no, don't commit directly to main, open a PR instead."),
+    ], sync_fts=False)
+
+    conn = sqlite3.connect(db)
+    try:
+        rows = rule_miner._candidate_batch(conn, 0, 10)
+    finally:
+        conn.close()
+
+    assert [row[0] for row in rows] == [2]
 
 
 def test_budget_cap_aborts(env, monkeypatch):

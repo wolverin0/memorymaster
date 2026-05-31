@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from memorymaster import verbatim_store
 from memorymaster.verbatim_store import store_transcript, store_verbatim
 
 
@@ -134,6 +135,53 @@ def test_store_transcript_idempotent_on_re_call(db_path: str, tmp_path: Path) ->
     assert n1 == 3
     assert stats2["stored"] == 0, "re-running the same transcript must add zero new rows"
     assert n2 == 3, "row count must stay stable across repeated stop events"
+
+
+def test_store_transcript_uses_one_connection_and_commit(
+    db_path: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transcript = tmp_path / "batched.jsonl"
+    transcript.write_text(
+        '{"role": "user", "content": "first message stored through the batch path"}\n'
+        '{"role": "assistant", "content": "assistant message stored through the batch path"}\n'
+        '{"role": "system", "content": "metadata line that is skipped by role"}\n'
+        '{"role": "user", "content": "second user message stored through the batch path"}\n',
+        encoding="utf-8",
+    )
+
+    real_connect = sqlite3.connect
+    connection_count = 0
+    commit_count = 0
+
+    class CommitCountingConnection(sqlite3.Connection):
+        def commit(self) -> None:
+            nonlocal commit_count
+            commit_count += 1
+            return super().commit()
+
+    def connect_spy(database: str, *args: object, **kwargs: object) -> sqlite3.Connection:
+        nonlocal connection_count
+        if str(database) == db_path:
+            connection_count += 1
+            kwargs["factory"] = CommitCountingConnection
+        return real_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(verbatim_store.sqlite3, "connect", connect_spy)
+
+    stats = verbatim_store.store_transcript(db_path, str(transcript), scope="project:test")
+
+    conn = real_connect(db_path)
+    rows = conn.execute(
+        "SELECT role, content FROM verbatim_memories ORDER BY id"
+    ).fetchall()
+    conn.close()
+
+    assert stats == {"stored": 3, "skipped": 1}
+    assert [row[0] for row in rows] == ["user", "assistant", "user"]
+    assert connection_count == 1
+    assert commit_count == 1
 
 
 def test_short_content_is_filtered_not_deduped(db_path: str) -> None:

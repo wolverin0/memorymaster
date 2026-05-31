@@ -116,12 +116,36 @@ def read(db_path: str, cache_key: str) -> list[dict] | None:
             "SELECT result_json, generation FROM query_cache WHERE cache_key = ?",
             (cache_key,),
         ).fetchone()
-        if row is None or int(row["generation"]) != gen:
+        if row is None:
+            return None
+        if int(row["generation"]) != gen:
+            try:
+                conn.execute("DELETE FROM query_cache WHERE cache_key = ?", (cache_key,))
+                conn.commit()
+            except sqlite3.Error:
+                pass
             return None
         return json.loads(row["result_json"])
     except (sqlite3.Error, json.JSONDecodeError, ValueError) as exc:
         logger.warning("query_cache.read failed (cache disabled for this query): %s", exc)
         return None
+    finally:
+        conn.close()
+
+
+def evict_stale(db_path: str) -> None:
+    """Delete query cache rows older than the current corpus generation."""
+    try:
+        conn = _connect(db_path)
+    except sqlite3.Error as exc:
+        logger.warning("query_cache.evict_stale connect failed: %s", exc)
+        return
+    try:
+        gen = current_generation(conn)
+        conn.execute("DELETE FROM query_cache WHERE generation < ?", (gen,))
+        conn.commit()
+    except (sqlite3.Error, ValueError) as exc:
+        logger.warning("query_cache.evict_stale failed: %s", exc)
     finally:
         conn.close()
 
