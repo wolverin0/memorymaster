@@ -6,7 +6,7 @@ Lifecycle-managed claims with citations, conflict detection, steward governance,
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-2232-green.svg)]()
+[![Tests](https://img.shields.io/badge/tests-2514-green.svg)]()
 [![MCP Tools](https://img.shields.io/badge/MCP%20tools-24-purple.svg)]()
 [![CLI Commands](https://img.shields.io/badge/CLI%20commands-86-orange.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memorymaster.svg)](https://pypi.org/project/memorymaster/)
