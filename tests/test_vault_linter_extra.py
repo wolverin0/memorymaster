@@ -128,21 +128,29 @@ def test_orphan_claim_with_no_subject_or_predicate(tmp_path: Path) -> None:
     assert any(o["type"] == "orphan" for o in report["orphans"])
 
 
-def test_present_subject_never_classified_as_weak_link(tmp_path: Path) -> None:
-    # WHY: the weak-link branch keys on `subject not in all_subjects`, but
-    # all_subjects is built from every loaded claim — so any subject that is
-    # present is, by construction, IN that set. This test pins the real
-    # contract: a claim whose subject exists is NEVER emitted as a weak_link
-    # (the branch only ever fires for subjects absent from the working set).
-    # Encoding this prevents a future "fix" from silently changing orphan
-    # semantics without updating the detector's documented behavior.
+def test_single_mention_subject_is_weak_link_orphan(tmp_path: Path) -> None:
+    # WHY: a "weak-link orphan" is a subject that appears in exactly ONE claim —
+    # a topic mentioned once and never connected to anything else. vault_linter's
+    # documented contract is "subject appears only once". This test anchors that
+    # REQUIREMENT (single-mention => weak_link, multi-mention => not).
+    #
+    # The previous version of this test pinned a BUG: _detect_orphans keyed the
+    # weak-link branch on `subject not in all_subjects`, which is always False for
+    # a present subject, so the check was unreachable and lint-vault reported a
+    # false "clean" for single-mention subjects. The v3.27 audit fixed the
+    # detector to count subject occurrences; this test follows the contract, not
+    # the old (buggy) implementation.
     db = _fresh_db(tmp_path)
     _insert(db, text="loner fact", subject="Loner", predicate="has", object_value="x")
+    # A subject mentioned more than once is well-connected and must NOT be weak.
+    _insert(db, text="hub one", subject="Hub", predicate="has", object_value="a")
+    _insert(db, text="hub two", subject="Hub", predicate="rel", object_value="b")
 
     report = _lint(db)
 
     weak_subjects = {o.get("subject") for o in report["orphans"] if o["type"] == "weak_link"}
-    assert "Loner" not in weak_subjects
+    assert "Loner" in weak_subjects, "a single-mention subject must be a weak_link orphan"
+    assert "Hub" not in weak_subjects, "a multi-mention subject must not be weak_link"
 
 
 def test_gap_detected_for_entity_mentioned_thrice(tmp_path: Path) -> None:

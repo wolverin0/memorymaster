@@ -33,16 +33,23 @@ class _ReadMixin:
         normalized_key = (idempotency_key or "").strip() or None
         if normalized_key is None:
             return None
+        # Hydrate the full row from the already-open conn instead of paying
+        # a fresh get_claim() connection open on every duplicate re-ingest.
         existing_row = conn.execute(
-            "SELECT id FROM claims WHERE idempotency_key = ?",
+            "SELECT * FROM claims WHERE idempotency_key = ?",
             (normalized_key,),
         ).fetchone()
-        if existing_row is not None:
-            existing = self.get_claim(int(existing_row["id"]))
-            if existing is None:
-                raise RuntimeError("Idempotency key matched missing claim.")
-            return existing
-        return None
+        if existing_row is None:
+            return None
+        claim = self._row_to_claim(existing_row)
+        claim.citations = [
+            self._row_to_citation(cit_row)
+            for cit_row in conn.execute(
+                "SELECT * FROM citations WHERE claim_id = ? ORDER BY id ASC",
+                (claim.id,),
+            ).fetchall()
+        ]
+        return claim
 
 
     def get_claim(self, claim_id: int, include_citations: bool = True) -> Claim | None:
@@ -172,7 +179,13 @@ class _ReadMixin:
             clauses.append(f"status IN ({placeholders})")
             params.extend(status_in)
 
-        if not include_archived and status != "archived":
+        # Only apply the implicit archived-exclusion when the caller did not
+        # explicitly request archived claims via `status` or `status_in`.
+        # Otherwise list_claims(status_in=['archived']) would return zero rows.
+        explicitly_wants_archived = (
+            status == "archived" or (status is None and bool(status_in) and "archived" in status_in)
+        )
+        if not include_archived and not explicitly_wants_archived:
             clauses.append("status <> 'archived'")
 
         if scope_allowlist:
@@ -597,6 +610,45 @@ class _ReadMixin:
             ).fetchall()
         return [self._row_to_citation(row) for row in rows]
 
+    @staticmethod
+    def _batch_neighbors(
+        conn: sqlite3.Connection,
+        frontier_ids: list[int],
+        *,
+        direction: str,
+        link_types: list[str] | None,
+    ) -> dict[int, list[tuple[int, str]]]:
+        """Fetch all neighbors for a whole BFS frontier in one query per direction.
+
+        Returns a mapping ``{frontier_claim_id: [(neighbor_id, link_type), ...]}``.
+        Replaces the per-node N+1 pattern with one batched query per level.
+        """
+        if not frontier_ids:
+            return {}
+        result: dict[int, list[tuple[int, str]]] = {cid: [] for cid in frontier_ids}
+        placeholders = ",".join("?" for _ in frontier_ids)
+        if direction in ("outgoing", "both"):
+            sql = f"SELECT source_id, target_id, link_type FROM claim_links WHERE source_id IN ({placeholders})"
+            for row in conn.execute(sql, frontier_ids).fetchall():
+                if link_types is None or row["link_type"] in link_types:
+                    result[int(row["source_id"])].append((int(row["target_id"]), str(row["link_type"])))
+        if direction in ("incoming", "both"):
+            sql = f"SELECT source_id, target_id, link_type FROM claim_links WHERE target_id IN ({placeholders})"
+            for row in conn.execute(sql, frontier_ids).fetchall():
+                if link_types is None or row["link_type"] in link_types:
+                    result[int(row["target_id"])].append((int(row["source_id"]), str(row["link_type"])))
+        return result
+
+    def _hydrate_claims(self, conn: sqlite3.Connection, claim_ids: list[int]) -> dict[int, Claim]:
+        """Load a batch of claims (no citations) in a single SELECT from *conn*."""
+        if not claim_ids:
+            return {}
+        placeholders = ",".join("?" for _ in claim_ids)
+        rows = conn.execute(
+            f"SELECT * FROM claims WHERE id IN ({placeholders})", claim_ids
+        ).fetchall()
+        return {int(row["id"]): self._row_to_claim(row) for row in rows}
+
     def traverse_relationships(
         self,
         start_claim_id: int,
@@ -616,44 +668,34 @@ class _ReadMixin:
         """
         with self.connect() as conn:
             visited: set[int] = {start_claim_id}
-            queue: list[tuple[int, int, list[int], str]] = []  # (claim_id, depth, path, via_link_type)
-
-            # Seed with depth-0 neighbors
-            def _get_neighbors(claim_id: int) -> list[tuple[int, str]]:
-                neighbors: list[tuple[int, str]] = []
-                if direction in ("outgoing", "both"):
-                    q = "SELECT target_id, link_type FROM claim_links WHERE source_id = ?"
-                    for row in conn.execute(q, (claim_id,)).fetchall():
-                        if link_types is None or row[1] in link_types:
-                            neighbors.append((row[0], row[1]))
-                if direction in ("incoming", "both"):
-                    q = "SELECT source_id, link_type FROM claim_links WHERE target_id = ?"
-                    for row in conn.execute(q, (claim_id,)).fetchall():
-                        if link_types is None or row[1] in link_types:
-                            neighbors.append((row[0], row[1]))
-                return neighbors
-
-            for neighbor_id, link_type in _get_neighbors(start_claim_id):
+            # Frontier entries: (claim_id, depth, path, via_link_type)
+            frontier: list[tuple[int, int, list[int], str]] = []
+            seed = self._batch_neighbors(conn, [start_claim_id], direction=direction, link_types=link_types)
+            for neighbor_id, link_type in seed.get(start_claim_id, []):
                 if neighbor_id not in visited:
                     visited.add(neighbor_id)
-                    queue.append((neighbor_id, 1, [start_claim_id, neighbor_id], link_type))
+                    frontier.append((neighbor_id, 1, [start_claim_id, neighbor_id], link_type))
 
             results: list[dict] = []
-            while queue:
-                cid, depth, path, via_type = queue.pop(0)
-                claim = self.get_claim(cid, include_citations=False)
-                if claim:
-                    results.append({
-                        "claim": claim,
-                        "depth": depth,
-                        "path": path,
-                        "link_type": via_type,
-                    })
-                if depth < max_depth:
-                    for neighbor_id, link_type in _get_neighbors(cid):
+            while frontier:
+                level_ids = [cid for cid, _, _, _ in frontier]
+                claims = self._hydrate_claims(conn, level_ids)
+                next_frontier: list[tuple[int, int, list[int], str]] = []
+                depth = frontier[0][1] if frontier else 0
+                neighbor_map = (
+                    self._batch_neighbors(conn, level_ids, direction=direction, link_types=link_types)
+                    if depth < max_depth
+                    else {}
+                )
+                for cid, cdepth, path, via_type in frontier:
+                    claim = claims.get(cid)
+                    if claim:
+                        results.append({"claim": claim, "depth": cdepth, "path": path, "link_type": via_type})
+                    for neighbor_id, link_type in neighbor_map.get(cid, []):
                         if neighbor_id not in visited:
                             visited.add(neighbor_id)
-                            queue.append((neighbor_id, depth + 1, path + [neighbor_id], link_type))
+                            next_frontier.append((neighbor_id, cdepth + 1, path + [neighbor_id], link_type))
+                frontier = next_frontier
 
         return results
 

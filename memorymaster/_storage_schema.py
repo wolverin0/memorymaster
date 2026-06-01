@@ -329,6 +329,10 @@ class _SchemaMixin:
         if not _SchemaMixin._fts5_available(conn):
             return
 
+        fts_existed = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='claims_fts'"
+        ).fetchone() is not None
+
         conn.execute(
             """
             CREATE VIRTUAL TABLE IF NOT EXISTS claims_fts USING fts5(
@@ -401,9 +405,19 @@ class _SchemaMixin:
             """
         )
 
-        # Backfill: rebuild FTS index from existing claims data.
-        # The 'rebuild' command re-reads all rows from the content table.
-        conn.execute("INSERT INTO claims_fts(claims_fts) VALUES ('rebuild')")
+        # Backfill: rebuild the FTS index from existing claims data only when
+        # necessary. A full 'rebuild' is O(n) over every claim and the sync
+        # triggers above already keep the index current, so on warm DBs an
+        # unconditional rebuild is pure waste (54k+ claims). Rebuild only when
+        # the FTS table was just created, or when a row-count mismatch between
+        # `claims` and `claims_fts` reveals the index drifted.
+        needs_rebuild = not fts_existed
+        if not needs_rebuild:
+            claims_count = conn.execute("SELECT COUNT(*) FROM claims").fetchone()[0]
+            fts_count = conn.execute("SELECT COUNT(*) FROM claims_fts").fetchone()[0]
+            needs_rebuild = claims_count != fts_count
+        if needs_rebuild:
+            conn.execute("INSERT INTO claims_fts(claims_fts) VALUES ('rebuild')")
 
 
     @staticmethod
@@ -486,12 +500,26 @@ class _SchemaMixin:
 
     @staticmethod
     def _backfill_human_ids(conn: sqlite3.Connection) -> int:
-        """Assign human_id to all claims that lack one."""
+        """Assign human_id to all claims that lack one.
+
+        Guard: only the claims with a NULL human_id are selected, so a warm DB
+        (all ids assigned) returns immediately. When there are zero
+        ``derived_from`` links the whole batch is top-level, so we skip the
+        per-row claim_links JOIN and generate ids in-memory + executemany.
+        """
         rows = conn.execute(
             "SELECT id, subject, text FROM claims WHERE human_id IS NULL ORDER BY id ASC"
         ).fetchall()
         if not rows:
             return 0
+
+        has_derived_links = conn.execute(
+            "SELECT 1 FROM claim_links WHERE link_type = 'derived_from' LIMIT 1"
+        ).fetchone() is not None
+
+        if not has_derived_links:
+            return _SchemaMixin._backfill_human_ids_top_level(conn, rows)
+
         updated = 0
         for row in rows:
             claim_id = int(row["id"])
@@ -504,6 +532,33 @@ class _SchemaMixin:
             )
             updated += 1
         return updated
+
+    @staticmethod
+    def _backfill_human_ids_top_level(conn: sqlite3.Connection, rows: list) -> int:
+        """Batch-assign top-level human_ids (no derived_from parents present).
+
+        Collisions are resolved in-memory against ids already present in the DB
+        plus ids minted within this batch, then written via a single executemany.
+        """
+        taken: set[str] = {
+            str(r[0])
+            for r in conn.execute(
+                "SELECT human_id FROM claims WHERE human_id IS NOT NULL"
+            ).fetchall()
+        }
+        updates: list[tuple[str, int]] = []
+        for row in rows:
+            claim_id = int(row["id"])
+            candidate = generate_top_level_human_id(row["subject"], str(row["text"]))
+            final = candidate
+            suffix = 1
+            while final in taken:
+                suffix += 1
+                final = f"{candidate}~{suffix}"
+            taken.add(final)
+            updates.append((final, claim_id))
+        conn.executemany("UPDATE claims SET human_id = ? WHERE id = ?", updates)
+        return len(updates)
 
 
     @staticmethod
@@ -675,6 +730,20 @@ class _SchemaMixin:
 
     @staticmethod
     def _backfill_event_chain(conn: sqlite3.Connection, *, rebuild_all: bool = False) -> int:
+        # Fast path: when not rebuilding everything, skip the full-table scan
+        # entirely if every event already has an event_hash. The cheap probe
+        # uses idx_events_event_hash, so the common warm-DB init does no work.
+        if not rebuild_all:
+            pending = conn.execute(
+                "SELECT 1 FROM events WHERE event_hash IS NULL LIMIT 1"
+            ).fetchone()
+            if pending is None:
+                return 0
+
+        # Materialize the rows before issuing UPDATEs: SQLite forbids mutating
+        # a table while a read cursor over it is still being iterated, so we
+        # fetchall() here rather than streaming. The NULL-hash guard above
+        # already makes the warm-DB common case do zero work.
         rows = conn.execute(
             """
             SELECT id, claim_id, event_type, from_status, to_status, details, payload_json, created_at, event_hash, hash_algo

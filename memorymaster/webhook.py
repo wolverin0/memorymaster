@@ -27,8 +27,11 @@ import os
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
+
+ALLOWED_WEBHOOK_SCHEMES = frozenset({"http", "https"})
 
 
 REPLAY_WINDOW_SECONDS = 300  # 5 minutes; receivers reject timestamps outside this
@@ -68,6 +71,14 @@ def fire_webhook(event_type: str, payload: dict) -> bool:
     url = os.environ.get("MEMORYMASTER_WEBHOOK_URL", "").strip()
     if not url:
         logger.debug("fire_webhook: MEMORYMASTER_WEBHOOK_URL not configured")
+        return False
+
+    # Reject non-http(s) schemes (file://, ftp://, gopher://, ...) BEFORE dispatch.
+    # urlopen will happily follow any scheme it supports, turning a misconfigured
+    # or attacker-controlled URL into a local-file-read / SSRF primitive.
+    scheme = urlsplit(url).scheme.lower()
+    if scheme not in ALLOWED_WEBHOOK_SCHEMES:
+        logger.warning("fire_webhook: refusing non-http(s) URL scheme %r", scheme)
         return False
 
     if not isinstance(event_type, str) or not isinstance(payload, dict):

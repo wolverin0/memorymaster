@@ -72,6 +72,21 @@ CREATE TABLE IF NOT EXISTS contradiction_verdicts (
 """.strip()
 
 
+def _connect_verdict_cache(db_path: str) -> sqlite3.Connection:
+    """Open the verdict-cache DB with the shared-writer pragmas.
+
+    WAL + busy_timeout are mandatory for every SQLite writer in this codebase
+    (the steward, the recall hook, sync, etc. all touch the same file). Without
+    them a concurrent writer turns the verdict INSERT into ``database is locked``,
+    which re-pays the LLM cost and (per-claim path) counts as a probe error toward
+    the circuit breaker. The pragmas mirror ``EntityGraph._connect`` / the store.
+    """
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    return conn
+
+
 def _canonical_pair(a_id: int, b_id: int) -> tuple[int, int]:
     """Order a pair so the symmetric (a,b)/(b,a) cache to one row."""
     return (a_id, b_id) if a_id <= b_id else (b_id, a_id)
@@ -336,7 +351,7 @@ def run_probe(
         return stats
 
     model = _model_key()
-    conn = sqlite3.connect(db_path)
+    conn = _connect_verdict_cache(db_path)
     try:
         _ensure_verdict_table(conn)
         with llm_budget.cycle_scope() as budget:
@@ -362,11 +377,12 @@ def run_probe(
                     stats["contradictions"] += 1
                     loser, winner = (a, b) if a.confidence <= b.confidence else (b, a)
                     # Same sensitivity guard the per-claim path uses: never let an
-                    # unredacted judge reason reach the events table on apply.
+                    # unredacted judge reason reach the events table on apply OR the
+                    # returned ``found`` report payload (also human/wiki-surfaced).
                     safe_reason = _safe_judge_reason(verdict.get("reason"))
                     stats["found"].append({
                         "claim_a_id": a.id, "claim_b_id": b.id, "similarity": sim,
-                        "severity": verdict["severity"], "reason": verdict.get("reason", ""),
+                        "severity": verdict["severity"], "reason": safe_reason or "",
                         "flag_candidate_id": loser.id,
                     })
                     if apply:
@@ -475,7 +491,7 @@ def probe_for_claim(
     if not db_path or "://" in str(db_path):
         return _done(True)  # verdict cache requires SQLite; skip silently on PG
 
-    conn = sqlite3.connect(str(db_path))
+    conn = _connect_verdict_cache(str(db_path))
     try:
         _ensure_verdict_table(conn, db_key=str(db_path))
         model = _model_key()

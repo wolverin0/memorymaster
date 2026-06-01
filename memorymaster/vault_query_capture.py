@@ -53,7 +53,7 @@ def capture_query_result(
     # Build the wiki page
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     slug = _slugify(query_text)
-    _SAFE_RE.sub("-", scope.lower().replace(":", "-")).strip("-") or "global"
+    scope_slug = _SAFE_RE.sub("-", scope.lower().replace(":", "-")).strip("-") or "global"
 
     lines = ["---"]
     lines.append(f'query: "{query_text[:100]}"')
@@ -96,8 +96,9 @@ def capture_query_result(
     lines.append("---")
     lines.append(f"*Auto-captured by MemoryMaster on {now}*")
 
-    # Write to queries/ subdirectory
-    queries_dir = vault / "queries"
+    # Write to queries/<scope_slug>/ subdirectory so captures with the same
+    # query_text but different scopes do not overwrite each other.
+    queries_dir = vault / "queries" / scope_slug
     queries_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{slug}.md"
     filepath = queries_dir / filename
