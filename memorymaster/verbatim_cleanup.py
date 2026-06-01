@@ -55,12 +55,36 @@ def _fts_present(conn: sqlite3.Connection) -> bool:
     return row is not None
 
 
-def analyze(db_path: str) -> dict[str, Any]:
+def _junk_prefix_count(conn: sqlite3.Connection) -> int:
+    """Count junk-prefix rows in a SINGLE table pass.
+
+    The previous implementation ran one ``content LIKE ?`` query per prefix —
+    three sequential full-table scans over a multi-GB table for a read-only
+    report. The prefixes are disjoint (a row matches at most one), so OR-ing
+    them into one predicate gives the identical total in one pass. Still fully
+    parameterized: one ``?`` per prefix, no value concatenation into the SQL.
+    """
+    if not _JUNK_PREFIXES:
+        return 0
+    where = " OR ".join("content LIKE ?" for _ in _JUNK_PREFIXES)
+    params = tuple(p + "%" for p in _JUNK_PREFIXES)
+    row = conn.execute(
+        f"SELECT COUNT(*) FROM verbatim_memories WHERE {where}", params
+    ).fetchone()
+    return int(row[0])
+
+
+def analyze(db_path: str, *, deep: bool = True) -> dict[str, Any]:
     """Report verbatim composition without touching anything.
 
-    Returns counts: total rows, distinct contents, exact duplicates (per
-    (session_id, content)), pre-#128 junk rows (matching known prefixes), and
-    rows with empty role (legacy capture-bug signature).
+    Counts: total rows, distinct contents, exact duplicates (per
+    (session_id, content)), pre-#128 junk rows, and empty-role rows.
+
+    ``deep`` (default True = legacy behaviour) gates the two expensive
+    whole-table aggregations (``COUNT(DISTINCT content)`` and the
+    ``GROUP BY`` duplicate tally) that turn a quick read into a multi-minute
+    scan on a multi-GB table. With ``deep=False`` those two come back as
+    ``None`` and only the cheap counts are computed.
     """
     if "://" in str(db_path):
         raise ValueError("verbatim cleanup is SQLite-only")
@@ -69,31 +93,30 @@ def analyze(db_path: str) -> dict[str, Any]:
         if not _verbatim_present(conn):
             return {"verbatim_present": False}
         total = conn.execute("SELECT COUNT(*) FROM verbatim_memories").fetchone()[0]
-        distinct_content = conn.execute(
-            "SELECT COUNT(DISTINCT content) FROM verbatim_memories"
-        ).fetchone()[0]
-        # Exact duplicates by (session_id, content): the "extra" copies beyond
-        # the first per group are deletable.
-        dup_extras = conn.execute(
-            """SELECT COALESCE(SUM(c - 1), 0) FROM (
-                   SELECT COUNT(*) AS c FROM verbatim_memories
-                   GROUP BY session_id, content HAVING c > 1
-               )"""
-        ).fetchone()[0]
+        distinct_content: int | None = None
+        dup_extras: int | None = None
+        if deep:
+            distinct_content = int(conn.execute(
+                "SELECT COUNT(DISTINCT content) FROM verbatim_memories"
+            ).fetchone()[0])
+            # Exact duplicates by (session_id, content): the "extra" copies
+            # beyond the first per group are deletable.
+            dup_extras = int(conn.execute(
+                """SELECT COALESCE(SUM(c - 1), 0) FROM (
+                       SELECT COUNT(*) AS c FROM verbatim_memories
+                       GROUP BY session_id, content HAVING c > 1
+                   )"""
+            ).fetchone()[0])
         empty_role = conn.execute(
             "SELECT COUNT(*) FROM verbatim_memories WHERE COALESCE(role, '') = ''"
         ).fetchone()[0]
-        junk = 0
-        for prefix in _JUNK_PREFIXES:
-            junk += conn.execute(
-                "SELECT COUNT(*) FROM verbatim_memories WHERE content LIKE ?",
-                (prefix + "%",),
-            ).fetchone()[0]
+        junk = _junk_prefix_count(conn)
         return {
             "verbatim_present": True,
+            "deep": bool(deep),
             "total": int(total),
-            "distinct_content": int(distinct_content),
-            "duplicate_extras": int(dup_extras),
+            "distinct_content": distinct_content,
+            "duplicate_extras": dup_extras,
             "empty_role_rows": int(empty_role),
             "junk_prefix_rows": int(junk),
             "junk_prefixes": list(_JUNK_PREFIXES),

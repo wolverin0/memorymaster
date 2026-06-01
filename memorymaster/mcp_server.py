@@ -1,5 +1,3 @@
-import base64
-import binascii
 from dataclasses import asdict
 import hashlib
 import http.client
@@ -11,14 +9,17 @@ import re
 import threading
 import time
 from typing import Any, TypeVar
-import unicodedata
 from urllib.parse import urlparse
 
 from memorymaster import mcp_path_policy, observability
 from pydantic import BaseModel, ValidationError
 
 from memorymaster.models import CitationInput
-from memorymaster.security import redact_text, resolve_allow_sensitive_access
+from memorymaster.security import (
+    expand_secret_scan_variants,
+    redact_text,
+    resolve_allow_sensitive_access,
+)
 from memorymaster.service import MemoryService
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,19 @@ _ENV_QUERY_INCLUDE_LEGACY_PROJECT = (
 _DEFAULT_INGEST_RATE_LIMIT_PER_MIN = 60
 _INGEST_RATE_LIMIT_ENV = "MM_INGEST_RATE_LIMIT_PER_MIN"
 _ANONYMOUS_SOURCE_AGENT = "_anonymous"
+# Reserved key for the GLOBAL (cross-agent) bucket. A leading NUL keeps it out
+# of any attacker-chosen source_agent namespace (NUL can't reach here via MCP).
+_GLOBAL_RATE_AGENT = "\x00_global"
+# The global bucket caps AGGREGATE ingestion across all source_agents so an
+# attacker can't bypass the per-agent limit by rotating source_agent values
+# (which previously also grew _INGEST_RATE_BUCKETS without bound). Sized as a
+# multiple of the per-agent limit so legitimate multi-agent fan-out isn't
+# throttled by normal traffic. (audit: rate-limit-partition-key)
+_GLOBAL_RATE_MULTIPLIER = 10
+# Hard cap on distinct per-agent buckets retained in memory; oldest-refilled
+# entries are evicted past this so a source_agent-rotation flood can't grow the
+# dict without bound.
+_MAX_RATE_BUCKETS = 4096
 _INGEST_RATE_BUCKETS: dict[str, tuple[float, float]] = {}
 _INGEST_RATE_BUCKETS_LOCK = threading.Lock()
 _monotonic = time.monotonic
@@ -59,31 +73,6 @@ _COPY_SUFFIX_RE = re.compile(
 # adding words here changes scope identity for every workspace dirname that
 # happens to end with one.
 _CHANNEL_SUFFIX_RE = re.compile(r"-(?:final|prod|production|dev|staging|stage|qa|test)$")
-_BASE64_CANDIDATE_RE = re.compile(
-    r"(?<![A-Za-z0-9+/=_-])"
-    r"(?:[A-Za-z0-9+/]{20,}={0,2}|[A-Za-z0-9_-]{20,}={0,2})"
-    r"(?![A-Za-z0-9+/=_-])"
-)
-_HEX_ESCAPE_SEQUENCE_RE = re.compile(r"(?:\\x[0-9A-Fa-f]{2}){4,}")
-_CONFUSABLE_ASCII_MAP = str.maketrans({
-    "\u0430": "a",  # Cyrillic small a
-    "\u0410": "A",
-    "\u0435": "e",
-    "\u0415": "E",
-    "\u043e": "o",
-    "\u041e": "O",
-    "\u0440": "p",
-    "\u0420": "P",
-    "\u0441": "c",
-    "\u0421": "C",
-    "\u0445": "x",
-    "\u0425": "X",
-    "\u0443": "y",
-    "\u0423": "Y",
-    "\u0456": "i",
-    "\u0406": "I",
-})
-_MAX_SENSITIVITY_SCAN_VARIANTS = 64
 
 
 class _ToolInput(BaseModel):
@@ -175,93 +164,14 @@ def _validate_tool_input(
     return model
 
 
-def _add_sensitivity_variant(queue: list[str], seen: set[str], value: str) -> None:
-    if not value or value in seen or len(seen) + len(queue) >= _MAX_SENSITIVITY_SCAN_VARIANTS:
-        return
-    seen.add(value)
-    queue.append(value)
-
-
-def _decode_text_bytes(raw: bytes) -> str | None:
-    if not raw:
-        return None
-    try:
-        decoded = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
-    if "\x00" in decoded:
-        return None
-    printable = sum(char.isprintable() or char in "\r\n\t" for char in decoded)
-    return decoded if printable / max(len(decoded), 1) >= 0.85 else None
-
-
-def _decode_base64_candidate(candidate: str) -> str | None:
-    if len(candidate) % 4 == 1:
-        return None
-    padded = candidate + ("=" * (-len(candidate) % 4))
-    try:
-        return _decode_text_bytes(base64.b64decode(padded, validate=True))
-    except binascii.Error:
-        try:
-            return _decode_text_bytes(base64.urlsafe_b64decode(padded))
-        except (binascii.Error, ValueError):
-            return None
-
-
-def _decode_hex_escape_sequence(candidate: str) -> str | None:
-    raw = bytes(int(pair, 16) for pair in re.findall(r"\\x([0-9A-Fa-f]{2})", candidate))
-    return _decode_text_bytes(raw)
-
-
-def _iter_json_scan_strings(value: Any):
-    if isinstance(value, str):
-        yield value
-    elif isinstance(value, list):
-        for item in value:
-            yield from _iter_json_scan_strings(item)
-    elif isinstance(value, dict):
-        for key, item in value.items():
-            if isinstance(key, str):
-                yield key
-                if isinstance(item, (str, int, float, bool)):
-                    yield f"{key}={item}"
-            yield from _iter_json_scan_strings(item)
-
-
-def _extract_json_scan_strings(text: str):
-    decoder = json.JSONDecoder()
-    for index, char in enumerate(text):
-        if char not in "[{":
-            continue
-        try:
-            value, _ = decoder.raw_decode(text[index:])
-        except json.JSONDecodeError:
-            continue
-        yield from _iter_json_scan_strings(value)
-
-
 def _sensitivity_scan_variants(text: str):
-    seen = {text}
-    queue = [text]
-    while queue:
-        current = queue.pop(0)
-        yield current
+    """Yield encoded/normalized variants of ``text`` for the ingest guard.
 
-        normalized = unicodedata.normalize("NFKC", current).translate(_CONFUSABLE_ASCII_MAP)
-        _add_sensitivity_variant(queue, seen, normalized)
-
-        for match in _HEX_ESCAPE_SEQUENCE_RE.finditer(current):
-            decoded = _decode_hex_escape_sequence(match.group(0))
-            if decoded:
-                _add_sensitivity_variant(queue, seen, decoded)
-
-        for match in _BASE64_CANDIDATE_RE.finditer(current):
-            decoded = _decode_base64_candidate(match.group(0))
-            if decoded:
-                _add_sensitivity_variant(queue, seen, decoded)
-
-        for nested in _extract_json_scan_strings(current):
-            _add_sensitivity_variant(queue, seen, nested)
+    Thin wrapper over ``security.expand_secret_scan_variants`` so the MCP ingest
+    guard and the storage-time chokepoint share a single decoder implementation
+    (audit: ingest-encoded-secret).
+    """
+    yield from expand_secret_scan_variants(text)
 
 
 def _sensitive_input_error(text: str, field: str = "text") -> dict[str, Any] | None:
@@ -293,6 +203,27 @@ def _ingest_rate_limit_per_min() -> int:
         return _DEFAULT_INGEST_RATE_LIMIT_PER_MIN
 
 
+def _refill_bucket(key: str, limit: int, timestamp: float) -> float:
+    """Return the refilled token count for ``key`` without committing it."""
+    tokens, last_refill = _INGEST_RATE_BUCKETS.get(key, (float(limit), timestamp))
+    elapsed = max(0.0, timestamp - last_refill)
+    return min(float(limit), tokens + elapsed * (limit / 60.0))
+
+
+def _evict_rate_buckets() -> None:
+    """Bound _INGEST_RATE_BUCKETS so source_agent rotation can't grow it forever.
+
+    Evicts the least-recently-refilled per-agent entries (the global bucket is
+    always retained). Caller must hold _INGEST_RATE_BUCKETS_LOCK.
+    """
+    if len(_INGEST_RATE_BUCKETS) <= _MAX_RATE_BUCKETS:
+        return
+    evictable = [k for k in _INGEST_RATE_BUCKETS if k != _GLOBAL_RATE_AGENT]
+    evictable.sort(key=lambda k: _INGEST_RATE_BUCKETS[k][1])
+    for stale_key in evictable[: len(_INGEST_RATE_BUCKETS) - _MAX_RATE_BUCKETS]:
+        del _INGEST_RATE_BUCKETS[stale_key]
+
+
 def _check_ingest_rate_limit(source_agent: str, now: float | None = None) -> dict[str, Any] | None:
     limit = _ingest_rate_limit_per_min()
     if limit == 0:
@@ -300,25 +231,36 @@ def _check_ingest_rate_limit(source_agent: str, now: float | None = None) -> dic
 
     timestamp = _monotonic() if now is None else now
     key = _empty_to_none(source_agent) or _ANONYMOUS_SOURCE_AGENT
+    global_limit = limit * _GLOBAL_RATE_MULTIPLIER
     with _INGEST_RATE_BUCKETS_LOCK:
-        tokens, last_refill = _INGEST_RATE_BUCKETS.get(key, (float(limit), timestamp))
-        elapsed = max(0.0, timestamp - last_refill)
-        refill_rate = limit / 60.0
-        tokens = min(float(limit), tokens + elapsed * refill_rate)
+        agent_tokens = _refill_bucket(key, limit, timestamp)
+        global_tokens = _refill_bucket(_GLOBAL_RATE_AGENT, global_limit, timestamp)
 
-        if tokens < 1.0:
-            retry_after_ms = max(1, int(((1.0 - tokens) / refill_rate) * 1000))
-            _INGEST_RATE_BUCKETS[key] = (tokens, timestamp)
-            return _structured_error(
-                f"ingest_claim rate limit exceeded for source_agent '{key}'.",
-                "RATE_LIMITED",
-                "source_agent",
-                retry_after_ms=retry_after_ms,
-                source_agent=key,
-                limit_per_min=limit,
-            )
+        # Reject if EITHER the per-agent or the aggregate (global) bucket is
+        # exhausted. The global bucket caps aggregate ingestion so rotating
+        # source_agent values can't bypass the limit (audit: rate-limit-key).
+        for bucket_key, tokens, bucket_limit in (
+            (key, agent_tokens, limit),
+            (_GLOBAL_RATE_AGENT, global_tokens, global_limit),
+        ):
+            if tokens < 1.0:
+                refill_rate = bucket_limit / 60.0
+                retry_after_ms = max(1, int(((1.0 - tokens) / refill_rate) * 1000))
+                _INGEST_RATE_BUCKETS[key] = (agent_tokens, timestamp)
+                _INGEST_RATE_BUCKETS[_GLOBAL_RATE_AGENT] = (global_tokens, timestamp)
+                _evict_rate_buckets()
+                return _structured_error(
+                    f"ingest_claim rate limit exceeded for source_agent '{key}'.",
+                    "RATE_LIMITED",
+                    "source_agent",
+                    retry_after_ms=retry_after_ms,
+                    source_agent=key,
+                    limit_per_min=limit,
+                )
 
-        _INGEST_RATE_BUCKETS[key] = (tokens - 1.0, timestamp)
+        _INGEST_RATE_BUCKETS[key] = (agent_tokens - 1.0, timestamp)
+        _INGEST_RATE_BUCKETS[_GLOBAL_RATE_AGENT] = (global_tokens - 1.0, timestamp)
+        _evict_rate_buckets()
     return None
 
 
@@ -985,10 +927,15 @@ if FastMCP is not None:
 
         t0 = _time.perf_counter()
         # Use scope from arg, else env, else derived from workspace.
+        # Parity fix (audit: read-scope-mismatch): when no explicit scope is
+        # given, derive it via the SAME _project_scope helper that ingest uses
+        # (canonicalize_slug + env/disambiguation handling). The previous raw
+        # basename made the read scope diverge from the write scope for any
+        # workspace dirname that needed canonicalization (e.g. "foo - Copy",
+        # "Foo (2)", "whatsappbot-final"), so briefings silently missed claims.
         effective_scope = (project_scope or "").strip()
         if not effective_scope:
-            from os.path import basename, normpath
-            effective_scope = f"project:{basename(normpath(_resolve_workspace(workspace)))}"
+            effective_scope = _project_scope(workspace)
 
         try:
             briefing = _qft(
@@ -1131,8 +1078,28 @@ if FastMCP is not None:
         """
         from memorymaster.rules import build_rule_fields
 
+        try:
+            fields = build_rule_fields(trigger, action, rationale)
+        except ValueError as exc:
+            return _structured_error(str(exc), "VALIDATION_ERROR", "trigger")
+
+        # Parity with ingest_claim (audit: ingest_rule-skips-guards): a rule is
+        # an ingest path, so it MUST share the same rate-limit guard and the
+        # same sensitive-input rejection. Scan the rendered text + rationale +
+        # action so a secret hidden in any rule field is caught before persist.
+        rate_limit_error = _check_ingest_rate_limit(source_agent)
+        if rate_limit_error is not None:
+            return rate_limit_error
+        for guard_field, guard_text in (
+            ("text", fields["text"]),
+            ("rationale", rationale),
+            ("action", action),
+        ):
+            sensitive_error = _sensitive_input_error(guard_text, field=guard_field)
+            if sensitive_error is not None:
+                return sensitive_error
+
         svc = _service(db, workspace)
-        fields = build_rule_fields(trigger, action, rationale)
         # Auto-citation: a rule's provenance is the session that taught it.
         claim = svc.ingest(
             **fields,
@@ -1140,7 +1107,11 @@ if FastMCP is not None:
             scope=scope,
             source_agent=source_agent,
         )
-        return {"ok": True, "claim_id": claim.id, "human_id": claim.human_id, "rule": fields["text"]}
+        # Echo the SANITIZED persisted text (claim.text), never the raw
+        # build_rule_fields output — returning fields["text"] would leak a
+        # secret that the storage-time filter just firewalled at rest into the
+        # client transcript / log.
+        return {"ok": True, "claim_id": claim.id, "human_id": claim.human_id, "rule": claim.text}
 
     @mcp.tool()
     def query_rules(

@@ -416,10 +416,10 @@ class PostgresStore(SQLiteStore):
                         text, idempotency_key, normalized_text, claim_type, subject, predicate, object_value,
                         scope, volatility, status, confidence, pinned, supersedes_claim_id,
                         replaced_by_claim_id, created_at, updated_at, last_validated_at, archived_at,
-                        tenant_id
+                        tenant_id, event_time, valid_from, valid_until, source_agent, visibility
                     ) VALUES (
                         %s, %s, NULL, %s, %s, %s, %s, %s, %s, 'candidate', %s, FALSE, NULL, NULL, %s, %s, NULL, NULL,
-                        %s
+                        %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT (idempotency_key) DO NOTHING
                     RETURNING id
@@ -437,6 +437,11 @@ class PostgresStore(SQLiteStore):
                     now,
                     now,
                     normalized_tenant_id,
+                    event_time,
+                    valid_from if valid_from is not None else now,
+                    valid_until,
+                    source_agent,
+                    visibility,
                 ),
             )
             claim_row = cur.fetchone()
@@ -1405,6 +1410,14 @@ class PostgresStore(SQLiteStore):
             archived_at=cls._as_iso(row["archived_at"]),
             human_id=cls._as_text(row.get("human_id")),
             tenant_id=cls._as_text(row.get("tenant_id")),
+            tier=cls._as_text(row.get("tier")) or "working",
+            access_count=int(row.get("access_count") or 0),
+            last_accessed=cls._as_iso(row.get("last_accessed")),
+            event_time=cls._as_iso(row.get("event_time")),
+            valid_from=cls._as_iso(row.get("valid_from")),
+            valid_until=cls._as_iso(row.get("valid_until")),
+            source_agent=cls._as_text(row.get("source_agent")),
+            visibility=cls._as_text(row.get("visibility")) or "public",
             wiki_article=cls._as_text(row.get("wiki_article")),
         )
 

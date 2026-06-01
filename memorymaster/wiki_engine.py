@@ -156,9 +156,16 @@ def _claim_set_generated_at(articles: list[dict]) -> str:
 
 
 def _call_llm(prompt: str, text: str) -> str:
+    from memorymaster import llm_budget
+
     try:
         from memorymaster.llm_provider import call_llm
         return call_llm(prompt, text)
+    except llm_budget.LLMBudgetExceeded:
+        # Budget abort MUST propagate so absorb() emits its documented
+        # `aborted` metadata instead of silently returning empty bodies that
+        # skip the remaining subjects while the run reports success.
+        raise
     except Exception:
         return ""
 
@@ -359,6 +366,12 @@ def _stamp_wiki_binding(db_path: str, claim_ids: list[int], slug: str) -> None:
         return
     try:
         conn = sqlite3.connect(db_path)
+        # WAL + busy_timeout so a concurrent writer (steward cycle, MCP ingest)
+        # doesn't give us an immediate SQLITE_BUSY that silently drops the
+        # wiki_article binding. Matches the shared-DB writer convention used
+        # across storage.py / operator_queue.py.
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
         placeholders = ",".join("?" * len(claim_ids))
         conn.execute(
             f"UPDATE claims SET wiki_article = ? WHERE id IN ({placeholders})",
@@ -368,8 +381,11 @@ def _stamp_wiki_binding(db_path: str, claim_ids: list[int], slug: str) -> None:
         conn.close()
     except sqlite3.OperationalError as exc:
         # Column missing on older DB — skip silently; backfill will cover it.
-        if "no such column" not in str(exc).lower():
-            logger.warning("wiki binding stamp failed: %s", exc)
+        if "no such column" in str(exc).lower():
+            return
+        # SQLITE_BUSY / locked or any other operational failure dropped the
+        # binding — surface it rather than swallowing it.
+        logger.warning("wiki binding stamp failed: %s", exc)
     except Exception as exc:
         logger.warning("wiki binding stamp failed: %s", exc)
 
@@ -478,23 +494,34 @@ def _absorb_impl(
         if existing_path.exists():
             # Update: preserve timeline, rewrite compiled truth
             existing_body = existing_path.read_text(encoding="utf-8", errors="replace")
-            # Split at --- separator to extract existing timeline
+            # Strip YAML frontmatter first so the LLM is fed the real PROSE,
+            # not the title/tags/claims metadata. Without this, every
+            # re-absorb rewrites from frontmatter and discards the compiled
+            # truth, so it regresses each pass. Same split as
+            # absorb_single_claim (split on the '---' fence, maxsplit=2).
+            existing_content = existing_body
+            frontmatter_parts = existing_body.split("---", 2)
+            if existing_body.startswith("---") and len(frontmatter_parts) >= 3:
+                existing_content = frontmatter_parts[2].lstrip()
+            # Split at --- separator to extract existing timeline. The first
+            # segment is the compiled-truth prose (before the truth/timeline
+            # divider); later segments hold the timeline.
             existing_timeline = ""
-            body_parts = existing_body.split("\n---\n")
+            body_parts = existing_content.split("\n---\n")
             if len(body_parts) >= 2:
-                # Everything after frontmatter's --- and the compiled truth's ---
                 # Find the timeline section
                 for i, part in enumerate(body_parts):
                     if "###" in part and ("undated" in part.lower() or "20" in part[:20]):
                         existing_timeline = "\n---\n".join(body_parts[i:])
                         break
 
+            existing_truth = body_parts[0] if body_parts else existing_content
             update_prompt = f"""Rewrite ONLY the compiled truth section of this wiki article with new claims.
 The compiled truth should reflect the CURRENT understanding including the new claims.
 Do NOT include the timeline section — I will preserve it separately.
 
 Existing compiled truth:
-{body_parts[0][:1500] if body_parts else existing_body[:1500]}
+{existing_truth[:1500]}
 
 New claims to integrate:
 {claims_text}
@@ -803,15 +830,49 @@ def breakdown(db_path: str, wiki_dir: str | Path, scope_filter: str | None = Non
             for s in suggestions[:5]:
                 entity = s.get("entity", "")
                 desc = s.get("description", "")
-                if entity and desc:
-                    # Create stub article
-                    result = absorb(db_path, wiki_dir, scope_filter=scope_filter)
-                    created += result.get("articles_written", 0)
-                    break  # absorb handles all at once
+                if not entity or not desc:
+                    continue
+                # Create only the LLM-SELECTED entity, not a blanket
+                # scope-wide absorb. Resolve a representative claim for this
+                # subject and absorb it individually so `created` reflects
+                # the entities the LLM actually chose.
+                claim_id = _resolve_subject_claim_id(db_path, entity, scope_filter)
+                if claim_id is None:
+                    continue
+                result = absorb_single_claim(claim_id, db_path, wiki_dir)
+                if result.get("absorbed") and not result.get("updated"):
+                    created += 1
         except (json.JSONDecodeError, KeyError):
             pass
 
     return {"missing": len(missing), "created": created}
+
+
+def _resolve_subject_claim_id(
+    db_path: str, subject: str, scope_filter: str | None = None
+) -> int | None:
+    """Return the highest-confidence active claim id for a subject.
+
+    Used by ``breakdown`` to turn an LLM-selected entity into a concrete
+    claim that ``absorb_single_claim`` can materialise into its own article.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        query = (
+            "SELECT id FROM claims "
+            "WHERE subject = ? AND status IN ('confirmed','candidate')"
+        )
+        params: list = [subject]
+        if scope_filter:
+            query += " AND scope LIKE ?"
+            params.append(f"{scope_filter}%")
+        query += " ORDER BY confidence DESC, id ASC LIMIT 1"
+        row = conn.execute(query, params).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        conn.close()
+    return int(row[0]) if row else None
 
 
 def _write_indexes(wiki: Path, articles: list[dict]) -> None:
