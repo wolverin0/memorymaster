@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import os
 import re
+import unicodedata
+from collections.abc import Iterator
 from collections.abc import Mapping
 from dataclasses import asdict
 from dataclasses import dataclass
@@ -295,6 +298,158 @@ def _redact(text: str) -> tuple[str, list[str]]:
     return out, findings
 
 
+# --- Shared encoded-secret variant scanner (audit: ingest-encoded-secret) ----
+# Previously this base64/hex/confusable decoder lived ONLY in mcp_server and
+# ran only on ingest_claim's `text` field, so every other ingest path
+# (ingest_rule, dream_bridge, transcript_miner, verbatim_store, service.ingest
+# of object_value/subject/predicate/citations) persisted encoded secrets
+# verbatim. Moving it into the storage-time chokepoint here means all callers
+# that route through `_redact`/`sanitize_claim_input`/`is_sensitive_claim`
+# detect an encoded secret and flag the claim sensitive. mcp_server reuses the
+# same generator so there is a single source of truth.
+_BASE64_CANDIDATE_RE = re.compile(
+    r"(?<![A-Za-z0-9+/=_-])"
+    r"(?:[A-Za-z0-9+/]{20,}={0,2}|[A-Za-z0-9_-]{20,}={0,2})"
+    r"(?![A-Za-z0-9+/=_-])"
+)
+_HEX_ESCAPE_SEQUENCE_RE = re.compile(r"(?:\\x[0-9A-Fa-f]{2}){4,}")
+_CONFUSABLE_ASCII_MAP = str.maketrans({
+    "а": "a",  # Cyrillic small a
+    "А": "A",
+    "е": "e",
+    "Е": "E",
+    "о": "o",
+    "О": "O",
+    "р": "p",
+    "Р": "P",
+    "с": "c",
+    "С": "C",
+    "х": "x",
+    "Х": "X",
+    "у": "y",
+    "У": "Y",
+    "і": "i",
+    "І": "I",
+})
+_MAX_SECRET_SCAN_VARIANTS = 64
+
+
+def _add_scan_variant(queue: list[str], seen: set[str], value: str) -> None:
+    if not value or value in seen or len(seen) + len(queue) >= _MAX_SECRET_SCAN_VARIANTS:
+        return
+    seen.add(value)
+    queue.append(value)
+
+
+def _decode_text_bytes(raw: bytes) -> str | None:
+    if not raw:
+        return None
+    try:
+        decoded = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if "\x00" in decoded:
+        return None
+    printable = sum(char.isprintable() or char in "\r\n\t" for char in decoded)
+    return decoded if printable / max(len(decoded), 1) >= 0.85 else None
+
+
+def _decode_base64_candidate(candidate: str) -> str | None:
+    if len(candidate) % 4 == 1:
+        return None
+    padded = candidate + ("=" * (-len(candidate) % 4))
+    try:
+        return _decode_text_bytes(base64.b64decode(padded, validate=True))
+    except binascii.Error:
+        try:
+            return _decode_text_bytes(base64.urlsafe_b64decode(padded))
+        except (binascii.Error, ValueError):
+            return None
+
+
+def _decode_hex_escape_sequence(candidate: str) -> str | None:
+    raw = bytes(int(pair, 16) for pair in re.findall(r"\\x([0-9A-Fa-f]{2})", candidate))
+    return _decode_text_bytes(raw)
+
+
+def _iter_json_scan_strings(value: object) -> Iterator[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for item in value:
+            yield from _iter_json_scan_strings(item)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            if isinstance(key, str):
+                yield key
+                if isinstance(item, (str, int, float, bool)):
+                    yield f"{key}={item}"
+            yield from _iter_json_scan_strings(item)
+
+
+def _extract_json_scan_strings(text: str) -> Iterator[str]:
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char not in "[{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        yield from _iter_json_scan_strings(value)
+
+
+def expand_secret_scan_variants(text: str) -> Iterator[str]:
+    """Yield ``text`` plus decoded/normalized variants for secret scanning.
+
+    Expands confusable-folded, base64-decoded, hex-escape-decoded, and embedded
+    JSON-string variants (breadth-first, capped at ``_MAX_SECRET_SCAN_VARIANTS``)
+    so a credential hidden behind one layer of encoding is still surfaced to the
+    regex filter. This is the single source of truth shared by the storage-time
+    chokepoint and the MCP ingest guard.
+    """
+    if not text:
+        return
+    seen = {text}
+    queue = [text]
+    while queue:
+        current = queue.pop(0)
+        yield current
+
+        normalized = unicodedata.normalize("NFKC", current).translate(_CONFUSABLE_ASCII_MAP)
+        _add_scan_variant(queue, seen, normalized)
+
+        for match in _HEX_ESCAPE_SEQUENCE_RE.finditer(current):
+            decoded = _decode_hex_escape_sequence(match.group(0))
+            if decoded:
+                _add_scan_variant(queue, seen, decoded)
+
+        for match in _BASE64_CANDIDATE_RE.finditer(current):
+            decoded = _decode_base64_candidate(match.group(0))
+            if decoded:
+                _add_scan_variant(queue, seen, decoded)
+
+        for nested in _extract_json_scan_strings(current):
+            _add_scan_variant(queue, seen, nested)
+
+
+def scan_text_for_findings(text: str) -> list[str]:
+    """Return de-duplicated finding names across all encoded variants of ``text``.
+
+    Unlike ``_redact`` (which substitutes in-place on the literal text only),
+    this walks decoded/normalized variants so an encoded secret is detected even
+    though it cannot be substituted back into the original bytes. Callers use the
+    result to decide whether a claim is sensitive (flag + encrypt-at-rest).
+    """
+    findings: list[str] = []
+    for variant in expand_secret_scan_variants(text):
+        _, variant_findings = _redact(variant)
+        for finding in variant_findings:
+            if finding not in findings:
+                findings.append(finding)
+    return findings
+
+
 def _get_fernet():
     key = os.getenv(_ENCRYPTION_ENV_VAR)
     if not key:
@@ -355,6 +510,19 @@ def sanitize_claim_input(
         sanitized_citations.append(CitationInput(source=cite.source, locator=cite.locator, excerpt=excerpt))
     findings.extend(citation_findings)
 
+    # Encoded-secret sweep (audit: ingest-encoded-secret): a credential hidden
+    # behind base64/hex/confusable encoding survives the literal `_redact`
+    # substitution above (the regexes don't match the encoded bytes). Scan the
+    # decoded variants of every inbound field so the claim is flagged sensitive
+    # (and thus encrypted-at-rest / hidden from recall) even when the raw text
+    # we persist still carries the encoded form.
+    for raw_field in (text, object_value, subject, predicate):
+        if raw_field:
+            findings.extend(scan_text_for_findings(raw_field))
+    for cite in citations:
+        if cite.excerpt:
+            findings.extend(scan_text_for_findings(cite.excerpt))
+
     dedup_findings = sorted(set(findings))
     is_sensitive = len(dedup_findings) > 0
     encrypted_payload = _encrypt_payload(
@@ -385,5 +553,6 @@ def is_sensitive_claim(claim: Claim) -> bool:
     )
     if "[REDACTED:" in combined:
         return True
-    _, findings = _redact(combined)
-    return len(findings) > 0
+    # Scan decoded variants too so a stored claim carrying an encoded secret
+    # (base64/hex/confusable) is still treated as sensitive at read time.
+    return len(scan_text_for_findings(combined)) > 0

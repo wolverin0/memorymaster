@@ -623,3 +623,113 @@ class TestPostgresStoreUnit:
         store = PostgresStore.__new__(PostgresStore)
         with pytest.raises(ValueError, match="must be different"):
             store.add_claim_link(5, 5, "relates_to")
+
+    # -- Regression: postgres-parity audit (claim columns dropped on read) ---
+
+    @staticmethod
+    def _claim_row(**overrides):
+        """A psycopg dict-row with all claims columns populated."""
+        row = {
+            "id": 1, "text": "t", "idempotency_key": None,
+            "normalized_text": None, "claim_type": None, "subject": "s",
+            "predicate": "p", "object_value": None, "scope": "project:x",
+            "volatility": "medium", "status": "candidate", "confidence": 0.5,
+            "pinned": False, "supersedes_claim_id": None,
+            "replaced_by_claim_id": None,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "last_validated_at": None, "archived_at": None, "human_id": None,
+            "tenant_id": None, "tier": "working", "access_count": 0,
+            "last_accessed": None, "event_time": None, "valid_from": None,
+            "valid_until": None, "source_agent": None, "visibility": "public",
+            "wiki_article": None,
+        }
+        row.update(overrides)
+        return row
+
+    def test_row_to_claim_preserves_visibility_and_source_agent(self):
+        """WHY: visibility gates the cross-agent sensitivity filter. If reads
+        always return 'public', a claim stored as sensitive leaks to query_memory.
+        source_agent is recall provenance; dropping it corrupts attribution."""
+        from memorymaster.postgres_store import PostgresStore
+
+        row = self._claim_row(visibility="sensitive", source_agent="claude-session")
+        claim = PostgresStore._row_to_claim(row)
+        assert claim.visibility == "sensitive"
+        assert claim.source_agent == "claude-session"
+
+    def test_row_to_claim_preserves_tier_and_access_count(self):
+        """WHY: tier and access_count drive recall ordering. If every read
+        reports tier='working'/access_count=0, recompute-tiers and ranking
+        silently flatten — core claims sink to the bottom."""
+        from memorymaster.postgres_store import PostgresStore
+
+        row = self._claim_row(tier="core", access_count=99)
+        claim = PostgresStore._row_to_claim(row)
+        assert claim.tier == "core"
+        assert claim.access_count == 99
+
+    def test_row_to_claim_preserves_temporal_fields(self):
+        """WHY: bitemporal fields drive steward decay decisions. Returning NULL
+        for valid_from/valid_until/event_time makes 'valid until X' modelling
+        invisible to the steward."""
+        from memorymaster.postgres_store import PostgresStore
+
+        row = self._claim_row(
+            event_time="2025-12-31T00:00:00+00:00",
+            valid_from="2026-01-01T00:00:00+00:00",
+            valid_until="2027-01-01T00:00:00+00:00",
+            last_accessed="2026-02-02T00:00:00+00:00",
+        )
+        claim = PostgresStore._row_to_claim(row)
+        assert claim.event_time.startswith("2025-12-31")
+        assert claim.valid_from.startswith("2026-01-01")
+        assert claim.valid_until.startswith("2027-01-01")
+        assert claim.last_accessed.startswith("2026-02-02")
+
+    def test_row_to_claim_defaults_match_dataclass_when_absent(self):
+        """WHY: a legacy row without the new columns must fall back to the SAME
+        defaults the dataclass / _storage_read.py declare, never crash."""
+        from memorymaster.postgres_store import PostgresStore
+
+        base = self._claim_row()
+        for col in ("tier", "access_count", "last_accessed", "event_time",
+                    "valid_from", "valid_until", "source_agent", "visibility"):
+            base.pop(col)
+        claim = PostgresStore._row_to_claim(base)
+        assert claim.visibility == "public"
+        assert claim.tier == "working"
+        assert claim.access_count == 0
+        assert claim.source_agent is None
+        assert claim.event_time is None
+
+    def test_create_claim_insert_writes_temporal_and_provenance(self):
+        """WHY: create_claim must persist event_time/valid_from/valid_until/
+        source_agent/visibility on insert, otherwise the read path has nothing
+        to return (write/read must stay symmetric)."""
+        import inspect
+
+        from memorymaster.postgres_store import PostgresStore
+
+        src = inspect.getsource(PostgresStore.create_claim)
+        insert = src[src.index("INSERT INTO claims"):src.index("VALUES")]
+        for col in ("event_time", "valid_from", "valid_until",
+                    "source_agent", "visibility"):
+            assert col in insert, f"create_claim INSERT drops {col}"
+
+    def test_postgres_schema_has_claim_parity_columns(self):
+        """WHY: SQLite schema has these 8 columns; Postgres must too, or the
+        0004 query_cache trigger (UPDATE OF valid_from, valid_until, tier)
+        aborts init_db and the whole Postgres backend fails to initialize."""
+        from pathlib import Path
+
+        import memorymaster
+
+        schema = (Path(memorymaster.__file__).parent / "schema_postgres.sql").read_text(
+            encoding="utf-8"
+        )
+        for col in ("event_time", "valid_from", "valid_until", "source_agent",
+                    "visibility", "tier", "access_count", "last_accessed"):
+            assert col in schema, f"schema_postgres.sql missing {col}"
+        assert "visibility TEXT NOT NULL DEFAULT 'public'" in schema
+        assert "tier TEXT NOT NULL DEFAULT 'working'" in schema

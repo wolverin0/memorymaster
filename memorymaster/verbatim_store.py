@@ -110,12 +110,19 @@ def _store_verbatim_conn(
 
     now = timestamp or datetime.now(timezone.utc).isoformat()
 
-    # Dedup by exact content within the same session. Uses idx_verbatim_session
-    # so the lookup is O(rows-in-session), not table-scan. The previous FTS5-based
-    # dedup query passed a sha256 hex prefix to MATCH which never resolves -
-    # the FTS5 index stores the content text, not its hash. Result: 9M+ rows
-    # accumulated for orchestrator sessions because every Stop event re-inserted
-    # every message. Fixed 2026-05-03; see mm-0c43.
+    # Dedup by exact content within the same session. The composite
+    # idx_verbatim_session_content(session_id, content) (migration 0006) makes
+    # this an index seek/probe instead of an O(rows-in-session) scan that
+    # byte-compares the ~262 KB content of every other row in the session — the
+    # equality predicate is sargable against the leading session_id + content
+    # columns. Without that index SQLite can only use the single-column
+    # idx_verbatim_session and re-reads every content blob, which on hot
+    # orchestrator sessions dominated insert time.
+    #
+    # The previous FTS5-based dedup query passed a sha256 hex prefix to MATCH
+    # which never resolves - the FTS5 index stores the content text, not its
+    # hash. Result: 9M+ rows accumulated for orchestrator sessions because every
+    # Stop event re-inserted every message. Fixed 2026-05-03; see mm-0c43.
     existing = conn.execute(
         "SELECT id FROM verbatim_memories WHERE session_id = ? AND content = ? LIMIT 1",
         (session_id, content),

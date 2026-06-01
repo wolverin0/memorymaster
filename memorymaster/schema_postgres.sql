@@ -31,6 +31,14 @@ CREATE TABLE IF NOT EXISTS claims (
     archived_at TIMESTAMPTZ,
     human_id TEXT,
     tenant_id TEXT,
+    tier TEXT NOT NULL DEFAULT 'working',
+    access_count BIGINT NOT NULL DEFAULT 0,
+    last_accessed TIMESTAMPTZ,
+    event_time TIMESTAMPTZ,
+    valid_from TIMESTAMPTZ,
+    valid_until TIMESTAMPTZ,
+    source_agent TEXT,
+    visibility TEXT NOT NULL DEFAULT 'public',
     wiki_article TEXT
 );
 
@@ -39,6 +47,19 @@ ALTER TABLE claims
 
 ALTER TABLE claims
     ADD COLUMN IF NOT EXISTS wiki_article TEXT;
+
+-- Parity with SQLite schema.sql / dataclass defaults (postgres-parity audit).
+-- Forward-migrate these columns on pre-existing Postgres DBs created before
+-- the parity fix, BEFORE the 0004 query_cache trigger references valid_from/
+-- valid_until. Postgres supports ADD COLUMN IF NOT EXISTS natively.
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'working';
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS access_count BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS last_accessed TIMESTAMPTZ;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS event_time TIMESTAMPTZ;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS valid_until TIMESTAMPTZ;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS source_agent TEXT;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'public';
 
 CREATE OR REPLACE FUNCTION memorymaster_claims_confirmed_tuple_guard()
 RETURNS trigger

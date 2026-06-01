@@ -24,13 +24,31 @@ def _text_hash(text: str) -> str:
     return hashlib.sha256(text.strip().lower().encode("utf-8")).hexdigest()[:16]
 
 
+# Columns whose values are local to a single DB and MUST NOT be carried across
+# a merge. ``human_id`` and ``idempotency_key`` are UNIQUE-indexed, so copying a
+# source value can collide with an unrelated target row and (pre-fix) silently
+# drop a genuinely-new claim. ``supersedes_claim_id`` / ``replaced_by_claim_id``
+# reference source-side row ids that are meaningless in the target. The target
+# re-allocates ``human_id`` (NULL on insert) and link references are cleared;
+# conflict resolution re-establishes links using target ids afterwards.
+_NON_PORTABLE_COLS = frozenset(
+    {"human_id", "supersedes_claim_id", "replaced_by_claim_id"}
+)
+
+
 def _build_insert_values(
     row: sqlite3.Row, common_cols: list[str], ikey: str
 ) -> tuple[list[str], list[object]]:
-    """Build column names and values for claim insertion."""
+    """Build column names and values for claim insertion.
+
+    Skips non-portable columns (``human_id`` and link references) so the target
+    re-allocates a fresh ``human_id`` and does not import dangling row-id links.
+    """
     cols_to_insert = []
     values = []
     for col in common_cols:
+        if col in _NON_PORTABLE_COLS:
+            continue
         if col == "idempotency_key":
             values.append(ikey)
         else:
@@ -120,6 +138,7 @@ def _find_existing_target_claim(
     tgt: sqlite3.Connection,
     ikey: object,
     text: str,
+    hash_to_id: dict[str, int] | None = None,
 ) -> dict[str, object] | None:
     if ikey:
         row = tgt.execute("SELECT * FROM claims WHERE idempotency_key = ?", (ikey,)).fetchone()
@@ -127,6 +146,15 @@ def _find_existing_target_claim(
             return dict(row)
 
     text_hash = _text_hash(text)
+    # Indexed primary-key lookup via a precomputed {text_hash: id} map avoids the
+    # O(n) full-table scan per source row (which made the merge O(n^2) overall).
+    if hash_to_id is not None:
+        claim_id = hash_to_id.get(text_hash)
+        if claim_id is None:
+            return None
+        row = tgt.execute("SELECT * FROM claims WHERE id = ?", (claim_id,)).fetchone()
+        return dict(row) if row else None
+
     for row in tgt.execute("SELECT * FROM claims").fetchall():
         if _text_hash(row["text"]) == text_hash:
             return dict(row)
@@ -151,6 +179,29 @@ def _reconcile_existing_claim(
     )
 
 
+def _record_supersession_event(
+    tgt: sqlite3.Connection, loser_id: int, winner_id: int
+) -> None:
+    """Append a supersession transition event for a loser claim.
+
+    Mirrors the lifecycle invariant that every status transition leaves an
+    event-chain record. Best-effort: an Atlas/legacy DB without an ``events``
+    table simply skips the record rather than failing the whole merge.
+    """
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        tgt.execute(
+            """
+            INSERT INTO events
+                (claim_id, event_type, from_status, to_status, details, created_at)
+            VALUES (?, 'supersession', NULL, 'superseded', ?, ?)
+            """,
+            (loser_id, f"merge: superseded by claim {winner_id}", now),
+        )
+    except sqlite3.OperationalError:
+        pass  # events table absent on this DB
+
+
 def _apply_conflict_resolution(
     tgt: sqlite3.Connection,
     source_row: sqlite3.Row,
@@ -164,13 +215,24 @@ def _apply_conflict_resolution(
     merged_claim["id"] = new_id
     winner = max([merged_claim, *conflicts], key=lambda claim: _claim_priority(tgt, claim))
     winner_id = int(winner["id"])
-    for claim in [merged_claim, *conflicts]:
-        claim_id = int(claim["id"])
-        if claim_id != winner_id:
-            tgt.execute(
-                "UPDATE claims SET status = 'superseded', replaced_by_claim_id = ? WHERE id = ?",
-                (winner_id, claim_id),
-            )
+    loser_ids = [
+        int(claim["id"]) for claim in [merged_claim, *conflicts] if int(claim["id"]) != winner_id
+    ]
+    for loser_id in loser_ids:
+        # Set BOTH sides of the supersession link so the invariant holds and the
+        # wiki/steward don't see a half-broken pair, and record the transition.
+        tgt.execute(
+            "UPDATE claims SET status = 'superseded', replaced_by_claim_id = ? WHERE id = ?",
+            (winner_id, loser_id),
+        )
+        _record_supersession_event(tgt, loser_id, winner_id)
+    # The winner's supersedes_claim_id closes the link from its side. The column
+    # is single-valued; point it at the first loser it replaced.
+    if loser_ids and "supersedes_claim_id" in target_cols:
+        tgt.execute(
+            "UPDATE claims SET supersedes_claim_id = ? WHERE id = ? AND supersedes_claim_id IS NULL",
+            (loser_ids[0], winner_id),
+        )
 
 
 def _insert_claim_into_target(
@@ -182,6 +244,8 @@ def _insert_claim_into_target(
     tgt: sqlite3.Connection,
 ) -> int | None:
     """Insert a single claim into target DB and copy citations. Returns new id if successful."""
+    src_id = row["id"] if "id" in row.keys() else "?"
+    text_hash = _text_hash(text)
     try:
         cols_to_insert, values = _build_insert_values(row, common_cols, ikey)
         placeholders = ",".join("?" for _ in cols_to_insert)
@@ -195,9 +259,75 @@ def _insert_claim_into_target(
 
         _copy_claim_citations(src, tgt, row["id"], new_id)
         return int(new_id)
-    except Exception as exc:
-        logger.warning("Failed to merge claim: %s", exc)
+    except sqlite3.IntegrityError as exc:
+        # A genuine UNIQUE/constraint collision (e.g. idempotency_key already
+        # present after another path inserted it). Log enough to trace which
+        # claim was dropped — do NOT swallow it as a generic "merge error".
+        logger.warning(
+            "Constraint collision merging claim src_id=%s text_hash=%s: %s",
+            src_id, text_hash, exc,
+        )
         return None
+    except sqlite3.OperationalError as exc:
+        # Schema/operational problem (missing column, locked DB after retries).
+        logger.warning(
+            "Operational error merging claim src_id=%s text_hash=%s: %s",
+            src_id, text_hash, exc,
+        )
+        return None
+
+
+def _open_target(target_db: str) -> sqlite3.Connection:
+    """Open the shared target DB like ``SQLiteStore.connect``.
+
+    WAL + a busy_timeout are mandatory for the shared OpenClaw DB: without them
+    a long merge transaction races concurrent readers/writers and surfaces
+    sporadic ``database is locked`` errors. ``timeout`` is the connect-level
+    busy handler; the explicit PRAGMA mirrors storage.py's WAL guarantee.
+    """
+    conn = sqlite3.connect(target_db, timeout=30.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 30000")
+    return conn
+
+
+def _max_schema_version(conn: sqlite3.Connection) -> int | None:
+    """Return the highest applied schema version, or None if untracked."""
+    try:
+        row = conn.execute("SELECT MAX(version) FROM schema_versions").fetchone()
+    except sqlite3.OperationalError:
+        return None  # legacy DB without migration bookkeeping
+    if row is None or row[0] is None:
+        return None
+    return int(row[0])
+
+
+def _check_schema_compatibility(
+    src: sqlite3.Connection, tgt: sqlite3.Connection
+) -> None:
+    """Refuse to merge across incompatible schema versions.
+
+    If both DBs track migrations and their highest applied versions differ, a
+    row valid in one may violate the other's CHECK constraints. Raise rather
+    than import rows the target forbids. If either side is untracked we cannot
+    compare, so we only warn.
+    """
+    src_v = _max_schema_version(src)
+    tgt_v = _max_schema_version(tgt)
+    if src_v is None or tgt_v is None:
+        logger.warning(
+            "Schema version unknown (source=%s, target=%s); merging without a "
+            "compatibility guarantee.", src_v, tgt_v,
+        )
+        return
+    if src_v != tgt_v:
+        raise ValueError(
+            "Refusing to merge across incompatible schema versions: "
+            f"source applied v{src_v}, target applied v{tgt_v}. "
+            "Migrate both DBs to the same version first."
+        )
 
 
 def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
@@ -213,20 +343,27 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
     if not Path(source_db).exists():
         raise FileNotFoundError(f"Source DB not found: {source_db}")
 
-    src = sqlite3.connect(source_db)
+    src = sqlite3.connect(source_db, timeout=30.0)
     src.row_factory = sqlite3.Row
-    tgt = sqlite3.connect(target_db)
-    tgt.row_factory = sqlite3.Row
+    tgt = _open_target(target_db)
 
     try:
-        # Build set of existing claim fingerprints in target
+        # Refuse to import rows the target's CHECK constraints may forbid.
+        _check_schema_compatibility(src, tgt)
+
+        # Build set of existing claim fingerprints in target. The {text_hash: id}
+        # map lets reconciliation look claims up by primary key instead of
+        # re-scanning the whole table per source row (the old O(n^2) cost).
         existing_keys: set[str] = set()
         existing_hashes: set[str] = set()
+        hash_to_id: dict[str, int] = {}
 
-        for row in tgt.execute("SELECT idempotency_key, text FROM claims").fetchall():
+        for row in tgt.execute("SELECT id, idempotency_key, text FROM claims").fetchall():
             if row["idempotency_key"]:
                 existing_keys.add(row["idempotency_key"])
-            existing_hashes.add(_text_hash(row["text"]))
+            thash = _text_hash(row["text"])
+            existing_hashes.add(thash)
+            hash_to_id.setdefault(thash, int(row["id"]))
 
         # Get all columns from source claims table
         src_cols = [col[1] for col in src.execute("PRAGMA table_info(claims)").fetchall()]
@@ -237,6 +374,8 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
         # Scan source claims
         source_claims = src.execute("SELECT * FROM claims WHERE status != 'archived'").fetchall()
 
+        batch_size = 200
+        pending = 0
         for row in source_claims:
             stats["scanned"] += 1
             ikey = row["idempotency_key"] if "idempotency_key" in row.keys() else None
@@ -244,7 +383,7 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
 
             # Reconcile duplicates deterministically instead of letting merge order win.
             if (ikey and ikey in existing_keys) or _text_hash(text) in existing_hashes:
-                existing_claim = _find_existing_target_claim(tgt, ikey, text)
+                existing_claim = _find_existing_target_claim(tgt, ikey, text, hash_to_id)
                 if existing_claim:
                     _reconcile_existing_claim(tgt, row, existing_claim, tgt_cols)
                 stats["skipped"] += 1
@@ -260,10 +399,19 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
             if new_id is not None:
                 _apply_conflict_resolution(tgt, row, new_id, tgt_cols, conflicts)
                 existing_keys.add(ikey)
-                existing_hashes.add(_text_hash(text))
+                thash = _text_hash(text)
+                existing_hashes.add(thash)
+                hash_to_id.setdefault(thash, new_id)
                 stats["merged"] += 1
             else:
                 stats["errors"] += 1
+
+            # Commit in batches so a long single transaction doesn't hold the
+            # shared DB locked for the whole merge.
+            pending += 1
+            if pending >= batch_size:
+                tgt.commit()
+                pending = 0
 
         tgt.commit()
 
