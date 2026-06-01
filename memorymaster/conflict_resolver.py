@@ -288,14 +288,21 @@ def detect_conflicts(
             key=lambda c: (c.confidence, _parse_iso(c.updated_at) or datetime.min.replace(tzinfo=timezone.utc), c.id),
             reverse=True,
         )
-        # Pairwise resolution: best claim is the winner, all others are losers
-        best = sorted_group[0]
-        for other in sorted_group[1:]:
-            pair = _pick_winner(best, other)
-            # Update best if this pair's winner is different (shouldn't happen with sorted order,
-            # but _pick_winner has pinned logic that can override)
-            best = pair.winner
-            pairs.append(pair)
+        # MED audit fix: determine the SINGLE group winner ONCE by reducing
+        # _pick_winner over the whole group (so pinned/priority logic settles on
+        # one champion), THEN emit (group_winner, loser) pairs for every other
+        # claim. The previous loop reassigned `best = pair.winner` on each
+        # iteration, so when _pick_winner's pinned/priority logic flipped the
+        # intermediate winner, earlier losers were left pointing (replaced_by) at
+        # a claim that was itself later superseded — a dead-link chain.
+        group_winner = sorted_group[0]
+        for candidate in sorted_group[1:]:
+            group_winner = _pick_winner(group_winner, candidate).winner
+
+        for loser in sorted_group:
+            if loser is group_winner:
+                continue
+            pairs.append(_pick_winner(group_winner, loser))
 
     return pairs
 

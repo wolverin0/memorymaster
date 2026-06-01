@@ -90,6 +90,14 @@ def _has_fts5_table(conn: sqlite3.Connection) -> bool:
     return row is not None
 
 
+# Statuses a claim may have and still be a valid "canonical" target to dedupe
+# a fresh candidate against. A retired (archived), replaced (superseded), or
+# contested (conflicted) claim must NOT be treated as the canonical survivor —
+# archiving a newer candidate in favour of one of those drops live information
+# in favour of a dead/contested row.
+_CANONICAL_DEDUPE_STATUSES = ("confirmed", "candidate", "stale")
+
+
 def fts_candidates_in_scope(
     conn: sqlite3.Connection,
     *,
@@ -101,7 +109,11 @@ def fts_candidates_in_scope(
     """Return list of (id, text, status) candidate matches via FTS5 OR-query.
 
     Empty list if FTS5 isn't present, scope is empty, or there are no matches.
-    Excludes archived claims and the candidate itself.
+    Excludes the candidate itself and any claim whose status is not a valid
+    canonical-dedupe target (archived / superseded / conflicted) — MED audit
+    fix: a fresh candidate must never be archived as a duplicate of a retired,
+    replaced, or contested claim, which would drop the possibly-newer candidate
+    in favour of a dead one.
     """
     if not text or not text.strip() or not scope:
         return []
@@ -109,19 +121,20 @@ def fts_candidates_in_scope(
         return []
 
     fts_query = _escape_fts5_query(text)
+    status_placeholders = ", ".join("?" for _ in _CANONICAL_DEDUPE_STATUSES)
     rows = conn.execute(
-        """
+        f"""
         SELECT c.id, c.text, c.status
         FROM claims c
         JOIN claims_fts ON claims_fts.rowid = c.id
         WHERE claims_fts MATCH ?
           AND c.scope = ?
           AND c.id <> ?
-          AND c.status <> 'archived'
+          AND c.status IN ({status_placeholders})
         ORDER BY bm25(claims_fts) ASC
         LIMIT ?
         """,
-        (fts_query, scope, exclude_id, limit),
+        (fts_query, scope, exclude_id, *_CANONICAL_DEDUPE_STATUSES, limit),
     ).fetchall()
 
     return [(int(r[0]), r[1] or "", r[2] or "") for r in rows]

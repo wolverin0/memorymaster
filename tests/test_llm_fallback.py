@@ -158,15 +158,27 @@ def test_case_e_both_fail_no_crash_returns_primary(monkeypatch):
 
 
 def test_case_f_fallback_model_is_honored_and_restored(monkeypatch):
-    """MEMORYMASTER_LLM_FALLBACK_MODEL is swapped in during fallback, restored after."""
+    """MEMORYMASTER_LLM_FALLBACK_MODEL is honored during fallback, restored after.
+
+    The model override is delivered to providers via ``llm_provider._env``
+    (a contextvar override) rather than by mutating ``os.environ`` — every real
+    provider (_call_google/_call_openai/...) reads its model through ``_env``,
+    so the stubs read it the same way. Mutating os.environ would let a
+    concurrent thread observe the wrong model mid-fallback, which is the bug
+    this contract guards against.
+    """
     observed_models: dict[str, str | None] = {}
+    observed_os_environ: dict[str, str | None] = {}
 
     def primary(prompt: str, text: str) -> str:
-        observed_models["primary"] = os.environ.get("MEMORYMASTER_LLM_MODEL")
+        observed_models["primary"] = llm_provider._env("MEMORYMASTER_LLM_MODEL")
         return ""  # Force fallback.
 
     def fallback(prompt: str, text: str) -> str:
-        observed_models["fallback"] = os.environ.get("MEMORYMASTER_LLM_MODEL")
+        observed_models["fallback"] = llm_provider._env("MEMORYMASTER_LLM_MODEL")
+        # os.environ must NOT carry the fallback model — a concurrent thread
+        # reading it directly must still see the primary model.
+        observed_os_environ["fallback"] = os.environ.get("MEMORYMASTER_LLM_MODEL")
         return "fb-ok"
 
     _install_providers(monkeypatch, primary, fallback)
@@ -180,9 +192,12 @@ def test_case_f_fallback_model_is_honored_and_restored(monkeypatch):
     assert result == "fb-ok"
     # Primary saw the primary model.
     assert observed_models["primary"] == "gemini-3.1-flash-lite-preview"
-    # Fallback saw the fallback model (swap happened).
+    # Fallback saw the fallback model (override applied via contextvar).
     assert observed_models["fallback"] == "gemma4:e4b"
-    # After call_llm returns, env is restored to the primary model.
+    # os.environ was never mutated — concurrent threads stay correct.
+    assert observed_os_environ["fallback"] == "gemini-3.1-flash-lite-preview"
+    # After call_llm returns, the primary model is still the effective one.
+    assert llm_provider._env("MEMORYMASTER_LLM_MODEL") == "gemini-3.1-flash-lite-preview"
     assert os.environ.get("MEMORYMASTER_LLM_MODEL") == "gemini-3.1-flash-lite-preview"
 
 

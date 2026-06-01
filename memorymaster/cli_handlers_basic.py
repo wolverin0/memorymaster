@@ -852,10 +852,19 @@ def _print_score_explanation(breakdown: dict | None) -> None:
 
 
 def _handle_query(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.query")
+    allow_sensitive = resolve_allow_sensitive_access(
+        allow_sensitive=args.allow_sensitive, context="cli.query"
+    )
     if getattr(args, "as_of", ""):
         t0 = time.perf_counter()
         claims = service.store.query_as_of(args.as_of)
+        # Parity with the non-as-of path: never surface sensitive-visibility
+        # claims in plaintext unless allow_sensitive was actually granted.
+        if not allow_sensitive:
+            claims = [
+                c for c in claims
+                if (getattr(c, "visibility", "public") or "public").strip().lower() != "sensitive"
+            ]
         elapsed_ms = (time.perf_counter() - t0) * 1000
         if args.json_output:
             print(_json_envelope([_claim_to_dict(c) for c in claims], total=len(claims), query_ms=elapsed_ms))

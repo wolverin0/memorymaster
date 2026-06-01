@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
@@ -463,14 +464,22 @@ def _run_semantic_probe(*, claim: Any, service: MemoryService, limit: int, timeo
         )
 
     worker = ThreadPoolExecutor(max_workers=1)
+    # Copy the current context into the worker thread so the active
+    # llm_budget.cycle_scope() ContextVar is visible there. ThreadPoolExecutor
+    # workers do NOT inherit contextvars; without this, service.query's
+    # LLM rerank would run with get_current()==None and silently bypass the
+    # per-cycle call/token/failure caps. audit: cycle-budget-contextvar-not-in-pool
+    ctx = contextvars.copy_context()
     future = worker.submit(
-        service.query,
-        query,
-        limit=max(1, int(limit)),
-        include_stale=True,
-        include_conflicted=True,
-        retrieval_mode="hybrid",
-        allow_sensitive=True,
+        ctx.run,
+        lambda: service.query(
+            query,
+            limit=max(1, int(limit)),
+            include_stale=True,
+            include_conflicted=True,
+            retrieval_mode="hybrid",
+            allow_sensitive=True,
+        ),
     )
     timed_out = False
     hits: list[Any] = []
@@ -535,7 +544,11 @@ def _run_tool_probe(*, claim: Any, service: MemoryService, timeout_seconds: floa
     reasons: list[Reason] = []
     started = time.monotonic()
     worker = ThreadPoolExecutor(max_workers=1)
-    future = worker.submit(service.store.get_claim, int(claim.id), False)
+    # Propagate cycle-budget contextvars into the worker thread (see note in
+    # _run_semantic_probe). get_claim itself does not call the LLM, but keeping
+    # the context consistent across pool workers avoids future silent bypass.
+    ctx = contextvars.copy_context()
+    future = worker.submit(ctx.run, service.store.get_claim, int(claim.id), False)
     timed_out = False
     fetched = None
     try:

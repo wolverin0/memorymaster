@@ -7,12 +7,11 @@ import os
 import threading
 import time
 from collections.abc import Sequence
-from contextlib import contextmanager
 from typing import Any
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from memorymaster.llm_provider import call_llm, parse_json_response
+from memorymaster.llm_provider import call_llm, parse_json_response, use_call_scoped_env
 
 logger = logging.getLogger(__name__)
 
@@ -33,39 +32,25 @@ class LLMRerankError(RuntimeError):
     """Raised for retryable rerank judge failures."""
 
 
-@contextmanager
 def _temporary_llm_env(judge_model: str):
-    saved_provider = os.environ.get("MEMORYMASTER_LLM_PROVIDER")
-    saved_model = os.environ.get("MEMORYMASTER_LLM_MODEL")
-    saved_key_file = os.environ.get("MEMORYMASTER_KEY_FILE")
-    saved_key_rotation = os.environ.get("MEMORYMASTER_LLM_KEY_ROTATION")
-    try:
-        from memorymaster.key_rotator import clear_cache
+    """Scope ONE rerank judge call to a google/judge_model client.
 
-        clear_cache()
-        os.environ["MEMORYMASTER_LLM_PROVIDER"] = "google"
-        os.environ["MEMORYMASTER_LLM_MODEL"] = judge_model
-        os.environ["MEMORYMASTER_KEY_FILE"] = "__memorymaster_llm_rerank_no_key_file__"
-        os.environ["MEMORYMASTER_LLM_KEY_ROTATION"] = "0"
-        yield
-    finally:
-        if saved_provider is None:
-            os.environ.pop("MEMORYMASTER_LLM_PROVIDER", None)
-        else:
-            os.environ["MEMORYMASTER_LLM_PROVIDER"] = saved_provider
-        if saved_model is None:
-            os.environ.pop("MEMORYMASTER_LLM_MODEL", None)
-        else:
-            os.environ["MEMORYMASTER_LLM_MODEL"] = saved_model
-        if saved_key_file is None:
-            os.environ.pop("MEMORYMASTER_KEY_FILE", None)
-        else:
-            os.environ["MEMORYMASTER_KEY_FILE"] = saved_key_file
-        if saved_key_rotation is None:
-            os.environ.pop("MEMORYMASTER_LLM_KEY_ROTATION", None)
-        else:
-            os.environ["MEMORYMASTER_LLM_KEY_ROTATION"] = saved_key_rotation
-        clear_cache()
+    Uses contextvars (via ``use_call_scoped_env``) instead of mutating
+    process-global ``os.environ`` and clearing the shared key-rotator cache.
+    Both of those were side effects that poisoned concurrent ``call_llm``
+    invocations (steward pool + other MCP threads) mid-flight: they would read
+    the rerank provider/model/keys and lose their own rotator state. The
+    overrides here are private to the calling thread/task and the shared file
+    rotator is skipped for this call only. audit: rerank-temporary-env-poisons-shared-state
+    """
+    return use_call_scoped_env(
+        {
+            "MEMORYMASTER_LLM_PROVIDER": "google",
+            "MEMORYMASTER_LLM_MODEL": judge_model,
+            "MEMORYMASTER_LLM_KEY_ROTATION": "0",
+        },
+        skip_file_rotator=True,
+    )
 
 
 def _min_interval_seconds() -> float:

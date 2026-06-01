@@ -15,12 +15,69 @@ import subprocess
 import sys
 import urllib.request
 import urllib.error
+from contextvars import ContextVar
 from typing import Any
 
 from memorymaster import llm_budget
 
 
+# Per-call env overrides. Threaded via contextvars so concurrent callers
+# (steward ThreadPoolExecutor + MCP rerank) never read each other's
+# in-flight overrides — unlike os.environ, which is process-global.
+# Currently used for the fallback model swap; a None value means "no
+# override, read os.environ as usual". audit: fallback-model-env-mutation
+_ENV_OVERRIDES: ContextVar[dict[str, str | None] | None] = ContextVar(
+    "memorymaster_llm_env_overrides", default=None
+)
+
+
+# When True for the current call (set via contextvars), _call_google skips the
+# shared module-level file key-rotator and uses the single GEMINI_API_KEY path.
+# Lets callers like llm_rerank scope one request to a no-rotator client WITHOUT
+# clearing the process-global rotator cache (which would poison concurrent
+# call_llm invocations). audit: rerank-temporary-env-poisons-shared-state
+_SKIP_FILE_ROTATOR: ContextVar[bool] = ContextVar(
+    "memorymaster_llm_skip_file_rotator", default=False
+)
+
+
+def use_call_scoped_env(
+    overrides: dict[str, str | None],
+    *,
+    skip_file_rotator: bool = False,
+):
+    """Context manager: apply per-call env overrides + optional rotator skip.
+
+    Overrides are read by ``_env``/``_call_google`` via contextvars, so they
+    are private to the calling thread/task and never mutate ``os.environ`` or
+    the shared key-rotator cache. A ``None`` override value means "behave as if
+    the var is unset".
+    """
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _ctx():
+        prev = _ENV_OVERRIDES.get()
+        merged = dict(prev) if prev else {}
+        merged.update(overrides)
+        tok_env = _ENV_OVERRIDES.set(merged)
+        tok_skip = _SKIP_FILE_ROTATOR.set(skip_file_rotator)
+        try:
+            yield
+        finally:
+            _SKIP_FILE_ROTATOR.reset(tok_skip)
+            _ENV_OVERRIDES.reset(tok_env)
+
+    return _ctx()
+
+
 def _env(key: str, default: str = "") -> str:
+    overrides = _ENV_OVERRIDES.get()
+    if overrides is not None and key in overrides:
+        value = overrides[key]
+        # An explicit None override means "behave as if unset" — let the
+        # provider fall back to its own default rather than the primary's.
+        return default if value is None else value
     return os.environ.get(key, default)
 
 
@@ -80,11 +137,19 @@ def _call_google_with_env_rotation(model: str, payload: dict[str, Any]) -> str |
     for _ in range(rotator.key_count):
         api_key = rotator.get_key()
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-        result = _http_post(url, payload, _extract_google)
+        # status_sink records the HTTP status of an HTTPError (if any) so we can
+        # distinguish a genuine 429 (cool the key) from an empty-200 success
+        # (leave the key untouched — cooling a HEALTHY key here would, across a
+        # batch, cool ALL keys and make get_key falsely sleep on "all keys
+        # rate-limited"). audit: env-rotation-empty200-cools-healthy-key
+        status_sink: dict[str, int | None] = {"http_status": None}
+        result = _http_post(url, payload, _extract_google, status_sink=status_sink)
         if result:
             rotator.clear_cooldown(api_key)
             return result
-        rotator.mark_rate_limited(api_key)
+        if status_sink["http_status"] == 429:
+            rotator.mark_rate_limited(api_key)
+        # else: empty-200 (or non-rate-limit error). Do NOT cool a healthy key.
     return ""
 
 
@@ -132,7 +197,7 @@ def _call_google(prompt: str, text: str) -> str:
     if env_rotated_result is not None:
         return env_rotated_result
 
-    rotator = get_rotator("gemini")
+    rotator = None if _SKIP_FILE_ROTATOR.get() else get_rotator("gemini")
     if rotator and len(rotator) > 0:
         # Try each key at most once per call, rotating on 429.
         attempts = len(rotator)
@@ -327,7 +392,15 @@ def _http_post(
     timeout: int = 10,
     rotator_label: str | None = None,
     rotator: Any = None,
+    status_sink: dict[str, int | None] | None = None,
 ) -> str:
+    """POST JSON, return extracted text or "" on failure.
+
+    ``status_sink``: optional mutable dict. On an HTTPError the response's
+    HTTP status code is written to ``status_sink["http_status"]`` so callers
+    (e.g. the env-key rotator) can distinguish a real 429 from an empty-200
+    success and avoid cooling a healthy key.
+    """
     headers = {"Content-Type": "application/json"}
     if extra_headers:
         headers.update(extra_headers)
@@ -344,6 +417,8 @@ def _http_post(
             result = json.loads(resp.read().decode("utf-8"))
         return extractor(result)
     except urllib.error.HTTPError as exc:
+        if status_sink is not None:
+            status_sink["http_status"] = exc.code
         # Read the response body so 429/4xx messages surface the provider's
         # actual error (quota metric, model, Retry-After, status).
         try:
@@ -532,26 +607,25 @@ def call_llm(prompt: str, text: str) -> str:
     # Budget gate for the fallback provider too.
     llm_budget.check_before_call(fallback_name)
 
-    # Swap MEMORYMASTER_LLM_MODEL to fallback model for the duration of the call.
+    # Override MEMORYMASTER_LLM_MODEL to the fallback model for the duration of
+    # the call WITHOUT mutating os.environ — a ContextVar override keeps the swap
+    # private to this thread/task so concurrent callers (steward pool + MCP
+    # rerank) never read the wrong model. A None override means "behave as if
+    # MEMORYMASTER_LLM_MODEL is unset" so the fallback provider uses its own
+    # default (the primary's model may be Gemini-specific).
     fallback_model = _env("MEMORYMASTER_LLM_FALLBACK_MODEL", "")
-    saved_model = os.environ.get("MEMORYMASTER_LLM_MODEL")
+    prev_overrides = _ENV_OVERRIDES.get()
+    new_overrides = dict(prev_overrides) if prev_overrides else {}
+    new_overrides["MEMORYMASTER_LLM_MODEL"] = fallback_model if fallback_model else None
+    token = _ENV_OVERRIDES.set(new_overrides)
     try:
-        if fallback_model:
-            os.environ["MEMORYMASTER_LLM_MODEL"] = fallback_model
-        elif "MEMORYMASTER_LLM_MODEL" in os.environ:
-            # No fallback model configured — let the fallback provider use its
-            # own default, not the primary's model (which may be Gemini-specific).
-            del os.environ["MEMORYMASTER_LLM_MODEL"]
         fallback_response = fallback_fn(prompt, text)
         llm_budget.record_call(
             fallback_name,
             tokens=llm_budget.estimate_tokens(prompt, text, fallback_response),
         )
     finally:
-        if saved_model is None:
-            os.environ.pop("MEMORYMASTER_LLM_MODEL", None)
-        else:
-            os.environ["MEMORYMASTER_LLM_MODEL"] = saved_model
+        _ENV_OVERRIDES.reset(token)
 
     if fallback_response and not _looks_like_quota_error(fallback_response):
         return fallback_response

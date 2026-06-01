@@ -158,21 +158,44 @@ def resolve_conflict_pair(
 
 
 def _resolve_group_pairs(store, claims: list[Claim], limit: int) -> tuple[int, int, int]:
-    """Resolve all pairs within a conflict group. Returns (evaluated, resolved, failed)."""
+    """Resolve a conflict group down to a single survivor. Returns (evaluated, resolved, failed).
+
+    MED audit fix: the previous loop only compared ADJACENT claims
+    (i vs i+1). In a 3+ group that left non-adjacent claims still
+    'conflicted' even though the whole group was reported resolved — a
+    claim that lost to its neighbour was never compared to the eventual
+    survivor. We instead carry a running winner and judge it against each
+    remaining conflicted claim, so every loser is superseded by the actual
+    group survivor and at most one 'conflicted' claim remains.
+    """
     evaluated = 0
     resolved = 0
     failed = 0
 
-    for i in range(len(claims) - 1):
+    # Running winner: the first still-conflicted claim, refreshed from store.
+    winner: Claim | None = None
+
+    for claim in claims:
         if evaluated >= limit:
             break
-        # Re-fetch to check if still conflicted (might have been resolved in earlier pair)
-        a = store.get_claim(claims[i].id, include_citations=True)
-        b = store.get_claim(claims[i + 1].id, include_citations=True)
-        if a is None or b is None or a.status != "conflicted" or b.status != "conflicted":
+
+        contender = store.get_claim(claim.id, include_citations=True)
+        if contender is None or contender.status != "conflicted":
             continue
 
-        result = resolve_conflict_pair(store, a, b)
+        if winner is None:
+            winner = contender
+            continue
+
+        # Re-fetch the running winner: an earlier pair (or another writer)
+        # may have changed its status/version since we last saw it.
+        winner = store.get_claim(winner.id, include_citations=True)
+        if winner is None or winner.status != "conflicted":
+            # Running winner is gone; the current contender becomes the new winner.
+            winner = contender
+            continue
+
+        result = resolve_conflict_pair(store, winner, contender)
         evaluated += 1
         if result.get("resolved"):
             resolved += 1
@@ -180,6 +203,10 @@ def _resolve_group_pairs(store, claims: list[Claim], limit: int) -> tuple[int, i
                 "Resolved conflict: winner=%d, loser=%d (%s)",
                 result["winner_id"], result["loser_id"], result["reason"],
             )
+            # The survivor (whichever side the LLM kept) carries forward.
+            survivor_id = result["winner_id"]
+            survivor = store.get_claim(survivor_id, include_citations=True)
+            winner = survivor if survivor is not None else contender
         else:
             failed += 1
 

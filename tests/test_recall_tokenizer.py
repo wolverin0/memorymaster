@@ -21,7 +21,8 @@ def tiny_db(tmp_path: Path) -> str:
     db_path = tmp_path / "tiny.db"
     conn = sqlite3.connect(db_path)
     conn.executescript(
-        "CREATE TABLE claims (id INTEGER PRIMARY KEY, text TEXT);"
+        "CREATE TABLE claims (id INTEGER PRIMARY KEY, text TEXT, "
+        "status TEXT NOT NULL DEFAULT 'confirmed');"
         "CREATE TABLE entity_aliases (id INTEGER PRIMARY KEY, entity_id INTEGER, "
         "alias TEXT UNIQUE, original_form TEXT);"
     )
@@ -108,7 +109,8 @@ def v2_db(tmp_path: Path) -> str:
     db_path = tmp_path / "v2.db"
     conn = sqlite3.connect(db_path)
     conn.executescript(
-        "CREATE TABLE claims (id INTEGER PRIMARY KEY, text TEXT);"
+        "CREATE TABLE claims (id INTEGER PRIMARY KEY, text TEXT, "
+        "status TEXT NOT NULL DEFAULT 'confirmed');"
         "CREATE TABLE entity_aliases (id INTEGER PRIMARY KEY, entity_id INTEGER, "
         "alias TEXT UNIQUE, original_form TEXT);"
     )
@@ -223,6 +225,72 @@ def test_all_df_zero_prompt_returns_something(v2_db: str) -> None:
     )
     # Non-crash guarantee; content is implementation-defined.
     assert isinstance(out, str)
+
+
+# ---------------------------------------------------------------------------
+# Recall hot-path regression (2026-06-01): corpus stats must reflect only
+# claims recall can actually return. Archived/superseded claims are never
+# served by recall, so counting them skews IDF toward dead tokens and wastes
+# tokenization on rows that can never match a live query.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def status_db(tmp_path: Path) -> str:
+    """Corpus mixing canonical claims with archived/superseded ones."""
+    db_path = tmp_path / "status.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        "CREATE TABLE claims (id INTEGER PRIMARY KEY, text TEXT, "
+        "status TEXT NOT NULL DEFAULT 'confirmed');"
+        "CREATE TABLE entity_aliases (id INTEGER PRIMARY KEY, entity_id INTEGER, "
+        "alias TEXT UNIQUE, original_form TEXT);"
+    )
+    rows = [
+        ("steward decay job runs on the cycle", "confirmed"),
+        ("steward promotes confirmed claims", "candidate"),
+        # 'ghosttoken' appears ONLY in retired claims — recall can never
+        # return it, so it must not enter the df table at all.
+        ("ghosttoken legacy decay heuristic", "archived"),
+        ("ghosttoken superseded by the new steward", "superseded"),
+    ]
+    conn.executemany("INSERT INTO claims (text, status) VALUES (?, ?)", rows)
+    conn.commit()
+    conn.close()
+    _corpus_stats.cache_clear()
+    _alias_set.cache_clear()
+    return str(db_path)
+
+
+def test_corpus_stats_excludes_retired_claims(status_db: str) -> None:
+    """Why it matters: recall never serves archived/superseded claims, so
+    their tokens must not inflate IDF or total_docs — otherwise dead tokens
+    look rarer-than-real and unmatchable terms get ranked up."""
+    total, df = _corpus_stats(status_db)
+    # Only the 2 canonical claims (confirmed + candidate) are counted.
+    assert total == 2
+    # A token that lives only in retired claims must be absent from df.
+    assert "ghosttoken" not in df
+    # A token from a canonical claim is present.
+    assert df.get("steward", 0) == 2
+
+
+def test_retired_token_not_ranked_into_query(status_db: str) -> None:
+    """A token present only in retired claims must be treated as df=0
+    (demoted), never surfaced as a 'rare, valuable' term, because recall
+    cannot return any document containing it.
+
+    'ghosttoken' lives only in archived/superseded claims; even though a
+    naive corpus scan would see it (and rank it as a rare, high-IDF gem),
+    the canonical-only df table treats it as df=0 and the penalty keeps it
+    out of the top results. The matchable canonical terms must win instead.
+    """
+    out = extract_query_tokens(
+        "steward ghosttoken decay", status_db, max_tokens=2
+    ).split()
+    assert "ghosttoken" not in out, out
+    # The surviving tokens must be ones recall can actually match.
+    assert set(out) <= {"steward", "decay"}, out
 
 
 def test_latin_boundary_preserves_accents() -> None:

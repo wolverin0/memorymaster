@@ -16,10 +16,27 @@ class EmbeddingProvider:
     model: str = "hash-v1"
     dims: int = 1536
     _transformer: Any = field(default=None, repr=False)
+    # Set True the moment a semantic backend (e.g. Gemini) fails at runtime and
+    # we fall back to hash embeddings. ``model`` also flips to ``hash-v1`` on
+    # downgrade, but this flag preserves the *intent* ("was supposed to be
+    # semantic") so callers can distinguish a genuine hash provider from a
+    # degraded one and recompute their semantic-vector filter accordingly.
+    degraded: bool = field(default=False, repr=True)
 
     @property
     def is_semantic(self) -> bool:
-        """Return True if this provider produces real semantic embeddings."""
+        """Return True if this provider produces real semantic embeddings.
+
+        Returns False once :attr:`degraded` is set, even before ``model`` is
+        inspected, so a provider that silently fell back to hash mid-flight is
+        never reported as semantic. Callers that captured ``is_semantic``
+        BEFORE the first :meth:`embed` should re-read it AFTER embedding (the
+        Gemini downgrade happens lazily on first call) to keep any
+        ``semantic_vectors`` retrieval filter from staying on a lenient
+        vector-only path against non-semantic hash vectors.
+        """
+        if self.degraded:
+            return False
         return not self.model.startswith("hash")
 
     def embed(self, text: str) -> list[float]:
@@ -57,6 +74,7 @@ class EmbeddingProvider:
             )
             self.model = "hash-v1"
             self.dims = 1536
+            self.degraded = True
             return hash_embed(text, dims=self.dims)
         vec = result.embeddings[0].values
         self.dims = len(vec)

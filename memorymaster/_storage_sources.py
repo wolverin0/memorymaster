@@ -633,6 +633,16 @@ class _SourceItemsMixin:
             return []
         now = utc_now()
         with self.connect() as conn:
+            # BEGIN IMMEDIATE takes the write lock up front so the SELECT and
+            # the claiming UPDATE are one atomic read-modify-write. Without it,
+            # two concurrent fetchers can SELECT the same pending rows, both
+            # UPDATE (double-incrementing attempt_count, emitting duplicate
+            # events) and both receive the same media_key — breaking the
+            # single-claimer guarantee. The loser waits on busy_timeout instead
+            # of failing. The "AND status = 'pending'" on the UPDATE is the
+            # second guard: a row already moved out of 'pending' is never
+            # re-claimed even if a stale id slips through.
+            conn.execute("BEGIN IMMEDIATE")
             rows = conn.execute(
                 """
                 SELECT id FROM media_retry_queue
@@ -654,7 +664,8 @@ class _SourceItemsMixin:
                 SET status = 'retrying',
                     attempt_count = attempt_count + 1,
                     updated_at = ?
-                WHERE id IN ({placeholders})
+                WHERE status = 'pending'
+                  AND id IN ({placeholders})
                 """,
                 [now, *ids],
             )

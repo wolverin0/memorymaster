@@ -224,7 +224,11 @@ class TestFallbackChain:
         def fb(p, t):
             import os
 
-            seen["model"] = os.environ.get("MEMORYMASTER_LLM_MODEL")
+            # Real providers read the model via lp._env (which honors the
+            # contextvar override); os.environ must stay at the primary model
+            # so concurrent threads never see the fallback model mid-call.
+            seen["model"] = lp._env("MEMORYMASTER_LLM_MODEL")
+            seen["os_environ"] = os.environ.get("MEMORYMASTER_LLM_MODEL")
             return "OK"
 
         monkeypatch.setitem(lp._PROVIDERS, "google", lambda p, t: "")
@@ -232,10 +236,13 @@ class TestFallbackChain:
         call_llm("p", "t")
         # WHY: the fallback must run under the fallback model...
         assert seen["model"] == "fb-model"
-        # ...and the primary model must be restored afterwards (no env leak).
+        # ...delivered WITHOUT mutating shared os.environ...
+        assert seen["os_environ"] == "primary-model"
+        # ...and the primary model is still the effective one afterwards.
         import os
 
         assert os.environ.get("MEMORYMASTER_LLM_MODEL") == "primary-model"
+        assert lp._env("MEMORYMASTER_LLM_MODEL") == "primary-model"
 
 
 # --------------------------------------------------------------------------
@@ -586,22 +593,58 @@ class TestGoogleEnvRotationCall:
 
     def test_rotates_past_rate_limited_key(self, monkeypatch):
         rot = _StubEnvRotator(["k1", "k2"], [])
-        responses = iter(["", "OK"])
+        # First key returns a genuine 429 (status_sink=429), second succeeds.
+        responses = iter([("", 429), ("OK", None)])
         monkeypatch.setattr(lp, "_get_google_env_rotator", lambda: rot)
-        monkeypatch.setattr(lp, "_http_post", lambda *a, **k: next(responses))
+
+        def fake_post(*a, **k):
+            body, status = next(responses)
+            sink = k.get("status_sink")
+            if sink is not None:
+                sink["http_status"] = status
+            return body
+
+        monkeypatch.setattr(lp, "_http_post", fake_post)
         out = lp._call_google_with_env_rotation("m", {})
         assert out == "OK"
-        # WHY: a key that returns empty must be marked rate-limited and the next
-        # key tried, not give up after the first failure.
+        # WHY: a key that hit a real 429 must be cooled and the next key tried;
+        # an empty-200 (no 429) must NOT cool a healthy key — see the test below.
         assert rot.rate_limited == ["k1"]
         assert rot.cleared == ["k2"]
 
-    def test_all_keys_exhausted_returns_empty_string(self, monkeypatch):
+    def test_empty_200_does_not_rate_limit_healthy_keys(self, monkeypatch):
         rot = _StubEnvRotator(["k1", "k2"], [])
         monkeypatch.setattr(lp, "_get_google_env_rotator", lambda: rot)
-        monkeypatch.setattr(lp, "_http_post", lambda *a, **k: "")
-        # WHY: when every env key is exhausted we return "" (a value, not None),
-        # so _call_google does NOT fall through to other paths — env rotation owns it.
+
+        def fake_post(*a, **k):
+            # Empty body but a successful HTTP 200 — status_sink stays None.
+            sink = k.get("status_sink")
+            if sink is not None:
+                sink["http_status"] = None
+            return ""
+
+        monkeypatch.setattr(lp, "_http_post", fake_post)
+        # WHY: returns "" (a value, not None) so env rotation owns the call and
+        # _call_google does NOT fall through to other paths.
+        assert lp._call_google_with_env_rotation("m", {}) == ""
+        # CRITICAL: empty-200 must leave every key UNCOOLED. Cooling healthy keys
+        # here would cool the whole set across a batch and make get_key falsely
+        # sleep on "all keys rate-limited".
+        assert rot.rate_limited == []
+
+    def test_all_keys_429_returns_empty_and_cools_each(self, monkeypatch):
+        rot = _StubEnvRotator(["k1", "k2"], [])
+        monkeypatch.setattr(lp, "_get_google_env_rotator", lambda: rot)
+
+        def fake_post(*a, **k):
+            sink = k.get("status_sink")
+            if sink is not None:
+                sink["http_status"] = 429
+            return ""
+
+        monkeypatch.setattr(lp, "_http_post", fake_post)
+        # WHY: when every env key hits a real 429 we return "" (a value, not
+        # None) and each key is correctly cooled.
         assert lp._call_google_with_env_rotation("m", {}) == ""
         assert rot.rate_limited == ["k1", "k2"]
 

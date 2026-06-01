@@ -81,6 +81,24 @@ def _rerank_with_profile(
     return profiled[:limit]
 
 
+def _filter_agent_visibility(claims: list[Claim], requesting_agent: str | None) -> list[Claim]:
+    """Drop other agents' PRIVATE claims for a per-agent visibility query.
+
+    A claim is visible to ``requesting_agent`` when it is public OR was authored
+    by that same agent. With no requesting agent the list is returned unchanged.
+    Must be applied on EVERY retrieval path (legacy, hybrid, cache rehydrate) or
+    a path-dependent cross-agent leak appears.
+    """
+    if not requesting_agent:
+        return claims
+    return [
+        c
+        for c in claims
+        if getattr(c, "visibility", "public") == "public"
+        or getattr(c, "source_agent", None) == requesting_agent
+    ]
+
+
 def _is_cross_scope_sensitive(claim: Claim, current_scope: str | None) -> bool:
     visibility = (getattr(claim, "visibility", "public") or "public").strip().lower()
     if visibility != "sensitive":
@@ -585,8 +603,7 @@ class MemoryService:
         if not include_sensitive:
             legacy = [claim for claim in legacy if not is_sensitive_claim(claim)]
         # Visibility: filter out private claims from other agents
-        if requesting_agent:
-            legacy = [c for c in legacy if getattr(c, 'visibility', 'public') == 'public' or getattr(c, 'source_agent', None) == requesting_agent]
+        legacy = _filter_agent_visibility(legacy, requesting_agent)
         ranked_rows = rank_claim_rows(
             query_text,
             legacy,
@@ -667,10 +684,21 @@ class MemoryService:
                     "sensitive": include_sensitive, "query_type": query_type,
                     "tenant": self.tenant_id or "", "enrich": enrich_with_entities,
                     "llm_rerank": use_llm_rerank,
+                    # Per-agent visibility differs per requester; keying on it
+                    # prevents serving agentA's PRIVATE claims to agentB.
+                    "agent": requesting_agent or "",
                 })
                 cached = query_cache.read(cache_path, cache_key)
                 if cached is not None:
                     rows = self._rehydrate_cached_rows(cached)
+                    # Visibility: filter out private claims from other agents
+                    # (cache is shared across agents; key omits requesting_agent).
+                    if requesting_agent:
+                        rows = [
+                            r for r in rows
+                            if getattr(r["claim"], "visibility", "public") == "public"
+                            or getattr(r["claim"], "source_agent", None) == requesting_agent
+                        ]
                     self._record_accesses(rows, query_text=query_text)
                     return rows
         # Capture the corpus generation BEFORE reading candidates so the cache
@@ -689,12 +717,24 @@ class MemoryService:
         )
         if not include_sensitive:
             candidates = [claim for claim in candidates if not is_sensitive_claim(claim)]
+        # Visibility: filter out private claims from other agents (parity with
+        # the legacy path; without this the hybrid path leaks cross-agent data).
+        candidates = _filter_agent_visibility(candidates, requesting_agent)
         semantic = False
         if vector_hook is None and hasattr(self.store, "vector_scores"):
             def _vector_hook(text, claims):
                 return self.store.vector_scores(text, claims, self.embedding_provider)
             vector_hook = _vector_hook
             semantic = self.embedding_provider.is_semantic
+            if semantic:
+                # The Gemini->hash downgrade is lazy: is_semantic only reflects a
+                # runtime fallback AFTER an embed has run. Probe once with the query
+                # (the hook embeds it anyway; embed() handles its own failure and sets
+                # degraded) so a degraded provider is not reported as semantic — which
+                # would apply retrieval's lenient vector-only filter to non-semantic
+                # hash vectors. (audit: embeddings TOCTOU)
+                self.embedding_provider.embed(query_text)
+                semantic = self.embedding_provider.is_semantic
         rank_limit = len(candidates) if profile_weights is not None else (max(limit, 50) if use_llm_rerank else limit)
         final_rank_limit = max(limit, 50) if use_llm_rerank else limit
         ranked_rows = rank_claim_rows(
