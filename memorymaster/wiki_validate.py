@@ -16,7 +16,7 @@ Validation codes
 * ``MISSING_RECOMMENDED:<field>`` (fixable) — ``description`` / ``date`` /
   ``tags`` absent. Auto-fix derives a default (current date for ``date``,
   empty list for ``tags``, derived from body for ``description``).
-* ``DESCRIPTION_TOO_SHORT`` / ``DESCRIPTION_TOO_LONG`` — outside 50-300 chars.
+* ``DESCRIPTION_TOO_SHORT`` / ``DESCRIPTION_TOO_LONG`` — outside 50-200 chars.
   Reported only; truncation/expansion is judgement work the human owns.
 * ``ORPHAN`` — body > 300 chars and contains no ``[[wikilinks]]``. Reported only.
 * ``YAML_PARSE`` — frontmatter present but not parseable. Reported only —
@@ -132,7 +132,7 @@ def _validate_fields(fields: dict | None, body: str) -> list[str]:
     if desc:
         if len(desc) < 50:
             codes.append("DESCRIPTION_TOO_SHORT")
-        elif len(desc) > 300:
+        elif len(desc) > 200:
             codes.append("DESCRIPTION_TOO_LONG")
     if len(body) > 300 and "[[" not in body:
         codes.append("ORPHAN")

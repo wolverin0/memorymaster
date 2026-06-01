@@ -207,3 +207,103 @@ class TestEntityGraph:
         assert stats["edges"] == 1
         assert stats["claim_links"] == 2
         assert "person" in stats["by_type"]
+
+
+class TestUpsertEntityRace:
+    """probe-graph cluster: _upsert_entity must not abort on a concurrent
+    case-only-different insert. WHY: the NOCASE unique index raises IntegrityError
+    on a plain INSERT when another writer inserts an equal name between our SELECT
+    and INSERT — that uncaught error would abort the whole extract_and_link for the
+    claim. INSERT OR IGNORE + re-select resolves to the winning row instead."""
+
+    @pytest.fixture
+    def db_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield Path(tmpdir) / "race.db"
+
+    def test_concurrent_caseonly_insert_does_not_raise(self, db_path):
+        graph = EntityGraph(str(db_path))
+        graph.ensure_tables()
+        conn = graph._connect()
+        try:
+            # Simulate the race: SELECT sees nothing, then a concurrent writer
+            # inserts "Acme" before our INSERT for "ACME" (NOCASE-equal) lands.
+            assert conn.execute(
+                "SELECT id FROM entities WHERE LOWER(name) = LOWER(?)", ("ACME",)
+            ).fetchone() is None
+            other = graph._connect()
+            try:
+                other.execute(
+                    "INSERT INTO entities (id, name, type, aliases, created_at) "
+                    "VALUES ('winner', 'Acme', 'org', '[]', '2026-01-01T00:00:00')"
+                )
+                other.commit()
+            finally:
+                other.close()
+            # Must resolve to the existing row, not raise IntegrityError.
+            ent_id = graph._upsert_entity(conn, "ACME", "org", ["alias-from-loser"])
+            conn.commit()
+            assert ent_id == "winner"
+            # Our aliases were merged into the winning row.
+            row = conn.execute("SELECT aliases FROM entities WHERE id = 'winner'").fetchone()
+            assert "alias-from-loser" in json.loads(row["aliases"])
+            # No duplicate row was created.
+            count = conn.execute(
+                "SELECT COUNT(*) AS c FROM entities WHERE LOWER(name) = 'acme'"
+            ).fetchone()["c"]
+            assert count == 1
+        finally:
+            conn.close()
+
+
+class TestSchemaEnsuredOnce:
+    """probe-graph cluster: the schema DDL must run at most once per instance.
+    WHY: bulk ingest calls extract_and_link once per claim; re-issuing the full
+    executescript DDL + commit on every claim is pure per-row churn. The
+    _schema_ready guard makes ensure_tables a no-op after the first call."""
+
+    @pytest.fixture
+    def db_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield Path(tmpdir) / "once.db"
+
+    def _count_real_ddl(self, graph):
+        """Wrap ensure_tables to count calls that actually issue the DDL.
+
+        sqlite3.Connection.executescript is immutable (cannot be patched), so we
+        observe the _schema_ready guard: a call does real work only when the flag
+        was False on entry and True on exit. Returns (wrapper, calls dict)."""
+        real_ensure = graph.ensure_tables
+        calls = {"n": 0}
+
+        def _wrapper(conn=None):
+            before = graph._schema_ready
+            real_ensure(conn)
+            if not before and graph._schema_ready:
+                calls["n"] += 1
+
+        return _wrapper, calls
+
+    def test_ensure_tables_runs_executescript_once(self, db_path):
+        graph = EntityGraph(str(db_path))
+        assert graph._schema_ready is False
+        wrapper, calls = self._count_real_ddl(graph)
+        graph.ensure_tables = wrapper
+        graph.ensure_tables()
+        graph.ensure_tables()
+        graph.ensure_tables()
+        assert graph._schema_ready is True
+        assert calls["n"] == 1, f"DDL ran {calls['n']} times, expected 1"
+
+    @patch("memorymaster.entity_graph._llm_chat")
+    def test_extract_and_link_does_not_reissue_ddl_per_claim(self, mock_llm, db_path):
+        mock_llm.return_value = json.dumps({"entities": [], "relations": []})
+        graph = EntityGraph(str(db_path))
+        wrapper, calls = self._count_real_ddl(graph)
+        graph.ensure_tables = wrapper
+        graph.extract_and_link(claim_id=1, text="one")
+        graph.extract_and_link(claim_id=2, text="two")
+        graph.extract_and_link(claim_id=3, text="three")
+        # DDL issued exactly once across three claims, not three times.
+        assert calls["n"] == 1, f"DDL issued {calls['n']} times across 3 claims"
+

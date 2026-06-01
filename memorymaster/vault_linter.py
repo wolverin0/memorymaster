@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import re
 import sqlite3
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -78,7 +78,7 @@ def _detect_contradictions(claims: list[dict]) -> list[dict]:
 def _detect_orphans(claims: list[dict]) -> list[dict]:
     """Find claims with no subject, no predicate, and no links to anything."""
     orphans = []
-    all_subjects = {c["subject"] for c in claims if c["subject"]}
+    subject_counts = Counter(c["subject"] for c in claims if c["subject"])
     for c in claims:
         if not c["subject"] and not c["predicate"]:
             orphans.append({
@@ -88,18 +88,16 @@ def _detect_orphans(claims: list[dict]) -> list[dict]:
                 "text": c["text"][:100],
                 "reason": "no subject or predicate",
             })
-        elif c["subject"] and c["subject"] not in all_subjects:
+        elif c["subject"] and subject_counts[c["subject"]] == 1:
             # Subject referenced only once — weak link
-            count = sum(1 for other in claims if other["subject"] == c["subject"])
-            if count == 1:
-                orphans.append({
-                    "type": "weak_link",
-                    "id": c["id"],
-                    "human_id": c.get("human_id"),
-                    "subject": c["subject"],
-                    "text": c["text"][:100],
-                    "reason": "subject appears only once",
-                })
+            orphans.append({
+                "type": "weak_link",
+                "id": c["id"],
+                "human_id": c.get("human_id"),
+                "subject": c["subject"],
+                "text": c["text"][:100],
+                "reason": "subject appears only once",
+            })
     return orphans[:50]  # Cap at 50
 
 

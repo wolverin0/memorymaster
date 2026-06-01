@@ -231,6 +231,64 @@ def test_run_probe_apply_redacts_event_reason(env, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# probe-graph cluster: the returned ``found`` report payload must ALSO route the
+# judge reason through the sensitivity guard — not just the events table. WHY:
+# ``found`` is what callers print/log/surface to humans and the wiki; a raw
+# verdict reason there leaks the exact secret the events-table guard already
+# blocks. A flagged (leaky) reason is dropped to "" so the report never carries it.
+# ---------------------------------------------------------------------------
+
+
+def test_run_probe_found_payload_redacts_leaky_reason(env, monkeypatch):
+    db, svc, holder, prov = env
+    secret = "bearer sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345 AKIAIOSFODNN7EXAMPLE"
+    monkeypatch.setitem(
+        llm_provider._PROVIDERS, "google",
+        lambda p, t: json.dumps({
+            "contradicts": ("rate-limited" in t.lower() and "no rate limit" in t.lower()),
+            "severity": "high",
+            "reason": secret,
+        }),
+    )
+    stats = contradiction_probe.run_probe(db, svc, provider=prov)
+    assert stats["contradictions"] == 1
+    found = stats["found"][0]
+    # The leaky reason is dropped from the report payload (blanked), never echoed.
+    assert found["reason"] == ""
+    assert "sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ" not in found["reason"]
+    assert "AKIAIOSFODNN7EXAMPLE" not in found["reason"]
+
+
+def test_run_probe_found_payload_keeps_clean_reason(env):
+    # A clean (non-leaky) reason still flows into the report verbatim — the guard
+    # only drops sensitive content, it does not blank every reason.
+    db, svc, holder, prov = env
+    stats = contradiction_probe.run_probe(db, svc, provider=prov)
+    assert stats["found"][0]["reason"] == "rate limit vs none"
+
+
+# ---------------------------------------------------------------------------
+# probe-graph cluster: the verdict-cache connection must open with WAL +
+# busy_timeout. WHY: the cache DB is the shared claims file that the steward,
+# recall hook, and sync all write; without WAL/busy_timeout a concurrent writer
+# turns the verdict INSERT into "database is locked", which re-pays the LLM cost
+# and (per-claim path) counts as a probe error toward the circuit breaker.
+# ---------------------------------------------------------------------------
+
+
+def test_connect_verdict_cache_sets_wal_and_busy_timeout(env):
+    db, svc, holder, prov = env
+    conn = contradiction_probe._connect_verdict_cache(db)
+    try:
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        busy = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        assert str(mode).lower() == "wal"
+        assert int(busy) >= 30000
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
 # T03: sample_candidate_pairs must stop the O(n^2) sweep early once `limit`
 # in-band pairs are collected. WHY: on a large claim set the quadratic scan is
 # the dominant cost; building thousands of pairs only to truncate to `limit`

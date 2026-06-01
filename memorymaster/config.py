@@ -121,15 +121,9 @@ INITIAL_CONFIDENCE_BY_TYPE: Dict[str, float] = {
     "bug_root_cause": 0.8337,
     "commitment": 0.8333,
     "constraint": 0.6808,
-    "constraint</claim_type>\n"
-    '<parameter name="source_agent">claude-session': 1.0,
-    "constraint</claim_type>\n"
-    '<parameter name="subject">whatsappbot-monitoring-blind-spot': 1.0,
     "convention": 1.0,
     "correction": 1.0,
     "decision": 0.6153,
-    "decision</claim_type>\n"
-    '<parameter name="source_agent">claude-session': 1.0,
     "decision_pending": 1.0,
     "environment": 0.5568,
     "event": 0.8362,
@@ -138,20 +132,8 @@ INITIAL_CONFIDENCE_BY_TYPE: Dict[str, float] = {
     "feedback": 1.0,
     "filesystem_fact": 1.0,
     "finding": 1.0,
-    "finding</claim_type>\n"
-    '<parameter name="source_agent">claude-session': 1.0,
-    "fix</claim_type>\n"
-    '<parameter name="source_agent">claude-session': 1.0,
     "gap": 1.0,
     "gotcha": 0.7169,
-    "gotcha</claim_type>\n"
-    '<parameter name="confidence">0.9': 1.0,
-    "gotcha</claim_type>\n"
-    '<parameter name="predicate">fork pr merge workflow when maintainercanmodify is false': 1.0,
-    "gotcha</claim_type>\n"
-    '<parameter name="source_agent">claude-session': 1.0,
-    "gotcha</claim_type>\n"
-    '<parameter name="subject">omniclaude-first-turn-protocol-not-enforced': 1.0,
     "gotchas": 1.0,
     "incident": 1.0,
     "infra_fact": 0.0946,
@@ -163,11 +145,7 @@ INITIAL_CONFIDENCE_BY_TYPE: Dict[str, float] = {
     "process": 1.0,
     "project": 0.898,
     "project_status": 1.0,
-    "project_status</claim_type>\n"
-    '<parameter name="source_agent">claude-session': 1.0,
     "reference": 0.7535,
-    "reference</claim_type>\n"
-    '<parameter name="source_agent">claude-session': 1.0,
     "security_finding": 1.0,
     "task_status": 1.0,
     "uncategorized": 0.258,

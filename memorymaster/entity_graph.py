@@ -96,6 +96,10 @@ class EntityGraph:
 
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
+        # Schema is created once per instance: bulk ingest calls extract_and_link
+        # once per claim, and re-issuing the full executescript DDL + commit on
+        # every claim is pure churn. Flag flips True after the first ensure.
+        self._schema_ready = False
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -103,9 +107,17 @@ class EntityGraph:
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
-    def ensure_tables(self) -> None:
-        """Create entity tables if they don't exist. Idempotent - safe to call multiple times."""
-        conn = self._connect()
+    def ensure_tables(self, conn: sqlite3.Connection | None = None) -> None:
+        """Create entity tables if they don't exist. Idempotent - safe to call multiple times.
+
+        Guarded by ``self._schema_ready`` so the executescript DDL + commit runs
+        at most once per instance. Pass an open ``conn`` to reuse a caller's
+        connection (avoids opening a second one during extract_and_link).
+        """
+        if self._schema_ready:
+            return
+        own_conn = conn is None
+        conn = conn or self._connect()
         try:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS entities (
@@ -135,11 +147,13 @@ class EntityGraph:
                     ON claim_entity_links(entity_id);
             """)
             conn.commit()
+            self._schema_ready = True
         except sqlite3.OperationalError as exc:
             logger.warning("ensure_tables already called (idempotent): %s", exc)
             conn.rollback()
         finally:
-            conn.close()
+            if own_conn:
+                conn.close()
 
     def _process_entities(self, data: dict, conn) -> tuple[dict[str, str], list[str]]:
         """Process extracted entities and return (name->id mapping, original names)."""
@@ -173,22 +187,25 @@ class EntityGraph:
         if not text:
             return []
 
-        try:
-            self.ensure_tables()
-        except sqlite3.OperationalError as exc:
-            logger.error("Failed to ensure entity tables for claim %d: %s", claim_id, exc)
-            return []
-
-        known = self._get_known_entity_names(limit=30)
-        context = f"\nKnown entities: {', '.join(known)}" if known else ""
-
-        raw = _llm_chat(text[:2000], system=ENTITY_SYSTEM_PROMPT + context)
-        if not raw:
-            return []
-        data = _parse_json(raw)
-
+        # One connection for the whole call: ensure schema (once per instance,
+        # guarded), read known entities, and write — instead of opening/pragma'ing
+        # a fresh connection per helper on every claim during bulk ingest.
         conn = self._connect()
         try:
+            try:
+                self.ensure_tables(conn)
+            except sqlite3.OperationalError as exc:
+                logger.error("Failed to ensure entity tables for claim %d: %s", claim_id, exc)
+                return []
+
+            known = self._get_known_entity_names(limit=30, conn=conn)
+            context = f"\nKnown entities: {', '.join(known)}" if known else ""
+
+            raw = _llm_chat(text[:2000], system=ENTITY_SYSTEM_PROMPT + context)
+            if not raw:
+                return []
+            data = _parse_json(raw)
+
             entity_id_map, entity_names = self._process_entities(data, conn)
 
             for rel in data.get("relations", []):
@@ -282,17 +299,34 @@ class EntityGraph:
             "SELECT id, aliases FROM entities WHERE LOWER(name) = LOWER(?)", (name,)
         ).fetchone()
         if existing:
-            current = json.loads(existing["aliases"])
-            merged = list(set(current + aliases))
-            if merged != current:
-                conn.execute("UPDATE entities SET aliases = ? WHERE id = ?", (json.dumps(merged), existing["id"]))
-            return existing["id"]
+            return self._merge_entity_aliases(conn, existing, aliases)
         ent_id = str(uuid.uuid4())
-        conn.execute(
-            "INSERT INTO entities (id, name, type, aliases, created_at) VALUES (?, ?, ?, ?, ?)",
+        # INSERT OR IGNORE + re-select: a concurrent writer can insert a
+        # case-insensitively-equal name between the SELECT above and this INSERT.
+        # The NOCASE unique index would raise IntegrityError on a plain INSERT and
+        # abort extract_and_link; OR IGNORE makes the loser a no-op, after which we
+        # re-select the winning row and merge our aliases into it.
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO entities (id, name, type, aliases, created_at) VALUES (?, ?, ?, ?, ?)",
             (ent_id, name, ent_type, json.dumps(aliases), datetime.now(timezone.utc).isoformat()),
         )
-        return ent_id
+        if cur.rowcount:
+            return ent_id
+        winner = conn.execute(
+            "SELECT id, aliases FROM entities WHERE LOWER(name) = LOWER(?)", (name,)
+        ).fetchone()
+        if winner is None:
+            return ent_id  # defensive: row vanished; treat our id as authoritative
+        return self._merge_entity_aliases(conn, winner, aliases)
+
+    @staticmethod
+    def _merge_entity_aliases(conn, row, aliases: list[str]) -> str:
+        """Merge new aliases into an existing entity row; return its id."""
+        current = json.loads(row["aliases"])
+        merged = list(set(current + aliases))
+        if merged != current:
+            conn.execute("UPDATE entities SET aliases = ? WHERE id = ?", (json.dumps(merged), row["id"]))
+        return row["id"]
 
     def _upsert_edge(self, conn, source_id: str, target_id: str, relation: str, claim_id: int) -> None:
         conn.execute(
@@ -304,10 +338,14 @@ class EntityGraph:
              datetime.now(timezone.utc).isoformat(), claim_id),
         )
 
-    def _get_known_entity_names(self, limit: int = 50) -> list[str]:
-        conn = self._connect()
+    def _get_known_entity_names(
+        self, limit: int = 50, conn: sqlite3.Connection | None = None
+    ) -> list[str]:
+        own_conn = conn is None
+        conn = conn or self._connect()
         try:
             rows = conn.execute("SELECT name FROM entities ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
             return [r["name"] for r in rows]
         finally:
-            conn.close()
+            if own_conn:
+                conn.close()

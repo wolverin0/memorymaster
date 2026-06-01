@@ -24,19 +24,23 @@ def classify_query(query: str) -> str:
     )):
         return "temporal"
 
+    # Constraint patterns — evaluated BEFORE the verification opener heuristic so
+    # that constraint questions phrased as questions (e.g. "Are there any rules
+    # about X?") route to constraint_check, not verification. The verification
+    # opener fires on prefixes like "are there" which would otherwise shadow the
+    # per-type constraint_check retrieval profile.
+    if any(w in q for w in (
+        "rule", "constraint", "must", "never", "always",
+        "require", "forbidden", "policy",
+    )):
+        return "constraint_check"
+
     # Verification patterns
     if q.startswith((
         "is it", "does it", "can we", "should we", "is there",
         "are there", "did we", "have we",
     )):
         return "verification"
-
-    # Constraint patterns
-    if any(w in q for w in (
-        "rule", "constraint", "must", "never", "always",
-        "require", "forbidden", "policy",
-    )):
-        return "constraint_check"
 
     # Preference patterns
     if any(w in q for w in ("prefer", "like", "want", "style", "convention")):
