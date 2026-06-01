@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [3.26.1] - 2026-06-01
+
+**Coverage hardening (audit-low backlog tail).** Closes the final three coverage
+tracks (T23–T25) deferred from the v3.26.0 remediation. Tests only — no source
+changes, no behaviour change. 42 new intent-anchored tests.
+
+### Added
+
+- **delta_sync coverage** (`test_delta_sync_extra.py`, 15 tests) — `export_delta`
+  watermark `>=` boundary (exact-watermark row included, one-tick-below excluded,
+  same-timestamp twins all exported), DDL/CREATE-TABLE copy into the delta file,
+  empty-export sentinel (`max_updated_at=None`), and full-export edges.
+- **conflict_resolver coverage** (`test_conflict_resolver_extra.py`, 16 tests) —
+  `_pick_winner` priority chain (pinned > confidence > recency > citations >
+  deterministic id), bidirectional supersession wiring, and the
+  `auto_resolver` LLM-resolution paths (chosen-winner A/B, abstain,
+  malformed-JSON degrade, no-op) with the LLM monkeypatched.
+- **lifecycle coverage** (`test_lifecycle_extra.py`, 11 tests) —
+  `transition_claim` (valid / no-op / invalid / superseded-requires-replaced-by),
+  `mark_superseded` both-sides wiring + `ConcurrentModificationError`,
+  `record_event` type validation, and `record_access`/`record_accesses_batch`.
+
+## [3.26.0] - 2026-05-31
+
+**Audit-low remediation + coverage hardening.** Resolves the remaining low-severity
+findings from the v3.21–v3.23 Workflow audit and raises test coverage across the
+service, storage, wiki, dream-bridge, provider, retrieval, and CLI layers. No
+behaviour change unless the affected cost/reliability paths are exercised.
+
+### Fixed
+
+- **contradiction_probe**: empty/invalid verdict severity now floors to `medium`
+  (was silently `low`, under-prioritising real contradictions); the raw LLM judge
+  reason is redacted before it reaches the events table; the `sample_candidate_pairs`
+  O(n²) cosine sweep early-breaks once `limit` in-band pairs are found; and the
+  per-claim sqlite connection + `CREATE TABLE` is reused across the cycle.
+- **rule_miner**: the non-sargable `LIKE '%kw%'` correction prefilter is replaced
+  with an FTS5 `MATCH` over `verbatim_fts` (graceful LIKE fallback when FTS absent).
+- **query_cache**: a generation-mismatch read now evicts the stale row, plus an
+  `evict_stale()` sweep helper.
+- **verbatim_store**: `store_transcript` batches through one connection with a
+  single commit per file instead of a connection + commit per JSONL turn.
+- **verbatim_cleanup**: dedup uses `NOT EXISTS` instead of the `id NOT IN (...)`
+  anti-join.
+- **bench_longmemeval**: softened the answerer prompt to reduce over-refusal.
+
+### Added
+
+- **Migration 0005** — index on `query_cache(generation)` and composite
+  `idx_verbatim_session_content(session_id, content)` (both backends).
+- Coverage suites for service, storage, wiki_engine, dream_bridge, llm_provider,
+  context_hook, db_merge, entity_registry, retrieval, vault_linter, cli_handlers,
+  and observability.
+
 ## [3.25.0] - 2026-05-29
 
 **Audit follow-through.** Fixes the three medium findings deferred from v3.24
