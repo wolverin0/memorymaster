@@ -512,6 +512,60 @@ def _auto_validate_claims(
     return result
 
 
+def _archive_candidate_cas(
+    conn: sqlite3.Connection,
+    *,
+    claim_id: int,
+    version: int,
+    replaced_by_claim_id: int | None = None,
+) -> bool:
+    """Archive a claim ONLY if it is still the 'candidate' at the read version.
+
+    MED audit fix: the steward reads a batch of candidates, then issues raw
+    status UPDATEs much later (after an LLM round-trip). A concurrent
+    mark_superseded/transition_claim (which CAS on version) may have moved the
+    claim out of 'candidate' in the meantime. A blind ``UPDATE ... WHERE id=?``
+    would clobber that newer status (lost-update race). Guarding on the read
+    version + the 'candidate' status means we only apply when nothing else
+    touched the row; rowcount==0 signals the race was lost and the caller must
+    skip its follow-up writes for this claim.
+    """
+    if replaced_by_claim_id is not None:
+        cur = conn.execute(
+            "UPDATE claims SET status = 'archived', replaced_by_claim_id = ?, "
+            "updated_at = datetime('now'), version = version + 1 "
+            "WHERE id = ? AND version = ? AND status = 'candidate'",
+            (replaced_by_claim_id, claim_id, version),
+        )
+    else:
+        cur = conn.execute(
+            "UPDATE claims SET status = 'archived', version = version + 1 "
+            "WHERE id = ? AND version = ? AND status = 'candidate'",
+            (claim_id, version),
+        )
+    return cur.rowcount > 0
+
+
+def _confirm_candidate_cas(
+    conn: sqlite3.Connection,
+    *,
+    claim_id: int,
+    version: int,
+    subject: Any,
+    predicate: Any,
+    object_value: Any,
+    confidence: float,
+) -> bool:
+    """Confirm a candidate claim with version CAS (see _archive_candidate_cas)."""
+    cur = conn.execute(
+        "UPDATE claims SET status = 'confirmed', subject = ?, predicate = ?, "
+        "object_value = ?, confidence = ?, version = version + 1 "
+        "WHERE id = ? AND version = ? AND status = 'candidate'",
+        (subject, predicate, object_value, confidence, claim_id, version),
+    )
+    return cur.rowcount > 0
+
+
 def run_steward(
     db_path: str,
     api_key: str,
@@ -553,9 +607,17 @@ def run_steward(
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    # MED audit fix: the steward holds write transactions across time.sleep(delay)
+    # between LLM calls. Without WAL + a busy_timeout this writer blocks (and is
+    # blocked by) every other writer on the shared DB, and busy_timeout=0 turns a
+    # momentary lock into an immediate "database is locked" error → lost writes.
+    # WAL lets readers proceed; busy_timeout gives concurrent writers a grace
+    # window instead of failing instantly. Mirrors storage.py's connect() guarantee.
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 5000")
 
     candidates = conn.execute(
-        "SELECT id, text, scope FROM claims WHERE status = 'candidate' "
+        "SELECT id, text, scope, version FROM claims WHERE status = 'candidate' "
         "AND text IS NOT NULL ORDER BY id LIMIT ?",
         (limit,),
     ).fetchall()
@@ -594,13 +656,16 @@ def run_steward(
         claim_id = row["id"]
         text = row["text"] or ""
         scope = row["scope"] or ""
+        claim_version = row["version"]
 
         if len(text.strip()) < 10:
             if not dry_run:
-                conn.execute(
-                    "UPDATE claims SET status = 'archived' WHERE id = ?",
-                    (claim_id,),
-                )
+                if not _archive_candidate_cas(
+                    conn, claim_id=claim_id, version=claim_version,
+                ):
+                    # Another writer moved this claim out of 'candidate' first.
+                    log.info("Skipping #%d: no longer candidate (race)", claim_id)
+                    continue
                 conn.execute(
                     "INSERT INTO events (claim_id, event_type, details, created_at) "
                     "VALUES (?, 'transition', 'auto-archived: too short', datetime('now'))",
@@ -643,12 +708,15 @@ def run_steward(
                     continue
                 else:
                     if not dry_run:
-                        conn.execute(
-                            "UPDATE claims SET status = 'archived', "
-                            "replaced_by_claim_id = ?, updated_at = datetime('now') "
-                            "WHERE id = ?",
-                            (dedupe.canonical_claim_id, claim_id),
-                        )
+                        if not _archive_candidate_cas(
+                            conn, claim_id=claim_id, version=claim_version,
+                            replaced_by_claim_id=dedupe.canonical_claim_id,
+                        ):
+                            log.info(
+                                "Skipping dedupe-archive #%d: no longer candidate (race)",
+                                claim_id,
+                            )
+                            continue
                         conn.execute(
                             "UPDATE claims SET access_count = COALESCE(access_count, 0) + 1, "
                             "updated_at = datetime('now') WHERE id = ?",
@@ -678,10 +746,11 @@ def run_steward(
 
         if result.action == "archive":
             if not dry_run:
-                conn.execute(
-                    "UPDATE claims SET status = 'archived' WHERE id = ?",
-                    (claim_id,),
-                )
+                if not _archive_candidate_cas(
+                    conn, claim_id=claim_id, version=claim_version,
+                ):
+                    log.info("Skipping llm-archive #%d: no longer candidate (race)", claim_id)
+                    continue
                 conn.execute(
                     "INSERT INTO events (claim_id, event_type, details, created_at) "
                     "VALUES (?, 'transition', 'llm-archived: no useful claims', datetime('now'))",
@@ -710,10 +779,14 @@ def run_steward(
                         (f_subj, f_pred, scope, claim_id),
                     ).fetchone()
                     if dup:
-                        conn.execute(
-                            "UPDATE claims SET status = 'archived' WHERE id = ?",
-                            (claim_id,),
-                        )
+                        if not _archive_candidate_cas(
+                            conn, claim_id=claim_id, version=claim_version,
+                        ):
+                            log.info(
+                                "Skipping llm-confirm-dup #%d: no longer candidate (race)",
+                                claim_id,
+                            )
+                            continue
                         conn.execute(
                             "UPDATE claims SET object_value = ?, confidence = MAX(confidence, ?), "
                             "updated_at = datetime('now') WHERE id = ?",
@@ -721,12 +794,16 @@ def run_steward(
                         )
                         confirmed_claim_ids.append(dup["id"])
                     else:
-                        conn.execute(
-                            "UPDATE claims SET status = 'confirmed', "
-                            "subject = ?, predicate = ?, object_value = ?, "
-                            "confidence = ? WHERE id = ?",
-                            (f_subj, f_pred, f_obj, f_conf, claim_id),
-                        )
+                        if not _confirm_candidate_cas(
+                            conn, claim_id=claim_id, version=claim_version,
+                            subject=f_subj, predicate=f_pred,
+                            object_value=f_obj, confidence=f_conf,
+                        ):
+                            log.info(
+                                "Skipping llm-confirm #%d: no longer candidate (race)",
+                                claim_id,
+                            )
+                            continue
                         confirmed_claim_ids.append(claim_id)
                     conn.execute(
                         "INSERT INTO events (claim_id, event_type, details, created_at) "
@@ -782,10 +859,14 @@ def run_steward(
                 stats["confirmed"] += 1
             else:
                 if not dry_run:
-                    conn.execute(
-                        "UPDATE claims SET status = 'archived' WHERE id = ?",
-                        (claim_id,),
-                    )
+                    if not _archive_candidate_cas(
+                        conn, claim_id=claim_id, version=claim_version,
+                    ):
+                        log.info(
+                            "Skipping llm-empty-archive #%d: no longer candidate (race)",
+                            claim_id,
+                        )
+                        continue
                 stats["archived"] += 1
 
         stats["results"].append({
@@ -795,7 +876,11 @@ def run_steward(
             "preview": text[:80],
         })
 
-        if not dry_run and (stats["confirmed"] + stats["archived"]) % 10 == 0:
+        # MED audit fix: commit each claim's writes BEFORE sleeping. Previously
+        # the open write transaction (every claim's UPDATE/INSERT) was held across
+        # time.sleep(delay), blocking all other writers for the whole delay window.
+        # Releasing the lock before the sleep keeps the steward cooperative.
+        if not dry_run:
             conn.commit()
 
         time.sleep(delay)

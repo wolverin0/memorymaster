@@ -172,8 +172,21 @@ def _handle_wiki_backfill_bindings(
     that were absorbed before the binding feature existed.
     """
     import re
-    import sqlite3
     from pathlib import Path
+
+    from memorymaster.store_factory import is_postgres_dsn
+
+    # The backfill issues SQLite-only SQL (PRAGMA table_info, ``?`` params).
+    # On a Postgres backend the old code silently opened a junk SQLite file
+    # named after the DSN and no-op'd, leaving claims.wiki_article NULL
+    # forever. Fail loudly instead of corrupting the working directory.
+    if is_postgres_dsn(str(effective_db)):
+        msg = "wiki-backfill-bindings is not supported on a Postgres backend"
+        if getattr(args, "json_output", False):
+            print(_json_error(msg))
+        else:
+            print(f"error: {msg}")
+        return 1
 
     wiki_dir = Path(args.output)
     if not wiki_dir.exists():
@@ -184,7 +197,16 @@ def _handle_wiki_backfill_bindings(
     scanned = 0
     updated = 0
 
-    conn = sqlite3.connect(effective_db)
+    # Route through the backend-aware store so we get WAL + busy_timeout +
+    # retry on the shared DB instead of a raw, unconfigured connection.
+    # This handler may be invoked without a constructed service (CLI builds
+    # one lazily from effective_db); fall back to a SQLiteStore on that path.
+    # Postgres is already rejected above, so effective_db is a SQLite path here.
+    store = getattr(service, "store", None) if service is not None else None
+    if store is None:
+        from memorymaster.storage import SQLiteStore
+        store = SQLiteStore(str(effective_db))
+    conn = store.connect()
     try:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(claims)").fetchall()]
         if "wiki_article" not in cols:

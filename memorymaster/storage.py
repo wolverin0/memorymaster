@@ -40,6 +40,12 @@ class SQLiteStore(_SchemaMixin, _ReadMixin, _WriteClaimsMixin, _LifecycleMixin, 
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA journal_mode = WAL")
+            # Shared-DB writers (Stop hook + steward + MCP) contend on the same
+            # file. Without busy_timeout, the loser of a write race raises an
+            # unhandled "database is locked" OperationalError that aborts the
+            # ingest/transition and LOSES the write. Make the loser wait instead.
+            # Matches operator_queue.py / wiki_engine.py (5000ms).
+            conn.execute("PRAGMA busy_timeout = 5000")
             return conn
 
         return connect_with_retry(_open)

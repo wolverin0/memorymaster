@@ -172,23 +172,41 @@ def merge_entities(
     """Merge entity merge_id INTO keep_id. All aliases of merge_id move to keep_id.
 
     Returns {"merged_aliases": int, "updated_claims": int}.
+
+    The alias move uses ``UPDATE OR IGNORE`` because keep_id may already own a
+    row with the same ``(entity_id, variant_key)`` as one of merge_id's aliases
+    (the UNIQUE constraint). Without OR IGNORE the bulk UPDATE raises
+    sqlite3.IntegrityError partway through, leaving aliases/claims half-moved
+    and the merged entity NOT deleted — a corrupted entity graph. With it, the
+    colliding alias rows simply stay on merge_id; we then delete those leftovers
+    explicitly so the subsequent entity DELETE doesn't strand them (or get
+    blocked by FK). The whole merge runs in a single transaction so any failure
+    rolls back cleanly instead of committing a partial merge.
     """
-    # Move aliases
-    cur = conn.execute(
-        "UPDATE entity_aliases SET entity_id = ? WHERE entity_id = ?",
-        (keep_id, merge_id),
-    )
-    merged_aliases = cur.rowcount
+    with conn:  # transaction: commits on success, rolls back on any exception
+        # Move aliases that don't collide; collisions are left on merge_id.
+        cur = conn.execute(
+            "UPDATE OR IGNORE entity_aliases SET entity_id = ? WHERE entity_id = ?",
+            (keep_id, merge_id),
+        )
+        merged_aliases = cur.rowcount
 
-    # Move claims that reference merge_id
-    cur2 = conn.execute(
-        "UPDATE claims SET entity_id = ? WHERE entity_id = ?",
-        (keep_id, merge_id),
-    )
-    updated_claims = cur2.rowcount
+        # Remove the duplicate alias rows that stayed behind on merge_id so the
+        # entity DELETE (and ON DELETE CASCADE) leaves no orphans.
+        conn.execute(
+            "DELETE FROM entity_aliases WHERE entity_id = ?",
+            (merge_id,),
+        )
 
-    # Delete the merged entity
-    conn.execute("DELETE FROM entities WHERE id = ?", (merge_id,))
+        # Move claims that reference merge_id.
+        cur2 = conn.execute(
+            "UPDATE claims SET entity_id = ? WHERE entity_id = ?",
+            (keep_id, merge_id),
+        )
+        updated_claims = cur2.rowcount
+
+        # Delete the merged entity.
+        conn.execute("DELETE FROM entities WHERE id = ?", (merge_id,))
 
     return {"merged_aliases": merged_aliases, "updated_claims": updated_claims}
 

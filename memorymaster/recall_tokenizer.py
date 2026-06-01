@@ -172,18 +172,42 @@ def _stem(tok: str) -> str | None:
     return None
 
 
+# Claims in these statuses can never match a live recall query (they are
+# retired or replaced), so they must not contribute to document frequencies
+# or inflate ``total_docs``. Restricting the scan keeps IDF aligned with what
+# recall can actually return and shrinks the per-prompt corpus re-tokenize.
+_NON_CANONICAL_STATUSES = ("archived", "superseded")
+
+
 @lru_cache(maxsize=8)
 def _corpus_stats(db_path: str) -> tuple[int, dict[str, int]]:
-    """Return (total_docs, {token: doc_frequency}) for IDF. Read-only."""
+    """Return (total_docs, {token: doc_frequency}) for IDF. Read-only.
+
+    Only canonical claims (everything except ``archived``/``superseded``)
+    are counted: those statuses are never returned by recall, so including
+    them would skew IDF toward dead tokens and waste tokenization on rows
+    that can never match.
+    """
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     except sqlite3.Error as exc:
         logger.debug("recall_tokenizer: cannot open %s ro: %s", db_path, exc)
         return (0, {})
+    placeholders = ",".join("?" * len(_NON_CANONICAL_STATUSES))
     try:
-        total = int(conn.execute("SELECT COUNT(*) FROM claims").fetchone()[0])
+        total = int(
+            conn.execute(
+                f"SELECT COUNT(*) FROM claims WHERE status NOT IN ({placeholders})",
+                _NON_CANONICAL_STATUSES,
+            ).fetchone()[0]
+        )
         df: dict[str, int] = {}
-        for (text,) in conn.execute("SELECT text FROM claims WHERE text IS NOT NULL"):
+        rows = conn.execute(
+            f"SELECT text FROM claims "
+            f"WHERE text IS NOT NULL AND status NOT IN ({placeholders})",
+            _NON_CANONICAL_STATUSES,
+        )
+        for (text,) in rows:
             seen: set[str] = set()
             for tok in _candidate_tokens(text or ""):
                 if tok in seen:

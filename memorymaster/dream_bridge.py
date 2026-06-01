@@ -614,6 +614,17 @@ def dream_ingest(
                 skipped += 1
                 continue
 
+            # The subject comes from the frontmatter ``name:`` field, which is
+            # NOT covered by the claim_text filter above. A token or personal
+            # path smuggled in via ``name:`` would otherwise be persisted
+            # verbatim on every dream_sync (sensitivity-filter invariant 1).
+            # Reject the whole file if the subject is sensitive, and redact any
+            # secret substrings before storing it as the claim subject.
+            if _is_sensitive(name):
+                skipped += 1
+                continue
+            name, _name_findings = _redact_text(name)
+
             if len(claim_text) > 2000:
                 claim_text = claim_text[:2000]
 
