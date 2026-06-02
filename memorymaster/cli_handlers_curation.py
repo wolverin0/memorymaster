@@ -392,6 +392,23 @@ def _handle_mine_rules(args: argparse.Namespace, service, parser: argparse.Argum
     return 0
 
 
+def _handle_export_rules(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.rule_export import collect_rules, render_rules
+    t0 = time.perf_counter()
+    rows = collect_rules(
+        service,
+        min_confidence=getattr(args, "min_confidence", 0.0),
+        status=getattr(args, "status", None) or None,
+        limit=getattr(args, "limit", 500),
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(rows, total=len(rows), query_ms=elapsed_ms))
+    else:
+        print(render_rules(rows, getattr(args, "format", "json")))
+    return 0
+
+
 def _handle_detect_contradictions(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.contradiction_probe import run_probe
     t0 = time.perf_counter()
@@ -820,6 +837,7 @@ COMMAND_HANDLERS: dict[str, object] = {
     "bases-generate": _handle_bases_generate,
     "mine-transcript": _handle_mine_transcript,
     "mine-rules": _handle_mine_rules,
+    "export-rules": _handle_export_rules,
     "detect-contradictions": _handle_detect_contradictions,
     "verbatim-cleanup": _handle_verbatim_cleanup,
     "verify-claims": _handle_verify_claims,

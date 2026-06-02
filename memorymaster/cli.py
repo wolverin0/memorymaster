@@ -486,6 +486,12 @@ def build_parser() -> argparse.ArgumentParser:
     mine_rules_cmd.add_argument("--provider", default="claude_cli", help="LLM provider for this run (default: claude_cli)")
     mine_rules_cmd.add_argument("--reset", action="store_true", help="Clear the stored watermark before running (re-scan from the start)")
 
+    export_rules_cmd = sub.add_parser("export-rules", help="Export mined rule-shaped claims as json/csv/markdown (v3.28)")
+    export_rules_cmd.add_argument("--format", choices=["json", "csv", "markdown"], default="json", help="Output format (default: json)")
+    export_rules_cmd.add_argument("--min-confidence", dest="min_confidence", type=float, default=0.0, help="Only export rules at/above this confidence (default: 0.0)")
+    export_rules_cmd.add_argument("--status", default=None, help="Only export rules with this claim status (default: all statuses)")
+    export_rules_cmd.add_argument("--limit", type=int, default=500, help="Max rules to export (default: 500)")
+
     verbatim_clean = sub.add_parser("verbatim-cleanup", help="Dedup the verbatim archive + optionally purge pre-#128 capture-bug junk (v3.23)")
     verbatim_clean.add_argument("--analyze-only", dest="analyze_only", action="store_true", help="Report composition only; do not delete")
     verbatim_clean.add_argument("--apply", action="store_true", help="Actually delete (default is dry-run)")

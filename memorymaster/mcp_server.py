@@ -1220,6 +1220,38 @@ if FastMCP is not None:
         return {"ok": True, "rows": len(rules), "rules": rules}
 
     @mcp.tool()
+    def rules_export(
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+        min_confidence: float = 0.0,
+        status: str = "",
+        limit: int = 500,
+        allow_sensitive: bool = False,
+    ) -> dict[str, Any]:
+        """Export mined rule-shaped claims, filtered by confidence + status.
+
+        Read-only. Returns each rule's trigger / action / rationale / confidence
+        / correction_count / status / created_at. Sensitive rules are filtered
+        out unless ``allow_sensitive`` is granted by policy, so this never leaks
+        another agent's secret rules.
+        """
+        resolve_allow_sensitive_access(
+            allow_sensitive=allow_sensitive,
+            context="mcp.rules_export",
+        )
+        from memorymaster.rule_export import collect_rules
+
+        svc = _service(db, workspace)
+        rows = collect_rules(
+            svc,
+            min_confidence=min_confidence,
+            status=_empty_to_none(status),
+            limit=limit,
+            allow_sensitive=allow_sensitive,
+        )
+        return {"ok": True, "rows": len(rows), "rules": rows}
+
+    @mcp.tool()
     def redact_claim_payload(
         claim_id: int,
         db: str = "memorymaster.db",
