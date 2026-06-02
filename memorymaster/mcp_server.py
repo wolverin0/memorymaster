@@ -813,6 +813,45 @@ if FastMCP is not None:
         return response
 
     @mcp.tool()
+    def query_claim_paths(
+        claim_id: str,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+        edge_type: str = "",
+        direction: str = "both",
+        max_hops: int = 2,
+        include_stale: bool = False,
+        include_conflicted: bool = False,
+    ) -> dict[str, Any]:
+        """Traverse claim relationship paths from a starting claim (read-only).
+
+        Answers relational questions over the ``claim_links`` graph:
+          - provenance ("what led to X?")     → direction="in"
+          - impact     ("what depends on X?") → direction="out"
+          - conflict   ("what contradicts X?") → edge_type="contradicts"
+
+        claim_id accepts a numeric id OR a human_id string.
+        direction: "in" (incoming), "out" (outgoing), or "both" (default).
+        edge_type: filter to one link type (empty = all types).
+        max_hops: BFS depth, clamped server-side to a sane maximum.
+
+        Each result row has: claim (full dict), depth, edge_chain (link types
+        traversed), path (claim ids), and path_confidence (weakest-link =
+        minimum claim confidence across the path). Orphaned claim → empty list.
+        """
+        svc = _service(db, workspace)
+        rows = svc.query_claim_paths(
+            claim_id,
+            edge_type=(edge_type.strip() or None),
+            direction=direction,
+            max_hops=max_hops,
+            include_stale=include_stale,
+            include_conflicted=include_conflicted,
+            requesting_agent=os.getenv("MEMORYMASTER_SOURCE_AGENT") or None,
+        )
+        return {"ok": True, "rows": len(rows), "paths": rows}
+
+    @mcp.tool()
     def recall_analysis(
         query: str,
         db: str = "memorymaster.db",

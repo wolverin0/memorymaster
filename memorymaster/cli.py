@@ -374,6 +374,14 @@ def build_parser() -> argparse.ArgumentParser:
     links_cmd.add_argument("claim_id", help="Claim numeric id or human_id")
     links_cmd.add_argument("--type", dest="link_type", choices=list(CLAIM_LINK_TYPES), default=None, help="Filter by link type")
 
+    paths_cmd = sub.add_parser("query-paths", help="BFS path query over claim links (provenance/conflict/impact)")
+    paths_cmd.add_argument("--claim-id", dest="claim_id", required=True, help="Start claim numeric id or human_id")
+    paths_cmd.add_argument("--edge-type", dest="edge_type", choices=list(CLAIM_LINK_TYPES), default=None, help="Filter traversal to one link type (default: all)")
+    paths_cmd.add_argument("--direction", choices=["in", "out", "both"], default="both", help="in=provenance, out=impact, both (default)")
+    paths_cmd.add_argument("--max-hops", dest="max_hops", type=int, default=2, help="BFS depth, clamped to 5 (default: 2)")
+    paths_cmd.add_argument("--include-stale", dest="include_stale", action="store_true", help="Include stale claims in results")
+    paths_cmd.add_argument("--include-conflicted", dest="include_conflicted", action="store_true", help="Include conflicted claims in results")
+
     resolve_conflicts_cmd = sub.add_parser("resolve-conflicts", help="Detect and auto-resolve conflicting claims (same subject+predicate, different object_value)")
     resolve_conflicts_cmd.add_argument("--dry-run", action="store_true", help="Detect conflicts but do not apply transitions")
     resolve_conflicts_cmd.add_argument("--limit", type=int, default=500, help="Maximum claims to scan for conflicts")

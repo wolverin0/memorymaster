@@ -231,6 +231,34 @@ def _handle_link_commands(args: argparse.Namespace, service, parser: argparse.Ar
         return 0
 
 
+def _handle_query_paths(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str = "") -> int:
+    """Handle the query-paths subcommand: BFS path query over claim links."""
+    t0 = time.perf_counter()
+    rows = service.query_claim_paths(
+        args.claim_id,
+        edge_type=getattr(args, "edge_type", None),
+        direction=getattr(args, "direction", "both"),
+        max_hops=getattr(args, "max_hops", 2),
+        include_stale=getattr(args, "include_stale", False),
+        include_conflicted=getattr(args, "include_conflicted", False),
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope({"rows": len(rows), "paths": rows}, total=len(rows), query_ms=elapsed_ms))
+        return 0
+    if not rows:
+        print(f"No paths found from claim {args.claim_id}.")
+        return 0
+    print(f"claim {args.claim_id} ({getattr(args, 'direction', 'both')}, max {getattr(args, 'max_hops', 2)} hops)")
+    for row in rows:
+        claim = row["claim"]
+        chain = " > ".join(row.get("edge_chain", [])) or "?"
+        text = str(claim.get("text", ""))[:80]
+        print(f"{'  ' * row['depth']}|-[{chain}] #{claim.get('id')} "
+              f"(conf={row.get('path_confidence', 0.0):.2f}) {text}")
+    return 0
+
+
 def _handle_stealth_status(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     t0 = time.perf_counter()
     stealth_path = Path.cwd() / STEALTH_DB_NAME
