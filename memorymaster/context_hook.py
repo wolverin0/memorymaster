@@ -424,6 +424,14 @@ _RECALL_WEIGHT_DEFAULTS: dict[str, float] = {
 #   artifacts/cognee-assessment-2026-04-24.md).
 # * ``MEMORYMASTER_RECALL_GRAPH_PATH`` — Kuzu DB file path. Default
 #   ``~/.memorymaster/graph.kuzu``. The backfill script writes here.
+# * ``MEMORYMASTER_RECALL_GRAPH_CANDIDATES`` — "1" / truthy promotes the
+#   stream from annotation-only to a full HARVEST stream: BFS-reached
+#   claims not already in the candidate pool are hydrated as new rows
+#   (roadmap 12.2). Default "0" = annotation-only, row set bit-identical.
+# * ``MEMORYMASTER_RECALL_W_GRAPH`` — linear-combiner weight for the
+#   distance-weighted ``graph_score`` signal (read via ``_recall_weight``).
+#   Default 0.0, so even a harvested row contributes nothing to ranking and
+#   recall stays bit-identical until an operator opts in to BOTH flags.
 #
 # Defensive-fail contract (claim 11907): every error is swallowed. If the
 # Kuzu DB is missing, corrupt, or kuzu isn't installed, the stream returns
@@ -435,6 +443,21 @@ _GRAPH_PATH_DEFAULT = "~/.memorymaster/graph.kuzu"
 
 def _graph_enabled() -> bool:
     raw = os.environ.get("MEMORYMASTER_RECALL_GRAPH", "0").strip()
+    return raw not in ("0", "false", "False", "no", "off", "")
+
+
+def _graph_candidates_enabled() -> bool:
+    """Opt-in gate for the graph HARVEST path (roadmap 12.2).
+
+    When ``MEMORYMASTER_RECALL_GRAPH_CANDIDATES`` is truthy AND the graph
+    stream itself is enabled (:func:`_graph_enabled`), the graph stream
+    promotes from annotation-only to a full retrieval stream: claims reached
+    by BFS that are NOT already in the candidate pool are hydrated as new
+    rows (distance-weighted ``graph_score``). Default "0" = off, so the
+    stream stays annotation-only and recall output is bit-identical to the
+    pre-harvest baseline.
+    """
+    raw = os.environ.get("MEMORYMASTER_RECALL_GRAPH_CANDIDATES", "0").strip()
     return raw not in ("0", "false", "False", "no", "off", "")
 
 
@@ -657,6 +680,71 @@ def _graph_reached_claim_distance(query: str, store) -> dict[int, int]:
                 gs.close()
             except Exception:  # pragma: no cover - defensive
                 pass
+
+
+def _row_for_graph_claim(claim, graph_score: float) -> dict:
+    """Build a query_rows-shaped row for a graph-harvested claim.
+
+    All lexical/vector/entity signals default to zero so the row only
+    contributes via ``graph_score`` under ``W_GRAPH``. At ``W_GRAPH=0``
+    (shipped default) a harvested row adds nothing to the ranking — it can
+    only ever be trimmed by the budget loop, never displace a real hit,
+    which preserves the bit-identical-when-disabled guarantee.
+    """
+    return {
+        "claim": claim,
+        "status": getattr(claim, "status", "confirmed"),
+        "annotation": None,
+        "score": 0.0,
+        "lexical_score": 0.0,
+        "freshness_score": 0.0,
+        "confidence_score": float(getattr(claim, "confidence", 0.0) or 0.0),
+        "vector_score": 0.0,
+        "entity_score": 0.0,
+        "graph_score": float(graph_score),
+        "source": "graph_harvest",
+    }
+
+
+def _harvest_graph_rows(
+    svc,
+    graph_distance: dict[int, int],
+    rows: list,
+    seen_ids: set[int],
+) -> int:
+    """Hydrate graph-reached claims that are NOT already candidates.
+
+    For each ``(claim_id, hops)`` in ``graph_distance`` whose id is unseen,
+    hydrate the claim, skip archived / sensitive ones, and append a row with
+    ``graph_score = 1 / (1 + hops)``. Mutates ``rows`` + ``seen_ids`` and
+    returns the number of rows added.
+
+    Defensive: a per-claim hydrate error is logged and skipped — the harvest
+    never raises into the recall hot path (claim 11907 silent-fail).
+    """
+    try:
+        from memorymaster.security import is_sensitive_claim
+    except Exception:  # pragma: no cover - security module is core
+        is_sensitive_claim = lambda _claim: False  # type: ignore[assignment]  # noqa: E731
+
+    added = 0
+    # Closest-first so a future cap keeps the highest-scoring claims.
+    for cid, hops in sorted(graph_distance.items(), key=lambda kv: kv[1]):
+        if cid in seen_ids:
+            continue
+        try:
+            claim = svc.store.get_claim(cid, include_citations=True)
+        except Exception as exc:  # noqa: BLE001 — best-effort hydrate
+            logger.debug("graph harvest: get_claim(%d) failed: %s", cid, exc)
+            continue
+        if claim is None or getattr(claim, "status", "") == "archived":
+            continue
+        if is_sensitive_claim(claim):
+            continue
+        rows.append(_row_for_graph_claim(claim, 1.0 / (1.0 + float(hops))))
+        seen_ids.add(cid)
+        added += 1
+    return added
 
 
 def _recall_weight(name: str) -> float:
@@ -1549,16 +1637,34 @@ def _recall_impl(
             #   hop 1  → score 0.500
             #   hop 2  → score 0.333
             #   not reached → score 0.0
-            graph_distance = _graph_reached_claim_distance(query, svc.store)
-            if graph_distance:
-                for row in rows:
-                    claim = row.get("claim")
-                    cid = getattr(claim, "id", None)
-                    if cid is not None and int(cid) in graph_distance:
-                        hops = graph_distance[int(cid)]
-                        row["graph_score"] = 1.0 / (1.0 + float(hops))
-                    elif row.get("graph_score") is None:
-                        row["graph_score"] = 0.0
+            # Wrap the whole stream so a catastrophic boundary failure
+            # (BFS helper, store, or harvest hydrate raising) is logged and
+            # swallowed — the graph stream NEVER raises into recall (claim
+            # 11907). The helpers already swallow their own internal errors;
+            # this is the outer belt-and-suspenders guard the spec mandates.
+            try:
+                graph_distance = _graph_reached_claim_distance(query, svc.store)
+                if graph_distance:
+                    for row in rows:
+                        claim = row.get("claim")
+                        cid = getattr(claim, "id", None)
+                        if cid is not None and int(cid) in graph_distance:
+                            hops = graph_distance[int(cid)]
+                            row["graph_score"] = 1.0 / (1.0 + float(hops))
+                        elif row.get("graph_score") is None:
+                            row["graph_score"] = 0.0
+                    # Roadmap 12.2 — HARVEST path. When
+                    # MEMORYMASTER_RECALL_GRAPH_CANDIDATES=1, promote the
+                    # stream from annotation-only to a full retrieval stream:
+                    # BFS-reached claims NOT already in the candidate pool are
+                    # hydrated as new rows. Default OFF keeps the row set
+                    # bit-identical.
+                    if _graph_candidates_enabled():
+                        _harvest_graph_rows(
+                            svc, graph_distance, rows, seen_ids
+                        )
+            except Exception as exc:  # noqa: BLE001 — defensive (claim 11907)
+                logger.debug("graph stream skipped: %s", exc)
 
     if not rows and not skip_qdrant:
         # Fallback to Qdrant semantic search

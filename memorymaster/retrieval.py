@@ -220,6 +220,8 @@ def _assemble_breakdown(
     floor: float,
     gated: bool,
     final: float,
+    graph: float | None = None,
+    w_graph: float = 0.0,
 ) -> dict:
     """Build the per-claim score breakdown (observability only).
 
@@ -230,12 +232,19 @@ def _assemble_breakdown(
     scores, the named weights actually applied, the weighted contributions,
     the relevance/boost subtotals, ``floor_gated``, and ``final_score``.
 
+    ``graph`` (roadmap 12.2) is the optional distance-weighted graph signal
+    ``1/(1+hops)`` carried on rows produced by the context_hook graph stream.
+    It is keyed in only when a caller passes a non-None value — the default
+    ``None`` leaves the breakdown byte-identical for every caller that does
+    not compute a graph score (i.e. the entire RankedClaim ranker today), so
+    the disabled-mode guarantee holds.
+
     No ranking math happens here — every value is derived from quantities the
     ranker already computed for this claim.
     """
     w_l, w_c, w_f, w_v = parts.weights
     boost_terms = parts.boost_terms
-    return {
+    breakdown = {
         # --- legacy keys (do not rename: explain/cache/qrels tests depend) ---
         "relevance": parts.relevance,
         "boosts_total": parts.boosts,
@@ -275,6 +284,14 @@ def _assemble_breakdown(
         "final_score": final,
         "floor_gated": gated,
     }
+    # Optional graph component (roadmap 12.2). Only surfaced when a caller
+    # actually carries a graph score — keeps the breakdown byte-identical for
+    # the RankedClaim ranker, which never computes one.
+    if graph is not None:
+        breakdown["components"]["graph"] = graph
+        breakdown["contributions"]["graph"] = w_graph * graph
+        breakdown["weights_applied"]["graph"] = w_graph
+    return breakdown
 
 
 def _compute_claim_score(
