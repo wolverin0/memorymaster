@@ -80,7 +80,11 @@ def _phase_timer(phase_ms: dict[str, float], name: str):
 # streams are "populated" (at least one row with a non-zero score on that
 # stream) and picks RRF when the count meets
 # MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD (default 3), falling back to the
-# linear combiner otherwise. Claim 11898 documents the rationale: on a
+# linear combiner otherwise. A per-query-type override
+# MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_<TYPE> (TYPE = a query_classifier
+# type uppercased, e.g. FACT_LOOKUP) takes precedence over the global var
+# for queries of that type, so sparse query classes can demand more streams
+# before paying for RRF. Claim 11898 documents the rationale: on a
 # dense 500-Q LongMemEval set with 2+ populated streams, RRF wins hit@1
 # +18% / MRR +11% vs linear; on a 30-prompt conversational set with only
 # bm25+freshness populated, RRF regresses p@5 from 0.313 to 0.127. The
@@ -119,28 +123,70 @@ def reset_auto_gate_stats() -> None:
         _AUTO_GATE_STATS[key] = 0
 
 
-def _auto_gate_threshold() -> int:
-    """Read gate threshold from env, falling back to 3."""
-    raw = os.environ.get("MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD")
+def _classify_query_type(query: str | None) -> str | None:
+    """Best-effort ``query_classifier`` type for ``query`` (or None).
+
+    Returns one of ``query_classifier.QUERY_TYPES`` (e.g. ``fact_lookup``)
+    so a per-type threshold override can be looked up. Defensive: a blank
+    query, an import failure, or any classifier error yields None, in which
+    case the gate uses the global threshold — it never crashes recall().
+    """
+    if not query or not query.strip():
+        return None
+    try:
+        from memorymaster.query_classifier import classify_query
+
+        return classify_query(query)
+    except Exception as exc:  # noqa: BLE001 — classification is advisory
+        logger.debug("auto-gate query classification skipped: %s", exc)
+        return None
+
+
+def _read_threshold_env(env_key: str) -> int | None:
+    """Read one threshold env var as a positive int, or None if unusable.
+
+    Returns None when the var is unset/blank, non-integer, or < 1 — the
+    caller then falls back to the next source (global var, then the
+    constant). Never raises; bad values are logged at WARNING.
+    """
+    raw = os.environ.get(env_key)
     if raw is None or raw.strip() == "":
-        return _AUTO_GATE_THRESHOLD_DEFAULT
+        return None
     try:
         value = int(raw)
     except ValueError:
-        logger.warning(
-            "Invalid MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD=%r, falling back to %d",
-            raw,
-            _AUTO_GATE_THRESHOLD_DEFAULT,
-        )
-        return _AUTO_GATE_THRESHOLD_DEFAULT
+        logger.warning("Invalid %s=%r, ignoring (falling back)", env_key, raw)
+        return None
     if value < 1:
-        logger.warning(
-            "MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD=%d < 1, falling back to %d",
-            value,
-            _AUTO_GATE_THRESHOLD_DEFAULT,
-        )
-        return _AUTO_GATE_THRESHOLD_DEFAULT
+        logger.warning("%s=%d < 1, ignoring (falling back)", env_key, value)
+        return None
     return value
+
+
+def _auto_gate_threshold(query_type: str | None = None) -> int:
+    """Resolve the gate threshold, falling back to 3.
+
+    Resolution order:
+      1. ``MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_<TYPE>`` — per-query-type
+         override (``<TYPE>`` is a ``query_classifier`` type uppercased, e.g.
+         ``FACT_LOOKUP``). Only consulted when ``query_type`` is provided.
+      2. ``MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD`` — global override.
+      3. :data:`_AUTO_GATE_THRESHOLD_DEFAULT` (3).
+
+    A blank / non-integer / ``< 1`` value at any level is ignored and the
+    next source is consulted, so a typo'd per-type var can't disable the
+    global one.
+    """
+    if query_type:
+        per_type = _read_threshold_env(
+            f"MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_{query_type.upper()}"
+        )
+        if per_type is not None:
+            return per_type
+    global_threshold = _read_threshold_env("MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD")
+    if global_threshold is not None:
+        return global_threshold
+    return _AUTO_GATE_THRESHOLD_DEFAULT
 
 
 def _auto_gate_decide(
@@ -149,6 +195,7 @@ def _auto_gate_decide(
     bm25_on: bool,
     freshness_weight: float,
     threshold: int | None = None,
+    query: str | None = None,
 ) -> tuple[str, int, int]:
     """Decide ``rrf`` vs ``linear`` for MEMORYMASTER_RECALL_FUSION=auto.
 
@@ -156,12 +203,15 @@ def _auto_gate_decide(
     ``picked_rrf`` / ``picked_linear``) and emits a ``log_hook("recall",
     "rrf_auto_gate", ...)`` line. Returns ``(decision, populated, threshold)``.
 
-    ``threshold`` defaults to the env-var / constant (see
+    ``threshold`` defaults to the env-resolved value (see
     ``_auto_gate_threshold``). Passing an explicit integer bypasses env
-    lookup — useful for tests.
+    lookup entirely — useful for tests. When ``threshold`` is None and
+    ``query`` is given, the query is classified via ``classify_query`` so a
+    per-type ``MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_<TYPE>`` override can
+    apply, falling back to the global threshold.
     """
     if threshold is None:
-        threshold = _auto_gate_threshold()
+        threshold = _auto_gate_threshold(_classify_query_type(query))
     populated = _count_populated_streams(
         rows,
         bm25_scores,
@@ -1806,6 +1856,7 @@ def _recall_impl(
             bm25_scores,
             bm25_on,
             w_freshness,
+            query=query,
         )
 
     if fusion_mode == "rrf":
