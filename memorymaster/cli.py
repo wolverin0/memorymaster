@@ -187,6 +187,19 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--auto-classify", action="store_true", help="Auto-classify query type and use optimal retrieval mode")
     query.add_argument("--explain", action="store_true", help="Show per-stage score attribution (relevance vs. boosts, floor-gate status) for each result")
 
+    recall_analysis = sub.add_parser(
+        "recall-analysis",
+        help="Explain WHY claims ranked where they did (per-component score breakdown)",
+    )
+    recall_analysis.add_argument("--query", required=True, help="Query text to analyze")
+    recall_analysis.add_argument("--mode", choices=list(RETRIEVAL_MODES), default="hybrid", help="Retrieval mode (legacy or hybrid)")
+    recall_analysis.add_argument("--limit", type=int, default=10, help="Maximum rows")
+    recall_analysis.add_argument("--profile", choices=list(RETRIEVAL_PROFILES), default=None, help="Per-query hybrid retrieval profile")
+    recall_analysis.add_argument("--include-candidates", action="store_true", help="Also analyze candidate (unverified) claims")
+    recall_analysis.add_argument("--allow-sensitive", action="store_true", help="Include claims that look sensitive")
+    recall_analysis.add_argument("--scope-allowlist", default="", help="Comma-separated scopes to include")
+    # JSON output uses the global --json/-j flag (dest=json_output).
+
     context = sub.add_parser("context", help="Pack relevant claims into a token-budgeted context block for AI agents")
     context.add_argument("text", help="Query text describing what context is needed")
     context.add_argument("--budget", type=int, default=4000, help="Maximum token budget (default: 4000)")

@@ -910,6 +910,62 @@ def _handle_query(args: argparse.Namespace, service, parser: argparse.ArgumentPa
     return 0
 
 
+def _print_recall_analysis(analysis: dict) -> None:
+    """Render the recall-analysis breakdown for humans (non-JSON path)."""
+    w = analysis.get("weights", {})
+    rw = w.get("retrieval_weights", {})
+    print(f"query: {analysis.get('query', '')!r}  mode={analysis.get('mode')}  "
+          f"profile={analysis.get('profile')}  rows={analysis.get('rows', 0)}")
+    print(f"weights(l,c,f,v)=({rw.get('lexical')},{rw.get('confidence')},"
+          f"{rw.get('freshness')},{rw.get('vector')})  "
+          f"floor_ratio={w.get('boost_floor_ratio')}  pinned_bonus={w.get('pinned_bonus')}")
+    if w.get("profile_override"):
+        print(f"profile_override: {w['profile_override']}")
+    for rank, entry in enumerate(analysis.get("results", []), start=1):
+        bd = entry.get("breakdown") or {}
+        comp = bd.get("components", {})
+        contrib = bd.get("contributions", {})
+        gate = "GATED" if bd.get("floor_gated") else "applied"
+        print(f"#{rank} claim={entry.get('claim_id')} ({entry.get('human_id')}) "
+              f"score={entry.get('score', 0.0):.3f} tier={entry.get('tier')} "
+              f"pinned={int(entry.get('pinned', False))}")
+        print(f"    components: lex={comp.get('lexical', 0.0):.3f} "
+              f"conf={comp.get('confidence', 0.0):.3f} fresh={comp.get('freshness', 0.0):.3f} "
+              f"vec={comp.get('vector', 0.0):.3f}")
+        print(f"    contributions: lex={contrib.get('lexical', 0.0):+.3f} "
+              f"vec={contrib.get('vector', 0.0):+.3f} conf={contrib.get('confidence', 0.0):+.3f} "
+              f"fresh={contrib.get('freshness', 0.0):+.3f} "
+              f"tier={contrib.get('tier_bonus', 0.0):+.3f} pin={contrib.get('pinned_bonus', 0.0):+.3f}")
+        print(f"    relevance={bd.get('relevance_subtotal', 0.0):.3f} "
+              f"boosts={bd.get('boosts_subtotal', 0.0):+.3f} [{gate}] "
+              f"-> final={bd.get('final_score', 0.0):.3f}")
+    rankings = analysis.get("component_rankings", {})
+    if rankings:
+        print("component rankings (best-first claim ids):")
+        for comp_name, ids in rankings.items():
+            print(f"    {comp_name}: {ids}")
+
+
+def _handle_recall_analysis(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.recall-analysis")
+    t0 = time.perf_counter()
+    analysis = service.recall_analysis(
+        query_text=args.query,
+        limit=args.limit,
+        retrieval_mode=args.mode,
+        include_candidates=getattr(args, "include_candidates", False),
+        retrieval_profile=getattr(args, "profile", None),
+        allow_sensitive=args.allow_sensitive,
+        scope_allowlist=parse_scope_allowlist(args.scope_allowlist),
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(analysis, total=analysis.get("rows", 0), query_ms=elapsed_ms))
+    else:
+        _print_recall_analysis(analysis)
+    return 0
+
+
 def _handle_context(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     resolve_allow_sensitive_access(allow_sensitive=args.allow_sensitive, context="cli.context")
     t0 = time.perf_counter()

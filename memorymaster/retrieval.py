@@ -210,6 +210,73 @@ def _compute_score_parts(
     )
 
 
+def _assemble_breakdown(
+    *,
+    parts: _ScoreParts,
+    lexical: float,
+    confidence: float,
+    freshness: float,
+    vector: float,
+    floor: float,
+    gated: bool,
+    final: float,
+) -> dict:
+    """Build the per-claim score breakdown (observability only).
+
+    Carries BOTH the legacy keys (``relevance``, ``boosts_total``,
+    ``boosts_applied``, ``boost_terms``, ``weights``, ``floor``, ``final`` —
+    relied on by existing explain/cache/qrels tests) AND the explicit
+    component view the Recall Pattern Analyzer surfaces: the raw per-signal
+    scores, the named weights actually applied, the weighted contributions,
+    the relevance/boost subtotals, ``floor_gated``, and ``final_score``.
+
+    No ranking math happens here — every value is derived from quantities the
+    ranker already computed for this claim.
+    """
+    w_l, w_c, w_f, w_v = parts.weights
+    boost_terms = parts.boost_terms
+    return {
+        # --- legacy keys (do not rename: explain/cache/qrels tests depend) ---
+        "relevance": parts.relevance,
+        "boosts_total": parts.boosts,
+        "boosts_applied": not gated,
+        "boost_terms": boost_terms,
+        "weights": parts.weights,
+        "floor": floor,
+        "final": final,
+        # --- explainability keys (Recall Pattern Analyzer) ---
+        # Raw signals (pre-weight), each in [0, 1].
+        "components": {
+            "lexical": lexical,
+            "confidence": confidence,
+            "freshness": freshness,
+            "vector": vector,
+        },
+        # Weighted contributions actually folded into the score.
+        "contributions": {
+            "lexical": w_l * lexical,
+            "vector": w_v * vector,
+            "confidence": boost_terms.get("confidence", 0.0),
+            "freshness": boost_terms.get("freshness", 0.0),
+            "tier_bonus": boost_terms.get("tier", 0.0),
+            "pinned_bonus": boost_terms.get("pinned", 0.0),
+        },
+        # Named weights so callers don't index a bare 4-tuple.
+        "weights_applied": {
+            "lexical": w_l,
+            "confidence": w_c,
+            "freshness": w_f,
+            "vector": w_v,
+        },
+        "tier_bonus": boost_terms.get("tier", 0.0),
+        "pinned_bonus": boost_terms.get("pinned", 0.0),
+        "relevance_subtotal": parts.relevance,
+        "boosts_subtotal": 0.0 if gated else parts.boosts,
+        "final_score": final,
+        "floor_gated": gated,
+    }
+
+
 def _compute_claim_score(
     claim: Claim,
     lexical: float,
@@ -274,6 +341,14 @@ def _component_rankings(rows: list[RankedClaim]) -> dict[str, list[int]]:
         "confidence": ranked_ids("confidence_score"),
         "freshness": ranked_ids("freshness_score"),
     }
+
+
+def component_rankings(rows: list[RankedClaim]) -> dict[str, list[int]]:
+    """Public view of per-component claim rankings (lexical/vector/confidence/
+    freshness): for each signal, the claim ids ordered best-first. Pure
+    observability — does not affect the ranked order in ``rows``.
+    """
+    return _component_rankings(rows)
 
 
 def apply_rrf_tiebreaker(
@@ -389,15 +464,16 @@ def rank_claim_rows(
                 freshness_score=freshness,
                 confidence_score=confidence,
                 vector_score=vector,
-                breakdown={
-                    "relevance": parts.relevance,
-                    "boosts_total": parts.boosts,
-                    "boosts_applied": not gated,
-                    "boost_terms": parts.boost_terms,
-                    "weights": parts.weights,
-                    "floor": floor,
-                    "final": score,
-                },
+                breakdown=_assemble_breakdown(
+                    parts=parts,
+                    lexical=lexical,
+                    confidence=confidence,
+                    freshness=freshness,
+                    vector=vector,
+                    floor=floor,
+                    gated=gated,
+                    final=score,
+                ),
             )
         )
 

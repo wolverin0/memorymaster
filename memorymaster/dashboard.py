@@ -248,6 +248,7 @@ def _build_get_route_map(handler: Any) -> dict[str, callable]:
         "/api/action-proposals": lambda qs: handler._handle_action_proposals(qs),
         "/api/atlas/version": lambda qs: handler._handle_atlas_version(qs),
         "/api/retrieval": lambda qs: handler._handle_retrieval(qs),
+        "/api/recall-analysis": lambda qs: handler._handle_recall_analysis(qs),
         "/api/audit": lambda qs: handler._handle_audit(qs),
         "/api/namespaces": lambda qs: handler._handle_namespaces(qs),
         "/api/session-stats": lambda qs: handler._handle_session_stats(qs),
@@ -1219,6 +1220,35 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
             for claim in claims
         ]
         self._write_json({"ok": True, "rows": len(rows), "rows_data": rows, "query": text, "mode": mode, "scope_allowlist": scope_allowlist})
+
+    def _handle_recall_analysis(self, query_string: str) -> None:
+        """Read-only ranking explainability: per-claim score breakdown, the
+        active retrieval weights/profile, and per-component claim rankings.
+
+        Thin wrapper over ``service.recall_analysis`` — no ranking math here.
+        Returns an empty analysis if the service lacks the method (older build).
+        """
+        params = _parse_retrieval_query_params(query_string)
+        # Introspection endpoint: default to including candidates so operators
+        # can debug how unverified claims would rank (parity with CLI/MCP).
+        include_candidates = _parse_bool(
+            _first_query_value(parse_qs(query_string), "include_candidates"), default=True
+        )
+        analyze = getattr(self._server.service, "recall_analysis", None)
+        if not callable(analyze):
+            self._write_json({"ok": True, "rows": 0, "results": [], "query": params["text"]})
+            return
+        analysis = analyze(
+            query_text=params["text"],
+            limit=params["limit"],
+            retrieval_mode=params["mode"],
+            include_stale=params["include_stale"],
+            include_conflicted=params["include_conflicted"],
+            include_candidates=include_candidates,
+            allow_sensitive=params["allow_sensitive"],
+            scope_allowlist=params["scope_allowlist"] or None,
+        )
+        self._write_json({"ok": True, **analysis})
 
     def _handle_audit(self, query_string: str) -> None:
         query = parse_qs(query_string)

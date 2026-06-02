@@ -138,6 +138,90 @@ def _llm_rerank_enabled() -> bool:
         return True
 
 
+def _recall_weights_snapshot(query_type: str | None) -> dict[str, Any]:
+    """Snapshot the retrieval weights in force, for recall explainability.
+
+    Reads ``get_config()`` (the same source the ranker uses) so the reported
+    weights match what actually scored the claims. Includes the per-query-type
+    profile override when one applies.
+    """
+    cfg = get_config()
+    lex, conf, fresh, vec = cfg.retrieval_weights
+    no_vec = cfg.retrieval_weights_no_vector
+    profile = cfg.retrieval_profile(query_type) if query_type else None
+    return {
+        "retrieval_weights": {
+            "lexical": lex,
+            "confidence": conf,
+            "freshness": fresh,
+            "vector": vec,
+        },
+        "retrieval_weights_no_vector": {
+            "lexical": no_vec[0],
+            "confidence": no_vec[1],
+            "freshness": no_vec[2],
+        },
+        "query_type": query_type,
+        "profile_override": (
+            None
+            if profile is None
+            else {
+                "lexical": profile[0],
+                "confidence": profile[1],
+                "freshness": profile[2],
+                "vector": profile[3],
+            }
+        ),
+        "pinned_bonus": cfg.pinned_bonus,
+        "boost_floor_ratio": cfg.boost_floor_ratio,
+    }
+
+
+def _recall_component_rankings(rows: list[dict[str, Any]]) -> dict[str, list[int]]:
+    """Per-component claim rankings for the returned rows (best-first ids).
+
+    Rebuilds lightweight ``RankedClaim`` objects from the query_rows dicts so
+    the shared ``retrieval.component_rankings`` logic can be reused without
+    duplicating the sort. Pure read — does not reorder ``rows``.
+    """
+    from memorymaster.retrieval import RankedClaim, component_rankings
+
+    ranked = [
+        RankedClaim(
+            claim=row["claim"],
+            score=float(row.get("score", 0.0)),
+            lexical_score=float(row.get("lexical_score", 0.0)),
+            freshness_score=float(row.get("freshness_score", 0.0)),
+            confidence_score=float(row.get("confidence_score", 0.0)),
+            vector_score=float(row.get("vector_score", 0.0)),
+            breakdown=row.get("breakdown"),
+        )
+        for row in rows
+        if row.get("claim") is not None
+    ]
+    if not ranked:
+        return {}
+    return component_rankings(ranked)
+
+
+def _recall_result_entry(row: dict[str, Any]) -> dict[str, Any]:
+    """Project one query_rows dict into a recall-analysis result entry."""
+    claim = row["claim"]
+    return {
+        "claim_id": getattr(claim, "id", None),
+        "human_id": getattr(claim, "human_id", None),
+        "text": getattr(claim, "text", ""),
+        "status": row.get("status", getattr(claim, "status", None)),
+        "tier": getattr(claim, "tier", "working"),
+        "pinned": bool(getattr(claim, "pinned", False)),
+        "score": float(row.get("score", 0.0)),
+        "lexical_score": float(row.get("lexical_score", 0.0)),
+        "confidence_score": float(row.get("confidence_score", 0.0)),
+        "freshness_score": float(row.get("freshness_score", 0.0)),
+        "vector_score": float(row.get("vector_score", 0.0)),
+        "breakdown": row.get("breakdown"),
+    }
+
 
 class MemoryService:
     def __init__(
@@ -786,6 +870,51 @@ class MemoryService:
                 for r in results if r.get("claim") is not None
             ], cache_generation)
         return results
+
+    def recall_analysis(
+        self,
+        query_text: str,
+        *,
+        limit: int = 20,
+        retrieval_mode: str = "legacy",
+        include_stale: bool = True,
+        include_conflicted: bool = True,
+        include_candidates: bool = False,
+        retrieval_profile: str | None = None,
+        allow_sensitive: bool = False,
+        scope_allowlist: list[str] | None = None,
+        requesting_agent: str | None = None,
+        query_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Explain WHY each claim ranked where it did (observability only).
+
+        Thin wrapper over :meth:`query_rows` that surfaces the per-claim score
+        breakdown already attached to ranked rows, the per-component claim
+        rankings, and the retrieval weights/profile in force. Does NOT alter
+        ranking math or result order — it only reads what the ranker produced.
+        """
+        rows = self.query_rows(
+            query_text=query_text,
+            limit=limit,
+            retrieval_mode=retrieval_mode,
+            include_stale=include_stale,
+            include_conflicted=include_conflicted,
+            include_candidates=include_candidates,
+            retrieval_profile=retrieval_profile,
+            allow_sensitive=allow_sensitive,
+            scope_allowlist=scope_allowlist,
+            requesting_agent=requesting_agent,
+            query_type=query_type,
+        )
+        return {
+            "query": query_text,
+            "mode": retrieval_mode,
+            "profile": retrieval_profile,
+            "rows": len(rows),
+            "weights": _recall_weights_snapshot(query_type),
+            "component_rankings": _recall_component_rankings(rows),
+            "results": [_recall_result_entry(row) for row in rows],
+        }
 
     def _rehydrate_cached_rows(self, stubs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Rebuild query_rows result dicts from cached stubs by re-fetching each

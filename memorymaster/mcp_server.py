@@ -813,6 +813,51 @@ if FastMCP is not None:
         return response
 
     @mcp.tool()
+    def recall_analysis(
+        query: str,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+        limit: int = 10,
+        retrieval_mode: str = "hybrid",
+        include_stale: bool = True,
+        include_conflicted: bool = True,
+        include_candidates: bool = True,
+        retrieval_profile: str = "",
+        allow_sensitive: bool = False,
+        scope_allowlist: str = "",
+    ) -> dict[str, Any]:
+        """Explain WHY each claim ranked where it did (ranking introspection).
+
+        Read-only observability tool. Returns, per claim, the full score
+        breakdown — raw lexical/confidence/freshness/vector signals, the
+        weighted contributions, tier and pinned bonuses, the relevance vs.
+        boost subtotals, whether the floor-ratio gate suppressed the boosts,
+        and the final score — plus the retrieval weights/profile actually in
+        force and the per-component claim rankings.
+
+        Use this to debug recall: why did a relevant claim rank low, or an
+        off-topic one rank high? It does NOT change ranking — it surfaces the
+        same numbers ``query_memory`` ranked on.
+        """
+        resolve_allow_sensitive_access(
+            allow_sensitive=allow_sensitive,
+            context="mcp.recall_analysis",
+        )
+        svc = _service(db, workspace)
+        analysis = svc.recall_analysis(
+            query_text=query,
+            limit=limit,
+            retrieval_mode=retrieval_mode,
+            include_stale=include_stale,
+            include_conflicted=include_conflicted,
+            include_candidates=include_candidates,
+            retrieval_profile=(retrieval_profile.strip() or None),
+            allow_sensitive=allow_sensitive,
+            scope_allowlist=_effective_scope_allowlist(scope_allowlist, workspace),
+        )
+        return {"ok": True, **analysis}
+
+    @mcp.tool()
     def query_for_context(
         query: str,
         db: str = "memorymaster.db",
