@@ -76,12 +76,43 @@ try {
     function Invoke-Mm([string[]]$mmArgs) {
         $parts = $MmBin.Split(" ", [StringSplitOptions]::RemoveEmptyEntries)
         $exe   = $parts[0]
-        $base  = @($parts[1..($parts.Length-1)]) + @("--json")
-        $raw = & $exe @base @mmArgs 2>&1 | Out-String
+        $base  = @()
+        if ($parts.Length -gt 1) { $base = @($parts[1..($parts.Length-1)]) }
+        $base += @("--json")
+
+        # Keep stderr separate from stdout. Some MemoryMaster commands emit
+        # compatibility warnings on stderr (for example old delta schema rows)
+        # while still returning valid JSON on stdout. PowerShell 5.1 turns native
+        # stderr into NativeCommandError records when redirected with 2>&1, which
+        # both contaminates JSON parsing and can abort this scheduled task under
+        # ErrorActionPreference=Stop.
+        $errFile = [System.IO.Path]::GetTempFileName()
         try {
-            return $raw | ConvertFrom-Json
-        } catch {
-            throw "memorymaster did not return JSON. Raw output:`n$raw"
+            $oldEap = $ErrorActionPreference
+            try {
+                # Native stderr redirection creates error records in Windows
+                # PowerShell 5.1. Temporarily relax EAP so warnings do not abort
+                # the task before we can parse stdout JSON and inspect exit code.
+                $ErrorActionPreference = "Continue"
+                $raw = & $exe @base @mmArgs 2>$errFile | Out-String
+                $exitCode = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $oldEap
+            }
+            $stderr = ""
+            if (Test-Path $errFile) {
+                $stderrRaw = Get-Content $errFile -Raw -ErrorAction SilentlyContinue
+                if ($null -ne $stderrRaw) { $stderr = $stderrRaw.Trim() }
+            }
+            if ($stderr) { Log ("  memorymaster stderr: {0}" -f ($stderr.Replace("`r`n", " | ").Replace("`n", " | "))) }
+            if ($exitCode -ne 0) { throw "memorymaster exited $exitCode. Stderr:`n$stderr`nStdout:`n$raw" }
+            try {
+                return $raw | ConvertFrom-Json
+            } catch {
+                throw "memorymaster did not return JSON. Raw output:`n$raw`nStderr:`n$stderr"
+            }
+        } finally {
+            if (Test-Path $errFile) { Remove-Item $errFile -Force -ErrorAction SilentlyContinue }
         }
     }
 
