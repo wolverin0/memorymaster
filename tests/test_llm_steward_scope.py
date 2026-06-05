@@ -74,7 +74,7 @@ def test_scope_filter_feeds_only_that_scope(tmp_path, monkeypatch):
 
     seen_claim_ids: list[int] = []
 
-    def fake_extract(provider, api_key, model, claim_id, text, base_url="", key_rotator=None):
+    def fake_extract(provider, api_key, model, claim_id, text, base_url="", key_rotator=None, use_llm_provider=False):
         seen_claim_ids.append(claim_id)
         return ExtractionResult(claim_id=claim_id, extractions=[])  # no-op: extract nothing
 
@@ -100,7 +100,7 @@ def test_no_scope_processes_all_scopes(tmp_path, monkeypatch):
 
     seen_claim_ids: list[int] = []
 
-    def fake_extract(provider, api_key, model, claim_id, text, base_url="", key_rotator=None):
+    def fake_extract(provider, api_key, model, claim_id, text, base_url="", key_rotator=None, use_llm_provider=False):
         seen_claim_ids.append(claim_id)
         return ExtractionResult(claim_id=claim_id, extractions=[])
 
@@ -120,7 +120,7 @@ def test_scope_dry_run_mutates_nothing(tmp_path, monkeypatch):
     _seed_two_scopes(svc)
     db_path = svc.store.db_path
 
-    def fake_extract(provider, api_key, model, claim_id, text, base_url="", key_rotator=None):
+    def fake_extract(provider, api_key, model, claim_id, text, base_url="", key_rotator=None, use_llm_provider=False):
         # Even if the LLM "extracted" something, dry_run must persist nothing.
         return ExtractionResult(claim_id=claim_id, extractions=[])
 
@@ -134,3 +134,58 @@ def test_scope_dry_run_mutates_nothing(tmp_path, monkeypatch):
     assert before == after == {"project:memorymaster": 4, "project:other": 4}, (
         "dry-run must leave every scope's candidate counts unchanged"
     )
+
+
+def test_use_llm_provider_routes_through_call_llm(tmp_path, monkeypatch):
+    """extract_claim(use_llm_provider=True) must call llm_provider.call_llm
+    (the keyless claude_cli OAuth path) and NOT the direct-HTTP _call_llm.
+    This is what lets the steward run when raw provider API keys 401/403."""
+    from memorymaster.llm_steward import extract_claim
+
+    called = {"provider": 0, "direct": 0}
+
+    def fake_provider_call_llm(prompt, text):
+        called["provider"] += 1
+        # the instruction prompt must be passed (placeholder stripped) + the text
+        assert "memory curator" in prompt
+        assert "{text}" not in prompt
+        assert "secret coding fact here" in text
+        return "[]"  # valid empty JSON array -> no extractions
+
+    def fake_direct(*a, **k):
+        called["direct"] += 1
+        return "[]"
+
+    monkeypatch.setattr("memorymaster.llm_provider.call_llm", fake_provider_call_llm)
+    monkeypatch.setattr("memorymaster.llm_steward._call_llm", fake_direct)
+
+    result = extract_claim(
+        "gemini", "", "", 99, "secret coding fact here", use_llm_provider=True
+    )
+
+    assert called["provider"] == 1, "must route through llm_provider.call_llm"
+    assert called["direct"] == 0, "must NOT use the direct-HTTP _call_llm path"
+    assert result.extractions == []
+
+
+def test_use_llm_provider_false_uses_direct_path(tmp_path, monkeypatch):
+    """Default (use_llm_provider=False) keeps the legacy direct-HTTP path."""
+    from memorymaster.llm_steward import extract_claim
+
+    called = {"provider": 0, "direct": 0}
+
+    def fake_provider_call_llm(prompt, text):
+        called["provider"] += 1
+        return "[]"
+
+    def fake_direct(*a, **k):
+        called["direct"] += 1
+        return "[]"
+
+    monkeypatch.setattr("memorymaster.llm_provider.call_llm", fake_provider_call_llm)
+    monkeypatch.setattr("memorymaster.llm_steward._call_llm", fake_direct)
+
+    extract_claim("gemini", "key", "model", 1, "some fact")
+
+    assert called["direct"] == 1
+    assert called["provider"] == 0
