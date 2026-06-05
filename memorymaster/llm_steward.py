@@ -579,6 +579,7 @@ def run_steward(
     cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS,
     auto_validate: bool = True,
     workspace_root: str = "",
+    scope: str | None = None,
 ) -> dict[str, Any]:
     """Process candidate claims through LLM extraction and curation.
 
@@ -591,6 +592,10 @@ def run_steward(
                        on newly confirmed claims after LLM extraction.
         workspace_root: Workspace root for deterministic file-path probes.
                         Defaults to cwd if empty.
+        scope: When set, only candidates with this exact ``scope`` are
+               processed (e.g. ``"project:memorymaster"``). When ``None``
+               (default), candidates from all scopes are processed in id
+               order, preserving the legacy behaviour.
 
     Returns summary stats dict.
     """
@@ -616,11 +621,20 @@ def run_steward(
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA busy_timeout = 5000")
 
-    candidates = conn.execute(
-        "SELECT id, text, scope, version FROM claims WHERE status = 'candidate' "
-        "AND text IS NOT NULL ORDER BY id LIMIT ?",
-        (limit,),
-    ).fetchall()
+    # Optional scope filter: when set, only that exact scope's candidates are
+    # processed. When None, behaviour is unchanged (all scopes, id order).
+    if scope is not None:
+        candidates = conn.execute(
+            "SELECT id, text, scope, version FROM claims WHERE status = 'candidate' "
+            "AND text IS NOT NULL AND scope = ? ORDER BY id LIMIT ?",
+            (scope, limit),
+        ).fetchall()
+    else:
+        candidates = conn.execute(
+            "SELECT id, text, scope, version FROM claims WHERE status = 'candidate' "
+            "AND text IS NOT NULL ORDER BY id LIMIT ?",
+            (limit,),
+        ).fetchall()
 
     confirmed_claim_ids: list[int] = []
 
@@ -971,6 +985,11 @@ Examples:
         "--workspace-root", default="",
         help="Workspace root for file-path validation probes (default: cwd)",
     )
+    parser.add_argument(
+        "--scope", default=None,
+        help="Only process candidates with this exact scope (e.g. project:memorymaster). "
+             "When omitted, candidates from all scopes are processed in id order.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
@@ -993,6 +1012,7 @@ Examples:
         cooldown_seconds=args.cooldown,
         auto_validate=not args.no_auto_validate,
         workspace_root=args.workspace_root,
+        scope=args.scope,
     )
 
     print(f"\n{'='*50}")
