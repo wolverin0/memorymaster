@@ -525,6 +525,7 @@ class MemoryService:
         min_score: float = 0.58,
         policy_mode: str = "legacy",
         policy_limit: int = 200,
+        batch_limit: int = 200,
     ) -> dict[str, object]:
         # Open a per-cycle LLM budget scope. When any of the caps fires
         # (MEMORYMASTER_MAX_LLM_CALLS_PER_CYCLE / MAX_TOKENS_PER_CYCLE /
@@ -542,7 +543,7 @@ class MemoryService:
                     mode=policy_mode,
                     limit=policy_limit,
                 )
-                extract_res = extractor.run(self.store)
+                extract_res = extractor.run(self.store, limit=batch_limit)
                 result["policy"] = {
                     "mode": policy_selection.mode,
                     "considered": policy_selection.considered,
@@ -552,24 +553,26 @@ class MemoryService:
                 result["extractor"] = extract_res
                 # Match validator's scan size (200) so every candidate the
                 # validator would touch gets a chance to dedupe first.
-                dedupe_res = candidate_dedupe.run(self.store)
+                dedupe_res = candidate_dedupe.run(self.store, limit=batch_limit)
                 result["dedupe"] = dedupe_res
                 deterministic_res = deterministic.run(
                     self.store,
                     workspace_root=self.workspace_root,
+                    limit=batch_limit,
                     revalidation_claims=policy_selection.selected,
                     policy_mode=policy_mode,
                 )
                 result["deterministic"] = deterministic_res
                 validate_res = validator.run(
                     self.store,
+                    limit=batch_limit,
                     min_citations=min_citations,
                     min_score=min_score,
                     revalidation_claims=policy_selection.selected,
                     policy_mode=policy_mode,
                 )
                 result["validator"] = validate_res
-                decay_res = decay.run(self.store)
+                decay_res = decay.run(self.store, limit=batch_limit)
                 result["decay"] = decay_res
                 compact_res = (
                     compactor.run(

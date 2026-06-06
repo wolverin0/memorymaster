@@ -34,7 +34,11 @@ try:
     from pathlib import Path
 
     svc = MemoryService(db_target=DB_PATH, workspace_root=Path(PROJECT_ROOT))
-    result = svc.run_cycle()
+    # batch_limit threads into the validator/extractor/deterministic/decay jobs
+    # (each defaults to 200). That path is deterministic (~0 LLM calls, ~12s per
+    # 200, ~107s for 2000), so a large batch is cheap and keeps the candidate
+    # backlog from outgrowing the steward when many panes ingest concurrently.
+    result = svc.run_cycle(batch_limit=2000)
     print(f"[MemoryMaster] steward cycle: {result}")
 except Exception as e:
     print(f"[MemoryMaster] steward error: {e}", file=sys.stderr)
