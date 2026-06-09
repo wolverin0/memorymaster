@@ -18,6 +18,12 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
+# bench_longmemeval imports huggingface_hub at module level (dataset download);
+# the hub is an optional bench-only dependency, absent in CI.
+pytest.importorskip("huggingface_hub")
+
 _SPEC = importlib.util.spec_from_file_location(
     "bench_longmemeval",
     Path(__file__).resolve().parent / "bench_longmemeval.py",
