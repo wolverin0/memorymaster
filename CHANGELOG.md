@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [3.28.0] - 2026-06-09
+
+**Feature bundle + steward operability.** Five recall/explainability features built
+via the `/mm-feature-rnd` workflow (each with intent-anchored tests), plus the
+steward-throughput fixes that drained the candidate backlog, and the v4
+consolidation-program tooling. Full suite green: 2732 passed, 53 skipped, 1 xfailed.
+
+### Added
+
+- **`recall_analysis` MCP tool** — per-claim retrieval explainability: which
+  channel (lexical/vector/entity/graph) surfaced a claim, per-channel scores,
+  and the fusion path that ranked it.
+- **RRF auto-gate per-type thresholds** — reciprocal-rank fusion now engages
+  per claim-type when measured signal supports it, instead of one global gate.
+- **Entity-graph harvesting in `context_hook`** — graph-adjacent claims enter
+  the recall candidate pool alongside lexical/vector hits.
+- **`query_claim_paths` MCP tool** — multi-hop claim chains with weakest-link
+  (min-confidence) rollup across the path.
+- **Rule confidence bootstrap + `rules_export`** — rules gain usage-driven
+  confidence stats (migration `0007_rule_stats`) and an export surface for
+  embedding rules into agent instructions.
+- **`llm_steward --scope`** — scoped candidate drains (`WHERE scope = ?`),
+  enabling per-project stewardship without touching other scopes.
+- **`llm_steward --use-llm-provider`** — routes extraction through
+  `llm_provider.call_llm`, enabling the keyless `claude_cli` provider.
+- **Workflow skills** — `/mm-audit`, `/mm-feature-rnd`, `/mm-mine-corrections`,
+  and `/mm4-baseline` (P0 of the v4 consolidation program) ship as repo-shared
+  dynamic-workflow harnesses under `.claude/`.
+- **Watchkeeper-heartbeat archival script** — lifecycle-safe bulk archive for
+  session-state heartbeat claims (28,268 archived in production).
+
+### Fixed
+
+- **Steward throughput** — `service.run_cycle` gained `batch_limit` (default
+  200, hook template raised to 2000) threaded into all five cycle jobs; the
+  previous hardcoded per-job `limit=200` capped validation at ~380 claims/day
+  and let the candidate backlog grow unbounded.
+- **Hermes sync stderr handling** — PowerShell 5.1 `NativeCommandError` no
+  longer aborts `windows-hermes-sync.ps1`; stderr routed to a temp file with
+  exit-code checks.
+
 ## [3.26.1] - 2026-06-01
 
 **Coverage hardening (audit-low backlog tail).** Closes the final three coverage
