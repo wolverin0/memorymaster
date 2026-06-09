@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MemoryMaster v4 Program - BASELINE Scorecard - 2026-06-09</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel2: #1c2330;
+    --border: #2d3645;
+    --text: #d7dee8;
+    --muted: #8b96a5;
+    --green: #3fb950;
+    --red: #f85149;
+    --amber: #d29922;
+    --blue: #58a6ff;
+    --purple: #bc8cff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    margin: 0; padding: 32px 24px 80px;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 19px; margin: 40px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { font-size: 15px; margin: 18px 0 8px; color: var(--blue); }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+  .statgrid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 12px; margin: 20px 0 8px;
+  }
+  .stat {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 14px 12px;
+  }
+  .stat .v { font-size: 24px; font-weight: 700; }
+  .stat .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+  .stat .d { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .ok    { color: var(--green); }
+  .bad   { color: var(--red); }
+  .warn  { color: var(--amber); }
+  .info  { color: var(--blue); }
+  .badge {
+    display: inline-block; font-size: 11px; font-weight: 700;
+    padding: 2px 10px; border-radius: 999px; vertical-align: middle;
+    letter-spacing: 0.5px; margin-left: 8px;
+  }
+  .b-pass { background: rgba(63,185,80,.15);  color: var(--green); border: 1px solid var(--green); }
+  .b-fail { background: rgba(248,81,73,.12);  color: var(--red);   border: 1px solid var(--red); }
+  .b-part { background: rgba(210,153,34,.12); color: var(--amber); border: 1px solid var(--amber); }
+  .b-def  { background: rgba(188,140,255,.12);color: var(--purple);border: 1px solid var(--purple); }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0 4px; font-size: 13.5px; }
+  th, td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--panel2); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+  tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
+  code, .mono { font-family: Consolas, "Courier New", monospace; font-size: 12.5px; color: #c9d6e3; }
+  code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
+  .section {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 20px; margin: 16px 0;
+  }
+  .section h2 { margin-top: 0; border: none; padding: 0; }
+  .gap { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .gap b { color: var(--text); }
+  pre {
+    background: #0a0e14; border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; font-size: 12px; overflow-x: auto; color: #b8c4d0;
+    white-space: pre-wrap;
+  }
+  ul { margin: 6px 0; padding-left: 22px; }
+  li { margin: 3px 0; font-size: 13.5px; }
+  .small { font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>MemoryMaster v4 Program &mdash; BASELINE Scorecard</h1>
+<div class="sub">
+  Measured 2026-06-09 &middot; repo <span class="mono">G:/_OneDrive/OneDrive/Desktop/Py Apps/memorymaster</span>
+  &middot; branch <span class="mono">omni/v328-features</span> &middot; package version <span class="mono">3.28.0</span>
+  &middot; live DB opened READ-ONLY only &middot; nothing committed or pushed.
+  P6 FINAL must re-run the exact methodology in each section below.
+</div>
+
+<!-- ====================== STAT GRID ====================== -->
+<div class="statgrid">
+  <div class="stat"><div class="v info">3.231 GB</div><div class="l">DB size</div><div class="d">memorymaster.db</div></div>
+  <div class="stat"><div class="v info">85,354</div><div class="l">Total claims</div><div class="d">all statuses</div></div>
+  <div class="stat"><div class="v ok">70.4 ms</div><div class="l">Recall p50</div><div class="d">target &lt;300 ms</div></div>
+  <div class="stat"><div class="v ok">117.6 ms</div><div class="l">Recall p95</div><div class="d">target &lt;1000 ms</div></div>
+  <div class="stat"><div class="v bad">16.06 s</div><div class="l">init_db cold</div><div class="d">target &lt;2 s (warm: 0.091 s)</div></div>
+  <div class="stat"><div class="v bad">23,010</div><div class="l">Candidate backlog</div><div class="d">= 21.3 days of inflow</div></div>
+  <div class="stat"><div class="v warn">1,082.7/day</div><div class="l">Claim inflow (7d)</div><div class="d">steward: 2,148.4/day</div></div>
+  <div class="stat"><div class="v warn">585</div><div class="l">Conflicted claims</div><div class="d">0.68% of corpus</div></div>
+  <div class="stat"><div class="v warn">138 / 49,650</div><div class="l">Modules / LOC</div><div class="d">13 modules &gt; 800 LOC</div></div>
+  <div class="stat"><div class="v info">2,789</div><div class="l">Tests collected</div><div class="d">227 test files</div></div>
+  <div class="stat"><div class="v bad">30 / 0</div><div class="l">MCP tools / usage rows</div><div class="d">tracking not wired</div></div>
+  <div class="stat"><div class="v info">888,634</div><div class="l">Verbatim rows</div><div class="d">events: 420,586</div></div>
+</div>
+<div class="small">Claims by status: archived 41,659 (48.8%) &middot; candidate 23,010 &middot; confirmed 10,925 &middot; stale 8,749 &middot; conflicted 585 &middot; superseded 426.</div>
+
+<!-- ====================== REPAIR OUTCOMES ====================== -->
+<div class="section">
+  <h2>Baseline-phase repair outcomes</h2>
+  <table>
+    <tr><th>Repair</th><th>Status</th><th>Evidence</th></tr>
+    <tr>
+      <td><b>Graphify post-commit hook</b> (GRAPH_REPORT.md truncated to 0 bytes)</td>
+      <td><span class="badge b-pass">FIXED</span></td>
+      <td>Root cause was NOT stdout: un-encoded <code>write_text(report)</code> in global package
+        <span class="mono">site-packages/graphify/watch.py:56</span> used cp1252, crashed on U+2192 arrows
+        (emitted by <span class="mono">graphify/report.py:72,110</span>) after truncating the file.
+        Fix 1 (primary): added <code>encoding="utf-8"</code> to the write. Fix 2 (defensive):
+        <code>export PYTHONUTF8=1</code> + <code>export PYTHONIOENCODING=utf-8</code> before the
+        <span class="mono">$GRAPHIFY_PYTHON</span> invocation in both <span class="mono">.git/hooks/post-commit</span>
+        and <span class="mono">.git/hooks/post-checkout</span>. Verified: crash reproduced first under forced cp1252
+        ("'charmap' codec can't encode character" at position 960); after fix, two real runs succeeded
+        (9,018 nodes / 17,144 edges / 440 communities). GRAPH_REPORT.md regenerated: 140,890 bytes, dated 2026-06-09,
+        19 lines containing the previously fatal arrow char; graph.json (9.9 MB) regenerated. No commit created.
+        The unrelated backgrounded <code>npx gitnexus analyze</code> block in the hook was untouched.</td>
+    </tr>
+    <tr>
+      <td><b>Self-docs: architecture</b></td>
+      <td><span class="badge b-pass">REGENERATED</span></td>
+      <td><span class="mono">.planning/codebase/ARCHITECTURE.md</span> (84 lines) and
+        <span class="mono">STRUCTURE.md</span> (67 lines) regenerated from the current tree (v3.28.0; was v2.0.0-stale).
+        Measured inputs: 108 top-level package modules + 22 in jobs/migrations/connectors, 228 test files, 56 scripts,
+        ~30 @mcp.tool decorators, migrations 0001-0007 (0005 intentionally absent). Covers claim lifecycle,
+        steward pipeline (batch_limit=200 per v3.28 commit 60e40ec), and the 6-stream recall fusion stack
+        (bm25/vector/entity/verbatim/freshness/graph; linear|rrf|auto).</td>
+    </tr>
+    <tr>
+      <td><b>Self-docs: quality five</b></td>
+      <td><span class="badge b-pass">REGENERATED</span></td>
+      <td><span class="mono">.planning/codebase/CONCERNS.md, TESTING.md, CONVENTIONS.md, STACK.md, INTEGRATIONS.md</span>
+        regenerated from the current tree. Grounded facts: pyproject 3.28.0 with 10 extras + 5 entry points;
+        226 test files / ~2,394 test functions (grep count); postgres parity gate
+        (<span class="mono">MEMORYMASTER_TEST_POSTGRES_DSN</span>); CI matrix ubuntu/windows x 3.10-3.12;
+        migrations with sha256 drift detection; claude_cli provider at <span class="mono">llm_provider.py:291</span>;
+        Qdrant fire-and-forget at <span class="mono">service.py:323/335</span>. CONCERNS.md cites the real
+        2026-06-05 corruption event and the intake-vs-steward backlog. All 7 docs in
+        <span class="mono">.planning/codebase/</span> are now fresh as of 2026-06-09.</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ====================== NORTH STAR 1: DURABLE ====================== -->
+<div class="section">
+  <h2>1. Durable <span class="badge b-fail">GAP</span></h2>
+  <table>
+    <tr><th>Metric</th><th>Measured today</th><th>Target (v4)</th><th>Verdict</th></tr>
+    <tr><td>Writer model</td><td class="bad">Multi-writer: per-pane MCP server processes + hooks + steward cron all open the same 3.231 GB SQLite file (WAL mode)</td><td>Single writer</td><td class="bad">FAIL</td></tr>
+    <tr><td>Integrity check schedule</td><td class="bad">No scheduled <code>PRAGMA quick_check</code>. Real corruption event in tree: <span class="mono">memorymaster.db.corrupt-2026-06-05</span> + recovery scripts (<span class="mono">scripts/recover_db_indexcorrupt.py</span>, swap_race*.ps1)</td><td>quick_check scheduled</td><td class="bad">FAIL</td></tr>
+    <tr><td>WAL + busy_timeout</td><td class="ok">Present (v3.27 batch-2 hardening, commit b1fcc92)</td><td>Present</td><td class="ok">PASS</td></tr>
+  </table>
+  <div class="gap"><b>Gap:</b> 4 days since last corruption event; zero scheduled integrity checks; N concurrent writer processes vs target of exactly 1.</div>
+</div>
+
+<!-- ====================== NORTH STAR 2: GOVERNED ====================== -->
+<div class="section">
+  <h2>2. Governed <span class="badge b-fail">GAP</span></h2>
+  <table>
+    <tr><th>Metric</th><th>Measured today</th><th>Target (v4)</th><th>Verdict</th></tr>
+    <tr><td>Candidate backlog</td><td class="bad">23,010 candidates = <b>21.3 days</b> of inflow (1,082.71/day, 7d window 2026-06-02..2026-06-09)</td><td>&lt;= 1 day of inflow (~1,083)</td><td class="bad">FAIL (21x over)</td></tr>
+    <tr><td>Steward throughput</td><td class="ok">2,148.43 validated/day (7d) &mdash; exceeds inflow, so backlog drains at ~1,066/day net if sustained (~21 days to clear)</td><td>&gt;= inflow</td><td class="ok">PASS</td></tr>
+    <tr><td>Conflicted claims</td><td class="warn">585 (0.68% of 85,354)</td><td>arbitrated, trending to 0</td><td class="warn">PARTIAL</td></tr>
+    <tr><td>Inflow attribution</td><td class="warn">Dominant 7d source is <code>(null)</code>: 5,319 of 8,579 (batch ingestion, unattributed). llm-stop-hook 1,686; claude-session 288; otacon-hermes 141; codex-session 97; others &lt;50</td><td>every claim attributed</td><td class="warn">PARTIAL</td></tr>
+  </table>
+  <div class="gap"><b>Gap:</b> backlog must shrink from 23,010 to ~1,083 (-95%); null-source ingestion (62% of inflow) needs source_agent attribution.</div>
+</div>
+
+<!-- ====================== NORTH STAR 3: PRECISE ====================== -->
+<div class="section">
+  <h2>3. Precise <span class="badge b-def">DEFERRED-to-P3</span></h2>
+  <table>
+    <tr><th>Metric</th><th>Measured today</th><th>Target (v4)</th><th>Verdict</th></tr>
+    <tr><td>LongMemEval score</td><td class="info">NOT RUN at baseline &mdash; ~7h wall-time; deliberately deferred to phase P3. Dataset staged at <span class="mono">benchmark/longmemeval_s_qa.json</span></td><td>Published LongMemEval &gt;= baseline</td><td class="info">DEFERRED-to-P3</td></tr>
+    <tr><td>Recall hit rate (proxy)</td><td class="ok">24/24 benchmark queries returned non-empty context (see Fast section methodology)</td><td>n/a (proxy only)</td><td class="ok">INFO</td></tr>
+  </table>
+  <div class="gap"><b>Gap:</b> no number exists yet. P3 must run LongMemEval and record the score here as the baseline for the P6 FINAL comparison.</div>
+</div>
+
+<!-- ====================== NORTH STAR 4: FAST ====================== -->
+<div class="section">
+  <h2>4. Fast <span class="badge b-part">PARTIAL</span></h2>
+  <table>
+    <tr><th>Metric</th><th>Measured today</th><th>Target (v4)</th><th>Verdict</th></tr>
+    <tr><td>Recall p50</td><td class="ok">70.38 ms</td><td>&lt; 300 ms</td><td class="ok">PASS (4.3x headroom)</td></tr>
+    <tr><td>Recall p95</td><td class="ok">117.55 ms</td><td>&lt; 1,000 ms</td><td class="ok">PASS (8.5x headroom)</td></tr>
+    <tr><td>init_db cold (first boot on 3 GB DB)</td><td class="bad">16.058 s</td><td>&lt; 2 s</td><td class="bad">FAIL (8x over)</td></tr>
+    <tr><td>init_db warm (2nd call, same process)</td><td class="ok">0.091 s</td><td>&lt; 2 s</td><td class="ok">PASS</td></tr>
+    <tr><td>Hook cold-process tax</td><td class="warn">~1.2 s first-call warm-up (imports + first SQLite connection) paid on EVERY user prompt by the fresh hook process &mdash; the steady-state 70 ms is in-process only</td><td>(implied by p50 target)</td><td class="warn">WATCH</td></tr>
+  </table>
+  <h3>Methodology (replicate exactly at P6)</h3>
+  <pre>Script: G:\_OneDrive\OneDrive\Desktop\Py Apps\memorymaster\_bench_recall_latency.py
+(preserved untracked; run with PYTHONIOENCODING=utf-8)
+Replicates the UserPromptSubmit hook (~/.claude/hooks/memorymaster-recall.py) exactly:
+  sys.path.insert(project_root); os.environ[MEMORYMASTER_DEFAULT_DB]=&lt;live db&gt;;
+  os.chdir(project_root);
+  from memorymaster.context_hook import recall
+  recall(query, db_path=DB_PATH, skip_qdrant=True)   # same signature as the hook
+24 varied project-topic queries (steward validation, postgres parity, recall fusion,
+sensitivity filter, WAL mode, decay, tiers, openclaw sync, ...), each timed end-to-end
+in-process with time.perf_counter. One warm-up call excluded (first call = 1,208 ms,
+lazy module init + first SQLite connection to the 3 GB DB).
+p50 = median; p95 = nearest-rank over the 24 sorted samples.
+Distribution: min 56.79 / mean 74.16 / max 136.07 ms. 0 timeouts, 0 errors, 24/24 hits.
+INIT: MemoryService(DB_PATH).init_db() called twice on one instance;
+  call 1 (cold) = 16.058 s, call 2 (warm) = 0.091 s.
+DB live and in production during the run; read paths + idempotent DDL only, no ingest.</pre>
+  <div class="gap"><b>Gap:</b> recall latency already meets target; cold init must drop from 16.06 s to &lt;2 s (-87%).</div>
+</div>
+
+<!-- ====================== NORTH STAR 5: MULTI-AGENT-SAFE ====================== -->
+<div class="section">
+  <h2>5. Multi-agent-safe <span class="badge b-fail">GAP</span></h2>
+  <table>
+    <tr><th>Metric</th><th>Measured today</th><th>Target (v4)</th><th>Verdict</th></tr>
+    <tr><td>Agent classes writing concurrently</td><td class="warn">&gt;= 4 observed in 7d inflow (llm-stop-hook, claude-session, codex-session, otacon-hermes family) plus unattributed batch &mdash; but uncontrolled, not via a tested protocol</td><td>3 agent classes verified e2e</td><td class="warn">PARTIAL</td></tr>
+    <tr><td>E2E multi-agent test harness</td><td class="bad">None exists. Concurrency safety is currently incidental (WAL + busy_timeout); the 2026-06-05 index corruption under per-pane multi-writer load is the counter-evidence</td><td>e2e suite proving 3 classes safe</td><td class="bad">FAIL</td></tr>
+  </table>
+  <div class="gap"><b>Gap:</b> agents already write concurrently in production with zero e2e safety proof; need a 3-class e2e harness that passes, ideally on a single-writer architecture (see Durable).</div>
+</div>
+
+<!-- ====================== NORTH STAR 6: OBSERVABLE ====================== -->
+<div class="section">
+  <h2>6. Observable <span class="badge b-part">PARTIAL</span></h2>
+  <table>
+    <tr><th>Metric</th><th>Measured today</th><th>Target (v4)</th><th>Verdict</th></tr>
+    <tr><td>MCP tool usage telemetry</td><td class="bad"><b>0 rows</b> in <code>mcp_usage</code> table. Schema exists (id, tool_name, timestamp, latency_ms, tenant_id, result_status), CLI report handler exists (<span class="mono">cli_handlers_basic.py:handle_mcp_usage_report</span>), tests exist &mdash; but <code>mcp_usage.insert()</code> is never called from <span class="mono">mcp_server.py</span>. All 30 registered tools have zero recorded calls</td><td>Dashboards with real usage data</td><td class="bad">FAIL</td></tr>
+    <tr><td>Dashboard</td><td class="warn"><span class="mono">dashboard.py</span> (1,568 LOC) exists; no usage-driven views possible while telemetry is empty</td><td>Dashboards live</td><td class="warn">PARTIAL</td></tr>
+    <tr><td>Fresh self-docs</td><td class="ok">All 7 <span class="mono">.planning/codebase/*.md</span> regenerated 2026-06-09 from the real tree (were v2.0.0-stale)</td><td>Fresh self-docs</td><td class="ok">PASS (today)</td></tr>
+    <tr><td>Graphify intelligence layer</td><td class="ok">GRAPH_REPORT.md 140,890 bytes, 2026-06-09; hook fixed so it stays fresh per commit</td><td>Fresh</td><td class="ok">PASS</td></tr>
+  </table>
+  <h3>P5 prerequisite (from mcp-usage agent)</h3>
+  <ul>
+    <li>Wire a wrapper/middleware in <span class="mono">mcp_server.py</span> logging each @mcp.tool() call to <code>mcp_usage</code> (tool_name, timestamp, latency_ms, result_status, tenant_id).</li>
+    <li>Let real traffic accumulate, then re-run the usage-mining analysis before any P5 tool curation &mdash; today's data cannot distinguish used from unused tools.</li>
+  </ul>
+  <div class="gap"><b>Gap:</b> docs fresh, but tool telemetry is 0/30 wired; dashboards have no usage data to show.</div>
+</div>
+
+<!-- ====================== NORTH STAR 7: DISTRIBUTABLE ====================== -->
+<div class="section">
+  <h2>7. Distributable <span class="badge b-fail">GAP</span></h2>
+  <table>
+    <tr><th>Metric</th><th>Measured today</th><th>Target (v4)</th><th>Verdict</th></tr>
+    <tr><td>Package version in tree</td><td class="warn">3.28.0 (pyproject + __version__), on unmerged branch <span class="mono">omni/v328-features</span></td><td rowspan="2">v4.0.0 published on PyPI</td><td class="bad" rowspan="2">FAIL</td></tr>
+    <tr><td>Last PyPI publish</td><td class="warn">v3.2.1 (2026-04-10) per project memory &mdash; 26 minor versions of local drift since</td></tr>
+    <tr><td>Code-size discipline</td><td class="warn">13 of 138 modules exceed the 800-LOC limit; top offenders: postgres_store.py 2,613; context_hook.py 2,161; service.py 1,819; steward.py 1,739; mcp_server.py 1,586; dashboard.py 1,568; cli_handlers_basic.py 1,566; operator.py 1,453; llm_steward.py 1,076; cli_handlers_curation.py 1,062 (+ wiki_engine 962, _storage_sources 1,006, _storage_schema 867)</td><td>0 over-limit (consolidation goal)</td><td class="warn">PARTIAL</td></tr>
+    <tr><td>Test suite</td><td class="ok">2,789 tests collected across 227 files; CI matrix ubuntu/windows x py3.10-3.12</td><td>green at release</td><td class="ok">INFO</td></tr>
+  </table>
+  <div class="gap"><b>Gap:</b> 3.28.0 local / 3.2.1 on PyPI vs 4.0.0 target; 13 over-limit modules to consolidate before release.</div>
+</div>
+
+<!-- ====================== METHODOLOGY APPENDIX ====================== -->
+<div class="section">
+  <h2>Appendix: full measurement methodology (for P6 FINAL replication)</h2>
+
+  <h3>A. DB governance stats (db-stats agent)</h3>
+  <pre>READ-ONLY SQL on memorymaster.db via sqlite3('file:...?mode=ro', uri=True).
+Window: last 7 calendar days, 2026-06-02 .. 2026-06-09.
+Measured: db_size_gb=3.231; total claims=85,354;
+claims_by_status: archived 41,659 / candidate 23,010 / confirmed 10,925 /
+  stale 8,749 / conflicted 585 / superseded 426;
+candidate inflow = 1,082.71/day (8,579 claims in 7d);
+inflow by source_agent (7d): (null) 5,319; llm-stop-hook 1,686; claude-session 288;
+  otacon-hermes 141; codex-session 97; otacon-hermes-research-agent 42; others &lt;=2;
+steward_validated_per_day_7d = 2,148.43;
+verbatim rows = 888,634; events rows = 420,586. No writes performed.</pre>
+
+  <h3>B. Recall latency + init (perf-recall agent)</h3>
+  <pre>See Fast section above. Script preserved at repo root: _bench_recall_latency.py
+(untracked). Re-run with PYTHONIOENCODING=utf-8 against the live DB, READ paths only.</pre>
+
+  <h3>C. Code census (code-census agent)</h3>
+  <pre>Live filesystem as of 2026-06-09: 138 Python modules under memorymaster/,
+49,650 total LOC; 13 modules over 800 LOC (list in Distributable section);
+227 test files, 2,789 collected tests; 30 @mcp.tool decorators in mcp_server.py.
+P6: repeat the same counts (module glob + LOC sum + pytest --co -q + decorator grep).</pre>
+
+  <h3>D. MCP usage mining (mcp-usage agent)</h3>
+  <pre>mcp_usage table queried read-only: schema exists, 0 records.
+30 registered tools enumerated: classify_query, compact_memory, entity_stats,
+extract_entities, federated_query, find_related_claims, ingest_claim, ingest_rule,
+init_db, list_claims, list_events, list_steward_proposals, open_dashboard, pin_claim,
+quality_scores, query_claim_paths, query_for_context, query_for_task, query_memory,
+query_meta_decisions, query_rules, read_active_tasks, recall_analysis, recompute_tiers,
+redact_claim_payload, resolve_steward_proposal, rules_export, run_cycle, run_steward,
+search_verbatim.
+Files: memorymaster/mcp_server.py (decorators), memorymaster/mcp_usage.py (insert/query,
+never called), cli_handlers_basic.py (report handler), tests/test_mcp_usage.py (fixtures).
+P6: re-query mcp_usage row count + per-tool counts once the insert hook is wired.</pre>
+
+  <h3>E. Graphify hook fix (fix-graphify-hook agent)</h3>
+  <pre>Verification protocol (no commit created):
+1) Reproduce: run graphify _rebuild_code under forced cp1252 (python -X utf8=0, no UTF-8
+   env) -&gt; before fix it crashed: "'charmap' codec can't encode character '-&gt;' (U+2192)".
+2) Fix watch.py:56 -&gt; write_text(report, encoding="utf-8"); add PYTHONUTF8=1 +
+   PYTHONIOENCODING=utf-8 exports to .git/hooks/post-commit and post-checkout.
+3) Re-run (a) _rebuild_code under forced cp1252 and (b) the hook's exact python -c
+   wrapper with GRAPHIFY_CHANGED from `git diff HEAD~1 HEAD` -&gt; both succeed:
+   9,018 nodes / 17,144 edges / 440 communities.
+4) Confirm GRAPH_REPORT.md = 140,890 bytes, dated 2026-06-09, contains the U+2192 char.
+P6: confirm GRAPH_REPORT.md mtime tracks the latest commit and size &gt; 0.</pre>
+
+  <h3>F. Self-docs regeneration (regen-docs agents)</h3>
+  <pre>All 7 files in .planning/codebase/ rewritten from the current tree on 2026-06-09:
+ARCHITECTURE.md, STRUCTURE.md (arch agent); CONCERNS.md, TESTING.md, CONVENTIONS.md,
+STACK.md, INTEGRATIONS.md (quality agent). All facts code-derived (no DB access).
+P6: check each file's stated version (must not say 2.0.0) and mtime vs HEAD.</pre>
+
+  <h3>G. Constraints honored at baseline</h3>
+  <ul>
+    <li>memorymaster.db opened READ-ONLY (uri mode=ro) for every query; zero writes.</li>
+    <li>No git commit, no push (graphify + hook fixes are working-tree / global-package only).</li>
+    <li>All numbers above are real measured output, not estimates.</li>
+    <li>LongMemEval intentionally NOT run (7h wall-time) &mdash; DEFERRED-to-P3.</li>
+  </ul>
+</div>
+
+<!-- ====================== SCOREBOARD SUMMARY ====================== -->
+<div class="section">
+  <h2>Scoreboard summary</h2>
+  <table>
+    <tr><th>North-star property</th><th>Baseline verdict</th><th>One-line gap</th></tr>
+    <tr><td>Durable</td><td><span class="badge b-fail">GAP</span></td><td>Multi-writer + no scheduled quick_check; corruption event 2026-06-05 in tree. Target: single writer + scheduled quick_check.</td></tr>
+    <tr><td>Governed</td><td><span class="badge b-fail">GAP</span></td><td>23,010-candidate backlog = 21.3 days of inflow vs target &lt;=1 day (~1,083).</td></tr>
+    <tr><td>Precise</td><td><span class="badge b-def">DEFERRED</span></td><td>LongMemEval not run at baseline (7h); P3 establishes the number.</td></tr>
+    <tr><td>Fast</td><td><span class="badge b-part">PARTIAL</span></td><td>Recall p50 70.4 / p95 117.6 ms PASS; cold init 16.06 s vs &lt;2 s target FAIL.</td></tr>
+    <tr><td>Multi-agent-safe</td><td><span class="badge b-fail">GAP</span></td><td>4+ agent classes already writing, but zero e2e safety harness; target = 3 classes verified e2e.</td></tr>
+    <tr><td>Observable</td><td><span class="badge b-part">PARTIAL</span></td><td>Self-docs fresh today; mcp_usage telemetry 0 rows / 30 tools (insert hook unwired); dashboards data-starved.</td></tr>
+    <tr><td>Distributable</td><td><span class="badge b-fail">GAP</span></td><td>3.28.0 in tree / 3.2.1 on PyPI vs v4.0.0-on-PyPI target; 13 modules over 800 LOC.</td></tr>
+  </table>
+</div>
+
+<div class="small" style="margin-top:24px;">
+  Generated by the P0 baseline compiler agent on 2026-06-09. File:
+  <span class="mono">.planning/BASELINE-2026-06-09.html</span>. ASCII-safe content (HTML entities only).
+</div>
+
+</div>
+</body>
+</html>

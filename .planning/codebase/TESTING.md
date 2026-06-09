@@ -1,57 +1,52 @@
 # TESTING.md — Testing Strategy
 
-## Framework
-- **pytest>=8.2** (`dev` extra)
-- Config: `pytest.ini` — `testpaths = tests`, `-p no:cacheprovider`
-- 43 test files covering all major modules
+*Regenerated 2026-06-09 from the current tree (v3.28.0). Supersedes the stale v2.0.0 document (which claimed 43 test files).*
 
-## Test Organization
-```
-tests/
-├── conftest.py                    # autouse cleanup fixture for .tmp_cases/
-├── test_auto_validate.py
-├── test_claim_links.py
-├── test_cli_*.py                  # CLI integration tests
-├── test_compact_*.py              # Compaction & summary compaction
-├── test_config.py
-├── test_conflict_resolver.py
-├── test_confusion_matrix_eval.py
-├── test_connection_retry.py
-├── test_connectors.py
-├── test_context_optimizer.py
-├── test_conversation_to_turns.py
-├── test_dashboard.py
-├── test_dedup.py
-├── test_deterministic_predicates.py
-└── ... (43 total)
-```
+## Framework & Scale
+- **pytest>=8.2** + **pytest-cov>=6.0** (`dev` extra)
+- Config: `pytest.ini` — `testpaths = tests`, `addopts = -p no:cacheprovider`, `norecursedirs = artifacts .pytest_cache .tmp_pytest`, marker `postgres` registered
+- **226 test files** (`tests/test_*.py`, counted 2026-06-09) containing **~2,394 `def test_` functions** (grep count)
+
+## Markers
+- `@pytest.mark.postgres` — "tests that require a reachable Postgres DSN" (pytest.ini). Skipped unless `MEMORYMASTER_TEST_POSTGRES_DSN` is set.
+
+## Cross-Backend Parity Gate (v3.20.0-S2)
+- `tests/conftest.py` provides `parametrize_backends`: the SAME test body runs against a fresh `MemoryService` on both SQLite and Postgres and must produce identical observable results
+- SQLite parametrization always runs (file-based); Postgres parametrization is skipped on machines without `MEMORYMASTER_TEST_POSTGRES_DSN`
+- This is the regression gate behind the v3.27 batch-1 Postgres parity fixes
 
 ## Key Patterns
-- **In-memory SQLite**: tests use `SQLiteStore(":memory:")` or temp files in `.tmp_cases/`
-- **Temp case cleanup**: `conftest.py` autouse fixture prunes `.tmp_cases/` before and after each test
-- **Postgres skip marker**: `@pytest.mark.postgres` — skipped unless a real Postgres DSN is reachable
-- **No network in core tests**: Qdrant, Gemini, sentence-transformers mocked or skipped
+- **Temp case isolation**: `conftest.py` roots temp DBs under `.tmp_cases/` with cleanup fixtures
+- **Migrations are tested**: `tests/test_migrations.py` covers the `MigrationRunner` (discovery, apply, checksum drift)
+- **Qdrant/service sync is tested with fakes**: `tests/test_qdrant_backend.py` and `tests/test_service_coverage.py` (`_make_svc_with_qdrant`, `test_sync_upserts_for_confirmed`, `test_sync_deletes_for_archived`, `test_sync_handles_exception`) — no live Qdrant needed
+- **No network in core tests**: Gemini / sentence-transformers / Qdrant are mocked, faked, or skipped
+- **Sensitivity filter has dedicated tests** (`tests/test_security_access.py` and sensitivity suites); `.claude/rules/sensitivity-filter.md` mandates a red-bar test for every filter change
 
 ## Running Tests
 ```bash
-# All tests (requires dev extras installed)
-pytest
+# Full suite (the canonical project command)
+python -m pytest tests/ -q --tb=short
 
-# Skip slow/integration tests
-pytest -m "not postgres"
+# Skip Postgres-dependent tests (default behavior without a DSN)
+python -m pytest tests/ -q -m "not postgres"
 
 # Single module
-pytest tests/test_claim_links.py -v
+python -m pytest tests/test_migrations.py -v
 ```
 
-## Coverage Areas
-- Claim lifecycle (ingest → confirm → decay → archive)
-- Deduplication with embedding similarity
-- Context optimizer token packing
-- CLI JSON output flag
-- MCP server tool definitions
-- Security/redaction workflows
-- Conflict resolution
-- Event log append-only enforcement
-- Connection retry logic
-- Dashboard rendering
+## CI
+- `.github/workflows/ci.yml`: matrix {ubuntu-latest, windows-latest} x {3.10, 3.11, 3.12}; installs `.[dev,mcp,security]`; runs `pytest tests/ -q --tb=short` with `MEMORYMASTER_ALLOW_SENSITIVE_BYPASS: "1"` set for the suite
+- Separate `perf` job (needs: test) on Python 3.12
+
+## Coverage Areas (current)
+- Claim lifecycle, dedup, conflict resolution, compaction, decay/staleness jobs
+- Migration framework (apply + drift detection)
+- SQLite/Postgres parity (backend-parametrized)
+- MCP server tools, sensitivity filter, redaction, access control
+- Recall stack: FTS5/lexical, recall fusion, query cache, verbatim recall, Qdrant fallback
+- Steward: classifier, features, proposals, LLM provider routing (incl. claude_cli)
+- Wiki engine, vault linter, vault bases; dream bridge; db_merge/OpenClaw sync
+
+## Known Gaps
+- No end-to-end multi-process concurrency test that reproduces the 12-writer per-pane MCP load profile that corrupted the production DB on 2026-06-05 (race scripts exist only as ad-hoc `scripts/swap_race*.ps1`)
+- Dashboard rendering still asserted programmatically, not visually
