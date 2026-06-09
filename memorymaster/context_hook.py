@@ -80,7 +80,11 @@ def _phase_timer(phase_ms: dict[str, float], name: str):
 # streams are "populated" (at least one row with a non-zero score on that
 # stream) and picks RRF when the count meets
 # MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD (default 3), falling back to the
-# linear combiner otherwise. Claim 11898 documents the rationale: on a
+# linear combiner otherwise. A per-query-type override
+# MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_<TYPE> (TYPE = a query_classifier
+# type uppercased, e.g. FACT_LOOKUP) takes precedence over the global var
+# for queries of that type, so sparse query classes can demand more streams
+# before paying for RRF. Claim 11898 documents the rationale: on a
 # dense 500-Q LongMemEval set with 2+ populated streams, RRF wins hit@1
 # +18% / MRR +11% vs linear; on a 30-prompt conversational set with only
 # bm25+freshness populated, RRF regresses p@5 from 0.313 to 0.127. The
@@ -119,28 +123,70 @@ def reset_auto_gate_stats() -> None:
         _AUTO_GATE_STATS[key] = 0
 
 
-def _auto_gate_threshold() -> int:
-    """Read gate threshold from env, falling back to 3."""
-    raw = os.environ.get("MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD")
+def _classify_query_type(query: str | None) -> str | None:
+    """Best-effort ``query_classifier`` type for ``query`` (or None).
+
+    Returns one of ``query_classifier.QUERY_TYPES`` (e.g. ``fact_lookup``)
+    so a per-type threshold override can be looked up. Defensive: a blank
+    query, an import failure, or any classifier error yields None, in which
+    case the gate uses the global threshold — it never crashes recall().
+    """
+    if not query or not query.strip():
+        return None
+    try:
+        from memorymaster.query_classifier import classify_query
+
+        return classify_query(query)
+    except Exception as exc:  # noqa: BLE001 — classification is advisory
+        logger.debug("auto-gate query classification skipped: %s", exc)
+        return None
+
+
+def _read_threshold_env(env_key: str) -> int | None:
+    """Read one threshold env var as a positive int, or None if unusable.
+
+    Returns None when the var is unset/blank, non-integer, or < 1 — the
+    caller then falls back to the next source (global var, then the
+    constant). Never raises; bad values are logged at WARNING.
+    """
+    raw = os.environ.get(env_key)
     if raw is None or raw.strip() == "":
-        return _AUTO_GATE_THRESHOLD_DEFAULT
+        return None
     try:
         value = int(raw)
     except ValueError:
-        logger.warning(
-            "Invalid MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD=%r, falling back to %d",
-            raw,
-            _AUTO_GATE_THRESHOLD_DEFAULT,
-        )
-        return _AUTO_GATE_THRESHOLD_DEFAULT
+        logger.warning("Invalid %s=%r, ignoring (falling back)", env_key, raw)
+        return None
     if value < 1:
-        logger.warning(
-            "MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD=%d < 1, falling back to %d",
-            value,
-            _AUTO_GATE_THRESHOLD_DEFAULT,
-        )
-        return _AUTO_GATE_THRESHOLD_DEFAULT
+        logger.warning("%s=%d < 1, ignoring (falling back)", env_key, value)
+        return None
     return value
+
+
+def _auto_gate_threshold(query_type: str | None = None) -> int:
+    """Resolve the gate threshold, falling back to 3.
+
+    Resolution order:
+      1. ``MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_<TYPE>`` — per-query-type
+         override (``<TYPE>`` is a ``query_classifier`` type uppercased, e.g.
+         ``FACT_LOOKUP``). Only consulted when ``query_type`` is provided.
+      2. ``MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD`` — global override.
+      3. :data:`_AUTO_GATE_THRESHOLD_DEFAULT` (3).
+
+    A blank / non-integer / ``< 1`` value at any level is ignored and the
+    next source is consulted, so a typo'd per-type var can't disable the
+    global one.
+    """
+    if query_type:
+        per_type = _read_threshold_env(
+            f"MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_{query_type.upper()}"
+        )
+        if per_type is not None:
+            return per_type
+    global_threshold = _read_threshold_env("MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD")
+    if global_threshold is not None:
+        return global_threshold
+    return _AUTO_GATE_THRESHOLD_DEFAULT
 
 
 def _auto_gate_decide(
@@ -149,6 +195,7 @@ def _auto_gate_decide(
     bm25_on: bool,
     freshness_weight: float,
     threshold: int | None = None,
+    query: str | None = None,
 ) -> tuple[str, int, int]:
     """Decide ``rrf`` vs ``linear`` for MEMORYMASTER_RECALL_FUSION=auto.
 
@@ -156,12 +203,15 @@ def _auto_gate_decide(
     ``picked_rrf`` / ``picked_linear``) and emits a ``log_hook("recall",
     "rrf_auto_gate", ...)`` line. Returns ``(decision, populated, threshold)``.
 
-    ``threshold`` defaults to the env-var / constant (see
+    ``threshold`` defaults to the env-resolved value (see
     ``_auto_gate_threshold``). Passing an explicit integer bypasses env
-    lookup — useful for tests.
+    lookup entirely — useful for tests. When ``threshold`` is None and
+    ``query`` is given, the query is classified via ``classify_query`` so a
+    per-type ``MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_<TYPE>`` override can
+    apply, falling back to the global threshold.
     """
     if threshold is None:
-        threshold = _auto_gate_threshold()
+        threshold = _auto_gate_threshold(_classify_query_type(query))
     populated = _count_populated_streams(
         rows,
         bm25_scores,
@@ -374,6 +424,14 @@ _RECALL_WEIGHT_DEFAULTS: dict[str, float] = {
 #   artifacts/cognee-assessment-2026-04-24.md).
 # * ``MEMORYMASTER_RECALL_GRAPH_PATH`` — Kuzu DB file path. Default
 #   ``~/.memorymaster/graph.kuzu``. The backfill script writes here.
+# * ``MEMORYMASTER_RECALL_GRAPH_CANDIDATES`` — "1" / truthy promotes the
+#   stream from annotation-only to a full HARVEST stream: BFS-reached
+#   claims not already in the candidate pool are hydrated as new rows
+#   (roadmap 12.2). Default "0" = annotation-only, row set bit-identical.
+# * ``MEMORYMASTER_RECALL_W_GRAPH`` — linear-combiner weight for the
+#   distance-weighted ``graph_score`` signal (read via ``_recall_weight``).
+#   Default 0.0, so even a harvested row contributes nothing to ranking and
+#   recall stays bit-identical until an operator opts in to BOTH flags.
 #
 # Defensive-fail contract (claim 11907): every error is swallowed. If the
 # Kuzu DB is missing, corrupt, or kuzu isn't installed, the stream returns
@@ -385,6 +443,21 @@ _GRAPH_PATH_DEFAULT = "~/.memorymaster/graph.kuzu"
 
 def _graph_enabled() -> bool:
     raw = os.environ.get("MEMORYMASTER_RECALL_GRAPH", "0").strip()
+    return raw not in ("0", "false", "False", "no", "off", "")
+
+
+def _graph_candidates_enabled() -> bool:
+    """Opt-in gate for the graph HARVEST path (roadmap 12.2).
+
+    When ``MEMORYMASTER_RECALL_GRAPH_CANDIDATES`` is truthy AND the graph
+    stream itself is enabled (:func:`_graph_enabled`), the graph stream
+    promotes from annotation-only to a full retrieval stream: claims reached
+    by BFS that are NOT already in the candidate pool are hydrated as new
+    rows (distance-weighted ``graph_score``). Default "0" = off, so the
+    stream stays annotation-only and recall output is bit-identical to the
+    pre-harvest baseline.
+    """
+    raw = os.environ.get("MEMORYMASTER_RECALL_GRAPH_CANDIDATES", "0").strip()
     return raw not in ("0", "false", "False", "no", "off", "")
 
 
@@ -607,6 +680,71 @@ def _graph_reached_claim_distance(query: str, store) -> dict[int, int]:
                 gs.close()
             except Exception:  # pragma: no cover - defensive
                 pass
+
+
+def _row_for_graph_claim(claim, graph_score: float) -> dict:
+    """Build a query_rows-shaped row for a graph-harvested claim.
+
+    All lexical/vector/entity signals default to zero so the row only
+    contributes via ``graph_score`` under ``W_GRAPH``. At ``W_GRAPH=0``
+    (shipped default) a harvested row adds nothing to the ranking — it can
+    only ever be trimmed by the budget loop, never displace a real hit,
+    which preserves the bit-identical-when-disabled guarantee.
+    """
+    return {
+        "claim": claim,
+        "status": getattr(claim, "status", "confirmed"),
+        "annotation": None,
+        "score": 0.0,
+        "lexical_score": 0.0,
+        "freshness_score": 0.0,
+        "confidence_score": float(getattr(claim, "confidence", 0.0) or 0.0),
+        "vector_score": 0.0,
+        "entity_score": 0.0,
+        "graph_score": float(graph_score),
+        "source": "graph_harvest",
+    }
+
+
+def _harvest_graph_rows(
+    svc,
+    graph_distance: dict[int, int],
+    rows: list,
+    seen_ids: set[int],
+) -> int:
+    """Hydrate graph-reached claims that are NOT already candidates.
+
+    For each ``(claim_id, hops)`` in ``graph_distance`` whose id is unseen,
+    hydrate the claim, skip archived / sensitive ones, and append a row with
+    ``graph_score = 1 / (1 + hops)``. Mutates ``rows`` + ``seen_ids`` and
+    returns the number of rows added.
+
+    Defensive: a per-claim hydrate error is logged and skipped — the harvest
+    never raises into the recall hot path (claim 11907 silent-fail).
+    """
+    try:
+        from memorymaster.security import is_sensitive_claim
+    except Exception:  # pragma: no cover - security module is core
+        is_sensitive_claim = lambda _claim: False  # type: ignore[assignment]  # noqa: E731
+
+    added = 0
+    # Closest-first so a future cap keeps the highest-scoring claims.
+    for cid, hops in sorted(graph_distance.items(), key=lambda kv: kv[1]):
+        if cid in seen_ids:
+            continue
+        try:
+            claim = svc.store.get_claim(cid, include_citations=True)
+        except Exception as exc:  # noqa: BLE001 — best-effort hydrate
+            logger.debug("graph harvest: get_claim(%d) failed: %s", cid, exc)
+            continue
+        if claim is None or getattr(claim, "status", "") == "archived":
+            continue
+        if is_sensitive_claim(claim):
+            continue
+        rows.append(_row_for_graph_claim(claim, 1.0 / (1.0 + float(hops))))
+        seen_ids.add(cid)
+        added += 1
+    return added
 
 
 def _recall_weight(name: str) -> float:
@@ -1499,16 +1637,34 @@ def _recall_impl(
             #   hop 1  → score 0.500
             #   hop 2  → score 0.333
             #   not reached → score 0.0
-            graph_distance = _graph_reached_claim_distance(query, svc.store)
-            if graph_distance:
-                for row in rows:
-                    claim = row.get("claim")
-                    cid = getattr(claim, "id", None)
-                    if cid is not None and int(cid) in graph_distance:
-                        hops = graph_distance[int(cid)]
-                        row["graph_score"] = 1.0 / (1.0 + float(hops))
-                    elif row.get("graph_score") is None:
-                        row["graph_score"] = 0.0
+            # Wrap the whole stream so a catastrophic boundary failure
+            # (BFS helper, store, or harvest hydrate raising) is logged and
+            # swallowed — the graph stream NEVER raises into recall (claim
+            # 11907). The helpers already swallow their own internal errors;
+            # this is the outer belt-and-suspenders guard the spec mandates.
+            try:
+                graph_distance = _graph_reached_claim_distance(query, svc.store)
+                if graph_distance:
+                    for row in rows:
+                        claim = row.get("claim")
+                        cid = getattr(claim, "id", None)
+                        if cid is not None and int(cid) in graph_distance:
+                            hops = graph_distance[int(cid)]
+                            row["graph_score"] = 1.0 / (1.0 + float(hops))
+                        elif row.get("graph_score") is None:
+                            row["graph_score"] = 0.0
+                    # Roadmap 12.2 — HARVEST path. When
+                    # MEMORYMASTER_RECALL_GRAPH_CANDIDATES=1, promote the
+                    # stream from annotation-only to a full retrieval stream:
+                    # BFS-reached claims NOT already in the candidate pool are
+                    # hydrated as new rows. Default OFF keeps the row set
+                    # bit-identical.
+                    if _graph_candidates_enabled():
+                        _harvest_graph_rows(
+                            svc, graph_distance, rows, seen_ids
+                        )
+            except Exception as exc:  # noqa: BLE001 — defensive (claim 11907)
+                logger.debug("graph stream skipped: %s", exc)
 
     if not rows and not skip_qdrant:
         # Fallback to Qdrant semantic search
@@ -1806,6 +1962,7 @@ def _recall_impl(
             bm25_scores,
             bm25_on,
             w_freshness,
+            query=query,
         )
 
     if fusion_mode == "rrf":

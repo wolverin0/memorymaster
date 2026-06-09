@@ -41,6 +41,27 @@ DEFAULT_PROVIDER = "claude_cli"
 _TURN_TRUNCATE = 1500
 _MIN_WINDOW_CHARS = 40
 
+# Confidence bootstrap (v3.28): a rule mined once is a guess; the same
+# correction mined repeatedly is load-bearing. confidence climbs with the
+# per-fingerprint correction tally via confidence = 0.4 + 0.3*min(count/3, 1.0)
+# — 1st=0.50, 2nd=0.60, 3rd+=0.70 — instead of the old flat 0.4 below.
+# (The brief's prose "0.40/0.53/0.70" is inconsistent with this formula, which
+# yields 0.50 at count=1; the formula is the spec we implement.)
+# Reversible: set MEMORYMASTER_RULE_CONFIDENCE_BOOTSTRAP=0.
+_BASE_RULE_CONFIDENCE = 0.4
+_BOOTSTRAP_SPAN = 0.3
+_BOOTSTRAP_SATURATION = 3
+_BOOTSTRAP_ENV = "MEMORYMASTER_RULE_CONFIDENCE_BOOTSTRAP"
+
+_RULE_STATS_DDL = """
+CREATE TABLE IF NOT EXISTS rule_stats (
+    rule_fingerprint TEXT PRIMARY KEY,
+    correction_count INTEGER NOT NULL DEFAULT 1,
+    last_mined TEXT NOT NULL,
+    confidence_at_last_mine REAL
+)
+""".strip()
+
 # Cheap pre-filter: a user turn is a *candidate* correction only if it
 # contains one of these markers. Keeps the LLM off the other ~99% of rows.
 _CORRECTION_KEYWORDS = (
@@ -216,6 +237,107 @@ def _is_sensitive_rule(rule: dict[str, str]) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Confidence bootstrap (rule_stats tally -> rising confidence)
+# ---------------------------------------------------------------------------
+
+
+def rule_fingerprint(trigger: str, action: str) -> str:
+    """Stable 16-hex fingerprint of a correction, keyed on trigger+action.
+
+    Case-insensitive and order-sensitive: ``X|Y`` and ``Y|X`` fingerprint
+    differently (the trigger and action are not interchangeable). Rationale is
+    intentionally excluded — the same corrective behaviour reworded should tally
+    together, not split. Matches the idempotency-key hash in
+    :func:`mine_transcript_rules` so the two paths agree on identity.
+    """
+    raw = f"{(trigger or '').strip()}|{(action or '').strip()}".lower()
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _bootstrap_enabled() -> bool:
+    """Bootstrap is default-ON; ``MEMORYMASTER_RULE_CONFIDENCE_BOOTSTRAP=0``
+    (or false/no/off) reverts to the flat legacy confidence."""
+    val = os.environ.get(_BOOTSTRAP_ENV)
+    if val is None:
+        return True
+    return val.strip().lower() not in ("0", "false", "no", "off", "")
+
+
+def _confidence_for_count(correction_count: int) -> float:
+    """0.4 + 0.3 * min(count/3, 1.0): count 1/2/3+ -> 0.50/0.60/0.70."""
+    ratio = min(max(correction_count, 1) / _BOOTSTRAP_SATURATION, 1.0)
+    return round(_BASE_RULE_CONFIDENCE + _BOOTSTRAP_SPAN * ratio, 4)
+
+
+def _ensure_rule_stats(conn: sqlite3.Connection) -> None:
+    """Idempotently create ``rule_stats`` so the miner runs even if ``migrate``
+    was not invoked first (mirrors :func:`_ensure_miner_state`)."""
+    conn.execute(_RULE_STATS_DDL)
+    conn.commit()
+
+
+def _record_mining_event(conn: sqlite3.Connection, fingerprint: str) -> int:
+    """Upsert one mining event for ``fingerprint``; return the new count.
+
+    Each call is a distinct mining event of that correction — the count rises
+    even when the resulting CLAIM later dedups on its idempotency_key, because
+    repetition (not claim-row uniqueness) is the confidence signal.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """INSERT INTO rule_stats (rule_fingerprint, correction_count, last_mined)
+           VALUES (?, 1, ?)
+           ON CONFLICT(rule_fingerprint) DO UPDATE SET
+               correction_count = rule_stats.correction_count + 1,
+               last_mined = excluded.last_mined""",
+        (fingerprint, now),
+    )
+    row = conn.execute(
+        "SELECT correction_count FROM rule_stats WHERE rule_fingerprint = ?",
+        (fingerprint,),
+    ).fetchone()
+    return int(row["correction_count"]) if row else 1
+
+
+def _bootstrapped_confidence(conn: sqlite3.Connection, rule: dict[str, str]) -> float:
+    """Tally this mining event and return the confidence to ingest with.
+
+    When bootstrap is disabled, returns the flat legacy confidence and does NOT
+    touch ``rule_stats`` — behaviour is fully reversible via the env flag.
+    """
+    if not _bootstrap_enabled():
+        return _BASE_RULE_CONFIDENCE
+    _ensure_rule_stats(conn)
+    fingerprint = rule_fingerprint(rule["trigger"], rule["action"])
+    count = _record_mining_event(conn, fingerprint)
+    confidence = _confidence_for_count(count)
+    conn.execute(
+        "UPDATE rule_stats SET confidence_at_last_mine = ? WHERE rule_fingerprint = ?",
+        (confidence, fingerprint),
+    )
+    conn.commit()
+    return confidence
+
+
+def _transcript_confidence(service: Any, rule: dict[str, str]) -> float:
+    """Bootstrap confidence for the Stop-hook path, which has a ``service`` but
+    no open verbatim connection. Resolves the store's SQLite path to tally the
+    event; if no SQLite path is available (e.g. Postgres store) or bootstrap is
+    disabled, returns the flat legacy confidence without touching ``rule_stats``.
+    """
+    if not _bootstrap_enabled():
+        return _BASE_RULE_CONFIDENCE
+    db_path = str(getattr(getattr(service, "store", None), "db_path", "") or "")
+    if not db_path or "://" in db_path:
+        return _BASE_RULE_CONFIDENCE
+    conn = _connect(db_path)
+    try:
+        return _bootstrapped_confidence(conn, rule)
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -343,6 +465,11 @@ def _process_candidate(
         stats["skipped"] += 1
         return "done"
 
+    # Tally this mining event BEFORE the claim-dedup check: a re-mined correction
+    # is a distinct event that should still raise confidence, even if the CLAIM
+    # already exists and gets deduped below.
+    confidence = _bootstrapped_confidence(conn, rule)
+
     idem = f"rule-miner-v{int(asst['id'])}-{int(row['id'])}"
     store = getattr(service, "store", None)
     if store is not None and hasattr(store, "get_claim_by_idempotency_key"):
@@ -354,7 +481,7 @@ def _process_candidate(
         **build_rule_fields(rule["trigger"], rule["action"], rule["rationale"]),
         citations=[CitationInput(source="verbatim", locator=idem)],
         scope=row["scope"] or "project",
-        confidence=0.4,
+        confidence=confidence,
         source_agent="rule-miner",
         idempotency_key=idem,
     )
@@ -458,9 +585,11 @@ def mine_transcript_rules(
                 if rule is None or _is_sensitive_rule(rule):
                     stats["skipped"] += 1
                     continue
-                idem = "rule-stop-" + hashlib.sha256(
-                    f"{rule['trigger']}|{rule['action']}".lower().encode()
-                ).hexdigest()[:16]
+                # rule-stop idem key IS the fingerprint (trigger|action), so the
+                # claim dedups per correction. The confidence tally records this
+                # mining event regardless, climbing confidence on each re-mine.
+                idem = "rule-stop-" + rule_fingerprint(rule["trigger"], rule["action"])
+                confidence = _transcript_confidence(service, rule)
                 store = getattr(service, "store", None)
                 if store is not None and hasattr(store, "get_claim_by_idempotency_key"):
                     if store.get_claim_by_idempotency_key(idem) is not None:
@@ -470,7 +599,7 @@ def mine_transcript_rules(
                     **build_rule_fields(rule["trigger"], rule["action"], rule["rationale"]),
                     citations=[CitationInput(source="verbatim", locator=idem)],
                     scope=scope,
-                    confidence=0.4,
+                    confidence=confidence,
                     source_agent="rule-stop-hook",
                     idempotency_key=idem,
                 )

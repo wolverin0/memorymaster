@@ -813,6 +813,90 @@ if FastMCP is not None:
         return response
 
     @mcp.tool()
+    def query_claim_paths(
+        claim_id: str,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+        edge_type: str = "",
+        direction: str = "both",
+        max_hops: int = 2,
+        include_stale: bool = False,
+        include_conflicted: bool = False,
+    ) -> dict[str, Any]:
+        """Traverse claim relationship paths from a starting claim (read-only).
+
+        Answers relational questions over the ``claim_links`` graph:
+          - provenance ("what led to X?")     → direction="in"
+          - impact     ("what depends on X?") → direction="out"
+          - conflict   ("what contradicts X?") → edge_type="contradicts"
+
+        claim_id accepts a numeric id OR a human_id string.
+        direction: "in" (incoming), "out" (outgoing), or "both" (default).
+        edge_type: filter to one link type (empty = all types).
+        max_hops: BFS depth, clamped server-side to a sane maximum.
+
+        Each result row has: claim (full dict), depth, edge_chain (link types
+        traversed), path (claim ids), and path_confidence (weakest-link =
+        minimum claim confidence across the path). Orphaned claim → empty list.
+        """
+        svc = _service(db, workspace)
+        rows = svc.query_claim_paths(
+            claim_id,
+            edge_type=(edge_type.strip() or None),
+            direction=direction,
+            max_hops=max_hops,
+            include_stale=include_stale,
+            include_conflicted=include_conflicted,
+            requesting_agent=os.getenv("MEMORYMASTER_SOURCE_AGENT") or None,
+        )
+        return {"ok": True, "rows": len(rows), "paths": rows}
+
+    @mcp.tool()
+    def recall_analysis(
+        query: str,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+        limit: int = 10,
+        retrieval_mode: str = "hybrid",
+        include_stale: bool = True,
+        include_conflicted: bool = True,
+        include_candidates: bool = True,
+        retrieval_profile: str = "",
+        allow_sensitive: bool = False,
+        scope_allowlist: str = "",
+    ) -> dict[str, Any]:
+        """Explain WHY each claim ranked where it did (ranking introspection).
+
+        Read-only observability tool. Returns, per claim, the full score
+        breakdown — raw lexical/confidence/freshness/vector signals, the
+        weighted contributions, tier and pinned bonuses, the relevance vs.
+        boost subtotals, whether the floor-ratio gate suppressed the boosts,
+        and the final score — plus the retrieval weights/profile actually in
+        force and the per-component claim rankings.
+
+        Use this to debug recall: why did a relevant claim rank low, or an
+        off-topic one rank high? It does NOT change ranking — it surfaces the
+        same numbers ``query_memory`` ranked on.
+        """
+        resolve_allow_sensitive_access(
+            allow_sensitive=allow_sensitive,
+            context="mcp.recall_analysis",
+        )
+        svc = _service(db, workspace)
+        analysis = svc.recall_analysis(
+            query_text=query,
+            limit=limit,
+            retrieval_mode=retrieval_mode,
+            include_stale=include_stale,
+            include_conflicted=include_conflicted,
+            include_candidates=include_candidates,
+            retrieval_profile=(retrieval_profile.strip() or None),
+            allow_sensitive=allow_sensitive,
+            scope_allowlist=_effective_scope_allowlist(scope_allowlist, workspace),
+        )
+        return {"ok": True, **analysis}
+
+    @mcp.tool()
     def query_for_context(
         query: str,
         db: str = "memorymaster.db",
@@ -1134,6 +1218,38 @@ if FastMCP is not None:
         svc = _service(db, workspace)
         rules = svc.query_rules(query, limit=limit, allow_sensitive=allow_sensitive)
         return {"ok": True, "rows": len(rules), "rules": rules}
+
+    @mcp.tool()
+    def rules_export(
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+        min_confidence: float = 0.0,
+        status: str = "",
+        limit: int = 500,
+        allow_sensitive: bool = False,
+    ) -> dict[str, Any]:
+        """Export mined rule-shaped claims, filtered by confidence + status.
+
+        Read-only. Returns each rule's trigger / action / rationale / confidence
+        / correction_count / status / created_at. Sensitive rules are filtered
+        out unless ``allow_sensitive`` is granted by policy, so this never leaks
+        another agent's secret rules.
+        """
+        resolve_allow_sensitive_access(
+            allow_sensitive=allow_sensitive,
+            context="mcp.rules_export",
+        )
+        from memorymaster.rule_export import collect_rules
+
+        svc = _service(db, workspace)
+        rows = collect_rules(
+            svc,
+            min_confidence=min_confidence,
+            status=_empty_to_none(status),
+            limit=limit,
+            allow_sensitive=allow_sensitive,
+        )
+        return {"ok": True, "rows": len(rows), "rules": rows}
 
     @mcp.tool()
     def redact_claim_payload(

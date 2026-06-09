@@ -187,6 +187,19 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--auto-classify", action="store_true", help="Auto-classify query type and use optimal retrieval mode")
     query.add_argument("--explain", action="store_true", help="Show per-stage score attribution (relevance vs. boosts, floor-gate status) for each result")
 
+    recall_analysis = sub.add_parser(
+        "recall-analysis",
+        help="Explain WHY claims ranked where they did (per-component score breakdown)",
+    )
+    recall_analysis.add_argument("--query", required=True, help="Query text to analyze")
+    recall_analysis.add_argument("--mode", choices=list(RETRIEVAL_MODES), default="hybrid", help="Retrieval mode (legacy or hybrid)")
+    recall_analysis.add_argument("--limit", type=int, default=10, help="Maximum rows")
+    recall_analysis.add_argument("--profile", choices=list(RETRIEVAL_PROFILES), default=None, help="Per-query hybrid retrieval profile")
+    recall_analysis.add_argument("--include-candidates", action="store_true", help="Also analyze candidate (unverified) claims")
+    recall_analysis.add_argument("--allow-sensitive", action="store_true", help="Include claims that look sensitive")
+    recall_analysis.add_argument("--scope-allowlist", default="", help="Comma-separated scopes to include")
+    # JSON output uses the global --json/-j flag (dest=json_output).
+
     context = sub.add_parser("context", help="Pack relevant claims into a token-budgeted context block for AI agents")
     context.add_argument("text", help="Query text describing what context is needed")
     context.add_argument("--budget", type=int, default=4000, help="Maximum token budget (default: 4000)")
@@ -361,6 +374,14 @@ def build_parser() -> argparse.ArgumentParser:
     links_cmd.add_argument("claim_id", help="Claim numeric id or human_id")
     links_cmd.add_argument("--type", dest="link_type", choices=list(CLAIM_LINK_TYPES), default=None, help="Filter by link type")
 
+    paths_cmd = sub.add_parser("query-paths", help="BFS path query over claim links (provenance/conflict/impact)")
+    paths_cmd.add_argument("--claim-id", dest="claim_id", required=True, help="Start claim numeric id or human_id")
+    paths_cmd.add_argument("--edge-type", dest="edge_type", choices=list(CLAIM_LINK_TYPES), default=None, help="Filter traversal to one link type (default: all)")
+    paths_cmd.add_argument("--direction", choices=["in", "out", "both"], default="both", help="in=provenance, out=impact, both (default)")
+    paths_cmd.add_argument("--max-hops", dest="max_hops", type=int, default=2, help="BFS depth, clamped to 5 (default: 2)")
+    paths_cmd.add_argument("--include-stale", dest="include_stale", action="store_true", help="Include stale claims in results")
+    paths_cmd.add_argument("--include-conflicted", dest="include_conflicted", action="store_true", help="Include conflicted claims in results")
+
     resolve_conflicts_cmd = sub.add_parser("resolve-conflicts", help="Detect and auto-resolve conflicting claims (same subject+predicate, different object_value)")
     resolve_conflicts_cmd.add_argument("--dry-run", action="store_true", help="Detect conflicts but do not apply transitions")
     resolve_conflicts_cmd.add_argument("--limit", type=int, default=500, help="Maximum claims to scan for conflicts")
@@ -464,6 +485,12 @@ def build_parser() -> argparse.ArgumentParser:
     mine_rules_cmd.add_argument("--batch-size", dest="batch_size", type=int, default=200, help="Rows fetched per SQL pre-filter page (default: 200)")
     mine_rules_cmd.add_argument("--provider", default="claude_cli", help="LLM provider for this run (default: claude_cli)")
     mine_rules_cmd.add_argument("--reset", action="store_true", help="Clear the stored watermark before running (re-scan from the start)")
+
+    export_rules_cmd = sub.add_parser("export-rules", help="Export mined rule-shaped claims as json/csv/markdown (v3.28)")
+    export_rules_cmd.add_argument("--format", choices=["json", "csv", "markdown"], default="json", help="Output format (default: json)")
+    export_rules_cmd.add_argument("--min-confidence", dest="min_confidence", type=float, default=0.0, help="Only export rules at/above this confidence (default: 0.0)")
+    export_rules_cmd.add_argument("--status", default=None, help="Only export rules with this claim status (default: all statuses)")
+    export_rules_cmd.add_argument("--limit", type=int, default=500, help="Max rules to export (default: 500)")
 
     verbatim_clean = sub.add_parser("verbatim-cleanup", help="Dedup the verbatim archive + optionally purge pre-#128 capture-bug junk (v3.23)")
     verbatim_clean.add_argument("--analyze-only", dest="analyze_only", action="store_true", help="Report composition only; do not delete")

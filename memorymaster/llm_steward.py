@@ -444,10 +444,25 @@ def extract_claim(
     claim_id: int, text: str,
     base_url: str = "",
     key_rotator: KeyRotator | None = None,
+    use_llm_provider: bool = False,
 ) -> ExtractionResult:
-    """Extract structured claims from raw text using any LLM."""
-    prompt = EXTRACT_PROMPT.replace("{text}", text[:2000])
-    raw = _call_llm(provider, api_key, model, prompt, base_url, key_rotator=key_rotator)
+    """Extract structured claims from raw text using any LLM.
+
+    When ``use_llm_provider`` is True, route through
+    ``memorymaster.llm_provider.call_llm`` (honours MEMORYMASTER_LLM_PROVIDER,
+    including the keyless ``claude_cli`` path) instead of the direct-HTTP
+    ``_call_llm``. The prompt + parsing are identical either way.
+    """
+    snippet = text[:2000]
+    if use_llm_provider:
+        from memorymaster.llm_provider import call_llm as _provider_call_llm
+        # call_llm joins as f"{prompt}\n\n{text}"; pass instructions (placeholder
+        # stripped) as the prompt and the claim text as the second arg.
+        instructions = EXTRACT_PROMPT.replace("{text}", "").rstrip()
+        raw = _provider_call_llm(instructions, snippet)
+    else:
+        prompt = EXTRACT_PROMPT.replace("{text}", snippet)
+        raw = _call_llm(provider, api_key, model, prompt, base_url, key_rotator=key_rotator)
     extractions = _parse_extractions(raw)
 
     if not extractions:
@@ -579,6 +594,8 @@ def run_steward(
     cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS,
     auto_validate: bool = True,
     workspace_root: str = "",
+    scope: str | None = None,
+    use_llm_provider: bool = False,
 ) -> dict[str, Any]:
     """Process candidate claims through LLM extraction and curation.
 
@@ -591,6 +608,15 @@ def run_steward(
                        on newly confirmed claims after LLM extraction.
         workspace_root: Workspace root for deterministic file-path probes.
                         Defaults to cwd if empty.
+        scope: When set, only candidates with this exact ``scope`` are
+               processed (e.g. ``"project:memorymaster"``). When ``None``
+               (default), candidates from all scopes are processed in id
+               order, preserving the legacy behaviour.
+        use_llm_provider: When True, extraction routes through
+               ``llm_provider.call_llm`` (honours MEMORYMASTER_LLM_PROVIDER,
+               including the keyless ``claude_cli`` OAuth path) instead of the
+               direct-HTTP provider call. Lets the steward run without a raw
+               API key when Claude Code CLI is available.
 
     Returns summary stats dict.
     """
@@ -616,11 +642,20 @@ def run_steward(
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA busy_timeout = 5000")
 
-    candidates = conn.execute(
-        "SELECT id, text, scope, version FROM claims WHERE status = 'candidate' "
-        "AND text IS NOT NULL ORDER BY id LIMIT ?",
-        (limit,),
-    ).fetchall()
+    # Optional scope filter: when set, only that exact scope's candidates are
+    # processed. When None, behaviour is unchanged (all scopes, id order).
+    if scope is not None:
+        candidates = conn.execute(
+            "SELECT id, text, scope, version FROM claims WHERE status = 'candidate' "
+            "AND text IS NOT NULL AND scope = ? ORDER BY id LIMIT ?",
+            (scope, limit),
+        ).fetchall()
+    else:
+        candidates = conn.execute(
+            "SELECT id, text, scope, version FROM claims WHERE status = 'candidate' "
+            "AND text IS NOT NULL ORDER BY id LIMIT ?",
+            (limit,),
+        ).fetchall()
 
     confirmed_claim_ids: list[int] = []
 
@@ -737,6 +772,7 @@ def run_steward(
             result = extract_claim(
                 provider, api_key, model, claim_id, text, base_url,
                 key_rotator=key_rotator,
+                use_llm_provider=use_llm_provider,
             )
         except Exception as e:
             log.warning("LLM error for claim #%d: %s", claim_id, e)
@@ -971,6 +1007,17 @@ Examples:
         "--workspace-root", default="",
         help="Workspace root for file-path validation probes (default: cwd)",
     )
+    parser.add_argument(
+        "--scope", default=None,
+        help="Only process candidates with this exact scope (e.g. project:memorymaster). "
+             "When omitted, candidates from all scopes are processed in id order.",
+    )
+    parser.add_argument(
+        "--use-llm-provider", action="store_true",
+        help="Route extraction through llm_provider.call_llm (honours "
+             "MEMORYMASTER_LLM_PROVIDER incl. the keyless claude_cli OAuth path) "
+             "instead of the direct-HTTP provider call.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
@@ -993,6 +1040,8 @@ Examples:
         cooldown_seconds=args.cooldown,
         auto_validate=not args.no_auto_validate,
         workspace_root=args.workspace_root,
+        scope=args.scope,
+        use_llm_provider=args.use_llm_provider,
     )
 
     print(f"\n{'='*50}")

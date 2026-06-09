@@ -24,6 +24,60 @@ logger = logging.getLogger(__name__)
 
 RetrievalWeights = tuple[float, float, float, float]
 
+# Hard ceiling for BFS path traversal — clamps caller-supplied max_hops so a
+# pathological request cannot fan out across the whole graph. Five hops is well
+# beyond any provenance/conflict/impact chain we expect in practice.
+MAX_CLAIM_PATH_HOPS = 5
+
+
+def _claim_to_path_dict(claim: Claim) -> dict[str, Any]:
+    """Serialize a Claim to a plain dict for path-query results (no citations)."""
+    from dataclasses import asdict
+
+    data = asdict(claim)
+    data.pop("citations", None)
+    return data
+
+
+def _weakest_link_confidence(path: list[int], conf_by_id: dict[int, float]) -> float:
+    """Weakest-link roll-up: minimum claim confidence across the whole path.
+
+    A path is only as trustworthy as its least-confident claim. Missing
+    confidences default to 0.0 so an unknown hop cannot inflate the score.
+    """
+    if not path:
+        return 0.0
+    return min(conf_by_id.get(cid, 0.0) for cid in path)
+
+
+def _edge_chain_for_path(
+    path: list[int],
+    raw: list[dict[str, Any]],
+    entry: dict[str, Any],
+) -> list[str]:
+    """Reconstruct the link types traversed along ``path`` (start → node).
+
+    Each BFS entry records the single ``link_type`` of the edge used to REACH
+    that node. We look up that edge per intermediate node so a 2-hop path
+    surfaces both hops' types (e.g. ``["derived_from", "supports"]``).
+    """
+    link_for_node = {e["path"][-1]: e.get("link_type") for e in raw if e.get("path")}
+    link_for_node[path[-1]] = entry.get("link_type")
+    # path[0] is the start node (no inbound edge); chain is one type per hop.
+    return [lt for cid in path[1:] if (lt := link_for_node.get(cid)) is not None]
+
+
+def _path_direction_to_traverse(direction: str) -> str:
+    """Map the public path-query direction to traverse_relationships direction.
+
+    Public API uses ``in``/``out``/``both`` (provenance/impact/all); the storage
+    BFS uses ``incoming``/``outgoing``/``both``. Unknown values fall back to
+    ``both`` rather than raising — a path query should degrade, not crash.
+    """
+    return {"in": "incoming", "out": "outgoing", "both": "both"}.get(
+        (direction or "both").strip().lower(), "both"
+    )
+
 RETRIEVAL_PROFILES: dict[str, RetrievalWeights] = {
     "recall": (0.6, 0.2, 0.1, 0.1),
     "precision": (0.2, 0.6, 0.1, 0.1),
@@ -137,6 +191,90 @@ def _llm_rerank_enabled() -> bool:
     except Exception:
         return True
 
+
+def _recall_weights_snapshot(query_type: str | None) -> dict[str, Any]:
+    """Snapshot the retrieval weights in force, for recall explainability.
+
+    Reads ``get_config()`` (the same source the ranker uses) so the reported
+    weights match what actually scored the claims. Includes the per-query-type
+    profile override when one applies.
+    """
+    cfg = get_config()
+    lex, conf, fresh, vec = cfg.retrieval_weights
+    no_vec = cfg.retrieval_weights_no_vector
+    profile = cfg.retrieval_profile(query_type) if query_type else None
+    return {
+        "retrieval_weights": {
+            "lexical": lex,
+            "confidence": conf,
+            "freshness": fresh,
+            "vector": vec,
+        },
+        "retrieval_weights_no_vector": {
+            "lexical": no_vec[0],
+            "confidence": no_vec[1],
+            "freshness": no_vec[2],
+        },
+        "query_type": query_type,
+        "profile_override": (
+            None
+            if profile is None
+            else {
+                "lexical": profile[0],
+                "confidence": profile[1],
+                "freshness": profile[2],
+                "vector": profile[3],
+            }
+        ),
+        "pinned_bonus": cfg.pinned_bonus,
+        "boost_floor_ratio": cfg.boost_floor_ratio,
+    }
+
+
+def _recall_component_rankings(rows: list[dict[str, Any]]) -> dict[str, list[int]]:
+    """Per-component claim rankings for the returned rows (best-first ids).
+
+    Rebuilds lightweight ``RankedClaim`` objects from the query_rows dicts so
+    the shared ``retrieval.component_rankings`` logic can be reused without
+    duplicating the sort. Pure read — does not reorder ``rows``.
+    """
+    from memorymaster.retrieval import RankedClaim, component_rankings
+
+    ranked = [
+        RankedClaim(
+            claim=row["claim"],
+            score=float(row.get("score", 0.0)),
+            lexical_score=float(row.get("lexical_score", 0.0)),
+            freshness_score=float(row.get("freshness_score", 0.0)),
+            confidence_score=float(row.get("confidence_score", 0.0)),
+            vector_score=float(row.get("vector_score", 0.0)),
+            breakdown=row.get("breakdown"),
+        )
+        for row in rows
+        if row.get("claim") is not None
+    ]
+    if not ranked:
+        return {}
+    return component_rankings(ranked)
+
+
+def _recall_result_entry(row: dict[str, Any]) -> dict[str, Any]:
+    """Project one query_rows dict into a recall-analysis result entry."""
+    claim = row["claim"]
+    return {
+        "claim_id": getattr(claim, "id", None),
+        "human_id": getattr(claim, "human_id", None),
+        "text": getattr(claim, "text", ""),
+        "status": row.get("status", getattr(claim, "status", None)),
+        "tier": getattr(claim, "tier", "working"),
+        "pinned": bool(getattr(claim, "pinned", False)),
+        "score": float(row.get("score", 0.0)),
+        "lexical_score": float(row.get("lexical_score", 0.0)),
+        "confidence_score": float(row.get("confidence_score", 0.0)),
+        "freshness_score": float(row.get("freshness_score", 0.0)),
+        "vector_score": float(row.get("vector_score", 0.0)),
+        "breakdown": row.get("breakdown"),
+    }
 
 
 class MemoryService:
@@ -387,6 +525,7 @@ class MemoryService:
         min_score: float = 0.58,
         policy_mode: str = "legacy",
         policy_limit: int = 200,
+        batch_limit: int = 200,
     ) -> dict[str, object]:
         # Open a per-cycle LLM budget scope. When any of the caps fires
         # (MEMORYMASTER_MAX_LLM_CALLS_PER_CYCLE / MAX_TOKENS_PER_CYCLE /
@@ -404,7 +543,7 @@ class MemoryService:
                     mode=policy_mode,
                     limit=policy_limit,
                 )
-                extract_res = extractor.run(self.store)
+                extract_res = extractor.run(self.store, limit=batch_limit)
                 result["policy"] = {
                     "mode": policy_selection.mode,
                     "considered": policy_selection.considered,
@@ -414,24 +553,26 @@ class MemoryService:
                 result["extractor"] = extract_res
                 # Match validator's scan size (200) so every candidate the
                 # validator would touch gets a chance to dedupe first.
-                dedupe_res = candidate_dedupe.run(self.store)
+                dedupe_res = candidate_dedupe.run(self.store, limit=batch_limit)
                 result["dedupe"] = dedupe_res
                 deterministic_res = deterministic.run(
                     self.store,
                     workspace_root=self.workspace_root,
+                    limit=batch_limit,
                     revalidation_claims=policy_selection.selected,
                     policy_mode=policy_mode,
                 )
                 result["deterministic"] = deterministic_res
                 validate_res = validator.run(
                     self.store,
+                    limit=batch_limit,
                     min_citations=min_citations,
                     min_score=min_score,
                     revalidation_claims=policy_selection.selected,
                     policy_mode=policy_mode,
                 )
                 result["validator"] = validate_res
-                decay_res = decay.run(self.store)
+                decay_res = decay.run(self.store, limit=batch_limit)
                 result["decay"] = decay_res
                 compact_res = (
                     compactor.run(
@@ -786,6 +927,51 @@ class MemoryService:
                 for r in results if r.get("claim") is not None
             ], cache_generation)
         return results
+
+    def recall_analysis(
+        self,
+        query_text: str,
+        *,
+        limit: int = 20,
+        retrieval_mode: str = "legacy",
+        include_stale: bool = True,
+        include_conflicted: bool = True,
+        include_candidates: bool = False,
+        retrieval_profile: str | None = None,
+        allow_sensitive: bool = False,
+        scope_allowlist: list[str] | None = None,
+        requesting_agent: str | None = None,
+        query_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Explain WHY each claim ranked where it did (observability only).
+
+        Thin wrapper over :meth:`query_rows` that surfaces the per-claim score
+        breakdown already attached to ranked rows, the per-component claim
+        rankings, and the retrieval weights/profile in force. Does NOT alter
+        ranking math or result order — it only reads what the ranker produced.
+        """
+        rows = self.query_rows(
+            query_text=query_text,
+            limit=limit,
+            retrieval_mode=retrieval_mode,
+            include_stale=include_stale,
+            include_conflicted=include_conflicted,
+            include_candidates=include_candidates,
+            retrieval_profile=retrieval_profile,
+            allow_sensitive=allow_sensitive,
+            scope_allowlist=scope_allowlist,
+            requesting_agent=requesting_agent,
+            query_type=query_type,
+        )
+        return {
+            "query": query_text,
+            "mode": retrieval_mode,
+            "profile": retrieval_profile,
+            "rows": len(rows),
+            "weights": _recall_weights_snapshot(query_type),
+            "component_rankings": _recall_component_rankings(rows),
+            "results": [_recall_result_entry(row) for row in rows],
+        }
 
     def _rehydrate_cached_rows(self, stubs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Rebuild query_rows result dicts from cached stubs by re-fetching each
@@ -1496,6 +1682,108 @@ class MemoryService:
 
     def get_linked_claims(self, claim_id: int, link_type: str | None = None) -> list[ClaimLink]:
         return self.store.get_linked_claims(claim_id, link_type=link_type)
+
+    def query_claim_paths(
+        self,
+        claim_id: int | str,
+        *,
+        edge_type: str | None = None,
+        direction: str = "both",
+        max_hops: int = 2,
+        include_stale: bool = False,
+        include_conflicted: bool = False,
+        requesting_agent: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """BFS path query over ``claim_links`` from a starting claim.
+
+        Answers relational questions an agent asks about a claim:
+          - provenance ("what led to X?")  → ``direction="in"``
+          - impact     ("what depends on X?") → ``direction="out"``
+          - conflict   ("what contradicts X?") → ``edge_type="contradicts"``
+
+        ``claim_id`` accepts an int id OR a human_id string (resolved via the
+        store). ``direction`` is ``in`` (incoming edges), ``out`` (outgoing) or
+        ``both``. ``edge_type`` filters traversal to a single link type (None =
+        all). ``max_hops`` is clamped to ``MAX_CLAIM_PATH_HOPS``. Claims whose
+        status is excluded by ``include_stale``/``include_conflicted`` are
+        dropped from results (archived/superseded are always excluded). Other
+        agents' private claims are dropped via ``_filter_agent_visibility``.
+
+        Returns a list of dicts, one per reachable claim, each with:
+          - ``claim``: the full claim as a dict
+          - ``depth``: hop distance from the start (>=1)
+          - ``edge_chain``: list of link types traversed to reach it
+          - ``path``: list of claim ids from start to this claim
+          - ``path_confidence``: WEAKEST-LINK roll-up = the MINIMUM claim
+            confidence across every claim on the path (start included). A path
+            is only as trustworthy as its least-confident hop.
+
+        An orphaned/unknown claim returns ``[]``. Cycles are handled by the
+        underlying BFS visited-set. If ``claim_links`` is missing/empty the
+        result is simply empty (logged, no crash).
+        """
+        try:
+            start_id = self.store.resolve_claim_id(claim_id)
+        except ValueError:
+            logger.info("query_claim_paths: unknown claim_id %r", claim_id)
+            return []
+
+        hops = max(1, min(int(max_hops), MAX_CLAIM_PATH_HOPS))
+        link_types = [edge_type] if edge_type else None
+        try:
+            raw = self.store.traverse_relationships(
+                start_id,
+                link_types=link_types,
+                max_depth=hops,
+                direction=_path_direction_to_traverse(direction),
+            )
+        except Exception as exc:  # noqa: BLE001 - graceful fallback, never crash a read
+            logger.warning("query_claim_paths: traversal failed for %s: %s", start_id, exc)
+            return []
+
+        allowed = self._build_query_statuses(include_stale, include_conflicted, include_candidates=True)
+        return self._assemble_path_rows(raw, start_id, allowed, requesting_agent)
+
+    def _assemble_path_rows(
+        self,
+        raw: list[dict[str, Any]],
+        start_id: int,
+        allowed_statuses: list[str],
+        requesting_agent: str | None,
+    ) -> list[dict[str, Any]]:
+        """Filter traversal hits by status + visibility and shape result dicts."""
+        status_set = set(allowed_statuses)
+        kept = [
+            entry for entry in raw
+            if getattr(entry["claim"], "status", None) in status_set
+        ]
+        visible = _filter_agent_visibility([e["claim"] for e in kept], requesting_agent)
+        visible_ids = {c.id for c in visible}
+
+        start_claim = self.store.get_claim(start_id, include_citations=False)
+        conf_by_id: dict[int, float] = {}
+        if start_claim is not None:
+            conf_by_id[start_id] = float(getattr(start_claim, "confidence", 0.0) or 0.0)
+        for entry in kept:
+            claim = entry["claim"]
+            conf_by_id[claim.id] = float(getattr(claim, "confidence", 0.0) or 0.0)
+
+        rows: list[dict[str, Any]] = []
+        for entry in kept:
+            claim = entry["claim"]
+            if claim.id not in visible_ids:
+                continue
+            path = entry.get("path", [start_id, claim.id])
+            rows.append(
+                {
+                    "claim": _claim_to_path_dict(claim),
+                    "depth": entry["depth"],
+                    "edge_chain": _edge_chain_for_path(path, raw, entry),
+                    "path": path,
+                    "path_confidence": _weakest_link_confidence(path, conf_by_id),
+                }
+            )
+        return rows
 
     def federated_query(
         self,

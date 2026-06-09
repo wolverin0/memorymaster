@@ -54,6 +54,8 @@ def _reset_env_and_stats(monkeypatch):
     for key in (
         "MEMORYMASTER_RECALL_FUSION",
         "MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD",
+        "MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_FACT_LOOKUP",
+        "MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_TEMPORAL",
     ):
         monkeypatch.delenv(key, raising=False)
     context_hook.reset_auto_gate_stats()
@@ -221,3 +223,140 @@ def test_bm25_off_does_not_count_even_with_scores():
         rows=[], bm25_scores={1: 5.0}, bm25_on=False, freshness_weight=0.0
     )
     assert count == 0
+
+
+# ---------------------------------------------------------------------------
+# Per-type threshold override — MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_<TYPE>
+#
+# REQUIREMENT: a sparse query class (e.g. fact_lookup) can demand MORE
+# populated streams before paying for RRF than the global default. The
+# override is keyed on the query_classifier type and takes precedence over
+# the global var ONLY for queries that classify to that type.
+# ---------------------------------------------------------------------------
+def test_per_type_override_raises_bar_for_matching_query(monkeypatch):
+    """fact_lookup override=4 + 3 populated streams -> linear (below 4),
+
+    even though the global default 3 would have picked RRF. This is the
+    whole point: the per-type bar gates RRF for this query class.
+    """
+    monkeypatch.setenv("MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_FACT_LOOKUP", "4")
+
+    rows = [
+        _row(1, entity_score=1.0, vector_score=0.0),
+        _row(2, entity_score=0.0, vector_score=0.75),
+    ]
+    bm25_scores = {1: 4.2, 2: 2.1}  # bm25 + entity + vector = 3 streams
+
+    decision, populated, threshold = context_hook._auto_gate_decide(
+        rows, bm25_scores, bm25_on=True, freshness_weight=0.0,
+        query="What database does pedrito use?",  # -> fact_lookup
+    )
+
+    assert populated == 3
+    assert threshold == 4  # per-type override applied, not the global 3
+    assert decision == "linear"  # 3 < 4
+    assert context_hook.get_auto_gate_stats()["picked_linear"] == 1
+
+
+def test_per_type_override_ignored_for_non_matching_query(monkeypatch):
+    """A fact_lookup override must NOT affect a temporal query — that query
+
+    uses the global threshold (default 3), so 3 streams -> RRF.
+    """
+    monkeypatch.setenv("MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_FACT_LOOKUP", "4")
+
+    rows = [
+        _row(1, entity_score=1.0, vector_score=0.0),
+        _row(2, entity_score=0.0, vector_score=0.75),
+    ]
+    bm25_scores = {1: 4.2, 2: 2.1}  # 3 streams
+
+    decision, populated, threshold = context_hook._auto_gate_decide(
+        rows, bm25_scores, bm25_on=True, freshness_weight=0.0,
+        query="What changed last week?",  # -> temporal, not fact_lookup
+    )
+
+    assert populated == 3
+    assert threshold == 3  # global default, override didn't match
+    assert decision == "rrf"
+
+
+def test_per_type_override_takes_precedence_over_global(monkeypatch):
+    """When BOTH global and per-type are set, the per-type wins for a
+
+    matching query: global=2 would pick RRF at 2 streams, but the
+    fact_lookup override=5 keeps it linear.
+    """
+    monkeypatch.setenv("MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD", "2")
+    monkeypatch.setenv("MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_FACT_LOOKUP", "5")
+
+    rows = [_row(1, entity_score=1.0), _row(2, entity_score=0.0)]
+    bm25_scores = {1: 4.2, 2: 2.1}  # bm25 + entity = 2 streams
+
+    decision, populated, threshold = context_hook._auto_gate_decide(
+        rows, bm25_scores, bm25_on=True, freshness_weight=0.0,
+        query="What database does pedrito use?",  # -> fact_lookup
+    )
+
+    assert populated == 2
+    assert threshold == 5  # per-type beats global
+    assert decision == "linear"
+
+
+def test_invalid_per_type_override_falls_back_to_global(monkeypatch):
+    """A garbage per-type value is ignored and the global var is used —
+
+    a typo'd override must never silently disable gating.
+    """
+    monkeypatch.setenv("MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD", "2")
+    monkeypatch.setenv("MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_FACT_LOOKUP", "oops")
+
+    rows = [_row(1, entity_score=1.0), _row(2, entity_score=0.0)]
+    bm25_scores = {1: 4.2, 2: 2.1}  # 2 streams
+
+    decision, populated, threshold = context_hook._auto_gate_decide(
+        rows, bm25_scores, bm25_on=True, freshness_weight=0.0,
+        query="What database does pedrito use?",  # -> fact_lookup
+    )
+
+    assert populated == 2
+    assert threshold == 2  # fell back to the global override
+    assert decision == "rrf"
+
+
+def test_explicit_threshold_arg_bypasses_per_type_lookup(monkeypatch):
+    """Passing threshold= explicitly (test path) ignores env entirely,
+
+    including any per-type override — preserves the existing test contract.
+    """
+    monkeypatch.setenv("MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_FACT_LOOKUP", "9")
+
+    rows = [_row(1, entity_score=1.0), _row(2, entity_score=0.0)]
+    bm25_scores = {1: 4.2, 2: 2.1}  # 2 streams
+
+    decision, populated, threshold = context_hook._auto_gate_decide(
+        rows, bm25_scores, bm25_on=True, freshness_weight=0.0,
+        threshold=2, query="What database does pedrito use?",
+    )
+
+    assert threshold == 2  # explicit arg wins over per-type env
+    assert decision == "rrf"
+
+
+def test_threshold_helper_per_type_resolution():
+    """Unit-level: _auto_gate_threshold honors the type, ignores bad values."""
+    import os
+
+    # No env -> default 3 regardless of type.
+    assert context_hook._auto_gate_threshold("fact_lookup") == 3
+    assert context_hook._auto_gate_threshold(None) == 3
+
+    os.environ["MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_FACT_LOOKUP"] = "7"
+    try:
+        assert context_hook._auto_gate_threshold("fact_lookup") == 7
+        # Different type doesn't see the fact_lookup override.
+        assert context_hook._auto_gate_threshold("temporal") == 3
+        # None type never consults per-type vars.
+        assert context_hook._auto_gate_threshold(None) == 3
+    finally:
+        del os.environ["MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_FACT_LOOKUP"]

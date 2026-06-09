@@ -34,6 +34,7 @@ from memorymaster.cli_handlers_basic import (
     _handle_ingest,
     _handle_init_db,
     _handle_link_commands,
+    _handle_query_paths,
     _handle_list_claims,
     _handle_list_events,
     _handle_pin,
@@ -41,6 +42,7 @@ from memorymaster.cli_handlers_basic import (
     _handle_qdrant_commands,
     _handle_query,
     _handle_ready,
+    _handle_recall_analysis,
     _handle_recompute_tiers,
     _handle_redact_claim,
     _handle_resolve_action_proposal,
@@ -387,6 +389,23 @@ def _handle_mine_rules(args: argparse.Namespace, service, parser: argparse.Argum
             f"{result['ingested']} ingested, {result['duplicates']} dupes, {result['skipped']} skipped "
             f"(watermark={result['last_id']}{abort}, {elapsed_ms:.0f}ms)"
         )
+    return 0
+
+
+def _handle_export_rules(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.rule_export import collect_rules, render_rules
+    t0 = time.perf_counter()
+    rows = collect_rules(
+        service,
+        min_confidence=getattr(args, "min_confidence", 0.0),
+        status=getattr(args, "status", None) or None,
+        limit=getattr(args, "limit", 500),
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(rows, total=len(rows), query_ms=elapsed_ms))
+    else:
+        print(render_rules(rows, getattr(args, "format", "json")))
     return 0
 
 
@@ -775,6 +794,7 @@ COMMAND_HANDLERS: dict[str, object] = {
     "atlas-version": _handle_atlas_version,
     "run-cycle": _handle_run_cycle,
     "query": _handle_query,
+    "recall-analysis": _handle_recall_analysis,
     "context": _handle_context,
     "pin": _handle_pin,
     "redact-claim": _handle_redact_claim,
@@ -798,6 +818,7 @@ COMMAND_HANDLERS: dict[str, object] = {
     "link": _handle_link_commands,
     "unlink": _handle_link_commands,
     "links": _handle_link_commands,
+    "query-paths": _handle_query_paths,
     "snapshot": _handle_snapshot_commands,
     "snapshots": _handle_snapshot_commands,
     "rollback": _handle_snapshot_commands,
@@ -816,6 +837,7 @@ COMMAND_HANDLERS: dict[str, object] = {
     "bases-generate": _handle_bases_generate,
     "mine-transcript": _handle_mine_transcript,
     "mine-rules": _handle_mine_rules,
+    "export-rules": _handle_export_rules,
     "detect-contradictions": _handle_detect_contradictions,
     "verbatim-cleanup": _handle_verbatim_cleanup,
     "verify-claims": _handle_verify_claims,
