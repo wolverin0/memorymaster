@@ -116,7 +116,7 @@ def _writer_stophook(db: Path, ledger: Ledger, writer_id: int) -> None:
     from memorymaster import spool
     from memorymaster.models import CitationInput
     from memorymaster.service import MemoryService
-    from memorymaster.verbatim_store import ensure_verbatim_schema, store_verbatim
+    from memorymaster.recall.verbatim_store import ensure_verbatim_schema, store_verbatim
 
     session = f"soak-session-{writer_id}-{os.getpid()}"
     seq = 0

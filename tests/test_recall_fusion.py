@@ -1,4 +1,4 @@
-"""Unit tests for ``memorymaster.recall_fusion.rrf_fuse``.
+"""Unit tests for ``memorymaster.recall.recall_fusion.rrf_fuse``.
 
 Smoke tests only — wiring into ``context_hook.recall`` is covered by the
 end-to-end eval in ``scripts/eval_recall_precision_at_5.py``.
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from memorymaster.recall_fusion import RRF_K_DEFAULT, rrf_fuse
+from memorymaster.recall.recall_fusion import RRF_K_DEFAULT, rrf_fuse
 
 
 def test_smoke_two_streams_three_items() -> None:

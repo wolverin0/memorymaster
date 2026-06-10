@@ -1,4 +1,4 @@
-"""Unit tests for memorymaster.recall_tokenizer."""
+"""Unit tests for memorymaster.recall.recall_tokenizer."""
 from __future__ import annotations
 
 import sqlite3
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.recall_tokenizer import (
+from memorymaster.recall.recall_tokenizer import (
     _alias_set,
     _best_form,
     _candidate_tokens,

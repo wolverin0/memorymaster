@@ -12,7 +12,7 @@ import sqlite3
 import pytest
 
 import memorymaster.service as service_mod
-from memorymaster import query_cache
+from memorymaster.recall import query_cache
 from memorymaster.config import reset_config
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService

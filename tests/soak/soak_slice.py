@@ -31,7 +31,7 @@ def build_slice(
     failure.
     """
     from memorymaster.storage import SQLiteStore
-    from memorymaster.verbatim_store import ensure_verbatim_schema
+    from memorymaster.recall.verbatim_store import ensure_verbatim_schema
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     for suffix in ("", "-wal", "-shm"):

@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from memorymaster.context_hook import (
+from memorymaster.recall.context_hook import (
     _BM25_W_SUBJECT_DEFAULT,
     _BM25_W_TEXT_DEFAULT,
     _bm25_field_weight,

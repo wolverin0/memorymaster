@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from memorymaster.embeddings import EmbeddingProvider
+from memorymaster.recall.embeddings import EmbeddingProvider
 from memorymaster.jobs.dedup import (
     _pick_survivor,
     _subject_predicate_match,

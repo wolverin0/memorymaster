@@ -1,4 +1,4 @@
-"""Tests for memorymaster.qdrant_backend (unit-level, no live Qdrant)."""
+"""Tests for memorymaster.recall.qdrant_backend (unit-level, no live Qdrant)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 
 from memorymaster.models import Claim
-from memorymaster.qdrant_backend import QdrantBackend, EMBEDDING_DIMS
+from memorymaster.recall.qdrant_backend import QdrantBackend, EMBEDDING_DIMS
 
 
 def _fake_claim(**overrides) -> Claim:

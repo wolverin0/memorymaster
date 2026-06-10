@@ -14,7 +14,7 @@ requirement (degraded provider is not semantic), not on the fallback mechanism.
 """
 from __future__ import annotations
 
-from memorymaster.embeddings import EmbeddingProvider
+from memorymaster.recall.embeddings import EmbeddingProvider
 
 
 class _BoomClient:

@@ -26,7 +26,7 @@ try:
         sys.exit(0)
 
     log_hook("recall", "start", session=session_id, query_len=len(query))
-    from memorymaster.context_hook import recall
+    from memorymaster.recall.context_hook import recall
     ctx = recall(query, db_path=DB_PATH, skip_qdrant=True)
     log_hook("recall", "done", session=session_id, hit=bool(ctx), ctx_chars=len(ctx or ""))
     if ctx:

@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.context_hook import recall
+from memorymaster.recall.context_hook import recall
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
 

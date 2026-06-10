@@ -159,7 +159,7 @@ def _handle_snapshot_commands(args: argparse.Namespace, service, parser: argpars
 
 def _handle_qdrant_commands(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str = "") -> int:
     """Handle qdrant-sync and qdrant-search subcommands."""
-    from memorymaster.qdrant_backend import QdrantBackend
+    from memorymaster.recall.qdrant_backend import QdrantBackend
 
     qdrant_url = args.qdrant_url or os.environ.get("QDRANT_URL") or ""
     ollama_url = args.ollama_url or os.environ.get("OLLAMA_URL") or ""
@@ -902,7 +902,7 @@ def _handle_query(args: argparse.Namespace, service, parser: argparse.ArgumentPa
             print(f"rows={len(claims)}")
         return 0
     if getattr(args, "auto_classify", False):
-        from memorymaster.query_classifier import classify_query, recommended_retrieval_mode
+        from memorymaster.recall.query_classifier import classify_query, recommended_retrieval_mode
         qtype = classify_query(args.text)
         retrieval_mode = recommended_retrieval_mode(qtype)
         print(f"query classified as: {qtype} → using {retrieval_mode} mode")

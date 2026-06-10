@@ -20,7 +20,7 @@ sys.path.insert(0, str(REPO))
 if hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-from memorymaster.recall_tokenizer import extract_query_tokens  # noqa: E402
+from memorymaster.recall.recall_tokenizer import extract_query_tokens  # noqa: E402
 from memorymaster.service import MemoryService  # noqa: E402
 
 
@@ -71,7 +71,7 @@ def _run_tokenized(svc: MemoryService, tokens: str, limit: int = 8,
     # Acts as a rescue stream when the claims pipeline returned nothing.
     if raw_prompt and db_path and hits < limit:
         try:
-            from memorymaster.verbatim_recall import (
+            from memorymaster.recall.verbatim_recall import (
                 is_enabled as _verbatim_enabled,
                 recall_verbatim,
             )

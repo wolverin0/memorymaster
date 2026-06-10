@@ -37,7 +37,7 @@ sys.path.insert(0, str(REPO))
 if hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-from memorymaster.recall_tokenizer import _candidate_tokens  # noqa: E402
+from memorymaster.recall.recall_tokenizer import _candidate_tokens  # noqa: E402
 from memorymaster.security import redact_text  # noqa: E402
 
 DEFAULT_TRANSCRIPTS = Path(

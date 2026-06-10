@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from memorymaster.models import CitationInput  # noqa: E402
-from memorymaster.embeddings import create_best_provider  # noqa: E402
+from memorymaster.recall.embeddings import create_best_provider  # noqa: E402
 from memorymaster.config import reset_config  # noqa: E402
 from memorymaster.service import MemoryService  # noqa: E402
 
@@ -408,7 +408,7 @@ def run_retrieval(
     aggregate = aggregate_retrieval(results)
     rerank_stats = {"attempts": 0, "successes": 0, "failures": 0, "disabled": 0}
     if use_llm_rerank:
-        from memorymaster.llm_rerank import get_rerank_stats
+        from memorymaster.recall.llm_rerank import get_rerank_stats
 
         rerank_stats = get_rerank_stats()
     payload = {

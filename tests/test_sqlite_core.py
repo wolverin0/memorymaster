@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.embeddings import EmbeddingProvider
+from memorymaster.recall.embeddings import EmbeddingProvider
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
 

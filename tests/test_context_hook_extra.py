@@ -1,4 +1,4 @@
-"""Coverage-hardening tests for memorymaster.context_hook (TRACK T18).
+"""Coverage-hardening tests for memorymaster.recall.context_hook (TRACK T18).
 
 The base ``test_context_hook.py`` suite drives recall() happy paths but
 leaves the env-var configuration boundary, the RRF auto-gate, the optional
@@ -19,7 +19,7 @@ import os
 
 import pytest
 
-from memorymaster import context_hook as ch
+from memorymaster.recall import context_hook as ch
 
 
 @pytest.fixture(autouse=True)

@@ -1,6 +1,6 @@
 """Tests for query expansion via entity-matched synonyms (roadmap 1.5).
 
-Covers :func:`memorymaster.query_expansion.expand_query`:
+Covers :func:`memorymaster.recall.query_expansion.expand_query`:
   - empty / whitespace query short-circuits to ``[query]``
   - single entity with 2 aliases returns ``[query, alias1, alias2]``
   - entity with 0 aliases (not in DB) returns just ``[query]``
@@ -19,7 +19,7 @@ from memorymaster.knowledge.entity_registry import (
     ensure_entity_schema,
     resolve_or_create,
 )
-from memorymaster.query_expansion import (
+from memorymaster.recall.query_expansion import (
     ALIASES_PER_ENTITY,
     MAX_TOTAL_ALIASES,
     expand_query,

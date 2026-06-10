@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from memorymaster import context_hook
+from memorymaster.recall import context_hook
 
 
 @pytest.fixture(autouse=True)

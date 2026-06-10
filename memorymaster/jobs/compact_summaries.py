@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from memorymaster.embeddings import EmbeddingProvider, cosine_similarity
+from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity
 # P2 phase0: KeyRotator's real home is key_rotator (RoundRobinKeyRotator);
 # llm_steward only re-exports it for external compat.
 from memorymaster.key_rotator import RoundRobinKeyRotator as KeyRotator

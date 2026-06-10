@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from memorymaster.verbatim_store import _connect, store_verbatim
+from memorymaster.recall.verbatim_store import _connect, store_verbatim
 
 
 def test_connect_sets_busy_timeout(tmp_path: Path) -> None:

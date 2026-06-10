@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster import context_hook
-from memorymaster.claim_edges import (
+from memorymaster.recall import context_hook
+from memorymaster.recall.claim_edges import (
     SHARES_ENTITY_KIND,
     rebuild_edges,
 )
@@ -75,7 +75,7 @@ def test_p1_closets_boost_only_via_env(monkeypatch):
 
 def test_p2_query_classifier_recognised_in_recall():
     """The query_classifier module's classify_query is callable."""
-    from memorymaster.query_classifier import classify_query
+    from memorymaster.recall.query_classifier import classify_query
 
     assert classify_query("what database does this use?") == "fact_lookup"
     assert classify_query("we must use postgres") == "constraint_check"

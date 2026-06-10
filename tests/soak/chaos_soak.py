@@ -115,7 +115,7 @@ def _seed_synthetic_fixture(db: Path) -> None:
     """Small schema-identical fixture for smoke/dev runs without a live slice."""
     from memorymaster.models import CitationInput
     from memorymaster.service import MemoryService
-    from memorymaster.verbatim_store import ensure_verbatim_schema
+    from memorymaster.recall.verbatim_store import ensure_verbatim_schema
 
     svc = MemoryService(db)
     svc.init_db()

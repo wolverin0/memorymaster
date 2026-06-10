@@ -44,7 +44,7 @@ class TestInitQdrant:
     def test_with_env_and_working_backend(self):
         mock_backend = MagicMock()
         with patch.dict(os.environ, {"QDRANT_URL": "http://localhost:6333"}):
-            with patch("memorymaster.qdrant_backend.QdrantBackend", return_value=mock_backend):
+            with patch("memorymaster.recall.qdrant_backend.QdrantBackend", return_value=mock_backend):
                 result = MemoryService._init_qdrant()
                 assert result is mock_backend
                 mock_backend.ensure_collection.assert_called_once()

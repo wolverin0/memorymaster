@@ -8,14 +8,15 @@ from typing import Any
 import logging
 import os
 
-from memorymaster import candidate_dedupe, lifecycle, llm_budget, observability, query_cache
-from memorymaster.embeddings import EmbeddingProvider, create_best_provider
+from memorymaster import candidate_dedupe, lifecycle, llm_budget, observability
+from memorymaster.recall import query_cache
+from memorymaster.recall.embeddings import EmbeddingProvider, create_best_provider
 from memorymaster.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, integrity, qdrant_reconcile, spool_drain, validator
 from memorymaster.models import ActionProposal, CitationInput, Claim, ClaimLink, Event, EvidenceItem, ExternalSource, MediaRetryItem, SourceItem
 from memorymaster.policy import select_revalidation_candidates
-from memorymaster.context_optimizer import ContextResult, pack_context
+from memorymaster.recall.context_optimizer import ContextResult, pack_context
 from memorymaster.config import get_config
-from memorymaster.retrieval import VectorSearchHook, _tier_bonus, rank_claim_rows
+from memorymaster.recall.retrieval import VectorSearchHook, _tier_bonus, rank_claim_rows
 from memorymaster.security import is_sensitive_claim, resolve_allow_sensitive_access, sanitize_claim_input
 from memorymaster.store_factory import create_store
 import contextlib
@@ -203,7 +204,7 @@ def _llm_rerank_enabled() -> bool:
     if not get_config().llm_rerank or not os.environ.get("GEMINI_API_KEY", "").strip():
         return False
     try:
-        from memorymaster.llm_rerank import rerank_temporarily_disabled
+        from memorymaster.recall.llm_rerank import rerank_temporarily_disabled
 
         return not rerank_temporarily_disabled()
     except Exception:
@@ -256,7 +257,7 @@ def _recall_component_rankings(rows: list[dict[str, Any]]) -> dict[str, list[int
     the shared ``retrieval.component_rankings`` logic can be reused without
     duplicating the sort. Pure read — does not reorder ``rows``.
     """
-    from memorymaster.retrieval import RankedClaim, component_rankings
+    from memorymaster.recall.retrieval import RankedClaim, component_rankings
 
     ranked = [
         RankedClaim(
@@ -334,7 +335,7 @@ class MemoryService:
         if not qdrant_url:
             return None
         try:
-            from memorymaster.qdrant_backend import QdrantBackend
+            from memorymaster.recall.qdrant_backend import QdrantBackend
             backend = QdrantBackend(qdrant_url=qdrant_url)
             backend.ensure_collection()
             logger.info("Qdrant backend enabled at %s", backend.qdrant_url)
@@ -965,7 +966,7 @@ class MemoryService:
             for row in ranked_rows
         ]
         if use_llm_rerank:
-            from memorymaster.llm_rerank import rerank_with_llm
+            from memorymaster.recall.llm_rerank import rerank_with_llm
 
             results = rerank_with_llm(query_text, results, top_k=limit)
         self._record_accesses(results, query_text=query_text)

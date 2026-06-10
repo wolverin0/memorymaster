@@ -39,7 +39,7 @@ qdrant = ["httpx>=0.27"]
 # 384-dim embeddings on CPU.
 vector = ["sentence-transformers>=3.0", "qdrant-client>=1.9"]
 # `graph` enables the Kuzu-backed graph retrieval stream (roadmap 11.3,
-# memorymaster.graph_store). Kuzu is an embedded, single-file graph
+# memorymaster.recall.graph_store). Kuzu is an embedded, single-file graph
 # database (no server) — lightweight enough to keep MemoryMaster's
 # "single-file SQLite + optional Qdrant" story. Gated at runtime by
 # MEMORYMASTER_RECALL_GRAPH=1; off by default.

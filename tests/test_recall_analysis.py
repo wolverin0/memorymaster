@@ -23,7 +23,7 @@ import pytest
 
 from memorymaster.config import get_config, reset_config
 from memorymaster.models import Claim, CitationInput
-from memorymaster.retrieval import component_rankings, rank_claim_rows
+from memorymaster.recall.retrieval import component_rankings, rank_claim_rows
 from memorymaster.service import MemoryService
 
 _OLD = "2000-01-01T00:00:00+00:00"

@@ -15,7 +15,7 @@ import pytest
 
 from memorymaster.config import reset_config
 from memorymaster.models import Claim
-from memorymaster.retrieval import rank_claim_rows, rank_claims
+from memorymaster.recall.retrieval import rank_claim_rows, rank_claims
 
 _OLD = "2000-01-01T00:00:00+00:00"      # stale -> freshness ~0
 _FUTURE = "2999-01-01T00:00:00+00:00"   # fresh -> freshness ~1

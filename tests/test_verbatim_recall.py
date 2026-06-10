@@ -1,4 +1,4 @@
-"""Tests for ``memorymaster.verbatim_recall``.
+"""Tests for ``memorymaster.recall.verbatim_recall``.
 
 Covers:
   1. FTS5 MATCH semantics — multi-token AND, quoting, special characters.
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.verbatim_recall import (
+from memorymaster.recall.verbatim_recall import (
     VerbatimHit,
     _build_match_expr,
     _escape_fts5_token,

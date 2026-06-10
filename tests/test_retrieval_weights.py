@@ -4,7 +4,7 @@ import pytest
 
 from memorymaster.config import reset_config
 from memorymaster.models import Claim
-from memorymaster.retrieval import rank_claim_rows
+from memorymaster.recall.retrieval import rank_claim_rows
 
 
 @pytest.fixture(autouse=True)

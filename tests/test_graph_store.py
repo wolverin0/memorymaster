@@ -1,4 +1,4 @@
-"""Tests for memorymaster.graph_store and the scripts.backfill_graph_store
+"""Tests for memorymaster.recall.graph_store and the scripts.backfill_graph_store
 CLI entry — roadmap 11.3.
 
 Covers the Cognee Alice→Atlas→Postgres multi-hop example, the idempotent
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.graph_store import (
+from memorymaster.recall.graph_store import (
     GraphEdge,
     GraphStore,
     GraphStoreUnavailable,
@@ -132,7 +132,7 @@ class TestNetworkxFallback:
         # open_graph_store with allow_networkx=True picks the in-memory
         # fallback when Kuzu is missing; on this box Kuzu is present, so
         # we directly construct the fallback via the private class.
-        from memorymaster.graph_store import _NetworkXGraphStore
+        from memorymaster.recall.graph_store import _NetworkXGraphStore
 
         fb = _NetworkXGraphStore(tmp_path / "g")
         fb.open()
@@ -275,9 +275,9 @@ class TestRecallRegressionGuard:
     def test_graph_disabled_short_circuits_before_import(self, monkeypatch):
         """When MEMORYMASTER_RECALL_GRAPH is unset or 0, _graph_enabled
         must return False and ``_graph_reached_claim_ids`` must return an
-        empty set without importing :mod:`memorymaster.graph_store`.
+        empty set without importing :mod:`memorymaster.recall.graph_store`.
         """
-        import memorymaster.context_hook as ch
+        import memorymaster.recall.context_hook as ch
 
         monkeypatch.delenv("MEMORYMASTER_RECALL_GRAPH", raising=False)
         assert ch._graph_enabled() is False
@@ -288,7 +288,7 @@ class TestRecallRegressionGuard:
         assert ch._graph_enabled() is False
 
     def test_graph_env_parsing(self, monkeypatch):
-        import memorymaster.context_hook as ch
+        import memorymaster.recall.context_hook as ch
 
         monkeypatch.setenv("MEMORYMASTER_RECALL_GRAPH", "1")
         assert ch._graph_enabled() is True
@@ -303,7 +303,7 @@ class TestRecallRegressionGuard:
         assert ch._graph_max_hops() == 1  # clamped to >= 1
 
     def test_populated_streams_counts_graph_when_scored(self):
-        import memorymaster.context_hook as ch
+        import memorymaster.recall.context_hook as ch
 
         # 0 populated — nothing scored
         rows = [{"entity_score": 0, "vector_score": 0}]

@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster import verbatim_store
-from memorymaster.verbatim_store import store_transcript, store_verbatim
+from memorymaster.recall import verbatim_store
+from memorymaster.recall.verbatim_store import store_transcript, store_verbatim
 
 
 def _init_verbatim_schema(conn: sqlite3.Connection) -> None:

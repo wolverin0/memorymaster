@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from memorymaster import context_hook, qdrant_recall_fallback
+from memorymaster.recall import context_hook, qdrant_recall_fallback
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
 

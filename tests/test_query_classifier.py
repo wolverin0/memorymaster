@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from memorymaster.query_classifier import QUERY_TYPES, classify_query, recommended_retrieval_mode
+from memorymaster.recall.query_classifier import QUERY_TYPES, classify_query, recommended_retrieval_mode
 
 
 class TestQueryTypes:

@@ -25,7 +25,7 @@ import os
 from unittest.mock import patch
 
 from memorymaster.config import INITIAL_CONFIDENCE_BY_TYPE
-from memorymaster.query_classifier import classify_query
+from memorymaster.recall.query_classifier import classify_query
 from memorymaster.webhook import fire_webhook
 
 

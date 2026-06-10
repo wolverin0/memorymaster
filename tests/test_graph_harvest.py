@@ -25,7 +25,7 @@ import os
 
 import pytest
 
-from memorymaster import context_hook as ch
+from memorymaster.recall import context_hook as ch
 
 
 @pytest.fixture(autouse=True)
@@ -307,7 +307,7 @@ def test_assemble_breakdown_omits_graph_by_default():
     unless a caller passes a graph score — so the RankedClaim ranker, which
     never computes one, is unaffected.
     """
-    from memorymaster.retrieval import _ScoreParts, _assemble_breakdown
+    from memorymaster.recall.retrieval import _ScoreParts, _assemble_breakdown
 
     parts = _ScoreParts(
         relevance=1.0,
@@ -329,7 +329,7 @@ def test_assemble_breakdown_surfaces_graph_when_passed():
     """When a graph score IS passed, it appears in all three component dicts
     with the weighted contribution — the surfacing path roadmap 12.2 adds.
     """
-    from memorymaster.retrieval import _ScoreParts, _assemble_breakdown
+    from memorymaster.recall.retrieval import _ScoreParts, _assemble_breakdown
 
     parts = _ScoreParts(
         relevance=1.0,

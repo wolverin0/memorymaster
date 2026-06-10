@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.claim_edges import (
+from memorymaster.recall.claim_edges import (
     SUPERSEDES_KIND,
     rebuild_edges,
     walk_neighbors,

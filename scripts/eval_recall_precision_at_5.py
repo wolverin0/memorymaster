@@ -10,7 +10,7 @@ block.
 Key design notes:
 
 * Uses the ``return_ids=True`` opt-in added to
-  :func:`memorymaster.context_hook.recall` so we never have to re-match
+  :func:`memorymaster.recall.context_hook.recall` so we never have to re-match
   rendered bullet text against the DB.
 * Read-only against the live DB — monkey-patches the service + store to
   disable every write path.
@@ -55,8 +55,8 @@ sys.path.insert(0, str(REPO))
 if __name__ == "__main__" and hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-from memorymaster.context_hook import recall  # noqa: E402
-from memorymaster.recall_tokenizer import _candidate_tokens  # noqa: E402
+from memorymaster.recall.context_hook import recall  # noqa: E402
+from memorymaster.recall.recall_tokenizer import _candidate_tokens  # noqa: E402
 
 
 # Env flags whose values we capture in the run summary — makes it trivial to

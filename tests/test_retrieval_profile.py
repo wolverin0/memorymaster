@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from memorymaster.surfaces.cli import build_parser
-from memorymaster.embeddings import EmbeddingProvider
+from memorymaster.recall.embeddings import EmbeddingProvider
 from memorymaster.models import Claim
 from memorymaster.service import MemoryService
 

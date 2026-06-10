@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from memorymaster.context_optimizer import (
+from memorymaster.recall.context_optimizer import (
     ContextResult,
     OUTPUT_FORMATS,
     estimate_tokens,

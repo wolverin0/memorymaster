@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from memorymaster import context_hook
+from memorymaster.recall import context_hook
 
 
 def _claim(cid: int, text: str, claim_type: str) -> MagicMock:

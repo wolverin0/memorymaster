@@ -12,7 +12,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
-from memorymaster.embeddings import EmbeddingProvider, cosine_similarity
+from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity
 from memorymaster.models import (
     CLAIM_LINK_TYPES,
     CLAIM_STATUSES,

@@ -2,7 +2,7 @@
 
 Validates :meth:`GraphStore.claims_for_entities_with_distance` and the
 ``_graph_reached_claim_distance`` helper in
-:mod:`memorymaster.context_hook`. The scoring contract:
+:mod:`memorymaster.recall.context_hook`. The scoring contract:
 
 * hop 0 → claim mentions a query entity directly → score ``1 / (1+0) = 1.0``
 * hop 1 → claim mentions an entity 1 BFS step away → score ``1/2 = 0.5``
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.graph_store import (
+from memorymaster.recall.graph_store import (
     GraphEdge,
     GraphStore,
     GraphStoreUnavailable,
@@ -204,7 +204,7 @@ class TestNetworkxFallbackDistance:
 # ----------------------------------------------------------------------
 class TestContextHookDistanceScore:
     def test_disabled_helper_returns_empty_mapping(self, monkeypatch):
-        import memorymaster.context_hook as ch
+        import memorymaster.recall.context_hook as ch
 
         monkeypatch.delenv("MEMORYMASTER_RECALL_GRAPH", raising=False)
         assert ch._graph_reached_claim_distance("query", store=None) == {}

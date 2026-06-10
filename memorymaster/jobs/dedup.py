@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from memorymaster.embeddings import EmbeddingProvider, cosine_similarity, create_best_provider
+from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity, create_best_provider
 from memorymaster.lifecycle import transition_claim
 from memorymaster.models import Claim
 

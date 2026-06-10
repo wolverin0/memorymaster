@@ -1,4 +1,4 @@
-"""Tests for memorymaster.embeddings — coverage gaps (provider creation, fallbacks)."""
+"""Tests for memorymaster.recall.embeddings — coverage gaps (provider creation, fallbacks)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from memorymaster.embeddings import (
+from memorymaster.recall.embeddings import (
     EmbeddingProvider,
     _load_gemini_client,
     _load_transformer,
@@ -73,7 +73,7 @@ class TestLoadGeminiClient:
 class TestCreateBestProvider:
     def test_fallback_to_hash(self):
         """When no providers are available, falls back to hash-v1."""
-        with patch("memorymaster.embeddings.create_semantic_provider", side_effect=ImportError):
+        with patch("memorymaster.recall.embeddings.create_semantic_provider", side_effect=ImportError):
             with patch.dict(os.environ, {}, clear=False):
                 os.environ.pop("GEMINI_API_KEY", None)
                 os.environ.pop("GOOGLE_API_KEY", None)
@@ -82,7 +82,7 @@ class TestCreateBestProvider:
 
     def test_semantic_failure_falls_through(self):
         """Non-import failure from sentence-transformers falls to next."""
-        with patch("memorymaster.embeddings.create_semantic_provider", side_effect=RuntimeError("broken")):
+        with patch("memorymaster.recall.embeddings.create_semantic_provider", side_effect=RuntimeError("broken")):
             with patch.dict(os.environ, {}, clear=False):
                 os.environ.pop("GEMINI_API_KEY", None)
                 os.environ.pop("GOOGLE_API_KEY", None)
@@ -91,16 +91,16 @@ class TestCreateBestProvider:
 
     def test_gemini_tried_when_key_present(self):
         """Gemini is attempted when API key is set."""
-        with patch("memorymaster.embeddings.create_semantic_provider", side_effect=ImportError):
+        with patch("memorymaster.recall.embeddings.create_semantic_provider", side_effect=ImportError):
             with patch.dict(os.environ, {"GEMINI_API_KEY": "test"}):
-                with patch("memorymaster.embeddings.create_gemini_provider", side_effect=ImportError):
+                with patch("memorymaster.recall.embeddings.create_gemini_provider", side_effect=ImportError):
                     p = create_best_provider()
                     assert p.model == "hash-v1"
 
     def test_gemini_failure_falls_to_hash(self):
-        with patch("memorymaster.embeddings.create_semantic_provider", side_effect=ImportError):
+        with patch("memorymaster.recall.embeddings.create_semantic_provider", side_effect=ImportError):
             with patch.dict(os.environ, {"GEMINI_API_KEY": "test"}):
-                with patch("memorymaster.embeddings.create_gemini_provider", side_effect=RuntimeError("fail")):
+                with patch("memorymaster.recall.embeddings.create_gemini_provider", side_effect=RuntimeError("fail")):
                     p = create_best_provider()
                     assert p.model == "hash-v1"
 

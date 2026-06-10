@@ -38,7 +38,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from memorymaster.graph_store import (  # noqa: E402
+from memorymaster.recall.graph_store import (  # noqa: E402
     GraphEdge,
     GraphStoreUnavailable,
     open_graph_store,

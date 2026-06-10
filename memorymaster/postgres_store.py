@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from memorymaster.embeddings import EmbeddingProvider, cosine_similarity
+from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity
 from memorymaster.models import (
     ActionProposal,
     CLAIM_LINK_TYPES,

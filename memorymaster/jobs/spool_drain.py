@@ -94,7 +94,7 @@ def _replay_ingest(svc, envelope: dict[str, object]) -> None:
 
 
 def _replay_verbatim(db_path: str | Path, envelope: dict[str, object]) -> None:
-    from memorymaster.verbatim_store import ensure_verbatim_schema, store_verbatim
+    from memorymaster.recall.verbatim_store import ensure_verbatim_schema, store_verbatim
 
     payload = envelope["payload"]
     # verbatim_memories is historically created out-of-band by the Stop hook;

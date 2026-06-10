@@ -13,9 +13,9 @@ from memorymaster.surfaces.cli_helpers import (  # noqa: F401 — re-export for 
     parse_citation,
     parse_scope_allowlist,
 )
-from memorymaster.context_optimizer import OUTPUT_FORMATS, PROVIDERS
+from memorymaster.recall.context_optimizer import OUTPUT_FORMATS, PROVIDERS
 from memorymaster.models import CLAIM_LINK_TYPES, CLAIM_STATUSES, VOLATILITY_LEVELS
-from memorymaster.retrieval import RETRIEVAL_MODES
+from memorymaster.recall.retrieval import RETRIEVAL_MODES
 from memorymaster.service import RETRIEVAL_PROFILES, MemoryService
 
 # Import dispatch table — this also triggers the late dispatch additions for daily/dream/ghost

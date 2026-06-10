@@ -189,7 +189,7 @@ def test_flag_off_keeps_legacy_direct_write_path(db: Path) -> None:
     """REQUIREMENT (governance: flag default OFF, legacy path intact): with
     the flag unset, recall records accesses directly in the DB and the spool
     stays empty — the v3.27 behavior is the untouched else-branch."""
-    from memorymaster.context_hook import recall
+    from memorymaster.recall.context_hook import recall
 
     before = _access_counts(db)
     rendered = recall(QUERY, db_path=str(db), skip_qdrant=True)
@@ -206,7 +206,7 @@ def test_recall_entrypoint_goes_read_only_under_flag(
     under MEMORYMASTER_WAL_DISCIPLINE=1 must build an RO service, leave the
     DB rows untouched, and spool the access signal."""
     monkeypatch.setenv("MEMORYMASTER_WAL_DISCIPLINE", "1")
-    from memorymaster.context_hook import recall
+    from memorymaster.recall.context_hook import recall
 
     before = _access_counts(db)
     rendered = recall(QUERY, db_path=str(db), skip_qdrant=True)

@@ -295,10 +295,10 @@ def main():
                 # P1 spec §2.3: append op:"verbatim" envelopes (~10 ms) instead
                 # of opening the multi-GB DB on every stop; the steward drain
                 # lands them in verbatim_memories via store_verbatim.
-                from memorymaster.verbatim_store import spool_transcript
+                from memorymaster.recall.verbatim_store import spool_transcript
                 spool_transcript(DB_PATH, transcript_path, scope=scope, source_agent="stop-hook")
             else:
-                from memorymaster.verbatim_store import store_transcript
+                from memorymaster.recall.verbatim_store import store_transcript
                 store_transcript(DB_PATH, transcript_path, scope=scope, source_agent="stop-hook")
     except Exception:
         pass

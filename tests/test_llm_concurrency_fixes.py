@@ -143,7 +143,8 @@ def test_rerank_env_does_not_clear_shared_rotator_cache(monkeypatch):
     WHY: clearing the cache mid-flight drops the rotation/cooldown state that a
     concurrent call_llm relies on, re-reading keys and double-spending quota.
     """
-    from memorymaster import key_rotator, llm_rerank
+    from memorymaster import key_rotator
+    from memorymaster.recall import llm_rerank
 
     cleared = {"count": 0}
     real_clear = key_rotator.clear_cache
@@ -179,7 +180,7 @@ def test_rerank_env_does_not_clear_shared_rotator_cache(monkeypatch):
 
 def test_rerank_env_does_not_mutate_os_environ(monkeypatch):
     """Provider/model/key-rotation are restored to os.environ after the call."""
-    from memorymaster import llm_rerank
+    from memorymaster.recall import llm_rerank
 
     monkeypatch.setenv("MEMORYMASTER_LLM_PROVIDER", "anthropic")
     monkeypatch.delenv("MEMORYMASTER_LLM_MODEL", raising=False)

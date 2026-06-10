@@ -412,7 +412,7 @@ def _effective_scope_allowlist(raw: str, workspace: str) -> list[str] | None:
 def _qdrant_query(query: str, db: str, workspace: str, limit: int) -> dict[str, Any]:
     """Fast semantic search via Qdrant+Ollama (no local model load)."""
     try:
-        from memorymaster.qdrant_backend import QdrantBackend
+        from memorymaster.recall.qdrant_backend import QdrantBackend
     except ImportError:
         return {"ok": False, "error": "qdrant mode requires httpx. Install with: pip install 'memorymaster[qdrant]'"}
     backend = QdrantBackend()
@@ -677,7 +677,7 @@ if FastMCP is not None:
     @mcp.tool()
     def classify_query(query: str) -> dict[str, Any]:
         """Classify a query and recommend the best retrieval mode."""
-        from memorymaster.query_classifier import classify_query as _classify, recommended_retrieval_mode
+        from memorymaster.recall.query_classifier import classify_query as _classify, recommended_retrieval_mode
         qtype = _classify(query)
         return {"query_type": qtype, "recommended_mode": recommended_retrieval_mode(qtype)}
 
@@ -743,7 +743,7 @@ if FastMCP is not None:
           - "standard" (default): full claim dict
           - "full": full claim dict with citations inlined
         """
-        from memorymaster.query_classifier import classify_query as _classify, recommended_retrieval_mode
+        from memorymaster.recall.query_classifier import classify_query as _classify, recommended_retrieval_mode
 
         resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
@@ -1008,7 +1008,7 @@ if FastMCP is not None:
         Returns empty briefing when no claims match.
         """
         import time as _time
-        from memorymaster.context_hook import query_for_task as _qft
+        from memorymaster.recall.context_hook import query_for_task as _qft
 
         t0 = _time.perf_counter()
         # Use scope from arg, else env, else derived from workspace.
@@ -1334,7 +1334,7 @@ if FastMCP is not None:
         Use this when query_memory (claims) doesn't find what you need —
         verbatim search finds exact conversation fragments.
         """
-        from memorymaster.verbatim_store import search_verbatim as _search
+        from memorymaster.recall.verbatim_store import search_verbatim as _search
         results = _search(_resolve_db(db), query, scope=scope or None, limit=limit, mode=mode)
         return {"ok": True, "rows": len(results), "results": results}
 

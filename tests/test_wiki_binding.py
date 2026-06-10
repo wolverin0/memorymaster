@@ -107,7 +107,7 @@ def test_row_to_claim_reads_wiki_article(tmp_path: Path) -> None:
 
 def test_recall_appends_wiki_pointer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Recall formatter should append `(compiled in [[slug]])` for bound claims."""
-    from memorymaster import context_hook
+    from memorymaster.recall import context_hook
     from memorymaster.models import Claim
 
     sample = Claim(

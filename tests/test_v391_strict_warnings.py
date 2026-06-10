@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-import memorymaster.claim_edges as claim_edges_module
+import memorymaster.recall.claim_edges as claim_edges_module
 
 
 def test_walker_logs_warning_when_table_missing(tmp_path, caplog):
@@ -19,7 +19,7 @@ def test_walker_logs_warning_when_table_missing(tmp_path, caplog):
     claim_edges_module._MISSING_TABLE_WARNED = False
     db = tmp_path / "no-edges.db"
     sqlite3.connect(str(db)).close()  # empty DB, no claim_edges table
-    with caplog.at_level("WARNING", logger="memorymaster.claim_edges"):
+    with caplog.at_level("WARNING", logger="memorymaster.recall.claim_edges"):
         result = claim_edges_module.walk_neighbors(db, [1, 2, 3], max_hops=2)
     assert result == {}
     assert any("claim_edges table missing" in r.message for r in caplog.records), \
@@ -31,7 +31,7 @@ def test_walker_warns_only_once_per_process(tmp_path, caplog):
     claim_edges_module._MISSING_TABLE_WARNED = False
     db = tmp_path / "no-edges.db"
     sqlite3.connect(str(db)).close()
-    with caplog.at_level("WARNING", logger="memorymaster.claim_edges"):
+    with caplog.at_level("WARNING", logger="memorymaster.recall.claim_edges"):
         claim_edges_module.walk_neighbors(db, [1], max_hops=1)
         caplog.clear()
         claim_edges_module.walk_neighbors(db, [2], max_hops=1)
@@ -50,7 +50,7 @@ def test_walker_does_not_warn_when_table_exists(tmp_path, caplog):
         claim_edges_module.ensure_claim_edges_schema(conn)
     finally:
         conn.close()
-    with caplog.at_level("WARNING", logger="memorymaster.claim_edges"):
+    with caplog.at_level("WARNING", logger="memorymaster.recall.claim_edges"):
         result = claim_edges_module.walk_neighbors(db, [1, 2], max_hops=2)
     assert result == {}  # empty table → no neighbors
     assert not any("claim_edges table missing" in r.message for r in caplog.records)
@@ -63,11 +63,11 @@ def test_module_exposes_warned_flag():
 
 def test_context_hook_exposes_verbatim_warned_flag():
     """S1 — _VERBATIM_IMPORT_WARNED gate exists so the warning is once-per-process."""
-    from memorymaster import context_hook
+    from memorymaster.recall import context_hook
     assert hasattr(context_hook, "_VERBATIM_IMPORT_WARNED")
 
 
 def test_context_hook_exposes_claim_edges_warned_flag():
     """S2 — _CLAIM_EDGES_MISSING_WARNED was reserved on context_hook for the F8 wiring."""
-    from memorymaster import context_hook
+    from memorymaster.recall import context_hook
     assert hasattr(context_hook, "_CLAIM_EDGES_MISSING_WARNED")

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from memorymaster.context_hook import classify_observation, observe, recall
+from memorymaster.recall.context_hook import classify_observation, observe, recall
 
 
 class TestClassifyObservation:

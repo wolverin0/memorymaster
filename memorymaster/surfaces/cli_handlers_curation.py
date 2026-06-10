@@ -726,7 +726,7 @@ def _handle_install_gitnexus_hook(args: argparse.Namespace, service, parser: arg
 
 
 def _handle_recall(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.context_hook import recall as _recall
+    from memorymaster.recall.context_hook import recall as _recall
     output = _recall(args.query, db_path=str(effective_db), budget=args.budget, format=args.output_format)
     if output:
         print(output)
@@ -736,7 +736,7 @@ def _handle_recall(args: argparse.Namespace, service, parser: argparse.ArgumentP
 
 
 def _handle_observe(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.context_hook import observe as _observe, observe_llm
+    from memorymaster.recall.context_hook import observe as _observe, observe_llm
     if args.llm:
         result = observe_llm(args.text, source=args.source, db_path=str(effective_db), scope=args.scope)
         if args.json_output:
