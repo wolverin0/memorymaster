@@ -8,7 +8,7 @@ gate away from the 50-200 contract.
 """
 from __future__ import annotations
 
-from memorymaster.wiki_validate import _validate_fields
+from memorymaster.knowledge.wiki_validate import _validate_fields
 
 
 def _fields(desc: str) -> dict:

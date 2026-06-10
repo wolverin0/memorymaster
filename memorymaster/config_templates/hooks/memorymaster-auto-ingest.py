@@ -229,13 +229,13 @@ Only: bug root causes, decisions, gotchas, constraints. Never: credentials, IPs,
 def _run_rule_extraction(transcript_path, cwd):
     """R1b ongoing: mine the latest correction in this session into a rule claim.
 
-    Reuses memorymaster.rule_miner.mine_transcript_rules (single source of truth
+    Reuses memorymaster.knowledge.rule_miner.mine_transcript_rules (single source of truth
     for the correction->rule prompt + ingest path). Bounded to one window per
     stop to keep the hook fast; rules land as low-confidence candidates."""
     try:
         if not transcript_path or not os.path.exists(transcript_path) or not os.path.exists(DB_PATH):
             return
-        from memorymaster.rule_miner import mine_transcript_rules
+        from memorymaster.knowledge.rule_miner import mine_transcript_rules
         from memorymaster.service import MemoryService
 
         scope = "project:" + os.path.basename(cwd).lower().replace(" ", "-") if cwd else "global"

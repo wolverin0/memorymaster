@@ -358,7 +358,7 @@ def test_observe_ingests_matched_text(tmp_path):
 def test_observe_llm_no_extractions(monkeypatch, tmp_path):
     """When the extractor yields nothing, observe_llm ingests nothing."""
     monkeypatch.setattr(
-        "memorymaster.auto_extractor.extract_claims_from_text",
+        "memorymaster.knowledge.auto_extractor.extract_claims_from_text",
         lambda *a, **k: [],
     )
     result = ch.observe_llm(
@@ -382,7 +382,7 @@ def test_observe_llm_ingests_extracted_claims(monkeypatch, tmp_path):
         {"text": "prefers ruff", "claim_type": "preference"},
     ]
     monkeypatch.setattr(
-        "memorymaster.auto_extractor.extract_claims_from_text",
+        "memorymaster.knowledge.auto_extractor.extract_claims_from_text",
         lambda *a, **k: extracted,
     )
 
@@ -613,7 +613,7 @@ def test_observe_llm_real_service_ingests(monkeypatch, tmp_path):
         {"text": "The team prefers ruff for linting.", "claim_type": "preference"},
     ]
     monkeypatch.setattr(
-        "memorymaster.auto_extractor.extract_claims_from_text",
+        "memorymaster.knowledge.auto_extractor.extract_claims_from_text",
         lambda *a, **k: extracted,
     )
     result = ch.observe_llm(
@@ -627,7 +627,7 @@ def test_observe_llm_real_service_ingests(monkeypatch, tmp_path):
 def test_observe_llm_default_scope_from_cwd(monkeypatch, tmp_path):
     # scope=None branch → scope_from_cwd is consulted (line 1972-1974).
     monkeypatch.setattr(
-        "memorymaster.auto_extractor.extract_claims_from_text",
+        "memorymaster.knowledge.auto_extractor.extract_claims_from_text",
         lambda *a, **k: [],
     )
     result = ch.observe_llm("nothing", db_path=str(tmp_path / "d.db"))

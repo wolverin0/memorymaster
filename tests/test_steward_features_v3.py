@@ -27,7 +27,7 @@ from memorymaster.steward_features import (  # noqa: E402
     FEATURE_VERSION,
     extract_features,
 )
-from memorymaster.wiki_similarity import (
+from memorymaster.knowledge.wiki_similarity import (
     WikiCorpus,
     compute_wiki_similarity,
     load_wiki_corpus,

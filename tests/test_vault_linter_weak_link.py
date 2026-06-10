@@ -10,7 +10,7 @@ not on the implementation, so they stay valid if the detection is rewritten.
 """
 from __future__ import annotations
 
-from memorymaster.vault_linter import _detect_orphans
+from memorymaster.knowledge.vault_linter import _detect_orphans
 
 
 def _claim(cid: int, subject: str) -> dict:

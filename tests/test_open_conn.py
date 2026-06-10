@@ -190,7 +190,7 @@ def test_migrated_defensive_readers_keep_empty_result_on_missing_db(tmp_path: Pa
     each defensive reader; this pins that the wrap exists.
     """
     from memorymaster.claim_edges import walk_neighbors
-    from memorymaster.closets import search_closets
+    from memorymaster.knowledge.closets import search_closets
 
     missing = str(tmp_path / "does-not-exist.db")
     assert walk_neighbors(missing, [1], max_hops=1) == {}

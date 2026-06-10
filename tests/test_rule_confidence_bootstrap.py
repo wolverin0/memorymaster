@@ -14,8 +14,9 @@ import sqlite3
 
 import pytest
 
-from memorymaster import llm_provider, rule_miner
-from memorymaster.rules import is_rule, parse_rule
+from memorymaster import llm_provider
+from memorymaster.knowledge import rule_miner
+from memorymaster.knowledge.rules import is_rule, parse_rule
 from memorymaster.service import MemoryService
 
 _VERBATIM_DDL = """

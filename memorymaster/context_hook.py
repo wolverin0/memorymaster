@@ -615,8 +615,8 @@ def _graph_reached_claim_distance(query: str, store) -> dict[int, int]:
 
     # Lazy imports — gated behind the enabled check above.
     try:
-        from memorymaster.entity_extractor import extract_patterns
-        from memorymaster.entity_registry import normalize_alias
+        from memorymaster.knowledge.entity_extractor import extract_patterns
+        from memorymaster.knowledge.entity_registry import normalize_alias
         from memorymaster.graph_store import GraphStoreUnavailable, open_graph_store
     except Exception as exc:
         logger.debug("graph stream: imports failed: %s", exc)
@@ -899,8 +899,8 @@ def _entity_fanout_claim_ids(
     their absence on legacy DBs.
     """
     try:
-        from memorymaster.entity_extractor import extract_patterns
-        from memorymaster.entity_registry import normalize_alias
+        from memorymaster.knowledge.entity_extractor import extract_patterns
+        from memorymaster.knowledge.entity_registry import normalize_alias
     except Exception:  # pragma: no cover — import errors are fatal elsewhere
         return []
 
@@ -1595,7 +1595,7 @@ def _recall_impl(
     if _closets_enabled():
         with _phase_timer(phase_ms, "closets"):
             try:
-                from memorymaster.closets import search_closets as _search_closets
+                from memorymaster.knowledge.closets import search_closets as _search_closets
             except Exception as exc:  # noqa: BLE001 — module may be missing
                 logger.debug("closets stream skipped (import): %s", exc)
                 _search_closets = None
@@ -2153,7 +2153,7 @@ def observe_llm(
     if scope is None:
         from memorymaster.scope_utils import scope_from_cwd
         scope = scope_from_cwd(Path.cwd())
-    from memorymaster.auto_extractor import extract_claims_from_text
+    from memorymaster.knowledge.auto_extractor import extract_claims_from_text
     from memorymaster.models import CitationInput
     from memorymaster.service import MemoryService
 

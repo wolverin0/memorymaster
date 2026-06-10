@@ -138,8 +138,8 @@ def expand_query(query: str, conn: sqlite3.Connection) -> list[str]:
     # the import cost off the hot path for callers that never enable this
     # feature.
     try:
-        from memorymaster.entity_extractor import extract_patterns
-        from memorymaster.entity_registry import normalize_alias
+        from memorymaster.knowledge.entity_extractor import extract_patterns
+        from memorymaster.knowledge.entity_registry import normalize_alias
     except Exception as exc:  # pragma: no cover — import failure rare
         logger.debug("query_expansion: import skipped: %s", exc)
         return [query]

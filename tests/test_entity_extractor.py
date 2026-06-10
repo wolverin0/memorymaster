@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.entity_extractor import Entity, extract_patterns
+from memorymaster.knowledge.entity_extractor import Entity, extract_patterns
 
 FIXTURE = Path(__file__).parent / "fixtures" / "entity_extraction_eval.jsonl"
 

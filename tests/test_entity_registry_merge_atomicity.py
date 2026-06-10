@@ -16,7 +16,7 @@ import sqlite3
 
 import pytest
 
-from memorymaster.entity_registry import (
+from memorymaster.knowledge.entity_registry import (
     add_alias,
     ensure_entity_schema,
     merge_entities,

@@ -32,7 +32,7 @@ def _wiki_autopromote_adapter(claim_id: int, db_path: str | None = None) -> None
     autopromote threshold actually fires (same laziness as the old
     lifecycle-internal import).
     """
-    from memorymaster.wiki_engine import absorb_single_claim
+    from memorymaster.knowledge.wiki_engine import absorb_single_claim
 
     absorb_single_claim(claim_id, db_path=db_path)
 
@@ -444,11 +444,11 @@ class MemoryService:
         entity_id = 0
         if subject or sanitized.text:
             try:
-                from memorymaster.entity_registry import (
+                from memorymaster.knowledge.entity_registry import (
                     add_alias,
                     resolve_or_create,
                 )
-                from memorymaster.entity_extractor import extract_patterns
+                from memorymaster.knowledge.entity_extractor import extract_patterns
 
                 with self.store.connect() as _conn:
                     if subject:
@@ -708,7 +708,7 @@ class MemoryService:
         rule-typed in Python (list_claims has no claim_type filter). See
         memorymaster/rules.py for the storage convention.
         """
-        from memorymaster.rules import parse_rule
+        from memorymaster.knowledge.rules import parse_rule
 
         rows = self.query_rows(
             query_text=query_text,
@@ -1058,7 +1058,7 @@ class MemoryService:
     ) -> list[dict[str, Any]]:
         """Add entity-related claims to query results via knowledge graph traversal."""
         try:
-            from memorymaster.entity_graph import EntityGraph
+            from memorymaster.knowledge.entity_graph import EntityGraph
             db_path = str(getattr(self.store, 'db_path', ''))
             if not db_path:
                 return results

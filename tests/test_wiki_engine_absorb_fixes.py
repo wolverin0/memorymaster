@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster import wiki_engine
+from memorymaster.knowledge import wiki_engine
 from memorymaster import llm_budget
 
 

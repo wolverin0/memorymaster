@@ -11,7 +11,7 @@ from memorymaster.claim_edges import (
     SHARES_ENTITY_KIND,
     rebuild_edges,
 )
-from memorymaster.closets import (
+from memorymaster.knowledge.closets import (
     ensure_closets_schema,
     rebuild_closets,
     search_closets,

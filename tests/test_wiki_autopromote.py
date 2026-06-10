@@ -5,7 +5,7 @@ from pathlib import Path
 
 from memorymaster.lifecycle import transition_claim
 from memorymaster.storage import SQLiteStore
-from memorymaster.wiki_engine import absorb_single_claim
+from memorymaster.knowledge.wiki_engine import absorb_single_claim
 
 
 def _fresh_store(tmp_path: Path) -> tuple[SQLiteStore, Path]:
@@ -51,7 +51,7 @@ def test_validator_threshold_crossing_absorbs_claim(
         return {"absorbed": True}
 
     monkeypatch.setenv("MEMORYMASTER_WIKI_AUTOPROMOTE_THRESHOLD", "3")
-    monkeypatch.setattr("memorymaster.wiki_engine.absorb_single_claim", fake_absorb_single_claim)
+    monkeypatch.setattr("memorymaster.knowledge.wiki_engine.absorb_single_claim", fake_absorb_single_claim)
 
     transition_claim(store, claim_id, "confirmed", reason="first validation", event_type="validator")
     transition_claim(store, claim_id, "stale", reason="second validation", event_type="validator")
@@ -69,7 +69,7 @@ def test_validator_threshold_zero_disables_autopromote(tmp_path: Path, monkeypat
 
     monkeypatch.setenv("MEMORYMASTER_WIKI_AUTOPROMOTE_THRESHOLD", "0")
     monkeypatch.setattr(
-        "memorymaster.wiki_engine.absorb_single_claim",
+        "memorymaster.knowledge.wiki_engine.absorb_single_claim",
         lambda claim_id_arg, db_path=None: calls.append(claim_id_arg),
     )
 

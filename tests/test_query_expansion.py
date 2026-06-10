@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from memorymaster.entity_registry import (
+from memorymaster.knowledge.entity_registry import (
     ensure_entity_schema,
     resolve_or_create,
 )
@@ -98,7 +98,7 @@ def test_single_entity_with_two_aliases(
     # where "pytest" is the canonical but additional forms ("unittest",
     # "tox-runner") share its entity_id via add_alias, exercising the
     # "multiple variants per entity" path.
-    from memorymaster.entity_registry import add_alias
+    from memorymaster.knowledge.entity_registry import add_alias
 
     entity_id = resolve_or_create(entity_db, "pytest")
     # Manually widen the alias pool. These are deliberately NOT substrings

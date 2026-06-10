@@ -55,7 +55,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from memorymaster.steward_features import FEATURE_VERSION, extract_features  # noqa: E402
-from memorymaster.wiki_similarity import load_wiki_corpus  # noqa: E402
+from memorymaster.knowledge.wiki_similarity import load_wiki_corpus  # noqa: E402
 
 _LOG = logging.getLogger(__name__)
 

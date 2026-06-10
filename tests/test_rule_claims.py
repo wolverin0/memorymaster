@@ -15,7 +15,7 @@ import json
 import pytest
 
 from memorymaster.models import CitationInput
-from memorymaster.rules import (
+from memorymaster.knowledge.rules import (
     RULE_CLAIM_TYPE,
     RULE_PREDICATE,
     build_rule_fields,

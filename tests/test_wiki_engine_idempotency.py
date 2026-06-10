@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 
 from memorymaster.storage import SQLiteStore
-from memorymaster.wiki_engine import absorb
+from memorymaster.knowledge.wiki_engine import absorb
 
 
 class _ChangingDateTime:
@@ -159,8 +159,8 @@ def test_wiki_absorb_compiled_truth_output_is_idempotent(
             "Synthetic evidence entry."
         )
 
-    monkeypatch.setattr("memorymaster.wiki_engine._call_llm", fake_llm)
-    monkeypatch.setattr("memorymaster.wiki_engine.datetime", _ChangingDateTime)
+    monkeypatch.setattr("memorymaster.knowledge.wiki_engine._call_llm", fake_llm)
+    monkeypatch.setattr("memorymaster.knowledge.wiki_engine.datetime", _ChangingDateTime)
 
     first = tmp_path / "wiki-first"
     second = tmp_path / "wiki-second"

@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-from memorymaster.auto_extractor import (
+from memorymaster.knowledge.auto_extractor import (
     _call_ollama,
     _normalise_claim,
     extract_claims_from_text,
@@ -110,7 +110,7 @@ class TestNormaliseClaim:
 class TestCallOllama:
     """Test Ollama HTTP interaction."""
 
-    @patch("memorymaster.auto_extractor.urllib.request.urlopen")
+    @patch("memorymaster.knowledge.auto_extractor.urllib.request.urlopen")
     def test_call_ollama_success(self, mock_urlopen: MagicMock) -> None:
         """Successful Ollama response should parse and return claims."""
         claims = [
@@ -136,7 +136,7 @@ class TestCallOllama:
         assert result[0]["text"] == "React is used"
         assert result[0]["claim_type"] == "fact"
 
-    @patch("memorymaster.auto_extractor.urllib.request.urlopen")
+    @patch("memorymaster.knowledge.auto_extractor.urllib.request.urlopen")
     def test_call_ollama_with_markdown_fences(self, mock_urlopen: MagicMock) -> None:
         """Response with markdown fences should be stripped."""
         claims = [{"text": "Test claim", "claim_type": "fact"}]
@@ -154,7 +154,7 @@ class TestCallOllama:
         assert len(result) == 1
         assert result[0]["text"] == "Test claim"
 
-    @patch("memorymaster.auto_extractor.urllib.request.urlopen")
+    @patch("memorymaster.knowledge.auto_extractor.urllib.request.urlopen")
     def test_call_ollama_returns_empty_on_url_error(self, mock_urlopen: MagicMock) -> None:
         """Ollama unreachable should return empty list."""
         import urllib.error
@@ -165,7 +165,7 @@ class TestCallOllama:
 
         assert result == []
 
-    @patch("memorymaster.auto_extractor.urllib.request.urlopen")
+    @patch("memorymaster.knowledge.auto_extractor.urllib.request.urlopen")
     def test_call_ollama_returns_empty_on_json_error(self, mock_urlopen: MagicMock) -> None:
         """Invalid JSON response should return empty list."""
         mock_response = MagicMock()
@@ -176,7 +176,7 @@ class TestCallOllama:
 
         assert result == []
 
-    @patch("memorymaster.auto_extractor.urllib.request.urlopen")
+    @patch("memorymaster.knowledge.auto_extractor.urllib.request.urlopen")
     def test_call_ollama_ignores_non_list_response(self, mock_urlopen: MagicMock) -> None:
         """Non-list JSON response should return empty list."""
         response_data = {
@@ -195,7 +195,7 @@ class TestCallOllama:
 class TestExtractClaimsFromText:
     """Test full extraction pipeline."""
 
-    @patch("memorymaster.auto_extractor._call_ollama")
+    @patch("memorymaster.knowledge.auto_extractor._call_ollama")
     def test_extract_claims_from_text_success(self, mock_ollama: MagicMock) -> None:
         """Successful extraction should return normalized claims."""
         mock_ollama.return_value = [
@@ -219,7 +219,7 @@ class TestExtractClaimsFromText:
         assert result[0]["source"] == "conversation"
         assert result[0]["scope"] == "project"
 
-    @patch("memorymaster.auto_extractor._call_ollama")
+    @patch("memorymaster.knowledge.auto_extractor._call_ollama")
     def test_extract_empty_text(self, mock_ollama: MagicMock) -> None:
         """Empty text should return empty list without calling Ollama."""
         result = extract_claims_from_text("", source="conversation")
@@ -227,7 +227,7 @@ class TestExtractClaimsFromText:
         assert result == []
         mock_ollama.assert_not_called()
 
-    @patch("memorymaster.auto_extractor._call_ollama")
+    @patch("memorymaster.knowledge.auto_extractor._call_ollama")
     def test_extract_whitespace_only(self, mock_ollama: MagicMock) -> None:
         """Whitespace-only text should return empty list without calling Ollama."""
         result = extract_claims_from_text("   \n  \t  ", source="conversation")
@@ -235,7 +235,7 @@ class TestExtractClaimsFromText:
         assert result == []
         mock_ollama.assert_not_called()
 
-    @patch("memorymaster.auto_extractor._call_ollama")
+    @patch("memorymaster.knowledge.auto_extractor._call_ollama")
     def test_extract_filters_invalid_claims(self, mock_ollama: MagicMock) -> None:
         """Invalid claims should be filtered out."""
         mock_ollama.return_value = [
@@ -249,7 +249,7 @@ class TestExtractClaimsFromText:
         assert len(result) == 1
         assert result[0]["text"] == "Valid claim"
 
-    @patch("memorymaster.auto_extractor._call_ollama")
+    @patch("memorymaster.knowledge.auto_extractor._call_ollama")
     def test_extract_filters_non_dict_entries(self, mock_ollama: MagicMock) -> None:
         """Non-dict entries should be filtered out."""
         mock_ollama.return_value = [
@@ -264,7 +264,7 @@ class TestExtractClaimsFromText:
         assert len(result) == 1
         assert result[0]["text"] == "Valid claim"
 
-    @patch("memorymaster.auto_extractor._call_ollama")
+    @patch("memorymaster.knowledge.auto_extractor._call_ollama")
     def test_extract_with_custom_model(self, mock_ollama: MagicMock) -> None:
         """Custom model should be passed to Ollama."""
         mock_ollama.return_value = []
@@ -282,7 +282,7 @@ class TestExtractClaimsFromText:
         assert "custom-model" in str(call_args)
 
     @patch.dict("os.environ", {"OLLAMA_URL": "http://env-ollama:11434"})
-    @patch("memorymaster.auto_extractor._call_ollama")
+    @patch("memorymaster.knowledge.auto_extractor._call_ollama")
     def test_extract_respects_env_ollama_url(self, mock_ollama: MagicMock) -> None:
         """OLLAMA_URL env var should be respected."""
         mock_ollama.return_value = []
@@ -292,7 +292,7 @@ class TestExtractClaimsFromText:
         call_args = mock_ollama.call_args
         assert "http://env-ollama:11434" in str(call_args)
 
-    @patch("memorymaster.auto_extractor._call_ollama")
+    @patch("memorymaster.knowledge.auto_extractor._call_ollama")
     def test_extract_multiple_claims(self, mock_ollama: MagicMock) -> None:
         """Multiple claims should all be returned."""
         mock_ollama.return_value = [

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.wiki_freshness import (
+from memorymaster.knowledge.wiki_freshness import (
     ArticleFreshness,
     FRESHNESS_SCALE_DAYS,
     STALE_ARTICLE_THRESHOLD,
@@ -186,7 +186,7 @@ def test_stale_threshold_constant_is_reasonable():
 
 def test_vault_linter_flags_stale_articles(tmp_path):
     """lint-vault should emit a stale_articles list sourced from the wiki."""
-    from memorymaster.vault_linter import _detect_stale_articles
+    from memorymaster.knowledge.vault_linter import _detect_stale_articles
 
     now = datetime(2026, 4, 24, tzinfo=timezone.utc)
     vault = _fixture_vault(tmp_path, now)

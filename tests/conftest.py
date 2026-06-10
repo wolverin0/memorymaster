@@ -123,6 +123,11 @@ def _hermetic_wal_discipline(tmp_path_factory, monkeypatch) -> None:
     back into the flag per-test via monkeypatch.setenv.
     """
     monkeypatch.delenv("MEMORYMASTER_WAL_DISCIPLINE", raising=False)
+    # The init_db fast-path sub-flag is ALSO setx'd machine-wide for the
+    # dogfood: under it a re-init skips the _ensure_* passes, so any test
+    # that re-runs init_db to trigger a backfill (e.g. human_id) silently
+    # no-ops and fails. Same hermeticity rule: tests opt in explicitly.
+    monkeypatch.delenv("MEMORYMASTER_INITDB_FASTPATH", raising=False)
     monkeypatch.setenv(
         "MEMORYMASTER_SPOOL_DIR",
         str(tmp_path_factory.mktemp("mm-spool")),

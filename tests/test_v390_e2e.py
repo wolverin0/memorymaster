@@ -25,10 +25,10 @@ from memorymaster.claim_edges import (
     rebuild_edges,
     walk_neighbors,
 )
-from memorymaster.closets import rebuild_closets, search_closets
-from memorymaster.entity_extractor import extract_patterns
+from memorymaster.knowledge.closets import rebuild_closets, search_closets
+from memorymaster.knowledge.entity_extractor import extract_patterns
 from memorymaster.scope_utils import scope_from_transcript
-from memorymaster.wiki_validate import validate_file
+from memorymaster.knowledge.wiki_validate import validate_file
 
 
 @pytest.fixture

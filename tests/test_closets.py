@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.closets import (
+from memorymaster.knowledge.closets import (
     ensure_closets_schema,
     extract_closet_terms,
     rebuild_closets,

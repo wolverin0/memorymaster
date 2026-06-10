@@ -1,4 +1,4 @@
-"""Coverage hardening for memorymaster.wiki_engine.
+"""Coverage hardening for memorymaster.knowledge.wiki_engine.
 
 These tests stub the LLM so the absorb / cleanup / breakdown / single-claim
 paths run end-to-end without any network or provider, and assert the *intent*
@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster import wiki_engine
+from memorymaster.knowledge import wiki_engine
 
 
 # Columns drawn from every SELECT in wiki_engine.py plus the binding column.

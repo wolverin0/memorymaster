@@ -12,7 +12,7 @@ from unittest import mock
 
 import pytest
 
-from memorymaster.entity_extractor import (
+from memorymaster.knowledge.entity_extractor import (
     Entity,
     LLM_KINDS,
     LLM_PROMPT_VERSION,
@@ -243,7 +243,7 @@ def test_merge_against_real_extract_patterns():
 
 def test_all_permitted_kinds_covered_by_canonicalizer():
     """Every LLM_KINDS value must canonicalize to a non-empty string."""
-    from memorymaster.entity_extractor import _canonical_llm
+    from memorymaster.knowledge.entity_extractor import _canonical_llm
 
     for kind in LLM_KINDS:
         out = _canonical_llm(kind, "  Some  Surface  ")

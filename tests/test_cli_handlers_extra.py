@@ -83,7 +83,7 @@ def test_curate_vault_routes_and_emits_envelope(monkeypatch, capsys):
         seen.update(db=db, output_dir=output_dir, scope_filter=scope_filter, dry_run=dry_run)
         return {"claims": 3, "files_written": 1, "scopes": 1, "topics": 2}
 
-    monkeypatch.setattr("memorymaster.vault_curator.curate_vault", fake_curate_vault)
+    monkeypatch.setattr("memorymaster.knowledge.vault_curator.curate_vault", fake_curate_vault)
     rc = C._handle_curate_vault(_ns(scope="project:x"), _FakeService(), None, "db.sqlite")
 
     assert rc == 0
@@ -95,7 +95,7 @@ def test_curate_vault_routes_and_emits_envelope(monkeypatch, capsys):
 def test_curate_vault_human_output_when_json_off(monkeypatch, capsys):
     """Non-JSON path must print a human summary, not crash, and return 0."""
     monkeypatch.setattr(
-        "memorymaster.vault_curator.curate_vault",
+        "memorymaster.knowledge.vault_curator.curate_vault",
         lambda db, **kw: {"claims": 0, "files_written": 0, "scopes": 0, "topics": 0},
     )
     rc = C._handle_curate_vault(_ns(json_output=False), _FakeService(), None, "db.sqlite")
@@ -112,8 +112,8 @@ def test_lint_vault_routes_and_emits_envelope(monkeypatch, capsys):
         "claims": 5, "issues": 0,
         "contradictions": [], "orphans": [], "gaps": [], "stale": [],
     }
-    monkeypatch.setattr("memorymaster.vault_linter.lint_vault", lambda *a, **k: report)
-    monkeypatch.setattr("memorymaster.vault_log.log_lint", lambda r: None)
+    monkeypatch.setattr("memorymaster.knowledge.vault_linter.lint_vault", lambda *a, **k: report)
+    monkeypatch.setattr("memorymaster.knowledge.vault_log.log_lint", lambda r: None)
 
     rc = C._handle_lint_vault(
         _ns(no_llm=True, max_stale_days=30), _FakeService(), None, "db.sqlite"
@@ -128,10 +128,10 @@ def test_lint_vault_routes_and_emits_envelope(monkeypatch, capsys):
 
 def test_wiki_absorb_routes_and_emits_envelope(monkeypatch, capsys):
     monkeypatch.setattr(
-        "memorymaster.wiki_engine.absorb",
+        "memorymaster.knowledge.wiki_engine.absorb",
         lambda *a, **k: {"subjects": 2, "articles_written": 1, "articles_updated": 1},
     )
-    monkeypatch.setattr("memorymaster.vault_log.log_curate", lambda *a, **k: None)
+    monkeypatch.setattr("memorymaster.knowledge.vault_log.log_curate", lambda *a, **k: None)
 
     rc = C._handle_wiki_absorb(
         _ns(no_bases=True), _FakeService(), None, "db.sqlite"
@@ -146,7 +146,7 @@ def test_wiki_absorb_routes_and_emits_envelope(monkeypatch, capsys):
 
 def test_bases_generate_routes_and_emits_envelope(monkeypatch, capsys):
     monkeypatch.setattr(
-        "memorymaster.vault_bases.generate_bases",
+        "memorymaster.knowledge.vault_bases.generate_bases",
         lambda output: {"written": 1, "path": output, "files": ["a.base"]},
     )
     rc = C._handle_bases_generate(_ns(), _FakeService(), None, "db.sqlite")
@@ -156,7 +156,7 @@ def test_bases_generate_routes_and_emits_envelope(monkeypatch, capsys):
 
 def test_wiki_cleanup_routes_and_emits_envelope(monkeypatch, capsys):
     monkeypatch.setattr(
-        "memorymaster.wiki_engine.cleanup",
+        "memorymaster.knowledge.wiki_engine.cleanup",
         lambda *, wiki_dir, scope_filter: {"audited": 4, "rewritten": 1},
     )
     rc = C._handle_wiki_cleanup(_ns(), _FakeService(), None, "db.sqlite")
@@ -166,7 +166,7 @@ def test_wiki_cleanup_routes_and_emits_envelope(monkeypatch, capsys):
 
 def test_wiki_breakdown_routes_and_emits_envelope(monkeypatch, capsys):
     monkeypatch.setattr(
-        "memorymaster.wiki_engine.breakdown",
+        "memorymaster.knowledge.wiki_engine.breakdown",
         lambda *a, **k: {"missing": 2, "created": 2},
     )
     rc = C._handle_wiki_breakdown(_ns(), _FakeService(), None, "db.sqlite")
@@ -195,7 +195,7 @@ def test_entity_stats_human_path_ok_json_path_raises(monkeypatch, capsys):
         def get_stats(self):
             return {"entities": 2, "edges": 1, "claim_links": 3, "by_type": {"person": 2}}
 
-    monkeypatch.setattr("memorymaster.entity_graph.EntityGraph", FakeEG)
+    monkeypatch.setattr("memorymaster.knowledge.entity_graph.EntityGraph", FakeEG)
 
     rc = C._handle_entity_stats(_ns(json_output=False), _FakeService(), None, "db.sqlite")
     assert rc == 0
@@ -294,7 +294,7 @@ def test_entity_list_emits_envelope(monkeypatch, capsys):
         store = _Store()
 
     monkeypatch.setattr(
-        "memorymaster.entity_registry.list_entities",
+        "memorymaster.knowledge.entity_registry.list_entities",
         lambda conn, **k: [
             {"id": 1, "type": "person", "name": "Ada", "alias_count": 0,
              "claim_count": 1, "scope": "project:x"}

@@ -1176,7 +1176,7 @@ def _handle_wiki_suggest_links(
     parser: argparse.ArgumentParser,
     effective_db: str,
 ) -> int:
-    from memorymaster.wiki_suggest import suggest_wikilinks
+    from memorymaster.knowledge.wiki_suggest import suggest_wikilinks
 
     suggestions = suggest_wikilinks(
         effective_db,

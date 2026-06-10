@@ -69,7 +69,7 @@ from memorymaster.models import CitationInput
 
 
 def _handle_export_vault(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.vault_exporter import export_vault
+    from memorymaster.knowledge.vault_exporter import export_vault
     t0 = time.perf_counter()
     result = export_vault(service.store, output_dir=args.output, scope_filter=args.scope or None, confirmed_only=args.confirmed_only, include_archived=args.include_archived, incremental=args.incremental)
     elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -81,7 +81,7 @@ def _handle_export_vault(args: argparse.Namespace, service, parser: argparse.Arg
 
 
 def _handle_curate_vault(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.vault_curator import curate_vault
+    from memorymaster.knowledge.vault_curator import curate_vault
     t0 = time.perf_counter()
     result = curate_vault(effective_db, output_dir=args.output, scope_filter=args.scope or None, dry_run=args.dry_run)
     elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -97,8 +97,8 @@ def _handle_curate_vault(args: argparse.Namespace, service, parser: argparse.Arg
 
 
 def _handle_lint_vault(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.vault_linter import lint_vault
-    from memorymaster.vault_log import log_lint
+    from memorymaster.knowledge.vault_linter import lint_vault
+    from memorymaster.knowledge.vault_log import log_lint
     t0 = time.perf_counter()
     report = lint_vault(effective_db, scope_filter=args.scope or None, verify_with_llm=not args.no_llm, max_stale_days=args.max_stale_days)
     elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -139,8 +139,8 @@ def _handle_lint_vault(args: argparse.Namespace, service, parser: argparse.Argum
 
 
 def _handle_wiki_absorb(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.wiki_engine import absorb
-    from memorymaster.vault_log import log_curate
+    from memorymaster.knowledge.wiki_engine import absorb
+    from memorymaster.knowledge.vault_log import log_curate
     t0 = time.perf_counter()
     result = absorb(effective_db, wiki_dir=args.output, scope_filter=args.scope or None)
     elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -149,7 +149,7 @@ def _handle_wiki_absorb(args: argparse.Namespace, service, parser: argparse.Argu
     # Regenerate Bases alongside absorb unless suppressed
     if not getattr(args, "no_bases", False):
         try:
-            from memorymaster.vault_bases import generate_bases
+            from memorymaster.knowledge.vault_bases import generate_bases
             bases_result = generate_bases(args.output)
             result["bases"] = bases_result
         except Exception as e:
@@ -254,7 +254,7 @@ def _handle_wiki_backfill_bindings(
 
 
 def _handle_bases_generate(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.vault_bases import generate_bases
+    from memorymaster.knowledge.vault_bases import generate_bases
     t0 = time.perf_counter()
     result = generate_bases(args.output)
     elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -272,7 +272,7 @@ def _handle_wiki_freshness(args: argparse.Namespace, service, parser: argparse.A
 
     Service is unused; the metric is a pure filesystem read over the vault.
     """
-    from memorymaster.wiki_freshness import (
+    from memorymaster.knowledge.wiki_freshness import (
         as_jsonable,
         bucket_distribution,
         scan_vault,
@@ -327,7 +327,7 @@ def _handle_wiki_freshness(args: argparse.Namespace, service, parser: argparse.A
 
 
 def _handle_wiki_cleanup(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.wiki_engine import cleanup
+    from memorymaster.knowledge.wiki_engine import cleanup
     t0 = time.perf_counter()
     result = cleanup(wiki_dir=args.output, scope_filter=args.scope or None)
     elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -356,7 +356,7 @@ def _handle_verify_claims(args: argparse.Namespace, service, parser: argparse.Ar
 
 
 def _handle_mine_transcript(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.transcript_miner import mine_transcript
+    from memorymaster.knowledge.transcript_miner import mine_transcript
     t0 = time.perf_counter()
     result = mine_transcript(args.input, effective_db, scope=args.scope, max_claims=getattr(args, 'max', 100))
     elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -368,7 +368,7 @@ def _handle_mine_transcript(args: argparse.Namespace, service, parser: argparse.
 
 
 def _handle_mine_rules(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.rule_miner import mine_rules
+    from memorymaster.knowledge.rule_miner import mine_rules
     t0 = time.perf_counter()
     result = mine_rules(
         effective_db,
@@ -393,7 +393,7 @@ def _handle_mine_rules(args: argparse.Namespace, service, parser: argparse.Argum
 
 
 def _handle_export_rules(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.rule_export import collect_rules, render_rules
+    from memorymaster.knowledge.rule_export import collect_rules, render_rules
     t0 = time.perf_counter()
     rows = collect_rules(
         service,
@@ -475,7 +475,7 @@ def _handle_verbatim_cleanup(args: argparse.Namespace, service, parser: argparse
 
 
 def _handle_wiki_breakdown(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.wiki_engine import breakdown
+    from memorymaster.knowledge.wiki_engine import breakdown
     t0 = time.perf_counter()
     result = breakdown(effective_db, wiki_dir=args.output, scope_filter=args.scope or None)
     elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -487,7 +487,7 @@ def _handle_wiki_breakdown(args: argparse.Namespace, service, parser: argparse.A
 
 
 def _handle_extract_entities(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.entity_graph import EntityGraph
+    from memorymaster.knowledge.entity_graph import EntityGraph
     t0 = time.perf_counter()
     eg = EntityGraph(str(effective_db))
     eg.ensure_tables()
@@ -509,7 +509,7 @@ def _handle_extract_entities(args: argparse.Namespace, service, parser: argparse
 
 
 def _handle_entity_stats(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.entity_graph import EntityGraph
+    from memorymaster.knowledge.entity_graph import EntityGraph
     eg = EntityGraph(str(effective_db))
     eg.ensure_tables()
     stats = eg.get_stats()
@@ -580,7 +580,7 @@ def _handle_train_model(args: argparse.Namespace, service, parser: argparse.Argu
 
 def _handle_extract_claims(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     import sys
-    from memorymaster.auto_extractor import extract_claims_from_text
+    from memorymaster.knowledge.auto_extractor import extract_claims_from_text
 
     if getattr(args, "stdin", False):
         raw_text = sys.stdin.read()
@@ -858,7 +858,7 @@ COMMAND_HANDLERS: dict[str, object] = {
 
 
 def _handle_daily_note(args, service, parser, effective_db) -> int:
-    from memorymaster.daily_notes import generate_daily_note, export_daily_note_md
+    from memorymaster.knowledge.daily_notes import generate_daily_note, export_daily_note_md
     date = args.date or None
     if args.output:
         path = export_daily_note_md(str(effective_db), args.output, date)
@@ -876,7 +876,7 @@ def _handle_daily_note(args, service, parser, effective_db) -> int:
 
 
 def _handle_ghost_notes(args, service, parser, effective_db) -> int:
-    from memorymaster.daily_notes import find_ghost_notes
+    from memorymaster.knowledge.daily_notes import find_ghost_notes
     t0 = time.perf_counter()
     ghosts = find_ghost_notes(str(effective_db))
     elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -987,7 +987,7 @@ COMMAND_HANDLERS["dream-clean"] = _handle_dream_clean
 # ---------------------------------------------------------------------------
 
 def _handle_entity_list(args, service, parser, effective_db) -> int:
-    from memorymaster.entity_registry import list_entities
+    from memorymaster.knowledge.entity_registry import list_entities
     t0 = time.perf_counter()
     with service.store.connect() as conn:
         entities = list_entities(
@@ -1007,7 +1007,7 @@ def _handle_entity_list(args, service, parser, effective_db) -> int:
 
 
 def _handle_entity_merge(args, service, parser, effective_db) -> int:
-    from memorymaster.entity_registry import merge_entities
+    from memorymaster.knowledge.entity_registry import merge_entities
     t0 = time.perf_counter()
     with service.store.connect() as conn:
         result = merge_entities(conn, args.keep_id, args.merge_id)
@@ -1021,7 +1021,7 @@ def _handle_entity_merge(args, service, parser, effective_db) -> int:
 
 
 def _handle_entity_aliases(args, service, parser, effective_db) -> int:
-    from memorymaster.entity_registry import get_aliases, add_alias
+    from memorymaster.knowledge.entity_registry import get_aliases, add_alias
     t0 = time.perf_counter()
     with service.store.connect() as conn:
         if args.add:
@@ -1044,7 +1044,7 @@ def _handle_entity_aliases(args, service, parser, effective_db) -> int:
 
 
 def _handle_entity_backfill(args, service, parser, effective_db) -> int:
-    from memorymaster.entity_registry import backfill_entities
+    from memorymaster.knowledge.entity_registry import backfill_entities
     t0 = time.perf_counter()
     with service.store.connect() as conn:
         result = backfill_entities(conn)

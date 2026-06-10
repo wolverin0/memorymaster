@@ -12,7 +12,7 @@ import sqlite3
 
 import pytest
 
-from memorymaster.entity_registry import (
+from memorymaster.knowledge.entity_registry import (
     _has_legacy_alias_unique,
     _variant_key,
     add_alias,

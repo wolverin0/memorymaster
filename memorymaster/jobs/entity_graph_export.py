@@ -8,7 +8,7 @@ import json
 import sqlite3
 import xml.etree.ElementTree as ET
 
-from memorymaster.entity_graph import EntityGraph
+from memorymaster.knowledge.entity_graph import EntityGraph
 
 
 SUPPORTED_FORMATS = {"dot", "graphml"}

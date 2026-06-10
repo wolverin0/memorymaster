@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from memorymaster.entity_graph import EntityGraph, _llm_chat, _parse_json
+from memorymaster.knowledge.entity_graph import EntityGraph, _llm_chat, _parse_json
 
 
 class TestParseJson:
@@ -36,7 +36,7 @@ class TestParseJson:
 class TestLlmChat:
     """Test LLM chat wrapper."""
 
-    @patch("memorymaster.entity_graph.urllib.request.urlopen")
+    @patch("memorymaster.knowledge.entity_graph.urllib.request.urlopen")
     def test_llm_chat_success(self, mock_urlopen):
         """Successful LLM call returns content."""
         mock_response = MagicMock()
@@ -48,7 +48,7 @@ class TestLlmChat:
         result = _llm_chat("test query", system="test")
         assert result == '{"entities": [], "relations": []}'
 
-    @patch("memorymaster.entity_graph.urllib.request.urlopen")
+    @patch("memorymaster.knowledge.entity_graph.urllib.request.urlopen")
     def test_llm_chat_timeout_returns_empty(self, mock_urlopen):
         """Timeout returns empty string."""
         mock_urlopen.side_effect = TimeoutError()
@@ -96,7 +96,7 @@ class TestEntityGraph:
         finally:
             conn.close()
 
-    @patch("memorymaster.entity_graph._llm_chat")
+    @patch("memorymaster.knowledge.entity_graph._llm_chat")
     def test_extract_and_link_empty_response(self, mock_llm, graph):
         """extract_and_link handles empty LLM response."""
         graph.ensure_tables()
@@ -104,7 +104,7 @@ class TestEntityGraph:
         result = graph.extract_and_link(claim_id=1, text="test text")
         assert result == []
 
-    @patch("memorymaster.entity_graph._llm_chat")
+    @patch("memorymaster.knowledge.entity_graph._llm_chat")
     def test_extract_and_link_with_entities(self, mock_llm, graph):
         """extract_and_link extracts and links entities."""
         graph.ensure_tables()
@@ -136,7 +136,7 @@ class TestEntityGraph:
         finally:
             conn.close()
 
-    @patch("memorymaster.entity_graph._llm_chat")
+    @patch("memorymaster.knowledge.entity_graph._llm_chat")
     def test_extract_and_link_skips_short_names(self, mock_llm, graph):
         """extract_and_link skips entity names with length < 2."""
         graph.ensure_tables()
@@ -158,7 +158,7 @@ class TestEntityGraph:
         result = graph.find_related_claims(["Unknown Entity"])
         assert result == []
 
-    @patch("memorymaster.entity_graph._llm_chat")
+    @patch("memorymaster.knowledge.entity_graph._llm_chat")
     def test_find_related_claims_with_data(self, mock_llm, graph):
         """find_related_claims finds claims via entity relationships."""
         graph.ensure_tables()
@@ -189,7 +189,7 @@ class TestEntityGraph:
         assert stats["edges"] == 0
         assert stats["claim_links"] == 0
 
-    @patch("memorymaster.entity_graph._llm_chat")
+    @patch("memorymaster.knowledge.entity_graph._llm_chat")
     def test_get_stats_with_data(self, mock_llm, graph):
         """get_stats returns accurate counts."""
         graph.ensure_tables()
@@ -295,7 +295,7 @@ class TestSchemaEnsuredOnce:
         assert graph._schema_ready is True
         assert calls["n"] == 1, f"DDL ran {calls['n']} times, expected 1"
 
-    @patch("memorymaster.entity_graph._llm_chat")
+    @patch("memorymaster.knowledge.entity_graph._llm_chat")
     def test_extract_and_link_does_not_reissue_ddl_per_claim(self, mock_llm, db_path):
         mock_llm.return_value = json.dumps({"entities": [], "relations": []})
         graph = EntityGraph(str(db_path))

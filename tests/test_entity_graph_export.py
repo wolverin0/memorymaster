@@ -5,7 +5,7 @@ import sqlite3
 import xml.etree.ElementTree as ET
 
 from memorymaster.surfaces.cli import main
-from memorymaster.entity_graph import EntityGraph
+from memorymaster.knowledge.entity_graph import EntityGraph
 from memorymaster.jobs.entity_graph_export import export_entity_graph
 
 

@@ -64,7 +64,7 @@ def test_migration_is_idempotent(tmp_path: Path) -> None:
 
 
 def test_stamp_wiki_binding_sets_column(tmp_path: Path) -> None:
-    from memorymaster.wiki_engine import _stamp_wiki_binding
+    from memorymaster.knowledge.wiki_engine import _stamp_wiki_binding
 
     _, db = _fresh_store(tmp_path)
     cid1 = _insert_claim(db, "qdrant runs on vm")
@@ -81,7 +81,7 @@ def test_stamp_wiki_binding_sets_column(tmp_path: Path) -> None:
 
 
 def test_stamp_wiki_binding_silent_on_empty(tmp_path: Path) -> None:
-    from memorymaster.wiki_engine import _stamp_wiki_binding
+    from memorymaster.knowledge.wiki_engine import _stamp_wiki_binding
 
     _, db = _fresh_store(tmp_path)
     # Empty claim_ids or empty slug must not raise and must not touch the DB.

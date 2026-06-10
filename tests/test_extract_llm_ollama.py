@@ -6,7 +6,7 @@ including the Gemma variant that uses "entity" instead of "surface_form".
 import os
 from unittest.mock import patch
 
-from memorymaster.entity_extractor import extract_llm
+from memorymaster.knowledge.entity_extractor import extract_llm
 
 
 class TestExtractLlmOllamaSchemaVariants:

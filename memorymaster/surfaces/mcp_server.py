@@ -575,12 +575,12 @@ if FastMCP is not None:
             return _structured_error(str(exc), "VALIDATION_ERROR", "text")
         # Log to vault chronicle + cross-source synthesis
         try:
-            from memorymaster.vault_log import log_ingest
+            from memorymaster.knowledge.vault_log import log_ingest
             log_ingest(claim.id, claim.subject, claim.scope)
         except Exception as exc:
             logger.debug("Vault log failed: %s", exc)
         try:
-            from memorymaster.vault_synthesis import synthesize_on_ingest
+            from memorymaster.knowledge.vault_synthesis import synthesize_on_ingest
             import os
             vault_dir = os.path.join(os.environ.get("MEMORYMASTER_WORKSPACE", "."), "obsidian-vault")
             if os.path.isdir(vault_dir):
@@ -806,7 +806,7 @@ if FastMCP is not None:
 
         # Log to vault chronicle
         try:
-            from memorymaster.vault_log import log_query
+            from memorymaster.knowledge.vault_log import log_query
             log_query(query, len(claims))
         except Exception:
             pass
@@ -1161,7 +1161,7 @@ if FastMCP is not None:
         the behavioural shape, distinct from descriptive fact claims. Stored
         as a claim_type='rule' claim; retrieve via query_rules.
         """
-        from memorymaster.rules import build_rule_fields
+        from memorymaster.knowledge.rules import build_rule_fields
 
         try:
             fields = build_rule_fields(trigger, action, rationale)
@@ -1240,7 +1240,7 @@ if FastMCP is not None:
             allow_sensitive=allow_sensitive,
             context="mcp.rules_export",
         )
-        from memorymaster.rule_export import collect_rules
+        from memorymaster.knowledge.rule_export import collect_rules
 
         svc = _service(db, workspace)
         rows = collect_rules(
@@ -1440,7 +1440,7 @@ if FastMCP is not None:
         workspace: str = ".",
     ) -> dict[str, Any]:
         """Extract entities from a claim's text and link them to the knowledge graph."""
-        from memorymaster.entity_graph import EntityGraph
+        from memorymaster.knowledge.entity_graph import EntityGraph
         svc = _service(db, workspace)
         if not text:
             claim = svc.store.get_claim(claim_id, include_citations=False)
@@ -1457,7 +1457,7 @@ if FastMCP is not None:
         db: str = "memorymaster.db",
     ) -> dict[str, Any]:
         """Get entity knowledge graph statistics."""
-        from memorymaster.entity_graph import EntityGraph
+        from memorymaster.knowledge.entity_graph import EntityGraph
         eg = EntityGraph(_resolve_db(db))
         eg.ensure_tables()
         return {"ok": True, **eg.get_stats()}
@@ -1473,7 +1473,7 @@ if FastMCP is not None:
 
         entity_names: comma-separated entity names to search from.
         """
-        from memorymaster.entity_graph import EntityGraph
+        from memorymaster.knowledge.entity_graph import EntityGraph
         eg = EntityGraph(_resolve_db(db))
         eg.ensure_tables()
         names = [n.strip() for n in entity_names.split(",") if n.strip()]

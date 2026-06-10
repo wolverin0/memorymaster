@@ -92,10 +92,10 @@ def test_lifecycle_imports_with_wiki_engine_blocked() -> None:
     """lifecycle must import and transition claims even if wiki_engine cannot
     be imported at all (the old code lazily imported it on the autopromote
     path; the hook default of None must make that path a clean no-op)."""
-    code = _BLOCKER.format(blocked="memorymaster.wiki_engine") + """
+    code = _BLOCKER.format(blocked="memorymaster.knowledge.wiki_engine") + """
     import memorymaster.lifecycle as lifecycle
 
-    assert "memorymaster.wiki_engine" not in sys.modules
+    assert "memorymaster.knowledge.wiki_engine" not in sys.modules
     assert lifecycle.on_claim_confirmed is None
     # The autopromote helper must be a silent no-op without a hook.
     class _Store:

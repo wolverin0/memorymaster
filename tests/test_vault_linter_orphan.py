@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from memorymaster.vault_linter import lint_vault
+from memorymaster.knowledge.vault_linter import lint_vault
 
 
 def _fresh_db(tmp_path: Path) -> Path:

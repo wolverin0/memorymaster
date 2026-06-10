@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from memorymaster.vault_query_capture import capture_query_result
+from memorymaster.knowledge.vault_query_capture import capture_query_result
 
 
 def _hi_conf_claims() -> list[dict]:

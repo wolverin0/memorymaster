@@ -1,4 +1,4 @@
-"""Coverage hardening for memorymaster.vault_linter detection branches.
+"""Coverage hardening for memorymaster.knowledge.vault_linter detection branches.
 
 The existing suite (test_vault_linter_orphan.py) only exercises the
 orphan-*article* path. These tests cover the *claim-level* detectors that
@@ -17,7 +17,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from memorymaster.vault_linter import lint_vault
+from memorymaster.knowledge.vault_linter import lint_vault
 
 
 def _fresh_db(tmp_path: Path) -> Path:

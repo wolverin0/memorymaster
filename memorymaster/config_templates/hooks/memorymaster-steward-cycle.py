@@ -67,7 +67,7 @@ except Exception as e:
 # Wiki absorb (compiled truth + timeline articles). Inherits the LLM provider
 # block above — uses the same OAuth-backed haiku stack as the steward.
 try:
-    from memorymaster.wiki_engine import absorb
+    from memorymaster.knowledge.wiki_engine import absorb
     wiki_path = os.path.join(PROJECT_ROOT, "obsidian-vault", "wiki")
     stats = absorb(DB_PATH, wiki_path)
     print(f"[MemoryMaster] wiki absorb: {stats}")

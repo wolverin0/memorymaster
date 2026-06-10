@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from memorymaster.wiki_similarity import WikiCorpus
+    from memorymaster.knowledge.wiki_similarity import WikiCorpus
 
 FEATURE_VERSION = "v3"
 
@@ -315,7 +315,7 @@ def extract_features(
     has_entity = 1.0 if c.get("entity_id") else 0.0
 
     if wiki_corpus is not None:
-        from memorymaster.wiki_similarity import compute_wiki_similarity
+        from memorymaster.knowledge.wiki_similarity import compute_wiki_similarity
         wiki_sim = compute_wiki_similarity(c, wiki_corpus)
     else:
         wiki_sim = 0.0
