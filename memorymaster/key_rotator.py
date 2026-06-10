@@ -101,6 +101,100 @@ class KeyRotator:
                     return
 
 
+@dataclass
+class RoundRobinKeyRotator:
+    """Round-robin API key rotator over an explicit key list, with per-key
+    cooldown on rate limits.
+
+    Moved verbatim from ``llm_steward.KeyRotator`` (P2 phase0 cycle cut:
+    ``llm_provider`` must not import ``llm_steward``). ``llm_steward``
+    re-exports this class under its historical name ``KeyRotator`` for
+    backward compatibility.
+
+    Keys that receive 429 errors are placed on cooldown and skipped until
+    the cooldown period expires. If all keys are on cooldown, the key with
+    the earliest cooldown expiry is used (with a sleep until it becomes
+    available).
+    """
+
+    keys: list[str]
+    cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS
+    _index: int = field(default=0, init=False, repr=False)
+    _cooldowns: dict[int, float] = field(default_factory=dict, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.keys:
+            raise ValueError("KeyRotator requires at least one API key")
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        unique: list[str] = []
+        for k in self.keys:
+            stripped = k.strip()
+            if stripped and stripped not in seen:
+                seen.add(stripped)
+                unique.append(stripped)
+        if not unique:
+            raise ValueError("KeyRotator requires at least one non-empty API key")
+        self.keys = unique
+
+    @property
+    def key_count(self) -> int:
+        return len(self.keys)
+
+    def get_key(self) -> str:
+        """Return the next available key, skipping those on cooldown.
+
+        If all keys are on cooldown, sleeps until the soonest one expires.
+        """
+        now = time.monotonic()
+        # Try each key starting from current index
+        for offset in range(len(self.keys)):
+            idx = (self._index + offset) % len(self.keys)
+            expiry = self._cooldowns.get(idx, 0.0)
+            if now >= expiry:
+                self._index = (idx + 1) % len(self.keys)
+                return self.keys[idx]
+
+        # All keys on cooldown: find the one that expires soonest
+        soonest_idx = min(self._cooldowns, key=self._cooldowns.get)  # type: ignore[arg-type]
+        wait = self._cooldowns[soonest_idx] - now
+        if wait > 0:
+            log.info(
+                "All %d keys rate-limited; waiting %.1fs for key #%d",
+                len(self.keys), wait, soonest_idx,
+            )
+            time.sleep(wait)
+        self._index = (soonest_idx + 1) % len(self.keys)
+        return self.keys[soonest_idx]
+
+    def mark_rate_limited(self, key: str) -> None:
+        """Place a key on cooldown after receiving a 429 error."""
+        try:
+            idx = self.keys.index(key)
+        except ValueError:
+            return
+        expiry = time.monotonic() + self.cooldown_seconds
+        self._cooldowns[idx] = expiry
+        log.info(
+            "Key #%d rate-limited, cooldown %.0fs (until monotonic %.1f)",
+            idx, self.cooldown_seconds, expiry,
+        )
+
+    def clear_cooldown(self, key: str) -> None:
+        """Remove cooldown for a key (e.g., after a successful call)."""
+        try:
+            idx = self.keys.index(key)
+        except ValueError:
+            return
+        self._cooldowns.pop(idx, None)
+
+    @property
+    def available_key_count(self) -> int:
+        """Number of keys not currently on cooldown."""
+        now = time.monotonic()
+        return sum(1 for idx in range(len(self.keys)) if now >= self._cooldowns.get(idx, 0.0))
+
+
 def _parse_file(path: Path) -> list[_KeySlot]:
     slots: list[_KeySlot] = []
     try:

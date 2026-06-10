@@ -113,7 +113,9 @@ def _get_google_env_rotator():
 
     global _GOOGLE_ENV_ROTATOR, _GOOGLE_ENV_ROTATOR_KEYSET
     if _GOOGLE_ENV_ROTATOR is None or _GOOGLE_ENV_ROTATOR_KEYSET != keys:
-        from memorymaster.llm_steward import DEFAULT_COOLDOWN_SECONDS, KeyRotator
+        # P2 phase0 cycle cut: import the rotator from its real home
+        # (key_rotator), never from llm_steward.
+        from memorymaster.key_rotator import DEFAULT_COOLDOWN_SECONDS, RoundRobinKeyRotator
 
         try:
             cooldown = float(
@@ -124,7 +126,7 @@ def _get_google_env_rotator():
             )
         except ValueError:
             cooldown = DEFAULT_COOLDOWN_SECONDS
-        _GOOGLE_ENV_ROTATOR = KeyRotator(keys=list(keys), cooldown_seconds=cooldown)
+        _GOOGLE_ENV_ROTATOR = RoundRobinKeyRotator(keys=list(keys), cooldown_seconds=cooldown)
         _GOOGLE_ENV_ROTATOR_KEYSET = keys
     return _GOOGLE_ENV_ROTATOR
 

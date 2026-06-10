@@ -10,6 +10,20 @@ from urllib.parse import urlparse
 from memorymaster.models import Claim
 from memorymaster.lifecycle import transition_claim
 
+
+def open_store(db_path: str):
+    """Create the default claims store for ``db_path``.
+
+    Lives here (next to the validation job that consumes it) as part of the
+    P2 phase0 cycle cut: llm_steward must never import store_factory. Callers
+    of ``_auto_validate_claims`` either inject a store or let this helper
+    resolve the default one.
+    """
+    from memorymaster.store_factory import create_store
+
+    return create_store(db_path)
+
+
 _EMAIL_RE = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$", re.IGNORECASE)
 _HOST_RE = re.compile(r"^(?=.{1,253}$)(?!-)[A-Z0-9-]{1,63}(?<!-)(?:\.(?!-)[A-Z0-9-]{1,63}(?<!-))*$", re.IGNORECASE)
 _SEMVER_RE = re.compile(r"^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.\-]+)?$")

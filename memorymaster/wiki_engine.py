@@ -962,3 +962,24 @@ def _write_backlinks(wiki: Path) -> None:
         json.dumps(dict(sorted(backlinks.items())), indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+
+
+def _register_lifecycle_autopromote() -> None:
+    """Register the wiki autopromote callback into lifecycle.
+
+    P2 phase0 cycle cut: lifecycle (core) must never import wiki_engine
+    (knowledge), so the dependency is inverted — wiki_engine (and service
+    wiring) registers an adapter into ``lifecycle.on_claim_confirmed``.
+    """
+    from memorymaster import lifecycle as _lifecycle
+
+    def _absorb_on_confirm(claim_id: int, db_path: str | None = None) -> None:
+        # Late module-global lookup so monkeypatching
+        # wiki_engine.absorb_single_claim is honoured at call time.
+        absorb_single_claim(claim_id, db_path=db_path)
+
+    if _lifecycle.on_claim_confirmed is None:
+        _lifecycle.on_claim_confirmed = _absorb_on_confirm
+
+
+_register_lifecycle_autopromote()

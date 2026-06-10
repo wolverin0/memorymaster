@@ -21,102 +21,21 @@ import sqlite3
 import time
 import urllib.request
 import urllib.error
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from memorymaster._storage_shared import open_conn
 
+# P2 phase0 cycle cut: KeyRotator/DEFAULT_COOLDOWN_SECONDS now live in
+# memorymaster.key_rotator (class RoundRobinKeyRotator). Re-exported here under
+# the historical names for backward compatibility — external callers import
+# KeyRotator from llm_steward.
+from memorymaster.key_rotator import (  # noqa: F401 — re-export for compat
+    DEFAULT_COOLDOWN_SECONDS,
+    RoundRobinKeyRotator as KeyRotator,
+)
+
 log = logging.getLogger(__name__)
-
-DEFAULT_COOLDOWN_SECONDS = 60.0
-
-
-@dataclass
-class KeyRotator:
-    """Round-robin API key rotator with per-key cooldown on rate limits.
-
-    Keys that receive 429 errors are placed on cooldown and skipped until
-    the cooldown period expires. If all keys are on cooldown, the key with
-    the earliest cooldown expiry is used (with a sleep until it becomes
-    available).
-    """
-
-    keys: list[str]
-    cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS
-    _index: int = field(default=0, init=False, repr=False)
-    _cooldowns: dict[int, float] = field(default_factory=dict, init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        if not self.keys:
-            raise ValueError("KeyRotator requires at least one API key")
-        # Deduplicate while preserving order
-        seen: set[str] = set()
-        unique: list[str] = []
-        for k in self.keys:
-            stripped = k.strip()
-            if stripped and stripped not in seen:
-                seen.add(stripped)
-                unique.append(stripped)
-        if not unique:
-            raise ValueError("KeyRotator requires at least one non-empty API key")
-        self.keys = unique
-
-    @property
-    def key_count(self) -> int:
-        return len(self.keys)
-
-    def get_key(self) -> str:
-        """Return the next available key, skipping those on cooldown.
-
-        If all keys are on cooldown, sleeps until the soonest one expires.
-        """
-        now = time.monotonic()
-        # Try each key starting from current index
-        for offset in range(len(self.keys)):
-            idx = (self._index + offset) % len(self.keys)
-            expiry = self._cooldowns.get(idx, 0.0)
-            if now >= expiry:
-                self._index = (idx + 1) % len(self.keys)
-                return self.keys[idx]
-
-        # All keys on cooldown: find the one that expires soonest
-        soonest_idx = min(self._cooldowns, key=self._cooldowns.get)  # type: ignore[arg-type]
-        wait = self._cooldowns[soonest_idx] - now
-        if wait > 0:
-            log.info(
-                "All %d keys rate-limited; waiting %.1fs for key #%d",
-                len(self.keys), wait, soonest_idx,
-            )
-            time.sleep(wait)
-        self._index = (soonest_idx + 1) % len(self.keys)
-        return self.keys[soonest_idx]
-
-    def mark_rate_limited(self, key: str) -> None:
-        """Place a key on cooldown after receiving a 429 error."""
-        try:
-            idx = self.keys.index(key)
-        except ValueError:
-            return
-        expiry = time.monotonic() + self.cooldown_seconds
-        self._cooldowns[idx] = expiry
-        log.info(
-            "Key #%d rate-limited, cooldown %.0fs (until monotonic %.1f)",
-            idx, self.cooldown_seconds, expiry,
-        )
-
-    def clear_cooldown(self, key: str) -> None:
-        """Remove cooldown for a key (e.g., after a successful call)."""
-        try:
-            idx = self.keys.index(key)
-        except ValueError:
-            return
-        self._cooldowns.pop(idx, None)
-
-    @property
-    def available_key_count(self) -> int:
-        """Number of keys not currently on cooldown."""
-        now = time.monotonic()
-        return sum(1 for idx in range(len(self.keys)) if now >= self._cooldowns.get(idx, 0.0))
 
 
 def _parse_api_keys(
@@ -486,20 +405,24 @@ def _auto_validate_claims(
     db_path: str,
     claim_ids: list[int],
     workspace_root: str = "",
+    store: Any | None = None,
 ) -> dict:
     """Run deterministic validators on recently confirmed/extracted claims.
 
-    Creates a store from ``db_path``, fetches the claims by ID, and runs
-    the deterministic validation job on them.  Returns the validation
-    stats dict from ``jobs.deterministic.run()``.
+    Fetches the claims by ID and runs the deterministic validation job on
+    them. Returns the validation stats dict from ``jobs.deterministic.run()``.
+
+    P2 phase0 cycle cut: llm_steward must never import store_factory. Callers
+    inject ``store``; when None, the default store for ``db_path`` is resolved
+    via ``jobs.deterministic.open_store`` (which owns that dependency).
     """
     if not claim_ids:
         return {"checked": 0, "boosted": 0, "dropped": 0, "hard_conflicted": 0}
 
-    from memorymaster.store_factory import create_store
-    from memorymaster.jobs.deterministic import run as run_deterministic
+    from memorymaster.jobs.deterministic import open_store, run as run_deterministic
 
-    store = create_store(db_path)
+    if store is None:
+        store = open_store(db_path)
     ws = Path(workspace_root) if workspace_root else Path.cwd()
 
     # Fetch full Claim objects for the IDs that were just confirmed/created
@@ -598,6 +521,7 @@ def run_steward(
     workspace_root: str = "",
     scope: str | None = None,
     use_llm_provider: bool = False,
+    store: Any | None = None,
 ) -> dict[str, Any]:
     """Process candidate claims through LLM extraction and curation.
 
@@ -619,6 +543,10 @@ def run_steward(
                including the keyless ``claude_cli`` OAuth path) instead of the
                direct-HTTP provider call. Lets the steward run without a raw
                API key when Claude Code CLI is available.
+        store: Optional injected claims store used by auto-validation
+               (P2 cycle cut: llm_steward must not import store_factory).
+               When None, the default store for ``db_path`` is resolved via
+               ``jobs.deterministic.open_store``.
 
     Returns summary stats dict.
     """
@@ -928,7 +856,7 @@ def run_steward(
         try:
             unique_ids = list(dict.fromkeys(confirmed_claim_ids))
             validation_stats = _auto_validate_claims(
-                db_path, unique_ids, workspace_root,
+                db_path, unique_ids, workspace_root, store=store,
             )
             stats["auto_validation"] = validation_stats
         except Exception as e:

@@ -2,10 +2,19 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Callable, Optional
 
 from memorymaster.models import Claim
 
 logger = logging.getLogger(__name__)
+
+# P2 phase0 cycle cut: lifecycle (core) must never import wiki_engine
+# (knowledge). The wiki autopromote trigger is inverted into this module-level
+# hook — wiring modules (service.py and wiki_engine.py) register a lazy
+# adapter around wiki_engine.absorb_single_claim at import time. When no hook
+# is registered, autopromote is a no-op.
+# Signature: hook(claim_id: int, db_path: str | None = None) -> None
+on_claim_confirmed: Optional[Callable[..., object]] = None
 
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "candidate": {"confirmed", "conflicted", "superseded", "archived"},
@@ -37,9 +46,11 @@ def _wiki_autopromote_after_validator(store, claim_id: int, event_type: str) -> 
         events = store.list_events(claim_id=claim_id, event_type="validator", limit=threshold + 1)
         if len({event.id for event in events}) != threshold:
             return
-        from memorymaster.wiki_engine import absorb_single_claim
-
-        absorb_single_claim(claim_id, db_path=getattr(store, "db_path", None))
+        hook = on_claim_confirmed
+        if hook is None:
+            logger.debug("wiki autopromote skipped for claim %s: no on_claim_confirmed hook", claim_id)
+            return
+        hook(claim_id, db_path=getattr(store, "db_path", None))
     except Exception as exc:
         logger.warning("wiki autopromote failed for claim %s: %s", claim_id, exc)
 

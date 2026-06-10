@@ -51,7 +51,7 @@ def test_empty_200_does_not_rate_limit_healthy_key(monkeypatch):
     across a batch, which then makes get_key sleep and falsely report "all keys
     rate-limited" even though no key ever hit a 429.
     """
-    from memorymaster.llm_steward import KeyRotator
+    from memorymaster.key_rotator import RoundRobinKeyRotator as KeyRotator
 
     rotator = KeyRotator(keys=["k1", "k2", "k3"])
     monkeypatch.setattr(llm_provider, "_get_google_env_rotator", lambda: rotator)
@@ -73,7 +73,7 @@ def test_empty_200_does_not_rate_limit_healthy_key(monkeypatch):
 
 def test_real_429_still_cools_the_key(monkeypatch):
     """A genuine HTTP 429 still cools the offending key (behavior preserved)."""
-    from memorymaster.llm_steward import KeyRotator
+    from memorymaster.key_rotator import RoundRobinKeyRotator as KeyRotator
 
     rotator = KeyRotator(keys=["k1", "k2"])
     monkeypatch.setattr(llm_provider, "_get_google_env_rotator", lambda: rotator)
