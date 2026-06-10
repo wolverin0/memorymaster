@@ -96,11 +96,17 @@ def test_archive_cas_refuses_non_candidate_even_at_right_version():
 def test_run_steward_opens_wal_and_busy_timeout(monkeypatch, tmp_path):
     """WHY: the steward holds write transactions across time.sleep(delay). Without
     WAL + a busy_timeout, this writer blocks every other writer and a momentary
-    lock becomes an immediate 'database is locked' (busy_timeout=0) → lost writes."""
+    lock becomes an immediate 'database is locked' (busy_timeout=0) → lost writes.
+    Since P1 step 3 that envelope is supplied by the canonical open_conn helper
+    (WAL + busy_timeout=15000, pinned by tests/test_open_conn.py) — the steward
+    must route through it, never a raw sqlite3.connect with ad-hoc pragmas."""
     import inspect
+
+    from memorymaster._storage_shared import open_conn as canonical_open_conn
     src = inspect.getsource(llm_steward.run_steward)
-    assert "PRAGMA journal_mode = WAL" in src
-    assert "busy_timeout" in src
+    assert "open_conn(" in src
+    assert "sqlite3.connect(" not in src
+    assert llm_steward.open_conn is canonical_open_conn
     # And the commit must precede the sleep so the lock is released first.
     assert src.index("conn.commit()") < src.rindex("time.sleep(delay)")
 

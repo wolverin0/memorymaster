@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from memorymaster._storage_shared import connect_ro, open_conn
+
 logger = logging.getLogger(__name__)
 
 _SAFE_RE = re.compile(r"[^a-z0-9_-]+")
@@ -66,8 +68,7 @@ def _scope_dirname(scope: str) -> str:
 
 def _load_claims_by_topic(db_path: str, scope_filter: str | None = None) -> dict[str, list[dict]]:
     """Load claims grouped by subject."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    conn = connect_ro(db_path)
     query = """SELECT id, text, claim_type, subject, predicate, object_value,
                scope, confidence, status, human_id, created_at, updated_at, event_time
                FROM claims WHERE status IN ('confirmed', 'candidate')"""
@@ -365,13 +366,10 @@ def _stamp_wiki_binding(db_path: str, claim_ids: list[int], slug: str) -> None:
     if not claim_ids or not slug:
         return
     try:
-        conn = sqlite3.connect(db_path)
-        # WAL + busy_timeout so a concurrent writer (steward cycle, MCP ingest)
-        # doesn't give us an immediate SQLITE_BUSY that silently drops the
-        # wiki_article binding. Matches the shared-DB writer convention used
-        # across storage.py / operator_queue.py.
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA busy_timeout = 5000")
+        # open_conn's WAL + busy_timeout mean a concurrent writer (steward
+        # cycle, MCP ingest) doesn't give us an immediate SQLITE_BUSY that
+        # silently drops the wiki_article binding.
+        conn = open_conn(db_path)
         placeholders = ",".join("?" * len(claim_ids))
         conn.execute(
             f"UPDATE claims SET wiki_article = ? WHERE id IN ({placeholders})",
@@ -612,8 +610,7 @@ def absorb_single_claim(
     wiki = Path(wiki_dir or os.environ.get("MEMORYMASTER_WIKI_DIR") or "obsidian-vault/wiki")
     wiki.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(db_target)
-    conn.row_factory = sqlite3.Row
+    conn = connect_ro(db_target)
     try:
         row = conn.execute(
             """SELECT id, text, claim_type, subject, predicate, object_value,
@@ -795,8 +792,7 @@ def breakdown(db_path: str, wiki_dir: str | Path, scope_filter: str | None = Non
             existing_subjects.add(md_file.stem)
 
     # Get all subjects from DB
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    conn = connect_ro(db_path)
     query = "SELECT subject, COUNT(*) as cnt FROM claims WHERE status IN ('confirmed','candidate')"
     params: list = []
     if scope_filter:
@@ -858,7 +854,11 @@ def _resolve_subject_claim_id(
     Used by ``breakdown`` to turn an LLM-selected entity into a concrete
     claim that ``absorb_single_claim`` can materialise into its own article.
     """
-    conn = sqlite3.connect(db_path)
+    try:
+        # Read-only; a missing/broken DB keeps the None contract below.
+        conn = connect_ro(db_path)
+    except sqlite3.OperationalError:
+        return None
     try:
         query = (
             "SELECT id FROM claims "

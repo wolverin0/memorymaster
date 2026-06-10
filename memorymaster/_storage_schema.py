@@ -12,14 +12,14 @@ import logging
 import sqlite3
 
 
-logger = logging.getLogger(__name__)
-
 from memorymaster._storage_shared import (
     EVENT_HASH_ALGO,
     SQLITE_CONFIRMED_TUPLE_GUARD_TRIGGERS,
     SQLITE_EVENTS_APPEND_ONLY_TRIGGERS,
     generate_top_level_human_id,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class _SchemaMixin:

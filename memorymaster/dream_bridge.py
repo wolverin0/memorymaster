@@ -14,6 +14,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+from memorymaster import spool
+from memorymaster._storage_shared import open_conn
 from memorymaster.security import redact_text as _redact_text
 
 log = logging.getLogger(__name__)
@@ -411,10 +413,8 @@ def _check_dream_lock(project_path: str | None) -> bool:
 # ---------------------------------------------------------------------------
 
 def _open_db(db_path: str) -> sqlite3.Connection:
-    """Open SQLite connection with row_factory."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Open SQLite connection with the uniform writer envelope."""
+    return open_conn(db_path)
 
 
 def _query_exportable_claims(
@@ -566,76 +566,147 @@ def dream_seed(
     }
 
 
+# Map Auto Dream memory types to MemoryMaster claim types (shared by the
+# direct-INSERT path and the spool path — see _parse_dream_file).
+_DREAM_CLAIM_TYPE_MAP = {
+    "feedback": "preference",
+    "project": "fact",
+    "user": "identity",
+    "reference": "reference",
+}
+
+
+def _parse_dream_file(md_file: Path) -> dict | None:
+    """Parse one Auto Dream memory file into claim fields, or None to skip.
+
+    Shared by the direct-INSERT path and the spool path (spec §2.3) so the
+    sensitivity filter, subject redaction, truncation, and type mapping can
+    never drift between the two regimes — a filter applied on one path but
+    not the other would turn the flag flip into a silent secret-leak channel.
+    """
+    # Skip our own exports and the index
+    if md_file.name.startswith("mm_") or md_file.name == "MEMORY.md":
+        return None
+
+    content = md_file.read_text(encoding="utf-8")
+    meta, body = _parse_frontmatter(content)
+
+    if not body.strip():
+        return None
+
+    # Build claim text from body (strip source lines)
+    claim_text = body.strip()
+    if _is_sensitive(claim_text):
+        return None
+
+    # The subject comes from the frontmatter ``name:`` field, which is
+    # NOT covered by the claim_text filter above. A token or personal
+    # path smuggled in via ``name:`` would otherwise be persisted
+    # verbatim on every dream_sync (sensitivity-filter invariant 1).
+    # Reject the whole file if the subject is sensitive, and redact any
+    # secret substrings before storing it as the claim subject.
+    name = meta.get("name", md_file.stem)
+    if _is_sensitive(name):
+        return None
+    name, _name_findings = _redact_text(name)
+
+    if len(claim_text) > 2000:
+        claim_text = claim_text[:2000]
+
+    return {
+        "text": claim_text,
+        "claim_type": _DREAM_CLAIM_TYPE_MAP.get(meta.get("type", "project"), "fact"),
+        "subject": name,
+        "source_marker": f"auto-dream:{md_file.name}",
+    }
+
+
+def _dream_ingest_spool(db_path: str, md_files: list[Path], memory_dir: Path) -> dict:
+    """Append Auto Dream items as ``op:"dream"`` spool envelopes (spec §2.3).
+
+    No DB is opened — that is the point: under the flag the dream bridge
+    leaves the writer set and the session-end hook drops from a multi-GB DB
+    open + INSERT to a file append. Dedup moves to drain time: the
+    envelope's idempotency_key (``auto-dream:<filename>``) hits svc.ingest's
+    dedup, so re-spooling the same file on every session end stays a no-op.
+    """
+    spooled = 0
+    skipped = 0
+    for md_file in md_files:
+        claim = _parse_dream_file(md_file)
+        if claim is None:
+            skipped += 1
+            continue
+        spool.append(
+            db_path,
+            "dream",
+            {
+                "text": claim["text"],
+                "claim_type": claim["claim_type"],
+                "subject": claim["subject"],
+                "scope": "project",
+                "volatility": "medium",
+                "confidence": 0.5,
+                "source_agent": "dream-bridge",
+                "citations": [{"source": "auto-dream", "locator": md_file.name}],
+            },
+            idempotency_key=claim["source_marker"],
+        )
+        spooled += 1
+
+    return {
+        "ingested": 0,
+        "spooled": spooled,
+        "skipped": skipped,
+        "memory_dir": str(memory_dir),
+    }
+
+
 def dream_ingest(
     db_path: str,
     project_path: str | None = None,
+    *,
+    use_spool: bool | None = None,
 ) -> dict:
     """Import Auto Dream memories (non-mm_ files) back into MemoryMaster.
 
-    Returns stats dict with ingested/skipped counts.
-    """
-    memory_dir = discover_memory_dir(project_path)
+    Under MEMORYMASTER_WAL_DISCIPLINE=1 (or ``use_spool=True``) items are
+    appended to the write spool as ``op:"dream"`` envelopes instead of
+    opening the DB (spec §2.3); the steward drain replays them through
+    ``svc.ingest``, where the canonical sensitivity filter and the
+    idempotency_key dedup apply. Flag off = the untouched direct-INSERT path.
 
+    Returns stats dict with ingested/skipped (direct) or spooled/skipped
+    (spool) counts.
+    """
+    if use_spool is None:
+        use_spool = spool.wal_discipline_enabled()
+
+    memory_dir = discover_memory_dir(project_path)
     md_files = sorted(memory_dir.glob("*.md"))
+
+    if use_spool:
+        return _dream_ingest_spool(db_path, md_files, memory_dir)
+
     ingested = 0
     skipped = 0
 
     conn = _open_db(db_path)
     try:
         for md_file in md_files:
-            # Skip our own exports and the index
-            if md_file.name.startswith("mm_") or md_file.name == "MEMORY.md":
+            claim = _parse_dream_file(md_file)
+            if claim is None:
                 skipped += 1
                 continue
-
-            content = md_file.read_text(encoding="utf-8")
-            meta, body = _parse_frontmatter(content)
-
-            if not body.strip():
-                skipped += 1
-                continue
-
-            dream_type = meta.get("type", "project")
-            name = meta.get("name", md_file.stem)
 
             # Check for duplicates by looking for source marker
-            source_marker = f"auto-dream:{md_file.name}"
             existing = conn.execute(
                 "SELECT id FROM claims WHERE idempotency_key = ? LIMIT 1",
-                (source_marker,),
+                (claim["source_marker"],),
             ).fetchone()
             if existing:
                 skipped += 1
                 continue
-
-            # Build claim text from body (strip source lines)
-            claim_text = body.strip()
-            if _is_sensitive(claim_text):
-                skipped += 1
-                continue
-
-            # The subject comes from the frontmatter ``name:`` field, which is
-            # NOT covered by the claim_text filter above. A token or personal
-            # path smuggled in via ``name:`` would otherwise be persisted
-            # verbatim on every dream_sync (sensitivity-filter invariant 1).
-            # Reject the whole file if the subject is sensitive, and redact any
-            # secret substrings before storing it as the claim subject.
-            if _is_sensitive(name):
-                skipped += 1
-                continue
-            name, _name_findings = _redact_text(name)
-
-            if len(claim_text) > 2000:
-                claim_text = claim_text[:2000]
-
-            # Map dream type to claim_type
-            claim_type_map = {
-                "feedback": "preference",
-                "project": "fact",
-                "user": "identity",
-                "reference": "reference",
-            }
-            claim_type = claim_type_map.get(dream_type, "fact")
 
             try:
                 conn.execute(
@@ -643,7 +714,7 @@ def dream_ingest(
                     "scope, volatility, idempotency_key, created_at, updated_at) "
                     "VALUES (?, ?, ?, 'candidate', 0.5, 'project', 'medium', ?, "
                     "datetime('now'), datetime('now'))",
-                    (claim_text, claim_type, name, source_marker),
+                    (claim["text"], claim["claim_type"], claim["subject"], claim["source_marker"]),
                 )
                 conn.execute(
                     "INSERT INTO events (claim_id, event_type, details, created_at) "

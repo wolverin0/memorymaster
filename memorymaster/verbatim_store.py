@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any
 
 # Credential detection delegated to the canonical filter in memorymaster.security.
+from memorymaster import spool
+from memorymaster._storage_shared import open_conn
 from memorymaster.security import redact_text as _redact_text
 
 logger = logging.getLogger(__name__)
@@ -60,10 +62,48 @@ EMBED_DIM = 1536  # text-embedding-3-small
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL")
-    return conn
+    # open_conn supplies WAL + busy_timeout=15000. The timeout is mandatory
+    # on this connection: verbatim_memories is the hottest write path (Stop
+    # hook + MCP per-turn inserts), and the 2026-06-05 btree corruption was
+    # confined to idx_verbatim_session on this exact table. Without it, the
+    # loser of a write race raises "database is locked" immediately and
+    # drops the turn (spec §2.1/§2.8).
+    return open_conn(db_path)
+
+
+# Mirrors the live DB's DDL exactly (verified via sqlite_master 2026-06-10).
+# Historically the table was created out-of-band by the Stop hook; under the
+# P1 spool regime (spec §2.3) the hook never opens the DB, so the spool
+# drainer needs a first-class way to create it on a fresh DB.
+_VERBATIM_SCHEMA = """
+CREATE TABLE IF NOT EXISTS verbatim_memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'project',
+    timestamp TEXT NOT NULL,
+    source_agent TEXT DEFAULT '',
+    embedding_synced INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS verbatim_fts USING fts5(
+    content,
+    content='verbatim_memories',
+    content_rowid='id',
+    tokenize='porter unicode61'
+);
+CREATE INDEX IF NOT EXISTS idx_verbatim_session ON verbatim_memories(session_id);
+CREATE INDEX IF NOT EXISTS idx_verbatim_session_content
+    ON verbatim_memories(session_id, content);
+"""
+
+
+def ensure_verbatim_schema(db_path: str) -> None:
+    """Create the verbatim tables/indexes if absent (idempotent)."""
+    with closing(_connect(db_path)) as conn:
+        conn.executescript(_VERBATIM_SCHEMA)
+        conn.commit()
 
 
 def store_verbatim(
@@ -175,6 +215,27 @@ def _extract_role_content(entry: dict) -> tuple[str, str]:
     return role, content if isinstance(content, str) else ""
 
 
+def _iter_transcript_turns(path: Path):
+    """Yield ``(role, content)`` for every parseable dict line of a transcript.
+
+    Shared by :func:`store_transcript` (direct DB path) and
+    :func:`spool_transcript` (P1 spool path) so the line parsing can never
+    drift between the two regimes — a turn one path keeps and the other
+    drops would silently change what verbatim recall can find when the
+    operator flips MEMORYMASTER_WAL_DISCIPLINE.
+    """
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        yield _extract_role_content(entry)
+
+
 def store_transcript(
     db_path: str,
     transcript_path: str | Path,
@@ -194,17 +255,7 @@ def store_transcript(
     session_id = path.stem  # Use filename as session ID
 
     with closing(_connect(db_path)) as conn:
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            if not line.strip():
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(entry, dict):
-                continue
-
-            role, content = _extract_role_content(entry)
+        for role, content in _iter_transcript_turns(path):
             if role not in ("user", "assistant"):
                 stats["skipped"] += 1
                 continue
@@ -218,6 +269,57 @@ def store_transcript(
             else:
                 stats["skipped"] += 1
         conn.commit()
+
+    return stats
+
+
+def spool_transcript(
+    db_path: str,
+    transcript_path: str | Path,
+    scope: str = "project",
+    source_agent: str = "transcript",
+) -> dict[str, int]:
+    """Spool a JSONL transcript as ``op:"verbatim"`` envelopes (spec §2.3).
+
+    Flag-on counterpart of :func:`store_transcript`: the Stop hook fires on
+    every stop, and under MEMORYMASTER_WAL_DISCIPLINE it must NOT open the
+    multi-GB DB — each kept turn becomes a ~10 ms spool append and the
+    steward drain replays it through :func:`store_verbatim` (its per-session
+    dedup and sensitivity filter intact). The sensitivity check ALSO runs
+    here, before the append, so a credential never sits at rest in the
+    plaintext spool file waiting for the drain to reject it.
+    """
+    path = Path(transcript_path)
+    if not path.exists():
+        return {"spooled": 0, "skipped": 0, "error": "file not found"}
+
+    stats = {"spooled": 0, "skipped": 0}
+    session_id = path.stem  # Use filename as session ID — mirrors store_transcript
+    now = datetime.now(timezone.utc).isoformat()
+
+    for role, content in _iter_transcript_turns(path):
+        if role not in ("user", "assistant"):
+            stats["skipped"] += 1
+            continue
+        if not content or len(content) < 20:
+            stats["skipped"] += 1
+            continue
+        if _row_has_sensitive_field(role, source_agent or "", content):
+            stats["skipped"] += 1
+            continue
+        spool.append(
+            db_path,
+            "verbatim",
+            {
+                "session_id": session_id,
+                "role": role,
+                "content": content,
+                "scope": scope,
+                "source_agent": source_agent,
+                "timestamp": now,
+            },
+        )
+        stats["spooled"] += 1
 
     return stats
 

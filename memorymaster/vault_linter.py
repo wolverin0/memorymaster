@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import logging
 import re
-import sqlite3
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from memorymaster._storage_shared import connect_ro
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +28,7 @@ _WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
 
 def _load_claims(db_path: str, scope_filter: str | None = None) -> list[dict]:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    conn = connect_ro(db_path)
     try:
         cols = {row[1] for row in conn.execute("PRAGMA table_info(claims)").fetchall()}
         wiki_article_expr = "wiki_article" if "wiki_article" in cols else "NULL AS wiki_article"

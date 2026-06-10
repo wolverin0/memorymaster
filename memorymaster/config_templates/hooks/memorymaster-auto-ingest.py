@@ -23,6 +23,17 @@ sys.path.insert(0, PROJECT_ROOT)
 
 os.makedirs(STATE_DIR, exist_ok=True)
 
+
+def _spool_enabled() -> bool:
+    """P1 WAL-discipline flag (spec §2.3), default OFF. When on, this hook
+    never opens the DB — verbatim turns and extracted learnings append spool
+    envelopes (~10 ms) and the steward drain replays them through the normal
+    service paths (sensitivity filter + dedup intact). Semantics must match
+    memorymaster.spool.wal_discipline_enabled (pinned by test_ambient_spool);
+    parsed locally so the gate works even before the package import resolves."""
+    raw = os.environ.get("MEMORYMASTER_WAL_DISCIPLINE", "0").strip()
+    return raw not in ("0", "false", "False", "no", "off", "")
+
 # Sensitivity filtering delegated to memorymaster.security.redact_text — the
 # canonical 25+ pattern set. The previous local SENSITIVE regex covered ~6 of
 # them and missed bearer/JWT/AWS/Stripe/Slack tokens, home path username
@@ -134,41 +145,80 @@ Only: bug root causes, decisions, gotchas, constraints. Never: credentials, IPs,
         claims = parse_json_response(response)
         claims = [c for c in claims if not _is_sensitive_claim(c)][:3]
 
-        if not claims or not os.path.exists(DB_PATH):
+        if not claims:
             return
 
         scope = "project:" + os.path.basename(cwd).lower().replace(" ", "-") if cwd else "global"
 
-        # Route through MemoryService.ingest instead of raw SQL so claims gain
-        # the canonical ingest path: sensitivity sanitize (defense-in-depth on
-        # top of the _is_sensitive_claim drop above), content-hash + idempotency
-        # dedup, entity resolution, auto-citation, observability, and webhook.
-        # Mirrors _run_rule_extraction, which already uses the service.
-        from memorymaster.service import MemoryService
-        from memorymaster.models import CitationInput
+        if _spool_enabled():
+            # Spool regime (P1 spec §2.3): append op:"ingest" envelopes instead
+            # of opening the multi-GB DB from a per-stop hook. The steward
+            # drain replays them through svc.ingest, so the canonical
+            # sensitivity sanitize + idempotency dedup still apply (on top of
+            # the _is_sensitive_claim drop above).
+            from memorymaster import spool
 
-        svc = MemoryService(DB_PATH, workspace_root=Path(cwd or PROJECT_ROOT))
-        ingested = 0
-        for c in claims:
-            text = c.get("text", "")
-            if not text or len(text) < 10:
-                continue
-            text_hash = hashlib.sha256(text.strip().lower().encode()).hexdigest()[:16]
-            try:
-                svc.ingest(
-                    text=text,
-                    citations=[CitationInput(source="llm-stop-hook", locator=scope, excerpt=text[:200])],
-                    idempotency_key=f"llm-stop-{text_hash}",
-                    claim_type=c.get("claim_type", "fact"),
-                    subject=c.get("subject", "codebase"),
-                    predicate=c.get("predicate", "observation"),
-                    scope=scope,
-                    confidence=0.6,
-                    source_agent="llm-stop-hook",
-                )
-                ingested += 1
-            except Exception:
-                continue  # one bad claim must not abort the rest
+            ingested = 0
+            for c in claims:
+                text = c.get("text", "")
+                if not text or len(text) < 10:
+                    continue
+                text_hash = hashlib.sha256(text.strip().lower().encode()).hexdigest()[:16]
+                try:
+                    spool.append(
+                        DB_PATH,
+                        "ingest",
+                        {
+                            "text": text,
+                            "claim_type": c.get("claim_type", "fact"),
+                            "subject": c.get("subject", "codebase"),
+                            "predicate": c.get("predicate", "observation"),
+                            "scope": scope,
+                            "confidence": 0.6,
+                            "source_agent": "llm-stop-hook",
+                            "citations": [
+                                {"source": "llm-stop-hook", "locator": scope, "excerpt": text[:200]}
+                            ],
+                        },
+                        idempotency_key=f"llm-stop-{text_hash}",
+                    )
+                    ingested += 1
+                except Exception:
+                    continue  # one bad claim must not abort the rest
+        else:
+            if not os.path.exists(DB_PATH):
+                return
+
+            # Route through MemoryService.ingest instead of raw SQL so claims gain
+            # the canonical ingest path: sensitivity sanitize (defense-in-depth on
+            # top of the _is_sensitive_claim drop above), content-hash + idempotency
+            # dedup, entity resolution, auto-citation, observability, and webhook.
+            # Mirrors _run_rule_extraction, which already uses the service.
+            from memorymaster.service import MemoryService
+            from memorymaster.models import CitationInput
+
+            svc = MemoryService(DB_PATH, workspace_root=Path(cwd or PROJECT_ROOT))
+            ingested = 0
+            for c in claims:
+                text = c.get("text", "")
+                if not text or len(text) < 10:
+                    continue
+                text_hash = hashlib.sha256(text.strip().lower().encode()).hexdigest()[:16]
+                try:
+                    svc.ingest(
+                        text=text,
+                        citations=[CitationInput(source="llm-stop-hook", locator=scope, excerpt=text[:200])],
+                        idempotency_key=f"llm-stop-{text_hash}",
+                        claim_type=c.get("claim_type", "fact"),
+                        subject=c.get("subject", "codebase"),
+                        predicate=c.get("predicate", "observation"),
+                        scope=scope,
+                        confidence=0.6,
+                        source_agent="llm-stop-hook",
+                    )
+                    ingested += 1
+                except Exception:
+                    continue  # one bad claim must not abort the rest
 
         provider = os.environ.get("MEMORYMASTER_LLM_PROVIDER", "google")
         sys.stderr.write(f"[MemoryMaster] {provider} extracted {ingested} learnings\n")
@@ -239,17 +289,26 @@ def main():
 
     # Store verbatim on every stop (raw conversation storage)
     try:
-        from memorymaster.verbatim_store import store_transcript
         if transcript_path and os.path.exists(transcript_path):
             scope = "project:" + os.path.basename(cwd).lower().replace(" ", "-") if cwd else "global"
-            store_transcript(DB_PATH, transcript_path, scope=scope, source_agent="stop-hook")
+            if _spool_enabled():
+                # P1 spec §2.3: append op:"verbatim" envelopes (~10 ms) instead
+                # of opening the multi-GB DB on every stop; the steward drain
+                # lands them in verbatim_memories via store_verbatim.
+                from memorymaster.verbatim_store import spool_transcript
+                spool_transcript(DB_PATH, transcript_path, scope=scope, source_agent="stop-hook")
+            else:
+                from memorymaster.verbatim_store import store_transcript
+                store_transcript(DB_PATH, transcript_path, scope=scope, source_agent="stop-hook")
     except Exception:
         pass
 
     # Not time to block — run passive Gemini extraction
     _run_gemini_extraction(transcript_path, cwd)
 
-    # R1b: mine the latest correction in this session into a rule claim
+    # R1b: mine the latest correction in this session into a rule claim.
+    # Accepted P1 residual (spec step 9): mine_transcript_rules needs a live
+    # MemoryService, so this stays a direct DB path even under the flag.
     _run_rule_extraction(transcript_path, cwd)
 
     sys.stdout.write(json.dumps({"decision": "approve"}))

@@ -7,6 +7,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+from memorymaster._storage_shared import open_conn
+
 logger = logging.getLogger(__name__)
 
 _CREATE_TABLE = """
@@ -35,9 +37,7 @@ class SessionTracker:
     # ------------------------------------------------------------------
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return open_conn(self.db_path)
 
     def _ensure_table(self) -> None:
         with self._connect() as conn:

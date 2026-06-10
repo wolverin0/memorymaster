@@ -1,10 +1,10 @@
 from datetime import datetime
-from pathlib import Path
-import sqlite3
+
+from memorymaster._storage_shared import connect_ro, open_conn
 
 
 def insert(db_path, record: dict) -> None:
-    conn = sqlite3.connect(Path(db_path))
+    conn = open_conn(db_path)
     try:
         conn.execute(
             """
@@ -26,8 +26,7 @@ def insert(db_path, record: dict) -> None:
 
 
 def query_window(db_path, since_dt: datetime) -> list[dict]:
-    conn = sqlite3.connect(Path(db_path))
-    conn.row_factory = sqlite3.Row
+    conn = connect_ro(db_path)
     try:
         rows = conn.execute(
             """

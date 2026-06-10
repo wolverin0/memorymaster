@@ -65,6 +65,25 @@ def run(
     revalidation_claims: list[Claim] | None = None,
     policy_mode: str = "legacy",
 ) -> dict[str, int]:
+    # Promotion freeze (P1 spec §2.5.2): a failed quick_check writes the
+    # <db>.integrity-failed sentinel; promoting/transitioning claims through
+    # a DB with a broken btree compounds the damage, so the validator no-ops
+    # until the operator clears the sentinel.
+    from memorymaster.jobs.integrity import promotions_frozen_for
+
+    if promotions_frozen_for(store):
+        return {
+            "frozen": 1,
+            "processed": 0,
+            "candidate_processed": 0,
+            "revalidation_processed": 0,
+            "confirmed": 0,
+            "conflicted": 0,
+            "superseded": 0,
+            "pending": 0,
+            "staled": 0,
+            "revalidated_healthy": 0,
+        }
     cfg = get_config()
     if min_score is None:
         min_score = cfg.validation_threshold

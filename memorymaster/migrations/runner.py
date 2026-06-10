@@ -17,7 +17,7 @@ import pkgutil
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 

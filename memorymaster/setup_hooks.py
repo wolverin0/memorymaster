@@ -142,6 +142,17 @@ def install_hooks(llm_config):
     if llm_config["model"]:
         env["MEMORYMASTER_LLM_MODEL"] = llm_config["model"]
 
+    # P1 WAL-discipline flag (spec §5): hook processes are spawned fresh by
+    # Claude Code with this settings env — mirror the operator's CURRENT
+    # machine-level value so the recall/auto-ingest/dream-sync hooks switch
+    # regimes together with everything else. When the operator never set it,
+    # write nothing: the in-code default (OFF) governs, and a stale pinned
+    # value here could silently override a later `setx` rollback.
+    wal_flag = os.environ.get("MEMORYMASTER_WAL_DISCIPLINE")
+    if wal_flag is not None:
+        env["MEMORYMASTER_WAL_DISCIPLINE"] = wal_flag
+        print(f"  MEMORYMASTER_WAL_DISCIPLINE={wal_flag} (mirrored into hook env)")
+
     # Add hooks
     hooks = settings.setdefault("hooks", {})
 

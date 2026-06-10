@@ -34,6 +34,8 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from memorymaster._storage_shared import connect_ro, open_conn
+
 __all__ = [
     "ensure_closets_schema",
     "extract_closet_terms",
@@ -147,7 +149,7 @@ def rebuild_closets(
     counters = {"articles_indexed": 0, "skipped": 0}
     if not root.is_dir():
         return counters
-    conn = sqlite3.connect(str(db_path))
+    conn = open_conn(db_path)
     try:
         ensure_closets_schema(conn)
         now = datetime.now(timezone.utc).isoformat()
@@ -206,7 +208,12 @@ def search_closets(
     """
     if not query or not query.strip():
         return []
-    conn = sqlite3.connect(str(db_path))
+    try:
+        # Read-only: FTS lookup never writes; a missing DB keeps the
+        # defensive empty-result contract instead of raising.
+        conn = connect_ro(db_path)
+    except sqlite3.OperationalError:
+        return []
     try:
         tokens = [t for t in re.findall(r"[A-Za-z0-9_]{3,}", query) if t]
         if not tokens:

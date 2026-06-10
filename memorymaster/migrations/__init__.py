@@ -19,6 +19,13 @@ table. Each applied migration's file source is sha256-checksummed and
 stored alongside its version; on subsequent runs, a mismatch raises
 ``MigrationDriftError`` — migrations are immutable once applied.
 
+P1 init_db fast-path note (spec §2.9): the discovered migration set —
+every (VERSION, file checksum) pair — feeds ``storage.schema_stamp()``,
+the ``PRAGMA user_version`` fingerprint behind
+``MEMORYMASTER_INITDB_FASTPATH``. Adding ANY new migration file therefore
+bumps the stamp automatically and forces the next init_db onto the full
+path; no manual stamp constant exists to forget.
+
 Public API:
 
     from memorymaster.migrations import MigrationRunner, MigrationDriftError

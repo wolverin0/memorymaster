@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 import contextlib
 
+from memorymaster._storage_shared import open_conn
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -60,19 +62,15 @@ class OperatorQueue:
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(
-            str(self._db_path),
-            isolation_level="DEFERRED",
-            check_same_thread=False,
-        )
-        self._conn.row_factory = sqlite3.Row
+        # open_conn supplies the uniform envelope (WAL, busy_timeout, Row,
+        # foreign_keys); isolation_level default ("") begins the same DEFERRED
+        # implicit transactions the old explicit "DEFERRED" did.
+        self._conn = open_conn(self._db_path, check_same_thread=False)
         self._bootstrap()
 
     def _bootstrap(self) -> None:
         cur = self._conn.cursor()
-        cur.execute("PRAGMA journal_mode=WAL")
         cur.execute("PRAGMA synchronous=NORMAL")
-        cur.execute("PRAGMA busy_timeout=5000")
         cur.executescript(_SCHEMA_SQL)
         self._conn.commit()
 

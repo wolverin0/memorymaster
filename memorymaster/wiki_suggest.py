@@ -13,6 +13,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from memorymaster._storage_shared import connect_ro
 from memorymaster.entity_graph import EntityGraph
 
 _WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_\-]*")
@@ -107,8 +108,11 @@ def load_wiki_article_slugs(wiki_root: str | Path) -> set[str]:
 
 
 def _load_entity_terms(db_path: Path) -> list[EntityTerm]:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    try:
+        # Read-only; a missing DB keeps the empty-result contract.
+        conn = connect_ro(db_path)
+    except sqlite3.OperationalError:
+        return []
     try:
         rows = conn.execute("SELECT id, name, aliases FROM entities").fetchall()
     except sqlite3.OperationalError:
@@ -164,8 +168,7 @@ def _rank_claim_slugs(
     if not entity_depths:
         return {}
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    conn = connect_ro(db_path)
     try:
         claim_links = _claim_links_for_entities(conn, set(entity_depths))
         claim_slugs = _claim_slugs(conn, set(claim_links), article_slugs)
@@ -212,8 +215,11 @@ def _reachable_entity_depths(
 
 
 def _load_adjacency(db_path: Path) -> dict[str, set[str]]:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    try:
+        # Read-only; a missing DB keeps the empty-result contract.
+        conn = connect_ro(db_path)
+    except sqlite3.OperationalError:
+        return {}
     try:
         rows = conn.execute("SELECT source_id, target_id FROM entity_edges").fetchall()
     except sqlite3.OperationalError:

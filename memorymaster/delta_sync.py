@@ -27,6 +27,8 @@ import logging
 import sqlite3
 from pathlib import Path
 
+from memorymaster._storage_shared import connect_ro, open_conn
+
 logger = logging.getLogger(__name__)
 
 
@@ -84,9 +86,10 @@ def export_delta(
         output_path.unlink()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    src = sqlite3.connect(source_db)
-    src.row_factory = sqlite3.Row
-    out = sqlite3.connect(str(output_path))
+    # Source is read-only (connect_ro takes no lock on the live DB); the
+    # fresh delta file gets the uniform writer envelope.
+    src = connect_ro(source_db)
+    out = open_conn(output_path)
     try:
         for table in _DELTA_TABLES:
             _copy_table_ddl(src, out, table)

@@ -1,6 +1,7 @@
 """Git-backed DB versioning: snapshot, list, rollback, diff."""
 from __future__ import annotations
 
+import os
 import sqlite3
 import subprocess
 from dataclasses import dataclass, field
@@ -10,6 +11,10 @@ import contextlib
 
 
 SNAPSHOTS_DIR_NAME = "snapshots"
+
+# Weekly VACUUM INTO snapshots (P1 integrity phase, spec §2.5.4).
+VACUUM_SNAPSHOT_KEEP = 3
+VACUUM_SNAPSHOT_PREFIX = "mm-"
 
 
 def _utc_now() -> str:
@@ -141,6 +146,85 @@ def backup(db_path: Path, backup_path: Path) -> Path:
     finally:
         src_conn.close()
     return backup_path
+
+
+def default_vacuum_dir() -> Path:
+    """Snapshot dir for weekly VACUUM INTO copies.
+
+    ``MEMORYMASTER_SNAPSHOT_DIR`` overrides; default is
+    ``~/.memorymaster/snapshots/`` — deliberately OUTSIDE the OneDrive-synced
+    tree and outside the DB directory (spec §2.5.4), unlike the per-DB
+    ``.memorymaster/snapshots`` used by the backup-API snapshots above.
+    """
+    env = os.environ.get("MEMORYMASTER_SNAPSHOT_DIR", "").strip()
+    if env:
+        return Path(env)
+    return Path.home() / ".memorymaster" / "snapshots"
+
+
+def vacuum_dir_for(db_path: str | Path) -> Path:
+    """Per-DB snapshot dir: ``<base>/<db-stem>/``.
+
+    Namespaced by DB filename (mirroring the spool's ``spool/<db-name>/``
+    layout, spec §2.2) so two DBs sharing the base dir cannot evict each
+    other's ``mm-YYYYMMDD.db`` rotations.
+    """
+    return default_vacuum_dir() / Path(db_path).stem
+
+
+def vacuum_into(
+    db_path: str | Path,
+    dest_dir: str | Path | None = None,
+    *,
+    keep: int = VACUUM_SNAPSHOT_KEEP,
+    now: datetime | None = None,
+) -> dict:
+    """``VACUUM INTO`` a dated snapshot (``mm-YYYYMMDD.db``), keep ``keep`` rotations.
+
+    VACUUM INTO reads the source without taking a write lock on it and
+    produces a compacted, self-contained copy — the recovery artifact the
+    2026-06-05 incident lacked. Writes to a ``.part`` file first so a crashed
+    run never leaves a plausible-looking half snapshot; idempotent per day
+    (an existing same-day snapshot is reused, ``created: False``).
+    """
+    db_path = Path(db_path).resolve()
+    if not db_path.exists():
+        raise FileNotFoundError(f"Database not found: {db_path}")
+    dest = Path(dest_dir) if dest_dir is not None else vacuum_dir_for(db_path)
+    dest.mkdir(parents=True, exist_ok=True)
+
+    stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%d")
+    target = dest / f"{VACUUM_SNAPSHOT_PREFIX}{stamp}.db"
+    if target.exists():
+        return {
+            "path": str(target),
+            "size_bytes": target.stat().st_size,
+            "created": False,
+            "deleted": [],
+        }
+
+    part = Path(f"{target}.part")
+    if part.exists():
+        part.unlink()
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("VACUUM INTO ?", (str(part),))
+    finally:
+        conn.close()
+    part.replace(target)
+
+    deleted: list[str] = []
+    snaps = sorted(dest.glob(f"{VACUUM_SNAPSHOT_PREFIX}*.db"))
+    for old in snaps[:-keep] if len(snaps) > keep else []:
+        with contextlib.suppress(OSError):
+            old.unlink()
+            deleted.append(old.name)
+    return {
+        "path": str(target),
+        "size_bytes": target.stat().st_size,
+        "created": True,
+        "deleted": deleted,
+    }
 
 
 def _has_restore_data(db_path: Path) -> bool:

@@ -22,6 +22,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
+from memorymaster._storage_shared import open_conn
 from memorymaster.config import get_config
 
 logger = logging.getLogger(__name__)
@@ -71,10 +72,7 @@ def make_cache_key(query_text: str, params: dict[str, Any]) -> str:
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL")
-    return conn
+    return open_conn(db_path)
 
 
 def current_generation(conn: sqlite3.Connection) -> int:

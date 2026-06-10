@@ -1,3 +1,9 @@
+# UserPromptSubmit recall hook. P1 WAL-discipline (spec §2.2): when the
+# inherited environment carries MEMORYMASTER_WAL_DISCIPLINE=1, recall()
+# below opens the DB strictly read-only (mode=ro + query_only — this
+# per-prompt process can never take a write lock on the shared multi-GB
+# file) and spools its access/feedback records to ~/.memorymaster/spool/
+# for the steward drain. Flag unset/0 = the legacy read-write path.
 import json
 import os
 import sys
@@ -9,7 +15,7 @@ sys.path.insert(0, PROJECT_ROOT)
 os.environ["MEMORYMASTER_DEFAULT_DB"] = DB_PATH
 os.chdir(PROJECT_ROOT)
 
-from memorymaster.hook_log import log_hook
+from memorymaster.hook_log import log_hook  # noqa: E402 — import must follow sys.path bootstrap
 
 try:
     data = json.loads(sys.stdin.read() or "{}")

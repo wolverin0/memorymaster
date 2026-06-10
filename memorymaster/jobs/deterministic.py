@@ -265,6 +265,20 @@ def run(
     revalidation_claims: list[Claim] | None = None,
     policy_mode: str = "legacy",
 ) -> dict[str, int]:
+    # Promotion freeze (P1 spec §2.5.2): no confidence writes or transitions
+    # while the integrity sentinel says the DB failed quick_check.
+    from memorymaster.jobs.integrity import promotions_frozen_for
+
+    if promotions_frozen_for(store):
+        return {
+            "frozen": 1,
+            "checked": 0,
+            "boosted": 0,
+            "dropped": 0,
+            "hard_conflicted": 0,
+            "revalidation_checked": 0,
+            "predicate_checks": {},
+        }
     if policy_mode == "legacy":
         candidates = store.list_claims(
             status_in=["candidate", "confirmed"],
