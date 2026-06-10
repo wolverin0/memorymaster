@@ -90,16 +90,24 @@ def test_round_robin_ordering() -> None:
     assert labels == ["a", "b", "c", "a", "b", "c"]
 
 
-def test_cooldown_is_skipped_until_recovery() -> None:
+def test_cooldown_is_skipped_until_recovery(monkeypatch) -> None:
+    # Drive the rotator's clock directly instead of real sleeps: on Windows
+    # CI runners the ~15.6ms timer resolution made sleep(0.06) race the
+    # 0.05s cooldown deadline, so "a" sometimes never re-entered rotation.
+    # The requirement is cooldown SEMANTICS (excluded until the deadline,
+    # eligible after), not wall-clock behavior — a fake clock pins exactly
+    # that, deterministically on any machine.
     r = _make(["a", "b", "c"])
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(type(r), "_now", lambda self: clock["t"])
     # Take a once, put it on cooldown
     assert r.next_key()[0] == "a"
     r.mark_rate_limited("a", retry_after=0.05)
     # Next rotation: b, c, b, c ... (a is on cooldown)
     seen = [r.next_key()[0] for _ in range(4)]
     assert "a" not in seen
-    # After cooldown, a re-enters rotation
-    time.sleep(0.06)
+    # After the cooldown deadline passes, a re-enters rotation
+    clock["t"] += 0.06
     labels = {r.next_key()[0] for _ in range(6)}
     assert "a" in labels
 
