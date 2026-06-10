@@ -14,8 +14,8 @@ conventional PRs, numeric exit gates only.
 | pre: ship v3.28.0 | ✅ DONE 2026-06-09 | PyPI 200; PRs #146 #147 |
 | CI resurrection (unplanned) | ✅ DONE 2026-06-09 | PRs #148 #150; main CI green (run 27244754336) — first since June 1 |
 | P0 /mm4-baseline | ✅ DONE 2026-06-09 | gate 4/4; BASELINE-2026-06-09.html; PR #149; graphify hook fixed |
-| P1 /mm4-reliability | ▶ BUILD DONE, gating | 12/12 steps built (2 workflow runs, ~2M tokens). Central gate GREEN: 2820 passed + ruff clean after fixing 2 gate-caught bugs (init_db connection leak via `with conn:` gotcha mm-6764; wal_bytes==0 over-pinned assertion). Remaining: merge, FK --apply, cold-init re-measure, chaos soak (exit gate) |
-| P2 /mm4-restructure | pending | |
+| P1 /mm4-reliability | ✅ DONE 2026-06-10 | PR #151 + #152. EXIT GATE PASSED: chaos soak 46min/12 writers/20 kill-rounds × both flag modes = 0 quick_check fails, 0 FK orphans, 0 lost acked writes. Live DB: FK 401→0 (400 quarantined), WAL 1.44GB→0 (first checkpoint in project history), cold init 16.06s→1.15s plain/0.09s fastpath. Flags enabled user-wide for dogfood (rollback = delete env vars). Daemon escalation tripwire stands |
+| P2 /mm4-restructure | ▶ IN PROGRESS | Census done (P2-CENSUS.md): 145 modules, 0 kills (dormancy rule), 6 orphans, 139 keeps → 7 subpackages; one 10-module SCC, 3 cycle cuts planned; order bridges→surfaces→knowledge→recall→govern→stores→core. OPERATOR VERDICTS: skill_evolver DELETE (zero references incl. zero tests — git history is the archive); plugins/qmd_bridge/federated_graphify/wiki_validate/vault_query_capture KEEP-DEPRECATED (test-only surface; wire-or-remove decision deferred to P5 review); federated_graphify additionally marked superseded-by-service.federated_query |
 | P3 /mm4-quality | pending | |
 | P4 /mm4-agents | pending | |
 | P5 /mm4-surfaces | pending | |
