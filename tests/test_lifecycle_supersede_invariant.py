@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster._storage_shared import ConcurrentModificationError
+from memorymaster.stores._storage_shared import ConcurrentModificationError
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
 

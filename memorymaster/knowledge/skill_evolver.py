@@ -86,7 +86,7 @@ def evolve_skills(db_path: str, *, min_feedback: int = 20) -> dict:
     """
     import sqlite3
 
-    from memorymaster._storage_shared import connect_ro
+    from memorymaster.stores._storage_shared import connect_ro
 
     try:
         # Read-only analysis; a missing DB keeps the skip contract.

@@ -22,7 +22,7 @@ import argparse
 import sys
 
 from memorymaster.lifecycle import transition_claim
-from memorymaster.storage import SQLiteStore
+from memorymaster.stores.storage import SQLiteStore
 
 SCOPE = "session-state.watchkeeper"
 REASON = "heartbeat session-state pulse — not a durable claim (WatchKeeper firehose cleanup)"

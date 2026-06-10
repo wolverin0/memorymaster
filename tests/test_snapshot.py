@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from memorymaster.surfaces.cli import main
-from memorymaster.snapshot import (
+from memorymaster.stores.snapshot import (
     SnapshotDiff,
     SnapshotInfo,
     create_snapshot,
@@ -51,7 +51,7 @@ def _capture(capsys, argv: list[str]) -> dict:
 
 
 class TestCreateSnapshot:
-    @patch("memorymaster.snapshot.get_git_head", return_value=None)
+    @patch("memorymaster.stores.snapshot.get_git_head", return_value=None)
     def test_creates_snapshot_file(self, mock_git, populated_db: Path) -> None:
         info = create_snapshot(populated_db, message="test snap")
         assert isinstance(info, SnapshotInfo)
@@ -79,7 +79,7 @@ class TestCreateSnapshot:
         with pytest.raises(FileNotFoundError):
             create_snapshot(fake)
 
-    @patch("memorymaster.snapshot.get_git_head", return_value="a" * 40)
+    @patch("memorymaster.stores.snapshot.get_git_head", return_value="a" * 40)
     def test_snapshot_with_git_hash(self, mock_git, populated_db: Path) -> None:
         info = create_snapshot(populated_db)
         assert info.commit_hash == "a" * 40

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from memorymaster._storage_shared import connect_ro, open_conn
+from memorymaster.stores._storage_shared import connect_ro, open_conn
 
 
 def insert(db_path, record: dict) -> None:

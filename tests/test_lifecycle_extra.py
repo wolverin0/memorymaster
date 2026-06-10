@@ -24,7 +24,7 @@ import pytest
 
 from memorymaster.lifecycle import transition_claim
 from memorymaster.models import CitationInput
-from memorymaster.storage import SQLiteStore
+from memorymaster.stores.storage import SQLiteStore
 
 
 def _store(tmp_path: Path) -> SQLiteStore:
@@ -191,7 +191,7 @@ def test_mark_superseded_double_supersede_is_refused(tmp_path: Path) -> None:
     Contract: the supersede pair is established exactly once. A second attempt
     is a concurrency/consistency error and must not overwrite the existing link.
     """
-    from memorymaster._storage_shared import ConcurrentModificationError
+    from memorymaster.stores._storage_shared import ConcurrentModificationError
 
     store = _store(tmp_path)
     old = store.create_claim("old truth", [_cite("old")])

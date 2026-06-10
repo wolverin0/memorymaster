@@ -7,7 +7,7 @@ import pytest
 
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
-from memorymaster import snapshot
+from memorymaster.stores import snapshot
 
 
 CLAIM_STATUSES = (

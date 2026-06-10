@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from memorymaster.storage import SQLiteStore
+from memorymaster.stores.storage import SQLiteStore
 from memorymaster.knowledge.wiki_engine import absorb
 
 

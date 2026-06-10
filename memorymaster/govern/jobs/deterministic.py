@@ -19,7 +19,7 @@ def open_store(db_path: str):
     of ``_auto_validate_claims`` either inject a store or let this helper
     resolve the default one.
     """
-    from memorymaster.store_factory import create_store
+    from memorymaster.stores.store_factory import create_store
 
     return create_store(db_path)
 

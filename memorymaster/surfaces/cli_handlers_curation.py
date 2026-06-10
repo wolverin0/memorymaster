@@ -176,7 +176,7 @@ def _handle_wiki_backfill_bindings(
     import re
     from pathlib import Path
 
-    from memorymaster.store_factory import is_postgres_dsn
+    from memorymaster.stores.store_factory import is_postgres_dsn
 
     # The backfill issues SQLite-only SQL (PRAGMA table_info, ``?`` params).
     # On a Postgres backend the old code silently opened a junk SQLite file
@@ -206,7 +206,7 @@ def _handle_wiki_backfill_bindings(
     # Postgres is already rejected above, so effective_db is a SQLite path here.
     store = getattr(service, "store", None) if service is not None else None
     if store is None:
-        from memorymaster.storage import SQLiteStore
+        from memorymaster.stores.storage import SQLiteStore
         store = SQLiteStore(str(effective_db))
     conn = store.connect()
     try:

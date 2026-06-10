@@ -31,7 +31,7 @@ from typing import Any, Iterator
 
 from memorymaster import llm_provider
 from memorymaster.govern import llm_budget
-from memorymaster._storage_shared import open_conn
+from memorymaster.stores._storage_shared import open_conn
 from memorymaster.models import CitationInput
 from memorymaster.knowledge.rules import build_rule_fields
 from memorymaster.security import redact_text

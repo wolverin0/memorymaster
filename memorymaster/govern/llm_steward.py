@@ -24,7 +24,7 @@ import urllib.error
 from dataclasses import dataclass
 from typing import Any
 
-from memorymaster._storage_shared import open_conn
+from memorymaster.stores._storage_shared import open_conn
 
 # P2 phase0 cycle cut: KeyRotator/DEFAULT_COOLDOWN_SECONDS now live in
 # memorymaster.key_rotator (class RoundRobinKeyRotator). Re-exported here under

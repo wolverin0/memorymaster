@@ -30,7 +30,7 @@ def build_slice(
     and quick_check == ok, so a bad fixture can never masquerade as a soak
     failure.
     """
-    from memorymaster.storage import SQLiteStore
+    from memorymaster.stores.storage import SQLiteStore
     from memorymaster.recall.verbatim_store import ensure_verbatim_schema
 
     dest.parent.mkdir(parents=True, exist_ok=True)

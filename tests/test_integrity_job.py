@@ -20,12 +20,12 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster import snapshot
-from memorymaster._storage_shared import open_conn
+from memorymaster.stores import snapshot
+from memorymaster.stores._storage_shared import open_conn
 from memorymaster.govern.jobs import deterministic, integrity, validator
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
-from memorymaster.storage import SQLiteStore
+from memorymaster.stores.storage import SQLiteStore
 
 
 @pytest.fixture()

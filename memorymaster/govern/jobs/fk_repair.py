@@ -54,7 +54,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
-from memorymaster._storage_shared import (
+from memorymaster.stores._storage_shared import (
     SQLITE_EVENTS_APPEND_ONLY_TRIGGERS,
     connect_ro,
     open_conn,

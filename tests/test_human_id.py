@@ -9,7 +9,7 @@ import pytest
 
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
-from memorymaster.storage import SQLiteStore, generate_human_id_hash, generate_top_level_human_id
+from memorymaster.stores.storage import SQLiteStore, generate_human_id_hash, generate_top_level_human_id
 
 
 def _fresh_db() -> str:

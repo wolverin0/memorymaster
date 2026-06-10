@@ -7,7 +7,7 @@ from pathlib import Path
 
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
-from memorymaster.storage import utc_now
+from memorymaster.stores.storage import utc_now
 
 
 def _case_db(prefix: str) -> Path:

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from memorymaster.lifecycle import transition_claim
 from memorymaster.models import CitationInput
-from memorymaster.storage import SQLiteStore
+from memorymaster.stores.storage import SQLiteStore
 
 
 def _store(tmp_path: Path) -> SQLiteStore:

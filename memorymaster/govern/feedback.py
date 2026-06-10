@@ -14,7 +14,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 
-from memorymaster._storage_shared import open_conn
+from memorymaster.stores._storage_shared import open_conn
 
 logger = logging.getLogger(__name__)
 

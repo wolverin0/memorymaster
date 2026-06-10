@@ -15,7 +15,7 @@ import json
 import logging
 from typing import Any
 
-from memorymaster._storage_shared import ConcurrentModificationError
+from memorymaster.stores._storage_shared import ConcurrentModificationError
 from memorymaster.lifecycle import transition_claim
 from memorymaster.llm_provider import call_llm
 from memorymaster.models import Claim

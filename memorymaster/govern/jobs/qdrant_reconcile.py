@@ -31,7 +31,7 @@ from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
-from memorymaster._storage_shared import connect_ro
+from memorymaster.stores._storage_shared import connect_ro
 from memorymaster.govern.jobs.integrity import _due, _record
 
 logger = logging.getLogger(__name__)

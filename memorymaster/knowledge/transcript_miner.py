@@ -64,7 +64,7 @@ def mine_transcript(
 
     Returns: {scanned, ingested, skipped, duplicates}
     """
-    from memorymaster._storage_shared import open_conn
+    from memorymaster.stores._storage_shared import open_conn
 
     path = Path(transcript_path)
     if not path.exists():

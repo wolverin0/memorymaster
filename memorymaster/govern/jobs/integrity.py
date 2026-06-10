@@ -37,7 +37,7 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from memorymaster._storage_shared import busy_error_count, connect_ro, open_conn, utc_now
+from memorymaster.stores._storage_shared import busy_error_count, connect_ro, open_conn, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +221,7 @@ def vacuum_snapshot(
     """Weekly ``VACUUM INTO`` snapshot, rotated keep-3 (snapshot.vacuum_into)."""
     if not force and not _due(db_path, MARKER_VACUUM, hours=VACUUM_INTERVAL_HOURS, now=now):
         return {"skipped": "throttled"}
-    from memorymaster import snapshot
+    from memorymaster.stores import snapshot
 
     info = snapshot.vacuum_into(db_path)
     _record(store, MARKER_VACUUM, dict(info))
@@ -230,7 +230,7 @@ def vacuum_snapshot(
 
 def status(store, db_path: str | Path) -> dict[str, object]:
     """Operator-facing snapshot: WAL size, sentinel, last phase runs."""
-    from memorymaster import snapshot
+    from memorymaster.stores import snapshot
 
     snap_dir = snapshot.vacuum_dir_for(db_path)
     snaps = sorted(p.name for p in snap_dir.glob("mm-*.db")) if snap_dir.exists() else []

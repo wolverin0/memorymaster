@@ -18,7 +18,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-from memorymaster._storage_shared import busy_error_count, connect_ro
+from memorymaster.stores._storage_shared import busy_error_count, connect_ro
 from memorymaster.govern.jobs.integrity import (
     MARKER_METRICS,
     _wal_bytes,

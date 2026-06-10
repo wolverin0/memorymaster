@@ -23,7 +23,7 @@ from memorymaster.recall.embeddings import (
 )
 from memorymaster.models import Claim
 from memorymaster.recall.retrieval import rank_claim_rows
-from memorymaster.storage import SQLiteStore
+from memorymaster.stores.storage import SQLiteStore
 
 
 # ---------------------------------------------------------------------------

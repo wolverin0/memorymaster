@@ -23,7 +23,7 @@ from memorymaster import spool
 from memorymaster.govern.jobs import spool_drain
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
-from memorymaster.storage import SQLiteStore
+from memorymaster.stores.storage import SQLiteStore
 
 
 @pytest.fixture()

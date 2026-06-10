@@ -134,7 +134,7 @@ def test_llm_provider_env_rotation_with_llm_steward_blocked() -> None:
 def test_llm_steward_imports_with_store_factory_blocked() -> None:
     """llm_steward must import (and its compat KeyRotator re-export must work)
     with store_factory completely unimportable."""
-    code = _BLOCKER.format(blocked="memorymaster.store_factory") + """
+    code = _BLOCKER.format(blocked="memorymaster.stores.store_factory") + """
     from memorymaster.govern.llm_steward import (
         DEFAULT_COOLDOWN_SECONDS,
         KeyRotator,
@@ -150,7 +150,7 @@ def test_llm_steward_imports_with_store_factory_blocked() -> None:
     # Empty-ids fast path needs no store at all.
     result = _auto_validate_claims("unused.db", [])
     assert result == {"checked": 0, "boosted": 0, "dropped": 0, "hard_conflicted": 0}
-    assert "memorymaster.store_factory" not in sys.modules
+    assert "memorymaster.stores.store_factory" not in sys.modules
     print("OK")
     """
     proc = _run_isolated(code)
@@ -163,7 +163,7 @@ def test_llm_steward_imports_with_store_factory_blocked() -> None:
 
 
 def _fresh_db(tmp_path: Path):
-    from memorymaster.storage import SQLiteStore
+    from memorymaster.stores.storage import SQLiteStore
 
     db = tmp_path / "memory.db"
     store = SQLiteStore(str(db))

@@ -28,7 +28,7 @@ from __future__ import annotations
 import sqlite3
 
 from memorymaster.govern.verbatim_cleanup import analyze
-from memorymaster.migrations.runner import MigrationRunner, discover_migrations
+from memorymaster.stores.migrations.runner import MigrationRunner, discover_migrations
 
 
 _SCHEMA_NO_COMPOSITE = """

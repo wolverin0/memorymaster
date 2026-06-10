@@ -19,7 +19,7 @@ from memorymaster.recall.context_optimizer import ContextResult, pack_context
 from memorymaster.config import get_config
 from memorymaster.recall.retrieval import VectorSearchHook, _tier_bonus, rank_claim_rows
 from memorymaster.security import is_sensitive_claim, resolve_allow_sensitive_access, sanitize_claim_input
-from memorymaster.store_factory import create_store
+from memorymaster.stores.store_factory import create_store
 import contextlib
 
 logger = logging.getLogger(__name__)

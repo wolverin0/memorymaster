@@ -1,11 +1,11 @@
-"""Tests for memorymaster.store_factory."""
+"""Tests for memorymaster.stores.store_factory."""
 
 from __future__ import annotations
 
 
 
-from memorymaster.store_factory import create_store, is_postgres_dsn
-from memorymaster.storage import SQLiteStore
+from memorymaster.stores.store_factory import create_store, is_postgres_dsn
+from memorymaster.stores.storage import SQLiteStore
 
 
 class TestIsPostgresDsn:

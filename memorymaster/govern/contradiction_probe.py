@@ -32,7 +32,7 @@ from typing import Any
 
 from memorymaster import llm_provider
 from memorymaster.govern import llm_budget
-from memorymaster._storage_shared import open_conn
+from memorymaster.stores._storage_shared import open_conn
 from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity, create_best_provider
 from memorymaster.lifecycle import transition_claim
 from memorymaster.models import Claim

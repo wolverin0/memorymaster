@@ -24,7 +24,7 @@ from typing import Any
 
 # Credential detection delegated to the canonical filter in memorymaster.security.
 from memorymaster import spool
-from memorymaster._storage_shared import open_conn
+from memorymaster.stores._storage_shared import open_conn
 from memorymaster.security import redact_text as _redact_text
 
 logger = logging.getLogger(__name__)

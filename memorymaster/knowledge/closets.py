@@ -34,7 +34,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from memorymaster._storage_shared import connect_ro, open_conn
+from memorymaster.stores._storage_shared import connect_ro, open_conn
 
 __all__ = [
     "ensure_closets_schema",

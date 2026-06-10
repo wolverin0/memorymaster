@@ -516,13 +516,13 @@ class TestPostgresStoreUnit:
     """Tests that verify PostgresStore behaviour without a real database."""
 
     def test_split_sql_statements_basic(self):
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         stmts = PostgresStore._split_sql_statements("SELECT 1; SELECT 2;")
         assert stmts == ["SELECT 1", "SELECT 2"]
 
     def test_split_sql_statements_dollar_quote(self):
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         sql = """
         CREATE FUNCTION test() RETURNS void AS $$
@@ -538,26 +538,26 @@ class TestPostgresStoreUnit:
         assert "SELECT 1" in stmts[1]
 
     def test_canonical_payload_none(self):
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         assert PostgresStore._canonical_payload(None) == ""
 
     def test_canonical_payload_string(self):
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         result = PostgresStore._canonical_payload('{"b":1,"a":2}')
         parsed = json.loads(result)
         assert list(parsed.keys()) == ["a", "b"]
 
     def test_canonical_payload_dict(self):
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         result = PostgresStore._canonical_payload({"z": 1, "a": 2})
         parsed = json.loads(result)
         assert list(parsed.keys()) == ["a", "z"]
 
     def test_vector_literal(self):
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         lit = PostgresStore._vector_literal([1.0, 2.0, 3.0])
         assert lit.startswith("[")
@@ -566,36 +566,36 @@ class TestPostgresStoreUnit:
         assert len(parts) == 3
 
     def test_as_iso_none(self):
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         assert PostgresStore._as_iso(None) is None
 
     def test_as_iso_string(self):
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         assert PostgresStore._as_iso("2025-01-01") == "2025-01-01"
 
     def test_as_iso_datetime(self):
         from datetime import datetime, timezone
 
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         dt = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
         result = PostgresStore._as_iso(dt)
         assert "2025-01-01" in result
 
     def test_as_text_none(self):
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         assert PostgresStore._as_text(None) is None
 
     def test_as_text_value(self):
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         assert PostgresStore._as_text(42) == "42"
 
     def test_row_to_claim_link(self):
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         row = {
             "id": 1,
@@ -611,14 +611,14 @@ class TestPostgresStoreUnit:
 
     def test_add_claim_link_validation_invalid_type(self):
         """Validation happens before DB access, so no connection needed."""
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         store = PostgresStore.__new__(PostgresStore)
         with pytest.raises(ValueError, match="Invalid link_type"):
             store.add_claim_link(1, 2, "bad_type")
 
     def test_add_claim_link_validation_self_link(self):
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         store = PostgresStore.__new__(PostgresStore)
         with pytest.raises(ValueError, match="must be different"):
@@ -651,7 +651,7 @@ class TestPostgresStoreUnit:
         """WHY: visibility gates the cross-agent sensitivity filter. If reads
         always return 'public', a claim stored as sensitive leaks to query_memory.
         source_agent is recall provenance; dropping it corrupts attribution."""
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         row = self._claim_row(visibility="sensitive", source_agent="claude-session")
         claim = PostgresStore._row_to_claim(row)
@@ -662,7 +662,7 @@ class TestPostgresStoreUnit:
         """WHY: tier and access_count drive recall ordering. If every read
         reports tier='working'/access_count=0, recompute-tiers and ranking
         silently flatten — core claims sink to the bottom."""
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         row = self._claim_row(tier="core", access_count=99)
         claim = PostgresStore._row_to_claim(row)
@@ -673,7 +673,7 @@ class TestPostgresStoreUnit:
         """WHY: bitemporal fields drive steward decay decisions. Returning NULL
         for valid_from/valid_until/event_time makes 'valid until X' modelling
         invisible to the steward."""
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         row = self._claim_row(
             event_time="2025-12-31T00:00:00+00:00",
@@ -690,7 +690,7 @@ class TestPostgresStoreUnit:
     def test_row_to_claim_defaults_match_dataclass_when_absent(self):
         """WHY: a legacy row without the new columns must fall back to the SAME
         defaults the dataclass / _storage_read.py declare, never crash."""
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         base = self._claim_row()
         for col in ("tier", "access_count", "last_accessed", "event_time",
@@ -709,7 +709,7 @@ class TestPostgresStoreUnit:
         to return (write/read must stay symmetric)."""
         import inspect
 
-        from memorymaster.postgres_store import PostgresStore
+        from memorymaster.stores.postgres_store import PostgresStore
 
         src = inspect.getsource(PostgresStore.create_claim)
         insert = src[src.index("INSERT INTO claims"):src.index("VALUES")]

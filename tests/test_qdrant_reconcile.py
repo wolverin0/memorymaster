@@ -21,7 +21,7 @@ import pytest
 from memorymaster.govern.jobs import qdrant_reconcile
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
-from memorymaster.storage import SQLiteStore
+from memorymaster.stores.storage import SQLiteStore
 
 
 class FakeQdrant:

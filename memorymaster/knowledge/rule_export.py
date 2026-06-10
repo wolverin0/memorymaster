@@ -18,7 +18,7 @@ import json
 import sqlite3
 from typing import Any
 
-from memorymaster._storage_shared import connect_ro
+from memorymaster.stores._storage_shared import connect_ro
 from memorymaster.knowledge.rule_miner import rule_fingerprint
 from memorymaster.knowledge.rules import is_rule, parse_rule
 

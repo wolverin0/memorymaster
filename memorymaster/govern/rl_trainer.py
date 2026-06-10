@@ -44,7 +44,7 @@ def train_quality_model(db_path: str) -> dict:
 
     # Try sklearn training
     try:
-        from memorymaster._storage_shared import connect_ro
+        from memorymaster.stores._storage_shared import connect_ro
         conn = connect_ro(db_path)
 
         # Build training data from quality_scores + usage_feedback

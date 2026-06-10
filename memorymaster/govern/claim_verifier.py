@@ -17,7 +17,7 @@ import re
 import subprocess
 from typing import Any
 
-from memorymaster._storage_shared import connect_ro
+from memorymaster.stores._storage_shared import connect_ro
 
 logger = logging.getLogger(__name__)
 

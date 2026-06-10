@@ -9,7 +9,7 @@ import pytest
 
 
 def _fresh_store(tmp: Path):
-    from memorymaster.storage import SQLiteStore
+    from memorymaster.stores.storage import SQLiteStore
 
     db = tmp / "memory.db"
     store = SQLiteStore(str(db))
@@ -55,7 +55,7 @@ def test_schema_has_wiki_article_index(tmp_path: Path) -> None:
 
 
 def test_migration_is_idempotent(tmp_path: Path) -> None:
-    from memorymaster.storage import SQLiteStore
+    from memorymaster.stores.storage import SQLiteStore
 
     db = tmp_path / "memory.db"
     SQLiteStore(str(db)).init_db()
@@ -90,7 +90,7 @@ def test_stamp_wiki_binding_silent_on_empty(tmp_path: Path) -> None:
 
 
 def test_row_to_claim_reads_wiki_article(tmp_path: Path) -> None:
-    from memorymaster._storage_read import _ReadMixin
+    from memorymaster.stores._storage_read import _ReadMixin
 
     _, db = _fresh_store(tmp_path)
     cid = _insert_claim(db, "qdrant runs on vm")

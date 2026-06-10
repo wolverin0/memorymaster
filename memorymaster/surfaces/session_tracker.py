@@ -7,7 +7,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from memorymaster._storage_shared import open_conn
+from memorymaster.stores._storage_shared import open_conn
 
 logger = logging.getLogger(__name__)
 

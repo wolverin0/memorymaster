@@ -101,7 +101,7 @@ class TestSQLiteStoreRetry:
 
     @patch("memorymaster.retry.time.sleep")
     def test_sqlite_connect_retries_on_failure(self, mock_sleep):
-        from memorymaster.storage import SQLiteStore
+        from memorymaster.stores.storage import SQLiteStore
 
         store = SQLiteStore(":memory:")
 

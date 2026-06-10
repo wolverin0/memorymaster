@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from memorymaster._storage_shared import utc_now
+from memorymaster.stores._storage_shared import utc_now
 from memorymaster.lifecycle import can_transition
 from memorymaster.models import Claim
 

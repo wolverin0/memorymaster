@@ -38,7 +38,7 @@ from memorymaster.security import resolve_allow_sensitive_access
 
 def _handle_create_snapshot(args: argparse.Namespace, db_resolved: Path) -> int:
     """Handle snapshot creation."""
-    from memorymaster.snapshot import create_snapshot
+    from memorymaster.stores.snapshot import create_snapshot
 
     t0 = time.perf_counter()
     info = create_snapshot(db_resolved, workspace_root=Path(args.workspace).resolve(), message=args.message)
@@ -56,7 +56,7 @@ def _handle_create_snapshot(args: argparse.Namespace, db_resolved: Path) -> int:
 
 def _handle_list_snapshots(db_resolved: Path, args: argparse.Namespace) -> int:
     """Handle listing snapshots."""
-    from memorymaster.snapshot import list_snapshots
+    from memorymaster.stores.snapshot import list_snapshots
 
     t0 = time.perf_counter()
     snaps = list_snapshots(db_resolved)
@@ -76,7 +76,7 @@ def _handle_list_snapshots(db_resolved: Path, args: argparse.Namespace) -> int:
 
 def _handle_rollback(args: argparse.Namespace, db_resolved: Path) -> int:
     """Handle snapshot rollback."""
-    from memorymaster.snapshot import rollback
+    from memorymaster.stores.snapshot import rollback
 
     if not args.yes:
         try:
@@ -99,7 +99,7 @@ def _handle_rollback(args: argparse.Namespace, db_resolved: Path) -> int:
 
 def _handle_diff(args: argparse.Namespace, db_resolved: Path) -> int:
     """Handle snapshot diff."""
-    from memorymaster.snapshot import diff_snapshot
+    from memorymaster.stores.snapshot import diff_snapshot
 
     t0 = time.perf_counter()
     result = diff_snapshot(db_resolved, args.snapshot_id)
@@ -122,7 +122,7 @@ def _handle_diff(args: argparse.Namespace, db_resolved: Path) -> int:
 
 def _handle_install_hook(args: argparse.Namespace) -> int:
     """Handle git hook installation."""
-    from memorymaster.snapshot import install_git_hook
+    from memorymaster.stores.snapshot import install_git_hook
 
     t0 = time.perf_counter()
     result = install_git_hook(Path(args.workspace).resolve())
@@ -1479,11 +1479,11 @@ def _handle_migrate(args: argparse.Namespace, service, parser: argparse.Argument
     --list: dump known migrations (version + description) without touching the DB.
     --status: query the DB and show applied vs pending per migration.
     """
-    from memorymaster.migrations import (
+    from memorymaster.stores.migrations import (
         MigrationRunner,
         discover_migrations,
     )
-    from memorymaster.store_factory import is_postgres_dsn
+    from memorymaster.stores.store_factory import is_postgres_dsn
 
     # --list works without a DB connection at all.
     if getattr(args, "list", False):

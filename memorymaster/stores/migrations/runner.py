@@ -70,7 +70,7 @@ class Migration:
         return hashlib.sha256(self.source_path.read_bytes()).hexdigest()
 
 
-def discover_migrations(package: str = "memorymaster.migrations") -> list[Migration]:
+def discover_migrations(package: str = "memorymaster.stores.migrations") -> list[Migration]:
     """Return all migrations in ``package``, sorted by version ascending.
 
     A migration module must define ``VERSION`` (int), ``DESCRIPTION`` (str),

@@ -22,7 +22,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from memorymaster._storage_shared import open_conn
+from memorymaster.stores._storage_shared import open_conn
 from memorymaster.config import get_config
 
 logger = logging.getLogger(__name__)

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 import contextlib
 
-from memorymaster._storage_shared import open_conn
+from memorymaster.stores._storage_shared import open_conn
 
 
 def _utc_now_iso() -> str:

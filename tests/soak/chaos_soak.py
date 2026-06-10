@@ -223,7 +223,7 @@ def _stop_fleet(run: SoakRun) -> None:
 
 
 def _quick_check(db: Path) -> list[str]:
-    from memorymaster._storage_shared import connect_ro
+    from memorymaster.stores._storage_shared import connect_ro
 
     conn = connect_ro(db, query_ms=60000)
     try:
@@ -233,7 +233,7 @@ def _quick_check(db: Path) -> list[str]:
 
 
 def _fk_orphans(db: Path) -> int:
-    from memorymaster._storage_shared import connect_ro
+    from memorymaster.stores._storage_shared import connect_ro
 
     conn = connect_ro(db, query_ms=60000)
     try:
@@ -300,7 +300,7 @@ def _reconcile(db: Path, ledger_dir: Path) -> dict[str, object]:
     and replay idempotency (a crashed-then-re-drained spool line, or a
     re-acked key after respawn, never duplicates a claim).
     """
-    from memorymaster._storage_shared import connect_ro
+    from memorymaster.stores._storage_shared import connect_ro
 
     acked = _read_ledgers(ledger_dir)
     lost: list[str] = []

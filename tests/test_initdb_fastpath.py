@@ -26,10 +26,10 @@ from pathlib import Path
 
 import pytest
 
-import memorymaster.migrations
-import memorymaster.migrations.runner
-import memorymaster.storage as storage_mod
-from memorymaster.storage import SQLiteStore, schema_stamp
+import memorymaster.stores.migrations
+import memorymaster.stores.migrations.runner
+import memorymaster.stores.storage as storage_mod
+from memorymaster.stores.storage import SQLiteStore, schema_stamp
 
 FLAG = "MEMORYMASTER_INITDB_FASTPATH"
 
@@ -51,14 +51,14 @@ def counters(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
 
     monkeypatch.setattr(SQLiteStore, "_ensure_fts5_schema", staticmethod(counting_ensure))
 
-    real_apply = memorymaster.migrations.MigrationRunner.apply_pending
+    real_apply = memorymaster.stores.migrations.MigrationRunner.apply_pending
 
     def counting_apply(self):  # noqa: ANN001
         counts["migrate"] += 1
         return real_apply(self)
 
     monkeypatch.setattr(
-        memorymaster.migrations.MigrationRunner, "apply_pending", counting_apply
+        memorymaster.stores.migrations.MigrationRunner, "apply_pending", counting_apply
     )
     return counts
 
@@ -186,7 +186,7 @@ def test_new_migration_changes_stamp_and_forces_full_path(
     def _apply(conn) -> None:  # noqa: ANN001
         applied["n"] += 1
 
-    fake = memorymaster.migrations.runner.Migration(
+    fake = memorymaster.stores.migrations.runner.Migration(
         version=9999,
         description="synthetic fast-path test migration",
         module_name="tests.synthetic_9999",
@@ -194,17 +194,17 @@ def test_new_migration_changes_stamp_and_forces_full_path(
         apply_sqlite=_apply,
         apply_postgres=_apply,
     )
-    real_discover = memorymaster.migrations.discover_migrations
+    real_discover = memorymaster.stores.migrations.discover_migrations
 
     def discover_plus_fake(
-        package: str = "memorymaster.migrations",
-    ) -> list[memorymaster.migrations.runner.Migration]:
+        package: str = "memorymaster.stores.migrations",
+    ) -> list[memorymaster.stores.migrations.runner.Migration]:
         return [*real_discover(package), fake]
 
     # Patch every namespace that resolves discover_migrations at call time:
     # schema_stamp imports from the package; MigrationRunner.apply_pending
     # resolves it from the runner module's globals.
-    for ns in (memorymaster.migrations, memorymaster.migrations.runner):
+    for ns in (memorymaster.stores.migrations, memorymaster.stores.migrations.runner):
         assert isinstance(ns, types.ModuleType)
         monkeypatch.setattr(ns, "discover_migrations", discover_plus_fake)
 

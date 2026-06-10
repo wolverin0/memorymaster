@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 
 from memorymaster.lifecycle import transition_claim
-from memorymaster.storage import SQLiteStore
+from memorymaster.stores.storage import SQLiteStore
 from memorymaster.knowledge.wiki_engine import absorb_single_claim
 
 

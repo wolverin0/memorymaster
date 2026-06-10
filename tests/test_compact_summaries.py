@@ -13,7 +13,7 @@ from memorymaster.govern.jobs.compact_summaries import (
     run,
 )
 from memorymaster.models import CitationInput
-from memorymaster.storage import SQLiteStore
+from memorymaster.stores.storage import SQLiteStore
 
 
 @pytest.fixture

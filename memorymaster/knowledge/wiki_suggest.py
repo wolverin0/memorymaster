@@ -13,7 +13,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from memorymaster._storage_shared import connect_ro
+from memorymaster.stores._storage_shared import connect_ro
 from memorymaster.knowledge.entity_graph import EntityGraph
 
 _WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_\-]*")

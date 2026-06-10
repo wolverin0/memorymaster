@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from memorymaster import observability
-from memorymaster._storage_shared import ConcurrentModificationError
+from memorymaster.stores._storage_shared import ConcurrentModificationError
 from memorymaster.lifecycle import can_transition, transition_claim
 
 

@@ -7,7 +7,7 @@ from memorymaster.knowledge.vault_linter import lint_vault
 
 
 def _fresh_db(tmp_path: Path) -> Path:
-    from memorymaster.storage import SQLiteStore
+    from memorymaster.stores.storage import SQLiteStore
 
     db = tmp_path / "memory.db"
     SQLiteStore(str(db)).init_db()
