@@ -23,6 +23,8 @@ import logging
 import sqlite3
 from typing import Any
 
+from memorymaster._storage_shared import open_conn
+
 logger = logging.getLogger(__name__)
 
 # Known pre-#128 junk content prefixes (internal LLM prompts that the broken
@@ -35,10 +37,7 @@ _JUNK_PREFIXES: tuple[str, ...] = (
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL")
-    return conn
+    return open_conn(db_path)
 
 
 def _verbatim_present(conn: sqlite3.Connection) -> bool:

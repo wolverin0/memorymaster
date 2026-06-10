@@ -45,10 +45,13 @@ except Exception as e:
 
 # Auto-archive: stale claims never accessed, older than 14 days
 try:
-    import sqlite3
     from datetime import datetime, timedelta
+
+    # Uniform pragma envelope (WAL + busy_timeout=15000) — a raw connect here
+    # had busy_timeout=0 and could lose the UPDATE to a write race (spec F8).
+    from memorymaster._storage_shared import open_conn
     cutoff = (datetime.now() - timedelta(days=14)).isoformat()
-    conn = sqlite3.connect(DB_PATH)
+    conn = open_conn(DB_PATH)
     conn.execute("""
         UPDATE claims SET status = 'archived', archived_at = datetime('now')
         WHERE status = 'stale' AND access_count = 0 AND created_at < ?

@@ -22,6 +22,8 @@ from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
+from memorymaster._storage_shared import connect_ro, open_conn
+
 logger = logging.getLogger(__name__)
 
 # v3.9.1 S2 — once-per-process so the missing-table warning doesn't spam recall callers.
@@ -138,7 +140,7 @@ def rebuild_edges(
         "supersession_edges": 0,
         "shares_entity_edges": 0,
     }
-    conn = sqlite3.connect(str(db_path))
+    conn = open_conn(db_path)
     try:
         ensure_claim_edges_schema(conn)
         now = datetime.now(timezone.utc).isoformat()
@@ -232,7 +234,12 @@ def walk_neighbors(
     queue: deque[tuple[int, int]] = deque()
     for s in seed_claim_ids:
         queue.append((int(s), 0))
-    conn = sqlite3.connect(str(db_path))
+    try:
+        # Read-only: BFS never writes, and a missing DB file must keep the
+        # recall hook's silent-fail invariant (empty result, not a raise).
+        conn = connect_ro(db_path)
+    except sqlite3.OperationalError:
+        return {}
     try:
         while queue:
             cid, depth = queue.popleft()

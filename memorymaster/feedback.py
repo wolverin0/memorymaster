@@ -14,6 +14,8 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 
+from memorymaster._storage_shared import open_conn
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,10 +26,7 @@ class FeedbackTracker:
         self.db_path = db_path
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        return conn
+        return open_conn(self.db_path)
 
     def ensure_tables(self) -> None:
         """Create feedback tables if they don't exist."""

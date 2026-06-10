@@ -85,8 +85,14 @@ def evolve_skills(db_path: str, *, min_feedback: int = 20) -> dict:
     Returns: {"generated": int, "ingested": int, "skipped_reason": str | None}
     """
     import sqlite3
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+
+    from memorymaster._storage_shared import connect_ro
+
+    try:
+        # Read-only analysis; a missing DB keeps the skip contract.
+        conn = connect_ro(db_path)
+    except sqlite3.OperationalError:
+        return {"generated": 0, "ingested": 0, "skipped_reason": "no feedback table"}
 
     try:
         # Check if enough feedback exists

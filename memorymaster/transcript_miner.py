@@ -17,11 +17,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 # Credential detection delegated to the canonical filter in
 # memorymaster.security — single source of truth.
 from memorymaster.security import redact_text as _redact_text
+
+logger = logging.getLogger(__name__)
 
 
 def _contains_sensitive(text: str) -> bool:
@@ -64,7 +64,7 @@ def mine_transcript(
 
     Returns: {scanned, ingested, skipped, duplicates}
     """
-    import sqlite3
+    from memorymaster._storage_shared import open_conn
 
     path = Path(transcript_path)
     if not path.exists():
@@ -72,7 +72,7 @@ def mine_transcript(
 
     stats = {"scanned": 0, "ingested": 0, "skipped": 0, "duplicates": 0}
 
-    conn = sqlite3.connect(db_path)
+    conn = open_conn(db_path)
     now = datetime.now(timezone.utc).isoformat()
 
     # Read transcript

@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from memorymaster import llm_budget, llm_provider
+from memorymaster._storage_shared import open_conn
 from memorymaster.embeddings import EmbeddingProvider, cosine_similarity, create_best_provider
 from memorymaster.lifecycle import transition_claim
 from memorymaster.models import Claim
@@ -79,12 +80,10 @@ def _connect_verdict_cache(db_path: str) -> sqlite3.Connection:
     (the steward, the recall hook, sync, etc. all touch the same file). Without
     them a concurrent writer turns the verdict INSERT into ``database is locked``,
     which re-pays the LLM cost and (per-claim path) counts as a probe error toward
-    the circuit breaker. The pragmas mirror ``EntityGraph._connect`` / the store.
+    the circuit breaker. open_conn supplies the uniform envelope; keep the
+    historical 30 s grace window for verdict INSERTs racing the steward.
     """
-    conn = sqlite3.connect(db_path, timeout=30.0)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")
-    return conn
+    return open_conn(db_path, busy_ms=30000)
 
 
 def _canonical_pair(a_id: int, b_id: int) -> tuple[int, int]:

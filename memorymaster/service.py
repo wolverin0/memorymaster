@@ -10,7 +10,7 @@ import os
 
 from memorymaster import candidate_dedupe, llm_budget, observability, query_cache
 from memorymaster.embeddings import EmbeddingProvider, create_best_provider
-from memorymaster.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, validator
+from memorymaster.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, integrity, qdrant_reconcile, spool_drain, validator
 from memorymaster.models import ActionProposal, CitationInput, Claim, ClaimLink, Event, EvidenceItem, ExternalSource, MediaRetryItem, SourceItem
 from memorymaster.policy import select_revalidation_candidates
 from memorymaster.context_optimizer import ContextResult, pack_context
@@ -285,8 +285,13 @@ class MemoryService:
         *,
         policy_config: Mapping[str, object] | None = None,
         tenant_id: str | None = None,
+        read_only: bool = False,
     ) -> None:
-        self.store = create_store(db_target)
+        # read_only (P1 WAL-discipline, spec §2.2): SQLite store opens
+        # mode=ro + query_only connections; _record_accesses spools its
+        # access/feedback signal instead of writing. Used by the per-prompt
+        # recall hook under MEMORYMASTER_WAL_DISCIPLINE=1.
+        self.store = create_store(db_target, read_only=read_only)
         self.workspace_root = Path(workspace_root) if workspace_root else Path.cwd()
         self._embedding_provider: EmbeddingProvider | None = None
         self.policy_config = policy_config
@@ -602,6 +607,32 @@ class MemoryService:
         budget_snapshot.setdefault("aborted", False)
         result["budget"] = budget_snapshot
         self._qdrant_post_cycle_sync()
+        # Integrity steward phase (P1 spec §2.5) — checkpoint every cycle,
+        # quick_check/fk_check daily, VACUUM INTO weekly. Additive and
+        # default-on; never allowed to break the cycle itself.
+        try:
+            result["integrity"] = integrity.run(self.store)
+        except Exception as exc:
+            logger.warning("integrity phase failed: %s", exc)
+            result["integrity"] = {"error": str(exc)}
+        # Qdrant reconciliation (P1 spec §2.7) — daily drift metric; full
+        # sync_all + orphan-point delete only when |drift| exceeds
+        # MEMORYMASTER_QDRANT_DRIFT_MAX. Clean skip when QDRANT_URL is unset
+        # (self.qdrant is None); never allowed to break the cycle itself.
+        try:
+            result["qdrant_reconcile"] = qdrant_reconcile.run(self.store, self.qdrant)
+        except Exception as exc:
+            logger.warning("qdrant reconcile phase failed: %s", exc)
+            result["qdrant_reconcile"] = {"error": str(exc)}
+        # Spool drain (P1 spec §2.4) — replay spooled access/feedback/ingest/
+        # verbatim/dream envelopes through the normal service paths (the
+        # sensitivity filter applies via svc.ingest). Cheap no-op when the
+        # spool is empty; never allowed to break the cycle itself.
+        try:
+            result["spool_drain"] = spool_drain.run(self)
+        except Exception as exc:
+            logger.warning("spool drain phase failed: %s", exc)
+            result["spool_drain"] = {"error": str(exc)}
         return result
 
     def query(
@@ -1032,12 +1063,26 @@ class MemoryService:
         return results
 
     def _record_accesses(self, rows: list[dict[str, Any]], query_text: str = "") -> None:
-        """Record access + feedback for each claim returned by a query."""
+        """Record access + feedback for each claim returned by a query.
+
+        On a read-only store (P1 WAL-discipline, spec §2.2) the direct
+        UPDATE would raise OperationalError — and the suppress(Exception)
+        below would silently eat it, killing the tiering/decay/quality
+        signal (the F9 silent-regression). The RO branch instead appends
+        spool lines that the steward drain replays through
+        record_accesses_batch / FeedbackTracker, so no signal is lost.
+        """
         claim_ids = []
         for row in rows:
             claim = row.get("claim")
             if claim is not None:
                 claim_ids.append(claim.id)
+        if not claim_ids:
+            return
+
+        if getattr(self.store, "read_only", False):
+            self._spool_accesses(claim_ids, query_text)
+            return
 
         # Batch record accesses in a single transaction if possible
         if claim_ids and hasattr(self.store, "record_accesses_batch"):
@@ -1060,6 +1105,38 @@ class MemoryService:
                     ft.record_retrieval(claim_ids, query_text)
             except Exception:
                 pass  # best-effort
+
+    def _spool_accesses(self, claim_ids: list[int], query_text: str) -> None:
+        """RO-store branch of _record_accesses: spool, don't write.
+
+        Appends ``access`` (+ ``feedback`` when there is a query) envelopes
+        to the JSONL spool (spool.py); jobs/spool_drain replays them through
+        the exact same sinks the RW path uses (record_accesses_batch,
+        FeedbackTracker.record_retrieval). Best-effort like the RW path —
+        a spool I/O failure must never break recall.
+        """
+        db_path = str(getattr(self.store, "db_path", "") or "")
+        if not db_path:
+            return
+        import hashlib
+
+        from memorymaster import spool
+
+        query_hash = (
+            hashlib.sha1(query_text.encode("utf-8")).hexdigest()[:12]
+            if query_text
+            else None
+        )
+        with contextlib.suppress(Exception):
+            spool.append(
+                db_path, "access", {"claim_ids": claim_ids, "query_hash": query_hash}
+            )
+            if query_text:
+                spool.append(
+                    db_path,
+                    "feedback",
+                    {"claim_ids": claim_ids, "query_text": query_text},
+                )
 
     def recompute_tiers(self) -> dict[str, int]:
         """Recompute tier assignments for all non-archived claims."""

@@ -22,6 +22,8 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
+from memorymaster._storage_shared import connect_ro
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,8 +36,8 @@ def generate_daily_note(db_path: str, date: str | None = None) -> dict:
     if date is None:
         date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    # Report is read-only; per-table queries below stay defensively wrapped.
+    conn = connect_ro(db_path)
 
     try:
         # What was queried today?
@@ -125,8 +127,11 @@ def find_ghost_notes(db_path: str, min_references: int = 3) -> list[dict]:
     but has fewer than 2 confirmed claims about it. These are the ideas
     worth fleshing out.
     """
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    try:
+        # Read-only; a missing DB keeps the empty-result contract.
+        conn = connect_ro(db_path)
+    except sqlite3.OperationalError:
+        return []
 
     try:
         # Get all query texts from feedback

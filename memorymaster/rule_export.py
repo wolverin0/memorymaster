@@ -18,6 +18,7 @@ import json
 import sqlite3
 from typing import Any
 
+from memorymaster._storage_shared import connect_ro
 from memorymaster.rule_miner import rule_fingerprint
 from memorymaster.rules import is_rule, parse_rule
 
@@ -45,9 +46,12 @@ def _correction_counts(db_path: str, fingerprints: set[str]) -> dict[str, int]:
     """
     if not db_path or "://" in db_path or not fingerprints:
         return {}
-    conn = sqlite3.connect(db_path)
     try:
-        conn.row_factory = sqlite3.Row
+        # Read-only stats lookup; a missing DB keeps the empty-map contract.
+        conn = connect_ro(db_path)
+    except sqlite3.Error:
+        return {}
+    try:
         try:
             rows = conn.execute(
                 "SELECT rule_fingerprint, correction_count FROM rule_stats"

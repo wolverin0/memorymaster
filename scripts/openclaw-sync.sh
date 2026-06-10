@@ -1,4 +1,15 @@
 #!/bin/bash
+# RETIRED 2026-06-10 — DO NOT RE-ENABLE.
+# This script scp-uploads a merged DB copy OVER the live memorymaster.db while
+# ~12 Windows writer processes hold it open in WAL mode. Overwriting the main
+# DB file out from under live WAL writers is the prime suspect for the
+# 2026-06-05 idx_verbatim_session btree corruption (see
+# scripts/recover_db_indexcorrupt.py and P1 spec F6). Use the hermes delta
+# sync instead. If you hit this guard from a forgotten VM cron, remove the
+# crontab entry (see scripts/RUNBOOK-wal-truncate.md, "VM crontab audit").
+echo "RETIRED 2026-06-10: scp-over-live-DB corrupts; use hermes delta sync" >&2
+exit 1
+
 # Bidirectional MemoryMaster sync between OpenClaw (Linux) and Windows PC.
 #
 # Replaces the old OVERWRITE sync with a proper MERGE:

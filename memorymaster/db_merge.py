@@ -16,6 +16,8 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from memorymaster._storage_shared import connect_ro, open_conn
+
 logger = logging.getLogger(__name__)
 
 
@@ -282,15 +284,11 @@ def _open_target(target_db: str) -> sqlite3.Connection:
 
     WAL + a busy_timeout are mandatory for the shared OpenClaw DB: without them
     a long merge transaction races concurrent readers/writers and surfaces
-    sporadic ``database is locked`` errors. ``timeout`` is the connect-level
-    busy handler; the explicit PRAGMA mirrors storage.py's WAL guarantee.
+    sporadic ``database is locked`` errors. open_conn supplies the uniform
+    envelope; the merge keeps its historical 30 s grace window (a long merge
+    transaction tolerates more contention than the 15 s fleet default).
     """
-    conn = sqlite3.connect(target_db, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA busy_timeout = 30000")
-    return conn
+    return open_conn(target_db, busy_ms=30000)
 
 
 def _max_schema_version(conn: sqlite3.Connection) -> int | None:
@@ -343,8 +341,9 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
     if not Path(source_db).exists():
         raise FileNotFoundError(f"Source DB not found: {source_db}")
 
-    src = sqlite3.connect(source_db, timeout=30.0)
-    src.row_factory = sqlite3.Row
+    # Merge only reads from the source — RO mode means no lock is ever taken
+    # on it (it may be another fleet's live DB). 30 s matches the old timeout.
+    src = connect_ro(source_db, query_ms=30000)
     tgt = _open_target(target_db)
 
     try:

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 # Credential detection delegated to the canonical filter in memorymaster.security.
+from memorymaster._storage_shared import open_conn
 from memorymaster.security import redact_text as _redact_text
 
 logger = logging.getLogger(__name__)
@@ -60,10 +61,48 @@ EMBED_DIM = 1536  # text-embedding-3-small
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL")
-    return conn
+    # open_conn supplies WAL + busy_timeout=15000. The timeout is mandatory
+    # on this connection: verbatim_memories is the hottest write path (Stop
+    # hook + MCP per-turn inserts), and the 2026-06-05 btree corruption was
+    # confined to idx_verbatim_session on this exact table. Without it, the
+    # loser of a write race raises "database is locked" immediately and
+    # drops the turn (spec §2.1/§2.8).
+    return open_conn(db_path)
+
+
+# Mirrors the live DB's DDL exactly (verified via sqlite_master 2026-06-10).
+# Historically the table was created out-of-band by the Stop hook; under the
+# P1 spool regime (spec §2.3) the hook never opens the DB, so the spool
+# drainer needs a first-class way to create it on a fresh DB.
+_VERBATIM_SCHEMA = """
+CREATE TABLE IF NOT EXISTS verbatim_memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'project',
+    timestamp TEXT NOT NULL,
+    source_agent TEXT DEFAULT '',
+    embedding_synced INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS verbatim_fts USING fts5(
+    content,
+    content='verbatim_memories',
+    content_rowid='id',
+    tokenize='porter unicode61'
+);
+CREATE INDEX IF NOT EXISTS idx_verbatim_session ON verbatim_memories(session_id);
+CREATE INDEX IF NOT EXISTS idx_verbatim_session_content
+    ON verbatim_memories(session_id, content);
+"""
+
+
+def ensure_verbatim_schema(db_path: str) -> None:
+    """Create the verbatim tables/indexes if absent (idempotent)."""
+    with closing(_connect(db_path)) as conn:
+        conn.executescript(_VERBATIM_SCHEMA)
+        conn.commit()
 
 
 def store_verbatim(

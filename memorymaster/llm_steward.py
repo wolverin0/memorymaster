@@ -24,6 +24,8 @@ import urllib.error
 from dataclasses import dataclass, field
 from typing import Any
 
+from memorymaster._storage_shared import open_conn
+
 log = logging.getLogger(__name__)
 
 DEFAULT_COOLDOWN_SECONDS = 60.0
@@ -631,16 +633,12 @@ def run_steward(
     if not model:
         model = cfg["default_model"]
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
     # MED audit fix: the steward holds write transactions across time.sleep(delay)
     # between LLM calls. Without WAL + a busy_timeout this writer blocks (and is
     # blocked by) every other writer on the shared DB, and busy_timeout=0 turns a
     # momentary lock into an immediate "database is locked" error → lost writes.
-    # WAL lets readers proceed; busy_timeout gives concurrent writers a grace
-    # window instead of failing instantly. Mirrors storage.py's connect() guarantee.
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA busy_timeout = 5000")
+    # open_conn supplies WAL + busy_timeout=15000 (uniform fleet envelope).
+    conn = open_conn(db_path)
 
     # Optional scope filter: when set, only that exact scope's candidates are
     # processed. When None, behaviour is unchanged (all scopes, id order).

@@ -30,8 +30,13 @@ from memorymaster.cli_handlers_basic import (
     _handle_wiki_suggest_links,
     handle_mcp_usage_report,
 )
+from memorymaster.cli_handlers_integrity import _handle_drain_spool, _handle_integrity, _handle_qdrant_reconcile, _handle_repair_fk
 
 
+COMMAND_HANDLERS["integrity"] = _handle_integrity
+COMMAND_HANDLERS["repair-fk"] = _handle_repair_fk
+COMMAND_HANDLERS["qdrant-reconcile"] = _handle_qdrant_reconcile
+COMMAND_HANDLERS["drain-spool"] = _handle_drain_spool
 COMMAND_HANDLERS["entity-graph-export"] = _handle_entity_graph_export
 COMMAND_HANDLERS["recompute-confidence-priors"] = _handle_recompute_confidence_priors
 COMMAND_HANDLERS["wiki-suggest-links"] = _handle_wiki_suggest_links
@@ -409,9 +414,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("install-hook", help="Install a git post-commit hook that auto-snapshots the DB")
 
+    integrity_cmd = sub.add_parser("integrity", help="DB integrity ops: WAL checkpoint, quick_check, fk_check, VACUUM INTO snapshot (P1 steward phase); no flags = full throttled phase")
+    integrity_cmd.add_argument("--checkpoint", action="store_true", help="Run PRAGMA wal_checkpoint(TRUNCATE) now")
+    integrity_cmd.add_argument("--quick-check", action="store_true", help="Run PRAGMA quick_check now (bypasses the daily throttle)")
+    integrity_cmd.add_argument("--fk-check", action="store_true", help="Run PRAGMA foreign_key_check now (bypasses the daily throttle)")
+    integrity_cmd.add_argument("--vacuum-snapshot", action="store_true", help="Run VACUUM INTO snapshot now (bypasses the weekly throttle)")
+    integrity_cmd.add_argument("--status", action="store_true", help="Show WAL size, promotion-freeze sentinel, last phase runs, snapshots")
+
+    repair_fk_cmd = sub.add_parser("repair-fk", help="Repair orphan foreign-key rows (P1 spec §2.6); dry-run by default, --apply quarantines + repairs in one transaction")
+    repair_fk_cmd.add_argument("--apply", action="store_true", help="Actually repair (default: dry-run report only)")
+    repair_fk_cmd.add_argument("--quarantine-dir", default="", help="Where to write the fk-repair-<ts>.jsonl audit export (default: ~/.memorymaster/quarantine/)")
+
     qdrant_sync = sub.add_parser("qdrant-sync", help="Bulk-sync all active claims to Qdrant vector store")
     qdrant_sync.add_argument("--qdrant-url", default="", help="Qdrant endpoint (default: $QDRANT_URL or localhost:6333)")
     qdrant_sync.add_argument("--ollama-url", default="", help="Ollama endpoint (default: $OLLAMA_URL or localhost:11434)")
+
+    qdrant_rec = sub.add_parser("qdrant-reconcile", help="Reconcile SQLite truth vs Qdrant point count (P1 spec §2.7); sync_all + orphan delete when drift exceeds threshold")
+    qdrant_rec.add_argument("--full", action="store_true", help="Force sync_all + orphan-point delete regardless of drift")
+    qdrant_rec.add_argument("--threshold", type=int, default=None, help="Drift threshold override (default: $MEMORYMASTER_QDRANT_DRIFT_MAX or 100)")
+
+    sub.add_parser("drain-spool", help="Replay spooled JSONL write envelopes through the normal service paths (P1 spec §2.4); sensitivity filter + idempotent dedup apply")
 
     qdrant_search = sub.add_parser("qdrant-search", help="Semantic search via Qdrant vector store")
     qdrant_search.add_argument("text", help="Query text for semantic search")

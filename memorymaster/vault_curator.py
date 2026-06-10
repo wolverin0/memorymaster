@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import logging
 import re
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from memorymaster._storage_shared import connect_ro
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,7 @@ def _scope_dirname(scope: str) -> str:
 
 def _load_claims(db_path: str, scope_filter: str | None = None) -> list[dict]:
     """Load confirmed + candidate claims from DB."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    conn = connect_ro(db_path)
 
     query = """SELECT id, text, claim_type, subject, predicate, object_value,
                scope, confidence, status, created_at, updated_at, human_id

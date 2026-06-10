@@ -11,13 +11,14 @@ from memorymaster._storage_schema import _SchemaMixin
 # Re-export shared helpers for backward compat with external imports.
 from memorymaster._storage_shared import (
     EVENT_HASH_ALGO as EVENT_HASH_ALGO,
+    connect_ro as connect_ro,
     generate_human_id_hash as generate_human_id_hash,
     generate_top_level_human_id as generate_top_level_human_id,
+    open_conn as open_conn,
     utc_now as utc_now,
 )
 from memorymaster._storage_sources import _SourceItemsMixin
 from memorymaster._storage_write_claims import _WriteClaimsMixin
-from memorymaster.retry import connect_with_retry
 from memorymaster.schema import load_schema_sql
 
 logger = logging.getLogger(__name__)
@@ -25,31 +26,44 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "EVENT_HASH_ALGO",
     "SQLiteStore",
+    "connect_ro",
     "generate_human_id_hash",
     "generate_top_level_human_id",
+    "open_conn",
     "utc_now",
 ]
 
 
 class SQLiteStore(_SchemaMixin, _ReadMixin, _WriteClaimsMixin, _LifecycleMixin, _SourceItemsMixin):
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, read_only: bool = False) -> None:
         self.db_path = str(db_path)
+        # P1 WAL-discipline (spec §2.2): an RO store hands out mode=ro +
+        # query_only connections from connect(), so every read path — and
+        # every side lookup that goes through the store — follows
+        # automatically, and the store can NEVER take a write lock. Write
+        # attempts raise sqlite3.OperationalError instead of silently
+        # contending with the fleet's writers.
+        self.read_only = bool(read_only)
     def connect(self) -> sqlite3.Connection:
-        def _open() -> sqlite3.Connection:
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA foreign_keys = ON")
-            conn.execute("PRAGMA journal_mode = WAL")
-            # Shared-DB writers (Stop hook + steward + MCP) contend on the same
-            # file. Without busy_timeout, the loser of a write race raises an
-            # unhandled "database is locked" OperationalError that aborts the
-            # ingest/transition and LOSES the write. Make the loser wait instead.
-            # Matches operator_queue.py / wiki_engine.py (5000ms).
-            conn.execute("PRAGMA busy_timeout = 5000")
-            return conn
+        # Delegates to the canonical helper so every writer in the fleet
+        # shares one pragma envelope (WAL + foreign_keys + busy_timeout=15000,
+        # up from the historical 5000ms — strictly safer under contention).
+        # See _storage_shared.open_conn for the lost-write race rationale.
+        if self.read_only:
+            return connect_ro(self.db_path)
+        return open_conn(self.db_path)
 
-        return connect_with_retry(_open)
+    def connect_ro(self) -> sqlite3.Connection:
+        """Read-only connection that cannot take a write lock (mode=ro + query_only)."""
+        return connect_ro(self.db_path)
     def init_db(self) -> None:
+        if self.read_only:
+            # Fail loudly: a read-only store must never mutate schema. The
+            # lenient executescript fallback below would otherwise swallow
+            # the per-statement OperationalErrors and "succeed" silently.
+            raise sqlite3.OperationalError(
+                "read-only store cannot init_db; construct without read_only=True"
+            )
         with self.connect() as conn:
             try:
                 conn.executescript(load_schema_sql())

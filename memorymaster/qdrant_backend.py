@@ -193,6 +193,58 @@ class QdrantBackend:
             logger.warning("Qdrant delete failed for claim %d: %s", claim_id, exc)
             return False
 
+    def count_points(self) -> int | None:
+        """Exact point count in the collection, or None if Qdrant is unreachable.
+
+        Used by jobs/qdrant_reconcile.py as the Qdrant side of the drift
+        metric (P1 spec §2.7).
+        """
+        try:
+            resp = self._client.post(
+                f"{self.qdrant_url}/collections/{self.collection}/points/count",
+                json={"exact": True},
+            )
+            resp.raise_for_status()
+            return int((resp.json().get("result") or {}).get("count", 0))
+        except Exception as exc:
+            logger.warning("Qdrant count failed: %s", exc)
+            return None
+
+    def list_point_claim_ids(self, *, batch_size: int = 1000) -> list[int] | None:
+        """Scroll every point and return its payload claim_id; None on failure.
+
+        Lets the reconciliation job delete points whose claim is archived or
+        missing in the primary store — the half of convergence sync_all
+        (upsert-only) cannot do.
+        """
+        ids: list[int] = []
+        offset: Any = None
+        try:
+            while True:
+                body: dict[str, Any] = {
+                    "limit": batch_size,
+                    "with_payload": ["claim_id"],
+                    "with_vector": False,
+                }
+                if offset is not None:
+                    body["offset"] = offset
+                resp = self._client.post(
+                    f"{self.qdrant_url}/collections/{self.collection}/points/scroll",
+                    json=body,
+                )
+                resp.raise_for_status()
+                result = resp.json().get("result") or {}
+                for point in result.get("points", []):
+                    claim_id = (point.get("payload") or {}).get("claim_id")
+                    if claim_id is not None:
+                        ids.append(int(claim_id))
+                offset = result.get("next_page_offset")
+                if offset is None:
+                    return ids
+        except Exception as exc:
+            logger.warning("Qdrant scroll failed: %s", exc)
+            return None
+
     def search(
         self,
         query_text: str,

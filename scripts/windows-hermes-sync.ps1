@@ -173,6 +173,24 @@ try {
         Log "  delta is empty - watermark unchanged"
     }
 
+    # === 3. INTEGRITY: WAL checkpoint piggyback (P1 WAL-discipline spec §2.5) =
+    # This task already runs twice daily while the DB is quiet-ish - cheapest
+    # place to retire WAL frames so passive auto-checkpoint starvation (spec
+    # F4: a 1.44 GB -wal against the 3.47 GB DB) cannot regrow between steward
+    # cycles. Non-fatal by design: a busy checkpoint must never fail the sync.
+    try {
+        Log "running WAL checkpoint (integrity --checkpoint)..."
+        $ck = Invoke-Mm @("--db", $WinDb, "integrity", "--checkpoint")
+        if ($ck.ok) {
+            $c = $ck.data.checkpoint
+            Log ("  checkpoint: busy={0} log_frames={1} checkpointed={2} wal_bytes={3}" -f $c.busy, $c.log_frames, $c.checkpointed_frames, $c.wal_bytes)
+        } else {
+            Log ("  checkpoint returned not-ok: {0}" -f $ck.error)
+        }
+    } catch {
+        Log ("  checkpoint failed (non-fatal): {0}" -f $_)
+    }
+
     Log "DONE windows delta sync"
 }
 finally {

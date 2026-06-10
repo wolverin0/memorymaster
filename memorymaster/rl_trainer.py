@@ -44,9 +44,8 @@ def train_quality_model(db_path: str) -> dict:
 
     # Try sklearn training
     try:
-        import sqlite3
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        from memorymaster._storage_shared import connect_ro
+        conn = connect_ro(db_path)
 
         # Build training data from quality_scores + usage_feedback
         rows = conn.execute("""

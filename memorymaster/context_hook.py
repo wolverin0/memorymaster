@@ -815,6 +815,19 @@ def _query_expansion_enabled() -> bool:
     return raw not in ("0", "false", "False", "no", "off", "")
 
 
+def _wal_discipline_enabled() -> bool:
+    """P1 WAL-discipline umbrella flag (spec §2.2), default OFF.
+
+    When on, the per-prompt recall hook's MemoryService opens the DB
+    strictly read-only (mode=ro + query_only — it can never take a write
+    lock on the shared multi-GB file) and its access/feedback records are
+    spooled for the steward drain instead of UPDATEd inline. Flag off =
+    the untouched legacy RW path.
+    """
+    raw = os.environ.get("MEMORYMASTER_WAL_DISCIPLINE", "0").strip()
+    return raw not in ("0", "false", "False", "no", "off", "")
+
+
 def _apply_query_expansion(svc, query: str, token_list: list[str]) -> list[str]:
     """Augment ``token_list`` with entity-alias tokens from the raw prompt.
 

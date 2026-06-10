@@ -14,9 +14,10 @@ from __future__ import annotations
 import logging
 import os
 import re
-import sqlite3
 import subprocess
 from typing import Any
+
+from memorymaster._storage_shared import connect_ro
 
 logger = logging.getLogger(__name__)
 
@@ -93,8 +94,7 @@ def verify_claims(
 
     Returns: {checked, valid, stale_candidates, issues: [...]}
     """
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    conn = connect_ro(db_path)
 
     query = """SELECT id, text, subject, predicate, object_value, scope, human_id, confidence
                FROM claims WHERE status IN ('confirmed', 'candidate')"""

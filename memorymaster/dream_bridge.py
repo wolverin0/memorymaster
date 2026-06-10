@@ -14,6 +14,7 @@ import re
 import sqlite3
 from pathlib import Path
 
+from memorymaster._storage_shared import open_conn
 from memorymaster.security import redact_text as _redact_text
 
 log = logging.getLogger(__name__)
@@ -411,10 +412,8 @@ def _check_dream_lock(project_path: str | None) -> bool:
 # ---------------------------------------------------------------------------
 
 def _open_db(db_path: str) -> sqlite3.Connection:
-    """Open SQLite connection with row_factory."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Open SQLite connection with the uniform writer envelope."""
+    return open_conn(db_path)
 
 
 def _query_exportable_claims(

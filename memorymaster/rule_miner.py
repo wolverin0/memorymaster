@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from memorymaster import llm_budget, llm_provider
+from memorymaster._storage_shared import open_conn
 from memorymaster.models import CitationInput
 from memorymaster.rules import build_rule_fields
 from memorymaster.security import redact_text
@@ -105,10 +106,7 @@ Output ONLY JSON. No markdown fences, no commentary."""
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL")
-    return conn
+    return open_conn(db_path)
 
 
 def _ensure_miner_state(conn: sqlite3.Connection) -> None:

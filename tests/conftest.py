@@ -94,6 +94,22 @@ def _prune_case_root(root: Path) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_snapshot_dir(tmp_path_factory, monkeypatch) -> None:
+    """Keep the integrity phase's VACUUM INTO snapshots out of the real home.
+
+    WHY: run_cycle now ends with the integrity steward phase (P1 spec §2.5);
+    without this redirect every test that calls run_cycle would write a
+    mm-YYYYMMDD.db snapshot of its tiny tmp DB under the user's real
+    ~/.memorymaster/snapshots/ — and the keep-3 rotation could evict REAL
+    production snapshots. Tests must never touch operator recovery artifacts.
+    """
+    monkeypatch.setenv(
+        "MEMORYMASTER_SNAPSHOT_DIR",
+        str(tmp_path_factory.mktemp("mm-snapshots")),
+    )
+
+
+@pytest.fixture(autouse=True)
 def _cleanup_case_artifacts() -> None:
     _CASE_ROOT.mkdir(parents=True, exist_ok=True)
     # Don't prune before the test - files might be locked from previous tests
