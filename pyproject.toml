@@ -52,7 +52,7 @@ ml = ["scikit-learn>=1.3", "joblib>=1.3"]
 memorymaster = "memorymaster.surfaces.cli:main"
 memorymaster-mcp = "memorymaster.surfaces.mcp_server:main"
 memorymaster-dashboard = "memorymaster.surfaces.dashboard:main"
-memorymaster-steward = "memorymaster.llm_steward:main"
+memorymaster-steward = "memorymaster.govern.llm_steward:main"
 memorymaster-setup = "memorymaster.surfaces.setup_hooks:main"
 
 [tool.ruff]

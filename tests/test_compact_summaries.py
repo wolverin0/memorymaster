@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from memorymaster.jobs.compact_summaries import (
+from memorymaster.govern.jobs.compact_summaries import (
     _build_claim_text_block,
     _cluster_by_subject,
     _get_unsummarized_archived_claims,
@@ -135,7 +135,7 @@ class TestRunDryRun:
 
 
 class TestRunWithMockedLLM:
-    @patch("memorymaster.jobs.compact_summaries._call_llm")
+    @patch("memorymaster.govern.jobs.compact_summaries._call_llm")
     def test_creates_summary_claim(self, mock_llm, store):
         mock_llm.return_value = json.dumps({
             "summary_text": "DNS config uses Cloudflare with specific records for failover.",
@@ -179,7 +179,7 @@ class TestRunWithMockedLLM:
         derived_links = [l for l in links if l.link_type == "derived_from"]
         assert len(derived_links) == 4
 
-    @patch("memorymaster.jobs.compact_summaries._call_llm")
+    @patch("memorymaster.govern.jobs.compact_summaries._call_llm")
     def test_handles_llm_error(self, mock_llm, store):
         mock_llm.side_effect = Exception("API timeout")
 
@@ -196,7 +196,7 @@ class TestRunWithMockedLLM:
         assert result.errors == 1
         assert result.summaries_created == 0
 
-    @patch("memorymaster.jobs.compact_summaries._call_llm")
+    @patch("memorymaster.govern.jobs.compact_summaries._call_llm")
     def test_handles_empty_llm_response(self, mock_llm, store):
         mock_llm.return_value = ""
 
@@ -213,7 +213,7 @@ class TestRunWithMockedLLM:
         assert result.errors == 1
         assert result.summaries_created == 0
 
-    @patch("memorymaster.jobs.compact_summaries._call_llm")
+    @patch("memorymaster.govern.jobs.compact_summaries._call_llm")
     def test_multiple_clusters(self, mock_llm, store):
         call_count = 0
 
@@ -257,7 +257,7 @@ class TestRunNoArchivedClaims:
 
 
 class TestMaxClusterSplitting:
-    @patch("memorymaster.jobs.compact_summaries._call_llm")
+    @patch("memorymaster.govern.jobs.compact_summaries._call_llm")
     def test_splits_large_clusters(self, mock_llm, store):
         mock_llm.return_value = json.dumps({
             "summary_text": "Summary of large cluster.",

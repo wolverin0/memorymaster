@@ -42,7 +42,7 @@ def ingest_insights(
     and ``wiki_engine.absorb``. If a parent scope is already open, defers
     to it instead of opening a nested one.
     """
-    from memorymaster import llm_budget
+    from memorymaster.govern import llm_budget
 
     if llm_budget.get_current() is not None:
         return _ingest_insights_impl(

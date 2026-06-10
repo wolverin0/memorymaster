@@ -281,7 +281,7 @@ def run(
 ) -> dict[str, int]:
     # Promotion freeze (P1 spec §2.5.2): no confidence writes or transitions
     # while the integrity sentinel says the DB failed quick_check.
-    from memorymaster.jobs.integrity import promotions_frozen_for
+    from memorymaster.govern.jobs.integrity import promotions_frozen_for
 
     if promotions_frozen_for(store):
         return {

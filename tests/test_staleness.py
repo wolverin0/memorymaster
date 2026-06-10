@@ -1,4 +1,4 @@
-"""Tests for claim staleness detection (memorymaster.jobs.staleness)."""
+"""Tests for claim staleness detection (memorymaster.govern.jobs.staleness)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
-from memorymaster.jobs.staleness import (
+from memorymaster.govern.jobs.staleness import (
     StalenessResult,
     check_claim_staleness,
     run,

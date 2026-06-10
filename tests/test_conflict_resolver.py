@@ -1,4 +1,4 @@
-"""Tests for memorymaster.conflict_resolver module."""
+"""Tests for memorymaster.govern.conflict_resolver module."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 from memorymaster.models import Claim, Citation
 from memorymaster.service import MemoryService
-from memorymaster.conflict_resolver import (
+from memorymaster.govern.conflict_resolver import (
     _build_conflict_groups,
     _pick_winner,
     detect_conflicts,

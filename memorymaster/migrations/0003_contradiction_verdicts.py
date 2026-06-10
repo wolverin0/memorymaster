@@ -1,6 +1,6 @@
 """0003_contradiction_verdicts — LLM verdict cache for the contradiction probe.
 
-The suspected-contradictions probe (:mod:`memorymaster.contradiction_probe`)
+The suspected-contradictions probe (:mod:`memorymaster.govern.contradiction_probe`)
 asks an LLM whether two topically-similar claims contradict. Judging is the
 expensive step, so verdicts are cached keyed on the (canonical-ordered) claim
 pair + model + prompt_version: re-running the probe never re-pays for a pair

@@ -11,7 +11,7 @@ import json
 import time
 
 from memorymaster.surfaces.cli_helpers import _json_envelope
-from memorymaster.jobs import fk_repair, integrity, qdrant_reconcile, spool_drain
+from memorymaster.govern.jobs import fk_repair, integrity, qdrant_reconcile, spool_drain
 
 
 def _handle_integrity(

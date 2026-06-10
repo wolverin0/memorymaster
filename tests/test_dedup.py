@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from memorymaster.recall.embeddings import EmbeddingProvider
-from memorymaster.jobs.dedup import (
+from memorymaster.govern.jobs.dedup import (
     _pick_survivor,
     _subject_predicate_match,
     _text_overlap,
@@ -21,7 +21,7 @@ def _mock_best_embedding_provider(monkeypatch):
         return EmbeddingProvider(model="hash-v1", dims=768)
 
     monkeypatch.setattr("memorymaster.service.create_best_provider", provider_factory)
-    monkeypatch.setattr("memorymaster.jobs.dedup.create_best_provider", provider_factory)
+    monkeypatch.setattr("memorymaster.govern.jobs.dedup.create_best_provider", provider_factory)
 
 
 def _make_claim(

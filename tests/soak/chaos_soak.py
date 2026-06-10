@@ -250,7 +250,7 @@ def _wal_bytes(db: Path) -> int:
 def _final_drain(db: Path) -> dict[str, object]:
     """Drain any spool residue through the normal paths (rollback guarantee §5)."""
     from memorymaster import spool
-    from memorymaster.jobs import spool_drain
+    from memorymaster.govern.jobs import spool_drain
     from memorymaster.service import MemoryService
 
     svc = MemoryService(db)

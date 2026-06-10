@@ -20,7 +20,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from memorymaster import llm_budget, llm_provider
+from memorymaster import llm_provider
+from memorymaster.govern import llm_budget
 
 
 @pytest.fixture(autouse=True)

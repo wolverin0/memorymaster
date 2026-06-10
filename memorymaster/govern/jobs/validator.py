@@ -5,7 +5,7 @@ import contextlib
 from memorymaster.config import get_config
 from memorymaster.lifecycle import transition_claim
 from memorymaster.models import Claim
-from memorymaster.steward_classifier import load_classifier, predict_promote_probability
+from memorymaster.govern.steward_classifier import load_classifier, predict_promote_probability
 
 # Calibrated-classifier decision threshold — the (precision>=0.95, max recall)
 # operating point from the Pareto sweep. See
@@ -69,7 +69,7 @@ def run(
     # <db>.integrity-failed sentinel; promoting/transitioning claims through
     # a DB with a broken btree compounds the damage, so the validator no-ops
     # until the operator clears the sentinel.
-    from memorymaster.jobs.integrity import promotions_frozen_for
+    from memorymaster.govern.jobs.integrity import promotions_frozen_for
 
     if promotions_frozen_for(store):
         return {

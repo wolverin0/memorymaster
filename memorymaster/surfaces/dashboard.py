@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlparse
 
 from memorymaster.surfaces import dashboard_auth
 from memorymaster.config import get_config
-from memorymaster.review import build_review_queue, queue_to_dicts
+from memorymaster.govern.review import build_review_queue, queue_to_dicts
 from memorymaster.security import is_sensitive_claim
 from memorymaster.service import MemoryService
 import contextlib
@@ -1440,7 +1440,7 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
             self._write_json({"ok": True, "action": action, "claim": _claim_to_dict(self._server.service.pin(claim_id, pin=False))})
             return
         if action in {"approve_proposal", "reject_proposal"}:
-            from memorymaster.steward import resolve_steward_proposal
+            from memorymaster.govern.steward import resolve_steward_proposal
 
             resolved = resolve_steward_proposal(
                 self._server.service,

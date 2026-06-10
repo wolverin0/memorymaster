@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from memorymaster.jobs.validator import validation_score  # noqa: E402
+from memorymaster.govern.jobs.validator import validation_score  # noqa: E402
 
 
 class _ClaimLike:

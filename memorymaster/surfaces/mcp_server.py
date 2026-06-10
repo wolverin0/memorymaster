@@ -644,7 +644,7 @@ if FastMCP is not None:
         artifact_path: str = "artifacts/steward/steward_report.json",
     ) -> dict[str, Any]:
         """Run the stewardship loop and emit an audit report artifact."""
-        from memorymaster.steward import run_steward as _run_steward
+        from memorymaster.govern.steward import run_steward as _run_steward
 
         allow_sensitive = resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
@@ -1400,7 +1400,7 @@ if FastMCP is not None:
         include_resolved: bool = False,
     ) -> dict[str, Any]:
         """List steward proposals for human override workflow."""
-        from memorymaster.steward import list_steward_proposals as _list_steward_proposals
+        from memorymaster.govern.steward import list_steward_proposals as _list_steward_proposals
 
         svc = _service(db, workspace)
         rows = _list_steward_proposals(
@@ -1420,7 +1420,7 @@ if FastMCP is not None:
         apply_on_approve: bool = True,
     ) -> dict[str, Any]:
         """Approve or reject a steward proposal by proposal_event_id or claim_id."""
-        from memorymaster.steward import resolve_steward_proposal as _resolve_steward_proposal
+        from memorymaster.govern.steward import resolve_steward_proposal as _resolve_steward_proposal
 
         svc = _service(db, workspace)
         result = _resolve_steward_proposal(
@@ -1485,7 +1485,7 @@ if FastMCP is not None:
         db: str = "memorymaster.db",
     ) -> dict[str, Any]:
         """Recompute quality scores for all claims based on usage feedback."""
-        from memorymaster.feedback import FeedbackTracker
+        from memorymaster.govern.feedback import FeedbackTracker
         ft = FeedbackTracker(_resolve_db(db))
         ft.ensure_tables()
         result = ft.compute_quality_scores()

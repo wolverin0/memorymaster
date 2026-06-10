@@ -27,12 +27,12 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from memorymaster.steward_classifier import (  # noqa: E402
+from memorymaster.govern.steward_classifier import (  # noqa: E402
     load_classifier,
     predict_promote_probability,
     reset_cache,
 )
-from memorymaster.steward_features import (  # noqa: E402
+from memorymaster.govern.steward_features import (  # noqa: E402
     FEATURE_KEYS,
     FEATURE_VERSION,
     extract_features,

@@ -1,4 +1,4 @@
-"""Tests for memorymaster.scheduler — daemon loop, git trigger, and helpers."""
+"""Tests for memorymaster.govern.scheduler — daemon loop, git trigger, and helpers."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 
-from memorymaster.scheduler import get_git_head, run_daemon, utc_now
+from memorymaster.govern.scheduler import get_git_head, run_daemon, utc_now
 
 
 class TestUtcNow:
@@ -40,25 +40,25 @@ class TestGetGitHead:
         assert get_git_head(tmp_path) is None
 
     def test_returns_none_on_timeout(self, tmp_path):
-        with patch("memorymaster.scheduler.subprocess.run", side_effect=subprocess.TimeoutExpired("git", 10)):
+        with patch("memorymaster.govern.scheduler.subprocess.run", side_effect=subprocess.TimeoutExpired("git", 10)):
             assert get_git_head(tmp_path) is None
 
     def test_returns_none_on_os_error(self, tmp_path):
-        with patch("memorymaster.scheduler.subprocess.run", side_effect=OSError("no git")):
+        with patch("memorymaster.govern.scheduler.subprocess.run", side_effect=OSError("no git")):
             assert get_git_head(tmp_path) is None
 
     def test_returns_none_for_invalid_output(self, tmp_path):
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         mock_proc.stdout = "not-a-sha\n"
-        with patch("memorymaster.scheduler.subprocess.run", return_value=mock_proc):
+        with patch("memorymaster.govern.scheduler.subprocess.run", return_value=mock_proc):
             assert get_git_head(tmp_path) is None
 
     def test_returns_none_for_empty_output(self, tmp_path):
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         mock_proc.stdout = ""
-        with patch("memorymaster.scheduler.subprocess.run", return_value=mock_proc):
+        with patch("memorymaster.govern.scheduler.subprocess.run", return_value=mock_proc):
             assert get_git_head(tmp_path) is None
 
 
@@ -101,7 +101,7 @@ class TestRunDaemon:
             call_count += 1
             return heads[idx]
 
-        with patch("memorymaster.scheduler.get_git_head", side_effect=fake_git_head):
+        with patch("memorymaster.govern.scheduler.get_git_head", side_effect=fake_git_head):
             result = run_daemon(
                 svc,
                 interval_seconds=9999,  # timer won't fire after first
@@ -119,7 +119,7 @@ class TestRunDaemon:
     def test_git_unavailable_warning(self, capsys):
         svc = self._mock_service()
 
-        with patch("memorymaster.scheduler.get_git_head", return_value=None):
+        with patch("memorymaster.govern.scheduler.get_git_head", return_value=None):
             run_daemon(
                 svc,
                 interval_seconds=0,

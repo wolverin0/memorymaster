@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from memorymaster.jobs.dedup import find_duplicates
+from memorymaster.govern.jobs.dedup import find_duplicates
 from memorymaster.models import Claim
 
 

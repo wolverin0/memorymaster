@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from memorymaster.llm_steward import _auto_validate_claims, run_steward
+from memorymaster.govern.llm_steward import _auto_validate_claims, run_steward
 from memorymaster.service import MemoryService
 
 
@@ -133,7 +133,7 @@ def test_auto_validate_skipped_on_dry_run() -> None:
         "action": "confirm",
     }
 
-    with patch("memorymaster.llm_steward._call_llm") as mock_llm:
+    with patch("memorymaster.govern.llm_steward._call_llm") as mock_llm:
         mock_llm.return_value = f'[{__import__("json").dumps(fake_extraction)}]'
         stats = run_steward(
             db_path, api_key="fake", provider="gemini",
@@ -157,7 +157,7 @@ def test_auto_validate_disabled_via_flag() -> None:
         "action": "confirm",
     }
 
-    with patch("memorymaster.llm_steward._call_llm") as mock_llm:
+    with patch("memorymaster.govern.llm_steward._call_llm") as mock_llm:
         mock_llm.return_value = f'[{__import__("json").dumps(fake_extraction)}]'
         stats = run_steward(
             db_path, api_key="fake", provider="gemini",
@@ -181,7 +181,7 @@ def test_auto_validate_runs_after_llm_extraction() -> None:
         "action": "confirm",
     }
 
-    with patch("memorymaster.llm_steward._call_llm") as mock_llm:
+    with patch("memorymaster.govern.llm_steward._call_llm") as mock_llm:
         mock_llm.return_value = f'[{__import__("json").dumps(fake_extraction)}]'
         stats = run_steward(
             db_path, api_key="fake", provider="gemini",

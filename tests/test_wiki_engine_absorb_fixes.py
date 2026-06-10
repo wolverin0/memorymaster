@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from memorymaster.knowledge import wiki_engine
-from memorymaster import llm_budget
+from memorymaster.govern import llm_budget
 
 
 def _seed_claims(db: Path, subject: str, scope: str, n: int = 2) -> None:

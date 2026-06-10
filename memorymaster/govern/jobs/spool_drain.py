@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from memorymaster import spool
-from memorymaster.jobs.integrity import _record
+from memorymaster.govern.jobs.integrity import _record
 from memorymaster.models import CitationInput
 
 logger = logging.getLogger(__name__)
@@ -119,7 +119,7 @@ def _replay_access(store, envelope: dict[str, object]) -> None:
 
 
 def _replay_feedback(db_path: str | Path, envelope: dict[str, object]) -> None:
-    from memorymaster.feedback import FeedbackTracker
+    from memorymaster.govern.feedback import FeedbackTracker
 
     payload = envelope["payload"]
     claim_ids = [int(cid) for cid in payload.get("claim_ids") or []]

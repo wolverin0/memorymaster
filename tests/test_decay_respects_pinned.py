@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.jobs import decay
+from memorymaster.govern.jobs import decay
 from memorymaster.lifecycle import transition_claim
 from memorymaster.models import CitationInput
 from memorymaster.storage import SQLiteStore

@@ -17,7 +17,8 @@ from typing import Iterator
 
 import pytest
 
-from memorymaster import llm_budget, llm_provider
+from memorymaster import llm_provider
+from memorymaster.govern import llm_budget
 
 
 @pytest.fixture(autouse=True)
@@ -200,7 +201,7 @@ def test_run_cycle_surfaces_abort_when_calls_cap_hit(tmp_path, monkeypatch, capl
     # directly invoking call_llm inside a fake stage. We can't easily make
     # the production extractor stages call the LLM in a test, so simulate
     # mid-cycle: patch one of the run_cycle stages to invoke call_llm.
-    from memorymaster.jobs import extractor
+    from memorymaster.govern.jobs import extractor
 
     monkeypatch.setenv("MEMORYMASTER_MAX_LLM_CALLS_PER_CYCLE", "1")
     _stub_provider(monkeypatch, "ok")

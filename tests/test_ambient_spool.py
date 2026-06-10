@@ -34,7 +34,7 @@ import pytest
 from memorymaster import spool
 from memorymaster._storage_shared import open_conn
 from memorymaster.bridges.dream_bridge import dream_ingest
-from memorymaster.jobs import spool_drain
+from memorymaster.govern.jobs import spool_drain
 from memorymaster.service import MemoryService
 from memorymaster.recall.verbatim_store import (
     ensure_verbatim_schema,

@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.jobs import fk_repair
+from memorymaster.govern.jobs import fk_repair
 from memorymaster.storage import SQLiteStore
 
 # Five observed orphan shapes (spec F10): 2 claims self-FK violations +

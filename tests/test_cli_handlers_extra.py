@@ -216,7 +216,7 @@ def test_feedback_stats_human_path_ok_json_path_raises(monkeypatch, capsys):
         def get_stats(self):
             return {"feedback_rows": 0, "claims_scored": 0, "avg_quality": 0.0}
 
-    monkeypatch.setattr("memorymaster.feedback.FeedbackTracker", FakeFT)
+    monkeypatch.setattr("memorymaster.govern.feedback.FeedbackTracker", FakeFT)
 
     rc = C._handle_feedback_stats(_ns(json_output=False), _FakeService(), None, "db.sqlite")
     assert rc == 0

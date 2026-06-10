@@ -6,7 +6,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 
-from memorymaster.auto_resolver import _cite_summary, _llm_evaluate, resolve_conflict_pair
+from memorymaster.govern.auto_resolver import _cite_summary, _llm_evaluate, resolve_conflict_pair
 
 
 class TestCiteSummary:
@@ -52,7 +52,7 @@ class TestCiteSummary:
 class TestLlmEvaluate:
     """Test LLM evaluation via the centralized llm_provider.call_llm."""
 
-    @patch("memorymaster.auto_resolver.call_llm")
+    @patch("memorymaster.govern.auto_resolver.call_llm")
     def test_llm_evaluate_success(self, mock_call_llm):
         """Successful LLM evaluation returns parsed JSON."""
         mock_call_llm.return_value = '{"winner": "A", "reason": "more recent"}'
@@ -61,7 +61,7 @@ class TestLlmEvaluate:
         assert result["winner"] == "A"
         assert "more recent" in result["reason"]
 
-    @patch("memorymaster.auto_resolver.call_llm")
+    @patch("memorymaster.govern.auto_resolver.call_llm")
     def test_llm_evaluate_with_markdown_fence(self, mock_call_llm):
         """LLM response with markdown fence is parsed."""
         mock_call_llm.return_value = '```json\n{"winner": "B", "reason": "specific"}\n```'
@@ -69,7 +69,7 @@ class TestLlmEvaluate:
         result = _llm_evaluate("test prompt")
         assert result["winner"] == "B"
 
-    @patch("memorymaster.auto_resolver.call_llm")
+    @patch("memorymaster.govern.auto_resolver.call_llm")
     def test_llm_evaluate_failure_returns_empty(self, mock_call_llm):
         """LLM failure returns empty dict."""
         mock_call_llm.side_effect = Exception("Provider error")
@@ -90,8 +90,8 @@ class TestResolveConflictPair:
             citations=[],
         )
 
-    @patch("memorymaster.auto_resolver._llm_evaluate")
-    @patch("memorymaster.auto_resolver.transition_claim")
+    @patch("memorymaster.govern.auto_resolver._llm_evaluate")
+    @patch("memorymaster.govern.auto_resolver.transition_claim")
     def test_resolve_conflict_pair_lllm_called(self, mock_transition, mock_llm):
         """resolve_conflict_pair calls LLM with formatted prompt."""
         mock_llm.return_value = {"winner": "A", "reason": "test"}
@@ -107,8 +107,8 @@ class TestResolveConflictPair:
         assert "Claim A" in prompt_arg
         assert "Claim B" in prompt_arg
 
-    @patch("memorymaster.auto_resolver._llm_evaluate")
-    @patch("memorymaster.auto_resolver.transition_claim")
+    @patch("memorymaster.govern.auto_resolver._llm_evaluate")
+    @patch("memorymaster.govern.auto_resolver.transition_claim")
     def test_resolve_conflict_pair_winner_a(self, mock_transition, mock_llm):
         """Resolves with winner A."""
         mock_llm.return_value = {"winner": "A", "reason": "better evidence"}
@@ -120,8 +120,8 @@ class TestResolveConflictPair:
         result = resolve_conflict_pair(mock_store, claim_a, claim_b)
         assert mock_transition.called
 
-    @patch("memorymaster.auto_resolver._llm_evaluate")
-    @patch("memorymaster.auto_resolver.transition_claim")
+    @patch("memorymaster.govern.auto_resolver._llm_evaluate")
+    @patch("memorymaster.govern.auto_resolver.transition_claim")
     def test_resolve_conflict_pair_no_result(self, mock_transition, mock_llm):
         """No result from LLM returns error."""
         mock_llm.return_value = {}

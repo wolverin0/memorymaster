@@ -32,7 +32,7 @@ from memorymaster.surfaces.cli_helpers import (
     parse_scope_allowlist,
     print_claim,
 )
-from memorymaster.scheduler import run_daemon
+from memorymaster.govern.scheduler import run_daemon
 from memorymaster.security import resolve_allow_sensitive_access
 
 
@@ -353,7 +353,7 @@ def _handle_ingest(args: argparse.Namespace, service, parser: argparse.ArgumentP
 
 
 def _handle_ingest_daydream(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.jobs.daydream_ingest import ingest_insights
+    from memorymaster.govern.jobs.daydream_ingest import ingest_insights
 
     t0 = time.perf_counter()
     result = ingest_insights(
@@ -1030,7 +1030,7 @@ def _handle_redact_claim(args: argparse.Namespace, service, parser: argparse.Arg
 
 
 def _handle_compact(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.jobs import compactor
+    from memorymaster.govern.jobs import compactor
 
     result = compactor.run(
         service.store,
@@ -1057,7 +1057,7 @@ def _handle_compact(args: argparse.Namespace, service, parser: argparse.Argument
 
 
 def _handle_decay(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.jobs import decay
+    from memorymaster.govern.jobs import decay
 
     t0 = time.perf_counter()
     result = decay.run(
@@ -1085,7 +1085,7 @@ def _handle_decay(args: argparse.Namespace, service, parser: argparse.ArgumentPa
 
 
 def _handle_compact_summaries(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.llm_steward import _parse_api_keys
+    from memorymaster.govern.llm_steward import _parse_api_keys
     rk = _parse_api_keys(api_key=args.api_key, api_keys=args.api_keys)
     t0 = time.perf_counter()
     result = service.compact_summaries(
@@ -1150,7 +1150,7 @@ def _handle_recompute_confidence_priors(
     parser: argparse.ArgumentParser,
     effective_db: str,
 ) -> int:
-    from memorymaster.jobs.calibration import run as run_calibration
+    from memorymaster.govern.jobs.calibration import run as run_calibration
 
     t0 = time.perf_counter()
     report = run_calibration(
@@ -1243,7 +1243,7 @@ def _handle_history(args: argparse.Namespace, service, parser: argparse.Argument
 
 
 def _handle_review_queue(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.review import build_review_queue, queue_to_dicts
+    from memorymaster.govern.review import build_review_queue, queue_to_dicts
 
     items = build_review_queue(service, limit=args.limit,
         include_stale=not args.exclude_stale, include_conflicted=not args.exclude_conflicted,
@@ -1307,7 +1307,7 @@ def _handle_run_operator(args: argparse.Namespace, service, parser: argparse.Arg
 
 
 def _handle_run_steward(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.steward import run_steward
+    from memorymaster.govern.steward import run_steward
 
     t0 = time.perf_counter()
     result = run_steward(
@@ -1333,7 +1333,7 @@ def _handle_run_steward(args: argparse.Namespace, service, parser: argparse.Argu
 
 
 def _handle_steward_proposals(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.steward import list_steward_proposals
+    from memorymaster.govern.steward import list_steward_proposals
 
     rows = list_steward_proposals(service, limit=args.limit, include_resolved=args.include_resolved)
     print(json.dumps({"rows": len(rows), "proposals": rows}, indent=2, default=_json_default))
@@ -1343,7 +1343,7 @@ def _handle_steward_proposals(args: argparse.Namespace, service, parser: argpars
 def _handle_resolve_proposal(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     if args.proposal_event_id is None and args.claim_id is None:
         raise ValueError("resolve-proposal requires --proposal-event-id or --claim-id")
-    from memorymaster.steward import resolve_steward_proposal
+    from memorymaster.govern.steward import resolve_steward_proposal
 
     result = resolve_steward_proposal(service, action=args.action,
         proposal_event_id=args.proposal_event_id, claim_id=args.claim_id, apply_on_approve=not args.no_apply)
@@ -1352,7 +1352,7 @@ def _handle_resolve_proposal(args: argparse.Namespace, service, parser: argparse
 
 
 def _handle_ready(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.conflict_resolver import detect_conflicts
+    from memorymaster.govern.conflict_resolver import detect_conflicts
 
     t0 = time.perf_counter()
     limit = args.limit
@@ -1410,7 +1410,7 @@ def _handle_ready(args: argparse.Namespace, service, parser: argparse.ArgumentPa
 
 
 def _handle_entity_graph_export(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.jobs.entity_graph_export import export_entity_graph
+    from memorymaster.govern.jobs.entity_graph_export import export_entity_graph
 
     t0 = time.perf_counter()
     result = export_entity_graph(
@@ -1434,7 +1434,7 @@ def _handle_entity_graph_export(args: argparse.Namespace, service, parser: argpa
 
 
 def _handle_resolve_conflicts(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.conflict_resolver import resolve_conflicts
+    from memorymaster.govern.conflict_resolver import resolve_conflicts
 
     t0 = time.perf_counter()
     result = resolve_conflicts(service, dry_run=args.dry_run, limit=args.limit)
@@ -1453,7 +1453,7 @@ def _handle_resolve_conflicts(args: argparse.Namespace, service, parser: argpars
 
 
 def _handle_check_staleness(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.jobs.staleness import run as run_staleness
+    from memorymaster.govern.jobs.staleness import run as run_staleness
 
     t0 = time.perf_counter()
     result = run_staleness(service.store, Path(args.workspace).resolve(), mode=args.mode, dry_run=args.dry_run, limit=args.limit)

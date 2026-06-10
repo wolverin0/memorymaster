@@ -157,7 +157,7 @@ def _claim_set_generated_at(articles: list[dict]) -> str:
 
 
 def _call_llm(prompt: str, text: str) -> str:
-    from memorymaster import llm_budget
+    from memorymaster.govern import llm_budget
 
     try:
         from memorymaster.llm_provider import call_llm
@@ -402,7 +402,7 @@ def absorb(
     overspend. If a parent scope is already active (e.g. wiki-absorb fired
     from inside ``service.run_cycle`` in the future), defers to it.
     """
-    from memorymaster import llm_budget
+    from memorymaster.govern import llm_budget
 
     if llm_budget.get_current() is not None:
         return _absorb_impl(db_path, wiki_dir, scope_filter=scope_filter)

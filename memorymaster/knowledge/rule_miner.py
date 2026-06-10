@@ -29,7 +29,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from memorymaster import llm_budget, llm_provider
+from memorymaster import llm_provider
+from memorymaster.govern import llm_budget
 from memorymaster._storage_shared import open_conn
 from memorymaster.models import CitationInput
 from memorymaster.knowledge.rules import build_rule_fields

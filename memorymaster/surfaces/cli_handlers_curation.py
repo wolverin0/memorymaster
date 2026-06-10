@@ -339,7 +339,7 @@ def _handle_wiki_cleanup(args: argparse.Namespace, service, parser: argparse.Arg
 
 
 def _handle_verify_claims(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.claim_verifier import verify_claims
+    from memorymaster.govern.claim_verifier import verify_claims
     t0 = time.perf_counter()
     result = verify_claims(effective_db, scope_filter=args.scope or None, limit=args.limit)
     elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -410,7 +410,7 @@ def _handle_export_rules(args: argparse.Namespace, service, parser: argparse.Arg
 
 
 def _handle_detect_contradictions(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.contradiction_probe import run_probe
+    from memorymaster.govern.contradiction_probe import run_probe
     t0 = time.perf_counter()
     result = run_probe(
         effective_db, service,
@@ -439,7 +439,7 @@ def _handle_detect_contradictions(args: argparse.Namespace, service, parser: arg
 
 
 def _handle_verbatim_cleanup(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.verbatim_cleanup import analyze, cleanup
+    from memorymaster.govern.verbatim_cleanup import analyze, cleanup
     t0 = time.perf_counter()
     if getattr(args, "analyze_only", False):
         result = analyze(effective_db)
@@ -523,7 +523,7 @@ def _handle_entity_stats(args: argparse.Namespace, service, parser: argparse.Arg
 
 
 def _handle_feedback_stats(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.feedback import FeedbackTracker
+    from memorymaster.govern.feedback import FeedbackTracker
     ft = FeedbackTracker(str(effective_db))
     ft.ensure_tables()
     stats = ft.get_stats()
@@ -535,7 +535,7 @@ def _handle_feedback_stats(args: argparse.Namespace, service, parser: argparse.A
 
 
 def _handle_quality_scores(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.feedback import FeedbackTracker
+    from memorymaster.govern.feedback import FeedbackTracker
     t0 = time.perf_counter()
     ft = FeedbackTracker(str(effective_db))
     ft.ensure_tables()
@@ -549,7 +549,7 @@ def _handle_quality_scores(args: argparse.Namespace, service, parser: argparse.A
 
 
 def _handle_auto_resolve(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.auto_resolver import auto_resolve_conflicts
+    from memorymaster.govern.auto_resolver import auto_resolve_conflicts
     t0 = time.perf_counter()
     result = auto_resolve_conflicts(service.store, limit=args.limit)
     elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -561,7 +561,7 @@ def _handle_auto_resolve(args: argparse.Namespace, service, parser: argparse.Arg
 
 
 def _handle_train_model(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.rl_trainer import train_quality_model
+    from memorymaster.govern.rl_trainer import train_quality_model
     t0 = time.perf_counter()
     result = train_quality_model(str(effective_db))
     elapsed_ms = (time.perf_counter() - t0) * 1000

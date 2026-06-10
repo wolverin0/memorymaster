@@ -19,13 +19,13 @@ from pathlib import Path
 from typing import Any
 
 from memorymaster._storage_shared import busy_error_count, connect_ro
-from memorymaster.jobs.integrity import (
+from memorymaster.govern.jobs.integrity import (
     MARKER_METRICS,
     _wal_bytes,
     promotions_frozen,
 )
-from memorymaster.jobs.qdrant_reconcile import MARKER_DRIFT
-from memorymaster.jobs.spool_drain import MARKER_DRAIN
+from memorymaster.govern.jobs.qdrant_reconcile import MARKER_DRIFT
+from memorymaster.govern.jobs.spool_drain import MARKER_DRAIN
 from memorymaster.spool import pending_depth
 
 

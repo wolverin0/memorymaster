@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.jobs import qdrant_reconcile
+from memorymaster.govern.jobs import qdrant_reconcile
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
 from memorymaster.storage import SQLiteStore

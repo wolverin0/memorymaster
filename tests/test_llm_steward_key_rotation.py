@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from memorymaster.llm_steward import (
+from memorymaster.govern.llm_steward import (
     DEFAULT_COOLDOWN_SECONDS,
     KeyRotator,
     _call_llm,
@@ -161,7 +161,7 @@ class TestParseApiKeys:
 # ---------------------------------------------------------------------------
 
 class TestCallLlmWithRotation:
-    @patch("memorymaster.llm_steward.urllib.request.urlopen")
+    @patch("memorymaster.govern.llm_steward.urllib.request.urlopen")
     def test_rotation_on_429(self, mock_urlopen: MagicMock) -> None:
         """429 on first key should rotate to second key."""
         import io
@@ -193,7 +193,7 @@ class TestCallLlmWithRotation:
         # key-a should be on cooldown
         assert rotator.available_key_count == 1
 
-    @patch("memorymaster.llm_steward.urllib.request.urlopen")
+    @patch("memorymaster.govern.llm_steward.urllib.request.urlopen")
     def test_single_key_backward_compat(self, mock_urlopen: MagicMock) -> None:
         """Without key_rotator, single-key path should work as before."""
         success_response = MagicMock()
@@ -213,7 +213,7 @@ class TestCallLlmWithRotation:
         assert result == "hello"
         assert mock_urlopen.call_count == 1
 
-    @patch("memorymaster.llm_steward.urllib.request.urlopen")
+    @patch("memorymaster.govern.llm_steward.urllib.request.urlopen")
     def test_all_keys_exhausted_raises(self, mock_urlopen: MagicMock) -> None:
         """When all keys get 429 and max attempts exceeded, should raise."""
         import io
@@ -238,7 +238,7 @@ class TestCallLlmWithRotation:
                 key_rotator=rotator,
             )
 
-    @patch("memorymaster.llm_steward.urllib.request.urlopen")
+    @patch("memorymaster.govern.llm_steward.urllib.request.urlopen")
     def test_clears_cooldown_on_success(self, mock_urlopen: MagicMock) -> None:
         """Successful call should clear any previous cooldown for the used key."""
         success_response = MagicMock()

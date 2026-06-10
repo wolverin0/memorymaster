@@ -8,10 +8,11 @@ from typing import Any
 import logging
 import os
 
-from memorymaster import candidate_dedupe, lifecycle, llm_budget, observability
+from memorymaster import lifecycle, observability
+from memorymaster.govern import candidate_dedupe, llm_budget
 from memorymaster.recall import query_cache
 from memorymaster.recall.embeddings import EmbeddingProvider, create_best_provider
-from memorymaster.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, integrity, qdrant_reconcile, spool_drain, validator
+from memorymaster.govern.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, integrity, qdrant_reconcile, spool_drain, validator
 from memorymaster.models import ActionProposal, CitationInput, Claim, ClaimLink, Event, EvidenceItem, ExternalSource, MediaRetryItem, SourceItem
 from memorymaster.policy import select_revalidation_candidates
 from memorymaster.recall.context_optimizer import ContextResult, pack_context
@@ -1125,7 +1126,7 @@ class MemoryService:
         # Record retrieval feedback for quality scoring
         if claim_ids and query_text:
             try:
-                from memorymaster.feedback import FeedbackTracker
+                from memorymaster.govern.feedback import FeedbackTracker
                 db_path = str(getattr(self.store, 'db_path', ''))
                 if db_path:
                     ft = FeedbackTracker(db_path)

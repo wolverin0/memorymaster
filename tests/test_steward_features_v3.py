@@ -22,7 +22,7 @@ import pytest
 
 np = pytest.importorskip("numpy", reason="ml extra not installed")
 
-from memorymaster.steward_features import (  # noqa: E402
+from memorymaster.govern.steward_features import (  # noqa: E402
     FEATURE_KEYS,
     FEATURE_VERSION,
     extract_features,

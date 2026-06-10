@@ -112,7 +112,7 @@ def test_lifecycle_imports_with_wiki_engine_blocked() -> None:
 def test_llm_provider_env_rotation_with_llm_steward_blocked() -> None:
     """The env-rotation path (former home of the lazy llm_steward import)
     must work with llm_steward completely unimportable."""
-    code = _BLOCKER.format(blocked="memorymaster.llm_steward") + """
+    code = _BLOCKER.format(blocked="memorymaster.govern.llm_steward") + """
     import os
     os.environ["MEMORYMASTER_LLM_KEY_ROTATION"] = "1"
     os.environ["MEMORYMASTER_LLM_API_KEYS"] = "pin-key-1,pin-key-2"
@@ -124,7 +124,7 @@ def test_llm_provider_env_rotation_with_llm_steward_blocked() -> None:
     assert isinstance(rotator, RoundRobinKeyRotator)
     assert rotator.key_count == 2
     assert rotator.get_key() == "pin-key-1"
-    assert "memorymaster.llm_steward" not in sys.modules
+    assert "memorymaster.govern.llm_steward" not in sys.modules
     print("OK")
     """
     proc = _run_isolated(code)
@@ -135,7 +135,7 @@ def test_llm_steward_imports_with_store_factory_blocked() -> None:
     """llm_steward must import (and its compat KeyRotator re-export must work)
     with store_factory completely unimportable."""
     code = _BLOCKER.format(blocked="memorymaster.store_factory") + """
-    from memorymaster.llm_steward import (
+    from memorymaster.govern.llm_steward import (
         DEFAULT_COOLDOWN_SECONDS,
         KeyRotator,
         _auto_validate_claims,
@@ -239,7 +239,7 @@ def test_wiring_modules_register_autopromote_hook() -> None:
 def test_auto_validate_uses_injected_store() -> None:
     """_auto_validate_claims must use the injected store and never build its
     own when one is supplied (the injection that replaced create_store)."""
-    from memorymaster.llm_steward import _auto_validate_claims
+    from memorymaster.govern.llm_steward import _auto_validate_claims
 
     class _RecordingStore:
         def __init__(self) -> None:

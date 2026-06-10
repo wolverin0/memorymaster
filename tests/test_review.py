@@ -6,7 +6,7 @@ import sqlite3
 import tempfile
 
 from memorymaster.models import CitationInput
-from memorymaster.review import build_review_queue, queue_to_dicts
+from memorymaster.govern.review import build_review_queue, queue_to_dicts
 from memorymaster.service import MemoryService
 
 

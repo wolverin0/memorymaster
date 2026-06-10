@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from memorymaster.jobs import compactor
+from memorymaster.govern.jobs import compactor
 from memorymaster.lifecycle import transition_claim
 from memorymaster.models import CitationInput
 from memorymaster.storage import SQLiteStore

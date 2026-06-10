@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster import llm_steward
+from memorymaster.govern import llm_steward
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
 

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from memorymaster.service import MemoryService
-from memorymaster.steward import run_steward
+from memorymaster.govern.steward import run_steward
 
 
 @pytest.fixture()
@@ -106,7 +106,7 @@ def test_ingest_exception_does_not_break_steward(
     def raise_ingest(*_args: object, **_kwargs: object) -> dict:
         raise RuntimeError("boom from daydream ingest")
 
-    monkeypatch.setattr("memorymaster.jobs.daydream_ingest.ingest_insights", raise_ingest)
+    monkeypatch.setattr("memorymaster.govern.jobs.daydream_ingest.ingest_insights", raise_ingest)
 
     report = _run_clean_steward(service, tmp_path)
 

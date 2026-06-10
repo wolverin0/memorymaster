@@ -19,7 +19,7 @@ from memorymaster import llm_provider
 from memorymaster.config import reset_config
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
-from memorymaster.steward import run_steward
+from memorymaster.govern.steward import run_steward
 
 
 def _case_db(prefix: str) -> Path:

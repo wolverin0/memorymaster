@@ -1,4 +1,4 @@
-"""Tests for memorymaster.llm_steward — KeyRotator and helpers."""
+"""Tests for memorymaster.govern.llm_steward — KeyRotator and helpers."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from memorymaster.key_rotator import RoundRobinKeyRotator as KeyRotator
-from memorymaster.llm_steward import _parse_api_keys
+from memorymaster.govern.llm_steward import _parse_api_keys
 
 
 class TestKeyRotator:

@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from memorymaster.candidate_dedupe import (
+from memorymaster.govern.candidate_dedupe import (
     DedupeResult,
     jaccard_high_threshold,
     fts_candidates_in_scope,
@@ -282,7 +282,7 @@ def test_fts_candidates_returns_matches(conn: sqlite3.Connection) -> None:
 
 
 def test_jaccard_known_values() -> None:
-    from memorymaster.candidate_dedupe import jaccard_tokens
+    from memorymaster.govern.candidate_dedupe import jaccard_tokens
     assert jaccard_tokens("the cat sat", "the cat sat") == pytest.approx(1.0)
     assert jaccard_tokens("the cat sat", "the dog sat") == pytest.approx(2 / 4)
     assert jaccard_tokens("alpha beta gamma", "delta epsilon zeta") == 0.0

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
-from memorymaster.steward import list_steward_proposals, resolve_steward_proposal, run_steward
+from memorymaster.govern.steward import list_steward_proposals, resolve_steward_proposal, run_steward
 
 
 def _case_db(prefix: str) -> Path:

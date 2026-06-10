@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from memorymaster import spool
-from memorymaster.jobs import spool_drain
+from memorymaster.govern.jobs import spool_drain
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
 from memorymaster.storage import SQLiteStore

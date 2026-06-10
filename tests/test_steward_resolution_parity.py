@@ -17,7 +17,7 @@ import pytest
 from memorymaster.surfaces.dashboard import create_dashboard_server
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
-from memorymaster.steward import list_steward_proposals, run_steward
+from memorymaster.govern.steward import list_steward_proposals, run_steward
 
 
 def _case_db(prefix: str) -> Path:

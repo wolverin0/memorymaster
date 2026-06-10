@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 
 from memorymaster.surfaces.cli import main
 from memorymaster.knowledge.entity_graph import EntityGraph
-from memorymaster.jobs.entity_graph_export import export_entity_graph
+from memorymaster.govern.jobs.entity_graph_export import export_entity_graph
 
 
 def _init_db(path) -> None:

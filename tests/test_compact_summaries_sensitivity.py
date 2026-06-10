@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from memorymaster.jobs.compact_summaries import run
+from memorymaster.govern.jobs.compact_summaries import run
 from memorymaster.lifecycle import transition_claim
 from memorymaster.models import CitationInput
 from memorymaster.storage import SQLiteStore
@@ -34,7 +34,7 @@ def _create_archived_claim(store, text: str):
     return store.get_claim(claim.id)
 
 
-@patch("memorymaster.jobs.compact_summaries._call_llm")
+@patch("memorymaster.govern.jobs.compact_summaries._call_llm")
 def test_compact_summaries_redacts_claim_text_before_llm_call(mock_llm, store):
     raw_secret = "sk-fake-test-1234567890abcdefghij"
     _create_archived_claim(

@@ -303,7 +303,7 @@ def test_triage_action_can_approve_steward_proposal(monkeypatch: Any, tmp_path: 
         return {"claim_id": kwargs["claim_id"], "applied": True}
 
     monkeypatch.setattr(
-        "memorymaster.steward.resolve_steward_proposal",
+        "memorymaster.govern.steward.resolve_steward_proposal",
         fake_resolve_steward_proposal,
     )
 
