@@ -295,7 +295,7 @@ class TestRunStaleness:
 
 class TestCheckStalenessCLI:
     def test_cli_check_staleness_dry_run(self, tmp_path):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
 
         db_path = tmp_path / "test.db"
         # Init DB first
@@ -313,7 +313,7 @@ class TestCheckStalenessCLI:
         assert ret == 0
 
     def test_cli_check_staleness_json(self, tmp_path, capsys):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
 
         db_path = tmp_path / "test.db"
         main(["--db", str(db_path), "init-db"])

@@ -49,7 +49,7 @@ def _claims(count: int, *, scope: str = "project:foo") -> list[Claim]:
 
 
 def _install_fake_service(monkeypatch, claims: list[Claim]):
-    import memorymaster.cli as cli
+    import memorymaster.surfaces.cli as cli
 
     class FakeService:
         provider: CountingProvider | None = None

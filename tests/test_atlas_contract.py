@@ -23,7 +23,7 @@ from memorymaster.bridges.atlas_contract import (
     atlas_contract_payload,
     atlas_meta,
 )
-from memorymaster.cli import main
+from memorymaster.surfaces.cli import main
 
 
 # ---------------------------------------------------------------------------
@@ -458,7 +458,7 @@ def test_edit_action_proposal_partial_update(tmp_path: Path, capsys) -> None:
 
 def test_edit_action_proposal_records_audit_event(tmp_path: Path) -> None:
     """Every successful edit MUST record an action_proposal event."""
-    from memorymaster.cli import main as cli_main
+    from memorymaster.surfaces.cli import main as cli_main
     from memorymaster.service import MemoryService
     fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
     db = tmp_path / "atlas.db"
@@ -485,7 +485,7 @@ def test_edit_action_proposal_records_audit_event(tmp_path: Path) -> None:
 
 def test_edit_action_proposal_noop_records_no_event(tmp_path: Path) -> None:
     """Edit with all fields equal to current values is a no-op (no event)."""
-    from memorymaster.cli import main as cli_main
+    from memorymaster.surfaces.cli import main as cli_main
     from memorymaster.service import MemoryService
     fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
     db = tmp_path / "atlas.db"
@@ -502,7 +502,7 @@ def test_edit_action_proposal_noop_records_no_event(tmp_path: Path) -> None:
 
 
 def test_edit_action_proposal_rejects_blank_title(tmp_path: Path) -> None:
-    from memorymaster.cli import main as cli_main
+    from memorymaster.surfaces.cli import main as cli_main
     from memorymaster.service import MemoryService
     fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
     db = tmp_path / "atlas.db"
@@ -516,7 +516,7 @@ def test_edit_action_proposal_rejects_blank_title(tmp_path: Path) -> None:
 
 
 def test_edit_action_proposal_rejects_no_fields(tmp_path: Path) -> None:
-    from memorymaster.cli import main as cli_main
+    from memorymaster.surfaces.cli import main as cli_main
     from memorymaster.service import MemoryService
     fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
     db = tmp_path / "atlas.db"

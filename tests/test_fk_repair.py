@@ -214,7 +214,7 @@ def test_cli_repair_fk_dry_run_default_then_apply(
     routine 'let me look first' invocation against the production DB would
     BE the apply. The dry-run default is the safety interlock.
     """
-    from memorymaster.cli import main
+    from memorymaster.surfaces.cli import main
 
     store = seeded["store"]
     db = str(store.db_path)

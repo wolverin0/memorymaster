@@ -273,7 +273,7 @@ class TestRunIntegration:
 
 class TestDedupCLI:
     def test_cli_dedup_dry_run(self, tmp_path):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
         db = str(tmp_path / "cli_dedup.db")
         assert main(["--db", db, "init-db"]) == 0
         assert main(["--db", db, "ingest", "--text", "test claim alpha", "--source", "s1"]) == 0
@@ -281,7 +281,7 @@ class TestDedupCLI:
         assert main(["--db", db, "dedup", "--dry-run"]) == 0
 
     def test_cli_dedup_apply(self, tmp_path):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
         db = str(tmp_path / "cli_dedup2.db")
         assert main(["--db", db, "init-db"]) == 0
         assert main(["--db", db, "ingest", "--text", "test claim beta", "--source", "s1"]) == 0
@@ -290,7 +290,7 @@ class TestDedupCLI:
 
     def test_cli_dedup_json_output(self, tmp_path):
         import json
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
         import io
         import sys
 
@@ -313,7 +313,7 @@ class TestDedupCLI:
         assert "data" in output
 
     def test_cli_dedup_custom_threshold(self, tmp_path):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
         db = str(tmp_path / "cli_dedup4.db")
         assert main(["--db", db, "init-db"]) == 0
         assert main(["--db", db, "ingest", "--text", "delta text here", "--source", "s1"]) == 0

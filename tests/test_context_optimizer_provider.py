@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from memorymaster.cli import build_parser
+from memorymaster.surfaces.cli import build_parser
 from memorymaster.context_optimizer import ContextResult, PROVIDERS, pack_context
 from memorymaster.models import Claim
 from memorymaster.service import MemoryService

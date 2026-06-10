@@ -401,7 +401,7 @@ class TestResolveConflictsIntegration:
 
 class TestCLIResolveConflicts:
     def test_cli_resolve_conflicts_dry_run(self, tmp_path):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
 
         db = str(tmp_path / "test.db")
         assert main(["--db", db, "init-db"]) == 0
@@ -425,7 +425,7 @@ class TestCLIResolveConflicts:
         assert rc == 0
 
     def test_cli_resolve_conflicts_json(self, tmp_path, capsys):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
 
         db = str(tmp_path / "test.db")
         assert main(["--db", db, "init-db"]) == 0

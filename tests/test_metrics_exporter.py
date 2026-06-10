@@ -7,7 +7,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from memorymaster.metrics_exporter import export_metrics, export_metrics_snapshot, render_prometheus_text
+from memorymaster.surfaces.metrics_exporter import export_metrics, export_metrics_snapshot, render_prometheus_text
 
 
 def _tmp_file(prefix: str, suffix: str) -> Path:

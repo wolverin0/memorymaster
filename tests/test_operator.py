@@ -6,7 +6,7 @@ import tempfile
 from typing import Any
 from pathlib import Path
 
-from memorymaster.operator import HeuristicClaimExtractor, MemoryOperator, OperatorConfig, TurnInput, strip_private_blocks
+from memorymaster.surfaces.operator import HeuristicClaimExtractor, MemoryOperator, OperatorConfig, TurnInput, strip_private_blocks
 from memorymaster.service import MemoryService
 
 

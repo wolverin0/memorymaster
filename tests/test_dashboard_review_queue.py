@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from memorymaster.dashboard import create_dashboard_server
+from memorymaster.surfaces.dashboard import create_dashboard_server
 from memorymaster.service import MemoryService
 
 

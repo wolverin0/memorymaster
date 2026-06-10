@@ -149,7 +149,7 @@ def test_recall_appends_wiki_pointer(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 def test_backfill_bindings_updates_claims_from_frontmatter(tmp_path: Path) -> None:
     """wiki-backfill-bindings reads `claims: [...]` frontmatter and stamps each claim."""
-    from memorymaster.cli_handlers_curation import _handle_wiki_backfill_bindings
+    from memorymaster.surfaces.cli_handlers_curation import _handle_wiki_backfill_bindings
 
     _, db = _fresh_store(tmp_path)
     c1 = _insert_claim(db, "qdrant runs on vm")

@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from memorymaster.cli import main
+from memorymaster.surfaces.cli import main
 from memorymaster.snapshot import (
     SnapshotDiff,
     SnapshotInfo,

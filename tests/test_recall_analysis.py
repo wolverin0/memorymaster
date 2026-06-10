@@ -220,7 +220,7 @@ def test_service_recall_analysis_preserves_ranking_order(svc):
 # --------------------------------------------------------------------------
 
 def test_cli_recall_analysis_json_envelope(svc, capsys):
-    from memorymaster.cli_handlers_basic import _handle_recall_analysis
+    from memorymaster.surfaces.cli_handlers_basic import _handle_recall_analysis
 
     args = argparse.Namespace(
         query=_QUERY, mode="hybrid", limit=5, profile=None,
@@ -238,7 +238,7 @@ def test_cli_recall_analysis_json_envelope(svc, capsys):
 
 
 def test_cli_recall_analysis_human_output(svc, capsys):
-    from memorymaster.cli_handlers_basic import _handle_recall_analysis
+    from memorymaster.surfaces.cli_handlers_basic import _handle_recall_analysis
 
     args = argparse.Namespace(
         query=_QUERY, mode="hybrid", limit=5, profile=None,
@@ -258,7 +258,7 @@ def test_cli_recall_analysis_human_output(svc, capsys):
 
 def test_mcp_recall_analysis_tool_returns_breakdown(tmp_path):
     try:
-        from memorymaster.mcp_server import init_db, ingest_claim, recall_analysis
+        from memorymaster.surfaces.mcp_server import init_db, ingest_claim, recall_analysis
     except ImportError:
         pytest.skip("MCP not installed")
 
@@ -289,7 +289,7 @@ def test_dashboard_recall_analysis_endpoint_returns_breakdown(svc):
     delegating to service.recall_analysis without touching ranking math."""
     from types import SimpleNamespace
 
-    from memorymaster.dashboard import DashboardRequestHandler
+    from memorymaster.surfaces.dashboard import DashboardRequestHandler
 
     captured: dict = {}
 

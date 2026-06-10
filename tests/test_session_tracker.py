@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from memorymaster.session_tracker import SessionTracker
+from memorymaster.surfaces.session_tracker import SessionTracker
 
 
 @pytest.fixture

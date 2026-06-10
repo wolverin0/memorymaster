@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from memorymaster.metrics_exporter import export_metrics_snapshot
+from memorymaster.surfaces.metrics_exporter import export_metrics_snapshot
 
 _LATENCY_OPERATIONS = ("ingest", "query", "cycle", "operator_turn")
 

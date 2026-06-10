@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.cli import main
+from memorymaster.surfaces.cli import main
 from memorymaster.jobs.calibration import compute_priors, run
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService

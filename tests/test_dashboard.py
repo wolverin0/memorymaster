@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from memorymaster.dashboard import create_dashboard_server
+from memorymaster.surfaces.dashboard import create_dashboard_server
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
 

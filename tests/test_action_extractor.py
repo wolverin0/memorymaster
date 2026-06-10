@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from memorymaster.bridges.action_extractor import propose_actions_from_evidence
-from memorymaster.cli import main
+from memorymaster.surfaces.cli import main
 from memorymaster.service import MemoryService
 
 

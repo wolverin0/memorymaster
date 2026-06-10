@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from memorymaster.mcp_server import QueryMetaDecisionsInput, _validate_tool_input
+from memorymaster.surfaces.mcp_server import QueryMetaDecisionsInput, _validate_tool_input
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
 

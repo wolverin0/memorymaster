@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.cli import main
+from memorymaster.surfaces.cli import main
 
 
 @pytest.fixture()

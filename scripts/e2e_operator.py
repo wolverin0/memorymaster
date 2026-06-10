@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from memorymaster.operator import MemoryOperator, OperatorConfig
+from memorymaster.surfaces.operator import MemoryOperator, OperatorConfig
 from memorymaster.service import MemoryService
 
 

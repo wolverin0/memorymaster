@@ -287,7 +287,7 @@ def test_cli_drain_spool_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     """`memorymaster drain-spool --json` is the one-shot operator/rollback
     path (spec §5): after turning the flag off, residue must drain via this
     command with a parseable envelope and exit 0 — no write ever stranded."""
-    from memorymaster.cli import main
+    from memorymaster.surfaces.cli import main
 
     monkeypatch.setenv(spool.ENV_SPOOL_DIR, str(tmp_path / "spool-root"))
     db = tmp_path / "cli-spool.db"

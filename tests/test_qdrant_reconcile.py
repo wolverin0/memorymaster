@@ -254,7 +254,7 @@ def test_cli_qdrant_reconcile_json(tmp_path: Path, capsys: pytest.CaptureFixture
     JSON envelope; on a machine without Qdrant the command must exit 0 with
     the skip marker, not crash or return nonzero inside a cron.
     """
-    from memorymaster.cli import main
+    from memorymaster.surfaces.cli import main
 
     monkeypatch.delenv("QDRANT_URL", raising=False)
     db = tmp_path / "cli-reconcile.db"

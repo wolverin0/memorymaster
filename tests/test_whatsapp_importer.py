@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from memorymaster.cli import main
+from memorymaster.surfaces.cli import main
 from memorymaster.bridges.connectors.whatsapp import import_wacli_json
 from memorymaster.service import MemoryService
 

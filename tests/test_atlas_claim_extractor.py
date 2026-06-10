@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from memorymaster.bridges.atlas_claim_extractor import extract_atlas_claims_from_evidence
-from memorymaster.cli import main
+from memorymaster.surfaces.cli import main
 from memorymaster.service import MemoryService
 
 

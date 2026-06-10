@@ -225,7 +225,7 @@ def test_status_reports_applied_and_pending(sqlite_conn, monkeypatch):
 
 def test_cli_migrate_list_works(tmp_path, capsys):
     """`memorymaster migrate --list` enumerates known migrations without touching DB."""
-    from memorymaster.cli import main
+    from memorymaster.surfaces.cli import main
 
     db = tmp_path / "list.db"
     rc = main(["--db", str(db), "--workspace", str(tmp_path), "migrate", "--list"])
@@ -239,7 +239,7 @@ def test_cli_migrate_list_works(tmp_path, capsys):
 
 def test_cli_migrate_apply_works(tmp_path, capsys):
     """`memorymaster migrate` (no flags) applies pending migrations."""
-    from memorymaster.cli import main
+    from memorymaster.surfaces.cli import main
     from memorymaster.service import MemoryService
 
     db = tmp_path / "apply.db"
@@ -257,7 +257,7 @@ def test_cli_migrate_apply_works(tmp_path, capsys):
 
 def test_cli_migrate_status_works(tmp_path, capsys):
     """`memorymaster migrate --status` reports applied/pending."""
-    from memorymaster.cli import main
+    from memorymaster.surfaces.cli import main
     from memorymaster.service import MemoryService
 
     db = tmp_path / "status.db"
