@@ -59,12 +59,32 @@ class _Store:
         return None
 
 
+class _FakeSemanticProvider:
+    """Duck-typed semantic EmbeddingProvider that never imports the real model.
+
+    The hybrid path's TOCTOU re-probe calls ``embedding_provider.embed(query)``
+    before trusting ``is_semantic``; a REAL EmbeddingProvider built with a
+    semantic model raises ImportError on machines without sentence-transformers
+    (loud-misconfiguration by design — graceful fallback lives in
+    create_best_provider). The scores themselves come from the stubbed
+    ``_Store.vector_scores``, so the provider only needs the protocol surface.
+    """
+
+    model = "fake-semantic-test"
+    is_semantic = True
+    dims = 4
+
+    def embed(self, text: str) -> list[float]:
+        return [1.0, 0.0, 0.0, 0.0]
+
+
 def _service(claims: list[Claim], *, vectors: dict[int, float] | None = None, semantic: bool = False) -> MemoryService:
     service = MemoryService.__new__(MemoryService)
     service.store = _Store(claims, vectors)
     service.workspace_root = Path.cwd()
-    model = "all-MiniLM-L6-v2" if semantic else "hash-v1"
-    service._embedding_provider = EmbeddingProvider(model=model, dims=384)
+    service._embedding_provider = (
+        _FakeSemanticProvider() if semantic else EmbeddingProvider(model="hash-v1", dims=384)
+    )
     service.policy_config = None
     service.tenant_id = None
     service.qdrant = None

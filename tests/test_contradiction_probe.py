@@ -18,7 +18,19 @@ from memorymaster.service import MemoryService
 
 
 class _FakeProvider:
-    """Maps a text marker -> 2-D unit vector at a given angle (radians)."""
+    """Maps a text marker -> 2-D unit vector at a given angle (radians).
+
+    Duck-types EmbeddingProvider (model / is_semantic / embed) so it can be
+    injected at ``svc.embedding_provider`` — the seam ``probe_for_claim``'s
+    hybrid peer fetch resolves vectors through. Without this injection the
+    tests depend on real sentence-transformers geometry: on machines without
+    the model the degraded hash fallback scores the planted pair below the
+    contradiction band and the probe silently finds zero pairs.
+    """
+
+    model = "fake-semantic-test"
+    is_semantic = True
+    dims = 2
 
     def __init__(self, angles: dict[str, float]):
         self.angles = angles
@@ -66,7 +78,11 @@ def env(tmp_path, monkeypatch):
                            "reason": "rate limit vs none" if contradicts else ""})
 
     monkeypatch.setitem(llm_provider._PROVIDERS, "google", _stub)
-    return str(db), svc, holder, _FakeProvider(_ANGLES)
+    prov = _FakeProvider(_ANGLES)
+    # Inject at the service seam so probe_for_claim's hybrid peer fetch uses
+    # the planted geometry deterministically (no sentence-transformers needed).
+    svc.embedding_provider = prov
+    return str(db), svc, holder, prov
 
 
 def test_probe_finds_planted_contradiction(env):
