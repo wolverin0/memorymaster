@@ -824,8 +824,9 @@ def _wal_discipline_enabled() -> bool:
     spooled for the steward drain instead of UPDATEd inline. Flag off =
     the untouched legacy RW path.
     """
-    raw = os.environ.get("MEMORYMASTER_WAL_DISCIPLINE", "0").strip()
-    return raw not in ("0", "false", "False", "no", "off", "")
+    from memorymaster.spool import wal_discipline_enabled
+
+    return wal_discipline_enabled()
 
 
 def _apply_query_expansion(svc, query: str, token_list: list[str]) -> list[str]:
@@ -1325,7 +1326,17 @@ def _recall_impl(
     """
     MemoryService = _memory_service_cls
     db = db_path or os.environ.get("MEMORYMASTER_DEFAULT_DB") or "memorymaster.db"
-    svc = MemoryService(db_target=db, workspace_root=Path.cwd())
+    if _wal_discipline_enabled():
+        # P1 WAL-discipline (spec §2.2): the per-prompt recall hook must
+        # never take a write lock on the shared multi-GB DB. The RO store
+        # hands out mode=ro + query_only connections (side lookups follow
+        # automatically through the store) and _record_accesses spools its
+        # access/feedback signal for the steward drain instead of UPDATEing
+        # inline — no tiering/decay/quality signal is lost (the F9 fix).
+        svc = MemoryService(db_target=db, workspace_root=Path.cwd(), read_only=True)
+    else:
+        # Flag off = the untouched legacy RW path, bit-for-bit.
+        svc = MemoryService(db_target=db, workspace_root=Path.cwd())
 
     # Pre-extract salient tokens before hitting FTS5. Passing the full
     # prompt verbatim AND-joins every token in FTS5 and rejects nearly all

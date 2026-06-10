@@ -633,6 +633,15 @@ class MemoryService:
         except Exception as exc:
             logger.warning("spool drain phase failed: %s", exc)
             result["spool_drain"] = {"error": str(exc)}
+        # Per-cycle observability snapshot (P1 spec §2.10) — one
+        # `integrity_metrics` event aggregating WAL/spool/drift/busy numbers
+        # for the dashboard panels and the §7 escalation tripwire. Must run
+        # AFTER the three phases above so their results are in `result`.
+        try:
+            result["integrity_metrics"] = integrity.emit_metrics(self.store, result)
+        except Exception as exc:
+            logger.warning("integrity metrics emit failed: %s", exc)
+            result["integrity_metrics"] = {"error": str(exc)}
         return result
 
     def query(

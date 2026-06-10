@@ -37,7 +37,7 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from memorymaster._storage_shared import connect_ro, open_conn, utc_now
+from memorymaster._storage_shared import busy_error_count, connect_ro, open_conn, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,7 @@ MARKER_FK_CHECK = "integrity_fk_check"
 MARKER_VACUUM = "integrity_vacuum_snapshot"
 MARKER_CHECK_FAILED = "integrity_check_failed"
 MARKER_WAL_OVERSIZE = "integrity_wal_oversize"
+MARKER_METRICS = "integrity_metrics"
 
 QUICK_CHECK_INTERVAL_HOURS = 24
 FK_CHECK_INTERVAL_HOURS = 24
@@ -285,3 +286,61 @@ def run(
             result[name] = {"error": str(exc)}
     result["promotions_frozen"] = promotions_frozen(db_path)
     return result
+
+
+def _phase_dict(container: dict[str, object] | None, key: str) -> dict[str, object]:
+    """Sub-result of a cycle phase, or {} when skipped/throttled/errored."""
+    value = (container or {}).get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def emit_metrics(
+    store,
+    cycle_result: dict[str, object],
+    *,
+    db_path: str | Path | None = None,
+) -> dict[str, object]:
+    """Persist the §2.10 per-cycle observability snapshot as ONE system event.
+
+    One ``integrity_metrics`` event per steward cycle carrying: WAL bytes,
+    checkpoint result, quick_check status, fk orphan count, qdrant drift,
+    spool depth + drain lag, busy-error count. These are the §5 flip criteria
+    AND the §7 escalation tripwire inputs — without a persisted series, "WAL
+    repeatedly > 256 MB" or "busy errors trending up" stay anecdotal.
+    Throttled sub-phases report ``None`` for this cycle (their own daily
+    markers carry the last real value).
+    """
+    if os.environ.get(ENV_DISABLE, "").strip() == "1":
+        return {"skipped": "disabled"}
+    db_path = db_path or getattr(store, "db_path", None)
+    if not db_path or not Path(db_path).exists():
+        return {"skipped": "no_sqlite_db"}
+    from memorymaster import spool
+
+    integ = cycle_result.get("integrity")
+    integ = integ if isinstance(integ, dict) else {}
+    ck = _phase_dict(integ, "checkpoint")
+    qc = _phase_dict(integ, "quick_check")
+    fk = _phase_dict(integ, "fk_check")
+    qd = cycle_result.get("qdrant_reconcile")
+    qd = qd if isinstance(qd, dict) else {}
+    sd = cycle_result.get("spool_drain")
+    sd = sd if isinstance(sd, dict) else {}
+    depth = spool.pending_depth(db_path)
+    metrics: dict[str, object] = {
+        "wal_bytes": _wal_bytes(db_path),
+        "checkpoint_busy": ck.get("busy"),
+        "checkpointed_frames": ck.get("checkpointed_frames"),
+        "quick_check_ok": qc.get("ok"),
+        "fk_orphans": fk.get("orphans"),
+        "qdrant_drift": qd.get("drift"),
+        "spool_depth_files": depth["files"],
+        "spool_depth_lines": depth["lines"],
+        "spool_drained": sd.get("drained"),
+        "spool_quarantined": sd.get("quarantined"),
+        "spool_lag_seconds": sd.get("lag_seconds"),
+        "busy_errors": busy_error_count(),
+        "promotions_frozen": promotions_frozen(db_path),
+    }
+    _record(store, MARKER_METRICS, metrics)
+    return metrics

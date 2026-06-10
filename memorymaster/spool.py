@@ -33,12 +33,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ENV_SPOOL_DIR = "MEMORYMASTER_SPOOL_DIR"
+ENV_WAL_DISCIPLINE = "MEMORYMASTER_WAL_DISCIPLINE"
 
 SPOOL_VERSION = 1
 KNOWN_OPS = ("access", "feedback", "ingest", "verbatim", "dream")
 
 DRAINING_SUFFIX = ".draining"
 QUARANTINE_DIRNAME = "quarantine"
+
+
+def wal_discipline_enabled() -> bool:
+    """P1 WAL-discipline umbrella flag (spec §5), default OFF.
+
+    Single source of truth for every flag-gated writer (recall hook, Stop
+    hook, dream bridge): when on, ambient writes go through this spool
+    instead of opening the multi-GB DB; when off, the untouched legacy
+    direct-write path runs.
+    """
+    raw = os.environ.get(ENV_WAL_DISCIPLINE, "0").strip()
+    return raw not in ("0", "false", "False", "no", "off", "")
 
 
 def spool_root() -> Path:

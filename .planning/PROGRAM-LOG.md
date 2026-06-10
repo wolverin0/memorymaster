@@ -14,7 +14,7 @@ conventional PRs, numeric exit gates only.
 | pre: ship v3.28.0 | ✅ DONE 2026-06-09 | PyPI 200; PRs #146 #147 |
 | CI resurrection (unplanned) | ✅ DONE 2026-06-09 | PRs #148 #150; main CI green (run 27244754336) — first since June 1 |
 | P0 /mm4-baseline | ✅ DONE 2026-06-09 | gate 4/4; BASELINE-2026-06-09.html; PR #149; graphify hook fixed |
-| P1 /mm4-reliability | ▶ IN PROGRESS | WF1 done: verdict **minimal/WAL-Discipline** (broker flag-gating + daemon RO-finding grafted; daemon = escalation tripwire). Spec: P1-RELIABILITY-SPEC.md (12 steps). WF2 build launched |
+| P1 /mm4-reliability | ▶ BUILD DONE, gating | 12/12 steps built (2 workflow runs, ~2M tokens). Central gate GREEN: 2820 passed + ruff clean after fixing 2 gate-caught bugs (init_db connection leak via `with conn:` gotcha mm-6764; wal_bytes==0 over-pinned assertion). Remaining: merge, FK --apply, cold-init re-measure, chaos soak (exit gate) |
 | P2 /mm4-restructure | pending | |
 | P3 /mm4-quality | pending | |
 | P4 /mm4-agents | pending | |

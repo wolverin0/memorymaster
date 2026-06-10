@@ -415,18 +415,21 @@ class _LifecycleMixin:
             conn.commit()
 
 
+    @staticmethod
+    def _embedding_text(claim: Claim) -> str:
+        return " ".join(
+            part
+            for part in [claim.text, claim.normalized_text or "", claim.subject or "", claim.object_value or ""]
+            if part
+        )
+
     def upsert_embeddings(self, claims: list[Claim], provider: EmbeddingProvider) -> int:
         if not claims:
             return 0
         now = utc_now()
         rows = []
         for claim in claims:
-            text = " ".join(
-                part
-                for part in [claim.text, claim.normalized_text or "", claim.subject or "", claim.object_value or ""]
-                if part
-            )
-            embedding = provider.embed(text)
+            embedding = provider.embed(self._embedding_text(claim))
             rows.append((claim.id, provider.model, json.dumps(embedding), now))
 
         try:
@@ -481,7 +484,17 @@ class _LifecycleMixin:
     ) -> dict[int, float]:
         if not claims:
             return {}
-        self.upsert_embeddings(claims, provider)
+        # P1 WAL-discipline (spec §2.2): on a read-only recall store the
+        # embedding-cache refresh is a WRITE on the read path — exactly the
+        # F9 class the RO mode exists to kill. Without this guard, hybrid
+        # recall under MEMORYMASTER_WAL_DISCIPLINE=1 raises "attempt to
+        # write a readonly database" whenever a concurrently-ingested claim
+        # has no cached embedding yet (found by the chaos soak, step 12).
+        # RO stores score uncached claims in memory instead; the cache
+        # catches up at the next RW touch (steward/ingest paths).
+        read_only = bool(getattr(self, "read_only", False))
+        if not read_only:
+            self.upsert_embeddings(claims, provider)
         query_vec = provider.embed(query_text)
         claim_ids = [c.id for c in claims]
         placeholders = ",".join("?" for _ in claim_ids)
@@ -495,6 +508,12 @@ class _LifecycleMixin:
             emb = json.loads(str(row["embedding_json"]))
             sim = cosine_similarity(query_vec, emb)
             scores[int(row["claim_id"])] = max(0.0, min(1.0, (sim + 1.0) / 2.0))
+        if read_only:
+            for claim in claims:
+                if claim.id in scores:
+                    continue
+                sim = cosine_similarity(query_vec, provider.embed(self._embedding_text(claim)))
+                scores[claim.id] = max(0.0, min(1.0, (sim + 1.0) / 2.0))
         return scores
 
 

@@ -110,6 +110,26 @@ def _hermetic_snapshot_dir(tmp_path_factory, monkeypatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_wal_discipline(tmp_path_factory, monkeypatch) -> None:
+    """Neutralize the WAL-discipline dogfood flag and redirect the spool root.
+
+    WHY: the P1 rollout (spec §5) sets MEMORYMASTER_WAL_DISCIPLINE=1
+    machine-wide (setx) for the dogfood week. Without this reset, every
+    legacy direct-path test (dream bridge, verbatim store, recall) would
+    silently flip into the spool regime on the operator's machine and fail;
+    and any test that spools without setting MEMORYMASTER_SPOOL_DIR would
+    litter envelopes under the REAL ~/.memorymaster/spool — where the
+    production steward's drain would replay tmp-DB test claims. Tests opt
+    back into the flag per-test via monkeypatch.setenv.
+    """
+    monkeypatch.delenv("MEMORYMASTER_WAL_DISCIPLINE", raising=False)
+    monkeypatch.setenv(
+        "MEMORYMASTER_SPOOL_DIR",
+        str(tmp_path_factory.mktemp("mm-spool")),
+    )
+
+
+@pytest.fixture(autouse=True)
 def _cleanup_case_artifacts() -> None:
     _CASE_ROOT.mkdir(parents=True, exist_ok=True)
     # Don't prune before the test - files might be locked from previous tests

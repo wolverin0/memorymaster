@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import logging
+import os
 import sqlite3
 from pathlib import Path
 
@@ -29,9 +31,45 @@ __all__ = [
     "connect_ro",
     "generate_human_id_hash",
     "generate_top_level_human_id",
+    "initdb_fastpath_enabled",
     "open_conn",
+    "schema_stamp",
     "utc_now",
 ]
+
+ENV_INITDB_FASTPATH = "MEMORYMASTER_INITDB_FASTPATH"
+
+
+def initdb_fastpath_enabled() -> bool:
+    """P1 init_db fast-path sub-flag (spec §2.9), default OFF.
+
+    Skipping the ``_ensure_*`` passes on a lagging DB is the one genuinely
+    risky optimization in the WAL-discipline program, so it gets its own
+    opt-in flag under the ``MEMORYMASTER_WAL_DISCIPLINE`` umbrella. Flag
+    off = byte-identical legacy init_db (full passes, no user_version write).
+    """
+    raw = os.environ.get(ENV_INITDB_FASTPATH, "0").strip()
+    return raw not in ("0", "false", "False", "no", "off", "")
+
+
+def schema_stamp() -> int:
+    """31-bit fingerprint of the full schema lineage, for ``PRAGMA user_version``.
+
+    Derived from the bytes of ``schema.sql`` PLUS every discovered migration's
+    (version, checksum) pair — so a schema edit or a new migration file
+    changes the stamp *automatically*, with no manual bump to forget. A DB
+    stamped under an older fingerprint always mismatches and falls through
+    to the full init path. Clamped to 31 bits (user_version is a signed
+    32-bit header field) and never 0 (0 is the fresh-DB default, which must
+    always mean "not stamped").
+    """
+    from memorymaster.migrations import discover_migrations
+
+    h = hashlib.sha256(load_schema_sql().encode("utf-8"))
+    for m in discover_migrations():
+        h.update(f"\x00{m.version}:{m.checksum()}".encode("utf-8"))
+    stamp = int.from_bytes(h.digest()[:4], "big") & 0x7FFFFFFF
+    return stamp or 1
 
 
 class SQLiteStore(_SchemaMixin, _ReadMixin, _WriteClaimsMixin, _LifecycleMixin, _SourceItemsMixin):
@@ -64,7 +102,27 @@ class SQLiteStore(_SchemaMixin, _ReadMixin, _WriteClaimsMixin, _LifecycleMixin, 
             raise sqlite3.OperationalError(
                 "read-only store cannot init_db; construct without read_only=True"
             )
-        with self.connect() as conn:
+        # P1 init_db fast-path (spec §2.9, F2): a successful FULL init stamps
+        # PRAGMA user_version with the schema-lineage fingerprint; when a
+        # later cold start finds a matching stamp, the 14 _ensure_* passes +
+        # MigrationRunner probe are provably redundant and are skipped
+        # (measured 16.06 s cold on the live DB). Any schema.sql edit or new
+        # migration changes the fingerprint, so a lagging DB always falls
+        # through to the full path below.
+        fastpath = initdb_fastpath_enabled()
+        expected_stamp = schema_stamp() if fastpath else None
+        if fastpath:
+            probe = self.connect()
+            try:
+                current_stamp = int(probe.execute("PRAGMA user_version").fetchone()[0])
+            finally:
+                probe.close()
+            if current_stamp == expected_stamp:
+                return
+        # NB: `with conn:` alone is a TRANSACTION scope in sqlite3 — it never
+        # closes. closing() makes the close deterministic; a GC-held connection
+        # here keeps the WAL file from truncating after init.
+        with contextlib.closing(self.connect()) as conn, conn:
             try:
                 conn.executescript(load_schema_sql())
                 conn.commit()
@@ -113,5 +171,11 @@ class SQLiteStore(_SchemaMixin, _ReadMixin, _WriteClaimsMixin, _LifecycleMixin, 
         # migration runner manages its own transactions per-step.
         from memorymaster.migrations import MigrationRunner
 
-        with self.connect() as mig_conn:
+        with contextlib.closing(self.connect()) as mig_conn, mig_conn:
             MigrationRunner(mig_conn, backend="sqlite").apply_pending()
+            if fastpath:
+                # Stamp ONLY after the full path succeeded end-to-end — an
+                # exception above propagates and leaves the DB unstamped, so
+                # the next init retries the full path. PRAGMA cannot be
+                # parameterized; expected_stamp is our own trusted int.
+                mig_conn.execute(f"PRAGMA user_version = {int(expected_stamp)}")

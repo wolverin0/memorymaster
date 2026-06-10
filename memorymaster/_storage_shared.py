@@ -49,6 +49,29 @@ def utc_now() -> str:
 DEFAULT_BUSY_TIMEOUT_MS = 15000
 DEFAULT_RO_BUSY_TIMEOUT_MS = 2000
 
+# Process-local busy-error counter (P1 spec §2.10): every "database is
+# locked/busy" failure inside open_conn's retry wrapper increments it. The
+# steward persists the value per cycle (jobs/integrity.emit_metrics) — a
+# rising trend despite uniform 15 s timeouts is escalation tripwire (d) in
+# spec §7, so it must be counted, not just logged.
+_busy_errors = 0
+
+
+def record_busy_error() -> None:
+    """Count one busy/locked connection failure (process-local)."""
+    global _busy_errors
+    _busy_errors += 1
+
+
+def busy_error_count() -> int:
+    """Busy/locked failures seen by this process since import."""
+    return _busy_errors
+
+
+def _is_busy_error(exc: sqlite3.Error) -> bool:
+    message = str(exc).lower()
+    return "locked" in message or "busy" in message
+
 
 def open_conn(
     db_path: str | Path,
@@ -75,11 +98,22 @@ def open_conn(
     """
 
     def _open() -> sqlite3.Connection:
-        conn = sqlite3.connect(str(db_path), check_same_thread=check_same_thread)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute(f"PRAGMA busy_timeout = {int(busy_ms)}")
+        try:
+            conn = sqlite3.connect(str(db_path), check_same_thread=check_same_thread)
+        except sqlite3.OperationalError as exc:
+            if _is_busy_error(exc):
+                record_busy_error()
+            raise
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute(f"PRAGMA busy_timeout = {int(busy_ms)}")
+        except sqlite3.OperationalError as exc:
+            conn.close()
+            if _is_busy_error(exc):
+                record_busy_error()
+            raise
         return conn
 
     return connect_with_retry(_open)

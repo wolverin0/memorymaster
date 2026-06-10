@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 # Credential detection delegated to the canonical filter in memorymaster.security.
+from memorymaster import spool
 from memorymaster._storage_shared import open_conn
 from memorymaster.security import redact_text as _redact_text
 
@@ -214,6 +215,27 @@ def _extract_role_content(entry: dict) -> tuple[str, str]:
     return role, content if isinstance(content, str) else ""
 
 
+def _iter_transcript_turns(path: Path):
+    """Yield ``(role, content)`` for every parseable dict line of a transcript.
+
+    Shared by :func:`store_transcript` (direct DB path) and
+    :func:`spool_transcript` (P1 spool path) so the line parsing can never
+    drift between the two regimes — a turn one path keeps and the other
+    drops would silently change what verbatim recall can find when the
+    operator flips MEMORYMASTER_WAL_DISCIPLINE.
+    """
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        yield _extract_role_content(entry)
+
+
 def store_transcript(
     db_path: str,
     transcript_path: str | Path,
@@ -233,17 +255,7 @@ def store_transcript(
     session_id = path.stem  # Use filename as session ID
 
     with closing(_connect(db_path)) as conn:
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            if not line.strip():
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(entry, dict):
-                continue
-
-            role, content = _extract_role_content(entry)
+        for role, content in _iter_transcript_turns(path):
             if role not in ("user", "assistant"):
                 stats["skipped"] += 1
                 continue
@@ -257,6 +269,57 @@ def store_transcript(
             else:
                 stats["skipped"] += 1
         conn.commit()
+
+    return stats
+
+
+def spool_transcript(
+    db_path: str,
+    transcript_path: str | Path,
+    scope: str = "project",
+    source_agent: str = "transcript",
+) -> dict[str, int]:
+    """Spool a JSONL transcript as ``op:"verbatim"`` envelopes (spec §2.3).
+
+    Flag-on counterpart of :func:`store_transcript`: the Stop hook fires on
+    every stop, and under MEMORYMASTER_WAL_DISCIPLINE it must NOT open the
+    multi-GB DB — each kept turn becomes a ~10 ms spool append and the
+    steward drain replays it through :func:`store_verbatim` (its per-session
+    dedup and sensitivity filter intact). The sensitivity check ALSO runs
+    here, before the append, so a credential never sits at rest in the
+    plaintext spool file waiting for the drain to reject it.
+    """
+    path = Path(transcript_path)
+    if not path.exists():
+        return {"spooled": 0, "skipped": 0, "error": "file not found"}
+
+    stats = {"spooled": 0, "skipped": 0}
+    session_id = path.stem  # Use filename as session ID — mirrors store_transcript
+    now = datetime.now(timezone.utc).isoformat()
+
+    for role, content in _iter_transcript_turns(path):
+        if role not in ("user", "assistant"):
+            stats["skipped"] += 1
+            continue
+        if not content or len(content) < 20:
+            stats["skipped"] += 1
+            continue
+        if _row_has_sensitive_field(role, source_agent or "", content):
+            stats["skipped"] += 1
+            continue
+        spool.append(
+            db_path,
+            "verbatim",
+            {
+                "session_id": session_id,
+                "role": role,
+                "content": content,
+                "scope": scope,
+                "source_agent": source_agent,
+                "timestamp": now,
+            },
+        )
+        stats["spooled"] += 1
 
     return stats
 

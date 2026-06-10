@@ -261,3 +261,29 @@ def test_store_connect_ro_rejects_writes(tmp_path: Path) -> None:
             conn.execute("DELETE FROM t")
     finally:
         conn.close()
+
+
+def test_init_db_closes_its_connections_deterministically(tmp_path):
+    """init_db must not leak connections — WAL truncates without gc.collect().
+
+    WHY: `with conn:` in sqlite3 is a TRANSACTION scope, not a closing one.
+    A leaked init connection is only reclaimed by GC, so the WAL file stays
+    at ~1.1MB until collection happens. That made wal_bytes-based integrity
+    panels (and any WAL-size tripwire) nondeterministic: green in isolation,
+    red when earlier tests shifted allocation patterns. The requirement is
+    deterministic close — the WAL must be truncated/absent the moment
+    init_db returns, with no garbage-collection assist.
+    """
+    import os
+
+    from memorymaster.service import MemoryService
+
+    db = tmp_path / "closes.db"
+    svc = MemoryService(db)
+    svc.init_db()
+    wal = tmp_path / "closes.db-wal"
+    wal_size = os.path.getsize(wal) if wal.exists() else 0
+    assert wal_size == 0, (
+        f"WAL is {wal_size} bytes after init_db — a connection leaked "
+        "(close is GC-dependent, not deterministic)"
+    )
