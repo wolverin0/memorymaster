@@ -17,7 +17,7 @@ log_hook("dream-sync", "start")
 try:
     sys.stdin.read()
 
-    from memorymaster.dream_bridge import dream_sync
+    from memorymaster.bridges.dream_bridge import dream_sync
     # Under MEMORYMASTER_WAL_DISCIPLINE=1 the ingest half appends op:"dream"
     # spool envelopes instead of opening the DB (P1 spec §2.3) — dream_ingest
     # reads the flag itself, so this template only needs the inherited env var.

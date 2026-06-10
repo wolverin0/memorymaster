@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.atlas_contract import (
+from memorymaster.bridges.atlas_contract import (
     ATLAS_CONTRACT_NAME,
     ATLAS_CONTRACT_VERSION,
     ATLAS_ENDPOINTS,
@@ -877,13 +877,13 @@ def test_init_db_migrates_stale_atlas_db_without_sensitivity_column(tmp_path: Pa
 
 
 def test_provider_factory_returns_mock() -> None:
-    from memorymaster.media_providers import get_ocr_provider, get_transcription_provider
+    from memorymaster.bridges.media_providers import get_ocr_provider, get_transcription_provider
     assert get_transcription_provider("mock").provider_name == "mock-transcription"
     assert get_ocr_provider("mock").provider_name == "mock-ocr"
 
 
 def test_provider_factory_rejects_unknown() -> None:
-    from memorymaster.media_providers import get_ocr_provider, get_transcription_provider
+    from memorymaster.bridges.media_providers import get_ocr_provider, get_transcription_provider
     with pytest.raises(ValueError, match="Unknown transcription provider"):
         get_transcription_provider("nonexistent")
     with pytest.raises(ValueError, match="Unknown OCR provider"):
@@ -895,7 +895,7 @@ def test_openai_whisper_class_lazy_imports() -> None:
     import os
     saved = os.environ.pop("OPENAI_API_KEY", None)
     try:
-        from memorymaster.media_providers import OpenAIWhisperTranscriptionProvider
+        from memorymaster.bridges.media_providers import OpenAIWhisperTranscriptionProvider
         provider = OpenAIWhisperTranscriptionProvider()
         assert provider.provider_name == "openai-whisper"
         with pytest.raises(RuntimeError, match="requires OPENAI_API_KEY"):
@@ -907,7 +907,7 @@ def test_openai_whisper_class_lazy_imports() -> None:
 
 def test_tesseract_class_lazy_imports() -> None:
     """Class must instantiate without pytesseract installed; check is lazy."""
-    from memorymaster.media_providers import TesseractOcrProvider
+    from memorymaster.bridges.media_providers import TesseractOcrProvider
     provider = TesseractOcrProvider()
     assert provider.provider_name == "tesseract"
 
@@ -962,7 +962,7 @@ def test_ocr_source_item_mock_envelope(tmp_path: Path, capsys) -> None:
 
 def test_transcribe_failure_records_event_does_not_crash(tmp_path: Path) -> None:
     """Provider failure must be recorded as media_process event, not raised."""
-    from memorymaster.media_processing import process_transcription
+    from memorymaster.bridges.media_processing import process_transcription
     from memorymaster.service import MemoryService
 
     fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"

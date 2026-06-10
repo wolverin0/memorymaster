@@ -228,7 +228,7 @@ def _writer_steward(db: Path, ledger: Ledger, writer_id: int) -> None:
 
 def _writer_merge(db: Path, ledger: Ledger, writer_id: int, sibling: Path) -> None:
     """1x merge-db: seed a sibling DB, merge it over the soak DB (hermes shape)."""
-    from memorymaster.db_merge import merge_databases
+    from memorymaster.bridges.db_merge import merge_databases
     from memorymaster.models import CitationInput
     from memorymaster.service import MemoryService
 

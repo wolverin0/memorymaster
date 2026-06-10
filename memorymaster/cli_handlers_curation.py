@@ -756,7 +756,7 @@ def _handle_observe(args: argparse.Namespace, service, parser: argparse.Argument
 
 
 def _handle_merge_db(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.db_merge import merge_databases
+    from memorymaster.bridges.db_merge import merge_databases
     t0 = time.perf_counter()
     result = merge_databases(str(effective_db), args.source)
     elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -902,7 +902,7 @@ COMMAND_HANDLERS["ghost-notes"] = _handle_ghost_notes
 
 
 def _handle_dream_seed(args, service, parser, effective_db) -> int:
-    from memorymaster.dream_bridge import dream_seed
+    from memorymaster.bridges.dream_bridge import dream_seed
     t0 = time.perf_counter()
     result = dream_seed(
         db_path=str(effective_db),
@@ -926,7 +926,7 @@ def _handle_dream_seed(args, service, parser, effective_db) -> int:
 
 
 def _handle_dream_ingest(args, service, parser, effective_db) -> int:
-    from memorymaster.dream_bridge import dream_ingest
+    from memorymaster.bridges.dream_bridge import dream_ingest
     t0 = time.perf_counter()
     result = dream_ingest(db_path=str(effective_db), project_path=args.project)
     elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -939,7 +939,7 @@ def _handle_dream_ingest(args, service, parser, effective_db) -> int:
 
 
 def _handle_dream_sync(args, service, parser, effective_db) -> int:
-    from memorymaster.dream_bridge import dream_sync
+    from memorymaster.bridges.dream_bridge import dream_sync
     t0 = time.perf_counter()
     result = dream_sync(
         db_path=str(effective_db),
@@ -962,7 +962,7 @@ def _handle_dream_sync(args, service, parser, effective_db) -> int:
 
 
 def _handle_dream_clean(args, service, parser, effective_db) -> int:
-    from memorymaster.dream_bridge import dream_clean
+    from memorymaster.bridges.dream_bridge import dream_clean
     t0 = time.perf_counter()
     result = dream_clean(project_path=args.project, dry_run=args.dry_run)
     elapsed_ms = (time.perf_counter() - t0) * 1000

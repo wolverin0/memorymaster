@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.media_processing import (
+from memorymaster.bridges.media_processing import (
     MockOcrProvider,
     MockTranscriptionProvider,
     process_ocr,

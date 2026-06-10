@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from memorymaster.cli import main
-from memorymaster.connectors.whatsapp import import_wacli_json
+from memorymaster.bridges.connectors.whatsapp import import_wacli_json
 from memorymaster.service import MemoryService
 
 

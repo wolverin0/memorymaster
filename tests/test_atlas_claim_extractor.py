@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from memorymaster.atlas_claim_extractor import extract_atlas_claims_from_evidence
+from memorymaster.bridges.atlas_claim_extractor import extract_atlas_claims_from_evidence
 from memorymaster.cli import main
 from memorymaster.service import MemoryService
 

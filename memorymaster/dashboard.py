@@ -1175,7 +1175,7 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
         )
 
     def _handle_atlas_version(self, query_string: str) -> None:
-        from memorymaster.atlas_contract import atlas_contract_payload
+        from memorymaster.bridges.atlas_contract import atlas_contract_payload
 
         payload = atlas_contract_payload()
         self._write_json({"ok": True, **payload})

@@ -317,7 +317,7 @@ def handle_mcp_usage_report(args: argparse.Namespace, db_path) -> int:
 
 
 def _handle_init_db(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.atlas_contract import atlas_meta
+    from memorymaster.bridges.atlas_contract import atlas_meta
 
     t0 = time.perf_counter()
     service.init_db()
@@ -376,8 +376,8 @@ def _handle_ingest_daydream(args: argparse.Namespace, service, parser: argparse.
 
 
 def _handle_import_whatsapp(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.atlas_contract import atlas_meta
-    from memorymaster.connectors.whatsapp import import_wacli_json
+    from memorymaster.bridges.atlas_contract import atlas_meta
+    from memorymaster.bridges.connectors.whatsapp import import_wacli_json
 
     t0 = time.perf_counter()
     result = import_wacli_json(
@@ -405,8 +405,8 @@ def _handle_import_whatsapp(args: argparse.Namespace, service, parser: argparse.
 
 
 def _handle_propose_actions(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.action_extractor import propose_actions_from_evidence
-    from memorymaster.atlas_contract import atlas_meta
+    from memorymaster.bridges.action_extractor import propose_actions_from_evidence
+    from memorymaster.bridges.atlas_contract import atlas_meta
 
     t0 = time.perf_counter()
     result = propose_actions_from_evidence(service, destination=args.destination, limit=args.limit)
@@ -431,8 +431,8 @@ def _handle_propose_actions(args: argparse.Namespace, service, parser: argparse.
 
 
 def _handle_extract_atlas_claims(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.atlas_claim_extractor import extract_atlas_claims_from_evidence
-    from memorymaster.atlas_contract import atlas_meta
+    from memorymaster.bridges.atlas_claim_extractor import extract_atlas_claims_from_evidence
+    from memorymaster.bridges.atlas_contract import atlas_meta
 
     t0 = time.perf_counter()
     result = extract_atlas_claims_from_evidence(service, scope=args.scope, limit=args.limit)
@@ -456,7 +456,7 @@ def _handle_extract_atlas_claims(args: argparse.Namespace, service, parser: argp
 
 
 def _handle_action_proposals(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.atlas_contract import atlas_meta
+    from memorymaster.bridges.atlas_contract import atlas_meta
 
     t0 = time.perf_counter()
     proposals = service.list_action_proposals(
@@ -487,7 +487,7 @@ def _handle_resolve_action_proposal(
     parser: argparse.ArgumentParser,
     effective_db: str,
 ) -> int:
-    from memorymaster.atlas_contract import atlas_meta
+    from memorymaster.bridges.atlas_contract import atlas_meta
 
     t0 = time.perf_counter()
     proposal = service.update_action_proposal_status(
@@ -514,9 +514,9 @@ def _handle_transcribe_source_item(
     parser: argparse.ArgumentParser,
     effective_db: str,
 ) -> int:
-    from memorymaster.atlas_contract import atlas_meta
-    from memorymaster.media_processing import process_transcription
-    from memorymaster.media_providers import get_transcription_provider
+    from memorymaster.bridges.atlas_contract import atlas_meta
+    from memorymaster.bridges.media_processing import process_transcription
+    from memorymaster.bridges.media_providers import get_transcription_provider
 
     provider = get_transcription_provider(args.provider)
     t0 = time.perf_counter()
@@ -552,9 +552,9 @@ def _handle_ocr_source_item(
     parser: argparse.ArgumentParser,
     effective_db: str,
 ) -> int:
-    from memorymaster.atlas_contract import atlas_meta
-    from memorymaster.media_processing import process_ocr
-    from memorymaster.media_providers import get_ocr_provider
+    from memorymaster.bridges.atlas_contract import atlas_meta
+    from memorymaster.bridges.media_processing import process_ocr
+    from memorymaster.bridges.media_providers import get_ocr_provider
 
     provider = get_ocr_provider(args.provider)
     t0 = time.perf_counter()
@@ -590,7 +590,7 @@ def _handle_enqueue_media_retry(
     parser: argparse.ArgumentParser,
     effective_db: str,
 ) -> int:
-    from memorymaster.atlas_contract import atlas_meta
+    from memorymaster.bridges.atlas_contract import atlas_meta
 
     t0 = time.perf_counter()
     item = service.enqueue_media_retry(
@@ -621,7 +621,7 @@ def _handle_process_media_retry_queue(
     parser: argparse.ArgumentParser,
     effective_db: str,
 ) -> int:
-    from memorymaster.atlas_contract import atlas_meta
+    from memorymaster.bridges.atlas_contract import atlas_meta
 
     t0 = time.perf_counter()
     claimed = service.claim_pending_media_retries(limit=args.limit)
@@ -659,7 +659,7 @@ def _handle_record_media_retry_outcome(
     parser: argparse.ArgumentParser,
     effective_db: str,
 ) -> int:
-    from memorymaster.atlas_contract import atlas_meta
+    from memorymaster.bridges.atlas_contract import atlas_meta
 
     t0 = time.perf_counter()
     item = service.record_media_retry_outcome(
@@ -689,7 +689,7 @@ def _handle_list_media_retries(
     parser: argparse.ArgumentParser,
     effective_db: str,
 ) -> int:
-    from memorymaster.atlas_contract import atlas_meta
+    from memorymaster.bridges.atlas_contract import atlas_meta
 
     t0 = time.perf_counter()
     rows = service.list_media_retries(
@@ -719,7 +719,7 @@ def _handle_label_source_item(
     parser: argparse.ArgumentParser,
     effective_db: str,
 ) -> int:
-    from memorymaster.atlas_contract import atlas_meta
+    from memorymaster.bridges.atlas_contract import atlas_meta
 
     sensitivity = None if args.sensitivity == "clear" else args.sensitivity
     t0 = time.perf_counter()
@@ -743,7 +743,7 @@ def _handle_label_evidence_item(
     parser: argparse.ArgumentParser,
     effective_db: str,
 ) -> int:
-    from memorymaster.atlas_contract import atlas_meta
+    from memorymaster.bridges.atlas_contract import atlas_meta
 
     sensitivity = None if args.sensitivity == "clear" else args.sensitivity
     t0 = time.perf_counter()
@@ -767,7 +767,7 @@ def _handle_edit_action_proposal(
     parser: argparse.ArgumentParser,
     effective_db: str,
 ) -> int:
-    from memorymaster.atlas_contract import atlas_meta
+    from memorymaster.bridges.atlas_contract import atlas_meta
 
     t0 = time.perf_counter()
     proposal = service.update_action_proposal_fields(
@@ -791,8 +791,8 @@ def _handle_edit_action_proposal(
 
 
 def _handle_export_actions(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.action_exporters import export_approved_actions
-    from memorymaster.atlas_contract import atlas_meta
+    from memorymaster.bridges.action_exporters import export_approved_actions
+    from memorymaster.bridges.atlas_contract import atlas_meta
 
     t0 = time.perf_counter()
     result = export_approved_actions(
@@ -818,7 +818,7 @@ def _handle_export_actions(args: argparse.Namespace, service, parser: argparse.A
 
 
 def _handle_atlas_version(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.atlas_contract import atlas_contract_payload, atlas_meta
+    from memorymaster.bridges.atlas_contract import atlas_contract_payload, atlas_meta
 
     t0 = time.perf_counter()
     payload = atlas_contract_payload()
@@ -848,7 +848,7 @@ def _handle_run_cycle(args: argparse.Namespace, service, parser: argparse.Argume
         print(json.dumps(result, indent=2))
 
     if getattr(args, "with_dream_sync", False):
-        from memorymaster.dream_bridge import dream_sync
+        from memorymaster.bridges.dream_bridge import dream_sync
         try:
             sync_result = dream_sync(effective_db, project_path=args.dream_project)
             print(f"\ndream-sync: ingested={sync_result.get('ingested', 0)} "
@@ -1544,7 +1544,7 @@ def _handle_export_delta(args: argparse.Namespace, service, parser: argparse.Arg
     the export counts and the new watermark — callers should record
     `max_updated_at` and pass it as `--since` on the next run.
     """
-    from memorymaster.delta_sync import export_delta
+    from memorymaster.bridges.delta_sync import export_delta
 
     t0 = time.perf_counter()
     result = export_delta(effective_db, args.since, args.output)

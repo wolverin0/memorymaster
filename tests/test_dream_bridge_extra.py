@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
-from memorymaster.dream_bridge import dream_clean, dream_ingest, dream_seed, dream_sync
+from memorymaster.bridges.dream_bridge import dream_clean, dream_ingest, dream_seed, dream_sync
 from memorymaster.service import MemoryService
 
 
@@ -95,7 +95,7 @@ def test_dream_seed_project_scope_filter_prevents_cross_project_export(tmp_path:
     _insert_claim(db_path, 1, "MemoryMaster keeps scoped export claims isolated.", scope="project:memorymaster")
     _insert_claim(db_path, 2, "Other project claim must stay out of this dream export.", scope="project:other")
 
-    with patch("memorymaster.dream_bridge.Path.home", return_value=home):
+    with patch("memorymaster.bridges.dream_bridge.Path.home", return_value=home):
         result = dream_seed(str(db_path), project_path=str(project_path), min_quality=0.0)
 
     exported = sorted(path.name for path in memory_dir.glob("mm_*.md"))
@@ -165,7 +165,7 @@ def test_dream_seed_aborts_when_auto_dream_lock_exists(tmp_path: Path) -> None:
     lock_dir.mkdir(parents=True)
     (lock_dir / ".dream.lock").write_text("running", encoding="utf-8")
 
-    with patch("memorymaster.dream_bridge.Path.home", return_value=home):
+    with patch("memorymaster.bridges.dream_bridge.Path.home", return_value=home):
         result = dream_seed(str(db_path), project_path=str(project_path))
 
     assert result["seeded"] == 0

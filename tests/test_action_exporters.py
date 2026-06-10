@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from memorymaster.action_exporters import export_approved_actions
+from memorymaster.bridges.action_exporters import export_approved_actions
 from memorymaster.cli import main
 from memorymaster.service import MemoryService
 

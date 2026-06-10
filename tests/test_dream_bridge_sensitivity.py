@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
-from memorymaster.dream_bridge import dream_ingest
+from memorymaster.bridges.dream_bridge import dream_ingest
 from memorymaster.service import MemoryService
 
 

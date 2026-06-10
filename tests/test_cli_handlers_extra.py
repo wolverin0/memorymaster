@@ -237,7 +237,7 @@ def test_merge_db_routes_and_emits_envelope(monkeypatch, capsys):
         seen.update(dest=dest, source=source)
         return {"merged": 2, "skipped": 1, "errors": 0}
 
-    monkeypatch.setattr("memorymaster.db_merge.merge_databases", fake_merge)
+    monkeypatch.setattr("memorymaster.bridges.db_merge.merge_databases", fake_merge)
     rc = C._handle_merge_db(_ns(source="other.db"), _FakeService(), None, "db.sqlite")
     assert rc == 0
     assert seen == {"dest": "db.sqlite", "source": "other.db"}
@@ -252,7 +252,7 @@ def test_dream_seed_error_returns_nonzero(monkeypatch, capsys):
     """When the worker reports an error in non-JSON mode, the handler must
     return 1 so the shell/caller can detect the failure."""
     monkeypatch.setattr(
-        "memorymaster.dream_bridge.dream_seed",
+        "memorymaster.bridges.dream_bridge.dream_seed",
         lambda **k: {"error": "no memory dir"},
     )
     args = _ns(json_output=False, project=".", min_tier="working",
@@ -264,7 +264,7 @@ def test_dream_seed_error_returns_nonzero(monkeypatch, capsys):
 
 def test_dream_seed_success_emits_envelope(monkeypatch, capsys):
     monkeypatch.setattr(
-        "memorymaster.dream_bridge.dream_seed",
+        "memorymaster.bridges.dream_bridge.dream_seed",
         lambda **k: {"seeded": 3, "skipped": 0, "total_claims": 3,
                      "memory_dir": "/tmp/m", "dry_run": True},
     )

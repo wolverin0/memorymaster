@@ -16,7 +16,7 @@ from typing import Iterator
 
 import pytest
 
-from memorymaster.delta_sync import export_delta
+from memorymaster.bridges.delta_sync import export_delta
 from memorymaster.models import CitationInput
 from memorymaster.service import MemoryService
 
@@ -197,7 +197,7 @@ def test_delta_file_round_trips_through_merge(populated_db, tmp_path):
     assert result["exported"] == 1
 
     # Merge the small delta into side B
-    from memorymaster.db_merge import merge_databases
+    from memorymaster.bridges.db_merge import merge_databases
     merge_result = merge_databases(str(db_b), str(delta))
     assert merge_result["merged"] == 1
 
