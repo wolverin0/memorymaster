@@ -58,6 +58,31 @@ def _cfg(monkeypatch):
     reset_config()
 
 
+class _FakeEmbeddings:
+    """Deterministic 2-D embeddings for the planted contradiction pair.
+
+    Duck-types EmbeddingProvider and is injected at ``service.embedding_provider``
+    so the probe's hybrid peer fetch scores the planted pair inside the
+    contradiction band (cos 0.78 rad ~= 0.71) on ANY machine. Without this the
+    test depends on real sentence-transformers geometry; in environments
+    without the model, the degraded hash fallback scores the pair below the
+    band and the probe finds zero pairs (decision stays 'stale').
+    """
+
+    model = "fake-semantic-test"
+    is_semantic = True
+    dims = 2
+
+    def embed(self, text: str) -> list[float]:
+        import math
+        low = text.lower()
+        if "rate-limited" in low:
+            return [1.0, 0.0]
+        if "no rate limit" in low:
+            return [math.cos(0.78), math.sin(0.78)]
+        return [0.0, 1.0]
+
+
 def _stub_judge(prompt: str, body: str) -> str:
     """LLM stub: contradicts iff both planted markers appear in the prompt body."""
     low = body.lower()
@@ -74,6 +99,7 @@ def test_contradiction_probe_elevates_to_conflicted_proposal(monkeypatch) -> Non
     workspace = _case_workspace("steward-contradiction-ws")
     service = MemoryService(db, workspace_root=workspace)
     service.init_db()
+    service.embedding_provider = _FakeEmbeddings()
     monkeypatch.setitem(llm_provider._PROVIDERS, "google", _stub_judge)
 
     # Two claims that contradict semantically but have DIFFERENT subject+predicate

@@ -738,7 +738,9 @@ def cleanup(wiki_dir: str | Path, scope_filter: str | None = None) -> dict[str, 
     audited = 0
     rewritten = 0
 
-    for md_file in wiki.rglob("*.md"):
+    # Sorted so the every-5th audit cadence is deterministic across platforms
+    # (rglob yields filesystem order, which differs between NTFS and ext4).
+    for md_file in sorted(wiki.rglob("*.md")):
         if md_file.name.startswith("_") or md_file.parent.name == "queries":
             continue
         if scope_filter:
