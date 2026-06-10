@@ -7,9 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster import key_rotator
 from memorymaster.key_rotator import (
-    DEFAULT_COOLDOWN_SECONDS,
     KeyRotator,
     _KeySlot,
     _parse_file,
