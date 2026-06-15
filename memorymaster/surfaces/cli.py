@@ -75,6 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--predicate", help="Optional claim predicate")
     ingest.add_argument("--object", dest="object_value", help="Optional claim object/value")
     ingest.add_argument("--idempotency-key", help="Optional key to dedupe ingest retries")
+    ingest.add_argument("--source-agent", dest="source_agent", default=None, help="Attribution tag for the ingesting agent (e.g. codex-session, hermes-vm). Routes to claims.source_agent for the per-agent provenance view.")
     ingest.add_argument("--scope", default="project", help="Claim scope (default: project)")
     ingest.add_argument("--volatility", choices=list(VOLATILITY_LEVELS), default="medium")
     ingest.add_argument("--confidence", type=float, default=0.5, help="Initial confidence (0-1)")

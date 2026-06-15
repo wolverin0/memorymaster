@@ -291,6 +291,23 @@ def append_instructions():
         codex_agents.write_text(existing.rstrip() + "\n\n" + append, encoding="utf-8")
         print(f"  Appended to {codex_agents}")
 
+    # Codex/generic BEAT-3 session-end automation (the non-Claude gap).
+    # Claude gets session-end distilled ingest via its Stop hook; Codex has no
+    # native Stop event, so we point the operator at the turnkey reference script
+    # rather than auto-scheduling a daemon they didn't ask for. The script sets
+    # source_agent + caps the batch at 3 and routes through service.ingest.
+    if CODEX_DIR.exists():
+        session_end_script = PROJECT_ROOT / "scripts" / "agent_session_end_ingest.py"
+        print("  Codex BEAT-3 (session-end distilled ingest) — no native Stop hook.")
+        print(f"  Turnkey reference: {session_end_script}")
+        print("    Wire it as a Codex notify/exit hook or run at session end:")
+        print(
+            f'    "{PYTHON_EXE}" "{session_end_script}" '
+            "--db <path>/memorymaster.db --transcript <rollout.jsonl> "
+            "--source-agent codex-session --cwd <project>"
+        )
+        print("    It distills <=3 learnings, sets source_agent, never raw-INSERTs.")
+
 
 # ---------------------------------------------------------------------------
 # 5. Steward cron
