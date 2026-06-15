@@ -46,6 +46,34 @@ if lifecycle.on_claim_confirmed is None:
 
 RetrievalWeights = tuple[float, float, float, float]
 
+# Rule-mining steward phase (P3). DEFAULT OFF: run_cycle only mines verbatim
+# corrections into rule candidates when MEMORYMASTER_STEWARD_RULE_MINING is
+# explicitly enabled. When unset/off, run_cycle makes ZERO rule-mining LLM
+# calls and behaves exactly as before. When on, the per-cycle window cap below
+# bounds how many candidate windows (and thus LLM calls) the phase examines.
+_RULE_MINING_FLAG = "MEMORYMASTER_STEWARD_RULE_MINING"
+_RULE_MINING_LIMIT_ENV = "MEMORYMASTER_STEWARD_RULE_MINING_LIMIT"
+_RULE_MINING_DEFAULT_LIMIT = 25
+
+
+def _rule_mining_enabled() -> bool:
+    """True only when the gate flag is explicitly truthy. Default is OFF."""
+    raw = os.environ.get(_RULE_MINING_FLAG, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _rule_mining_limit() -> int:
+    """Conservative per-cycle cap on candidate windows examined (bounds LLM
+    calls). Falls back to the default when unset or unparseable; never < 1."""
+    raw = os.environ.get(_RULE_MINING_LIMIT_ENV, "").strip()
+    if not raw:
+        return _RULE_MINING_DEFAULT_LIMIT
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return _RULE_MINING_DEFAULT_LIMIT
+
+
 # Hard ceiling for BFS path traversal — clamps caller-supplied max_hops so a
 # pathological request cannot fan out across the whole graph. Five hops is well
 # beyond any provenance/conflict/impact chain we expect in practice.
@@ -584,6 +612,41 @@ class MemoryService:
         observability.bump_claim_ingested(source_agent)
         return claim
 
+    def _rule_mining_phase(self) -> dict[str, object]:
+        """Mine verbatim corrections into rule candidates (P3 steward phase).
+
+        DEFAULT OFF via ``MEMORYMASTER_STEWARD_RULE_MINING``: when the flag is
+        unset/off this returns ``{"enabled": False}`` and makes NO LLM calls —
+        run_cycle behaves exactly as before. When on, it delegates to
+        :func:`rule_miner.mine_rules`, which already redacts/drops sensitive
+        rules and ingests through ``service.ingest`` (intake policy +
+        sensitivity filter both apply). The per-cycle window cap bounds LLM
+        calls; the call runs inside run_cycle's open ``cycle_scope`` so the
+        global budget caps still abort it cleanly.
+
+        Resilience: any failure (LLM error, missing verbatim table, Postgres
+        store, etc.) is caught and surfaced as ``{"error": ...}`` so the rest
+        of the cycle (decay, integrity, ...) still completes.
+        """
+        if not _rule_mining_enabled():
+            return {"enabled": False}
+
+        db_path = str(getattr(self.store, "db_path", "") or "")
+        if not db_path or "://" in db_path:
+            # Verbatim rule mining is SQLite-only; skip cleanly for Postgres
+            # stores or stores without a usable SQLite path.
+            return {"enabled": True, "skipped": "no_sqlite_db_path"}
+
+        from memorymaster.knowledge import rule_miner
+
+        result = rule_miner.mine_rules(
+            db_path,
+            self,
+            limit=_rule_mining_limit(),
+        )
+        result["enabled"] = True
+        return result
+
     def run_cycle(
         self,
         *,
@@ -650,6 +713,16 @@ class MemoryService:
                     else {"archived_claims": 0, "deleted_events": 0}
                 )
                 result["compactor"] = compact_res
+                # Rule-mining steward phase (P3) — DEFAULT OFF. Runs INSIDE the
+                # cycle_scope so the global LLM budget caps still abort it
+                # cleanly. Failure-isolated: a mine_rules error never crashes
+                # the cycle; the remaining phases (decay already ran above;
+                # integrity/qdrant/spool below) still complete.
+                try:
+                    result["rule_mining"] = self._rule_mining_phase()
+                except Exception as exc:
+                    logger.warning("rule mining phase failed: %s", exc)
+                    result["rule_mining"] = {"enabled": True, "error": str(exc)}
                 budget_snapshot = budget.snapshot()
         except llm_budget.LLMBudgetExceeded as exc:
             current = llm_budget.get_current()
