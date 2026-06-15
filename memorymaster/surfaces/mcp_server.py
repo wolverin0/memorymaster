@@ -570,6 +570,7 @@ if FastMCP is not None:
                 valid_from=_empty_to_none(request.valid_from),
                 valid_until=_empty_to_none(request.valid_until),
                 source_agent=effective_source,
+                require_source_agent=True,
             )
         except ValueError as exc:
             return _structured_error(str(exc), "VALIDATION_ERROR", "text")
