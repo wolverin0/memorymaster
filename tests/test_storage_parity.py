@@ -13,10 +13,10 @@ from typing import Iterator
 
 import pytest
 
-from memorymaster.lifecycle import transition_claim
-from memorymaster.models import CitationInput, Claim
-from memorymaster.postgres_store import PostgresStore
-from memorymaster.storage import SQLiteStore
+from memorymaster.core.lifecycle import transition_claim
+from memorymaster.core.models import CitationInput, Claim
+from memorymaster.stores.postgres_store import PostgresStore
+from memorymaster.stores.storage import SQLiteStore
 
 POSTGRES_TEST_URL = os.getenv("POSTGRES_TEST_URL")
 pytestmark = pytest.mark.skipif(not POSTGRES_TEST_URL, reason="POSTGRES_TEST_URL is not set")

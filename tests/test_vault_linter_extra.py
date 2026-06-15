@@ -1,4 +1,4 @@
-"""Coverage hardening for memorymaster.vault_linter detection branches.
+"""Coverage hardening for memorymaster.knowledge.vault_linter detection branches.
 
 The existing suite (test_vault_linter_orphan.py) only exercises the
 orphan-*article* path. These tests cover the *claim-level* detectors that
@@ -17,11 +17,11 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from memorymaster.vault_linter import lint_vault
+from memorymaster.knowledge.vault_linter import lint_vault
 
 
 def _fresh_db(tmp_path: Path) -> Path:
-    from memorymaster.storage import SQLiteStore
+    from memorymaster.stores.storage import SQLiteStore
 
     db = tmp_path / "memory.db"
     SQLiteStore(str(db)).init_db()
@@ -280,7 +280,7 @@ def test_verify_with_llm_filters_out_false_positive_contradictions(
     _insert(db, text="db is sqlite", subject="db", predicate="is", object_value="sqlite", confidence=0.9)
     _insert(db, text="db is postgres", subject="db", predicate="is", object_value="postgres", confidence=0.6)
 
-    import memorymaster.llm_provider as llm
+    import memorymaster.core.llm_provider as llm
 
     monkeypatch.setattr(llm, "call_llm", lambda *a, **k: "[]")
     monkeypatch.setattr(

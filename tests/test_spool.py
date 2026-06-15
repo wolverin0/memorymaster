@@ -19,11 +19,11 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster import spool
-from memorymaster.jobs import spool_drain
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
-from memorymaster.storage import SQLiteStore
+from memorymaster.core import spool
+from memorymaster.govern.jobs import spool_drain
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
+from memorymaster.stores.storage import SQLiteStore
 
 
 @pytest.fixture()
@@ -287,7 +287,7 @@ def test_cli_drain_spool_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     """`memorymaster drain-spool --json` is the one-shot operator/rollback
     path (spec §5): after turning the flag off, residue must drain via this
     command with a parseable envelope and exit 0 — no write ever stranded."""
-    from memorymaster.cli import main
+    from memorymaster.surfaces.cli import main
 
     monkeypatch.setenv(spool.ENV_SPOOL_DIR, str(tmp_path / "spool-root"))
     db = tmp_path / "cli-spool.db"

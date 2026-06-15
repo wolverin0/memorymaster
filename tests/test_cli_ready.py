@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.cli import main
+from memorymaster.surfaces.cli import main
 
 
 @pytest.fixture()
@@ -56,9 +56,9 @@ class TestReadyWithClaims:
 
     def _ingest(self, db: Path, text: str, source: str = "test|loc|exc") -> int:
         """Ingest a claim and return its id."""
-        from memorymaster.service import MemoryService
+        from memorymaster.core.service import MemoryService
         svc = MemoryService(str(db))
-        from memorymaster.models import CitationInput
+        from memorymaster.core.models import CitationInput
         claim = svc.ingest(text, citations=[CitationInput(source="test", locator="loc", excerpt="exc")])
         return claim.id
 

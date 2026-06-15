@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from memorymaster.db_merge import merge_databases
+from memorymaster.bridges.db_merge import merge_databases
 from test_db_merge_coverage_v2 import _claims, _init_db, _insert_claim, _snapshot
 
 

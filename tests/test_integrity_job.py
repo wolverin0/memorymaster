@@ -20,12 +20,12 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster import snapshot
-from memorymaster._storage_shared import open_conn
-from memorymaster.jobs import deterministic, integrity, validator
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
-from memorymaster.storage import SQLiteStore
+from memorymaster.stores import snapshot
+from memorymaster.stores._storage_shared import open_conn
+from memorymaster.govern.jobs import deterministic, integrity, validator
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
+from memorymaster.stores.storage import SQLiteStore
 
 
 @pytest.fixture()
@@ -298,7 +298,7 @@ def test_cli_integrity_checkpoint_json(tmp_path: Path, capsys: pytest.CaptureFix
     a renamed key or missing subcommand breaks the scheduled checkpoint
     silently inside a try/catch that is deliberately non-fatal.
     """
-    from memorymaster.cli import main
+    from memorymaster.surfaces.cli import main
 
     db = tmp_path / "cli.db"
     SQLiteStore(db).init_db()
@@ -317,7 +317,7 @@ def test_cli_integrity_status(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     Intent: §5 flip criteria are checked from these fields at day 7; the
     operator runbook reads this status before/after the supervised TRUNCATE.
     """
-    from memorymaster.cli import main
+    from memorymaster.surfaces.cli import main
 
     monkeypatch.setenv("MEMORYMASTER_SNAPSHOT_DIR", str(tmp_path / "snaps"))
     db = tmp_path / "cli-status.db"

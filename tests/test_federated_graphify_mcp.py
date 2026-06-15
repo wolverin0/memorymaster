@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.federated_graphify import (
+from memorymaster.bridges.federated_graphify import (
     discover_graphify_projects,
     federated_query,
     load_graph,

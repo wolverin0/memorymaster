@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.wiki_validate import (
+from memorymaster.knowledge.wiki_validate import (
     FIXABLE_CODES,
     audit,
     auto_fix,

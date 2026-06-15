@@ -1,4 +1,4 @@
-"""Tests for memorymaster.mcp_server helper functions and tool wrappers."""
+"""Tests for memorymaster.surfaces.mcp_server helper functions and tool wrappers."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def _port_bound(host: str = "127.0.0.1", port: int = 8765) -> bool:
         except OSError:
             return False
 
-from memorymaster.mcp_server import (
+from memorymaster.surfaces.mcp_server import (
     _claim_to_dict,
     _effective_ingest_scope,
     _effective_scope_allowlist,
@@ -45,11 +45,11 @@ class TestResolveDb:
 
     def test_returns_default_when_empty(self):
         with patch.dict(os.environ, {}, clear=False):
-            with patch("memorymaster.mcp_server._ENV_DEFAULT_DB", ""):
+            with patch("memorymaster.surfaces.mcp_server._ENV_DEFAULT_DB", ""):
                 assert _resolve_db("") == "memorymaster.db"
 
     def test_returns_env_default_when_no_explicit(self):
-        with patch("memorymaster.mcp_server._ENV_DEFAULT_DB", "env.db"):
+        with patch("memorymaster.surfaces.mcp_server._ENV_DEFAULT_DB", "env.db"):
             assert _resolve_db("memorymaster.db") == "env.db"
 
     def test_strips_whitespace(self):
@@ -61,11 +61,11 @@ class TestResolveWorkspace:
         assert _resolve_workspace("/some/path") == "/some/path"
 
     def test_returns_env_default(self):
-        with patch("memorymaster.mcp_server._ENV_DEFAULT_WORKSPACE", "/env/ws"):
+        with patch("memorymaster.surfaces.mcp_server._ENV_DEFAULT_WORKSPACE", "/env/ws"):
             assert _resolve_workspace("") == "/env/ws"
 
     def test_returns_dot_when_no_override(self):
-        with patch("memorymaster.mcp_server._ENV_DEFAULT_WORKSPACE", ""):
+        with patch("memorymaster.surfaces.mcp_server._ENV_DEFAULT_WORKSPACE", ""):
             assert _resolve_workspace("") == "."
 
 
@@ -128,11 +128,11 @@ class TestParseScopeAllowlist:
 
 class TestProjectScope:
     def test_returns_env_override(self):
-        with patch("memorymaster.mcp_server._ENV_DEFAULT_PROJECT_SCOPE", "override"):
+        with patch("memorymaster.surfaces.mcp_server._ENV_DEFAULT_PROJECT_SCOPE", "override"):
             assert _project_scope(".") == "override"
 
     def test_generates_slug_from_workspace(self):
-        with patch("memorymaster.mcp_server._ENV_DEFAULT_PROJECT_SCOPE", ""):
+        with patch("memorymaster.surfaces.mcp_server._ENV_DEFAULT_PROJECT_SCOPE", ""):
             scope = _project_scope(".")
             assert scope.startswith("project:")
             assert ":" in scope  # has digest
@@ -149,7 +149,7 @@ class TestProjectScopeCanonicalization:
     """
 
     def _scope(self, path):
-        with patch("memorymaster.mcp_server._ENV_DEFAULT_PROJECT_SCOPE", ""):
+        with patch("memorymaster.surfaces.mcp_server._ENV_DEFAULT_PROJECT_SCOPE", ""):
             return _project_scope(str(path))
 
     def test_underscore_prefix_folds(self, tmp_path):
@@ -194,8 +194,8 @@ class TestProjectScopeCanonicalization:
 
     def test_empty_workspace_returns_user_not_project(self):
         """No workspace context anywhere → 'user' scope, not 'project'."""
-        with patch("memorymaster.mcp_server._ENV_DEFAULT_PROJECT_SCOPE", ""):
-            with patch("memorymaster.mcp_server._ENV_DEFAULT_WORKSPACE", ""):
+        with patch("memorymaster.surfaces.mcp_server._ENV_DEFAULT_PROJECT_SCOPE", ""):
+            with patch("memorymaster.surfaces.mcp_server._ENV_DEFAULT_WORKSPACE", ""):
                 assert _project_scope("") == "user"
                 assert _project_scope("   ") == "user"
 
@@ -203,7 +203,7 @@ class TestProjectScopeCanonicalization:
         """The v3.3.1 escape hatch must keep working for genuine collisions."""
         target = tmp_path / "myproj"
         target.mkdir()
-        with patch("memorymaster.mcp_server._ENV_DEFAULT_PROJECT_SCOPE", ""):
+        with patch("memorymaster.surfaces.mcp_server._ENV_DEFAULT_PROJECT_SCOPE", ""):
             with patch.dict(os.environ, {"MEMORYMASTER_SCOPE_DISAMBIGUATE": "1"}):
                 scope = _project_scope(str(target))
                 assert scope.startswith("project:myproj:")
@@ -212,11 +212,11 @@ class TestProjectScopeCanonicalization:
 
 class TestEffectiveIngestScope:
     def test_empty_uses_project_scope(self):
-        with patch("memorymaster.mcp_server._project_scope", return_value="project:test:abc"):
+        with patch("memorymaster.surfaces.mcp_server._project_scope", return_value="project:test:abc"):
             assert _effective_ingest_scope("", ".") == "project:test:abc"
 
     def test_project_literal_uses_project_scope(self):
-        with patch("memorymaster.mcp_server._project_scope", return_value="project:test:abc"):
+        with patch("memorymaster.surfaces.mcp_server._project_scope", return_value="project:test:abc"):
             assert _effective_ingest_scope("project", ".") == "project:test:abc"
 
     def test_custom_scope_passthrough(self):
@@ -229,16 +229,16 @@ class TestEffectiveScopeAllowlist:
         assert result == ["custom1", "custom2"]
 
     def test_default_includes_project_and_global(self):
-        with patch("memorymaster.mcp_server._project_scope", return_value="project:ws:abc"):
-            with patch("memorymaster.mcp_server._ENV_QUERY_INCLUDE_LEGACY_PROJECT", True):
+        with patch("memorymaster.surfaces.mcp_server._project_scope", return_value="project:ws:abc"):
+            with patch("memorymaster.surfaces.mcp_server._ENV_QUERY_INCLUDE_LEGACY_PROJECT", True):
                 result = _effective_scope_allowlist("", ".")
                 assert "project:ws:abc" in result
                 assert "global" in result
                 assert "project" in result
 
     def test_no_legacy_project_when_disabled(self):
-        with patch("memorymaster.mcp_server._project_scope", return_value="project:ws:abc"):
-            with patch("memorymaster.mcp_server._ENV_QUERY_INCLUDE_LEGACY_PROJECT", False):
+        with patch("memorymaster.surfaces.mcp_server._project_scope", return_value="project:ws:abc"):
+            with patch("memorymaster.surfaces.mcp_server._ENV_QUERY_INCLUDE_LEGACY_PROJECT", False):
                 result = _effective_scope_allowlist("", ".")
                 assert "project" not in result
 
@@ -265,14 +265,14 @@ class TestMcpToolsIntegration:
         self.workspace = str(tmp_path)
 
     def _init_service(self):
-        from memorymaster.service import MemoryService
+        from memorymaster.core.service import MemoryService
         svc = MemoryService(db_target=self.db_path, workspace_root=Path(self.workspace))
         svc.init_db()
         return svc
 
     def test_init_db_tool(self):
         try:
-            from memorymaster.mcp_server import init_db
+            from memorymaster.surfaces.mcp_server import init_db
         except ImportError:
             pytest.skip("MCP not installed")
         result = init_db(db=self.db_path, workspace=self.workspace)
@@ -280,7 +280,7 @@ class TestMcpToolsIntegration:
 
     def test_ingest_and_query_tools(self):
         try:
-            from memorymaster.mcp_server import init_db, ingest_claim, query_memory
+            from memorymaster.surfaces.mcp_server import init_db, ingest_claim, query_memory
         except ImportError:
             pytest.skip("MCP not installed")
 
@@ -304,7 +304,7 @@ class TestMcpToolsIntegration:
 
     def test_list_claims_tool(self):
         try:
-            from memorymaster.mcp_server import init_db, ingest_claim, list_claims
+            from memorymaster.surfaces.mcp_server import init_db, ingest_claim, list_claims
         except ImportError:
             pytest.skip("MCP not installed")
 
@@ -316,7 +316,7 @@ class TestMcpToolsIntegration:
 
     def test_pin_claim_tool(self):
         try:
-            from memorymaster.mcp_server import init_db, ingest_claim, pin_claim
+            from memorymaster.surfaces.mcp_server import init_db, ingest_claim, pin_claim
         except ImportError:
             pytest.skip("MCP not installed")
 
@@ -329,7 +329,7 @@ class TestMcpToolsIntegration:
 
     def test_run_cycle_tool(self):
         try:
-            from memorymaster.mcp_server import init_db, run_cycle
+            from memorymaster.surfaces.mcp_server import init_db, run_cycle
         except ImportError:
             pytest.skip("MCP not installed")
 
@@ -339,7 +339,7 @@ class TestMcpToolsIntegration:
 
     def test_compact_memory_tool(self):
         try:
-            from memorymaster.mcp_server import init_db, compact_memory
+            from memorymaster.surfaces.mcp_server import init_db, compact_memory
         except ImportError:
             pytest.skip("MCP not installed")
 
@@ -349,7 +349,7 @@ class TestMcpToolsIntegration:
 
     def test_list_events_tool(self):
         try:
-            from memorymaster.mcp_server import init_db, list_events
+            from memorymaster.surfaces.mcp_server import init_db, list_events
         except ImportError:
             pytest.skip("MCP not installed")
 
@@ -359,7 +359,7 @@ class TestMcpToolsIntegration:
 
     def test_query_for_context_tool(self):
         try:
-            from memorymaster.mcp_server import init_db, ingest_claim, query_for_context
+            from memorymaster.surfaces.mcp_server import init_db, ingest_claim, query_for_context
         except ImportError:
             pytest.skip("MCP not installed")
 
@@ -376,7 +376,7 @@ class TestMcpToolsIntegration:
 
     def test_redact_claim_tool(self):
         try:
-            from memorymaster.mcp_server import init_db, ingest_claim, redact_claim_payload
+            from memorymaster.surfaces.mcp_server import init_db, ingest_claim, redact_claim_payload
         except ImportError:
             pytest.skip("MCP not installed")
 
@@ -392,7 +392,7 @@ class TestMcpToolsIntegration:
     )
     def test_open_dashboard_no_server(self):
         try:
-            from memorymaster.mcp_server import open_dashboard
+            from memorymaster.surfaces.mcp_server import open_dashboard
         except ImportError:
             pytest.skip("MCP not installed")
 
@@ -403,7 +403,7 @@ class TestMcpToolsIntegration:
 
     def test_open_dashboard_skip_health(self):
         try:
-            from memorymaster.mcp_server import open_dashboard
+            from memorymaster.surfaces.mcp_server import open_dashboard
         except ImportError:
             pytest.skip("MCP not installed")
 

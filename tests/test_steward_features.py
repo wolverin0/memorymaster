@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from memorymaster.steward_features import (
+from memorymaster.govern.steward_features import (
     FEATURE_KEYS,
     FEATURE_VERSION,
     extract_features,

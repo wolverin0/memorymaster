@@ -14,10 +14,10 @@ from typing import Iterator
 
 import pytest
 
-from memorymaster.dashboard import create_dashboard_server
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
-from memorymaster.steward import list_steward_proposals, run_steward
+from memorymaster.surfaces.dashboard import create_dashboard_server
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
+from memorymaster.govern.steward import list_steward_proposals, run_steward
 
 
 def _case_db(prefix: str) -> Path:
@@ -196,7 +196,7 @@ def test_proposal_resolution_mcp_parity() -> None:
     service.init_db()
     _seed_proposal(service, db, workspace)
 
-    from memorymaster import mcp_server
+    from memorymaster.surfaces import mcp_server
 
     if not hasattr(mcp_server, "list_steward_proposals") or not hasattr(mcp_server, "resolve_steward_proposal"):
         pytest.skip("MCP extra not installed; stewardship MCP tools unavailable in this environment.")

@@ -18,12 +18,12 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.context_hook import (
+from memorymaster.recall.context_hook import (
     _RECALL_WEIGHT_DEFAULTS,
     _recall_weight,
     recall,
 )
-from memorymaster.models import Claim
+from memorymaster.core.models import Claim
 
 
 def _claim(cid: int, text: str, *, subject: str | None = None,
@@ -98,11 +98,11 @@ def _patch_service(monkeypatch: pytest.MonkeyPatch, rows: list[dict]) -> None:
     def _fake_ctor(db_target: str, workspace_root: Path):  # noqa: ARG001
         return _FakeService(rows)
 
-    monkeypatch.setattr("memorymaster.service.MemoryService", _fake_ctor)
+    monkeypatch.setattr("memorymaster.core.service.MemoryService", _fake_ctor)
     # recall() also passes through extract_query_tokens; stub it so we don't
     # need a real DB on disk.
     monkeypatch.setattr(
-        "memorymaster.recall_tokenizer.extract_query_tokens",
+        "memorymaster.recall.recall_tokenizer.extract_query_tokens",
         lambda q, db, max_tokens=6: "steward",
     )
 
@@ -203,7 +203,7 @@ def _rank_top5_contains_relevant(
     _patch_service(monkeypatch, rows)
     # extract_query_tokens returns the prompt unchanged (stub).
     monkeypatch.setattr(
-        "memorymaster.recall_tokenizer.extract_query_tokens",
+        "memorymaster.recall.recall_tokenizer.extract_query_tokens",
         lambda q, db, max_tokens=6: q,
     )
     out = recall(prompt, db_path=str(tmp_path / "nope.db"), skip_qdrant=True)

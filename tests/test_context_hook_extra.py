@@ -1,4 +1,4 @@
-"""Coverage-hardening tests for memorymaster.context_hook (TRACK T18).
+"""Coverage-hardening tests for memorymaster.recall.context_hook (TRACK T18).
 
 The base ``test_context_hook.py`` suite drives recall() happy paths but
 leaves the env-var configuration boundary, the RRF auto-gate, the optional
@@ -19,7 +19,7 @@ import os
 
 import pytest
 
-from memorymaster import context_hook as ch
+from memorymaster.recall import context_hook as ch
 
 
 @pytest.fixture(autouse=True)
@@ -38,7 +38,7 @@ def _init_db(path):
     first or every store query hits ``no such table: claims``."""
     from pathlib import Path as _P
 
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     p = str(path)
     MemoryService(db_target=p, workspace_root=_P(p).parent).init_db()
@@ -200,7 +200,7 @@ def test_two_pass_neighbor_ids_empty_for_no_seeds():
 def test_two_pass_neighbor_ids_degrades_without_tables(tmp_path):
     # A real store whose schema lacks claim_entities must return [] (the
     # except path), never raise — two-pass is best-effort.
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     svc = MemoryService(db_target=str(tmp_path / "n.db"), workspace_root=tmp_path)
     out = ch._two_pass_neighbor_ids(svc.store, seed_ids=[1, 2], excluded=set())
@@ -358,7 +358,7 @@ def test_observe_ingests_matched_text(tmp_path):
 def test_observe_llm_no_extractions(monkeypatch, tmp_path):
     """When the extractor yields nothing, observe_llm ingests nothing."""
     monkeypatch.setattr(
-        "memorymaster.auto_extractor.extract_claims_from_text",
+        "memorymaster.knowledge.auto_extractor.extract_claims_from_text",
         lambda *a, **k: [],
     )
     result = ch.observe_llm(
@@ -382,7 +382,7 @@ def test_observe_llm_ingests_extracted_claims(monkeypatch, tmp_path):
         {"text": "prefers ruff", "claim_type": "preference"},
     ]
     monkeypatch.setattr(
-        "memorymaster.auto_extractor.extract_claims_from_text",
+        "memorymaster.knowledge.auto_extractor.extract_claims_from_text",
         lambda *a, **k: extracted,
     )
 
@@ -402,7 +402,7 @@ def test_observe_llm_ingests_extracted_claims(monkeypatch, tmp_path):
 
             return _C()
 
-    monkeypatch.setattr("memorymaster.service.MemoryService", _FakeSvc)
+    monkeypatch.setattr("memorymaster.core.service.MemoryService", _FakeSvc)
 
     result = ch.observe_llm(
         "transcript",
@@ -423,8 +423,8 @@ def test_observe_llm_ingests_extracted_claims(monkeypatch, tmp_path):
 
 
 def _seed(tmp_path):
-    from memorymaster.models import CitationInput
-    from memorymaster.service import MemoryService
+    from memorymaster.core.models import CitationInput
+    from memorymaster.core.service import MemoryService
 
     db = tmp_path / "seeded.db"
     svc = MemoryService(db_target=str(db), workspace_root=tmp_path)
@@ -466,7 +466,7 @@ def test_recall_return_ids_tracks_rendered_bullets(tmp_path):
 
 
 def test_recall_empty_db_returns_empty(tmp_path):
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     db = tmp_path / "empty.db"
     MemoryService(db_target=str(db), workspace_root=tmp_path).init_db()
@@ -585,8 +585,8 @@ def test_apply_query_expansion_real_store_returns_list(tmp_path):
     # Real seeded service → store.connect() succeeds → expand_query runs.
     # Whether aliases are found or not, the contract is "return a list that
     # still contains the original tokens" (best-effort augmentation).
-    from memorymaster.models import CitationInput
-    from memorymaster.service import MemoryService
+    from memorymaster.core.models import CitationInput
+    from memorymaster.core.service import MemoryService
 
     db = tmp_path / "qe.db"
     svc = MemoryService(db_target=str(db), workspace_root=tmp_path)
@@ -613,7 +613,7 @@ def test_observe_llm_real_service_ingests(monkeypatch, tmp_path):
         {"text": "The team prefers ruff for linting.", "claim_type": "preference"},
     ]
     monkeypatch.setattr(
-        "memorymaster.auto_extractor.extract_claims_from_text",
+        "memorymaster.knowledge.auto_extractor.extract_claims_from_text",
         lambda *a, **k: extracted,
     )
     result = ch.observe_llm(
@@ -627,7 +627,7 @@ def test_observe_llm_real_service_ingests(monkeypatch, tmp_path):
 def test_observe_llm_default_scope_from_cwd(monkeypatch, tmp_path):
     # scope=None branch → scope_from_cwd is consulted (line 1972-1974).
     monkeypatch.setattr(
-        "memorymaster.auto_extractor.extract_claims_from_text",
+        "memorymaster.knowledge.auto_extractor.extract_claims_from_text",
         lambda *a, **k: [],
     )
     result = ch.observe_llm("nothing", db_path=str(tmp_path / "d.db"))

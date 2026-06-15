@@ -9,7 +9,7 @@ import pytest
 
 
 def _fresh_store(tmp: Path):
-    from memorymaster.storage import SQLiteStore
+    from memorymaster.stores.storage import SQLiteStore
 
     db = tmp / "memory.db"
     store = SQLiteStore(str(db))
@@ -55,7 +55,7 @@ def test_schema_has_wiki_article_index(tmp_path: Path) -> None:
 
 
 def test_migration_is_idempotent(tmp_path: Path) -> None:
-    from memorymaster.storage import SQLiteStore
+    from memorymaster.stores.storage import SQLiteStore
 
     db = tmp_path / "memory.db"
     SQLiteStore(str(db)).init_db()
@@ -64,7 +64,7 @@ def test_migration_is_idempotent(tmp_path: Path) -> None:
 
 
 def test_stamp_wiki_binding_sets_column(tmp_path: Path) -> None:
-    from memorymaster.wiki_engine import _stamp_wiki_binding
+    from memorymaster.knowledge.wiki_engine import _stamp_wiki_binding
 
     _, db = _fresh_store(tmp_path)
     cid1 = _insert_claim(db, "qdrant runs on vm")
@@ -81,7 +81,7 @@ def test_stamp_wiki_binding_sets_column(tmp_path: Path) -> None:
 
 
 def test_stamp_wiki_binding_silent_on_empty(tmp_path: Path) -> None:
-    from memorymaster.wiki_engine import _stamp_wiki_binding
+    from memorymaster.knowledge.wiki_engine import _stamp_wiki_binding
 
     _, db = _fresh_store(tmp_path)
     # Empty claim_ids or empty slug must not raise and must not touch the DB.
@@ -90,7 +90,7 @@ def test_stamp_wiki_binding_silent_on_empty(tmp_path: Path) -> None:
 
 
 def test_row_to_claim_reads_wiki_article(tmp_path: Path) -> None:
-    from memorymaster._storage_read import _ReadMixin
+    from memorymaster.stores._storage_read import _ReadMixin
 
     _, db = _fresh_store(tmp_path)
     cid = _insert_claim(db, "qdrant runs on vm")
@@ -107,8 +107,8 @@ def test_row_to_claim_reads_wiki_article(tmp_path: Path) -> None:
 
 def test_recall_appends_wiki_pointer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Recall formatter should append `(compiled in [[slug]])` for bound claims."""
-    from memorymaster import context_hook
-    from memorymaster.models import Claim
+    from memorymaster.recall import context_hook
+    from memorymaster.core.models import Claim
 
     sample = Claim(
         id=1,
@@ -140,7 +140,7 @@ def test_recall_appends_wiki_pointer(tmp_path: Path, monkeypatch: pytest.MonkeyP
     def _fake_ctor(db_target: str, workspace_root: Path):  # noqa: ARG001
         return _FakeService()
 
-    monkeypatch.setattr("memorymaster.service.MemoryService", _fake_ctor)
+    monkeypatch.setattr("memorymaster.core.service.MemoryService", _fake_ctor)
 
     out = context_hook.recall("qdrant", db_path=str(tmp_path / "nope.db"), skip_qdrant=True)
     assert "[[qdrant]]" in out
@@ -149,7 +149,7 @@ def test_recall_appends_wiki_pointer(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 def test_backfill_bindings_updates_claims_from_frontmatter(tmp_path: Path) -> None:
     """wiki-backfill-bindings reads `claims: [...]` frontmatter and stamps each claim."""
-    from memorymaster.cli_handlers_curation import _handle_wiki_backfill_bindings
+    from memorymaster.surfaces.cli_handlers_curation import _handle_wiki_backfill_bindings
 
     _, db = _fresh_store(tmp_path)
     c1 = _insert_claim(db, "qdrant runs on vm")

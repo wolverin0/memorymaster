@@ -13,9 +13,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from memorymaster.dashboard import create_dashboard_server
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.surfaces.dashboard import create_dashboard_server
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 
 def _case_db(prefix: str) -> Path:

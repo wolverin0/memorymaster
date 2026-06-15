@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from memorymaster.context_hook import (
+from memorymaster.recall.context_hook import (
     _BM25_W_SUBJECT_DEFAULT,
     _BM25_W_TEXT_DEFAULT,
     _bm25_field_weight,
@@ -142,7 +142,7 @@ class TestBm25FieldWeightHelper:
 
 
 class TestBm25PerFieldRanking:
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.core.service.MemoryService")
     def test_equal_weights_returns_all_three_docs(
         self, mock_service_class: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -165,7 +165,7 @@ class TestBm25PerFieldRanking:
         assert ordered.index(1) < ordered.index(3)
         assert ordered.index(2) < ordered.index(3)
 
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.core.service.MemoryService")
     def test_subject_heavy_weights_rank_subject_match_first(
         self, mock_service_class: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -187,7 +187,7 @@ class TestBm25PerFieldRanking:
         # score is 0 — it ties with doc 3 for the tail. Only assert doc 1
         # wins.
 
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.core.service.MemoryService")
     def test_text_only_weights_rank_body_match_first(
         self, mock_service_class: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -204,7 +204,7 @@ class TestBm25PerFieldRanking:
         assert ordered, "expected at least one ranked claim"
         assert ordered[0] == 2
 
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.core.service.MemoryService")
     def test_empty_subject_does_not_crash(
         self, mock_service_class: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:

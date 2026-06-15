@@ -24,13 +24,13 @@ from unittest.mock import patch
 
 import pytest
 
-from memorymaster import migrations
-from memorymaster.migrations import (
+from memorymaster.stores import migrations
+from memorymaster.stores.migrations import (
     MigrationDriftError,
     MigrationRunner,
     discover_migrations,
 )
-from memorymaster.migrations.runner import Migration
+from memorymaster.stores.migrations.runner import Migration
 
 
 @pytest.fixture
@@ -140,7 +140,7 @@ def test_apply_pending_mid_version_applies_tail(sqlite_conn, monkeypatch):
     )
 
     monkeypatch.setattr(
-        "memorymaster.migrations.runner.discover_migrations",
+        "memorymaster.stores.migrations.runner.discover_migrations",
         lambda: [*real, synthetic],
     )
 
@@ -202,7 +202,7 @@ def test_status_reports_applied_and_pending(sqlite_conn, monkeypatch):
         apply_postgres=lambda c: None,
     )
     monkeypatch.setattr(
-        "memorymaster.migrations.runner.discover_migrations",
+        "memorymaster.stores.migrations.runner.discover_migrations",
         lambda: [*real, synthetic],
     )
 
@@ -225,7 +225,7 @@ def test_status_reports_applied_and_pending(sqlite_conn, monkeypatch):
 
 def test_cli_migrate_list_works(tmp_path, capsys):
     """`memorymaster migrate --list` enumerates known migrations without touching DB."""
-    from memorymaster.cli import main
+    from memorymaster.surfaces.cli import main
 
     db = tmp_path / "list.db"
     rc = main(["--db", str(db), "--workspace", str(tmp_path), "migrate", "--list"])
@@ -239,8 +239,8 @@ def test_cli_migrate_list_works(tmp_path, capsys):
 
 def test_cli_migrate_apply_works(tmp_path, capsys):
     """`memorymaster migrate` (no flags) applies pending migrations."""
-    from memorymaster.cli import main
-    from memorymaster.service import MemoryService
+    from memorymaster.surfaces.cli import main
+    from memorymaster.core.service import MemoryService
 
     db = tmp_path / "apply.db"
     # Need init_db first so the legacy schema is in place
@@ -257,8 +257,8 @@ def test_cli_migrate_apply_works(tmp_path, capsys):
 
 def test_cli_migrate_status_works(tmp_path, capsys):
     """`memorymaster migrate --status` reports applied/pending."""
-    from memorymaster.cli import main
-    from memorymaster.service import MemoryService
+    from memorymaster.surfaces.cli import main
+    from memorymaster.core.service import MemoryService
 
     db = tmp_path / "status.db"
     svc = MemoryService(db, workspace_root=tmp_path)
@@ -275,7 +275,7 @@ def test_cli_migrate_status_works(tmp_path, capsys):
 def test_service_init_db_applies_migrations_automatically(tmp_path):
     """MemoryService.init_db() must trigger the runner so callers don't have
     to invoke `migrate` separately on first setup."""
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     db = tmp_path / "auto.db"
     svc = MemoryService(db, workspace_root=tmp_path)

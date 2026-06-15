@@ -1,11 +1,11 @@
-from __future__ import annotations
+"""Deprecated compatibility shim — folded into ``memorymaster.stores._storage_schema``.
 
-from importlib.resources import files
+P2 restructure: ``load_schema_sql`` / ``load_schema_postgres_sql`` now live in
+``memorymaster.stores._storage_schema``. This alias keeps the old import path
+working for one minor version. Update imports accordingly.
+"""
+import sys as _sys
 
+from memorymaster.stores import _storage_schema as _new
 
-def load_schema_sql() -> str:
-    return files("memorymaster").joinpath("schema.sql").read_text(encoding="utf-8")
-
-
-def load_schema_postgres_sql() -> str:
-    return files("memorymaster").joinpath("schema_postgres.sql").read_text(encoding="utf-8")
+_sys.modules[__name__] = _new

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.feedback import FeedbackTracker
+from memorymaster.govern.feedback import FeedbackTracker
 
 
 @pytest.fixture

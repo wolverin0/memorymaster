@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from memorymaster.cli import main
-from memorymaster.connectors.whatsapp import import_wacli_json
-from memorymaster.service import MemoryService
+from memorymaster.surfaces.cli import main
+from memorymaster.bridges.connectors.whatsapp import import_wacli_json
+from memorymaster.core.service import MemoryService
 
 
 def test_wacli_import_creates_source_items_and_text_evidence(tmp_path: Path) -> None:

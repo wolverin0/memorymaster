@@ -8,8 +8,8 @@ from pathlib import Path
 # Ensure memorymaster is importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from memorymaster.service import MemoryService
-from memorymaster.models import CitationInput
+from memorymaster.core.service import MemoryService
+from memorymaster.core.models import CitationInput
 
 PROJECTS_ROOT = Path(os.environ.get("PROJECTS_ROOT", "."))
 DB_PATH = Path(__file__).resolve().parent.parent / "memorymaster.db"

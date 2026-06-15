@@ -12,7 +12,7 @@ These tests are additive — they do NOT re-assert the pre-existing kinds
 """
 from __future__ import annotations
 
-from memorymaster.entity_extractor import Entity, extract_patterns
+from memorymaster.knowledge.entity_extractor import Entity, extract_patterns
 
 
 def _of_kind(entities: list[Entity], kind: str) -> list[Entity]:

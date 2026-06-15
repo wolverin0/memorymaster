@@ -1,4 +1,4 @@
-"""Tests for memorymaster.service — coverage gaps."""
+"""Tests for memorymaster.core.service — coverage gaps."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from memorymaster import llm_budget
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core import llm_budget
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 
 @pytest.fixture
@@ -44,7 +44,7 @@ class TestInitQdrant:
     def test_with_env_and_working_backend(self):
         mock_backend = MagicMock()
         with patch.dict(os.environ, {"QDRANT_URL": "http://localhost:6333"}):
-            with patch("memorymaster.qdrant_backend.QdrantBackend", return_value=mock_backend):
+            with patch("memorymaster.recall.qdrant_backend.QdrantBackend", return_value=mock_backend):
                 result = MemoryService._init_qdrant()
                 assert result is mock_backend
                 mock_backend.ensure_collection.assert_called_once()
@@ -225,7 +225,7 @@ class TestQueryRowsCoverage:
                 retrieval_mode="hybrid",
                 vector_hook=vector_hook,
             )
-            with patch("memorymaster.service.rank_claim_rows", side_effect=AssertionError("cache miss reranked")):
+            with patch("memorymaster.core.service.rank_claim_rows", side_effect=AssertionError("cache miss reranked")):
                 second = svc.query_rows(
                     "cached hybrid",
                     include_candidates=True,
@@ -239,7 +239,7 @@ class TestQueryRowsCoverage:
 
 class TestRunCycleBudgetAbort:
     def test_run_cycle_returns_budget_abort_instead_of_raising(self, svc):
-        with patch("memorymaster.service.extractor.run", side_effect=llm_budget.LLMBudgetExceeded("calls_exhausted")):
+        with patch("memorymaster.core.service.extractor.run", side_effect=llm_budget.LLMBudgetExceeded("calls_exhausted")):
             result = svc.run_cycle()
 
         assert result["budget"]["aborted"] is True, "budget caps must stop steward work without crashing callers"

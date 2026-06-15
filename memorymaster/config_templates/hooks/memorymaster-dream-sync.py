@@ -11,13 +11,13 @@ os.chdir(PROJECT_ROOT)
 
 # Must import after the sys.path.insert bootstrap above — hook templates run
 # standalone, before the package is necessarily on PYTHONPATH.
-from memorymaster.hook_log import log_hook  # noqa: E402
+from memorymaster.core.hook_log import log_hook  # noqa: E402
 
 log_hook("dream-sync", "start")
 try:
     sys.stdin.read()
 
-    from memorymaster.dream_bridge import dream_sync
+    from memorymaster.bridges.dream_bridge import dream_sync
     # Under MEMORYMASTER_WAL_DISCIPLINE=1 the ingest half appends op:"dream"
     # spool envelopes instead of opening the DB (P1 spec §2.3) — dream_ingest
     # reads the flag itself, so this template only needs the inherited env var.

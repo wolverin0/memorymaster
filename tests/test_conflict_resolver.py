@@ -1,4 +1,4 @@
-"""Tests for memorymaster.conflict_resolver module."""
+"""Tests for memorymaster.govern.conflict_resolver module."""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ import json
 from pathlib import Path
 
 
-from memorymaster.models import Claim, Citation
-from memorymaster.service import MemoryService
-from memorymaster.conflict_resolver import (
+from memorymaster.core.models import Claim, Citation
+from memorymaster.core.service import MemoryService
+from memorymaster.govern.conflict_resolver import (
     _build_conflict_groups,
     _pick_winner,
     detect_conflicts,
@@ -159,7 +159,7 @@ def _fresh_service(tmp_path: Path) -> MemoryService:
 class TestDetectConflictsIntegration:
     def test_detects_conflict_from_store(self, tmp_path):
         svc = _fresh_service(tmp_path)
-        from memorymaster.models import CitationInput
+        from memorymaster.core.models import CitationInput
 
         svc.ingest(
             text="server port is 8080",
@@ -184,7 +184,7 @@ class TestDetectConflictsIntegration:
 
     def test_no_conflict_same_value(self, tmp_path):
         svc = _fresh_service(tmp_path)
-        from memorymaster.models import CitationInput
+        from memorymaster.core.models import CitationInput
 
         svc.ingest(
             text="server port is 8080",
@@ -209,7 +209,7 @@ class TestDetectConflictsIntegration:
 class TestResolveConflictsIntegration:
     def test_dry_run_no_transitions(self, tmp_path):
         svc = _fresh_service(tmp_path)
-        from memorymaster.models import CitationInput
+        from memorymaster.core.models import CitationInput
 
         c1 = svc.ingest(
             text="server port is 8080",
@@ -240,7 +240,7 @@ class TestResolveConflictsIntegration:
 
     def test_resolve_applies_superseded(self, tmp_path):
         svc = _fresh_service(tmp_path)
-        from memorymaster.models import CitationInput
+        from memorymaster.core.models import CitationInput
 
         c1 = svc.ingest(
             text="server port is 8080",
@@ -271,7 +271,7 @@ class TestResolveConflictsIntegration:
 
     def test_pinned_loser_skipped(self, tmp_path):
         svc = _fresh_service(tmp_path)
-        from memorymaster.models import CitationInput
+        from memorymaster.core.models import CitationInput
 
         c1 = svc.ingest(
             text="server port is 8080",
@@ -305,7 +305,7 @@ class TestResolveConflictsIntegration:
 
     def test_already_superseded_skipped(self, tmp_path):
         svc = _fresh_service(tmp_path)
-        from memorymaster.models import CitationInput
+        from memorymaster.core.models import CitationInput
 
         c1 = svc.ingest(
             text="server port is 8080",
@@ -332,7 +332,7 @@ class TestResolveConflictsIntegration:
 
     def test_resolution_creates_audit_event(self, tmp_path):
         svc = _fresh_service(tmp_path)
-        from memorymaster.models import CitationInput
+        from memorymaster.core.models import CitationInput
 
         c1 = svc.ingest(
             text="server port is 8080",
@@ -366,7 +366,7 @@ class TestResolveConflictsIntegration:
     def test_three_way_conflict(self, tmp_path):
         """Three claims with same tuple but different values - only one winner."""
         svc = _fresh_service(tmp_path)
-        from memorymaster.models import CitationInput
+        from memorymaster.core.models import CitationInput
 
         c1 = svc.ingest(
             text="server port is 8080",
@@ -401,7 +401,7 @@ class TestResolveConflictsIntegration:
 
 class TestCLIResolveConflicts:
     def test_cli_resolve_conflicts_dry_run(self, tmp_path):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
 
         db = str(tmp_path / "test.db")
         assert main(["--db", db, "init-db"]) == 0
@@ -425,7 +425,7 @@ class TestCLIResolveConflicts:
         assert rc == 0
 
     def test_cli_resolve_conflicts_json(self, tmp_path, capsys):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
 
         db = str(tmp_path / "test.db")
         assert main(["--db", db, "init-db"]) == 0

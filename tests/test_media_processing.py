@@ -4,13 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.media_processing import (
+from memorymaster.bridges.media_processing import (
     MockOcrProvider,
     MockTranscriptionProvider,
     process_ocr,
     process_transcription,
 )
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 
 class FailingTranscriptionProvider:

@@ -24,17 +24,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from memorymaster.models import Claim, Citation, CitationInput
-from memorymaster.service import MemoryService
-from memorymaster.lifecycle import transition_claim
-from memorymaster.conflict_resolver import (
+from memorymaster.core.models import Claim, Citation, CitationInput
+from memorymaster.core.service import MemoryService
+from memorymaster.core.lifecycle import transition_claim
+from memorymaster.govern.conflict_resolver import (
     _pick_winner,
     supersede_claim,
     resolve_conflicts,
     SupersessionRaceLost,
 )
-from memorymaster import auto_resolver
-from memorymaster.auto_resolver import resolve_conflict_pair, auto_resolve_conflicts
+from memorymaster.govern import auto_resolver
+from memorymaster.govern.auto_resolver import resolve_conflict_pair, auto_resolve_conflicts
 
 
 # --------------------------------------------------------------------------- #

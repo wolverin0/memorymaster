@@ -1,7 +1,7 @@
 """Export of mined rule-shaped claims (v3.28).
 
 `export-rules` CLI / `rules_export` MCP both delegate to
-:mod:`memorymaster.rule_export`. These tests anchor on the requirement: the
+:mod:`memorymaster.knowledge.rule_export`. These tests anchor on the requirement: the
 export enumerates rule claims, filters by min-confidence + status, renders the
 three formats with the documented columns, and never leaks sensitive rules.
 """
@@ -13,10 +13,10 @@ import json
 
 import pytest
 
-from memorymaster import rule_export
-from memorymaster.models import CitationInput
-from memorymaster.rules import build_rule_fields
-from memorymaster.service import MemoryService
+from memorymaster.knowledge import rule_export
+from memorymaster.core.models import CitationInput
+from memorymaster.knowledge.rules import build_rule_fields
+from memorymaster.core.service import MemoryService
 
 
 @pytest.fixture
@@ -77,7 +77,7 @@ def test_export_carries_correction_count(svc):
     """A rule whose fingerprint has a rule_stats tally reports that count."""
     import sqlite3
 
-    from memorymaster.rule_miner import rule_fingerprint
+    from memorymaster.knowledge.rule_miner import rule_fingerprint
 
     _ingest_rule(svc, "repeat rule", "do repeat", confidence=0.7)
     fp = rule_fingerprint("repeat rule", "do repeat")

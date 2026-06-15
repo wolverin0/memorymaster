@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from memorymaster.rl_trainer import MIN_SAMPLES, train_quality_model
+from memorymaster.govern.rl_trainer import MIN_SAMPLES, train_quality_model
 
 
 def _make_db(prefix: str) -> str:
@@ -128,7 +128,7 @@ class TestTrainQualityModel:
         assert result["status"] == "skipped"
         assert result["reason"] in ["insufficient_scored_claims", "insufficient_data"]
 
-    @patch("memorymaster.rl_trainer.FeedbackTracker")
+    @patch("memorymaster.govern.rl_trainer.FeedbackTracker")
     def test_train_reports_error_on_sklearn_failure(self, mock_ft_class: MagicMock) -> None:
         """Training should report error status on sklearn import/training failures."""
         db_path = _make_db("rl-exception")
@@ -161,7 +161,7 @@ class TestTrainQualityModel:
         assert "status" in result
         assert result["status"] in ["skipped", "trained", "error"]
 
-    @patch("memorymaster.rl_trainer.FeedbackTracker")
+    @patch("memorymaster.govern.rl_trainer.FeedbackTracker")
     def test_train_suggests_action_on_insufficient_data(self, mock_ft_class: MagicMock) -> None:
         """Training should suggest action when insufficient data."""
         db_path = _make_db("rl-suggestion")
@@ -191,7 +191,7 @@ class TestTrainQualityModel:
         assert isinstance(result, dict)
         assert "status" in result
 
-    @patch("memorymaster.rl_trainer.FeedbackTracker")
+    @patch("memorymaster.govern.rl_trainer.FeedbackTracker")
     def test_train_respects_min_samples_constant(self, mock_ft_class: MagicMock) -> None:
         """Training should use MIN_SAMPLES constant correctly."""
         db_path = _make_db("rl-min-samples")

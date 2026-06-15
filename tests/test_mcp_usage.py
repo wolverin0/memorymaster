@@ -5,8 +5,8 @@ import csv
 from datetime import datetime
 import sqlite3
 
-from memorymaster.cli_handlers_basic import handle_mcp_usage_report
-from memorymaster.mcp_usage import insert, query_window
+from memorymaster.surfaces.cli_handlers_basic import handle_mcp_usage_report
+from memorymaster.surfaces.mcp_usage import insert, query_window
 
 
 CREATE_USAGE_TABLE = """

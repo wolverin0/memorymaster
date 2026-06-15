@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.wiki_engine import (
+from memorymaster.knowledge.wiki_engine import (
     _build_contradiction_callout,
     _read_existing_explored,
     _write_article,

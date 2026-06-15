@@ -53,7 +53,7 @@ Rules:
 def _get_candidates(db_path: str, prompt: str, top_k: int) -> list[dict]:
     """Run production recall via context_hook and return top-K candidates."""
     # Use the same return_ids=True path as the eval harness.
-    from memorymaster import context_hook
+    from memorymaster.recall import context_hook
 
     # Recall returns rendered bullet text; we need ids + raw claim text.
     # Easiest: get the IDs from recall, then fetch claim text from DB.
@@ -94,7 +94,7 @@ def _get_candidates(db_path: str, prompt: str, top_k: int) -> list[dict]:
 
 def _call_judge(prompt: str, candidates: list[dict]) -> list[int]:
     """Single LLM call to the judge. Returns list of claim IDs."""
-    from memorymaster.llm_provider import call_llm, parse_json_response
+    from memorymaster.core.llm_provider import call_llm, parse_json_response
 
     judge_text = _judge_prompt(prompt, candidates)
     raw = call_llm(judge_text, "")

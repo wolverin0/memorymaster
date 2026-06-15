@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster import llm_steward
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.govern import llm_steward
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 
 @pytest.fixture

@@ -24,9 +24,9 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
-from memorymaster.config import INITIAL_CONFIDENCE_BY_TYPE
-from memorymaster.query_classifier import classify_query
-from memorymaster.webhook import fire_webhook
+from memorymaster.core.config import INITIAL_CONFIDENCE_BY_TYPE
+from memorymaster.recall.query_classifier import classify_query
+from memorymaster.core.webhook import fire_webhook
 
 
 class TestConfidenceCalibrationKeysAreCanonical:
@@ -68,21 +68,21 @@ class TestConstraintBeatsVerificationOpener:
 class TestWebhookSchemeGuard:
     """Finding 3: reject non-http(s) schemes before dispatch."""
 
-    @patch("memorymaster.webhook.urllib.request.urlopen")
+    @patch("memorymaster.core.webhook.urllib.request.urlopen")
     def test_file_scheme_rejected_without_dispatch(self, mock_urlopen):
         """file:// URLs are refused and urlopen is never called."""
         with patch.dict(os.environ, {"MEMORYMASTER_WEBHOOK_URL": "file:///etc/passwd"}):
             assert fire_webhook("evt", {"a": 1}) is False
         mock_urlopen.assert_not_called()
 
-    @patch("memorymaster.webhook.urllib.request.urlopen")
+    @patch("memorymaster.core.webhook.urllib.request.urlopen")
     def test_ftp_scheme_rejected_without_dispatch(self, mock_urlopen):
         """ftp:// URLs are refused and urlopen is never called."""
         with patch.dict(os.environ, {"MEMORYMASTER_WEBHOOK_URL": "ftp://host/x"}):
             assert fire_webhook("evt", {}) is False
         mock_urlopen.assert_not_called()
 
-    @patch("memorymaster.webhook.urllib.request.urlopen")
+    @patch("memorymaster.core.webhook.urllib.request.urlopen")
     def test_https_scheme_still_dispatches(self, mock_urlopen):
         """A valid https URL still passes the guard and reaches urlopen."""
         resp = mock_urlopen.return_value.__enter__.return_value

@@ -21,7 +21,7 @@ import pytest
 
 pytest.importorskip("numpy", reason="ml extra not installed")
 
-from memorymaster.wiki_similarity import (  # noqa: E402
+from memorymaster.knowledge.wiki_similarity import (  # noqa: E402
     _discover_scope_dirs,
     _scope_to_dirname,
     compute_wiki_similarity,
@@ -88,7 +88,7 @@ def vault(tmp_path: Path) -> Path:
 
 
 def test_scope_to_dirname_matches_wiki_engine() -> None:
-    # Must stay in sync with memorymaster.wiki_engine._scope_dirname.
+    # Must stay in sync with memorymaster.knowledge.wiki_engine._scope_dirname.
     assert _scope_to_dirname("project:memorymaster") == "project-memorymaster"
     assert _scope_to_dirname("project:whatsappbot") == "project-whatsappbot"
     assert _scope_to_dirname("user") == "user"

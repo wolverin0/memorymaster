@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.verbatim_cleanup import analyze, cleanup
+from memorymaster.govern.verbatim_cleanup import analyze, cleanup
 
 
 _SCHEMA = """

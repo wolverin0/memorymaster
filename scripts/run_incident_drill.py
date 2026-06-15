@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 DEFAULT_PERF_SLO_CONFIG = "benchmarks/slo_targets.json"
 DEFAULT_ARTIFACTS_ROOT = "artifacts/incident_drill"

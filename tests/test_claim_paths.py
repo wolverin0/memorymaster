@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.models import CitationInput
-from memorymaster.service import MAX_CLAIM_PATH_HOPS, MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MAX_CLAIM_PATH_HOPS, MemoryService
 
 
 def _case_db(prefix: str) -> Path:
@@ -263,7 +263,7 @@ class TestOrphanAndConfidence:
 
 class TestMcpTool:
     def test_mcp_query_claim_paths_returns_paths(self, tmp_path, monkeypatch):
-        from memorymaster import mcp_server
+        from memorymaster.surfaces import mcp_server
 
         db = tmp_path / "mcp-paths.db"
         svc = MemoryService(db, workspace_root=tmp_path)
@@ -287,7 +287,7 @@ class TestCli:
     def test_cli_query_paths_json(self, tmp_path, capsys):
         import json as _json
 
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
 
         db = tmp_path / "cli-paths.db"
         svc = MemoryService(db, workspace_root=tmp_path)

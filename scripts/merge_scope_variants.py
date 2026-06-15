@@ -1,7 +1,7 @@
 """Merge fragmented scope variants in the claims DB into their canonical form.
 
 Follow-up to the 2026-04-22 scope-fragmentation audit. Uses the SAME
-``_canonicalize_slug`` helper as ``memorymaster.mcp_server`` so code and
+``_canonicalize_slug`` helper as ``memorymaster.surfaces.mcp_server`` so code and
 migration agree by construction.
 
 Usage::
@@ -31,7 +31,7 @@ from pathlib import Path
 # Allow running as ``python scripts/merge_scope_variants.py`` from repo root.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from memorymaster.mcp_server import _canonicalize_slug  # noqa: E402
+from memorymaster.surfaces.mcp_server import _canonicalize_slug  # noqa: E402
 
 
 def _canonicalize_scope(scope: str) -> str:

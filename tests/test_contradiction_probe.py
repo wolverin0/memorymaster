@@ -11,10 +11,11 @@ import math
 
 import pytest
 
-from memorymaster import contradiction_probe, llm_provider
-from memorymaster.config import reset_config
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core import llm_provider
+from memorymaster.govern import contradiction_probe
+from memorymaster.core.config import reset_config
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 
 class _FakeProvider:
@@ -313,7 +314,7 @@ def test_connect_verdict_cache_sets_wal_and_busy_timeout(env):
 
 
 def test_sample_pairs_early_break_bounds_cosine_calls(monkeypatch):
-    from memorymaster import contradiction_probe as cp
+    from memorymaster.govern import contradiction_probe as cp
 
     class _Claim:
         def __init__(self, cid):

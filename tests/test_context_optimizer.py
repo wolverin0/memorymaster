@@ -6,13 +6,13 @@ import json
 
 import pytest
 
-from memorymaster.context_optimizer import (
+from memorymaster.recall.context_optimizer import (
     ContextResult,
     OUTPUT_FORMATS,
     estimate_tokens,
     pack_context,
 )
-from memorymaster.models import Claim
+from memorymaster.core.models import Claim
 
 
 def _make_claim(

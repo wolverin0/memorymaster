@@ -14,7 +14,7 @@ import sqlite3
 import sys
 from collections import Counter
 
-from memorymaster.candidate_dedupe import find_near_duplicate
+from memorymaster.govern.candidate_dedupe import find_near_duplicate
 
 
 THRESHOLDS = [0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]

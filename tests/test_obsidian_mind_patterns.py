@@ -235,7 +235,7 @@ class TestSessionStartHook:
 
 class TestWikiDescriptionField:
     def test_extract_description_from_body(self):
-        from memorymaster.wiki_engine import _extract_description
+        from memorymaster.knowledge.wiki_engine import _extract_description
 
         body = "# Title\n\nThis is the first real paragraph with enough content to be useful. It explains the thing."
         desc = _extract_description(body)
@@ -243,7 +243,7 @@ class TestWikiDescriptionField:
         assert "first real paragraph" in desc
 
     def test_extract_description_skips_headers_and_lists(self):
-        from memorymaster.wiki_engine import _extract_description
+        from memorymaster.knowledge.wiki_engine import _extract_description
 
         body = "## Header\n\n- bullet one\n- bullet two\n\nActual paragraph content goes here and is substantial enough."
         desc = _extract_description(body)
@@ -251,14 +251,14 @@ class TestWikiDescriptionField:
         assert "bullet" not in desc
 
     def test_extract_description_respects_max_chars(self):
-        from memorymaster.wiki_engine import _extract_description
+        from memorymaster.knowledge.wiki_engine import _extract_description
 
         body = "This is a very long paragraph. " * 50
         desc = _extract_description(body, max_chars=150)
         assert len(desc) <= 200  # Soft limit with ellipsis tolerance
 
     def test_build_tags_includes_type_and_scope(self):
-        from memorymaster.wiki_engine import _build_tags
+        from memorymaster.knowledge.wiki_engine import _build_tags
 
         tags = _build_tags("decision", "project:memorymaster", ["decision", "decision", "fact"])
         assert "decision" in tags
@@ -266,13 +266,13 @@ class TestWikiDescriptionField:
         assert "fact" in tags
 
     def test_build_tags_capped(self):
-        from memorymaster.wiki_engine import _build_tags
+        from memorymaster.knowledge.wiki_engine import _build_tags
 
         tags = _build_tags("fact", "project:x", ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"])
         assert len(tags) <= 8
 
     def test_write_article_produces_full_frontmatter(self, tmp_path):
-        from memorymaster.wiki_engine import _write_article
+        from memorymaster.knowledge.wiki_engine import _write_article
 
         body = "This is a wiki article with enough content for the description extractor to pick up on."
         path = _write_article(
@@ -298,7 +298,7 @@ class TestWikiDescriptionField:
         assert "scope: project:test" in content
 
     def test_yaml_escape_handles_colons(self):
-        from memorymaster.wiki_engine import _yaml_escape
+        from memorymaster.knowledge.wiki_engine import _yaml_escape
 
         assert _yaml_escape("simple") == "simple"
         escaped = _yaml_escape("has: colon")
@@ -311,7 +311,7 @@ class TestWikiDescriptionField:
 
 class TestVaultBases:
     def test_generate_bases_writes_all_files(self, tmp_path):
-        from memorymaster.vault_bases import generate_bases, BASES
+        from memorymaster.knowledge.vault_bases import generate_bases, BASES
 
         result = generate_bases(tmp_path)
         assert result["written"] == len(BASES)
@@ -325,7 +325,7 @@ class TestVaultBases:
             assert "views:" in content
 
     def test_bases_are_valid_yaml(self, tmp_path):
-        from memorymaster.vault_bases import generate_bases
+        from memorymaster.knowledge.vault_bases import generate_bases
 
         try:
             import yaml  # noqa: F401
@@ -342,7 +342,7 @@ class TestVaultBases:
             assert isinstance(parsed["views"], list)
 
     def test_bases_readme_written(self, tmp_path):
-        from memorymaster.vault_bases import generate_bases
+        from memorymaster.knowledge.vault_bases import generate_bases
 
         generate_bases(tmp_path)
         readme = tmp_path / "bases" / "README.md"
@@ -350,7 +350,7 @@ class TestVaultBases:
         assert "MemoryMaster" in readme.read_text(encoding="utf-8")
 
     def test_generate_bases_idempotent(self, tmp_path):
-        from memorymaster.vault_bases import generate_bases
+        from memorymaster.knowledge.vault_bases import generate_bases
 
         r1 = generate_bases(tmp_path)
         r2 = generate_bases(tmp_path)

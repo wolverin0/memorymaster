@@ -21,13 +21,13 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.context_hook import (
+from memorymaster.recall.context_hook import (
     _current_scope,
     _DEFAULT_CURRENT_SCOPE,
     _recall_scope_boost,
     recall,
 )
-from memorymaster.models import Claim
+from memorymaster.core.models import Claim
 
 
 # --------------------------------------------------------------------------- #
@@ -77,11 +77,11 @@ def _patch_service(monkeypatch: pytest.MonkeyPatch, rows: list[dict]) -> None:
     def _fake_ctor(db_target: str, workspace_root: Path):  # noqa: ARG001
         return _FakeService(rows)
 
-    monkeypatch.setattr("memorymaster.service.MemoryService", _fake_ctor)
+    monkeypatch.setattr("memorymaster.core.service.MemoryService", _fake_ctor)
     # recall() also passes through extract_query_tokens; stub it so we don't
     # need a real DB on disk.
     monkeypatch.setattr(
-        "memorymaster.recall_tokenizer.extract_query_tokens",
+        "memorymaster.recall.recall_tokenizer.extract_query_tokens",
         lambda q, db, max_tokens=6: "recall",
     )
 
@@ -253,7 +253,7 @@ def test_boost_zero_point_one_yields_required_score_margin(
     directly replicating the formula. Direct-formula check keeps the
     assertion precise and independent of the hook's budget trimming.
     """
-    from memorymaster.context_hook import _recall_weight  # noqa: WPS433
+    from memorymaster.recall.context_hook import _recall_weight  # noqa: WPS433
 
     monkeypatch.setenv("MEMORYMASTER_RECALL_SCOPE_BOOST", "0.1")
     monkeypatch.setenv("MEMORYMASTER_SCOPE_DEFAULT", "project:memorymaster")

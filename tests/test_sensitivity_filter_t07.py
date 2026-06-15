@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from memorymaster.models import CitationInput
-from memorymaster.security import redact_text, sanitize_claim_input
+from memorymaster.core.models import CitationInput
+from memorymaster.core.security import redact_text, sanitize_claim_input
 
 
 def _assert_redacted(text: str, expected_finding: str, secret: str) -> None:

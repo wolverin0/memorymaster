@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.models import CLAIM_LINK_TYPES, CitationInput, ClaimLink
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CLAIM_LINK_TYPES, CitationInput, ClaimLink
+from memorymaster.core.service import MemoryService
 
 
 def _case_db(prefix: str) -> Path:
@@ -184,7 +184,7 @@ class TestClaimLinksCLI:
     @pytest.fixture()
     def cli_db(self, tmp_path: Path) -> Path:
         """Set up a fresh db using CLI init-db + ingest."""
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
 
         db = tmp_path / "links_test.db"
         assert main(["--db", str(db), "init-db"]) == 0
@@ -199,27 +199,27 @@ class TestClaimLinksCLI:
         return db
 
     def test_cli_link_command(self, cli_db: Path):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
 
         result = main(["--db", str(cli_db), "link", "1", "2", "--type", "supports"])
         assert result == 0
 
     def test_cli_links_command(self, cli_db: Path):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
 
         main(["--db", str(cli_db), "link", "1", "2", "--type", "relates_to"])
         result = main(["--db", str(cli_db), "links", "1"])
         assert result == 0
 
     def test_cli_unlink_command(self, cli_db: Path):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
 
         main(["--db", str(cli_db), "link", "1", "2", "--type", "relates_to"])
         result = main(["--db", str(cli_db), "unlink", "1", "2"])
         assert result == 0
 
     def test_cli_link_json_output(self, cli_db: Path, capsys):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
 
         result = main(["--db", str(cli_db), "--json", "link", "1", "2", "--type", "derived_from"])
         assert result == 0
@@ -230,7 +230,7 @@ class TestClaimLinksCLI:
         assert data["data"]["link_type"] == "derived_from"
 
     def test_cli_links_json_output(self, cli_db: Path, capsys):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
 
         main(["--db", str(cli_db), "link", "1", "2", "--type", "supports"])
         main(["--db", str(cli_db), "link", "1", "2", "--type", "contradicts"])
@@ -246,7 +246,7 @@ class TestClaimLinksCLI:
         assert len(data["data"]["links"]) == 2
 
     def test_cli_unlink_json_output(self, cli_db: Path, capsys):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
 
         main(["--db", str(cli_db), "link", "1", "2", "--type", "relates_to"])
 
@@ -260,7 +260,7 @@ class TestClaimLinksCLI:
         assert data["data"]["removed"] == 1
 
     def test_cli_links_filter_by_type(self, cli_db: Path, capsys):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
 
         main(["--db", str(cli_db), "link", "1", "2", "--type", "supports"])
         main(["--db", str(cli_db), "link", "1", "2", "--type", "contradicts"])

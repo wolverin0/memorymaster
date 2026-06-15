@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from memorymaster.policy import POLICY_MODES, select_revalidation_candidates
+from memorymaster.core.policy import POLICY_MODES, select_revalidation_candidates
 
 
 class _FakeStore:

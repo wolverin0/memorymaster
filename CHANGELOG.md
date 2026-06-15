@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Changed
+
+- **Package restructure (v4 program P2).** The previously-flat ~138 modules
+  under `memorymaster/` are now organized into seven subpackages:
+  `core/` (models, service, lifecycle, config, policy, security, llm_provider,
+  llm_budget, …), `stores/` (storage layer + migrations), `recall/`
+  (context_hook, retrieval/fusion, embeddings, qdrant, verbatim),
+  `govern/` (steward stack + jobs pipeline + probes/resolvers),
+  `knowledge/` (wiki/vault/entity/rules), `surfaces/` (cli, mcp_server,
+  dashboard, operator, setup), and `bridges/` (dream, atlas, openclaw,
+  connectors). **Every old import path keeps working** via deprecation shims
+  (`sys.modules` aliasing) for one minor version — update imports to the new
+  subpackage paths. Console entry points (`memorymaster`, `-mcp`,
+  `-dashboard`, `-steward`, `-setup`) are unchanged.
+- `memorymaster.skill_evolver` removed (unreferenced dead module).
+
+### Deprecated
+
+- All top-level `memorymaster.<module>` import paths now alias into the
+  subpackages and will be removed in a future minor. Migrate to e.g.
+  `memorymaster.core.service`, `memorymaster.stores.storage`,
+  `memorymaster.recall.context_hook`, `memorymaster.govern.steward`.
+
 ## [3.28.0] - 2026-06-09
 
 **Feature bundle + steward operability.** Five recall/explainability features built

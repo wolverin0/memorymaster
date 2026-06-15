@@ -18,7 +18,7 @@ def _assert_filter_caught(result: dict) -> None:
 @pytest.fixture
 def mcp_db(tmp_path):
     try:
-        from memorymaster.mcp_server import init_db
+        from memorymaster.surfaces.mcp_server import init_db
     except ImportError:
         pytest.skip("MCP not installed")
 
@@ -29,7 +29,7 @@ def mcp_db(tmp_path):
 
 
 def _ingest_attempt(text: str, mcp_db):
-    from memorymaster.mcp_server import ingest_claim
+    from memorymaster.surfaces.mcp_server import ingest_claim
 
     db_path, workspace = mcp_db
     return ingest_claim(

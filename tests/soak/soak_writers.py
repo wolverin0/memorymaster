@@ -64,8 +64,8 @@ def _unique(prefix: str, writer_id: int, seq: int) -> str:
 
 def _writer_ingest(db: Path, ledger: Ledger, writer_id: int) -> None:
     """6x MCP-style ingest: fresh MemoryService per batch (mcp_server pattern)."""
-    from memorymaster.models import CitationInput
-    from memorymaster.service import MemoryService
+    from memorymaster.core.models import CitationInput
+    from memorymaster.core.service import MemoryService
 
     seq = 0
     while True:
@@ -96,8 +96,8 @@ def _writer_recall(db: Path, ledger: Ledger, writer_id: int) -> None:
     flag OFF -> legacy direct-UPDATE writer. Mirrors context_hook exactly at
     the service layer.
     """
-    from memorymaster import spool
-    from memorymaster.service import MemoryService
+    from memorymaster.core import spool
+    from memorymaster.core.service import MemoryService
 
     read_only = spool.wal_discipline_enabled()
     while True:
@@ -113,10 +113,10 @@ def _writer_recall(db: Path, ledger: Ledger, writer_id: int) -> None:
 
 def _writer_stophook(db: Path, ledger: Ledger, writer_id: int) -> None:
     """1x Stop-hook: verbatim turn + learning ingest per iteration."""
-    from memorymaster import spool
-    from memorymaster.models import CitationInput
-    from memorymaster.service import MemoryService
-    from memorymaster.verbatim_store import ensure_verbatim_schema, store_verbatim
+    from memorymaster.core import spool
+    from memorymaster.core.models import CitationInput
+    from memorymaster.core.service import MemoryService
+    from memorymaster.recall.verbatim_store import ensure_verbatim_schema, store_verbatim
 
     session = f"soak-session-{writer_id}-{os.getpid()}"
     seq = 0
@@ -176,9 +176,9 @@ def _writer_stophook(db: Path, ledger: Ledger, writer_id: int) -> None:
 
 def _writer_dream(db: Path, ledger: Ledger, writer_id: int) -> None:
     """1x dream-bridge: op:"dream" envelopes under flag, direct ingest off-flag."""
-    from memorymaster import spool
-    from memorymaster.models import CitationInput
-    from memorymaster.service import MemoryService
+    from memorymaster.core import spool
+    from memorymaster.core.models import CitationInput
+    from memorymaster.core.service import MemoryService
 
     seq = 0
     use_spool = spool.wal_discipline_enabled()
@@ -214,7 +214,7 @@ def _writer_dream(db: Path, ledger: Ledger, writer_id: int) -> None:
 
 def _writer_steward(db: Path, ledger: Ledger, writer_id: int) -> None:
     """1x steward: run_cycle (small batch) — includes integrity + spool drain."""
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     while True:
         try:
@@ -228,9 +228,9 @@ def _writer_steward(db: Path, ledger: Ledger, writer_id: int) -> None:
 
 def _writer_merge(db: Path, ledger: Ledger, writer_id: int, sibling: Path) -> None:
     """1x merge-db: seed a sibling DB, merge it over the soak DB (hermes shape)."""
-    from memorymaster.db_merge import merge_databases
-    from memorymaster.models import CitationInput
-    from memorymaster.service import MemoryService
+    from memorymaster.bridges.db_merge import merge_databases
+    from memorymaster.core.models import CitationInput
+    from memorymaster.core.service import MemoryService
 
     sib = MemoryService(sibling)
     if not sibling.exists():

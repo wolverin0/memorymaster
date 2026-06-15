@@ -4,7 +4,7 @@ import hashlib
 import json
 import sqlite3
 
-from memorymaster import verbatim_store
+from memorymaster.recall import verbatim_store
 
 
 class _Response:

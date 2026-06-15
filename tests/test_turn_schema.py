@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from memorymaster.turn_schema import normalize_turn_row
+from memorymaster.surfaces.turn_schema import normalize_turn_row
 
 
 def test_normalize_turn_row_explicit_shape() -> None:
@@ -80,7 +80,7 @@ def test_normalize_turn_row_messages_block_list_shape() -> None:
 
 
 def test_normalize_turn_row_generates_fallback_turn_id_when_missing(monkeypatch) -> None:
-    monkeypatch.setattr("memorymaster.turn_schema.time.time", lambda: 1700000000.123)
+    monkeypatch.setattr("memorymaster.surfaces.turn_schema.time.time", lambda: 1700000000.123)
 
     got = normalize_turn_row({})
     assert got.turn_id == "turn-1700000000123"

@@ -20,7 +20,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from memorymaster import llm_budget, llm_provider
+from memorymaster.core import llm_provider
+from memorymaster.core import llm_budget
 
 
 @pytest.fixture(autouse=True)
@@ -51,7 +52,7 @@ def test_empty_200_does_not_rate_limit_healthy_key(monkeypatch):
     across a batch, which then makes get_key sleep and falsely report "all keys
     rate-limited" even though no key ever hit a 429.
     """
-    from memorymaster.llm_steward import KeyRotator
+    from memorymaster.core.key_rotator import RoundRobinKeyRotator as KeyRotator
 
     rotator = KeyRotator(keys=["k1", "k2", "k3"])
     monkeypatch.setattr(llm_provider, "_get_google_env_rotator", lambda: rotator)
@@ -73,7 +74,7 @@ def test_empty_200_does_not_rate_limit_healthy_key(monkeypatch):
 
 def test_real_429_still_cools_the_key(monkeypatch):
     """A genuine HTTP 429 still cools the offending key (behavior preserved)."""
-    from memorymaster.llm_steward import KeyRotator
+    from memorymaster.core.key_rotator import RoundRobinKeyRotator as KeyRotator
 
     rotator = KeyRotator(keys=["k1", "k2"])
     monkeypatch.setattr(llm_provider, "_get_google_env_rotator", lambda: rotator)
@@ -143,7 +144,8 @@ def test_rerank_env_does_not_clear_shared_rotator_cache(monkeypatch):
     WHY: clearing the cache mid-flight drops the rotation/cooldown state that a
     concurrent call_llm relies on, re-reading keys and double-spending quota.
     """
-    from memorymaster import key_rotator, llm_rerank
+    from memorymaster.core import key_rotator
+    from memorymaster.recall import llm_rerank
 
     cleared = {"count": 0}
     real_clear = key_rotator.clear_cache
@@ -179,7 +181,7 @@ def test_rerank_env_does_not_clear_shared_rotator_cache(monkeypatch):
 
 def test_rerank_env_does_not_mutate_os_environ(monkeypatch):
     """Provider/model/key-rotation are restored to os.environ after the call."""
-    from memorymaster import llm_rerank
+    from memorymaster.recall import llm_rerank
 
     monkeypatch.setenv("MEMORYMASTER_LLM_PROVIDER", "anthropic")
     monkeypatch.delenv("MEMORYMASTER_LLM_MODEL", raising=False)

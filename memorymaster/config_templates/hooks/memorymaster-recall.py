@@ -15,7 +15,7 @@ sys.path.insert(0, PROJECT_ROOT)
 os.environ["MEMORYMASTER_DEFAULT_DB"] = DB_PATH
 os.chdir(PROJECT_ROOT)
 
-from memorymaster.hook_log import log_hook  # noqa: E402 — import must follow sys.path bootstrap
+from memorymaster.core.hook_log import log_hook  # noqa: E402 — import must follow sys.path bootstrap
 
 try:
     data = json.loads(sys.stdin.read() or "{}")
@@ -26,7 +26,7 @@ try:
         sys.exit(0)
 
     log_hook("recall", "start", session=session_id, query_len=len(query))
-    from memorymaster.context_hook import recall
+    from memorymaster.recall.context_hook import recall
     ctx = recall(query, db_path=DB_PATH, skip_qdrant=True)
     log_hook("recall", "done", session=session_id, hit=bool(ctx), ctx_chars=len(ctx or ""))
     if ctx:

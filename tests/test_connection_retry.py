@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from memorymaster.retry import connect_with_retry, _get_retry_config
+from memorymaster.core.retry import connect_with_retry, _get_retry_config
 
 
 class TestGetRetryConfig:
@@ -37,7 +37,7 @@ class TestConnectWithRetry:
         result = connect_with_retry(lambda: conn)
         assert result is conn
 
-    @patch("memorymaster.retry.time.sleep")
+    @patch("memorymaster.core.retry.time.sleep")
     def test_success_after_transient_failure(self, mock_sleep):
         conn = MagicMock()
         fn = MagicMock(side_effect=[OSError("locked"), conn])
@@ -50,7 +50,7 @@ class TestConnectWithRetry:
         assert fn.call_count == 2
         mock_sleep.assert_called_once_with(0.5)  # base * 2^0
 
-    @patch("memorymaster.retry.time.sleep")
+    @patch("memorymaster.core.retry.time.sleep")
     def test_all_retries_exhausted(self, mock_sleep):
         error = ConnectionError("refused")
         fn = MagicMock(side_effect=error)
@@ -67,7 +67,7 @@ class TestConnectWithRetry:
         mock_sleep.assert_any_call(0.25)   # 0.25 * 2^0
         mock_sleep.assert_any_call(0.5)    # 0.25 * 2^1
 
-    @patch("memorymaster.retry.time.sleep")
+    @patch("memorymaster.core.retry.time.sleep")
     def test_zero_retries_fails_immediately(self, mock_sleep):
         fn = MagicMock(side_effect=RuntimeError("boom"))
 
@@ -79,7 +79,7 @@ class TestConnectWithRetry:
         assert fn.call_count == 1
         mock_sleep.assert_not_called()
 
-    @patch("memorymaster.retry.time.sleep")
+    @patch("memorymaster.core.retry.time.sleep")
     def test_exponential_backoff_delays(self, mock_sleep):
         conn = MagicMock()
         fn = MagicMock(side_effect=[OSError("1"), OSError("2"), OSError("3"), conn])
@@ -99,9 +99,9 @@ class TestConnectWithRetry:
 class TestSQLiteStoreRetry:
     """Integration: verify SQLiteStore.connect() uses retry wrapper."""
 
-    @patch("memorymaster.retry.time.sleep")
+    @patch("memorymaster.core.retry.time.sleep")
     def test_sqlite_connect_retries_on_failure(self, mock_sleep):
-        from memorymaster.storage import SQLiteStore
+        from memorymaster.stores.storage import SQLiteStore
 
         store = SQLiteStore(":memory:")
 

@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from memorymaster import context_hook
-from memorymaster.context_hook import recall
+from memorymaster.recall import context_hook
+from memorymaster.recall.context_hook import recall
 
 
 def _mock_claim(cid: int, text: str = "working on memorymaster project", subject: str = "memorymaster"):
@@ -34,8 +34,8 @@ def _mock_claim(cid: int, text: str = "working on memorymaster project", subject
 class TestRecallLatencyInstrumentation:
     """Verify per-stream + total latency lines emitted to ``log_hook``."""
 
-    @patch("memorymaster.context_hook.log_hook")
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.recall.context_hook.log_hook")
+    @patch("memorymaster.core.service.MemoryService")
     def test_fts5_stream_always_emits_latency_line(
         self, mock_service_class: MagicMock, mock_log_hook: MagicMock
     ) -> None:
@@ -52,8 +52,8 @@ class TestRecallLatencyInstrumentation:
         streams = _streams_emitted(mock_log_hook)
         assert "fts5" in streams
 
-    @patch("memorymaster.context_hook.log_hook")
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.recall.context_hook.log_hook")
+    @patch("memorymaster.core.service.MemoryService")
     def test_latency_total_event_always_emitted(
         self, mock_service_class: MagicMock, mock_log_hook: MagicMock
     ) -> None:
@@ -76,8 +76,8 @@ class TestRecallLatencyInstrumentation:
         assert "total_ms" in total_kwargs
         assert total_kwargs["total_ms"] >= 0.0
 
-    @patch("memorymaster.context_hook.log_hook")
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.recall.context_hook.log_hook")
+    @patch("memorymaster.core.service.MemoryService")
     def test_verbatim_disabled_emits_no_verbatim_line(
         self, mock_service_class: MagicMock, mock_log_hook: MagicMock,
         monkeypatch,
@@ -97,8 +97,8 @@ class TestRecallLatencyInstrumentation:
         streams = _streams_emitted(mock_log_hook)
         assert "verbatim" not in streams
 
-    @patch("memorymaster.context_hook.log_hook")
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.recall.context_hook.log_hook")
+    @patch("memorymaster.core.service.MemoryService")
     def test_vector_fallback_disabled_emits_no_line(
         self, mock_service_class: MagicMock, mock_log_hook: MagicMock,
         monkeypatch,
@@ -118,8 +118,8 @@ class TestRecallLatencyInstrumentation:
         streams = _streams_emitted(mock_log_hook)
         assert "vector_fallback" not in streams
 
-    @patch("memorymaster.context_hook.log_hook")
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.recall.context_hook.log_hook")
+    @patch("memorymaster.core.service.MemoryService")
     def test_bm25_disabled_emits_no_line(
         self, mock_service_class: MagicMock, mock_log_hook: MagicMock,
         monkeypatch,
@@ -138,8 +138,8 @@ class TestRecallLatencyInstrumentation:
         streams = _streams_emitted(mock_log_hook)
         assert "bm25_rescore" not in streams
 
-    @patch("memorymaster.context_hook.log_hook")
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.recall.context_hook.log_hook")
+    @patch("memorymaster.core.service.MemoryService")
     def test_rank_and_build_emitted_on_non_empty_rows(
         self, mock_service_class: MagicMock, mock_log_hook: MagicMock
     ) -> None:
@@ -156,8 +156,8 @@ class TestRecallLatencyInstrumentation:
         streams = _streams_emitted(mock_log_hook)
         assert "rank_and_build" in streams
 
-    @patch("memorymaster.context_hook.log_hook")
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.recall.context_hook.log_hook")
+    @patch("memorymaster.core.service.MemoryService")
     def test_rank_and_build_skipped_on_empty_rows(
         self, mock_service_class: MagicMock, mock_log_hook: MagicMock
     ) -> None:
@@ -187,9 +187,9 @@ class TestRecallLatencyDeterminism:
     Windows.
     """
 
-    @patch("memorymaster.context_hook.log_hook")
-    @patch("memorymaster.context_hook.time")
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.recall.context_hook.log_hook")
+    @patch("memorymaster.recall.context_hook.time")
+    @patch("memorymaster.core.service.MemoryService")
     def test_uses_perf_counter_not_monotonic(
         self,
         mock_service_class: MagicMock,
@@ -234,8 +234,8 @@ class TestRecallLatencyDeterminism:
             assert isinstance(ms, float)
             assert ms >= 0.0
 
-    @patch("memorymaster.context_hook.log_hook")
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.recall.context_hook.log_hook")
+    @patch("memorymaster.core.service.MemoryService")
     def test_log_hook_never_raises_even_on_failure(
         self, mock_service_class: MagicMock, mock_log_hook: MagicMock
     ) -> None:

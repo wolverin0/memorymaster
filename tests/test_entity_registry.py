@@ -12,7 +12,7 @@ import sqlite3
 
 import pytest
 
-from memorymaster.entity_registry import (
+from memorymaster.knowledge.entity_registry import (
     _has_legacy_alias_unique,
     _variant_key,
     add_alias,
@@ -375,9 +375,9 @@ class TestServiceIntegration:
     into the entity_aliases table, not just touch the first one."""
 
     def test_ingest_multiple_subjects_creates_variants(self, tmp_path):
-        pytest.importorskip("memorymaster.service")
-        from memorymaster.models import CitationInput
-        from memorymaster.service import MemoryService
+        pytest.importorskip("memorymaster.core.service")
+        from memorymaster.core.models import CitationInput
+        from memorymaster.core.service import MemoryService
 
         db = tmp_path / "mm.db"
         svc = MemoryService(db_target=str(db), workspace_root=tmp_path)

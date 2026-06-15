@@ -6,14 +6,14 @@ from unittest.mock import patch
 
 import pytest
 
-from memorymaster.jobs.compact_summaries import (
+from memorymaster.govern.jobs.compact_summaries import (
     _build_claim_text_block,
     _cluster_by_subject,
     _get_unsummarized_archived_claims,
     run,
 )
-from memorymaster.models import CitationInput
-from memorymaster.storage import SQLiteStore
+from memorymaster.core.models import CitationInput
+from memorymaster.stores.storage import SQLiteStore
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def _create_archived_claim(store, text, subject="test-subject", predicate="has_v
         object_value=obj,
     )
     # Transition to confirmed first, then archived
-    from memorymaster.lifecycle import transition_claim
+    from memorymaster.core.lifecycle import transition_claim
     transition_claim(store, claim.id, to_status="confirmed", reason="test", event_type="transition")
     transition_claim(store, claim.id, to_status="stale", reason="test", event_type="decay")
     transition_claim(store, claim.id, to_status="archived", reason="test", event_type="compactor")
@@ -135,7 +135,7 @@ class TestRunDryRun:
 
 
 class TestRunWithMockedLLM:
-    @patch("memorymaster.jobs.compact_summaries._call_llm")
+    @patch("memorymaster.govern.jobs.compact_summaries._call_llm")
     def test_creates_summary_claim(self, mock_llm, store):
         mock_llm.return_value = json.dumps({
             "summary_text": "DNS config uses Cloudflare with specific records for failover.",
@@ -179,7 +179,7 @@ class TestRunWithMockedLLM:
         derived_links = [l for l in links if l.link_type == "derived_from"]
         assert len(derived_links) == 4
 
-    @patch("memorymaster.jobs.compact_summaries._call_llm")
+    @patch("memorymaster.govern.jobs.compact_summaries._call_llm")
     def test_handles_llm_error(self, mock_llm, store):
         mock_llm.side_effect = Exception("API timeout")
 
@@ -196,7 +196,7 @@ class TestRunWithMockedLLM:
         assert result.errors == 1
         assert result.summaries_created == 0
 
-    @patch("memorymaster.jobs.compact_summaries._call_llm")
+    @patch("memorymaster.govern.jobs.compact_summaries._call_llm")
     def test_handles_empty_llm_response(self, mock_llm, store):
         mock_llm.return_value = ""
 
@@ -213,7 +213,7 @@ class TestRunWithMockedLLM:
         assert result.errors == 1
         assert result.summaries_created == 0
 
-    @patch("memorymaster.jobs.compact_summaries._call_llm")
+    @patch("memorymaster.govern.jobs.compact_summaries._call_llm")
     def test_multiple_clusters(self, mock_llm, store):
         call_count = 0
 
@@ -257,7 +257,7 @@ class TestRunNoArchivedClaims:
 
 
 class TestMaxClusterSplitting:
-    @patch("memorymaster.jobs.compact_summaries._call_llm")
+    @patch("memorymaster.govern.jobs.compact_summaries._call_llm")
     def test_splits_large_clusters(self, mock_llm, store):
         mock_llm.return_value = json.dumps({
             "summary_text": "Summary of large cluster.",

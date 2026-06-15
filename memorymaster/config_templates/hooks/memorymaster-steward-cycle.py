@@ -30,7 +30,7 @@ os.environ["MEMORYMASTER_DEDUPE_JACCARD_HIGH"] = "0.85"
 os.chdir(PROJECT_ROOT)
 
 try:
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
     from pathlib import Path
 
     svc = MemoryService(db_target=DB_PATH, workspace_root=Path(PROJECT_ROOT))
@@ -49,7 +49,7 @@ try:
 
     # Uniform pragma envelope (WAL + busy_timeout=15000) — a raw connect here
     # had busy_timeout=0 and could lose the UPDATE to a write race (spec F8).
-    from memorymaster._storage_shared import open_conn
+    from memorymaster.stores._storage_shared import open_conn
     cutoff = (datetime.now() - timedelta(days=14)).isoformat()
     conn = open_conn(DB_PATH)
     conn.execute("""
@@ -67,7 +67,7 @@ except Exception as e:
 # Wiki absorb (compiled truth + timeline articles). Inherits the LLM provider
 # block above — uses the same OAuth-backed haiku stack as the steward.
 try:
-    from memorymaster.wiki_engine import absorb
+    from memorymaster.knowledge.wiki_engine import absorb
     wiki_path = os.path.join(PROJECT_ROOT, "obsidian-vault", "wiki")
     stats = absorb(DB_PATH, wiki_path)
     print(f"[MemoryMaster] wiki absorb: {stats}")

@@ -1,7 +1,7 @@
 """Tests for v3.19.0-H2 dashboard auth + CSRF + bind-safety.
 
 Two layers:
-- Unit tests on the pure functions in memorymaster.dashboard_auth.
+- Unit tests on the pure functions in memorymaster.surfaces.dashboard_auth.
 - End-to-end smoke that boots a DashboardHTTPServer on an ephemeral
   loopback port and exercises the HTTP gates with real headers.
 """
@@ -13,8 +13,8 @@ from typing import Iterator
 
 import pytest
 
-from memorymaster import dashboard_auth
-from memorymaster.dashboard_auth import (
+from memorymaster.surfaces import dashboard_auth
+from memorymaster.surfaces.dashboard_auth import (
     AuthDecision,
     BindUnsafeError,
     DashboardRole,
@@ -176,7 +176,7 @@ def test_bind_non_loopback_allowed_with_auth_token(monkeypatch):
 def test_bind_non_loopback_allowed_with_unsafe_opt_in(monkeypatch, caplog):
     monkeypatch.setenv("MEMORYMASTER_DASHBOARD_UNSAFE_BIND", "1")
     import logging
-    with caplog.at_level(logging.WARNING, logger="memorymaster.dashboard_auth"):
+    with caplog.at_level(logging.WARNING, logger="memorymaster.surfaces.dashboard_auth"):
         dashboard_auth.check_bind_safety("0.0.0.0")
     assert any("running exposed" in rec.message for rec in caplog.records)
 
@@ -193,7 +193,7 @@ def live_dashboard(monkeypatch, tmp_path) -> Iterator[tuple[str, int, threading.
     Yields (host, port, thread, server). The fixture sets both tokens so the
     server is in non-legacy mode, then yields control to the test.
     """
-    from memorymaster.dashboard import create_dashboard_server
+    from memorymaster.surfaces.dashboard import create_dashboard_server
 
     monkeypatch.setenv("MEMORYMASTER_DASHBOARD_TOKEN_OPERATOR", "op-secret")
     monkeypatch.setenv("MEMORYMASTER_DASHBOARD_TOKEN_VIEWER", "vw-secret")

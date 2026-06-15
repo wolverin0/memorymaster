@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.jobs.daydream_ingest import ingest_insights
-from memorymaster.service import MemoryService
+from memorymaster.govern.jobs.daydream_ingest import ingest_insights
+from memorymaster.core.service import MemoryService
 
 
 @pytest.fixture()

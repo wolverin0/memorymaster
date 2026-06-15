@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.models import CitationInput
-from memorymaster.storage import SQLiteStore
+from memorymaster.core.models import CitationInput
+from memorymaster.stores.storage import SQLiteStore
 
 
 def _tmp_db(prefix: str = "fts5") -> Path:

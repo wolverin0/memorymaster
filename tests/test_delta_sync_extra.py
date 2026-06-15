@@ -1,4 +1,4 @@
-"""Extra edge-case coverage for ``memorymaster.delta_sync.export_delta``.
+"""Extra edge-case coverage for ``memorymaster.bridges.delta_sync.export_delta``.
 
 These tests deliberately complement ``tests/test_delta_sync.py`` by drilling
 into the four contract corners that are easiest to break silently:
@@ -29,9 +29,9 @@ from typing import Iterator
 
 import pytest
 
-from memorymaster.delta_sync import export_delta
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.bridges.delta_sync import export_delta
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 
 # ---------------------------------------------------------------------------

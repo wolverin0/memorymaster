@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from memorymaster.jobs.dedup import find_duplicates
-from memorymaster.models import Claim
+from memorymaster.govern.jobs.dedup import find_duplicates
+from memorymaster.core.models import Claim
 
 
 class CountingProvider:
@@ -49,7 +49,7 @@ def _claims(count: int, *, scope: str = "project:foo") -> list[Claim]:
 
 
 def _install_fake_service(monkeypatch, claims: list[Claim]):
-    import memorymaster.cli as cli
+    import memorymaster.surfaces.cli as cli
 
     class FakeService:
         provider: CountingProvider | None = None

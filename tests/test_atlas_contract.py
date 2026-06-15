@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.atlas_contract import (
+from memorymaster.bridges.atlas_contract import (
     ATLAS_CONTRACT_NAME,
     ATLAS_CONTRACT_VERSION,
     ATLAS_ENDPOINTS,
@@ -23,7 +23,7 @@ from memorymaster.atlas_contract import (
     atlas_contract_payload,
     atlas_meta,
 )
-from memorymaster.cli import main
+from memorymaster.surfaces.cli import main
 
 
 # ---------------------------------------------------------------------------
@@ -458,8 +458,8 @@ def test_edit_action_proposal_partial_update(tmp_path: Path, capsys) -> None:
 
 def test_edit_action_proposal_records_audit_event(tmp_path: Path) -> None:
     """Every successful edit MUST record an action_proposal event."""
-    from memorymaster.cli import main as cli_main
-    from memorymaster.service import MemoryService
+    from memorymaster.surfaces.cli import main as cli_main
+    from memorymaster.core.service import MemoryService
     fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
     db = tmp_path / "atlas.db"
     cli_main(["--db", str(db), "init-db"])
@@ -485,8 +485,8 @@ def test_edit_action_proposal_records_audit_event(tmp_path: Path) -> None:
 
 def test_edit_action_proposal_noop_records_no_event(tmp_path: Path) -> None:
     """Edit with all fields equal to current values is a no-op (no event)."""
-    from memorymaster.cli import main as cli_main
-    from memorymaster.service import MemoryService
+    from memorymaster.surfaces.cli import main as cli_main
+    from memorymaster.core.service import MemoryService
     fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
     db = tmp_path / "atlas.db"
     cli_main(["--db", str(db), "init-db"])
@@ -502,8 +502,8 @@ def test_edit_action_proposal_noop_records_no_event(tmp_path: Path) -> None:
 
 
 def test_edit_action_proposal_rejects_blank_title(tmp_path: Path) -> None:
-    from memorymaster.cli import main as cli_main
-    from memorymaster.service import MemoryService
+    from memorymaster.surfaces.cli import main as cli_main
+    from memorymaster.core.service import MemoryService
     fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
     db = tmp_path / "atlas.db"
     cli_main(["--db", str(db), "init-db"])
@@ -516,8 +516,8 @@ def test_edit_action_proposal_rejects_blank_title(tmp_path: Path) -> None:
 
 
 def test_edit_action_proposal_rejects_no_fields(tmp_path: Path) -> None:
-    from memorymaster.cli import main as cli_main
-    from memorymaster.service import MemoryService
+    from memorymaster.surfaces.cli import main as cli_main
+    from memorymaster.core.service import MemoryService
     fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
     db = tmp_path / "atlas.db"
     cli_main(["--db", str(db), "init-db"])
@@ -534,7 +534,7 @@ def _seed_with_proposal(tmp_path: Path) -> tuple[Path, int, int]:
     db = tmp_path / "atlas.db"
     main(["--db", str(db), "init-db"])
     main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
     svc = MemoryService(db, workspace_root=tmp_path)
     items = svc.store.connect()
     with svc.store.connect() as conn:
@@ -591,7 +591,7 @@ def test_label_clear_resets_to_null(tmp_path: Path, capsys) -> None:
 
 def test_sensitivity_preserved_on_reimport(tmp_path: Path) -> None:
     """Re-importing a fixture must NOT wipe operator-applied labels."""
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
     fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
     db = tmp_path / "atlas.db"
     main(["--db", str(db), "init-db"])
@@ -607,7 +607,7 @@ def test_sensitivity_preserved_on_reimport(tmp_path: Path) -> None:
 
 
 def test_sensitivity_rejects_invalid_value(tmp_path: Path) -> None:
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
     db, sid, _ = _seed_with_proposal(tmp_path)
     svc = MemoryService(db, workspace_root=tmp_path)
     with pytest.raises(ValueError, match="sensitivity must be one of"):
@@ -615,7 +615,7 @@ def test_sensitivity_rejects_invalid_value(tmp_path: Path) -> None:
 
 
 def test_sensitivity_records_audit_event_on_change(tmp_path: Path) -> None:
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
     db, sid, _ = _seed_with_proposal(tmp_path)
     svc = MemoryService(db, workspace_root=tmp_path)
     n_before = len(svc.list_events(event_type="source_import"))
@@ -629,7 +629,7 @@ def test_sensitivity_records_audit_event_on_change(tmp_path: Path) -> None:
 
 
 def test_sensitivity_no_event_on_noop(tmp_path: Path) -> None:
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
     db, sid, _ = _seed_with_proposal(tmp_path)
     svc = MemoryService(db, workspace_root=tmp_path)
     svc.set_source_item_sensitivity(sid, "low")
@@ -649,7 +649,7 @@ def _seed_with_source_item(tmp_path: Path) -> tuple[Path, int]:
     db = tmp_path / "atlas.db"
     main(["--db", str(db), "init-db"])
     main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
     svc = MemoryService(db, workspace_root=tmp_path)
     with svc.store.connect() as conn:
         rows = conn.execute("SELECT id FROM source_items WHERE item_type='audio' LIMIT 1").fetchall()
@@ -743,7 +743,7 @@ def test_record_outcome_expired_requires_no_path(tmp_path: Path, capsys) -> None
 
 
 def test_record_outcome_done_requires_media_path(tmp_path: Path) -> None:
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
     db, sid = _seed_with_source_item(tmp_path)
     svc = MemoryService(db, workspace_root=tmp_path)
     item = svc.enqueue_media_retry(source_item_id=sid, media_key="k-done", media_type="audio")
@@ -847,7 +847,7 @@ def test_init_db_migrates_stale_atlas_db_without_sensitivity_column(tmp_path: Pa
     finally:
         conn.close()
 
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
     svc = MemoryService(db, workspace_root=tmp_path)
     svc.init_db()  # MUST not raise
 
@@ -877,13 +877,13 @@ def test_init_db_migrates_stale_atlas_db_without_sensitivity_column(tmp_path: Pa
 
 
 def test_provider_factory_returns_mock() -> None:
-    from memorymaster.media_providers import get_ocr_provider, get_transcription_provider
+    from memorymaster.bridges.media_providers import get_ocr_provider, get_transcription_provider
     assert get_transcription_provider("mock").provider_name == "mock-transcription"
     assert get_ocr_provider("mock").provider_name == "mock-ocr"
 
 
 def test_provider_factory_rejects_unknown() -> None:
-    from memorymaster.media_providers import get_ocr_provider, get_transcription_provider
+    from memorymaster.bridges.media_providers import get_ocr_provider, get_transcription_provider
     with pytest.raises(ValueError, match="Unknown transcription provider"):
         get_transcription_provider("nonexistent")
     with pytest.raises(ValueError, match="Unknown OCR provider"):
@@ -895,7 +895,7 @@ def test_openai_whisper_class_lazy_imports() -> None:
     import os
     saved = os.environ.pop("OPENAI_API_KEY", None)
     try:
-        from memorymaster.media_providers import OpenAIWhisperTranscriptionProvider
+        from memorymaster.bridges.media_providers import OpenAIWhisperTranscriptionProvider
         provider = OpenAIWhisperTranscriptionProvider()
         assert provider.provider_name == "openai-whisper"
         with pytest.raises(RuntimeError, match="requires OPENAI_API_KEY"):
@@ -907,7 +907,7 @@ def test_openai_whisper_class_lazy_imports() -> None:
 
 def test_tesseract_class_lazy_imports() -> None:
     """Class must instantiate without pytesseract installed; check is lazy."""
-    from memorymaster.media_providers import TesseractOcrProvider
+    from memorymaster.bridges.media_providers import TesseractOcrProvider
     provider = TesseractOcrProvider()
     assert provider.provider_name == "tesseract"
 
@@ -917,7 +917,7 @@ def test_transcribe_source_item_mock_envelope(tmp_path: Path, capsys) -> None:
     db = tmp_path / "atlas.db"
     main(["--db", str(db), "init-db"])
     main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
     svc = MemoryService(db, workspace_root=tmp_path)
     audio_item = next((i for i in svc.list_evidence_items() if i.evidence_type == "message_text"), None)
     # Find the audio source_item
@@ -943,7 +943,7 @@ def test_ocr_source_item_mock_envelope(tmp_path: Path, capsys) -> None:
     db = tmp_path / "atlas.db"
     main(["--db", str(db), "init-db"])
     main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
     svc = MemoryService(db, workspace_root=tmp_path)
     with svc.store.connect() as conn:
         rows = conn.execute("SELECT id FROM source_items WHERE item_type='image' LIMIT 1").fetchall()
@@ -962,8 +962,8 @@ def test_ocr_source_item_mock_envelope(tmp_path: Path, capsys) -> None:
 
 def test_transcribe_failure_records_event_does_not_crash(tmp_path: Path) -> None:
     """Provider failure must be recorded as media_process event, not raised."""
-    from memorymaster.media_processing import process_transcription
-    from memorymaster.service import MemoryService
+    from memorymaster.bridges.media_processing import process_transcription
+    from memorymaster.core.service import MemoryService
 
     fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
     db = tmp_path / "atlas.db"

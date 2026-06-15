@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from memorymaster.mcp_server import (
+from memorymaster.surfaces.mcp_server import (
     IngestClaimInput,
     _sensitive_input_error,
     _validate_tool_input,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from memorymaster.qmd_bridge import claims_to_qmd, qmd_to_claims
+from memorymaster.bridges.qmd_bridge import claims_to_qmd, qmd_to_claims
 
 
 class TestQmdToClaims:

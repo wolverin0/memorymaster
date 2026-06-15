@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
-from memorymaster.storage import SQLiteStore, generate_human_id_hash, generate_top_level_human_id
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
+from memorymaster.stores.storage import SQLiteStore, generate_human_id_hash, generate_top_level_human_id
 
 
 def _fresh_db() -> str:
@@ -252,7 +252,7 @@ class TestHumanIdInClaimOutput:
 
 class TestCliResolveClaimId:
     def test_resolve_with_numeric_string(self):
-        from memorymaster.cli import _resolve_claim_id
+        from memorymaster.surfaces.cli import _resolve_claim_id
 
         db = _fresh_db()
         svc = MemoryService(db, workspace_root=Path.cwd())
@@ -263,7 +263,7 @@ class TestCliResolveClaimId:
         assert _resolve_claim_id(svc, str(claim.id)) == claim.id
 
     def test_resolve_with_human_id(self):
-        from memorymaster.cli import _resolve_claim_id
+        from memorymaster.surfaces.cli import _resolve_claim_id
 
         db = _fresh_db()
         svc = MemoryService(db, workspace_root=Path.cwd())
@@ -274,7 +274,7 @@ class TestCliResolveClaimId:
         assert _resolve_claim_id(svc, claim.human_id) == claim.id
 
     def test_resolve_with_int(self):
-        from memorymaster.cli import _resolve_claim_id
+        from memorymaster.surfaces.cli import _resolve_claim_id
 
         db = _fresh_db()
         svc = MemoryService(db, workspace_root=Path.cwd())

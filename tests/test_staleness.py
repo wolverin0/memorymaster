@@ -1,4 +1,4 @@
-"""Tests for claim staleness detection (memorymaster.jobs.staleness)."""
+"""Tests for claim staleness detection (memorymaster.govern.jobs.staleness)."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
-from memorymaster.jobs.staleness import (
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
+from memorymaster.govern.jobs.staleness import (
     StalenessResult,
     check_claim_staleness,
     run,
@@ -46,7 +46,7 @@ def _ingest_with_file_citation(
         citations=[CitationInput(source=source_file, locator="line:1")],
     )
     if status == "confirmed":
-        from memorymaster.lifecycle import transition_claim
+        from memorymaster.core.lifecycle import transition_claim
         transition_claim(
             service.store,
             claim.id,
@@ -59,7 +59,7 @@ def _ingest_with_file_citation(
 
 class TestExtractFilePaths:
     def test_relative_path(self, tmp_path):
-        from memorymaster.models import Claim, Citation
+        from memorymaster.core.models import Claim, Citation
         claim = Claim(
             id=1, text="x", idempotency_key=None, normalized_text=None,
             claim_type=None, subject=None, predicate=None, object_value=None,
@@ -78,7 +78,7 @@ class TestExtractFilePaths:
         assert paths[0] == tmp_path / "src/main.py"
 
     def test_url_ignored(self, tmp_path):
-        from memorymaster.models import Claim, Citation
+        from memorymaster.core.models import Claim, Citation
         claim = Claim(
             id=1, text="x", idempotency_key=None, normalized_text=None,
             claim_type=None, subject=None, predicate=None, object_value=None,
@@ -97,7 +97,7 @@ class TestExtractFilePaths:
         assert paths == []
 
     def test_plain_label_ignored(self, tmp_path):
-        from memorymaster.models import Claim, Citation
+        from memorymaster.core.models import Claim, Citation
         claim = Claim(
             id=1, text="x", idempotency_key=None, normalized_text=None,
             claim_type=None, subject=None, predicate=None, object_value=None,
@@ -135,7 +135,7 @@ class TestCheckClaimStaleness:
         source_file = tmp_path / "config.py"
         source_file.write_text("old content")
 
-        from memorymaster.models import Claim, Citation
+        from memorymaster.core.models import Claim, Citation
         # Set last_validated_at to the past
         past = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
         claim = Claim(
@@ -164,7 +164,7 @@ class TestCheckClaimStaleness:
         source_file = tmp_path / "stable.py"
         source_file.write_text("stable content")
 
-        from memorymaster.models import Claim, Citation
+        from memorymaster.core.models import Claim, Citation
         # Set last_validated_at to the future (simulates recent validation)
         future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
         claim = Claim(
@@ -186,7 +186,7 @@ class TestCheckClaimStaleness:
         assert changed == []
 
     def test_no_citations(self, tmp_path):
-        from memorymaster.models import Claim
+        from memorymaster.core.models import Claim
         claim = Claim(
             id=1, text="no refs", idempotency_key=None,
             normalized_text=None, claim_type=None, subject=None,
@@ -273,7 +273,7 @@ class TestRunStaleness:
             text="External docs say X",
             citations=[CitationInput(source="https://docs.example.com/api")],
         )
-        from memorymaster.lifecycle import transition_claim
+        from memorymaster.core.lifecycle import transition_claim
         transition_claim(
             svc.store, claim.id, to_status="confirmed",
             reason="test", event_type="transition",
@@ -295,7 +295,7 @@ class TestRunStaleness:
 
 class TestCheckStalenessCLI:
     def test_cli_check_staleness_dry_run(self, tmp_path):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
 
         db_path = tmp_path / "test.db"
         # Init DB first
@@ -313,7 +313,7 @@ class TestCheckStalenessCLI:
         assert ret == 0
 
     def test_cli_check_staleness_json(self, tmp_path, capsys):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
 
         db_path = tmp_path / "test.db"
         main(["--db", str(db_path), "init-db"])

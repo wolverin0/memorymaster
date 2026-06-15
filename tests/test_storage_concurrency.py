@@ -21,8 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.service import MemoryService
-from memorymaster.storage import SQLiteStore
+from memorymaster.core.service import MemoryService
+from memorymaster.stores.storage import SQLiteStore
 
 
 @pytest.fixture()

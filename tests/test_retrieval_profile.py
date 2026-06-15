@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.cli import build_parser
-from memorymaster.embeddings import EmbeddingProvider
-from memorymaster.models import Claim
-from memorymaster.service import MemoryService
+from memorymaster.surfaces.cli import build_parser
+from memorymaster.recall.embeddings import EmbeddingProvider
+from memorymaster.core.models import Claim
+from memorymaster.core.service import MemoryService
 
 
 def _claim(

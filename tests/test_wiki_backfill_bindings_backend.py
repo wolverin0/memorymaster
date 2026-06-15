@@ -20,7 +20,7 @@ import sqlite3
 from pathlib import Path
 
 
-from memorymaster import cli_handlers_curation as C
+from memorymaster.surfaces import cli_handlers_curation as C
 
 
 def _ns(**kw) -> argparse.Namespace:

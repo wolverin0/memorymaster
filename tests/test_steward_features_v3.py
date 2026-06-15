@@ -22,12 +22,12 @@ import pytest
 
 np = pytest.importorskip("numpy", reason="ml extra not installed")
 
-from memorymaster.steward_features import (  # noqa: E402
+from memorymaster.govern.steward_features import (  # noqa: E402
     FEATURE_KEYS,
     FEATURE_VERSION,
     extract_features,
 )
-from memorymaster.wiki_similarity import (
+from memorymaster.knowledge.wiki_similarity import (
     WikiCorpus,
     compute_wiki_similarity,
     load_wiki_corpus,

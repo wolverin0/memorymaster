@@ -4,9 +4,9 @@ import json
 import sqlite3
 from pathlib import Path
 
-from memorymaster.cli import main
-from memorymaster.entity_graph import EntityGraph
-from memorymaster.wiki_suggest import suggest_wikilinks
+from memorymaster.surfaces.cli import main
+from memorymaster.knowledge.entity_graph import EntityGraph
+from memorymaster.knowledge.wiki_suggest import suggest_wikilinks
 
 
 def _seed_graph(db_path: Path) -> None:

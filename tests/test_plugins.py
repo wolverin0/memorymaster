@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from memorymaster.plugins import (
+from memorymaster.core.plugins import (
     PluginType,
     get_plugins,
     register_plugin,
@@ -28,7 +28,7 @@ class TestRegisterPlugin:
 
     def teardown_method(self):
         """Clean up registry after each test."""
-        import memorymaster.plugins as p
+        import memorymaster.core.plugins as p
         p._registry.clear()
 
     def test_register_plugin_simple(self):
@@ -92,7 +92,7 @@ class TestUnregisterPlugin:
 
     def teardown_method(self):
         """Clean up registry after each test."""
-        import memorymaster.plugins as p
+        import memorymaster.core.plugins as p
         p._registry.clear()
 
     def test_unregister_existing_plugin(self):
@@ -125,7 +125,7 @@ class TestGetPlugins:
 
     def teardown_method(self):
         """Clean up registry after each test."""
-        import memorymaster.plugins as p
+        import memorymaster.core.plugins as p
         p._registry.clear()
 
     def test_get_plugins_empty(self):
@@ -167,7 +167,7 @@ class TestRunPlugins:
 
     def teardown_method(self):
         """Clean up registry after each test."""
-        import memorymaster.plugins as p
+        import memorymaster.core.plugins as p
         p._registry.clear()
 
     def test_run_plugins_no_plugins(self):
@@ -248,7 +248,7 @@ class TestPluginIntegration:
 
     def teardown_method(self):
         """Clean up registry after each test."""
-        import memorymaster.plugins as p
+        import memorymaster.core.plugins as p
         p._registry.clear()
 
     def test_register_and_run_workflow(self):

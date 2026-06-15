@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from memorymaster.lifecycle import transition_claim
-from memorymaster.models import CitationInput
-from memorymaster.storage import SQLiteStore
+from memorymaster.core.lifecycle import transition_claim
+from memorymaster.core.models import CitationInput
+from memorymaster.stores.storage import SQLiteStore
 
 
 def _store(tmp_path: Path) -> SQLiteStore:

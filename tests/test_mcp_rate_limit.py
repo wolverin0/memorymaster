@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
-import memorymaster.mcp_server as mcp_server
+import memorymaster.surfaces.mcp_server as mcp_server
 
 
 @dataclass

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.cli import STEALTH_DB_NAME, main
+from memorymaster.surfaces.cli import STEALTH_DB_NAME, main
 
 
 @pytest.fixture()

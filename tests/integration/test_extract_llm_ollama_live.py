@@ -20,7 +20,7 @@ def test_extract_llm_ollama_live():
     os.environ["MEMORYMASTER_LLM_PROVIDER"] = "ollama"
     os.environ["MEMORYMASTER_LLM_MODEL"] = "gemma4:e4b"
 
-    from memorymaster.entity_extractor import extract_llm
+    from memorymaster.knowledge.entity_extractor import extract_llm
 
     # Sample text: Spanish + English mix with person names, library, and model
     text = "Ada Lovelace y Charles Babbage usaron FastAPI y gpt-4o-mini."

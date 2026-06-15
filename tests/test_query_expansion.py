@@ -1,6 +1,6 @@
 """Tests for query expansion via entity-matched synonyms (roadmap 1.5).
 
-Covers :func:`memorymaster.query_expansion.expand_query`:
+Covers :func:`memorymaster.recall.query_expansion.expand_query`:
   - empty / whitespace query short-circuits to ``[query]``
   - single entity with 2 aliases returns ``[query, alias1, alias2]``
   - entity with 0 aliases (not in DB) returns just ``[query]``
@@ -15,11 +15,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from memorymaster.entity_registry import (
+from memorymaster.knowledge.entity_registry import (
     ensure_entity_schema,
     resolve_or_create,
 )
-from memorymaster.query_expansion import (
+from memorymaster.recall.query_expansion import (
     ALIASES_PER_ENTITY,
     MAX_TOTAL_ALIASES,
     expand_query,
@@ -98,7 +98,7 @@ def test_single_entity_with_two_aliases(
     # where "pytest" is the canonical but additional forms ("unittest",
     # "tox-runner") share its entity_id via add_alias, exercising the
     # "multiple variants per entity" path.
-    from memorymaster.entity_registry import add_alias
+    from memorymaster.knowledge.entity_registry import add_alias
 
     entity_id = resolve_or_create(entity_db, "pytest")
     # Manually widen the alias pool. These are deliberately NOT substrings

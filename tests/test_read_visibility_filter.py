@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 
 QUERY_TOKEN = "visibilityregressiontoken"
@@ -97,7 +97,7 @@ def test_as_of_hides_sensitive_visibility_without_allow_flag(tmp_path, monkeypat
     """
     import argparse
 
-    from memorymaster import cli_handlers_basic
+    from memorymaster.surfaces import cli_handlers_basic
 
     svc = _service(tmp_path, monkeypatch)
     public = f"{QUERY_TOKEN} as-of public"
@@ -131,8 +131,8 @@ def test_as_of_shows_sensitive_when_allow_granted(tmp_path, monkeypatch):
     """
     import argparse
 
-    from memorymaster import cli_handlers_basic
-    from memorymaster import security as security_mod
+    from memorymaster.surfaces import cli_handlers_basic
+    from memorymaster.core import security as security_mod
 
     svc = _service(tmp_path, monkeypatch)
     secret = f"{QUERY_TOKEN} as-of sensitive"

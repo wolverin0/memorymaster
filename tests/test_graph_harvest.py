@@ -25,7 +25,7 @@ import os
 
 import pytest
 
-from memorymaster import context_hook as ch
+from memorymaster.recall import context_hook as ch
 
 
 @pytest.fixture(autouse=True)
@@ -38,8 +38,8 @@ def _clear_recall_env(monkeypatch):
 
 def _seed(tmp_path):
     """Two FTS5-reachable claims. Returns (db_path, [seeded_claim_ids])."""
-    from memorymaster.models import CitationInput
-    from memorymaster.service import MemoryService
+    from memorymaster.core.models import CitationInput
+    from memorymaster.core.service import MemoryService
 
     db = tmp_path / "harvest.db"
     svc = MemoryService(db_target=str(db), workspace_root=tmp_path)
@@ -64,8 +64,8 @@ def _ingest_offgraph_claim(db, text="A graph-only fact about Kubernetes scaling.
     """Ingest a claim that FTS5 won't surface for a 'PostgreSQL' query, so it
     can only enter the candidate pool via the graph harvest path. Returns id.
     """
-    from memorymaster.models import CitationInput
-    from memorymaster.service import MemoryService
+    from memorymaster.core.models import CitationInput
+    from memorymaster.core.service import MemoryService
 
     svc = MemoryService(db_target=db, workspace_root=os.path.dirname(db) or ".")
     claim = svc.ingest(
@@ -132,7 +132,7 @@ def test_harvest_adds_unseen_claim_with_distance_score(tmp_path):
     db, _ = _seed(tmp_path)
     off_id = _ingest_offgraph_claim(db)
 
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     svc = MemoryService(db_target=db, workspace_root=str(tmp_path))
     rows: list = []
@@ -151,7 +151,7 @@ def test_harvest_dedups_against_existing_candidates(tmp_path):
     harvest — dedup is enforced against ``seen_ids``.
     """
     db, seeded = _seed(tmp_path)
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     svc = MemoryService(db_target=db, workspace_root=str(tmp_path))
     existing = {"claim": svc.store.get_claim(seeded[0]), "graph_score": 0.0}
@@ -165,7 +165,7 @@ def test_harvest_dedups_against_existing_candidates(tmp_path):
 def test_harvest_skips_archived_and_missing(tmp_path):
     """Archived / unhydratable claims are skipped, never appended."""
     db, _ = _seed(tmp_path)
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     svc = MemoryService(db_target=db, workspace_root=str(tmp_path))
     rows: list = []
@@ -179,7 +179,7 @@ def test_harvest_skips_archived_and_missing(tmp_path):
 def test_harvest_hydrate_error_does_not_raise(monkeypatch, tmp_path):
     """A per-claim hydrate error is swallowed, not propagated (claim 11907)."""
     db, seeded = _seed(tmp_path)
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     svc = MemoryService(db_target=db, workspace_root=str(tmp_path))
 
@@ -307,7 +307,7 @@ def test_assemble_breakdown_omits_graph_by_default():
     unless a caller passes a graph score — so the RankedClaim ranker, which
     never computes one, is unaffected.
     """
-    from memorymaster.retrieval import _ScoreParts, _assemble_breakdown
+    from memorymaster.recall.retrieval import _ScoreParts, _assemble_breakdown
 
     parts = _ScoreParts(
         relevance=1.0,
@@ -329,7 +329,7 @@ def test_assemble_breakdown_surfaces_graph_when_passed():
     """When a graph score IS passed, it appears in all three component dicts
     with the weighted contribution — the surfacing path roadmap 12.2 adds.
     """
-    from memorymaster.retrieval import _ScoreParts, _assemble_breakdown
+    from memorymaster.recall.retrieval import _ScoreParts, _assemble_breakdown
 
     parts = _ScoreParts(
         relevance=1.0,

@@ -1,4 +1,4 @@
-"""Tests for the claude_cli LLM provider (memorymaster.llm_provider._call_claude_cli).
+"""Tests for the claude_cli LLM provider (memorymaster.core.llm_provider._call_claude_cli).
 
 The provider shells out to the local `claude --print` binary. These tests mock
 subprocess.run so they don't actually invoke the CLI — they cover the defensive
@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 import pytest
 
-from memorymaster import llm_provider
+from memorymaster.core import llm_provider
 
 
 def _completed(stdout: str = "", stderr: str = "", returncode: int = 0):

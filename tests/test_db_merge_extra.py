@@ -1,4 +1,4 @@
-"""Extra coverage for memorymaster.db_merge edge paths.
+"""Extra coverage for memorymaster.bridges.db_merge edge paths.
 
 Each test anchors on a merge INVARIANT (why the branch exists), not just the
 line it touches:
@@ -19,8 +19,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from memorymaster import db_merge
-from memorymaster.db_merge import (
+from memorymaster.bridges import db_merge
+from memorymaster.bridges.db_merge import (
     _parse_timestamp,
     merge_databases,
 )

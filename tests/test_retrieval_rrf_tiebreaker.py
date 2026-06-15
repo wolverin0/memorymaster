@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from memorymaster.config import get_config, reset_config
-from memorymaster.models import Claim
-from memorymaster.retrieval import RankedClaim, apply_rrf_tiebreaker
+from memorymaster.core.config import get_config, reset_config
+from memorymaster.core.models import Claim
+from memorymaster.recall.retrieval import RankedClaim, apply_rrf_tiebreaker
 
 
 def _claim(claim_id: int) -> Claim:

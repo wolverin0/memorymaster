@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.context_hook import (
+from memorymaster.recall.context_hook import (
     _ENTITY_CAP_PER_ENTITY,
     _ENTITY_CAP_TOTAL,
     _RECALL_WEIGHT_DEFAULTS,
@@ -32,7 +32,7 @@ from memorymaster.context_hook import (
     _row_for_claim,
     recall,
 )
-from memorymaster.models import Claim
+from memorymaster.core.models import Claim
 
 
 # --------------------------------------------------------------------------- #
@@ -351,9 +351,9 @@ def _patch_svc(monkeypatch: pytest.MonkeyPatch, svc: _FakeSvcWithStore,
                 fts_tokens: str) -> None:
     def _fake_ctor(db_target, workspace_root):  # noqa: ARG001
         return svc
-    monkeypatch.setattr("memorymaster.service.MemoryService", _fake_ctor)
+    monkeypatch.setattr("memorymaster.core.service.MemoryService", _fake_ctor)
     monkeypatch.setattr(
-        "memorymaster.recall_tokenizer.extract_query_tokens",
+        "memorymaster.recall.recall_tokenizer.extract_query_tokens",
         lambda q, db, max_tokens=6: fts_tokens,
     )
 

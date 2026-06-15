@@ -1,6 +1,6 @@
-"""Tests for memorymaster.schema — SQL schema loading."""
+"""Tests for memorymaster.stores._storage_schema — SQL schema loading."""
 
-from memorymaster.schema import load_schema_sql, load_schema_postgres_sql
+from memorymaster.stores._storage_schema import load_schema_sql, load_schema_postgres_sql
 
 
 def test_load_sqlite_schema():

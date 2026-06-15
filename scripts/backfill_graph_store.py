@@ -3,7 +3,7 @@
 
 Reads every (claim_id, entity_id) link directly from the claims table's
 ``entity_id`` column — that's the canonical per-claim entity assignment
-written by :mod:`memorymaster.entity_registry` during ingest. Also mines
+written by :mod:`memorymaster.knowledge.entity_registry` during ingest. Also mines
 ``entity_aliases`` rows whose ``original_form`` appears in a claim's
 ``subject``/``text``, so claims that mention multiple entities (legacy
 claims didn't have the per-claim ``entity_id`` populated for every
@@ -38,7 +38,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from memorymaster.graph_store import (  # noqa: E402
+from memorymaster.recall.graph_store import (  # noqa: E402
     GraphEdge,
     GraphStoreUnavailable,
     open_graph_store,

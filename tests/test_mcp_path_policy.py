@@ -1,7 +1,7 @@
 """Tests for v3.19.0-H4 MCP db/workspace path allowlist.
 
 Two layers:
-- Unit tests on memorymaster.mcp_path_policy validators.
+- Unit tests on memorymaster.surfaces.mcp_path_policy validators.
 - Integration tests that exercise mcp_server._resolve_db / _resolve_workspace
   (the single chokepoint that all MCP tools share) to prove the policy
   applies uniformly without needing to touch every tool.
@@ -14,8 +14,8 @@ from typing import Iterator
 
 import pytest
 
-from memorymaster import mcp_path_policy
-from memorymaster.mcp_path_policy import (
+from memorymaster.surfaces import mcp_path_policy
+from memorymaster.surfaces.mcp_path_policy import (
     ENV_ADMIN_MODE,
     ENV_DB_ALLOWLIST,
     ENV_WORKSPACE_ALLOWLIST,
@@ -87,7 +87,7 @@ def test_db_admin_mode_bypasses_allowlist(tmp_path, monkeypatch, caplog):
     allowed.touch()
     monkeypatch.setenv(ENV_DB_ALLOWLIST, str(allowed))
     monkeypatch.setenv(ENV_ADMIN_MODE, "1")
-    with caplog.at_level(logging.WARNING, logger="memorymaster.mcp_path_policy"):
+    with caplog.at_level(logging.WARNING, logger="memorymaster.surfaces.mcp_path_policy"):
         validate_db_path("/anywhere/at/all.db")  # no raise
     assert any("admin_mode bypass" in rec.message for rec in caplog.records)
 
@@ -136,7 +136,7 @@ def test_workspace_admin_mode_bypass(tmp_path, monkeypatch):
 def test_mcp_resolve_db_enforces_allowlist(tmp_path, monkeypatch):
     """A tool calling _resolve_db with a non-allowlisted path should raise.
     This covers every MCP tool that takes a `db` arg — no per-tool edits needed."""
-    from memorymaster import mcp_server
+    from memorymaster.surfaces import mcp_server
 
     allowed_db = tmp_path / "allowed.db"
     allowed_db.touch()
@@ -151,7 +151,7 @@ def test_mcp_resolve_db_enforces_allowlist(tmp_path, monkeypatch):
 
 
 def test_mcp_resolve_workspace_enforces_allowlist(tmp_path, monkeypatch):
-    from memorymaster import mcp_server
+    from memorymaster.surfaces import mcp_server
 
     allowed = tmp_path / "ws_ok"
     allowed.mkdir()
@@ -166,7 +166,7 @@ def test_mcp_resolve_workspace_enforces_allowlist(tmp_path, monkeypatch):
 def test_mcp_resolve_db_default_path_passes_without_allowlist(monkeypatch):
     """Sanity: with no allowlist env set, the default DB resolves cleanly
     (back-compat: pre-v3.19 behaviour unchanged)."""
-    from memorymaster import mcp_server
+    from memorymaster.surfaces import mcp_server
 
     # No allowlist set
     result = mcp_server._resolve_db("")
@@ -176,7 +176,7 @@ def test_mcp_resolve_db_default_path_passes_without_allowlist(monkeypatch):
 def test_mcp_admin_mode_bypass_through_chokepoint(tmp_path, monkeypatch):
     """Admin mode lets a caller supply a non-allowlisted path through the
     same chokepoint that normally enforces."""
-    from memorymaster import mcp_server
+    from memorymaster.surfaces import mcp_server
 
     allowed = tmp_path / "narrow.db"
     allowed.touch()
@@ -190,13 +190,13 @@ def test_mcp_admin_mode_bypass_through_chokepoint(tmp_path, monkeypatch):
 
 def test_mcp_policy_error_log_includes_actor(tmp_path, monkeypatch, caplog):
     """Denial path logs a structured WARNING including the actor identifier."""
-    from memorymaster import mcp_server
+    from memorymaster.surfaces import mcp_server
 
     allowed = tmp_path / "ok.db"
     allowed.touch()
     monkeypatch.setenv(ENV_DB_ALLOWLIST, str(allowed))
 
-    with caplog.at_level(logging.WARNING, logger="memorymaster.mcp_path_policy"):
+    with caplog.at_level(logging.WARNING, logger="memorymaster.surfaces.mcp_path_policy"):
         with pytest.raises(MCPPathPolicyError):
             mcp_server._resolve_db(str(tmp_path / "evil.db"))
 

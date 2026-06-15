@@ -20,10 +20,10 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from memorymaster.models import CitationInput  # noqa: E402
-from memorymaster.embeddings import create_best_provider  # noqa: E402
-from memorymaster.config import reset_config  # noqa: E402
-from memorymaster.service import MemoryService  # noqa: E402
+from memorymaster.core.models import CitationInput  # noqa: E402
+from memorymaster.recall.embeddings import create_best_provider  # noqa: E402
+from memorymaster.core.config import reset_config  # noqa: E402
+from memorymaster.core.service import MemoryService  # noqa: E402
 
 
 DATA_PATH = ROOT / "benchmark" / "data" / "longmemeval_s_cleaned.json"
@@ -408,7 +408,7 @@ def run_retrieval(
     aggregate = aggregate_retrieval(results)
     rerank_stats = {"attempts": 0, "successes": 0, "failures": 0, "disabled": 0}
     if use_llm_rerank:
-        from memorymaster.llm_rerank import get_rerank_stats
+        from memorymaster.recall.llm_rerank import get_rerank_stats
 
         rerank_stats = get_rerank_stats()
     payload = {
@@ -662,7 +662,7 @@ def call_claude_cli_judge(
     max_tokens: int,
     temperature: float = 0.0,
 ) -> LLMResponse:
-    """OAuth-via-CLI judge — wraps memorymaster.llm_provider._call_claude_cli.
+    """OAuth-via-CLI judge — wraps memorymaster.core.llm_provider._call_claude_cli.
 
     Routes the judge prompt through the user's local `claude --print` binary so
     the bench runs against a Claude Code subscription instead of api.anthropic.com.
@@ -675,7 +675,7 @@ def call_claude_cli_judge(
     # Local import — keeps the bench importable even if memorymaster is
     # partially broken during dev. The provider helper handles binary discovery,
     # timeouts, and Windows console suppression.
-    from memorymaster.llm_provider import _call_claude_cli
+    from memorymaster.core.llm_provider import _call_claude_cli
 
     # Pin the model the bench reports via env, so judge_used_label stays stable.
     os.environ.setdefault("MEMORYMASTER_LLM_MODEL", CLAUDE_CLI_JUDGE_MODEL)

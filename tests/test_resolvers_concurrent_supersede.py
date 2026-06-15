@@ -4,10 +4,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
 
-from memorymaster.auto_resolver import resolve_conflict_pair
-from memorymaster.conflict_resolver import SupersessionRaceLost, supersede_claim
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.govern.auto_resolver import resolve_conflict_pair
+from memorymaster.govern.conflict_resolver import SupersessionRaceLost, supersede_claim
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 
 def _fresh_service(tmp_path: Path) -> MemoryService:
@@ -34,7 +34,7 @@ def _race_supersede(service: MemoryService, old_id: int, replacement_ids: tuple[
         barrier.wait(timeout=5)
         return {"winner": "B", "reason": "race regression"}
 
-    monkeypatch.setattr("memorymaster.auto_resolver._llm_evaluate", pick_replacement)
+    monkeypatch.setattr("memorymaster.govern.auto_resolver._llm_evaluate", pick_replacement)
 
     def auto_supersede(replacement_id: int):
         old = service.store.get_claim(old_id, include_citations=True)
@@ -131,7 +131,7 @@ def test_retry_after_loss(tmp_path, monkeypatch):
     chained = _claim(service, "replacement C", "C", confidence=1.0)
 
     monkeypatch.setattr(
-        "memorymaster.auto_resolver._llm_evaluate",
+        "memorymaster.govern.auto_resolver._llm_evaluate",
         lambda _prompt: {"winner": "B", "reason": "retry after race"},
     )
     winner = service.store.get_claim(winner_id, include_citations=True)

@@ -24,7 +24,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from memorymaster import context_hook
+from memorymaster.recall import context_hook
 
 
 def _row(cid: int, **scores) -> dict:

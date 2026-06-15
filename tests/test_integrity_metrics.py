@@ -20,12 +20,12 @@ from typing import Any, Iterator
 
 import pytest
 
-from memorymaster._storage_shared import busy_error_count, open_conn
-from memorymaster.dashboard import create_dashboard_server
-from memorymaster.dashboard_integrity import build_integrity_panel
-from memorymaster.jobs import integrity
-from memorymaster.service import MemoryService
-from memorymaster.storage import SQLiteStore
+from memorymaster.stores._storage_shared import busy_error_count, open_conn
+from memorymaster.surfaces.dashboard import create_dashboard_server
+from memorymaster.surfaces.dashboard_integrity import build_integrity_panel
+from memorymaster.govern.jobs import integrity
+from memorymaster.core.service import MemoryService
+from memorymaster.stores.storage import SQLiteStore
 
 METRIC_KEYS = {
     "wal_bytes",
@@ -272,7 +272,7 @@ def test_setup_hooks_mirrors_wal_discipline_flag_into_hook_env(
     EXCEPT the hooks, splitting the fleet across regimes (half spooling,
     half direct-writing) — the exact mixed state the umbrella flag forbids.
     """
-    from memorymaster import setup_hooks
+    from memorymaster.surfaces import setup_hooks
 
     llm_config = {"provider": "google", "api_key": "", "model": ""}
 

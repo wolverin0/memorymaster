@@ -16,9 +16,9 @@ from typing import Iterator
 
 import pytest
 
-from memorymaster.delta_sync import export_delta
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.bridges.delta_sync import export_delta
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 
 @pytest.fixture
@@ -197,7 +197,7 @@ def test_delta_file_round_trips_through_merge(populated_db, tmp_path):
     assert result["exported"] == 1
 
     # Merge the small delta into side B
-    from memorymaster.db_merge import merge_databases
+    from memorymaster.bridges.db_merge import merge_databases
     merge_result = merge_databases(str(db_b), str(delta))
     assert merge_result["merged"] == 1
 
@@ -215,7 +215,7 @@ def test_delta_file_round_trips_through_merge(populated_db, tmp_path):
 
 
 def test_cli_export_delta_writes_file_and_reports(populated_db, tmp_path, capsys):
-    from memorymaster.cli import main
+    from memorymaster.surfaces.cli import main
 
     db, svc = populated_db
     _ingest(svc, "cli delta claim")
@@ -231,7 +231,7 @@ def test_cli_export_delta_writes_file_and_reports(populated_db, tmp_path, capsys
 
 def test_cli_export_delta_json_output(populated_db, tmp_path, capsys):
     import json
-    from memorymaster.cli import main
+    from memorymaster.surfaces.cli import main
 
     db, svc = populated_db
     _ingest(svc, "json delta claim")
@@ -245,7 +245,7 @@ def test_cli_export_delta_json_output(populated_db, tmp_path, capsys):
 
 
 def test_cli_export_delta_empty_reports_no_change(populated_db, tmp_path, capsys):
-    from memorymaster.cli import main
+    from memorymaster.surfaces.cli import main
 
     db, svc = populated_db
     _ingest(svc, "single claim")

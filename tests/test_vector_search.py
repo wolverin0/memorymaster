@@ -14,16 +14,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from memorymaster.embeddings import (
+from memorymaster.recall.embeddings import (
     EmbeddingProvider,
     cosine_similarity,
     create_best_provider,
     hash_embed,
     normalize,
 )
-from memorymaster.models import Claim
-from memorymaster.retrieval import rank_claim_rows
-from memorymaster.storage import SQLiteStore
+from memorymaster.core.models import Claim
+from memorymaster.recall.retrieval import rank_claim_rows
+from memorymaster.stores.storage import SQLiteStore
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +142,7 @@ class TestCosineSimilarity:
 
 class TestCreateBestProvider:
     def test_falls_back_to_hash_when_nothing_available(self) -> None:
-        with patch("memorymaster.embeddings._load_transformer", side_effect=ImportError("no ST")), \
+        with patch("memorymaster.recall.embeddings._load_transformer", side_effect=ImportError("no ST")), \
              patch.dict("os.environ", {"GEMINI_API_KEY": "", "OPENAI_API_KEY": ""}, clear=False):
             provider = create_best_provider()
         assert provider.model == "hash-v1"
@@ -151,7 +151,7 @@ class TestCreateBestProvider:
     def test_prefers_sentence_transformers(self) -> None:
         mock_transformer = MagicMock()
         mock_transformer.get_sentence_embedding_dimension.return_value = 384
-        with patch("memorymaster.embeddings._load_transformer", return_value=mock_transformer):
+        with patch("memorymaster.recall.embeddings._load_transformer", return_value=mock_transformer):
             provider = create_best_provider()
         assert provider.model == "all-MiniLM-L6-v2"
         assert provider.is_semantic
@@ -160,9 +160,9 @@ class TestCreateBestProvider:
     def test_falls_back_to_gemini_when_st_unavailable(self) -> None:
         mock_client = MagicMock()
         with (
-            patch("memorymaster.embeddings._load_transformer", side_effect=ImportError("no ST")),
+            patch("memorymaster.recall.embeddings._load_transformer", side_effect=ImportError("no ST")),
             patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
-            patch("memorymaster.embeddings._load_gemini_client", return_value=mock_client),
+            patch("memorymaster.recall.embeddings._load_gemini_client", return_value=mock_client),
         ):
             provider = create_best_provider()
         # Default upgraded to gemini-embedding-001 after Google deprecated
@@ -172,7 +172,7 @@ class TestCreateBestProvider:
 
     def test_no_gemini_without_api_key(self) -> None:
         with (
-            patch("memorymaster.embeddings._load_transformer", side_effect=ImportError("no ST")),
+            patch("memorymaster.recall.embeddings._load_transformer", side_effect=ImportError("no ST")),
             patch.dict("os.environ", {}, clear=True),
         ):
             # Remove both possible env vars
@@ -200,7 +200,7 @@ class TestStoreVectorScores:
         return EmbeddingProvider(model="hash-v1", dims=64)
 
     def _insert_claim(self, store: SQLiteStore, text: str) -> Claim:
-        from memorymaster.models import CitationInput
+        from memorymaster.core.models import CitationInput
         return store.create_claim(
             text=text,
             citations=[CitationInput(source="test")],

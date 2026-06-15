@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from memorymaster.cli import build_parser
-from memorymaster.context_optimizer import ContextResult, PROVIDERS, pack_context
-from memorymaster.models import Claim
-from memorymaster.service import MemoryService
+from memorymaster.surfaces.cli import build_parser
+from memorymaster.recall.context_optimizer import ContextResult, PROVIDERS, pack_context
+from memorymaster.core.models import Claim
+from memorymaster.core.service import MemoryService
 
 
 def _make_claim(
@@ -138,7 +138,7 @@ def test_service_query_for_context_threads_provider(monkeypatch):
             format=kwargs["output_format"],
         )
 
-    monkeypatch.setattr("memorymaster.service.pack_context", fake_pack_context)
+    monkeypatch.setattr("memorymaster.core.service.pack_context", fake_pack_context)
 
     service.query_for_context("repo facts", provider="anthropic")
 

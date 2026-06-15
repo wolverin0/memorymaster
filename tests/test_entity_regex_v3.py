@@ -7,7 +7,7 @@ substrings of already-extracted env-vars/services.
 """
 from __future__ import annotations
 
-from memorymaster.entity_extractor import extract_patterns, _CAMEL_STOPLIST
+from memorymaster.knowledge.entity_extractor import extract_patterns, _CAMEL_STOPLIST
 
 
 def _kinds_for(text: str) -> list[tuple[str, str]]:

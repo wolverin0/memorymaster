@@ -7,8 +7,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 
-from memorymaster.models import Claim
-from memorymaster.vault_exporter import _claim_to_markdown, _safe_dirname, export_vault
+from memorymaster.core.models import Claim
+from memorymaster.knowledge.vault_exporter import _claim_to_markdown, _safe_dirname, export_vault
 
 
 def make_claim(**kwargs) -> Claim:

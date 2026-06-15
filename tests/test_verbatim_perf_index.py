@@ -27,8 +27,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from memorymaster.verbatim_cleanup import analyze
-from memorymaster.migrations.runner import MigrationRunner, discover_migrations
+from memorymaster.govern.verbatim_cleanup import analyze
+from memorymaster.stores.migrations.runner import MigrationRunner, discover_migrations
 
 
 _SCHEMA_NO_COMPOSITE = """
@@ -203,7 +203,7 @@ def test_analyze_junk_count_single_pass_matches_per_prefix(tmp_path):
     """WHY: folding the three junk-prefix LIKE scans into one pass must yield
     the IDENTICAL total the old per-prefix loop produced — the prefixes are
     disjoint, so one OR-ed scan equals three sequential ones."""
-    from memorymaster import verbatim_cleanup as vc
+    from memorymaster.govern import verbatim_cleanup as vc
 
     db = tmp_path / "v.db"
     conn = sqlite3.connect(str(db))

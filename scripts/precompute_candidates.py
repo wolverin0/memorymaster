@@ -29,7 +29,7 @@ def _sha1_16(text: str) -> str:
 
 
 def _get_candidates(conn: sqlite3.Connection, prompt: str, top_k: int) -> list[dict]:
-    from memorymaster import context_hook
+    from memorymaster.recall import context_hook
 
     try:
         result = context_hook.recall(prompt, db_path=conn.execute("PRAGMA database_list").fetchone()[2], return_ids=True)

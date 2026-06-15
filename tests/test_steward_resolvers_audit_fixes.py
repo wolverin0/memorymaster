@@ -19,8 +19,8 @@ import sqlite3
 
 import pytest
 
-from memorymaster import auto_resolver, candidate_dedupe, conflict_resolver, llm_steward
-from memorymaster.models import Claim
+from memorymaster.govern import auto_resolver, candidate_dedupe, conflict_resolver, llm_steward
+from memorymaster.core.models import Claim
 
 
 # --------------------------------------------------------------------------- #
@@ -102,7 +102,7 @@ def test_run_steward_opens_wal_and_busy_timeout(monkeypatch, tmp_path):
     must route through it, never a raw sqlite3.connect with ad-hoc pragmas."""
     import inspect
 
-    from memorymaster._storage_shared import open_conn as canonical_open_conn
+    from memorymaster.stores._storage_shared import open_conn as canonical_open_conn
     src = inspect.getsource(llm_steward.run_steward)
     assert "open_conn(" in src
     assert "sqlite3.connect(" not in src

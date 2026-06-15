@@ -43,17 +43,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from memorymaster.entity_extractor import (  # noqa: E402
+from memorymaster.knowledge.entity_extractor import (  # noqa: E402
     extract_llm,
     extract_patterns,
     merge_entities,
 )
-from memorymaster.entity_registry import (  # noqa: E402
+from memorymaster.knowledge.entity_registry import (  # noqa: E402
     add_alias,
     ensure_entity_schema,
     resolve_or_create,
 )
-from memorymaster.security import redact_text  # noqa: E402
+from memorymaster.core.security import redact_text  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

@@ -1,5 +1,5 @@
-import memorymaster.key_rotator as file_key_rotator
-import memorymaster.llm_provider as llm_provider
+import memorymaster.core.key_rotator as file_key_rotator
+import memorymaster.core.llm_provider as llm_provider
 
 
 def _reset_env_rotator() -> None:

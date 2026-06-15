@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.jobs import fk_repair
-from memorymaster.storage import SQLiteStore
+from memorymaster.govern.jobs import fk_repair
+from memorymaster.stores.storage import SQLiteStore
 
 # Five observed orphan shapes (spec F10): 2 claims self-FK violations +
 # 2 events + 1 citation + 1 claim_link + 1 claim_embedding = 7 violations,
@@ -214,7 +214,7 @@ def test_cli_repair_fk_dry_run_default_then_apply(
     routine 'let me look first' invocation against the production DB would
     BE the apply. The dry-run default is the safety interlock.
     """
-    from memorymaster.cli import main
+    from memorymaster.surfaces.cli import main
 
     store = seeded["store"]
     db = str(store.db_path)

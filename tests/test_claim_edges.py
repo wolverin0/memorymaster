@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.claim_edges import (
+from memorymaster.recall.claim_edges import (
     MENTION_KIND,
     SUPERSEDES_KIND,
     ensure_claim_edges_schema,

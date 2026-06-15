@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-from memorymaster.db_merge import merge_databases
+from memorymaster.bridges.db_merge import merge_databases
 
 
 BASE_TIME = "2026-05-11T12:00:00+00:00"

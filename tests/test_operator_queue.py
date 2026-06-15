@@ -7,9 +7,9 @@ import tempfile
 from pathlib import Path
 
 
-from memorymaster.operator import MemoryOperator, OperatorConfig
-from memorymaster.operator_queue import OperatorQueue
-from memorymaster.service import MemoryService
+from memorymaster.surfaces.operator import MemoryOperator, OperatorConfig
+from memorymaster.surfaces.operator_queue import OperatorQueue
+from memorymaster.core.service import MemoryService
 
 
 def _tmp_db(prefix: str) -> Path:

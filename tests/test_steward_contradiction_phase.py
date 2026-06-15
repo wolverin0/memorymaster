@@ -15,11 +15,11 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster import llm_provider
-from memorymaster.config import reset_config
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
-from memorymaster.steward import run_steward
+from memorymaster.core import llm_provider
+from memorymaster.core.config import reset_config
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
+from memorymaster.govern.steward import run_steward
 
 
 def _case_db(prefix: str) -> Path:

@@ -7,7 +7,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 
-from memorymaster.webhook import fire_webhook
+from memorymaster.core.webhook import fire_webhook
 
 
 class TestFireWebhook:
@@ -27,7 +27,7 @@ class TestFireWebhook:
         result = fire_webhook("test_event", {})
         assert result is False
 
-    @patch("memorymaster.webhook.urllib.request.urlopen")
+    @patch("memorymaster.core.webhook.urllib.request.urlopen")
     @patch.dict(os.environ, {"MEMORYMASTER_WEBHOOK_URL": "http://example.com/webhook"})
     def test_fire_webhook_success(self, mock_urlopen):
         """fire_webhook returns True on success."""
@@ -39,7 +39,7 @@ class TestFireWebhook:
         result = fire_webhook("claim_created", {"claim_id": 42})
         assert result is True
 
-    @patch("memorymaster.webhook.urllib.request.urlopen")
+    @patch("memorymaster.core.webhook.urllib.request.urlopen")
     @patch.dict(os.environ, {"MEMORYMASTER_WEBHOOK_URL": "http://example.com/webhook"})
     def test_fire_webhook_sends_correct_payload(self, mock_urlopen):
         """fire_webhook sends correctly formatted payload."""
@@ -57,7 +57,7 @@ class TestFireWebhook:
         assert body["event"] == "test_event"
         assert body["data"]["key"] == "value"
 
-    @patch("memorymaster.webhook.urllib.request.urlopen")
+    @patch("memorymaster.core.webhook.urllib.request.urlopen")
     @patch.dict(os.environ, {"MEMORYMASTER_WEBHOOK_URL": "http://example.com/webhook"})
     def test_fire_webhook_sets_headers(self, mock_urlopen):
         """fire_webhook sets content-type header."""
@@ -69,7 +69,7 @@ class TestFireWebhook:
         request = mock_urlopen.call_args[0][0]
         assert request.headers["Content-type"] == "application/json"
 
-    @patch("memorymaster.webhook.urllib.request.urlopen")
+    @patch("memorymaster.core.webhook.urllib.request.urlopen")
     @patch.dict(os.environ, {"MEMORYMASTER_WEBHOOK_URL": "http://example.com/webhook"})
     def test_fire_webhook_uses_post(self, mock_urlopen):
         """fire_webhook uses POST method."""
@@ -81,7 +81,7 @@ class TestFireWebhook:
         request = mock_urlopen.call_args[0][0]
         assert request.get_method() == "POST"
 
-    @patch("memorymaster.webhook.urllib.request.urlopen")
+    @patch("memorymaster.core.webhook.urllib.request.urlopen")
     @patch.dict(os.environ, {"MEMORYMASTER_WEBHOOK_URL": "http://example.com/webhook"})
     def test_fire_webhook_timeout_returns_false(self, mock_urlopen):
         """fire_webhook returns False on timeout."""
@@ -90,7 +90,7 @@ class TestFireWebhook:
         result = fire_webhook("event", {})
         assert result is False
 
-    @patch("memorymaster.webhook.urllib.request.urlopen")
+    @patch("memorymaster.core.webhook.urllib.request.urlopen")
     @patch.dict(os.environ, {"MEMORYMASTER_WEBHOOK_URL": "http://example.com/webhook"})
     def test_fire_webhook_connection_error_returns_false(self, mock_urlopen):
         """fire_webhook returns False on connection error."""
@@ -99,7 +99,7 @@ class TestFireWebhook:
         result = fire_webhook("event", {})
         assert result is False
 
-    @patch("memorymaster.webhook.urllib.request.urlopen")
+    @patch("memorymaster.core.webhook.urllib.request.urlopen")
     @patch.dict(os.environ, {"MEMORYMASTER_WEBHOOK_URL": "http://example.com/webhook"})
     def test_fire_webhook_empty_payload(self, mock_urlopen):
         """fire_webhook handles empty payload."""
@@ -111,7 +111,7 @@ class TestFireWebhook:
         result = fire_webhook("event", {})
         assert result is True
 
-    @patch("memorymaster.webhook.urllib.request.urlopen")
+    @patch("memorymaster.core.webhook.urllib.request.urlopen")
     @patch.dict(os.environ, {"MEMORYMASTER_WEBHOOK_URL": "https://secure.example.com/webhook"})
     def test_fire_webhook_https(self, mock_urlopen):
         """fire_webhook works with HTTPS URLs."""
@@ -130,7 +130,7 @@ class TestFireWebhook:
 class TestWebhookEventTypes:
     """Test various webhook event types."""
 
-    @patch("memorymaster.webhook.urllib.request.urlopen")
+    @patch("memorymaster.core.webhook.urllib.request.urlopen")
     @patch.dict(os.environ, {"MEMORYMASTER_WEBHOOK_URL": "http://example.com/webhook"})
     def test_claim_created_event(self, mock_urlopen):
         """Claim created event is sent correctly."""
@@ -142,7 +142,7 @@ class TestWebhookEventTypes:
         body = json.loads(mock_urlopen.call_args[0][0].data.decode())
         assert body["event"] == "claim_created"
 
-    @patch("memorymaster.webhook.urllib.request.urlopen")
+    @patch("memorymaster.core.webhook.urllib.request.urlopen")
     @patch.dict(os.environ, {"MEMORYMASTER_WEBHOOK_URL": "http://example.com/webhook"})
     def test_claim_updated_event(self, mock_urlopen):
         """Claim updated event is sent correctly."""
@@ -154,7 +154,7 @@ class TestWebhookEventTypes:
         body = json.loads(mock_urlopen.call_args[0][0].data.decode())
         assert body["event"] == "claim_updated"
 
-    @patch("memorymaster.webhook.urllib.request.urlopen")
+    @patch("memorymaster.core.webhook.urllib.request.urlopen")
     @patch.dict(os.environ, {"MEMORYMASTER_WEBHOOK_URL": "http://example.com/webhook"})
     def test_conflict_resolved_event(self, mock_urlopen):
         """Conflict resolved event is sent correctly."""

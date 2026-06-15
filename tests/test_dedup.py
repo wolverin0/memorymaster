@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from memorymaster.embeddings import EmbeddingProvider
-from memorymaster.jobs.dedup import (
+from memorymaster.recall.embeddings import EmbeddingProvider
+from memorymaster.govern.jobs.dedup import (
     _pick_survivor,
     _subject_predicate_match,
     _text_overlap,
     find_duplicates,
 )
-from memorymaster.models import Claim
-from memorymaster.service import MemoryService
+from memorymaster.core.models import Claim
+from memorymaster.core.service import MemoryService
 
 
 @pytest.fixture(autouse=True)
@@ -20,8 +20,8 @@ def _mock_best_embedding_provider(monkeypatch):
     def provider_factory():
         return EmbeddingProvider(model="hash-v1", dims=768)
 
-    monkeypatch.setattr("memorymaster.service.create_best_provider", provider_factory)
-    monkeypatch.setattr("memorymaster.jobs.dedup.create_best_provider", provider_factory)
+    monkeypatch.setattr("memorymaster.core.service.create_best_provider", provider_factory)
+    monkeypatch.setattr("memorymaster.govern.jobs.dedup.create_best_provider", provider_factory)
 
 
 def _make_claim(
@@ -217,7 +217,7 @@ class TestRunIntegration:
     _counter = 0
 
     def _ingest(self, service, text, **kwargs):
-        from memorymaster.models import CitationInput
+        from memorymaster.core.models import CitationInput
         TestRunIntegration._counter += 1
         defaults = {
             "citations": [CitationInput(source="test")],
@@ -273,7 +273,7 @@ class TestRunIntegration:
 
 class TestDedupCLI:
     def test_cli_dedup_dry_run(self, tmp_path):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
         db = str(tmp_path / "cli_dedup.db")
         assert main(["--db", db, "init-db"]) == 0
         assert main(["--db", db, "ingest", "--text", "test claim alpha", "--source", "s1"]) == 0
@@ -281,7 +281,7 @@ class TestDedupCLI:
         assert main(["--db", db, "dedup", "--dry-run"]) == 0
 
     def test_cli_dedup_apply(self, tmp_path):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
         db = str(tmp_path / "cli_dedup2.db")
         assert main(["--db", db, "init-db"]) == 0
         assert main(["--db", db, "ingest", "--text", "test claim beta", "--source", "s1"]) == 0
@@ -290,7 +290,7 @@ class TestDedupCLI:
 
     def test_cli_dedup_json_output(self, tmp_path):
         import json
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
         import io
         import sys
 
@@ -313,7 +313,7 @@ class TestDedupCLI:
         assert "data" in output
 
     def test_cli_dedup_custom_threshold(self, tmp_path):
-        from memorymaster.cli import main
+        from memorymaster.surfaces.cli import main
         db = str(tmp_path / "cli_dedup4.db")
         assert main(["--db", db, "init-db"]) == 0
         assert main(["--db", db, "ingest", "--text", "delta text here", "--source", "s1"]) == 0

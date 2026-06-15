@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from memorymaster.entity_registry import (
+from memorymaster.knowledge.entity_registry import (
     add_alias,
     backfill_entities,
     ensure_entity_schema,

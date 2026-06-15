@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.cli import main
-from memorymaster.jobs.calibration import compute_priors, run
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.surfaces.cli import main
+from memorymaster.govern.jobs.calibration import compute_priors, run
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 
 NOW = datetime(2026, 5, 11, 12, 0, 0, tzinfo=timezone.utc)

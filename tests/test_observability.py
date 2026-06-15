@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from memorymaster import observability
+from memorymaster.core import observability
 
 
 def setup_function() -> None:

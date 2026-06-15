@@ -14,8 +14,8 @@ import json
 
 import pytest
 
-from memorymaster.models import CitationInput
-from memorymaster.rules import (
+from memorymaster.core.models import CitationInput
+from memorymaster.knowledge.rules import (
     RULE_CLAIM_TYPE,
     RULE_PREDICATE,
     build_rule_fields,
@@ -23,7 +23,7 @@ from memorymaster.rules import (
     parse_rule,
     render_rule_text,
 )
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 
 @pytest.fixture

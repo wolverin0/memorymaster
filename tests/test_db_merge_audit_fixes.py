@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.db_merge import merge_databases, _open_target, _build_insert_values
+from memorymaster.bridges.db_merge import merge_databases, _open_target, _build_insert_values
 
 
 T = "2026-06-01T00:00:00+00:00"

@@ -1,4 +1,4 @@
-"""Tests for memorymaster.lifecycle — state transition logic."""
+"""Tests for memorymaster.core.lifecycle — state transition logic."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from memorymaster.lifecycle import ALLOWED_TRANSITIONS, can_transition, transition_claim
+from memorymaster.core.lifecycle import ALLOWED_TRANSITIONS, can_transition, transition_claim
 
 
 class TestCanTransition:

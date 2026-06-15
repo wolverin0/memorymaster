@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from memorymaster import verbatim_store
+from memorymaster.recall import verbatim_store
 
 
 def test_hybrid_search_keeps_same_prefix_distinct_content(tmp_path, monkeypatch):

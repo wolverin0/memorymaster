@@ -142,7 +142,7 @@ def perf_iteration(i: int) -> bool:
     rc, output = run(
         'python -c "'
         "import time; "
-        "from memorymaster.service import MemoryService; "
+        "from memorymaster.core.service import MemoryService; "
         "from pathlib import Path; "
         "svc = MemoryService(db_target='memorymaster.db', workspace_root=Path('.')); "
         "t=time.perf_counter(); "

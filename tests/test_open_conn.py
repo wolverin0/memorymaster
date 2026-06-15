@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster._storage_shared import connect_ro, open_conn
-from memorymaster.storage import SQLiteStore
+from memorymaster.stores._storage_shared import connect_ro, open_conn
+from memorymaster.stores.storage import SQLiteStore
 
 
 def _make_db(tmp_path: Path) -> str:
@@ -84,7 +84,7 @@ def test_open_conn_retries_transient_open_failures(tmp_path: Path, monkeypatch: 
             raise sqlite3.OperationalError("database is locked")
         return real_connect(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr("memorymaster._storage_shared.sqlite3.connect", flaky)
+    monkeypatch.setattr("memorymaster.stores._storage_shared.sqlite3.connect", flaky)
     conn = open_conn(str(tmp_path / "envelope.db"))
     try:
         assert attempts["n"] == 2, "first failure must be retried"
@@ -189,8 +189,8 @@ def test_migrated_defensive_readers_keep_empty_result_on_missing_db(tmp_path: Pa
     F9) — a raise here would abort recall fleet-wide. The migration wraps
     each defensive reader; this pins that the wrap exists.
     """
-    from memorymaster.claim_edges import walk_neighbors
-    from memorymaster.closets import search_closets
+    from memorymaster.recall.claim_edges import walk_neighbors
+    from memorymaster.knowledge.closets import search_closets
 
     missing = str(tmp_path / "does-not-exist.db")
     assert walk_neighbors(missing, [1], max_hops=1) == {}
@@ -239,7 +239,7 @@ def test_no_bare_sqlite3_connect_outside_helpers() -> None:
             offenders.append(f"{py.relative_to(pkg_root)}:{idx + 1}: {stripped}")
     assert not offenders, (
         "bare sqlite3.connect( found — route through "
-        "memorymaster._storage_shared.open_conn/connect_ro instead:\n"
+        "memorymaster.stores._storage_shared.open_conn/connect_ro instead:\n"
         + "\n".join(offenders)
     )
 
@@ -276,7 +276,7 @@ def test_init_db_closes_its_connections_deterministically(tmp_path):
     """
     import os
 
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     db = tmp_path / "closes.db"
     svc = MemoryService(db)

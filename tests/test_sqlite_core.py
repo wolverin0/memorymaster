@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.embeddings import EmbeddingProvider
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.recall.embeddings import EmbeddingProvider
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 
 @pytest.fixture(autouse=True)
@@ -17,7 +17,7 @@ def _mock_best_embedding_provider(monkeypatch):
     def provider_factory():
         return EmbeddingProvider(model="hash-v1", dims=768)
 
-    monkeypatch.setattr("memorymaster.service.create_best_provider", provider_factory)
+    monkeypatch.setattr("memorymaster.core.service.create_best_provider", provider_factory)
 
 
 def _case_db(prefix: str) -> Path:

@@ -14,7 +14,7 @@ import sys
 
 import pytest
 
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def service(tmp_path):
 @pytest.fixture
 def ingested_claim(service):
     """Create a claim so handlers that operate on a claim_id have something to work with."""
-    from memorymaster.models import CitationInput
+    from memorymaster.core.models import CitationInput
     claim = service.ingest(
         text="Regression-fixture claim",
         citations=[CitationInput(source="pytest")],
@@ -48,7 +48,7 @@ class TestHandleHistory:
 
         Before the fix this raised NameError: name '_score_str_from_payload' is not defined.
         """
-        from memorymaster.cli_handlers_basic import _handle_history
+        from memorymaster.surfaces.cli_handlers_basic import _handle_history
 
         args = argparse.Namespace(
             claim_id=str(ingested_claim.id),
@@ -61,7 +61,7 @@ class TestHandleHistory:
         assert "ingest" in captured.out or "created" in captured.out.lower() or str(ingested_claim.id) in captured.out
 
     def test_json_mode(self, service, ingested_claim, capsys):
-        from memorymaster.cli_handlers_basic import _handle_history
+        from memorymaster.surfaces.cli_handlers_basic import _handle_history
 
         args = argparse.Namespace(
             claim_id=str(ingested_claim.id),
@@ -82,9 +82,9 @@ class TestHandleExtractClaims:
         We only need to verify the import and the handler reference the symbol.
         Full extraction requires an LLM provider we don't want to mock here.
         """
-        from memorymaster import cli_handlers_curation
+        from memorymaster.surfaces import cli_handlers_curation
         assert hasattr(cli_handlers_curation, "_handle_extract_claims")
-        # The fix added `from memorymaster.models import CitationInput` at the top of
+        # The fix added `from memorymaster.core.models import CitationInput` at the top of
         # cli_handlers_curation — this getattr access fails if the module raised NameError
         # during import.
         assert cli_handlers_curation.CitationInput is not None
@@ -96,7 +96,7 @@ class TestHandleExtractClaims:
 class TestHandleFederatedQuery:
     def test_handler_importable_with_required_symbols(self):
         """Regression for F821: _SCORE_KEYS and print_claim used but not imported."""
-        from memorymaster import cli_handlers_curation
+        from memorymaster.surfaces import cli_handlers_curation
         assert cli_handlers_curation._SCORE_KEYS is not None
         assert cli_handlers_curation.print_claim is not None
         assert hasattr(cli_handlers_curation, "_handle_federated_query")
@@ -107,7 +107,7 @@ class TestHandleFederatedQuery:
         Before the fix this raised NameError: name '_SCORE_KEYS' is not defined
         as soon as the code path that aggregates scores was reached.
         """
-        from memorymaster.cli_handlers_curation import _handle_federated_query
+        from memorymaster.surfaces.cli_handlers_curation import _handle_federated_query
 
         db1 = tmp_path / "mm1.db"
         db2 = tmp_path / "mm2.db"
@@ -136,7 +136,7 @@ class TestHandleGhostNotes:
         """Regression for TypeError: _json_envelope() missing required keyword-only
         argument 'query_ms' at cli_handlers_curation.py:576.
         """
-        from memorymaster.cli_handlers_curation import _handle_ghost_notes
+        from memorymaster.surfaces.cli_handlers_curation import _handle_ghost_notes
 
         args = argparse.Namespace(json_output=True)
         rc = _handle_ghost_notes(args, service, None, service.store.db_path)
@@ -151,7 +151,7 @@ class TestHandleGhostNotes:
         assert "query_ms" in parsed["meta"]
 
     def test_text_mode(self, service, capsys):
-        from memorymaster.cli_handlers_curation import _handle_ghost_notes
+        from memorymaster.surfaces.cli_handlers_curation import _handle_ghost_notes
 
         args = argparse.Namespace(json_output=False)
         rc = _handle_ghost_notes(args, service, None, service.store.db_path)

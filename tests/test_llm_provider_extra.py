@@ -1,4 +1,4 @@
-"""Coverage hardening for memorymaster.llm_provider.
+"""Coverage hardening for memorymaster.core.llm_provider.
 
 These tests pin the *contracts* the rest of the system relies on, not
 implementation details:
@@ -24,8 +24,8 @@ the per-cycle budget hooks are neutralised, so no network or API keys run.
 
 import pytest
 
-import memorymaster.llm_provider as lp
-from memorymaster.llm_provider import (
+import memorymaster.core.llm_provider as lp
+from memorymaster.core.llm_provider import (
     call_llm,
     get_fallback_stats,
     parse_json_response,
@@ -349,7 +349,7 @@ class TestProviderBodies:
         monkeypatch.setattr(lp, "_call_google_with_env_rotation", lambda *a, **k: None)
         # get_rotator is imported locally inside _call_google from key_rotator,
         # so patch it at its source module, not on lp.
-        monkeypatch.setattr("memorymaster.key_rotator.get_rotator", lambda name: None)
+        monkeypatch.setattr("memorymaster.core.key_rotator.get_rotator", lambda name: None)
         called = []
         monkeypatch.setattr(lp, "_http_post", lambda *a, **k: called.append(1) or "x")
         assert lp._call_google("p", "t") == ""
@@ -358,7 +358,7 @@ class TestProviderBodies:
     def test_google_single_key_path_posts(self, monkeypatch):
         monkeypatch.setenv("GEMINI_API_KEY", "g-key")
         monkeypatch.setattr(lp, "_call_google_with_env_rotation", lambda *a, **k: None)
-        monkeypatch.setattr("memorymaster.key_rotator.get_rotator", lambda name: None)
+        monkeypatch.setattr("memorymaster.core.key_rotator.get_rotator", lambda name: None)
         monkeypatch.setattr(lp, "_http_post", lambda url, *a, **k: url)
         out = lp._call_google("p", "t")
         # WHY: the single-key path must hit the generateContent endpoint.
@@ -669,7 +669,7 @@ class TestCallGoogleDispatch:
     def test_gemini3_sets_thinking_level(self, monkeypatch):
         monkeypatch.setenv("MEMORYMASTER_LLM_MODEL", "gemini-3.1-flash-lite-preview")
         monkeypatch.setattr(lp, "_call_google_with_env_rotation", lambda *a, **k: None)
-        monkeypatch.setattr("memorymaster.key_rotator.get_rotator", lambda name: None)
+        monkeypatch.setattr("memorymaster.core.key_rotator.get_rotator", lambda name: None)
         monkeypatch.setenv("GEMINI_API_KEY", "g")
         captured = {}
 
@@ -687,7 +687,7 @@ class TestCallGoogleDispatch:
     def test_gemini25_sets_thinking_budget_zero(self, monkeypatch):
         monkeypatch.setenv("MEMORYMASTER_LLM_MODEL", "gemini-2.5-flash-lite")
         monkeypatch.setattr(lp, "_call_google_with_env_rotation", lambda *a, **k: None)
-        monkeypatch.setattr("memorymaster.key_rotator.get_rotator", lambda name: None)
+        monkeypatch.setattr("memorymaster.core.key_rotator.get_rotator", lambda name: None)
         monkeypatch.setenv("GEMINI_API_KEY", "g")
         captured = {}
         monkeypatch.setattr(
@@ -700,7 +700,7 @@ class TestCallGoogleDispatch:
         monkeypatch.setattr(lp, "_call_google_with_env_rotation", lambda *a, **k: "ENVROT")
         # If env rotation returns a non-None value, no other path runs.
         monkeypatch.setattr(
-            "memorymaster.key_rotator.get_rotator",
+            "memorymaster.core.key_rotator.get_rotator",
             lambda name: (_ for _ in ()).throw(AssertionError("must not reach file rotator")),
         )
         assert lp._call_google("p", "t") == "ENVROT"
@@ -709,7 +709,7 @@ class TestCallGoogleDispatch:
         monkeypatch.setenv("MEMORYMASTER_LLM_MODEL", "gemini-3.1-flash-lite-preview")
         monkeypatch.setattr(lp, "_call_google_with_env_rotation", lambda *a, **k: None)
         rot = _StubFileRotator([("label1", "key1")])
-        monkeypatch.setattr("memorymaster.key_rotator.get_rotator", lambda name: rot)
+        monkeypatch.setattr("memorymaster.core.key_rotator.get_rotator", lambda name: rot)
         monkeypatch.setattr(lp, "_http_post", lambda *a, **k: "FILE_OK")
         # WHY: the file-rotator path is the desktop default; a success on the
         # first labelled key must be returned directly.

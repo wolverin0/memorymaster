@@ -1,7 +1,7 @@
 """Benchmark: recall latency + init_db cost against the LIVE memorymaster.db.
 
 Replicates exactly what ~/.claude/hooks/memorymaster-recall.py does:
-    from memorymaster.context_hook import recall
+    from memorymaster.recall.context_hook import recall
     recall(query, db_path=DB_PATH, skip_qdrant=True)
 
 READ-ONLY discipline: recall() is a pure read path. init_db() is idempotent DDL
@@ -49,7 +49,7 @@ QUERIES = [
 
 
 def main():
-    from memorymaster.context_hook import recall
+    from memorymaster.recall.context_hook import recall
 
     # Warm-up call (includes lazy module init, first-connection cost) -- reported
     # separately, excluded from p50/p95.
@@ -79,7 +79,7 @@ def main():
 
     # INIT: MemoryService(db_target=...).init_db() -- time call 1 (cold-ish) and
     # call 2 (warm = MCP boot cost on an already-initialized DB).
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
     init_err = None
     init1_s = init2_s = None
     try:
