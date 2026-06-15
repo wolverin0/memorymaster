@@ -18,7 +18,7 @@ import urllib.error
 from contextvars import ContextVar
 from typing import Any
 
-from memorymaster.govern import llm_budget
+from memorymaster.core import llm_budget
 
 
 # Per-call env overrides. Threaded via contextvars so concurrent callers

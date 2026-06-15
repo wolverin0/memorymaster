@@ -11,7 +11,7 @@ import time
 from typing import Any, Literal
 
 from memorymaster.core import observability
-from memorymaster.govern import llm_budget
+from memorymaster.core import llm_budget
 from memorymaster.core.lifecycle import transition_claim
 from memorymaster.core.security import is_sensitive_claim
 from memorymaster.core.service import MemoryService

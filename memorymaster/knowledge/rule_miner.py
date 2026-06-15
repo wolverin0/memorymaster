@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from memorymaster.core import llm_provider
-from memorymaster.govern import llm_budget
+from memorymaster.core import llm_budget
 from memorymaster.stores._storage_shared import open_conn
 from memorymaster.core.models import CitationInput
 from memorymaster.knowledge.rules import build_rule_fields

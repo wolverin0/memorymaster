@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from memorymaster.core import llm_provider
-from memorymaster.govern import llm_budget
+from memorymaster.core import llm_budget
 
 
 @pytest.fixture(autouse=True)

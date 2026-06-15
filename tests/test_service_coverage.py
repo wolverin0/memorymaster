@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from memorymaster.govern import llm_budget
+from memorymaster.core import llm_budget
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
 

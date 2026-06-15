@@ -9,7 +9,8 @@ import logging
 import os
 
 from memorymaster.core import lifecycle, observability
-from memorymaster.govern import candidate_dedupe, llm_budget
+from memorymaster.core import llm_budget
+from memorymaster.govern import candidate_dedupe
 from memorymaster.recall import query_cache
 from memorymaster.recall.embeddings import EmbeddingProvider, create_best_provider
 from memorymaster.govern.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, integrity, qdrant_reconcile, spool_drain, validator
