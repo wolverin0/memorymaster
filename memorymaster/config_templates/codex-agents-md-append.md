@@ -30,6 +30,27 @@ ingest_claim({
   "predicate": "what aspect",
   "object_value": "the value",
   "scope": "project:<project-name>",
-  "source": "codex-session"
+  "source_agent": "codex-session"
 })
 ```
+The attribution kwarg is `source_agent` (not `source`) — it feeds the per-agent
+provenance view. Always set it to `"codex-session"` so your claims are not tagged
+`unknown`/`mcp-session`.
+
+### Turnkey BEAT-3 fallback (session-end automation)
+Codex has no native `Stop` hook, so if you forget to ingest, nothing fires. The
+operator can install a session-end distiller that reads your last transcript,
+distills <=3 learnings, and ingests them with `source_agent="codex-session"`:
+
+```
+python scripts/agent_session_end_ingest.py \
+  --db <path>/memorymaster.db \
+  --transcript ~/.codex/sessions/rollout-<id>.jsonl \
+  --source-agent codex-session \
+  --cwd <project-dir>
+```
+
+It routes through the same hardened ingest path (sensitivity filter + intake
+policy + dedup), caps the batch at 3 via `intake_batch_max`, and never raw-INSERTs.
+Wire it as a Codex notify/exit hook or run it at session end. This is the
+automation layer; the instructions above are the human-instruction layer.
