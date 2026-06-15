@@ -18,16 +18,20 @@ from pathlib import Path
 from typing import Any
 
 # Credential detection delegated to the canonical filter in
-# memorymaster.core.security — single source of truth.
-from memorymaster.core.security import redact_text as _redact_text
+# memorymaster.core.security — single source of truth. Use
+# scan_text_for_findings (the full decoded-variant sweep that
+# sanitize_claim_input runs), NOT redact_text: the latter is a literal
+# pattern pass that misses base64/hex/confusable-encoded secrets, which
+# would let an encoded credential in a mined transcript reach the claims
+# table (P3 filter-bypass hardening).
+from memorymaster.core.security import scan_text_for_findings as _scan_findings
 
 logger = logging.getLogger(__name__)
 
 
 def _contains_sensitive(text: str) -> bool:
     """Return True if text contains any credential the canonical filter catches."""
-    _, findings = _redact_text(text)
-    return bool(findings)
+    return bool(_scan_findings(text))
 
 # Patterns indicating valuable content in assistant messages
 VALUABLE_PATTERNS = [
