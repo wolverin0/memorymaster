@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from memorymaster.stores._storage_shared import open_conn
+from memorymaster.core import observability
+from memorymaster.core.security import sanitize_claim_input
 
 # P2 phase0 cycle cut: KeyRotator/DEFAULT_COOLDOWN_SECONDS now live in
 # memorymaster.core.key_rotator (class RoundRobinKeyRotator). Re-exported here under
@@ -600,6 +602,7 @@ def run_steward(
         "archived": 0,
         "errors": 0,
         "claims_extracted": 0,
+        "claims_filtered_sensitive": 0,
         "provider": provider,
         "model": model,
         "key_count": key_rotator.key_count if key_rotator else 1,
@@ -795,6 +798,29 @@ def run_steward(
                             )
                             confirmed_claim_ids.append(existing["id"])
                         else:
+                            # Sensitivity firewall — this cycle insert bypasses
+                            # svc.ingest, so run the SAME canonical filter over the
+                            # exact fields about to be persisted (default-deny). A
+                            # credential in an LLM extraction must never be stored.
+                            sanitized = sanitize_claim_input(
+                                text=text[:200],
+                                object_value=obj_val,
+                                citations=[],
+                                subject=subj,
+                                predicate=pred,
+                            )
+                            if sanitized.is_sensitive:
+                                observability.bump_claim_filtered(
+                                    "steward_extraction_sensitive"
+                                )
+                                log.warning(
+                                    "steward: skipped sensitive extraction from "
+                                    "claim #%d [REDACTED findings=%s]",
+                                    claim_id,
+                                    ",".join(sanitized.findings),
+                                )
+                                stats["claims_filtered_sensitive"] += 1
+                                continue
                             try:
                                 # F-1 fix: use source claim's scope here too, so
                                 # newly-inserted extra extractions are reachable
