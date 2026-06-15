@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import escape
 import importlib.metadata
 import json
@@ -158,6 +158,65 @@ def _validation_latency_metric(service: Any) -> dict[str, Any]:
     }
 
 
+def _provenance_rows(service: Any) -> list[dict[str, Any]]:
+    """One row per source_agent: total + status mix + last-ingest + 24h count.
+
+    Read-only GROUP BY over claims (excludes archived). CASE-based SUMs are used
+    instead of SQLite's `SUM(status='x')` boolean trick so the same query is valid
+    on Postgres (storage-parity boundary — no schema change). NULL/empty
+    source_agent collapses to the literal '<null>' bucket so it is visible (those
+    are exactly the rows the Codex BEAT-3 script exists to convert into a clean
+    'codex-session' total)."""
+    store = getattr(service, "store", None)
+    connect = getattr(store, "connect", None)
+    if not callable(connect):
+        return []
+    sql = """
+        SELECT
+            COALESCE(NULLIF(TRIM(source_agent), ''), '<null>') AS agent,
+            COUNT(*)                                            AS total,
+            SUM(CASE WHEN status = 'confirmed'  THEN 1 ELSE 0 END) AS confirmed,
+            SUM(CASE WHEN status = 'candidate'  THEN 1 ELSE 0 END) AS candidate,
+            SUM(CASE WHEN status = 'stale'      THEN 1 ELSE 0 END) AS stale,
+            SUM(CASE WHEN status = 'conflicted' THEN 1 ELSE 0 END) AS conflicted,
+            MAX(created_at)                                    AS last_ingest,
+            SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END)   AS ingests_24h
+        FROM claims
+        WHERE status != 'archived'
+        GROUP BY agent
+        ORDER BY total DESC
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S")
+    with connect() as conn:
+        rows = conn.execute(sql, (cutoff,)).fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        out.append(
+            {
+                "agent": str(row["agent"]),
+                "total": int(row["total"] or 0),
+                "confirmed": int(row["confirmed"] or 0),
+                "candidate": int(row["candidate"] or 0),
+                "stale": int(row["stale"] or 0),
+                "conflicted": int(row["conflicted"] or 0),
+                "last_ingest": (str(row["last_ingest"]) if row["last_ingest"] else None),
+                "ingests_24h": int(row["ingests_24h"] or 0),
+            }
+        )
+    return out
+
+
+def _ingest_recall_note() -> dict[str, Any]:
+    """Honesty marker for the provenance panel.
+
+    Ingest IS attributed per source_agent (claims.source_agent, reliable post-P3
+    intake policy). Recall is NOT attributed at the row level: the events table
+    has no source_agent column, so a per-agent recall split would be fabricated.
+    The panel surfaces this flag so the UI can say so explicitly rather than
+    invent numbers."""
+    return {"ingest_attributed": True, "recall_attributed": False}
+
+
 def _claim_to_dict(claim: Any) -> dict[str, Any]:
     return asdict(claim)
 
@@ -251,6 +310,7 @@ def _build_get_route_map(handler: Any) -> dict[str, callable]:
         "/api/recall-analysis": lambda qs: handler._handle_recall_analysis(qs),
         "/api/audit": lambda qs: handler._handle_audit(qs),
         "/api/namespaces": lambda qs: handler._handle_namespaces(qs),
+        "/api/provenance": lambda qs: handler._handle_provenance(qs),
         "/api/session-stats": lambda qs: handler._handle_session_stats(qs),
         "/api/observability": lambda qs: handler._handle_observability(qs),
         "/api/integrity": lambda qs: handler._handle_integrity(qs),
@@ -957,6 +1017,10 @@ input[type="text"],input:not([type]){background:#0f172a;border:1px solid #475569
 <div id="namespaces-box" class="scroll"><div class="empty">No namespaces created yet</div></div>
 </section>
 <section>
+<div class="section-head"><div class="icon icon-indigo">&#129302;</div><div><h2>Provenance by Agent</h2><div class="desc">Claims ingested per source_agent (recall is not per-agent attributable)</div></div></div>
+<div class="scroll"><table><thead><tr><th>Agent</th><th>Total</th><th>Confirmed</th><th>Candidate</th><th>Stale</th><th>Conflicted</th><th>24h</th><th>Last ingest</th></tr></thead><tbody id="provenance-body"><tr><td colspan="8" class="empty">No attributed claims yet</td></tr></tbody></table></div>
+</section>
+<section>
 <div class="section-head"><div class="icon icon-pink">&#128202;</div><div><h2>Session Stats</h2><div class="desc">Operator session and thread activity</div></div></div>
 <div id="session-stats" class="scroll"><div class="empty">No sessions recorded</div></div>
 </section>
@@ -987,6 +1051,7 @@ function fillQueue(d){const rows=Array.isArray(d.items)?d.items:[];const b=docum
 function fillRetr(d){const rows=Array.isArray(d.rows_data)?d.rows_data:[];const b=document.getElementById('retrieval-body');const meta=document.getElementById('retrieval-meta');const scopes=Array.isArray(d.scope_allowlist)?d.scope_allowlist:[];const scopeText=scopes.length?scopes.join(', '):'all';meta.textContent='Mode: '+(d.mode||'-')+' &#183; Scopes: '+scopeText+' &#183; '+rows.length+' results';b.innerHTML=rows.map(r=>{const c=r.claim||{};const s=r.status||c.status||'unknown';const ann=(r.annotation||'-');return '<tr><td class="mono">'+esc(c.id)+'</td><td>'+tuple(c)+'</td><td>'+statusBadge(s)+'</td><td>'+esc(ann)+'</td><td class="mono">'+esc(f3(r.score))+'</td><td class="mono" style="font-size:.75rem">'+esc(f3(r.lexical_score))+' / '+esc(f3(r.confidence_score))+' / '+esc(f3(r.freshness_score))+' / '+esc(f3(r.vector_score))+'</td></tr>';}).join('')||'<tr><td colspan="6" class="empty">No results found</td></tr>';}
 function fillAudit(d){const rows=Array.isArray(d.events)?d.events:[];document.getElementById('audit-body').innerHTML=rows.map(e=>'<tr><td class="mono" style="font-size:.75rem">'+esc(e.created_at||'-')+'</td><td>'+esc(e.event_type||'-')+'</td><td class="mono">'+esc(e.claim_id||'-')+'</td><td>'+esc(e.details||'-')+'</td></tr>').join('')||'<tr><td colspan="4" class="empty">No audit events</td></tr>';}
 function fillNs(d){const ns=d.namespaces||{};const keys=Object.keys(ns);document.getElementById('namespaces-box').innerHTML=keys.length?keys.map(k=>'<div style="padding:8px 10px;border-bottom:1px solid #334155;display:flex;justify-content:space-between"><span style="color:#f1f5f9">'+esc(k)+'</span><span class="mono muted">'+esc(ns[k].count||0)+' claims</span></div>').join(''):'<div class="empty">No namespaces created yet</div>';}
+function fillProvenance(d){const rows=Array.isArray(d.agents)?d.agents:[];const b=document.getElementById('provenance-body');if(!rows.length){b.innerHTML='<tr><td colspan="8" class="empty">No attributed claims yet</td></tr>';return;}b.innerHTML=rows.map(r=>'<tr><td class="mono">'+esc(r.agent)+'</td><td class="mono">'+esc(r.total||0)+'</td><td class="mono">'+esc(r.confirmed||0)+'</td><td class="mono">'+esc(r.candidate||0)+'</td><td class="mono">'+esc(r.stale||0)+'</td><td class="mono">'+esc(r.conflicted||0)+'</td><td class="mono">'+esc(r.ingests_24h||0)+'</td><td class="mono" style="font-size:.75rem">'+esc(r.last_ingest||'-')+'</td></tr>').join('');}
 function fillStats(d){const s=d.summary||{};document.getElementById('session-stats').innerHTML='<div style="padding:10px"><div class="stat-row"><div class="stat-item"><span class="stat-value">'+esc(s.sessions||0)+'</span><span class="stat-label">Sessions</span></div><div class="stat-item"><span class="stat-value">'+esc(s.threads||0)+'</span><span class="stat-label">Threads</span></div><div class="stat-item"><span class="stat-value">'+esc(s.rows_scanned||0)+'</span><span class="stat-label">Rows scanned</span></div></div>'+(Object.keys(s.event_counts||{}).length?'<div class="muted" style="margin-top:6px;padding-top:6px;border-top:1px solid #334155">Events: '+countPills(s.event_counts||{},8)+'</div>':'')+'</div>';}
 function fillValidationLatency(d){const box=document.getElementById('validation-latency');const val=(v)=>typeof v==='number'?v.toFixed(3)+'s':'-';box.innerHTML='<div style="padding:10px"><div class="stat-row"><div class="stat-item"><span class="stat-value">'+esc(d.rows||0)+'</span><span class="stat-label">Claims</span></div><div class="stat-item"><span class="stat-value">'+esc(val(d.p50))+'</span><span class="stat-label">p50</span></div><div class="stat-item"><span class="stat-value">'+esc(val(d.p95))+'</span><span class="stat-label">p95</span></div><div class="stat-item"><span class="stat-value">'+esc(val(d.p99))+'</span><span class="stat-label">p99</span></div></div></div>';}
 function fillObs(d){const o=d.observability||{};const op=o.operator||{};const ev=o.events_recent||{};const q=o.queue||{};const latency=op.latency_ms||{};const latencyRows=Object.keys(latency).sort().map(k=>'<tr><td class="mono">'+esc(k)+'</td><td class="mono">'+esc(latency[k].count||0)+'</td><td class="mono">'+esc(f3(latency[k].p50))+'</td><td class="mono">'+esc(f3(latency[k].p95))+'</td><td class="mono">'+esc(f3(latency[k].max))+'</td></tr>').join('')||'<tr><td colspan="5" class="empty">No latency data yet</td></tr>';const topQueue=Array.isArray(q.top)?q.top:[];document.getElementById('obs-box').innerHTML='<div style="padding:10px;border-bottom:1px solid #334155"><div class="stat-row"><div class="stat-item"><span class="stat-value">'+(op.running?'<span style="color:#4ade80">&#9679; Running</span>':'<span style="color:#64748b">&#9679; Stopped</span>')+'</span><span class="stat-label">Operator</span></div>'+(op.running?'<div class="stat-item"><span class="stat-value">'+esc(op.pid)+'</span><span class="stat-label">PID</span></div>':'')+'<div class="stat-item"><span class="stat-value">'+esc(op.rows_scanned||0)+'</span><span class="stat-label">Rows</span></div><div class="stat-item"><span class="stat-value">'+esc(op.sessions||0)+'</span><span class="stat-label">Sessions</span></div></div></div><div style="padding:8px 10px;border-bottom:1px solid #334155"><span class="muted">Events:</span> '+countPills(op.event_counts||{},8)+'</div><div style="padding:8px 10px;border-bottom:1px solid #334155"><span class="muted">Tools:</span> '+countPills(op.tool_counts||{},8)+'</div><div style="padding:8px 10px;border-bottom:1px solid #334155"><span class="muted">Queue:</span> <span class="mono">total='+esc(q.rows_scanned||0)+' actionable='+esc(q.actionable||0)+' reviewed='+esc(q.triage_reviewed||0)+' suppressed='+esc(q.triage_suppressed||0)+'</span></div><div style="padding:8px 10px;border-bottom:1px solid #334155"><span class="muted">Priority queue:</span> '+(topQueue.length?topQueue.map(t=>'<span class="mono">#'+esc(t.claim_id)+' '+statusBadge(t.status)+' p='+esc(f3(t.priority))+'</span>').join(' '):'<span class="muted">empty</span>')+'</div><div style="padding:8px 10px"><table><thead><tr><th>Metric</th><th>Samples</th><th>p50</th><th>p95</th><th>Max</th></tr></thead><tbody>'+latencyRows+'</tbody></table></div>';}
@@ -1004,7 +1069,7 @@ document.getElementById('timeline-group').addEventListener('change',(ev)=>{timel
 document.getElementById('conflicts-search').addEventListener('input',(ev)=>{conflictState.search=String((ev&&ev.target&&ev.target.value)||'');renderConflicts();});
 document.getElementById('conflicts-include-stale').addEventListener('change',refreshConflicts);
 document.getElementById('conflicts-refresh').addEventListener('click',refreshConflicts);
-jget('/api/claims?limit=50').then(fillClaims).catch(()=>{});jget('/api/timeline?limit=40').then(fillTimeline).catch(()=>{});refreshConflicts().catch(()=>{});refreshQueue().catch(()=>{});jget('/api/audit?limit=40').then(fillAudit).catch(()=>{});jget('/api/namespaces?limit=200').then(fillNs).catch(()=>{});jget('/api/session-stats?limit=2000').then(fillStats).catch(()=>{});jget('/metrics/validation-latency').then(fillValidationLatency).catch(()=>{});jget('/api/integrity').then(fillIntegrity).catch(()=>{});jget('/api/operator/status').then(fillOp).catch(()=>{});refreshObs().catch(()=>{});
+jget('/api/claims?limit=50').then(fillClaims).catch(()=>{});jget('/api/timeline?limit=40').then(fillTimeline).catch(()=>{});refreshConflicts().catch(()=>{});refreshQueue().catch(()=>{});jget('/api/audit?limit=40').then(fillAudit).catch(()=>{});jget('/api/namespaces?limit=200').then(fillNs).catch(()=>{});jget('/api/provenance').then(fillProvenance).catch(()=>{});jget('/api/session-stats?limit=2000').then(fillStats).catch(()=>{});jget('/metrics/validation-latency').then(fillValidationLatency).catch(()=>{});jget('/api/integrity').then(fillIntegrity).catch(()=>{});jget('/api/operator/status').then(fillOp).catch(()=>{});refreshObs().catch(()=>{});
 const sb=document.getElementById('stream');const es=new EventSource('/api/operator/stream?last=20'); const append=(t)=>{const ex=sb.textContent.trim();sb.textContent=(ex&&ex!=='Waiting for operator to start...'?ex+'\\n':'')+t;}; ['message','stream_start','state_loaded','state_error','state_saved','json_error','turn_processed','reconcile_run','stream_exit'].forEach(n=>es.addEventListener(n,(ev)=>append(ev.data))); es.onerror=()=>append('[stream reconnecting]');
 </script></main></body></html>"""
         body = html.encode("utf-8")
@@ -1298,6 +1363,24 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
                     "workflows": {"count": len(buckets["workflows"]), "samples": _samples(buckets["workflows"])},
                     "project_overview": {"count": len(buckets["project_overview"]), "samples": _samples(buckets["project_overview"])},
                 },
+            }
+        )
+
+    def _handle_provenance(self, query_string: str) -> None:
+        """Per-agent provenance: ingest counts + status mix by source_agent.
+
+        Reliable post-P3 intake policy (source_agent is default-tagged/enforced)
+        and cheap via idx_claims_source_agent. Read-only GROUP BY over claims.
+        Recall is NOT row-attributed (the events table has no source_agent), so
+        recall_total is surfaced separately as a best-effort in-process counter
+        and labelled as such — we do not fabricate a per-agent recall split."""
+        rows = _provenance_rows(self._server.service)
+        self._write_json(
+            {
+                "ok": True,
+                "rows": len(rows),
+                "agents": rows,
+                "attribution": _ingest_recall_note(),
             }
         )
 
