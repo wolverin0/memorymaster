@@ -14,9 +14,10 @@ import re
 import sqlite3
 from pathlib import Path
 
-from memorymaster.core import spool
+from memorymaster.core import observability, spool
 from memorymaster.stores._storage_shared import open_conn
 from memorymaster.core.security import redact_text as _redact_text
+from memorymaster.core.security import sanitize_claim_input
 
 log = logging.getLogger(__name__)
 
@@ -705,6 +706,25 @@ def dream_ingest(
                 (claim["source_marker"],),
             ).fetchone()
             if existing:
+                skipped += 1
+                continue
+
+            # Sensitivity firewall — the direct-INSERT path bypasses svc.ingest,
+            # so run the SAME canonical filter here (default-deny). A parsed dream
+            # note carrying a credential must never reach the claims table.
+            sanitized = sanitize_claim_input(
+                text=claim["text"],
+                object_value=None,
+                citations=[],
+                subject=claim["subject"],
+            )
+            if sanitized.is_sensitive:
+                observability.bump_claim_filtered("dream_ingest_sensitive")
+                log.warning(
+                    "dream_ingest: skipped sensitive note %s [REDACTED findings=%s]",
+                    md_file.name,
+                    ",".join(sanitized.findings),
+                )
                 skipped += 1
                 continue
 

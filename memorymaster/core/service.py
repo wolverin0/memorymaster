@@ -20,6 +20,7 @@ from memorymaster.recall.context_optimizer import ContextResult, pack_context
 from memorymaster.core.config import get_config
 from memorymaster.recall.retrieval import VectorSearchHook, _tier_bonus, rank_claim_rows
 from memorymaster.core.security import is_sensitive_claim, resolve_allow_sensitive_access, sanitize_claim_input
+from memorymaster.core.intake_policy import IntakeRejected, evaluate_intake
 from memorymaster.stores.store_factory import create_store
 import contextlib
 
@@ -399,6 +400,9 @@ class MemoryService:
         valid_until: str | None = None,
         source_agent: str | None = None,
         visibility: str = "public",
+        require_source_agent: bool = False,
+        intake_batch_id: str | None = None,
+        intake_batch_max: int | None = None,
     ) -> Claim:
         if not text.strip():
             raise ValueError("Claim text cannot be empty.")
@@ -442,6 +446,43 @@ class MemoryService:
         # placed in those fields is redacted at rest, not just at display time.
         subject = sanitized.subject
         predicate = sanitized.predicate
+        # Intake policy (P3) — runs AFTER the sacred sensitivity filter above and
+        # BEFORE create_claim. Additive admission control: may reject more or
+        # default-tag attribution, never weakens the filter or flips a prior
+        # reject into an accept. Reject raises IntakeRejected (a ValueError) so
+        # existing `except ValueError` handlers surface VALIDATION_ERROR.
+        try:
+            decision = evaluate_intake(
+                text=sanitized.text,
+                claim_type=claim_type,
+                subject=subject,
+                scope=scope,
+                source_agent=source_agent,
+                require_source_agent=require_source_agent,
+                intake_batch_id=intake_batch_id,
+                intake_batch_max=intake_batch_max,
+            )
+        except IntakeRejected as rejected:
+            observability.bump_claim_policy_rejected(rejected.rule, rejected.reason)
+            try:
+                self.store.record_event(
+                    claim_id=None,
+                    event_type="policy_decision",
+                    details=f"intake_rejected:{rejected.rule}",
+                    payload={
+                        "rule": rejected.rule,
+                        "reason": rejected.reason,
+                        "scope": scope,
+                        "claim_type": claim_type,
+                        "source_agent": source_agent or "",
+                    },
+                )
+            except Exception:
+                pass  # event recording must never mask the rejection
+            raise
+        new_source_agent = decision.mutated_fields.get("source_agent")
+        if isinstance(new_source_agent, str):
+            source_agent = new_source_agent
         # Resolve subject → canonical entity (GBrain-inspired entity registry)
         # and mine text for pattern-based entities (#127 Wave 3).
         entity_id = 0

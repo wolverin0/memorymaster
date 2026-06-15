@@ -56,6 +56,8 @@ _INGEST_FIELDS = (
     "valid_until",
     "source_agent",
     "visibility",
+    "intake_batch_id",
+    "intake_batch_max",
 )
 
 

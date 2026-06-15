@@ -150,6 +150,16 @@ Only: bug root causes, decisions, gotchas, constraints. Never: credentials, IPs,
 
         scope = "project:" + os.path.basename(cwd).lower().replace(" ", "-") if cwd else "global"
 
+        # Per-invocation batch fence (P3 intake policy Rule D). The intake policy
+        # rejects the (N+1)th claim carrying the same intake_batch_id, so an
+        # edited hook or a compromised LLM response cannot flood past the
+        # documented "max 3 learnings per Stop" norm even if the [:3] slice above
+        # is removed. A fresh id per Stop keeps batches independent.
+        import uuid as _uuid
+
+        intake_batch_id = "stop-" + _uuid.uuid4().hex[:16]
+        intake_batch_max = 3
+
         if _spool_enabled():
             # Spool regime (P1 spec §2.3): append op:"ingest" envelopes instead
             # of opening the multi-GB DB from a per-stop hook. The steward
@@ -176,6 +186,8 @@ Only: bug root causes, decisions, gotchas, constraints. Never: credentials, IPs,
                             "scope": scope,
                             "confidence": 0.6,
                             "source_agent": "llm-stop-hook",
+                            "intake_batch_id": intake_batch_id,
+                            "intake_batch_max": intake_batch_max,
                             "citations": [
                                 {"source": "llm-stop-hook", "locator": scope, "excerpt": text[:200]}
                             ],
@@ -215,6 +227,8 @@ Only: bug root causes, decisions, gotchas, constraints. Never: credentials, IPs,
                         scope=scope,
                         confidence=0.6,
                         source_agent="llm-stop-hook",
+                        intake_batch_id=intake_batch_id,
+                        intake_batch_max=intake_batch_max,
                     )
                     ingested += 1
                 except Exception:

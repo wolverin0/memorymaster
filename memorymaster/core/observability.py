@@ -66,6 +66,14 @@ def bump_claim_filtered_findings(findings: list[str] | tuple[str, ...]) -> None:
         bump_claim_filtered(finding)
 
 
+def bump_claim_policy_rejected(rule: str | None, reason: str | None = None) -> None:
+    bump_counter(
+        "claims_policy_rejected_total",
+        rule=_normalize_label_value(rule),
+        reason=_normalize_label_value(reason),
+    )
+
+
 def bump_compactor_run(status: str | None) -> None:
     bump_counter("compactor_run_total", status=status)
 
@@ -165,6 +173,12 @@ def metrics_text() -> str:
         _counter_family_lines(
             "claims_filtered_total",
             "Claims rejected or redacted by the sensitivity filter grouped by reason.",
+        )
+    )
+    lines.extend(
+        _counter_family_lines(
+            "claims_policy_rejected_total",
+            "Claims rejected by the intake policy grouped by rule and reason.",
         )
     )
     lines.extend(_steward_histogram_lines())
