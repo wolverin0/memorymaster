@@ -11,7 +11,7 @@ os.chdir(PROJECT_ROOT)
 
 # Must import after the sys.path.insert bootstrap above — hook templates run
 # standalone, before the package is necessarily on PYTHONPATH.
-from memorymaster.hook_log import log_hook  # noqa: E402
+from memorymaster.core.hook_log import log_hook  # noqa: E402
 
 log_hook("dream-sync", "start")
 try:

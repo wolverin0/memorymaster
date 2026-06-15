@@ -29,12 +29,12 @@ def _spool_enabled() -> bool:
     never opens the DB — verbatim turns and extracted learnings append spool
     envelopes (~10 ms) and the steward drain replays them through the normal
     service paths (sensitivity filter + dedup intact). Semantics must match
-    memorymaster.spool.wal_discipline_enabled (pinned by test_ambient_spool);
+    memorymaster.core.spool.wal_discipline_enabled (pinned by test_ambient_spool);
     parsed locally so the gate works even before the package import resolves."""
     raw = os.environ.get("MEMORYMASTER_WAL_DISCIPLINE", "0").strip()
     return raw not in ("0", "false", "False", "no", "off", "")
 
-# Sensitivity filtering delegated to memorymaster.security.redact_text — the
+# Sensitivity filtering delegated to memorymaster.core.security.redact_text — the
 # canonical 25+ pattern set. The previous local SENSITIVE regex covered ~6 of
 # them and missed bearer/JWT/AWS/Stripe/Slack tokens, home path username
 # leaks, and card numbers. Discovered 2026-05-04 by overnight audit (F-2).
@@ -45,7 +45,7 @@ def _is_sensitive_claim(c: dict) -> bool:
     """Return True if any of (text, subject, predicate, object_value) trips
     the canonical sensitivity filter. Caller drops the claim entirely."""
     try:
-        from memorymaster.security import redact_text
+        from memorymaster.core.security import redact_text
     except ImportError:
         # Fail-closed: if the canonical filter can't be imported, refuse the
         # claim. Prevents shipping unreviewed text on a broken install.
@@ -105,7 +105,7 @@ def _set_last_save(session_id, count):
 def _run_gemini_extraction(transcript_path, cwd):
     """Fallback: run Gemini extraction on non-block turns."""
     try:
-        from memorymaster.llm_provider import call_llm, parse_json_response
+        from memorymaster.core.llm_provider import call_llm, parse_json_response
 
         # Read last assistant messages
         messages = []
@@ -156,7 +156,7 @@ Only: bug root causes, decisions, gotchas, constraints. Never: credentials, IPs,
             # drain replays them through svc.ingest, so the canonical
             # sensitivity sanitize + idempotency dedup still apply (on top of
             # the _is_sensitive_claim drop above).
-            from memorymaster import spool
+            from memorymaster.core import spool
 
             ingested = 0
             for c in claims:
@@ -194,8 +194,8 @@ Only: bug root causes, decisions, gotchas, constraints. Never: credentials, IPs,
             # top of the _is_sensitive_claim drop above), content-hash + idempotency
             # dedup, entity resolution, auto-citation, observability, and webhook.
             # Mirrors _run_rule_extraction, which already uses the service.
-            from memorymaster.service import MemoryService
-            from memorymaster.models import CitationInput
+            from memorymaster.core.service import MemoryService
+            from memorymaster.core.models import CitationInput
 
             svc = MemoryService(DB_PATH, workspace_root=Path(cwd or PROJECT_ROOT))
             ingested = 0
@@ -236,7 +236,7 @@ def _run_rule_extraction(transcript_path, cwd):
         if not transcript_path or not os.path.exists(transcript_path) or not os.path.exists(DB_PATH):
             return
         from memorymaster.knowledge.rule_miner import mine_transcript_rules
-        from memorymaster.service import MemoryService
+        from memorymaster.core.service import MemoryService
 
         scope = "project:" + os.path.basename(cwd).lower().replace(" ", "-") if cwd else "global"
         svc = MemoryService(DB_PATH, workspace_root=Path(cwd or PROJECT_ROOT))

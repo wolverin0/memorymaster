@@ -21,7 +21,7 @@ if hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 from memorymaster.recall.recall_tokenizer import extract_query_tokens  # noqa: E402
-from memorymaster.service import MemoryService  # noqa: E402
+from memorymaster.core.service import MemoryService  # noqa: E402
 
 
 def _load_prompts(path: Path) -> list[str]:

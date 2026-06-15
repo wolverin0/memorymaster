@@ -81,7 +81,7 @@ def test_update_feeds_compiled_prose_not_frontmatter(
         captured["prompt"] = prompt
         return "Rewritten compiled truth that is comfortably longer than fifty characters."
 
-    monkeypatch.setattr("memorymaster.llm_provider.call_llm", spy)
+    monkeypatch.setattr("memorymaster.core.llm_provider.call_llm", spy)
     wiki_engine.absorb(str(db), wiki_dir, scope_filter="project:demo")
 
     prompt = captured["prompt"]
@@ -103,7 +103,7 @@ def test_budget_abort_propagates_through_call_llm(
     def boom(prompt: str, text: str) -> str:
         raise llm_budget.LLMBudgetExceeded(reason="cap", provider="gemini")
 
-    monkeypatch.setattr("memorymaster.llm_provider.call_llm", boom)
+    monkeypatch.setattr("memorymaster.core.llm_provider.call_llm", boom)
     with pytest.raises(llm_budget.LLMBudgetExceeded):
         wiki_engine._call_llm("prompt", "text")
 
@@ -116,7 +116,7 @@ def test_generic_llm_error_still_degrades_gracefully(
     def transient(prompt: str, text: str) -> str:
         raise RuntimeError("network blip")
 
-    monkeypatch.setattr("memorymaster.llm_provider.call_llm", transient)
+    monkeypatch.setattr("memorymaster.core.llm_provider.call_llm", transient)
     assert wiki_engine._call_llm("p", "t") == ""
 
 
@@ -134,7 +134,7 @@ def test_absorb_aborts_with_metadata_on_budget(
     def boom(prompt: str, text: str) -> str:
         raise llm_budget.LLMBudgetExceeded(reason="cap", provider="gemini")
 
-    monkeypatch.setattr("memorymaster.llm_provider.call_llm", boom)
+    monkeypatch.setattr("memorymaster.core.llm_provider.call_llm", boom)
     # No parent budget scope active -> absorb opens its own and catches abort.
     result = wiki_engine.absorb(str(db), tmp_path / "wiki", scope_filter="project:demo")
     assert result.get("aborted") is True

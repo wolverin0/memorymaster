@@ -11,17 +11,17 @@ import time
 from typing import Any, TypeVar
 from urllib.parse import urlparse
 
-from memorymaster import observability
+from memorymaster.core import observability
 from memorymaster.surfaces import mcp_path_policy
 from pydantic import BaseModel, ValidationError
 
-from memorymaster.models import CitationInput
-from memorymaster.security import (
+from memorymaster.core.models import CitationInput
+from memorymaster.core.security import (
     expand_secret_scan_variants,
     redact_text,
     resolve_allow_sensitive_access,
 )
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 logger = logging.getLogger(__name__)
 

@@ -38,7 +38,7 @@ if hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 from memorymaster.recall.recall_tokenizer import _candidate_tokens, extract_query_tokens  # noqa: E402
-from memorymaster.service import MemoryService  # noqa: E402
+from memorymaster.core.service import MemoryService  # noqa: E402
 
 # Re-rank weights shipped in context_hook.py::_RECALL_WEIGHT_DEFAULTS.
 W0 = (0.3, 0.3, 0.2, 0.1, 0.1, 0.0, 0.0)

@@ -5,9 +5,9 @@ from pathlib import Path
 import sqlite3
 import tempfile
 
-from memorymaster.models import CitationInput
+from memorymaster.core.models import CitationInput
 from memorymaster.govern.review import build_review_queue, queue_to_dicts
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 
 def _case_db(prefix: str) -> Path:

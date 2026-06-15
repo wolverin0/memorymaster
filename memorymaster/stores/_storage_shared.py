@@ -15,7 +15,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from memorymaster.retry import connect_with_retry
+from memorymaster.core.retry import connect_with_retry
 
 HUMAN_ID_PREFIX = "mm"
 EVENT_HASH_ALGO = "sha256-v1"

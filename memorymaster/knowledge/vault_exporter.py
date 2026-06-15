@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from memorymaster.models import Claim
+from memorymaster.core.models import Claim
 
 logger = logging.getLogger(__name__)
 

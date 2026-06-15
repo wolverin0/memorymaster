@@ -27,10 +27,10 @@ from typing import Any
 from memorymaster.stores._storage_shared import open_conn
 
 # P2 phase0 cycle cut: KeyRotator/DEFAULT_COOLDOWN_SECONDS now live in
-# memorymaster.key_rotator (class RoundRobinKeyRotator). Re-exported here under
+# memorymaster.core.key_rotator (class RoundRobinKeyRotator). Re-exported here under
 # the historical names for backward compatibility — external callers import
 # KeyRotator from llm_steward.
-from memorymaster.key_rotator import (  # noqa: F401 — re-export for compat
+from memorymaster.core.key_rotator import (  # noqa: F401 — re-export for compat
     DEFAULT_COOLDOWN_SECONDS,
     RoundRobinKeyRotator as KeyRotator,
 )
@@ -370,13 +370,13 @@ def extract_claim(
     """Extract structured claims from raw text using any LLM.
 
     When ``use_llm_provider`` is True, route through
-    ``memorymaster.llm_provider.call_llm`` (honours MEMORYMASTER_LLM_PROVIDER,
+    ``memorymaster.core.llm_provider.call_llm`` (honours MEMORYMASTER_LLM_PROVIDER,
     including the keyless ``claude_cli`` path) instead of the direct-HTTP
     ``_call_llm``. The prompt + parsing are identical either way.
     """
     snippet = text[:2000]
     if use_llm_provider:
-        from memorymaster.llm_provider import call_llm as _provider_call_llm
+        from memorymaster.core.llm_provider import call_llm as _provider_call_llm
         # call_llm joins as f"{prompt}\n\n{text}"; pass instructions (placeholder
         # stripped) as the prompt and the claim text as the second arg.
         instructions = EXTRACT_PROMPT.replace("{text}", "").rstrip()

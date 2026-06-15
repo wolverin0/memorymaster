@@ -21,7 +21,7 @@ from memorymaster.recall.embeddings import (
     hash_embed,
     normalize,
 )
-from memorymaster.models import Claim
+from memorymaster.core.models import Claim
 from memorymaster.recall.retrieval import rank_claim_rows
 from memorymaster.stores.storage import SQLiteStore
 
@@ -200,7 +200,7 @@ class TestStoreVectorScores:
         return EmbeddingProvider(model="hash-v1", dims=64)
 
     def _insert_claim(self, store: SQLiteStore, text: str) -> Claim:
-        from memorymaster.models import CitationInput
+        from memorymaster.core.models import CitationInput
         return store.create_claim(
             text=text,
             citations=[CitationInput(source="test")],

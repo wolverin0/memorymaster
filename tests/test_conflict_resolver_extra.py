@@ -24,9 +24,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from memorymaster.models import Claim, Citation, CitationInput
-from memorymaster.service import MemoryService
-from memorymaster.lifecycle import transition_claim
+from memorymaster.core.models import Claim, Citation, CitationInput
+from memorymaster.core.service import MemoryService
+from memorymaster.core.lifecycle import transition_claim
 from memorymaster.govern.conflict_resolver import (
     _pick_winner,
     supersede_claim,

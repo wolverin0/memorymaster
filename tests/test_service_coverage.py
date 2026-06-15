@@ -1,4 +1,4 @@
-"""Tests for memorymaster.service — coverage gaps."""
+"""Tests for memorymaster.core.service — coverage gaps."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from memorymaster.govern import llm_budget
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 
 @pytest.fixture
@@ -225,7 +225,7 @@ class TestQueryRowsCoverage:
                 retrieval_mode="hybrid",
                 vector_hook=vector_hook,
             )
-            with patch("memorymaster.service.rank_claim_rows", side_effect=AssertionError("cache miss reranked")):
+            with patch("memorymaster.core.service.rank_claim_rows", side_effect=AssertionError("cache miss reranked")):
                 second = svc.query_rows(
                     "cached hybrid",
                     include_candidates=True,
@@ -239,7 +239,7 @@ class TestQueryRowsCoverage:
 
 class TestRunCycleBudgetAbort:
     def test_run_cycle_returns_budget_abort_instead_of_raising(self, svc):
-        with patch("memorymaster.service.extractor.run", side_effect=llm_budget.LLMBudgetExceeded("calls_exhausted")):
+        with patch("memorymaster.core.service.extractor.run", side_effect=llm_budget.LLMBudgetExceeded("calls_exhausted")):
             result = svc.run_cycle()
 
         assert result["budget"]["aborted"] is True, "budget caps must stop steward work without crashing callers"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from memorymaster.config import Config
+from memorymaster.core.config import Config
 
 
 def test_config_initial_confidence_priors_match_calibration_report() -> None:

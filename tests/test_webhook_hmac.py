@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from memorymaster import webhook
-from memorymaster.webhook import (
+from memorymaster.core import webhook
+from memorymaster.core.webhook import (
     REPLAY_WINDOW_SECONDS,
     SIGNATURE_HEADER,
     TIMESTAMP_HEADER,
@@ -51,7 +51,7 @@ def test_outbound_no_secret_omits_signature_headers(monkeypatch):
         ctx.__exit__ = MagicMock(return_value=False)
         return ctx
 
-    with patch("memorymaster.webhook.urllib.request.urlopen", side_effect=fake_urlopen):
+    with patch("memorymaster.core.webhook.urllib.request.urlopen", side_effect=fake_urlopen):
         assert fire_webhook("e", {}) is True
 
     keys_lower = {k.lower() for k in captured["headers"]}
@@ -72,7 +72,7 @@ def test_outbound_with_secret_adds_signature_and_timestamp(monkeypatch):
         ctx.__exit__ = MagicMock(return_value=False)
         return ctx
 
-    with patch("memorymaster.webhook.urllib.request.urlopen", side_effect=fake_urlopen):
+    with patch("memorymaster.core.webhook.urllib.request.urlopen", side_effect=fake_urlopen):
         assert fire_webhook("claim_created", {"id": 7}) is True
 
     # urllib normalizes header capitalization to Title-Case, e.g. "X-Memorymaster-Signature".

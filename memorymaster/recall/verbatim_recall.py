@@ -252,7 +252,7 @@ def hit_to_synthetic_row(hit: VerbatimHit) -> dict:
     """
     # Lazy import — avoids circularity at module load and keeps verbatim
     # a leaf module.
-    from memorymaster.models import Claim
+    from memorymaster.core.models import Claim
 
     # ID namespace: negative to avoid collision with real claim.id values
     # in downstream dedupe sets. Ranker only uses id for de-dup; any

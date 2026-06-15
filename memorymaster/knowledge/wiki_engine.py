@@ -160,7 +160,7 @@ def _call_llm(prompt: str, text: str) -> str:
     from memorymaster.govern import llm_budget
 
     try:
-        from memorymaster.llm_provider import call_llm
+        from memorymaster.core.llm_provider import call_llm
         return call_llm(prompt, text)
     except llm_budget.LLMBudgetExceeded:
         # Budget abort MUST propagate so absorb() emits its documented
@@ -971,7 +971,7 @@ def _register_lifecycle_autopromote() -> None:
     (knowledge), so the dependency is inverted — wiki_engine (and service
     wiring) registers an adapter into ``lifecycle.on_claim_confirmed``.
     """
-    from memorymaster import lifecycle as _lifecycle
+    from memorymaster.core import lifecycle as _lifecycle
 
     def _absorb_on_confirm(claim_id: int, db_path: str | None = None) -> None:
         # Late module-global lookup so monkeypatching

@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from memorymaster.key_rotator import RoundRobinKeyRotator as KeyRotator
+from memorymaster.core.key_rotator import RoundRobinKeyRotator as KeyRotator
 from memorymaster.govern.llm_steward import _parse_api_keys
 
 

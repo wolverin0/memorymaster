@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 from memorymaster.stores.storage import SQLiteStore, generate_human_id_hash, generate_top_level_human_id
 
 

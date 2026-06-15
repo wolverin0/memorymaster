@@ -12,7 +12,7 @@ from memorymaster.recall.context_optimizer import (
     estimate_tokens,
     pack_context,
 )
-from memorymaster.models import Claim
+from memorymaster.core.models import Claim
 
 
 def _make_claim(

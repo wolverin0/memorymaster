@@ -13,7 +13,7 @@ class TestExtractLlmOllamaSchemaVariants:
     """Test extract_llm parser robustness against schema variants."""
 
     @patch.dict(os.environ, {"MEMORYMASTER_ENTITY_LLM": "1"})
-    @patch("memorymaster.llm_provider.call_llm")
+    @patch("memorymaster.core.llm_provider.call_llm")
     def test_standard_schema_surface_form(self, mock_call_llm):
         """Standard schema with 'surface_form' field."""
         mock_call_llm.return_value = (
@@ -27,7 +27,7 @@ class TestExtractLlmOllamaSchemaVariants:
         assert result[0].kind == "person_name"
 
     @patch.dict(os.environ, {"MEMORYMASTER_ENTITY_LLM": "1"})
-    @patch("memorymaster.llm_provider.call_llm")
+    @patch("memorymaster.core.llm_provider.call_llm")
     def test_gemma_alt_schema_entity_field(self, mock_call_llm):
         """Gemma variant using 'entity' instead of 'surface_form'."""
         mock_call_llm.return_value = (
@@ -42,7 +42,7 @@ class TestExtractLlmOllamaSchemaVariants:
         assert result[1].surface == "Charles Babbage"
 
     @patch.dict(os.environ, {"MEMORYMASTER_ENTITY_LLM": "1"})
-    @patch("memorymaster.llm_provider.call_llm")
+    @patch("memorymaster.core.llm_provider.call_llm")
     def test_gemma_variant_mixed_fields(self, mock_call_llm):
         """Gemma variant with mixed or missing 'aliases'."""
         mock_call_llm.return_value = (
@@ -57,7 +57,7 @@ class TestExtractLlmOllamaSchemaVariants:
         assert result[1].surface == "gpt-4o-mini"
 
     @patch.dict(os.environ, {"MEMORYMASTER_ENTITY_LLM": "1"})
-    @patch("memorymaster.llm_provider.call_llm")
+    @patch("memorymaster.core.llm_provider.call_llm")
     def test_truncated_json_response_no_crash(self, mock_call_llm):
         """Truncated JSON response doesn't crash."""
         # Simulate Ollama cutting off mid-JSON
@@ -67,7 +67,7 @@ class TestExtractLlmOllamaSchemaVariants:
         assert result == []
 
     @patch.dict(os.environ, {"MEMORYMASTER_ENTITY_LLM": "1"})
-    @patch("memorymaster.llm_provider.call_llm")
+    @patch("memorymaster.core.llm_provider.call_llm")
     def test_multiple_kinds_mixed_schema(self, mock_call_llm):
         """Multiple entity kinds with mixed schema."""
         mock_call_llm.return_value = (
@@ -88,7 +88,7 @@ class TestExtractLlmOllamaSchemaVariants:
         assert result[3].kind == "model_name"
 
     @patch.dict(os.environ, {"MEMORYMASTER_ENTITY_LLM": "1"})
-    @patch("memorymaster.llm_provider.call_llm")
+    @patch("memorymaster.core.llm_provider.call_llm")
     def test_invalid_kind_filtered_out(self, mock_call_llm):
         """Invalid kind is filtered out."""
         mock_call_llm.return_value = (
@@ -102,7 +102,7 @@ class TestExtractLlmOllamaSchemaVariants:
         assert result[0].surface == "Ada Lovelace"
 
     @patch.dict(os.environ, {"MEMORYMASTER_ENTITY_LLM": "1"})
-    @patch("memorymaster.llm_provider.call_llm")
+    @patch("memorymaster.core.llm_provider.call_llm")
     def test_empty_surface_filtered_out(self, mock_call_llm):
         """Empty surface is filtered out."""
         mock_call_llm.return_value = (
@@ -116,7 +116,7 @@ class TestExtractLlmOllamaSchemaVariants:
         assert result[0].surface == "Ada Lovelace"
 
     @patch.dict(os.environ, {"MEMORYMASTER_ENTITY_LLM": "1"})
-    @patch("memorymaster.llm_provider.call_llm")
+    @patch("memorymaster.core.llm_provider.call_llm")
     def test_malformed_json_returns_empty(self, mock_call_llm):
         """Malformed JSON returns empty list."""
         mock_call_llm.return_value = "not valid json"
@@ -124,7 +124,7 @@ class TestExtractLlmOllamaSchemaVariants:
         assert result == []
 
     @patch.dict(os.environ, {"MEMORYMASTER_ENTITY_LLM": "1"})
-    @patch("memorymaster.llm_provider.call_llm")
+    @patch("memorymaster.core.llm_provider.call_llm")
     def test_non_list_dict_response_wrapped(self, mock_call_llm):
         """Non-list dict JSON response gets wrapped in list by parse_json_response."""
         # This is acceptable: parse_json_response wraps dicts in a list

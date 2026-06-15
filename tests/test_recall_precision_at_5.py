@@ -23,7 +23,7 @@ from memorymaster.recall.context_hook import (
     _recall_weight,
     recall,
 )
-from memorymaster.models import Claim
+from memorymaster.core.models import Claim
 
 
 def _claim(cid: int, text: str, *, subject: str | None = None,
@@ -98,7 +98,7 @@ def _patch_service(monkeypatch: pytest.MonkeyPatch, rows: list[dict]) -> None:
     def _fake_ctor(db_target: str, workspace_root: Path):  # noqa: ARG001
         return _FakeService(rows)
 
-    monkeypatch.setattr("memorymaster.service.MemoryService", _fake_ctor)
+    monkeypatch.setattr("memorymaster.core.service.MemoryService", _fake_ctor)
     # recall() also passes through extract_query_tokens; stub it so we don't
     # need a real DB on disk.
     monkeypatch.setattr(

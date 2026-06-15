@@ -8,8 +8,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 from memorymaster.govern.steward import list_steward_proposals, resolve_steward_proposal, run_steward
 
 

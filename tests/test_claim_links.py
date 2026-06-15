@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.models import CLAIM_LINK_TYPES, CitationInput, ClaimLink
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CLAIM_LINK_TYPES, CitationInput, ClaimLink
+from memorymaster.core.service import MemoryService
 
 
 def _case_db(prefix: str) -> Path:

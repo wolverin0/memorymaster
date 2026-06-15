@@ -22,10 +22,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# Credential detection delegated to the canonical filter in memorymaster.security.
-from memorymaster import spool
+# Credential detection delegated to the canonical filter in memorymaster.core.security.
+from memorymaster.core import spool
 from memorymaster.stores._storage_shared import open_conn
-from memorymaster.security import redact_text as _redact_text
+from memorymaster.core.security import redact_text as _redact_text
 
 logger = logging.getLogger(__name__)
 

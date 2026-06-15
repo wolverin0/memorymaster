@@ -12,7 +12,7 @@ from time import perf_counter
 
 import pytest
 
-from memorymaster import llm_provider
+from memorymaster.core import llm_provider
 
 
 @pytest.fixture(autouse=True)

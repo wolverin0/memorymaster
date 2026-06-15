@@ -24,7 +24,7 @@ def _pg_dsn() -> str | None:
 
 
 def _fresh_sqlite_service(tmp_path):
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     db = tmp_path / "parity-sqlite.db"
     svc = MemoryService(db, workspace_root=tmp_path)
@@ -33,7 +33,7 @@ def _fresh_sqlite_service(tmp_path):
 
 
 def _fresh_postgres_service():
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     dsn = _pg_dsn()
     if not dsn:

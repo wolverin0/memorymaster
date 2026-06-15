@@ -12,7 +12,7 @@ from memorymaster.govern.jobs.compact_summaries import (
     _get_unsummarized_archived_claims,
     run,
 )
-from memorymaster.models import CitationInput
+from memorymaster.core.models import CitationInput
 from memorymaster.stores.storage import SQLiteStore
 
 
@@ -34,7 +34,7 @@ def _create_archived_claim(store, text, subject="test-subject", predicate="has_v
         object_value=obj,
     )
     # Transition to confirmed first, then archived
-    from memorymaster.lifecycle import transition_claim
+    from memorymaster.core.lifecycle import transition_claim
     transition_claim(store, claim.id, to_status="confirmed", reason="test", event_type="transition")
     transition_claim(store, claim.id, to_status="stale", reason="test", event_type="decay")
     transition_claim(store, claim.id, to_status="archived", reason="test", event_type="compactor")

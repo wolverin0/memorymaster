@@ -6,7 +6,7 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from memorymaster.models import CitationInput, Claim, EvidenceItem, SourceItem
+from memorymaster.core.models import CitationInput, Claim, EvidenceItem, SourceItem
 
 
 @dataclass(frozen=True)
@@ -44,7 +44,7 @@ def extract_atlas_claims_from_evidence(
     if scope is None:
         from pathlib import Path
 
-        from memorymaster.scope_utils import scope_from_cwd
+        from memorymaster.core.scope_utils import scope_from_cwd
 
         scope = scope_from_cwd(Path.cwd())
     evidence_items = service.list_evidence_items(limit=limit)

@@ -1,7 +1,7 @@
 """P2 phase0 cycle-cut pins — the 3 cuts that break the 10-module import SCC.
 
 Cut 1: llm_provider must never import llm_steward. KeyRotator's real home is
-       memorymaster.key_rotator (RoundRobinKeyRotator); llm_steward only
+       memorymaster.core.key_rotator (RoundRobinKeyRotator); llm_steward only
        re-exports it for backward compatibility.
 Cut 2: lifecycle must never import wiki_engine. The wiki autopromote trigger
        is inverted into lifecycle.on_claim_confirmed, registered by wiring
@@ -93,7 +93,7 @@ def test_lifecycle_imports_with_wiki_engine_blocked() -> None:
     be imported at all (the old code lazily imported it on the autopromote
     path; the hook default of None must make that path a clean no-op)."""
     code = _BLOCKER.format(blocked="memorymaster.knowledge.wiki_engine") + """
-    import memorymaster.lifecycle as lifecycle
+    import memorymaster.core.lifecycle as lifecycle
 
     assert "memorymaster.knowledge.wiki_engine" not in sys.modules
     assert lifecycle.on_claim_confirmed is None
@@ -117,8 +117,8 @@ def test_llm_provider_env_rotation_with_llm_steward_blocked() -> None:
     os.environ["MEMORYMASTER_LLM_KEY_ROTATION"] = "1"
     os.environ["MEMORYMASTER_LLM_API_KEYS"] = "pin-key-1,pin-key-2"
 
-    from memorymaster.llm_provider import _get_google_env_rotator
-    from memorymaster.key_rotator import RoundRobinKeyRotator
+    from memorymaster.core.llm_provider import _get_google_env_rotator
+    from memorymaster.core.key_rotator import RoundRobinKeyRotator
 
     rotator = _get_google_env_rotator()
     assert isinstance(rotator, RoundRobinKeyRotator)
@@ -140,7 +140,7 @@ def test_llm_steward_imports_with_store_factory_blocked() -> None:
         KeyRotator,
         _auto_validate_claims,
     )
-    from memorymaster.key_rotator import RoundRobinKeyRotator
+    from memorymaster.core.key_rotator import RoundRobinKeyRotator
 
     # Compat re-export: external callers keep importing KeyRotator from
     # llm_steward for one minor version.
@@ -187,8 +187,8 @@ def test_lifecycle_autopromote_fires_registered_hook(tmp_path: Path, monkeypatch
     """transition_claim must route autopromote through on_claim_confirmed —
     anchoring the inversion: lifecycle calls whatever was registered, it never
     resolves wiki_engine itself."""
-    from memorymaster import lifecycle
-    from memorymaster.lifecycle import transition_claim
+    from memorymaster.core import lifecycle
+    from memorymaster.core.lifecycle import transition_claim
 
     store, db, claim_id = _fresh_db(tmp_path)
     calls: list[tuple[int, str | None]] = []
@@ -211,8 +211,8 @@ def test_lifecycle_autopromote_fires_registered_hook(tmp_path: Path, monkeypatch
 def test_lifecycle_autopromote_noop_without_hook(tmp_path: Path, monkeypatch) -> None:
     """With no hook registered the threshold crossing is a silent no-op —
     the transition itself must still land (autopromote is a side-channel)."""
-    from memorymaster import lifecycle
-    from memorymaster.lifecycle import transition_claim
+    from memorymaster.core import lifecycle
+    from memorymaster.core.lifecycle import transition_claim
 
     store, _, claim_id = _fresh_db(tmp_path)
 
@@ -230,8 +230,8 @@ def test_wiring_modules_register_autopromote_hook() -> None:
     """Importing service (or wiki_engine) must leave a registered hook behind —
     production paths (run_cycle, CLI, MCP, steward-cycle schtask) all import
     service, so autopromote keeps firing exactly as before the cut."""
-    import memorymaster.service  # noqa: F401 — import is the wiring side effect
-    from memorymaster import lifecycle
+    import memorymaster.core.service  # noqa: F401 — import is the wiring side effect
+    from memorymaster.core import lifecycle
 
     assert lifecycle.on_claim_confirmed is not None
 

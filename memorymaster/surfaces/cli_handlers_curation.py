@@ -65,7 +65,7 @@ from memorymaster.surfaces.cli_helpers import (
     _json_error,
     print_claim,
 )
-from memorymaster.models import CitationInput
+from memorymaster.core.models import CitationInput
 
 
 def _handle_export_vault(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:

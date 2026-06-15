@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Mapping
 
-from memorymaster.config import get_config
-from memorymaster.models import Claim
+from memorymaster.core.config import get_config
+from memorymaster.core.models import Claim
 from memorymaster.recall.recall_fusion import RRF_K_DEFAULT, rrf_fuse
 
 RETRIEVAL_MODES = ("legacy", "hybrid")

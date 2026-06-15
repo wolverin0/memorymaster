@@ -10,11 +10,11 @@ import subprocess
 import time
 from typing import Any, Literal
 
-from memorymaster import observability
+from memorymaster.core import observability
 from memorymaster.govern import llm_budget
-from memorymaster.lifecycle import transition_claim
-from memorymaster.security import is_sensitive_claim
-from memorymaster.service import MemoryService
+from memorymaster.core.lifecycle import transition_claim
+from memorymaster.core.security import is_sensitive_claim
+from memorymaster.core.service import MemoryService
 import contextlib
 
 StewardMode = Literal["manual", "cadence"]

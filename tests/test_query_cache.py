@@ -11,11 +11,11 @@ import sqlite3
 
 import pytest
 
-import memorymaster.service as service_mod
+import memorymaster.core.service as service_mod
 from memorymaster.recall import query_cache
-from memorymaster.config import reset_config
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.config import reset_config
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 _NO_VECTOR = lambda q, c: {}  # noqa: E731 — keeps tests fast/deterministic (no embed model)
 

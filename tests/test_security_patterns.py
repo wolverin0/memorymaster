@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from memorymaster.security import _redact
+from memorymaster.core.security import _redact
 
 
 class TestExistingPatterns:
@@ -241,7 +241,7 @@ class TestRedactTextPublicApi:
     """Ensure the public redact_text re-export matches internal _redact."""
 
     def test_public_api_matches_internal(self):
-        from memorymaster.security import redact_text, _redact
+        from memorymaster.core.security import redact_text, _redact
         text = "sk-1234567890abcdefghij"
         pub_result, pub_findings = redact_text(text)
         priv_result, priv_findings = _redact(text)

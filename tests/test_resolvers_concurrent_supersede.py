@@ -6,8 +6,8 @@ from threading import Barrier
 
 from memorymaster.govern.auto_resolver import resolve_conflict_pair
 from memorymaster.govern.conflict_resolver import SupersessionRaceLost, supersede_claim
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 
 def _fresh_service(tmp_path: Path) -> MemoryService:

@@ -20,7 +20,7 @@ import sqlite3
 import pytest
 
 from memorymaster.govern import auto_resolver, candidate_dedupe, conflict_resolver, llm_steward
-from memorymaster.models import Claim
+from memorymaster.core.models import Claim
 
 
 # --------------------------------------------------------------------------- #

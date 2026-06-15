@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.models import CitationInput
+from memorymaster.core.models import CitationInput
 from memorymaster.stores.storage import SQLiteStore
 
 

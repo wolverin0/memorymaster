@@ -10,9 +10,9 @@ import argparse
 from dataclasses import asdict, is_dataclass
 import json
 
-from memorymaster.models import CitationInput
-from memorymaster.policy import POLICY_MODES
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.policy import POLICY_MODES
+from memorymaster.core.service import MemoryService
 
 STEALTH_DB_NAME = ".memorymaster-stealth.db"
 _SCORE_KEYS = ("score", "lexical_score", "confidence_score", "freshness_score", "vector_score")

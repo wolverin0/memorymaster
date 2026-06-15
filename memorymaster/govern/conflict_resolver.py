@@ -21,8 +21,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from memorymaster.stores._storage_shared import utc_now
-from memorymaster.lifecycle import can_transition
-from memorymaster.models import Claim
+from memorymaster.core.lifecycle import can_transition
+from memorymaster.core.models import Claim
 
 logger = logging.getLogger(__name__)
 

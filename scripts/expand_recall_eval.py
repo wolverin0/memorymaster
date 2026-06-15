@@ -38,7 +38,7 @@ if hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 from memorymaster.recall.recall_tokenizer import _candidate_tokens  # noqa: E402
-from memorymaster.security import redact_text  # noqa: E402
+from memorymaster.core.security import redact_text  # noqa: E402
 
 DEFAULT_TRANSCRIPTS = Path(
     os.path.expanduser(
@@ -229,7 +229,7 @@ def _label_prompts(new_records: list[PromptRecord],
     """
     # Lazy imports — the eval harness already knows how to collect candidates.
     from scripts.eval_recall_precision_at_5 import _fetch_candidates  # type: ignore
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     prior = os.environ.get("MEMORYMASTER_RECALL_VERBATIM")
     os.environ["MEMORYMASTER_RECALL_VERBATIM"] = "0"

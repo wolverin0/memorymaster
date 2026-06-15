@@ -18,8 +18,8 @@ from __future__ import annotations
 from pathlib import Path
 
 
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 TOKEN = "toctoutoken"
 
@@ -76,7 +76,7 @@ def _capture_semantic(svc: MemoryService, monkeypatch) -> dict:
         captured["semantic_vectors"] = kwargs.get("semantic_vectors")
         return []
 
-    monkeypatch.setattr("memorymaster.service.rank_claim_rows", fake_rank)
+    monkeypatch.setattr("memorymaster.core.service.rank_claim_rows", fake_rank)
     # Force the hybrid vector path: vector_hook is None + store exposes vector_scores.
     svc.store.vector_scores = lambda text, claims, provider: {}
     return captured

@@ -13,8 +13,8 @@ from typing import Iterator
 
 import pytest
 
-from memorymaster.lifecycle import transition_claim
-from memorymaster.models import CitationInput, Claim
+from memorymaster.core.lifecycle import transition_claim
+from memorymaster.core.models import CitationInput, Claim
 from memorymaster.stores.postgres_store import PostgresStore
 from memorymaster.stores.storage import SQLiteStore
 

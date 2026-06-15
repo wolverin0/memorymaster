@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from memorymaster.access_control import (
+from memorymaster.core.access_control import (
     DEFAULT_ROLE,
     Role,
     ROLE_PERMISSIONS,
@@ -87,7 +87,7 @@ class TestGetRole:
     def test_get_role_unknown_agent(self):
         """Unknown agent returns DEFAULT_ROLE (writer)."""
         # Reset module state
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -96,7 +96,7 @@ class TestGetRole:
 
     def test_get_role_none_agent(self):
         """None agent returns DEFAULT_ROLE."""
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -106,7 +106,7 @@ class TestGetRole:
     @patch.dict(os.environ, {"MEMORYMASTER_ROLE_DASHBOARD": "reader"})
     def test_get_role_from_environment(self):
         """get_role reads from environment variables."""
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -116,7 +116,7 @@ class TestGetRole:
     @patch.dict(os.environ, {"MEMORYMASTER_ROLE_AUDIT_AGENT": "admin"})
     def test_get_role_environment_underscore_conversion(self):
         """Environment variables convert underscores to hyphens."""
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -125,7 +125,7 @@ class TestGetRole:
 
     def test_get_role_case_insensitive(self):
         """Agent IDs are case-insensitive."""
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -140,7 +140,7 @@ class TestGetRole:
         config_file = tmp_path / "roles.json"
         config_file.write_text(json.dumps(config))
 
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -156,7 +156,7 @@ class TestGetRole:
         config_file = tmp_path / "roles.json"
         config_file.write_text(json.dumps(config))
 
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -170,7 +170,7 @@ class TestCheckPermission:
 
     def test_check_permission_admin(self):
         """Admin has all permissions."""
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -181,7 +181,7 @@ class TestCheckPermission:
 
     def test_check_permission_writer_ingest(self):
         """Writer can ingest."""
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -191,7 +191,7 @@ class TestCheckPermission:
 
     def test_check_permission_writer_no_delete(self):
         """Writer cannot delete."""
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -201,7 +201,7 @@ class TestCheckPermission:
 
     def test_check_permission_reader(self):
         """Reader can only query and export."""
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -213,7 +213,7 @@ class TestCheckPermission:
 
     def test_check_permission_unknown_agent(self):
         """Unknown agents are writers by default."""
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -223,7 +223,7 @@ class TestCheckPermission:
 
     def test_check_permission_none_agent(self):
         """None agent uses default role."""
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -236,7 +236,7 @@ class TestRequirePermission:
 
     def test_require_permission_allowed(self):
         """require_permission succeeds when allowed."""
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -247,7 +247,7 @@ class TestRequirePermission:
 
     def test_require_permission_denied_raises(self):
         """require_permission raises PermissionError when denied."""
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -260,7 +260,7 @@ class TestRequirePermission:
 
     def test_require_permission_error_message(self):
         """PermissionError has informative message."""
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -276,7 +276,7 @@ class TestRequirePermission:
 
     def test_require_permission_none_agent(self):
         """require_permission works with None agent."""
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -293,7 +293,7 @@ class TestPermissionWorkflow:
 
     def test_workflow_admin_full_access(self):
         """Admin workflow: full access to all operations."""
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -306,7 +306,7 @@ class TestPermissionWorkflow:
 
     def test_workflow_writer_ingestion(self):
         """Writer workflow: can ingest and query."""
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 
@@ -318,7 +318,7 @@ class TestPermissionWorkflow:
 
     def test_workflow_reader_readonly(self):
         """Reader workflow: query-only access."""
-        import memorymaster.access_control as ac
+        import memorymaster.core.access_control as ac
         ac._loaded = False
         ac._agent_roles.clear()
 

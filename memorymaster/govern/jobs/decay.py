@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from memorymaster import observability
-from memorymaster.config import get_config
-from memorymaster.lifecycle import transition_claim
+from memorymaster.core import observability
+from memorymaster.core.config import get_config
+from memorymaster.core.lifecycle import transition_claim
 
 def _parse_iso(dt: str) -> datetime:
     parsed = datetime.fromisoformat(dt)

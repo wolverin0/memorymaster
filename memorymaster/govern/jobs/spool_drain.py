@@ -32,9 +32,9 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from memorymaster import spool
+from memorymaster.core import spool
 from memorymaster.govern.jobs.integrity import _record
-from memorymaster.models import CitationInput
+from memorymaster.core.models import CitationInput
 
 logger = logging.getLogger(__name__)
 

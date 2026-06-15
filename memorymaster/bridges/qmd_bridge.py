@@ -1,5 +1,9 @@
 """QMD ↔ memorymaster claim mapping.
 
+Deprecated: P2 census found zero package importers and zero CLI/MCP/hook/script
+surface (test-only). Kept per operator verdict (KEEP-DEPRECATED, 2026-06-10);
+wire-or-remove decision deferred to P5 review.
+
 Bridges OpenClaw's QMD (Quick Memory Database) format with memorymaster claims.
 QMD stores memories as simple text entries with type/tier metadata.
 This module imports/exports between the two formats.
@@ -19,7 +23,7 @@ import json
 import logging
 from typing import Any
 
-from memorymaster.models import CitationInput
+from memorymaster.core.models import CitationInput
 
 logger = logging.getLogger(__name__)
 

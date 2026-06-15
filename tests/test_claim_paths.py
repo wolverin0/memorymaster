@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.models import CitationInput
-from memorymaster.service import MAX_CLAIM_PATH_HOPS, MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MAX_CLAIM_PATH_HOPS, MemoryService
 
 
 def _case_db(prefix: str) -> Path:

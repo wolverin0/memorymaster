@@ -11,7 +11,7 @@ import logging
 import sqlite3
 from typing import TYPE_CHECKING
 
-from memorymaster.models import (
+from memorymaster.core.models import (
     CitationInput,
     Claim,
     validate_event_payload,

@@ -6,9 +6,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from memorymaster import observability
+from memorymaster.core import observability
 from memorymaster.stores._storage_shared import ConcurrentModificationError
-from memorymaster.lifecycle import can_transition, transition_claim
+from memorymaster.core.lifecycle import can_transition, transition_claim
 
 
 def _utc_now_iso() -> str:

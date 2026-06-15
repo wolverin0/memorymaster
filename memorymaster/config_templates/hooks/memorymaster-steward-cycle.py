@@ -30,7 +30,7 @@ os.environ["MEMORYMASTER_DEDUPE_JACCARD_HIGH"] = "0.85"
 os.chdir(PROJECT_ROOT)
 
 try:
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
     from pathlib import Path
 
     svc = MemoryService(db_target=DB_PATH, workspace_root=Path(PROJECT_ROOT))

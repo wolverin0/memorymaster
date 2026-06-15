@@ -1,5 +1,10 @@
 """Query-to-wiki capture — save high-quality query results as wiki pages.
 
+Deprecated: P2 census found zero package importers — the documented
+``query --save-to-vault`` flag was never wired into cli.py (test-only surface).
+Kept per operator verdict (KEEP-DEPRECATED, 2026-06-10); wire-or-remove decision
+deferred to P5 review.
+
 When a query returns good results, the synthesized answer becomes a new
 wiki page. This compounds knowledge: future queries can reference previous
 answers without re-synthesizing.

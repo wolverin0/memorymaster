@@ -85,8 +85,8 @@ class TestJsonFlagEnvelope:
     def test_query_json_with_results(self, tmp_db: Path, capsys) -> None:
         main(["--db", str(tmp_db), "ingest", "--text", "Query target claim", "--source", "s"])
         # Confirm the claim so query finds it (query excludes candidates by default)
-        from memorymaster.lifecycle import transition_claim
-        from memorymaster.service import MemoryService
+        from memorymaster.core.lifecycle import transition_claim
+        from memorymaster.core.service import MemoryService
         svc = MemoryService(str(tmp_db), workspace_root=Path.cwd())
         transition_claim(svc.store, 1, "confirmed", reason="test", event_type="validator")
 

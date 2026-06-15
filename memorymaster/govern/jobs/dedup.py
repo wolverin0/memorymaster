@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity, create_best_provider
-from memorymaster.lifecycle import transition_claim
-from memorymaster.models import Claim
+from memorymaster.core.lifecycle import transition_claim
+from memorymaster.core.models import Claim
 
 logger = logging.getLogger(__name__)
 

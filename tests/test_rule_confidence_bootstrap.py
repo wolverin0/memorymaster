@@ -14,10 +14,10 @@ import sqlite3
 
 import pytest
 
-from memorymaster import llm_provider
+from memorymaster.core import llm_provider
 from memorymaster.knowledge import rule_miner
 from memorymaster.knowledge.rules import is_rule, parse_rule
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 _VERBATIM_DDL = """
 CREATE TABLE verbatim_memories (

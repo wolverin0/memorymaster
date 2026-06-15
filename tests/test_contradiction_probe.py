@@ -11,11 +11,11 @@ import math
 
 import pytest
 
-from memorymaster import llm_provider
+from memorymaster.core import llm_provider
 from memorymaster.govern import contradiction_probe
-from memorymaster.config import reset_config
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.config import reset_config
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 
 class _FakeProvider:

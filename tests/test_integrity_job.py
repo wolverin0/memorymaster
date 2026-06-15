@@ -23,8 +23,8 @@ import pytest
 from memorymaster.stores import snapshot
 from memorymaster.stores._storage_shared import open_conn
 from memorymaster.govern.jobs import deterministic, integrity, validator
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 from memorymaster.stores.storage import SQLiteStore
 
 

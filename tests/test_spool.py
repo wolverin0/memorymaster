@@ -19,10 +19,10 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster import spool
+from memorymaster.core import spool
 from memorymaster.govern.jobs import spool_drain
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 from memorymaster.stores.storage import SQLiteStore
 
 

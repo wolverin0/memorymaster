@@ -25,11 +25,11 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster import spool
+from memorymaster.core import spool
 from memorymaster.stores._storage_shared import open_conn
 from memorymaster.govern.jobs import spool_drain
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 # FTS5 AND-joins every token — the query must be fully contained in a
 # fixture claim or the legacy path matches nothing and records nothing.

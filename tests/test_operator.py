@@ -7,7 +7,7 @@ from typing import Any
 from pathlib import Path
 
 from memorymaster.surfaces.operator import HeuristicClaimExtractor, MemoryOperator, OperatorConfig, TurnInput, strip_private_blocks
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 
 def _case_db(prefix: str) -> Path:

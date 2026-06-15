@@ -280,7 +280,7 @@ def test_verify_with_llm_filters_out_false_positive_contradictions(
     _insert(db, text="db is sqlite", subject="db", predicate="is", object_value="sqlite", confidence=0.9)
     _insert(db, text="db is postgres", subject="db", predicate="is", object_value="postgres", confidence=0.6)
 
-    import memorymaster.llm_provider as llm
+    import memorymaster.core.llm_provider as llm
 
     monkeypatch.setattr(llm, "call_llm", lambda *a, **k: "[]")
     monkeypatch.setattr(

@@ -7,8 +7,8 @@ import re
 from datetime import date
 from urllib.parse import urlparse
 
-from memorymaster.models import Claim
-from memorymaster.lifecycle import transition_claim
+from memorymaster.core.models import Claim
+from memorymaster.core.lifecycle import transition_claim
 
 
 def open_store(db_path: str):

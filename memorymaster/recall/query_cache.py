@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from memorymaster.stores._storage_shared import open_conn
-from memorymaster.config import get_config
+from memorymaster.core.config import get_config
 
 logger = logging.getLogger(__name__)
 

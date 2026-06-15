@@ -70,7 +70,7 @@ def _load_claims(db_path: str, scope_filter: str | None = None) -> list[dict]:
 
 def _batch_categorize(claims: list[dict], batch_size: int = 20) -> dict[int, str]:
     """Call LLM to categorize claims into topics. Returns {claim_id: topic}."""
-    from memorymaster.llm_provider import call_llm, parse_json_response
+    from memorymaster.core.llm_provider import call_llm, parse_json_response
 
     result: dict[int, str] = {}
 

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from memorymaster.surfaces.operator import MemoryOperator, OperatorConfig
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 
 def _utc_now_iso() -> str:

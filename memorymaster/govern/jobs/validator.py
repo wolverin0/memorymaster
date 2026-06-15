@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import contextlib
 
-from memorymaster.config import get_config
-from memorymaster.lifecycle import transition_claim
-from memorymaster.models import Claim
+from memorymaster.core.config import get_config
+from memorymaster.core.lifecycle import transition_claim
+from memorymaster.core.models import Claim
 from memorymaster.govern.steward_classifier import load_classifier, predict_promote_probability
 
 # Calibrated-classifier decision threshold — the (precision>=0.95, max recall)

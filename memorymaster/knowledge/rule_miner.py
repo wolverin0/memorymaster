@@ -29,12 +29,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from memorymaster import llm_provider
+from memorymaster.core import llm_provider
 from memorymaster.govern import llm_budget
 from memorymaster.stores._storage_shared import open_conn
-from memorymaster.models import CitationInput
+from memorymaster.core.models import CitationInput
 from memorymaster.knowledge.rules import build_rule_fields
-from memorymaster.security import redact_text
+from memorymaster.core.security import redact_text
 
 logger = logging.getLogger(__name__)
 

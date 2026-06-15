@@ -14,7 +14,7 @@ import sys
 
 import pytest
 
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def service(tmp_path):
 @pytest.fixture
 def ingested_claim(service):
     """Create a claim so handlers that operate on a claim_id have something to work with."""
-    from memorymaster.models import CitationInput
+    from memorymaster.core.models import CitationInput
     claim = service.ingest(
         text="Regression-fixture claim",
         citations=[CitationInput(source="pytest")],
@@ -84,7 +84,7 @@ class TestHandleExtractClaims:
         """
         from memorymaster.surfaces import cli_handlers_curation
         assert hasattr(cli_handlers_curation, "_handle_extract_claims")
-        # The fix added `from memorymaster.models import CitationInput` at the top of
+        # The fix added `from memorymaster.core.models import CitationInput` at the top of
         # cli_handlers_curation — this getattr access fails if the module raised NameError
         # during import.
         assert cli_handlers_curation.CitationInput is not None

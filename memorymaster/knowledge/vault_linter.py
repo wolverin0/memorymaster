@@ -347,7 +347,7 @@ def _llm_verify_contradictions(contradictions: list[dict]) -> list[dict]:
         return contradictions
 
     try:
-        from memorymaster.llm_provider import call_llm, parse_json_response
+        from memorymaster.core.llm_provider import call_llm, parse_json_response
     except ImportError:
         return contradictions
 

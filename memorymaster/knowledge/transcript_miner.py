@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Any
 
 # Credential detection delegated to the canonical filter in
-# memorymaster.security — single source of truth.
-from memorymaster.security import redact_text as _redact_text
+# memorymaster.core.security — single source of truth.
+from memorymaster.core.security import redact_text as _redact_text
 
 logger = logging.getLogger(__name__)
 

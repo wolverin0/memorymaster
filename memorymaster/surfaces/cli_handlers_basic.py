@@ -33,7 +33,7 @@ from memorymaster.surfaces.cli_helpers import (
     print_claim,
 )
 from memorymaster.govern.scheduler import run_daemon
-from memorymaster.security import resolve_allow_sensitive_access
+from memorymaster.core.security import resolve_allow_sensitive_access
 
 
 def _handle_create_snapshot(args: argparse.Namespace, db_resolved: Path) -> int:

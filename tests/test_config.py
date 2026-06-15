@@ -1,4 +1,4 @@
-"""Tests for memorymaster.config — centralized tunable constants."""
+"""Tests for memorymaster.core.config — centralized tunable constants."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import tempfile
 
 import pytest
 
-from memorymaster.config import Config, get_config, load_config, reset_config, set_config
+from memorymaster.core.config import Config, get_config, load_config, reset_config, set_config
 
 
 @pytest.fixture(autouse=True)

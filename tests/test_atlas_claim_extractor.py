@@ -5,7 +5,7 @@ from pathlib import Path
 
 from memorymaster.bridges.atlas_claim_extractor import extract_atlas_claims_from_evidence
 from memorymaster.surfaces.cli import main
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 
 def test_extract_atlas_claims_creates_candidate_with_whatsapp_citation(tmp_path: Path) -> None:

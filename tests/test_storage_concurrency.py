@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 from memorymaster.stores.storage import SQLiteStore
 
 

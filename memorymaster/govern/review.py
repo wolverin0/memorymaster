@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import math
 
-from memorymaster.security import is_sensitive_claim
+from memorymaster.core.security import is_sensitive_claim
 
 
 @dataclass(slots=True)

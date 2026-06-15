@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from memorymaster.govern.jobs.dedup import find_duplicates
-from memorymaster.models import Claim
+from memorymaster.core.models import Claim
 
 
 class CountingProvider:

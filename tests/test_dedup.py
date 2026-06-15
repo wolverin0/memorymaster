@@ -11,8 +11,8 @@ from memorymaster.govern.jobs.dedup import (
     _text_overlap,
     find_duplicates,
 )
-from memorymaster.models import Claim
-from memorymaster.service import MemoryService
+from memorymaster.core.models import Claim
+from memorymaster.core.service import MemoryService
 
 
 @pytest.fixture(autouse=True)
@@ -20,7 +20,7 @@ def _mock_best_embedding_provider(monkeypatch):
     def provider_factory():
         return EmbeddingProvider(model="hash-v1", dims=768)
 
-    monkeypatch.setattr("memorymaster.service.create_best_provider", provider_factory)
+    monkeypatch.setattr("memorymaster.core.service.create_best_provider", provider_factory)
     monkeypatch.setattr("memorymaster.govern.jobs.dedup.create_best_provider", provider_factory)
 
 
@@ -217,7 +217,7 @@ class TestRunIntegration:
     _counter = 0
 
     def _ingest(self, service, text, **kwargs):
-        from memorymaster.models import CitationInput
+        from memorymaster.core.models import CitationInput
         TestRunIntegration._counter += 1
         defaults = {
             "citations": [CitationInput(source="test")],

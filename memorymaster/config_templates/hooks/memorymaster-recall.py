@@ -15,7 +15,7 @@ sys.path.insert(0, PROJECT_ROOT)
 os.environ["MEMORYMASTER_DEFAULT_DB"] = DB_PATH
 os.chdir(PROJECT_ROOT)
 
-from memorymaster.hook_log import log_hook  # noqa: E402 — import must follow sys.path bootstrap
+from memorymaster.core.hook_log import log_hook  # noqa: E402 — import must follow sys.path bootstrap
 
 try:
     data = json.loads(sys.stdin.read() or "{}")

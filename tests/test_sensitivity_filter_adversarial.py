@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.security import redact_text
+from memorymaster.core.security import redact_text
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "sensitivity_adversarial.jsonl"
 

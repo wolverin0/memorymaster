@@ -5,7 +5,7 @@ from pathlib import Path
 
 from memorymaster.bridges.action_exporters import export_approved_actions
 from memorymaster.surfaces.cli import main
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 
 def test_export_approved_actions_writes_bridge_file_and_marks_exported(tmp_path: Path) -> None:

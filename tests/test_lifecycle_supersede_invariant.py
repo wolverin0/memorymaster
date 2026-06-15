@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 
 from memorymaster.stores._storage_shared import ConcurrentModificationError
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 
 def _service(tmp_path: Path) -> MemoryService:

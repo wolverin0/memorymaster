@@ -21,7 +21,7 @@ from typing import Any
 
 import httpx
 
-from memorymaster.models import Claim
+from memorymaster.core.models import Claim
 
 logger = logging.getLogger(__name__)
 

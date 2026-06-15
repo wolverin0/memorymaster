@@ -17,7 +17,7 @@ from typing import Iterator
 
 import pytest
 
-from memorymaster import llm_provider
+from memorymaster.core import llm_provider
 from memorymaster.govern import llm_budget
 
 
@@ -179,7 +179,7 @@ def test_circuit_breaker_blocks_further_calls_to_same_provider(monkeypatch):
 def test_run_cycle_includes_budget_snapshot(tmp_path, monkeypatch):
     """When run_cycle completes without hitting any cap, the result dict
     still includes a budget snapshot with aborted=False."""
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     db_path = tmp_path / "mm.db"
     svc = MemoryService(db_target=db_path, workspace_root=tmp_path)
@@ -195,7 +195,7 @@ def test_run_cycle_surfaces_abort_when_calls_cap_hit(tmp_path, monkeypatch, capl
     """If something inside run_cycle calls call_llm beyond the cap, the
     result dict's budget block reports aborted=True with the reason —
     and the abort is logged at WARNING."""
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     # Force any LLM call to fire — and inject an extractor-like usage by
     # directly invoking call_llm inside a fake stage. We can't easily make
@@ -220,7 +220,7 @@ def test_run_cycle_surfaces_abort_when_calls_cap_hit(tmp_path, monkeypatch, capl
     svc = MemoryService(db_target=db_path, workspace_root=tmp_path)
     svc.init_db()
 
-    with caplog.at_level(logging.WARNING, logger="memorymaster.service"):
+    with caplog.at_level(logging.WARNING, logger="memorymaster.core.service"):
         result = svc.run_cycle()
 
     budget = result["budget"]

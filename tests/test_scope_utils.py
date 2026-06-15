@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.scope_utils import (
+from memorymaster.core.scope_utils import (
     cwd_from_transcript,
     scope_from_cwd,
     scope_from_transcript,

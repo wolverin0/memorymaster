@@ -15,14 +15,14 @@ from typing import Any
 from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity
 # P2 phase0: KeyRotator's real home is key_rotator (RoundRobinKeyRotator);
 # llm_steward only re-exports it for external compat.
-from memorymaster.key_rotator import RoundRobinKeyRotator as KeyRotator
+from memorymaster.core.key_rotator import RoundRobinKeyRotator as KeyRotator
 from memorymaster.govern.llm_steward import (
     PROVIDERS,
     _call_llm,
     _parse_extractions,
 )
-from memorymaster.models import CitationInput
-from memorymaster.security import redact_text
+from memorymaster.core.models import CitationInput
+from memorymaster.core.security import redact_text
 
 log = logging.getLogger(__name__)
 
@@ -380,7 +380,7 @@ def run(
                 )
 
                 # Transition summary claim to confirmed status
-                from memorymaster.lifecycle import transition_claim
+                from memorymaster.core.lifecycle import transition_claim
                 transition_claim(
                     store,
                     claim_id=summary_claim.id,

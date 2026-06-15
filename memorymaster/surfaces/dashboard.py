@@ -20,10 +20,10 @@ import urllib.request
 from urllib.parse import parse_qs, urlparse
 
 from memorymaster.surfaces import dashboard_auth
-from memorymaster.config import get_config
+from memorymaster.core.config import get_config
 from memorymaster.govern.review import build_review_queue, queue_to_dicts
-from memorymaster.security import is_sensitive_claim
-from memorymaster.service import MemoryService
+from memorymaster.core.security import is_sensitive_claim
+from memorymaster.core.service import MemoryService
 import contextlib
 
 

@@ -79,7 +79,7 @@ def main():
 
     # INIT: MemoryService(db_target=...).init_db() -- time call 1 (cold-ish) and
     # call 2 (warm = MCP boot cost on an already-initialized DB).
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
     init_err = None
     init1_s = init2_s = None
     try:

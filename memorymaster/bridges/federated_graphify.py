@@ -1,5 +1,11 @@
 """Federated graphify — cross-project knowledge graph queries (v3.9.0 F7).
 
+Deprecated: P2 census found zero package importers (test-only surface) and the
+live MCP ``federated_query`` / CLI ``federated-query`` paths route through
+``service.federated_query``, not this module — superseded-by-service.federated_query.
+Kept per operator verdict (KEEP-DEPRECATED, 2026-06-10); wire-or-remove decision
+deferred to P5 review.
+
 Ports graphify v0.5.0's ``merge-graphs`` concept into a MemoryMaster MCP
 helper. Walks a list of project roots, looks for ``graphify-out/graph.json``
 in each, merges nodes + edges with a per-node ``repo`` tag, and returns the

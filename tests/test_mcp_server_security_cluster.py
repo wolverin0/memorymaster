@@ -10,12 +10,12 @@ import base64
 import pytest
 
 import memorymaster.surfaces.mcp_server as mcp_server
-from memorymaster.security import (
+from memorymaster.core.security import (
     expand_secret_scan_variants,
     sanitize_claim_input,
     scan_text_for_findings,
 )
-from memorymaster.models import CitationInput
+from memorymaster.core.models import CitationInput
 
 
 _OPENAI_SECRET = "sk-ABCDEFGHIJKLMNOPQRSTUVWX"  # openai_key-shaped synthetic value

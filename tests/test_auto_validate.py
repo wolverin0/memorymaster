@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from memorymaster.govern.llm_steward import _auto_validate_claims, run_steward
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 
 def _make_db(prefix: str) -> str:

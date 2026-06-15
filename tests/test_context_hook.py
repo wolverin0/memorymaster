@@ -66,7 +66,7 @@ class TestClassifyObservation:
 class TestRecall:
     """Test memory recall function (mocked)."""
 
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.core.service.MemoryService")
     def test_recall_with_results(self, mock_service_class: MagicMock) -> None:
         """Recall should return formatted context when claims are found."""
         mock_service = MagicMock()
@@ -86,7 +86,7 @@ class TestRecall:
         assert result.startswith("# Memory Context")
         mock_service.query_rows.assert_called_once()
 
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.core.service.MemoryService")
     def test_recall_no_results(self, mock_service_class: MagicMock) -> None:
         """Recall should return empty string when no claims found."""
         mock_service = MagicMock()
@@ -97,7 +97,7 @@ class TestRecall:
 
         assert result == ""
 
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.core.service.MemoryService")
     def test_recall_with_custom_budget(self, mock_service_class: MagicMock) -> None:
         """Recall should respect custom token budget."""
         mock_service = MagicMock()
@@ -113,7 +113,7 @@ class TestRecall:
 
         assert "a" * 200 in result
 
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.core.service.MemoryService")
     def test_recall_sanitizes_non_ascii(self, mock_service_class: MagicMock) -> None:
         """Recall should sanitize non-ASCII characters for Windows console."""
         mock_service = MagicMock()
@@ -134,7 +134,7 @@ class TestRecall:
 class TestObserve:
     """Test observation ingestion (mocked)."""
 
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.core.service.MemoryService")
     def test_observe_with_pattern_match(self, mock_service_class: MagicMock) -> None:
         """Observe should ingest text that matches a pattern."""
         mock_service = MagicMock()
@@ -156,7 +156,7 @@ class TestObserve:
         assert call_kwargs["claim_type"] == "decision"
         assert call_kwargs["source_agent"] == "context-hook"
 
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.core.service.MemoryService")
     def test_observe_no_pattern_match_with_auto_classify(self, mock_service_class: MagicMock) -> None:
         """Observe should skip ingestion if text doesn't match pattern and auto_classify=True."""
         mock_service = MagicMock()
@@ -169,7 +169,7 @@ class TestObserve:
         assert result["reason"] == "no_pattern_match"
         mock_service.ingest.assert_not_called()
 
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.core.service.MemoryService")
     def test_observe_force_ingest_without_pattern(self, mock_service_class: MagicMock) -> None:
         """Observe should ingest even without pattern match if force=True."""
         mock_service = MagicMock()
@@ -185,7 +185,7 @@ class TestObserve:
         assert result["claim_type"] == "fact"
         assert result["claim_id"] == 99
 
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.core.service.MemoryService")
     def test_observe_auto_classify_false(self, mock_service_class: MagicMock) -> None:
         """Observe should ingest regardless of pattern if auto_classify=False."""
         mock_service = MagicMock()
@@ -201,7 +201,7 @@ class TestObserve:
         assert result["claim_type"] == "fact"
         assert result["claim_id"] == 77
 
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.core.service.MemoryService")
     def test_observe_truncates_long_text(self, mock_service_class: MagicMock) -> None:
         """Observe should truncate text to 2000 chars."""
         mock_service = MagicMock()
@@ -217,7 +217,7 @@ class TestObserve:
         call_kwargs = mock_service.ingest.call_args.kwargs
         assert len(call_kwargs["text"]) <= 2000
 
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.core.service.MemoryService")
     def test_observe_handles_ingest_failure(self, mock_service_class: MagicMock) -> None:
         """Observe should handle exceptions during ingestion gracefully."""
         mock_service = MagicMock()
@@ -229,7 +229,7 @@ class TestObserve:
         assert result["ingested"] is False
         assert "DB error" in result.get("reason", "")
 
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.core.service.MemoryService")
     def test_observe_with_custom_scope(self, mock_service_class: MagicMock) -> None:
         """Observe should respect custom scope parameter."""
         mock_service = MagicMock()
@@ -244,7 +244,7 @@ class TestObserve:
         call_kwargs = mock_service.ingest.call_args.kwargs
         assert call_kwargs["scope"] == "personal"
 
-    @patch("memorymaster.service.MemoryService")
+    @patch("memorymaster.core.service.MemoryService")
     def test_observe_sets_confidence(self, mock_service_class: MagicMock) -> None:
         """Observe should set confidence to 0.6."""
         mock_service = MagicMock()

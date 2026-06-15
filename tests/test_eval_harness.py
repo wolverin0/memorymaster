@@ -27,8 +27,8 @@ from pathlib import Path
 import pytest
 
 from memorymaster.recall.context_hook import recall
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 REPO = Path(__file__).resolve().parent.parent
 HARNESS_PATH = REPO / "scripts" / "eval_recall_precision_at_5.py"

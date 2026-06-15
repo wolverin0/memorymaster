@@ -16,8 +16,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 PROJECTS_ROOT = Path(os.environ.get("PROJECTS_ROOT", "."))
 DB_PATH = PROJECTS_ROOT / "memorymaster" / "memorymaster.db"

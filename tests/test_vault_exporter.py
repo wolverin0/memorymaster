@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 
-from memorymaster.models import Claim
+from memorymaster.core.models import Claim
 from memorymaster.knowledge.vault_exporter import _claim_to_markdown, _safe_dirname, export_vault
 
 

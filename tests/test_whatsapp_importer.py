@@ -5,7 +5,7 @@ from pathlib import Path
 
 from memorymaster.surfaces.cli import main
 from memorymaster.bridges.connectors.whatsapp import import_wacli_json
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 
 def test_wacli_import_creates_source_items_and_text_evidence(tmp_path: Path) -> None:

@@ -242,8 +242,8 @@ def test_rollback_run_cycle_survives_missing_artifact(tmp_path, monkeypatch):
     monkeypatch.setenv("MEMORYMASTER_STEWARD_CLASSIFIER_PATH", str(missing))
     reset_cache()
 
-    from memorymaster.models import CitationInput
-    from memorymaster.service import MemoryService
+    from memorymaster.core.models import CitationInput
+    from memorymaster.core.service import MemoryService
 
     db_path = tmp_path / "memorymaster_rollback.db"
     svc = MemoryService(str(db_path), workspace_root=tmp_path)

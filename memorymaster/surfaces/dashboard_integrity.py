@@ -26,7 +26,7 @@ from memorymaster.govern.jobs.integrity import (
 )
 from memorymaster.govern.jobs.qdrant_reconcile import MARKER_DRIFT
 from memorymaster.govern.jobs.spool_drain import MARKER_DRAIN
-from memorymaster.spool import pending_depth
+from memorymaster.core.spool import pending_depth
 
 
 def _latest_marker_payload(

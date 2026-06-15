@@ -53,7 +53,7 @@ from memorymaster.knowledge.entity_registry import (  # noqa: E402
     ensure_entity_schema,
     resolve_or_create,
 )
-from memorymaster.security import redact_text  # noqa: E402
+from memorymaster.core.security import redact_text  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

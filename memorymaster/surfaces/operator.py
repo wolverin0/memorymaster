@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 from memorymaster.surfaces.turn_schema import normalize_turn_row
 
 _SPACE_RE = re.compile(r"\s+")

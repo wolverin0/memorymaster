@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from memorymaster.models import EvidenceItem
+from memorymaster.core.models import EvidenceItem
 
 
 @dataclass(frozen=True)

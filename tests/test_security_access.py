@@ -1,4 +1,4 @@
-"""Tests for memorymaster.security — access control, bypass, encryption."""
+"""Tests for memorymaster.core.security — access control, bypass, encryption."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from memorymaster.models import CitationInput
-from memorymaster.security import (
+from memorymaster.core.models import CitationInput
+from memorymaster.core.security import (
     _as_bool,
     _encrypt_payload,
     _get_fernet,
@@ -92,23 +92,23 @@ class TestResolveAllowSensitiveAccess:
         assert resolve_allow_sensitive_access(allow_sensitive=False, context="test") is False
 
     def test_allowed_with_bypass(self):
-        with patch("memorymaster.security.is_sensitive_bypass_enabled", return_value=True):
+        with patch("memorymaster.core.security.is_sensitive_bypass_enabled", return_value=True):
             assert resolve_allow_sensitive_access(allow_sensitive=True, context="test") is True
 
     def test_denied_raises(self):
-        with patch("memorymaster.security.is_sensitive_bypass_enabled", return_value=False):
+        with patch("memorymaster.core.security.is_sensitive_bypass_enabled", return_value=False):
             with pytest.raises(PermissionError, match="allow_sensitive access denied"):
                 resolve_allow_sensitive_access(allow_sensitive=True, context="test")
 
     def test_filter_mode_returns_false(self):
-        with patch("memorymaster.security.is_sensitive_bypass_enabled", return_value=False):
+        with patch("memorymaster.core.security.is_sensitive_bypass_enabled", return_value=False):
             result = resolve_allow_sensitive_access(
                 allow_sensitive=True, context="test", deny_mode="filter"
             )
             assert result is False
 
     def test_invalid_deny_mode_raises(self):
-        with patch("memorymaster.security.is_sensitive_bypass_enabled", return_value=False):
+        with patch("memorymaster.core.security.is_sensitive_bypass_enabled", return_value=False):
             with pytest.raises(ValueError, match="deny_mode"):
                 resolve_allow_sensitive_access(
                     allow_sensitive=True, context="test", deny_mode="invalid"
@@ -195,7 +195,7 @@ class TestSanitizeClaimInput:
 
 class TestIsSensitiveClaim:
     def test_redacted_claim_is_sensitive(self):
-        from memorymaster.models import Claim
+        from memorymaster.core.models import Claim
         claim = Claim(
             id=1, text="[REDACTED:openai_key]", idempotency_key=None,
             normalized_text=None, claim_type=None, subject=None, predicate=None,
@@ -207,7 +207,7 @@ class TestIsSensitiveClaim:
         assert is_sensitive_claim(claim) is True
 
     def test_clean_claim_not_sensitive(self):
-        from memorymaster.models import Claim
+        from memorymaster.core.models import Claim
         claim = Claim(
             id=1, text="Python is great", idempotency_key=None,
             normalized_text=None, claim_type=None, subject=None, predicate=None,

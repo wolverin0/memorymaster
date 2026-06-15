@@ -113,8 +113,8 @@ class SoakRun:
 
 def _seed_synthetic_fixture(db: Path) -> None:
     """Small schema-identical fixture for smoke/dev runs without a live slice."""
-    from memorymaster.models import CitationInput
-    from memorymaster.service import MemoryService
+    from memorymaster.core.models import CitationInput
+    from memorymaster.core.service import MemoryService
     from memorymaster.recall.verbatim_store import ensure_verbatim_schema
 
     svc = MemoryService(db)
@@ -249,9 +249,9 @@ def _wal_bytes(db: Path) -> int:
 
 def _final_drain(db: Path) -> dict[str, object]:
     """Drain any spool residue through the normal paths (rollback guarantee §5)."""
-    from memorymaster import spool
+    from memorymaster.core import spool
     from memorymaster.govern.jobs import spool_drain
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     svc = MemoryService(db)
     last: dict[str, object] = {}

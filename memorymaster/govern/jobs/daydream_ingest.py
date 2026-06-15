@@ -7,8 +7,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 logger = logging.getLogger(__name__)
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Aggregate recall-hook latency samples (roadmap 5.1).
 
-Reads a ``hook.log`` produced by ``memorymaster.hook_log.log_hook`` and prints
+Reads a ``hook.log`` produced by ``memorymaster.core.hook_log.log_hook`` and prints
 an operator-friendly p50/p99/mean/count table per retrieval stream.
 
 Usage:
@@ -11,7 +11,7 @@ Usage:
 Stdlib-only. Does not mutate the log. Silently ignores malformed lines so a
 corrupt tail never hides good data earlier in the file.
 
-Log line format (from ``memorymaster.hook_log.log_hook``)::
+Log line format (from ``memorymaster.core.hook_log.log_hook``)::
 
     [HH:MM:SS] hook=recall event=latency stream=fts5 ms=12.345
     [HH:MM:SS] hook=recall event=latency_total total_ms=42.1 fts5_ms=12.3 ...

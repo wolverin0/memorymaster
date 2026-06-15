@@ -31,11 +31,11 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster import spool
+from memorymaster.core import spool
 from memorymaster.stores._storage_shared import open_conn
 from memorymaster.bridges.dream_bridge import dream_ingest
 from memorymaster.govern.jobs import spool_drain
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 from memorymaster.recall.verbatim_store import (
     ensure_verbatim_schema,
     spool_transcript,
@@ -442,7 +442,7 @@ def test_auto_ingest_template_spools_llm_learnings_as_ingest_envelopes(
     monkeypatch.setenv("MEMORYMASTER_WAL_DISCIPLINE", "1")
     module = _import_template(project_root, tmp_path / "auto_ingest_mod.py", "mm_tpl_learnings")
 
-    import memorymaster.llm_provider as llm_provider
+    import memorymaster.core.llm_provider as llm_provider
     fake_learning = json.dumps([{
         "text": "The steward cycle truncates the WAL before taking snapshots",
         "claim_type": "fact",

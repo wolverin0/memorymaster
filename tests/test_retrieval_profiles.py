@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import pytest
 
-from memorymaster.config import reset_config, get_config
-from memorymaster.models import Claim
+from memorymaster.core.config import reset_config, get_config
+from memorymaster.core.models import Claim
 from memorymaster.recall.retrieval import rank_claim_rows
 
 

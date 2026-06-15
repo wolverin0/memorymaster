@@ -10,7 +10,7 @@ from memorymaster.bridges.media_processing import (
     process_ocr,
     process_transcription,
 )
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 
 class FailingTranscriptionProvider:

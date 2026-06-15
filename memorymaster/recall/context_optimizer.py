@@ -14,7 +14,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from memorymaster.models import Claim
+from memorymaster.core.models import Claim
 
 OUTPUT_FORMATS = ("text", "xml", "json")
 PROVIDERS = ("claude_cli", "google", "openai", "anthropic", "ollama", "auto")

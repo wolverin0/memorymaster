@@ -3,7 +3,7 @@
 When two claims contradict (same subject/predicate, different object_value),
 asks an LLM to evaluate which one has stronger evidence and should be kept.
 
-Provider routing goes through `memorymaster.llm_provider.call_llm`, which
+Provider routing goes through `memorymaster.core.llm_provider.call_llm`, which
 honors `MEMORYMASTER_LLM_PROVIDER` (claude_cli / google / openai / anthropic
 / ollama) instead of the previous hardcoded Ollama-only path. The loser
 gets superseded, not deleted — preserving full audit trail.
@@ -16,9 +16,9 @@ import logging
 from typing import Any
 
 from memorymaster.stores._storage_shared import ConcurrentModificationError
-from memorymaster.lifecycle import transition_claim
-from memorymaster.llm_provider import call_llm
-from memorymaster.models import Claim
+from memorymaster.core.lifecycle import transition_claim
+from memorymaster.core.llm_provider import call_llm
+from memorymaster.core.models import Claim
 
 logger = logging.getLogger(__name__)
 

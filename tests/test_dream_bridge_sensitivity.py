@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from memorymaster.bridges.dream_bridge import dream_ingest
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 
 def _init_db(tmp_path: Path) -> Path:

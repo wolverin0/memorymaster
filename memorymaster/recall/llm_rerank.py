@@ -11,7 +11,7 @@ from typing import Any
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from memorymaster.llm_provider import call_llm, parse_json_response, use_call_scoped_env
+from memorymaster.core.llm_provider import call_llm, parse_json_response, use_call_scoped_env
 
 logger = logging.getLogger(__name__)
 

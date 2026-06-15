@@ -627,7 +627,7 @@ def _canonical_llm(kind: str, surface: str) -> str:
 
 def _parse_llm_payload(raw: str) -> list[dict]:
     """Defensive wrapper around parse_json_response — returns []  on failure."""
-    from memorymaster.llm_provider import parse_json_response
+    from memorymaster.core.llm_provider import parse_json_response
 
     try:
         parsed = parse_json_response(raw)
@@ -649,7 +649,7 @@ def extract_llm(text: str, *, provider: str | None = None) -> list[Entity]:
 
     Gated by the ``MEMORYMASTER_ENTITY_LLM`` env var. When unset or falsy,
     this is a no-op that returns ``[]``. When enabled, calls the configured
-    LLM provider (see ``memorymaster.llm_provider.call_llm``) and parses
+    LLM provider (see ``memorymaster.core.llm_provider.call_llm``) and parses
     a JSON array of ``{kind, surface_form, aliases}`` objects.
 
     Idempotent for a given ``(text, LLM_PROMPT_VERSION, model_version)``
@@ -682,7 +682,7 @@ def extract_llm(text: str, *, provider: str | None = None) -> list[Entity]:
     if provider:
         os.environ["MEMORYMASTER_LLM_PROVIDER"] = provider
     try:
-        from memorymaster.llm_provider import call_llm
+        from memorymaster.core.llm_provider import call_llm
 
         try:
             raw = call_llm(_LLM_PROMPT, snippet)

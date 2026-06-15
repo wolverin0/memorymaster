@@ -180,7 +180,7 @@ def quick_check(
             )
         _record(store, MARKER_CHECK_FAILED, {"rows": rows[:10]})
         with contextlib.suppress(Exception):
-            from memorymaster.webhook import fire_webhook
+            from memorymaster.core.webhook import fire_webhook
 
             fire_webhook("integrity_check_failed", {"db": str(db_path), "rows": rows[:10]})
         logger.error("integrity quick_check FAILED for %s: %s", db_path, rows[:5])
@@ -315,7 +315,7 @@ def emit_metrics(
     db_path = db_path or getattr(store, "db_path", None)
     if not db_path or not Path(db_path).exists():
         return {"skipped": "no_sqlite_db"}
-    from memorymaster import spool
+    from memorymaster.core import spool
 
     integ = cycle_result.get("integrity")
     integ = integ if isinstance(integ, dict) else {}

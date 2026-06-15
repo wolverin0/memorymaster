@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity
-from memorymaster.models import (
+from memorymaster.core.models import (
     CLAIM_LINK_TYPES,
     CLAIM_STATUSES,
     STATUS_TRANSITION_EVENT_TYPES,
@@ -283,7 +283,7 @@ class _LifecycleMixin:
                     continue
                 if from_status == to_status:
                     continue
-                from memorymaster.lifecycle import ALLOWED_TRANSITIONS
+                from memorymaster.core.lifecycle import ALLOWED_TRANSITIONS
 
                 if to_status not in ALLOWED_TRANSITIONS.get(str(from_status), set()):
                     transition_issues.append(

@@ -276,7 +276,7 @@ def test_init_db_closes_its_connections_deterministically(tmp_path):
     """
     import os
 
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     db = tmp_path / "closes.db"
     svc = MemoryService(db)

@@ -6,7 +6,7 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 
-from memorymaster.models import Claim
+from memorymaster.core.models import Claim
 from memorymaster.recall.qdrant_backend import QdrantBackend, EMBEDDING_DIMS
 
 
@@ -309,10 +309,10 @@ class TestServiceQdrantIntegration:
 
     def test_qdrant_sync_noop_when_none(self):
         """_qdrant_sync should not raise when qdrant is None."""
-        from memorymaster.service import MemoryService
+        from memorymaster.core.service import MemoryService
         # Patch create_store and create_best_provider to avoid DB
-        with patch("memorymaster.service.create_store"), \
-             patch("memorymaster.service.create_best_provider"):
+        with patch("memorymaster.core.service.create_store"), \
+             patch("memorymaster.core.service.create_best_provider"):
             svc = MemoryService.__new__(MemoryService)
             svc.qdrant = None
             claim = _fake_claim()

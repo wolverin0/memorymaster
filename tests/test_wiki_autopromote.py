@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from memorymaster.lifecycle import transition_claim
+from memorymaster.core.lifecycle import transition_claim
 from memorymaster.stores.storage import SQLiteStore
 from memorymaster.knowledge.wiki_engine import absorb_single_claim
 

@@ -265,7 +265,7 @@ class TestMcpToolsIntegration:
         self.workspace = str(tmp_path)
 
     def _init_service(self):
-        from memorymaster.service import MemoryService
+        from memorymaster.core.service import MemoryService
         svc = MemoryService(db_target=self.db_path, workspace_root=Path(self.workspace))
         svc.init_db()
         return svc

@@ -26,7 +26,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from memorymaster.hook_log import log_hook
+from memorymaster.core.hook_log import log_hook
 
 logger = logging.getLogger(__name__)
 
@@ -723,7 +723,7 @@ def _harvest_graph_rows(
     never raises into the recall hot path (claim 11907 silent-fail).
     """
     try:
-        from memorymaster.security import is_sensitive_claim
+        from memorymaster.core.security import is_sensitive_claim
     except Exception:  # pragma: no cover - security module is core
         is_sensitive_claim = lambda _claim: False  # type: ignore[assignment]  # noqa: E731
 
@@ -824,7 +824,7 @@ def _wal_discipline_enabled() -> bool:
     spooled for the steward drain instead of UPDATEd inline. Flag off =
     the untouched legacy RW path.
     """
-    from memorymaster.spool import wal_discipline_enabled
+    from memorymaster.core.spool import wal_discipline_enabled
 
     return wal_discipline_enabled()
 
@@ -1042,7 +1042,7 @@ def _apply_vector_fallback(
 
     # Lazy security check — mirrors the entity fanout treatment.
     try:
-        from memorymaster.security import is_sensitive_claim
+        from memorymaster.core.security import is_sensitive_claim
     except Exception:
         is_sensitive_claim = lambda _claim: False  # type: ignore[assignment]  # noqa: E731
 
@@ -1149,7 +1149,7 @@ def recall(
     ``return_ids`` defaults to ``False`` so every existing caller — MCP
     tools, CLI, hooks — gets the legacy ``str`` return type unchanged.
     """
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     # Retrieval latency instrumentation (roadmap 5.1). ``phase_ms`` records
     # per-stream wall-clock durations in milliseconds. Each entry is emitted
@@ -1260,7 +1260,7 @@ def query_for_task(
     # Use MemoryService.query_for_context directly so we can pass scope_allowlist —
     # recall() doesn't expose that parameter. Scope filtering is essential for
     # task briefings: claims from other projects would be noise.
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     db = db_path or os.environ.get("MEMORYMASTER_DEFAULT_DB") or "memorymaster.db"
     svc = MemoryService(db_target=db, workspace_root=Path.cwd())
@@ -1414,7 +1414,7 @@ def _recall_impl(
             # Lazy import so legacy callers without the security module still
             # work — fanout is a best-effort layer.
             try:
-                from memorymaster.security import is_sensitive_claim
+                from memorymaster.core.security import is_sensitive_claim
             except Exception:
                 is_sensitive_claim = lambda _claim: False  # type: ignore[assignment]  # noqa: E731
             fanout_ids = _entity_fanout_claim_ids(svc.store, query, seen_ids)
@@ -2104,7 +2104,7 @@ def observe(
     Returns: {"ingested": bool, "claim_type": str, "claim_id": int | None}
     """
     if scope is None:
-        from memorymaster.scope_utils import scope_from_cwd
+        from memorymaster.core.scope_utils import scope_from_cwd
         scope = scope_from_cwd(Path.cwd())
     # Check if worth remembering
     claim_type = None
@@ -2116,8 +2116,8 @@ def observe(
     if not claim_type:
         claim_type = "fact"
 
-    from memorymaster.models import CitationInput
-    from memorymaster.service import MemoryService
+    from memorymaster.core.models import CitationInput
+    from memorymaster.core.service import MemoryService
 
     db = db_path or os.environ.get("MEMORYMASTER_DEFAULT_DB") or "memorymaster.db"
     svc = MemoryService(db_target=db, workspace_root=Path.cwd())
@@ -2151,11 +2151,11 @@ def observe_llm(
     observe() docstring for the F-5 background.
     """
     if scope is None:
-        from memorymaster.scope_utils import scope_from_cwd
+        from memorymaster.core.scope_utils import scope_from_cwd
         scope = scope_from_cwd(Path.cwd())
     from memorymaster.knowledge.auto_extractor import extract_claims_from_text
-    from memorymaster.models import CitationInput
-    from memorymaster.service import MemoryService
+    from memorymaster.core.models import CitationInput
+    from memorymaster.core.service import MemoryService
 
     db = db_path or os.environ.get("MEMORYMASTER_DEFAULT_DB") or "memorymaster.db"
 

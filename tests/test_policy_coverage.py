@@ -1,4 +1,4 @@
-"""Tests for memorymaster.policy — coverage gaps."""
+"""Tests for memorymaster.core.policy — coverage gaps."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from memorymaster.policy import (
+from memorymaster.core.policy import (
     _age_seconds,
     _parse_iso,
     select_revalidation_candidates,

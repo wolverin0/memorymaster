@@ -118,7 +118,7 @@ def stub_llm(monkeypatch):
             "fifty characters so the length guard passes cleanly."
         )
 
-    import memorymaster.llm_provider as llm_provider
+    import memorymaster.core.llm_provider as llm_provider
 
     monkeypatch.setattr(llm_provider, "call_llm", _fake, raising=False)
     return calls

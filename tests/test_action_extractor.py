@@ -5,7 +5,7 @@ from pathlib import Path
 
 from memorymaster.bridges.action_extractor import propose_actions_from_evidence
 from memorymaster.surfaces.cli import main
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 
 def test_propose_actions_from_whatsapp_evidence_is_idempotent(tmp_path: Path) -> None:

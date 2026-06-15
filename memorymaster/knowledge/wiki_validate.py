@@ -1,5 +1,10 @@
 """Wiki article validator + auto-fixer (v3.9.0 F4, ported from gbrain v0.22.4).
 
+Deprecated: P2 census found zero package importers — the installed
+memorymaster-validate-wiki hook reimplements validation inline and does NOT
+import this module (test-only surface plus own ``__main__``). Kept per operator
+verdict (KEEP-DEPRECATED, 2026-06-10); wire-or-remove decision deferred to P5 review.
+
 Inspects an Obsidian-vault wiki article (.md with YAML frontmatter) and
 reports schema violations. With ``--fix``, auto-corrects the four fixable
 codes; for the rest, exits non-zero so a CI/git-hook gate can refuse the

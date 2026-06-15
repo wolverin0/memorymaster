@@ -108,7 +108,7 @@ def test_row_to_claim_reads_wiki_article(tmp_path: Path) -> None:
 def test_recall_appends_wiki_pointer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Recall formatter should append `(compiled in [[slug]])` for bound claims."""
     from memorymaster.recall import context_hook
-    from memorymaster.models import Claim
+    from memorymaster.core.models import Claim
 
     sample = Claim(
         id=1,
@@ -140,7 +140,7 @@ def test_recall_appends_wiki_pointer(tmp_path: Path, monkeypatch: pytest.MonkeyP
     def _fake_ctor(db_target: str, workspace_root: Path):  # noqa: ARG001
         return _FakeService()
 
-    monkeypatch.setattr("memorymaster.service.MemoryService", _fake_ctor)
+    monkeypatch.setattr("memorymaster.core.service.MemoryService", _fake_ctor)
 
     out = context_hook.recall("qdrant", db_path=str(tmp_path / "nope.db"), skip_qdrant=True)
     assert "[[qdrant]]" in out

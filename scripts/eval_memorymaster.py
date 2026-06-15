@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 
 def utc_now() -> str:
@@ -128,7 +128,7 @@ def run_step(step: dict[str, Any], service: MemoryService, db_path: Path, cycle_
     if action == "ingest":
         sources = step.get("sources", [])
         citations = []
-        from memorymaster.models import CitationInput
+        from memorymaster.core.models import CitationInput
 
         for raw in sources:
             parts = [part.strip() for part in str(raw).split("|", 2)]

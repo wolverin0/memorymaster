@@ -14,9 +14,9 @@ from unittest.mock import patch
 
 import pytest
 
-from memorymaster.access_control import Role, require_permission, set_role
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.access_control import Role, require_permission, set_role
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 from memorymaster.knowledge.vault_exporter import export_vault
 
 

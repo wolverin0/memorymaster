@@ -30,13 +30,13 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from memorymaster import llm_provider
+from memorymaster.core import llm_provider
 from memorymaster.govern import llm_budget
 from memorymaster.stores._storage_shared import open_conn
 from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity, create_best_provider
-from memorymaster.lifecycle import transition_claim
-from memorymaster.models import Claim
-from memorymaster.security import redact_text
+from memorymaster.core.lifecycle import transition_claim
+from memorymaster.core.models import Claim
+from memorymaster.core.security import redact_text
 
 logger = logging.getLogger(__name__)
 

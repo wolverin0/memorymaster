@@ -24,7 +24,7 @@ from memorymaster.stores._storage_shared import busy_error_count, open_conn
 from memorymaster.surfaces.dashboard import create_dashboard_server
 from memorymaster.surfaces.dashboard_integrity import build_integrity_panel
 from memorymaster.govern.jobs import integrity
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 from memorymaster.stores.storage import SQLiteStore
 
 METRIC_KEYS = {

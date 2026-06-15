@@ -30,8 +30,8 @@ from typing import Iterator
 import pytest
 
 from memorymaster.bridges.delta_sync import export_delta
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 
 # ---------------------------------------------------------------------------

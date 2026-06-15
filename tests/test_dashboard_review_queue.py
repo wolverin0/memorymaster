@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Iterator
 
 from memorymaster.surfaces.dashboard import create_dashboard_server
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 
 def _case_db(prefix: str) -> Path:

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from memorymaster.models import CitationInput
+from memorymaster.core.models import CitationInput
 
 
 def _ingest(svc, text, **kw):

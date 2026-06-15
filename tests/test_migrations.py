@@ -240,7 +240,7 @@ def test_cli_migrate_list_works(tmp_path, capsys):
 def test_cli_migrate_apply_works(tmp_path, capsys):
     """`memorymaster migrate` (no flags) applies pending migrations."""
     from memorymaster.surfaces.cli import main
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     db = tmp_path / "apply.db"
     # Need init_db first so the legacy schema is in place
@@ -258,7 +258,7 @@ def test_cli_migrate_apply_works(tmp_path, capsys):
 def test_cli_migrate_status_works(tmp_path, capsys):
     """`memorymaster migrate --status` reports applied/pending."""
     from memorymaster.surfaces.cli import main
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     db = tmp_path / "status.db"
     svc = MemoryService(db, workspace_root=tmp_path)
@@ -275,7 +275,7 @@ def test_cli_migrate_status_works(tmp_path, capsys):
 def test_service_init_db_applies_migrations_automatically(tmp_path):
     """MemoryService.init_db() must trigger the runner so callers don't have
     to invoke `migrate` separately on first setup."""
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     db = tmp_path / "auto.db"
     svc = MemoryService(db, workspace_root=tmp_path)

@@ -1,6 +1,6 @@
 """Tests for Layer-2 LLM entity extraction (`extract_llm`).
 
-Unit tests mock `memorymaster.llm_provider.call_llm`. An integration test
+Unit tests mock `memorymaster.core.llm_provider.call_llm`. An integration test
 (skipped by default) exercises the real provider when `GEMINI_API_KEY` or
 `OPENAI_API_KEY` is present AND `MEMORYMASTER_ENTITY_LLM=1`.
 """
@@ -36,7 +36,7 @@ def _enable_flag(monkeypatch):
 def _mock_call_llm(return_value: str):
     """Patch the call_llm used inside extract_llm."""
     return mock.patch(
-        "memorymaster.llm_provider.call_llm", return_value=return_value
+        "memorymaster.core.llm_provider.call_llm", return_value=return_value
     )
 
 
@@ -115,7 +115,7 @@ def test_malformed_json_returns_empty_list(caplog):
 
 def test_llm_call_raises_returns_empty_list(caplog):
     with mock.patch(
-        "memorymaster.llm_provider.call_llm",
+        "memorymaster.core.llm_provider.call_llm",
         side_effect=RuntimeError("HTTP 500"),
     ):
         result = extract_llm("some text with Ada")

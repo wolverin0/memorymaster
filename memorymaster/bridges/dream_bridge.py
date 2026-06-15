@@ -14,15 +14,15 @@ import re
 import sqlite3
 from pathlib import Path
 
-from memorymaster import spool
+from memorymaster.core import spool
 from memorymaster.stores._storage_shared import open_conn
-from memorymaster.security import redact_text as _redact_text
+from memorymaster.core.security import redact_text as _redact_text
 
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Sensitivity filter — credential detection is delegated to
-# `memorymaster.security.redact_text` (single source of truth). Below we keep
+# `memorymaster.core.security.redact_text` (single source of truth). Below we keep
 # only the dream-bridge-specific extras: personal paths, SSH command shapes,
 # and vendor-specific keys that security.py doesn't need for general ingest
 # filtering but we want to block from being seeded into dream memory.

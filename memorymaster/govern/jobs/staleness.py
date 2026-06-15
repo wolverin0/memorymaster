@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from memorymaster.lifecycle import can_transition, transition_claim
-from memorymaster.models import Claim
+from memorymaster.core.lifecycle import can_transition, transition_claim
+from memorymaster.core.models import Claim
 
 
 @dataclass(frozen=True)

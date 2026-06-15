@@ -21,7 +21,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from memorymaster.lifecycle import transition_claim
+from memorymaster.core.lifecycle import transition_claim
 from memorymaster.stores.storage import SQLiteStore
 
 SCOPE = "session-state.watchkeeper"

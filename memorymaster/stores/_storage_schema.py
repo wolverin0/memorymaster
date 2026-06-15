@@ -434,7 +434,7 @@ class _SchemaMixin:
 
     @staticmethod
     def _ensure_claim_links_schema(conn: sqlite3.Connection) -> None:
-        from memorymaster.models import CLAIM_LINK_TYPES
+        from memorymaster.core.models import CLAIM_LINK_TYPES
 
         # Build the CHECK constraint from the canonical CLAIM_LINK_TYPES tuple
         # so new types only need to be added in models.py.

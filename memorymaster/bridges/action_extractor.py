@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, time, timedelta
 from typing import Any
 
-from memorymaster.models import ActionProposal, EvidenceItem, SourceItem
+from memorymaster.core.models import ActionProposal, EvidenceItem, SourceItem
 
 
 @dataclass(frozen=True)

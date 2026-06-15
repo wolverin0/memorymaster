@@ -18,8 +18,8 @@ from pathlib import Path
 
 from memorymaster.govern import llm_steward
 from memorymaster.govern.llm_steward import ExtractionResult, run_steward
-from memorymaster.models import CitationInput
-from memorymaster.service import MemoryService
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 
 
 def _service(tmp_path: Path, monkeypatch) -> MemoryService:
@@ -156,7 +156,7 @@ def test_use_llm_provider_routes_through_call_llm(tmp_path, monkeypatch):
         called["direct"] += 1
         return "[]"
 
-    monkeypatch.setattr("memorymaster.llm_provider.call_llm", fake_provider_call_llm)
+    monkeypatch.setattr("memorymaster.core.llm_provider.call_llm", fake_provider_call_llm)
     monkeypatch.setattr("memorymaster.govern.llm_steward._call_llm", fake_direct)
 
     result = extract_claim(
@@ -182,7 +182,7 @@ def test_use_llm_provider_false_uses_direct_path(tmp_path, monkeypatch):
         called["direct"] += 1
         return "[]"
 
-    monkeypatch.setattr("memorymaster.llm_provider.call_llm", fake_provider_call_llm)
+    monkeypatch.setattr("memorymaster.core.llm_provider.call_llm", fake_provider_call_llm)
     monkeypatch.setattr("memorymaster.govern.llm_steward._call_llm", fake_direct)
 
     extract_claim("gemini", "key", "model", 1, "some fact")

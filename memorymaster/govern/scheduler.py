@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from memorymaster.service import MemoryService
+from memorymaster.core.service import MemoryService
 
 
 def utc_now() -> str:

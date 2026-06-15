@@ -21,8 +21,8 @@ import json
 
 import pytest
 
-from memorymaster import observability as obs
-from memorymaster import webhook
+from memorymaster.core import observability as obs
+from memorymaster.core import webhook
 
 
 @pytest.fixture(autouse=True)

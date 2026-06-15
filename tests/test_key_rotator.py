@@ -1,4 +1,4 @@
-"""Tests for memorymaster.key_rotator: file parsing, rotation, cooldown, ban."""
+"""Tests for memorymaster.core.key_rotator: file parsing, rotation, cooldown, ban."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.key_rotator import (
+from memorymaster.core.key_rotator import (
     KeyRotator,
     _KeySlot,
     _parse_file,

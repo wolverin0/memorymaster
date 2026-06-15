@@ -11,7 +11,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
-from memorymaster.models import (
+from memorymaster.core.models import (
     Citation,
     Claim,
     ClaimLink,

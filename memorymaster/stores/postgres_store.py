@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity
-from memorymaster.models import (
+from memorymaster.core.models import (
     ActionProposal,
     CLAIM_LINK_TYPES,
     CLAIM_STATUSES,
@@ -25,7 +25,7 @@ from memorymaster.models import (
     validate_event_type,
     validate_transition_event_type,
 )
-from memorymaster.retry import connect_with_retry
+from memorymaster.core.retry import connect_with_retry
 from memorymaster.stores._storage_shared import EVENT_HASH_ALGO, generate_top_level_human_id
 from memorymaster.stores.storage import SQLiteStore
 
@@ -1042,7 +1042,7 @@ class PostgresStore(SQLiteStore):
                 )
                 transition_rows = cur.fetchall()
                 transition_issues: list[dict[str, object]] = []
-                from memorymaster.lifecycle import ALLOWED_TRANSITIONS
+                from memorymaster.core.lifecycle import ALLOWED_TRANSITIONS
 
                 for row in transition_rows:
                     from_status = self._as_text(row["from_status"])

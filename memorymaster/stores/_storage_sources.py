@@ -11,7 +11,7 @@ import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from memorymaster.stores._storage_shared import utc_now
-from memorymaster.models import (
+from memorymaster.core.models import (
     ATLAS_SENSITIVITY_LEVELS,
     MEDIA_RETRY_STATUSES,
     ActionProposal,

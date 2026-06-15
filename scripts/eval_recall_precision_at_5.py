@@ -198,7 +198,7 @@ def _patch_service_readonly() -> None:
     never mutates ``claim_accesses`` / ``claim_signals`` — necessary when
     the harness runs against the live 7.8 GB DB.
     """
-    from memorymaster import service as _svc_mod
+    from memorymaster.core import service as _svc_mod
 
     _original_init = _svc_mod.MemoryService.__init__
 
@@ -219,7 +219,7 @@ def _lookup_claim_texts(db_path: str, ids: list[int]) -> dict[int, tuple[str, st
     """
     if not ids:
         return {}
-    from memorymaster.service import MemoryService
+    from memorymaster.core.service import MemoryService
 
     svc = MemoryService(db_target=db_path, workspace_root=REPO)
     out: dict[int, tuple[str, str | None]] = {}

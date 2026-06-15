@@ -94,7 +94,7 @@ def _get_candidates(db_path: str, prompt: str, top_k: int) -> list[dict]:
 
 def _call_judge(prompt: str, candidates: list[dict]) -> list[int]:
     """Single LLM call to the judge. Returns list of claim IDs."""
-    from memorymaster.llm_provider import call_llm, parse_json_response
+    from memorymaster.core.llm_provider import call_llm, parse_json_response
 
     judge_text = _judge_prompt(prompt, candidates)
     raw = call_llm(judge_text, "")
