@@ -7,7 +7,12 @@ from memorymaster.core.config import Config
 
 
 def test_config_initial_confidence_priors_match_calibration_report() -> None:
-    report_path = Path(__file__).resolve().parents[1] / "docs" / "calibration-priors-2026-05-11.json"
+    report_path = (
+        Path(__file__).resolve().parents[1]
+        / "docs"
+        / "archive"
+        / "calibration-priors-2026-05-11.json"
+    )
     report = json.loads(report_path.read_text(encoding="utf-8"))
     expected_by_type = {
         row["claim_type"]: row["recommended_initial_confidence"]

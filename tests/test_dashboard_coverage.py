@@ -201,6 +201,74 @@ def test_index_route_serves_dashboard_html(tmp_path: Path) -> None:
     assert "EventSource('/api/operator/stream?last=20')" in body
 
 
+def test_recall_analysis_renders_as_operator_panel(tmp_path: Path) -> None:
+    """P5 governance surface: recall-analysis must be operator-visible as a
+    rendered dashboard panel, not a curl-only JSON endpoint. The differentiator
+    of this product is governance you can SEE — an operator debugging why a
+    claim ranked where it did should not need a terminal. If this panel is
+    removed (regressing back to JSON-only), this test fails on intent."""
+    with running_dashboard(tmp_path, FakeService()) as (base_url, _host, _port, _log_path):
+        with urllib.request.urlopen(base_url + "/", timeout=5) as response:
+            body = response.read().decode("utf-8")
+
+    # The panel section, its on-demand control, its render target, and the
+    # fetch wiring must all be present so the route surfaces in the UI.
+    assert "Recall Analysis" in body
+    assert 'id="recall-run"' in body
+    assert 'id="recall-body"' in body
+    assert "/api/recall-analysis?query=" in body
+    assert "fillRecallAnalysis" in body
+
+
+def test_recall_analysis_endpoint_returns_ranking_explainability(tmp_path: Path) -> None:
+    """The panel is only useful if the backing route emits the explainability
+    contract (active weights + per-claim results). This anchors on WHAT an
+    operator needs to debug ranking, not on internal field plumbing."""
+
+    class RecallService(FakeService):
+        def recall_analysis(self, *, query_text: str, **_kwargs: Any) -> dict[str, Any]:
+            return {
+                "query": query_text,
+                "mode": "hybrid",
+                "profile": None,
+                "rows": 1,
+                "weights": {
+                    "retrieval_weights": {
+                        "lexical": 0.4,
+                        "confidence": 0.2,
+                        "freshness": 0.2,
+                        "vector": 0.2,
+                    }
+                },
+                "component_rankings": {"lexical": [1]},
+                "results": [
+                    {
+                        "claim_id": 1,
+                        "human_id": "C-1",
+                        "text": "dashboard is covered",
+                        "status": "confirmed",
+                        "tier": "working",
+                        "pinned": False,
+                        "score": 0.91,
+                        "lexical_score": 0.5,
+                        "confidence_score": 0.2,
+                        "freshness_score": 0.1,
+                        "vector_score": 0.11,
+                    }
+                ],
+            }
+
+    with running_dashboard(tmp_path, RecallService()) as (base_url, _host, _port, _log_path):
+        payload = get_json(base_url, "/api/recall-analysis?query=dashboard&mode=hybrid&limit=10")
+
+    assert payload["ok"] is True
+    # Active retrieval weights — the "why did this rank" inputs.
+    assert payload["weights"]["retrieval_weights"]["lexical"] == 0.4
+    # Per-claim score attribution the panel renders.
+    assert payload["results"][0]["claim_id"] == 1
+    assert payload["results"][0]["score"] == 0.91
+
+
 def test_claim_list_route_filters_and_serializes_claim_detail(tmp_path: Path) -> None:
     with running_dashboard(tmp_path, FakeService()) as (base_url, _host, _port, _log_path):
         payload = get_json(base_url, "/api/claims?status=stale&limit=10")
