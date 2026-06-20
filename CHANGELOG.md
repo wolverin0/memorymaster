@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [4.0.0] - 2026-06-20
+
+**The v4 consolidation — MemoryMaster becomes a top-tier governed memory layer.**
+A six-phase program turning the production-proven prototype into a reliable,
+governed, distributable release. No data migration is required: an existing
+3.x SQLite database opens unchanged, and **every old `memorymaster.<module>`
+import path keeps working** via deprecation shims for one minor version.
+
+### Reliability (P1)
+
+- **Single-writer "WAL-Discipline".** Retired the corruption class that hit the
+  project on 2026-06-05: the legacy `openclaw-sync.sh` scp-over-live-DB path is
+  hard-disabled, the hottest write path (`verbatim_store`) gained a busy_timeout,
+  and a steward **integrity phase** now runs `wal_checkpoint(TRUNCATE)` every
+  cycle (the WAL had grown to 1.44 GB with no checkpoint ever), `quick_check`
+  daily with a promotion freeze on failure, `foreign_key_check`, and weekly
+  `VACUUM INTO` snapshots (keep-3). ~26 ad-hoc `sqlite3.connect` sites were
+  unified through one pragma envelope (`open_conn`/`connect_ro`).
+- **Cold `init_db` 16 s → 0.09 s** via the `MEMORYMASTER_INITDB_FASTPATH`
+  user_version stamp; recall read path no longer takes a write lock
+  (`MEMORYMASTER_WAL_DISCIPLINE`). Both flags default off; legacy path intact.
+- New `repair-fk` and `qdrant-reconcile` maintenance jobs.
+
+### Governance & security (P3)
+
+- **Intake policy as code** (`core/intake_policy.py`) at the `service.ingest`
+  chokepoint, after the (unchanged) sensitivity filter: `source_agent`
+  attribution, session-state/heartbeat rejection (the telemetry-flood class),
+  per-agent quotas, and a distilled-per-stop cap. Additive and env-configurable.
+- **Closed three sensitivity-filter bypasses** — `dream_bridge`, the
+  `llm_steward` cycle-insert, and `transcript_miner` (which used a literal scan
+  that missed base64/encoded secrets) now all run the canonical
+  `scan_text_for_findings` sweep before any write.
+- The steward can now **absorb correction-mining** as a `run_cycle` phase
+  (`MEMORYMASTER_STEWARD_RULE_MINING`, default off).
+
+### Multi-agent contract (P4)
+
+- **`docs/INTEGRATING.md`** documents the 3-beat contract (session-start fetch /
+  on-demand recall / session-end distilled ingest) with per-agent-class
+  reference implementations; new `scripts/agent_session_end_ingest.py` turnkey
+  Codex/generic session-end ingest; a **per-agent provenance** dashboard panel.
+
+### Surfaces & docs (P5)
+
+- README rewritten with positioning vs mem0/Letta/Zep and a 15-minute quickstart;
+  generated `docs/MCP-TOOLS.md`; stale audits/experiments archived under
+  `docs/archive/`; the dashboard's recall-analysis view now renders as a panel.
+
+### Packaging (P6)
+
+- **The published wheel now ships only the `memorymaster` package.** Previously
+  `setuptools` swept every top-level dir (`tests/`, `scripts/`, `benchmarks/`,
+  …) into site-packages, polluting the importer's namespace (`import tests`
+  would collide) — `packages.find` is now scoped to `memorymaster*`.
+
+### Migration
+
+- **Imports:** update `memorymaster.<module>` → the subpackage path
+  (`memorymaster.core.service`, `memorymaster.stores.storage`,
+  `memorymaster.recall.context_hook`, `memorymaster.govern.steward`, …). Old
+  paths still resolve but are deprecated and will be removed in a future minor.
+- **Database:** none. 3.x DBs open as-is.
+- **Removed:** `memorymaster.skill_evolver` (unreferenced dead module).
+
 ### Changed
 
 - **Package restructure (v4 program P2).** The previously-flat ~138 modules
