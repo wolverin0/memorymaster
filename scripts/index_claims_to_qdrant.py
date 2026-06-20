@@ -9,7 +9,7 @@ Usage::
 
     python scripts/index_claims_to_qdrant.py \
         --db memorymaster.db \
-        --qdrant-url http://192.168.100.186:6333 \
+        --qdrant-url http://localhost:6333 \
         --collection memorymaster-claims
 
 Environment variables (respected as defaults when flags are omitted):
@@ -278,7 +278,7 @@ def main() -> int:
     ap.add_argument(
         "--qdrant-url",
         default=os.environ.get("MEMORYMASTER_QDRANT_URL") or DEFAULT_QDRANT_URL,
-        help="Qdrant REST URL, e.g. http://192.168.100.186:6333",
+        help="Qdrant REST URL, e.g. http://localhost:6333",
     )
     ap.add_argument(
         "--collection",

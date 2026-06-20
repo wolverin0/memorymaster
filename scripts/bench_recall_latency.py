@@ -13,8 +13,13 @@ import statistics
 import sys
 import time
 
-PROJECT_ROOT = r"G:\_OneDrive\OneDrive\Desktop\Py Apps\memorymaster"
-DB_PATH = os.path.join(PROJECT_ROOT, "memorymaster.db")
+# Resolve the repo root from this file's location (scripts/ is one level down),
+# overridable via env — no hardcoded maintainer path.
+PROJECT_ROOT = os.environ.get(
+    "MEMORYMASTER_PROJECT_ROOT",
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+)
+DB_PATH = os.environ.get("MEMORYMASTER_DEFAULT_DB", os.path.join(PROJECT_ROOT, "memorymaster.db"))
 
 sys.path.insert(0, PROJECT_ROOT)
 os.environ["MEMORYMASTER_DEFAULT_DB"] = DB_PATH

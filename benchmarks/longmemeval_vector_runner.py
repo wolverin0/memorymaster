@@ -19,7 +19,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent
 DATASET = str(SCRIPT_DIR / "longmemeval_oracle.json")
 OUTPUT = str(SCRIPT_DIR / "longmemeval_vector_output.jsonl")
-QDRANT_URL = "http://192.168.100.186:6333"
+QDRANT_URL = "http://localhost:6333"
 COLLECTION = "longmemeval_bench"
 EMBED_MODEL = "text-embedding-3-small"
 EMBED_DIM = 1536

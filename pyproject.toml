@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memorymaster"
-version = "3.28.0"
+version = "4.0.0"
 description = "Production-grade memory reliability system for AI coding agents. Lifecycle-managed claims with citations, conflict detection, steward governance, and MCP integration."
 license = {text = "MIT"}
 authors = [{name = "wolverin0"}]
@@ -65,6 +65,12 @@ ignore = ["E501"]  # line length handled by formatter
 
 [tool.setuptools.packages.find]
 where = ["."]
+# Ship ONLY the library. Without this, find() sweeps every top-level dir
+# (tests/, scripts/, benchmarks/, artifacts/, cloned/, docs/, ...) into
+# site-packages as importable top-level packages — polluting the user's
+# namespace (`import tests` / `import scripts` collide) and bloating the
+# wheel. Scoped to memorymaster* so the published artifact is just the package.
+include = ["memorymaster*"]
 
 [tool.setuptools.package-data]
 memorymaster = [
