@@ -1,0 +1,74 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MemoryMaster v4.0.0 — FINAL vs BASELINE</title>
+<style>
+ :root{--bg:#0f1115;--card:#171a21;--ink:#e6e8eb;--mut:#9aa3af;--line:#262b34;--acc:#4dabf7;--ok:#2b8a3e;--warn:#c79100;--bad:#b3001b}
+ *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif}
+ .wrap{max-width:1080px;margin:0 auto;padding:30px}
+ h1{font-size:27px;margin:0 0 2px} .sub{color:var(--mut);margin-bottom:22px}
+ h2{font-size:19px;margin:30px 0 10px;border-bottom:1px solid var(--line);padding-bottom:6px}
+ table{width:100%;border-collapse:collapse;font-size:13.5px;margin:8px 0}
+ th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);vertical-align:top}
+ th{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.05em;background:#10131a}
+ code{color:#ffd8a8;font-size:12.5px;background:#0c0e13;padding:1px 5px;border-radius:4px}
+ .ok{color:#69db7c;font-weight:700}.warn{color:#ffd43b;font-weight:700}
+ .pill{display:inline-block;color:#fff;border-radius:6px;padding:2px 9px;font-size:11px;font-weight:700}
+ .done{background:var(--ok)}.partial{background:var(--warn);color:#000}
+ .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:14px 0}
+ .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:13px}
+ .stat b{font-size:20px;display:block;color:#69db7c} .stat span{color:var(--mut);font-size:11.5px}
+ .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 20px;margin:12px 0}
+</style></head><body><div class="wrap">
+
+<h1>MemoryMaster v4.0.0 — FINAL vs BASELINE scorecard</h1>
+<div class="sub">v4 consolidation program complete · 2026-06-20 · baseline frozen 2026-06-09 (<code>.planning/BASELINE-2026-06-09.html</code>) · 6 phases shipped across PRs #149–#159</div>
+
+<div class="grid">
+ <div class="stat"><b>v4.0.0</b><span>on PyPI</span></div>
+ <div class="stat"><b>6/7</b><span>north-star DONE (1 deferred)</span></div>
+ <div class="stat"><b>2927</b><span>tests green</span></div>
+ <div class="stat"><b>0</b><span>corruption events since P1</span></div>
+ <div class="stat"><b>16.06s→0.09s</b><span>cold init</span></div>
+ <div class="stat"><b>138→0</b><span>flat modules (7 subpackages)</span></div>
+</div>
+
+<h2>The seven north-star properties</h2>
+<table>
+<tr><th>Property</th><th>Baseline (2026-06-09)</th><th>v4.0.0 (now)</th><th></th></tr>
+<tr><td><b>Durable</b></td><td>12 concurrent writers, no scheduled integrity check, real corruption 06-05</td><td>WAL-Discipline; 46-min chaos soak (12 writers × 20 kill-rounds, both flag modes) = 0 quick_check fails / 0 FK orphans / 0 lost writes; FK 401→0; WAL 1.44GB→0 (first checkpoint in project history); scheduled quick_check + VACUUM-INTO snapshots</td><td><span class="pill done">DONE</span></td></tr>
+<tr><td><b>Governed</b></td><td>47% of claims NULL source_agent; session-state heartbeat floods; policy = convention</td><td>Intake policy as code at the ingest chokepoint; 0 NULL on new claims; heartbeat floods rejected (0 new in 3 days); per-agent quotas + distilled cap. <span class="warn">Note:</span> legacy candidate backlog drain is an ops follow-up</td><td><span class="pill done">DONE</span></td></tr>
+<tr><td><b>Precise</b></td><td>recall-regression CI absent (thought); no published QA number</td><td>Hermetic recall-regression gate already in CI (top1≥0.7, recall@5≥0.85). <span class="warn">LongMemEval ladder + published QA number DEFERRED by user (7h run)</span></td><td><span class="pill partial">PARTIAL — deferred</span></td></tr>
+<tr><td><b>Fast</b></td><td>recall p50 70ms (already good); cold init 16.06s; ~1.2s hook cold tax</td><td>recall p50 unchanged (70ms); <b>cold init 16.06s → 1.15s plain / 0.09s fastpath</b>; read path no longer takes a write lock</td><td><span class="pill done">DONE</span></td></tr>
+<tr><td><b>Multi-agent-safe</b></td><td>Claude hooked; Codex MCP-only; Hermes unverified; no documented contract</td><td><code>docs/INTEGRATING.md</code> 3-beat contract; turnkey Codex/generic session-end ref; e2e round-trip proven (Claude+Codex locally, Hermes documented); per-agent provenance panel</td><td><span class="pill done">DONE</span></td></tr>
+<tr><td><b>Observable</b></td><td>3 dashboard panels deferred; GRAPH_REPORT 0 bytes; planning docs described v2.0</td><td>Governance panels render (conflicts, triage, recall-analysis, provenance, integrity, observability); graphify hook fixed; self-docs regenerated; 3 sensitivity-filter bypasses closed</td><td><span class="pill done">DONE</span></td></tr>
+<tr><td><b>Distributable</b></td><td>v3.26.1; docs sprawl (40+ files); no quickstart; namespace-polluting wheel</td><td><b>v4.0.0 on PyPI</b>; README positioning + 15-min quickstart (stranger-test PASS ~20min); docs consolidated; wheel ships only the library; <b>release-gate audit caught + fixed a home-lab-IP leak before publish</b></td><td><span class="pill done">DONE</span></td></tr>
+</table>
+
+<h2>Program ledger</h2>
+<div class="card">
+<table>
+<tr><th>Phase</th><th>Shipped</th></tr>
+<tr><td>pre / CI</td><td>v3.28.0 to PyPI; CI resurrected (red since June 1) — PRs #146–#150, #153</td></tr>
+<tr><td>P0 baseline</td><td>graphify hook fixed, self-docs regenerated, BASELINE frozen — PR #149</td></tr>
+<tr><td>P1 reliability</td><td>WAL-Discipline, chaos-soak-proven; corruption class retired — PRs #151–#152</td></tr>
+<tr><td>P2 restructure</td><td>138 flat modules → 7 subpackages, 0 flat left, shims preserve all old imports — PR #154</td></tr>
+<tr><td>P3 quality</td><td>intake policy + 3 sensitivity-bypass fixes + steward-absorbs-miners — PRs #155–#156</td></tr>
+<tr><td>P4 agents</td><td>3-beat contract + provenance + e2e round-trip — PR #157</td></tr>
+<tr><td>P5 surfaces</td><td>README/docs/badges + MCP reference + governance panels + stranger-test — PR #158</td></tr>
+<tr><td>P6 release</td><td>release-gate audit (caught 2 HIGH), v4.0.0, CHANGELOG, tag, PyPI — PR #159</td></tr>
+</table>
+</div>
+
+<h2>Honest carry-forward (documented, not hidden)</h2>
+<div class="card">
+<ul>
+<li><b>LongMemEval ladder</b> — the published QA number + dark-feature proof; <b>deferred by user choice</b> (7h wall-time run). The mechanisms ship; the measurement is a deliberate later run.</li>
+<li><b>Legacy candidate backlog drain + tier-vs-usage recompute</b> — write-side governance ops tuning surfaced by the live-DB evaluation; recall quality is unaffected. Queue as a post-release governance pass.</li>
+<li><b>P2b splits</b> — 13 modules still &gt;800 LOC (re-homed, not split). Lower priority.</li>
+<li><b>service.py orchestrator-facade</b> — subpackage graph is a DAG except service.py's by-design coupling; strict DAG = relocate to a facade tier.</li>
+<li><b>Public-repo hygiene</b> — <code>artifacts/</code> mining scratch + some test fixtures still contain the home-lab IP in claim text on GitHub (they no longer ship to PyPI). Worth a repo scrub.</li>
+</ul>
+</div>
+
+<p class="sub" style="margin-top:24px">Net: MemoryMaster went from a production-proven prototype with a live corruption risk and a write-only-feeling archive to a <b>governed, reliable, documented, distributable v4.0.0</b> — six phases, every one gated by the full suite + an adversarial verifier, every one leaving main releasable. The recall quality users already loved is intact; the write-side governance and safety that were invisibly lagging are now code.</p>
+</div></body></html>
