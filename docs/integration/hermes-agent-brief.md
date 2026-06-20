@@ -44,7 +44,7 @@ memorymaster — OR a better integration if your runtime supports it.
 - **v3.20.0-S1** — versioned migrations framework (`memorymaster/migrations/`, `MigrationRunner`, `schema_versions` table, drift detection)
 
 Full env-var reference in `CHANGELOG.md`. ROADMAP and remaining backlog in
-`docs/ROADMAP.md` + `docs/v320-backlog.md`.
+`docs/ROADMAP.md` + `docs/archive/v320-backlog.md`.
 
 ---
 

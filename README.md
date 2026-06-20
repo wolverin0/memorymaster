@@ -6,12 +6,27 @@ Lifecycle-managed claims with citations, conflict detection, steward governance,
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-2732-green.svg)]()
-[![MCP Tools](https://img.shields.io/badge/MCP%20tools-24-purple.svg)]()
-[![CLI Commands](https://img.shields.io/badge/CLI%20commands-86-orange.svg)]()
+[![Tests](https://img.shields.io/badge/tests-2927-green.svg)]()
+[![MCP Tools](https://img.shields.io/badge/MCP%20tools-30-purple.svg)]()
+[![CLI Commands](https://img.shields.io/badge/CLI%20commands-104-orange.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memorymaster.svg)](https://pypi.org/project/memorymaster/)
 
 MemoryMaster prevents the #1 problem with agent memory: **drift, stale assumptions, and unsafe disclosure**. It gives Claude Code, Codex, and any MCP-compatible agent persistent, verifiable memory with a full claim lifecycle, citation tracking, conflict detection, and human-in-the-loop governance.
+
+### How it's different
+
+Most agent-memory systems (mem0, Letta/MemGPT, Zep) optimize for **storing and recalling more** — embeddings, summaries, a fast vector store. MemoryMaster optimizes for **trusting what you recall**. The differentiator is **governance**: every memory is a lifecycle-managed *claim*, not an opaque embedding.
+
+| | mem0 / Letta / Zep | **MemoryMaster** |
+|---|---|---|
+| Unit of memory | text chunk / summary | **claim** with status, tier, citations, bitemporal validity |
+| Stale / wrong facts | linger until overwritten | **decay → `stale`**, **conflict detection**, **supersession** |
+| Contradictions | silently coexist | surfaced as **`conflicted`**, auto-resolved (5-tier) or queued for review |
+| Provenance | usually none | **citation per claim** + per-agent provenance |
+| Secret leakage | your problem | **sensitivity filter at ingest** (JWT/AWS/Bearer/SSH redaction) |
+| Operator control | API only | **steward governance** + a **dashboard** you can *see* |
+
+If you want an agent that recalls more, any vector store works. If you want an agent that recalls *correctly* — and can prove where a fact came from and retire it when it goes stale — that's the gap MemoryMaster fills.
 
 ---
 
@@ -70,7 +85,7 @@ Full feature index lives in [`docs/handbook.md`](docs/handbook.md).
 | Recall@10 | 0.942 | **0.984** | 0.986 | -0.002 |
 | MRR | 0.799 | **0.902** | 0.882 | **+0.020** ★ |
 
-Reproduce: `python tests/bench_longmemeval.py --retrieval-only`. Full methodology, experiment-by-experiment deltas (1 KEEP, 2 REVERT, 3 NULL), and the architectural findings that surfaced along the way live in [`docs/longmemeval-results.md`](docs/longmemeval-results.md) and [`docs/v315-experiments/`](docs/v315-experiments/). QA-accuracy pass (with judge) is deferred until provider quotas allow.
+Reproduce: `python tests/bench_longmemeval.py --retrieval-only`. Full methodology, experiment-by-experiment deltas (1 KEEP, 2 REVERT, 3 NULL), and the architectural findings that surfaced along the way live in [`docs/archive/longmemeval-results.md`](docs/archive/longmemeval-results.md) and [`docs/archive/v315-experiments/`](docs/archive/v315-experiments/). QA-accuracy pass (with judge) is deferred until provider quotas allow.
 
 ## Prerequisites
 
@@ -89,30 +104,69 @@ Reproduce: `python tests/bench_longmemeval.py --retrieval-only`. Full methodolog
 
 - **Docker** for Qdrant — vector retrieval. SQLite FTS5 is the default and works out of the box; add Qdrant when you want semantic recall on top of keyword search.
 
-## Quick start
+## 15-minute quickstart
+
+From zero to a recalled claim and a live dashboard. No Qdrant, no Postgres, no LLM key required for these steps (SQLite + FTS5 is the default).
+
+**1. Install (2 min)**
 
 ```bash
 pip install "memorymaster[mcp]"
 memorymaster --db memorymaster.db init-db
-memorymaster-setup     # interactive: hooks, MCP, steward cron, CLAUDE.md / AGENTS.md
 ```
 
-That's enough to use the CLI, the MCP server, and the auto-ingest Stop hook.
+**2. Configure a provider (3 min, optional for this walkthrough)**
+
+Recall and ingest below work with zero config. An LLM provider is only needed for the steward/wiki cycles — pick one when you're ready (see [Pick your LLM provider](#pick-your-llm-provider)). For a Claude Code subscriber, the cheapest path is:
 
 ```bash
-# Ingest a claim with citation
+export MEMORYMASTER_LLM_PROVIDER=claude_cli   # reuses your Claude Code OAuth, no API key
+```
+
+**3. Ingest a claim via CLI (1 min)**
+
+```bash
 memorymaster --db memorymaster.db ingest \
   --text "Server uses PostgreSQL 16" \
   --source "session://chat|turn-3|user confirmed"
+```
 
-# Query memory (hybrid retrieval)
-memorymaster --db memorymaster.db query "database version" --retrieval-mode hybrid
+**4. Recall it (1 min)**
 
-# Context optimizer — the killer feature for agents
-memorymaster --db memorymaster.db context "auth patterns" --budget 4000 --format xml
+A freshly-ingested claim starts life as a `candidate` (unvalidated). The CLI `query`/`context` paths *exclude* candidates by default — that's the governance model: unvalidated facts don't silently leak into recall until the steward promotes them. To see your brand-new claim before a validation cycle, pass `--include-candidates`:
 
-# Run validation cycle
-memorymaster --db memorymaster.db run-cycle
+```bash
+# Hybrid retrieval (lexical + freshness + confidence)
+memorymaster --db memorymaster.db query "database version" \
+  --retrieval-mode hybrid --include-candidates
+
+# Token-budgeted context block — the killer feature for agents
+memorymaster --db memorymaster.db context "database" \
+  --budget 4000 --format xml --include-candidates
+```
+
+You should see the PostgreSQL 16 claim come back, ranked, with its citation. (Drop `--include-candidates` and you'll get zero results until step 7's `run-cycle` promotes it to `confirmed` — that's working as designed, not a bug.)
+
+**5. Open the dashboard (2 min)**
+
+```bash
+memorymaster --db memorymaster.db run-dashboard   # serves on http://127.0.0.1:8765
+```
+
+Open the URL: you'll see your claim in **Claims**, plus governance panels — **Conflicts**, **Review Queue**, **Recall Analysis** (why each claim ranked where it did), **Audit Log**, **Provenance by Agent**, and **Reliability**.
+
+**6. Wire it into your agent (3 min)**
+
+```bash
+memorymaster-setup     # interactive: hooks, MCP, steward cron, CLAUDE.md / AGENTS.md
+```
+
+That installs the MCP server and the auto-ingest Stop hook so your agent recalls and stores memory automatically. See [MCP server](#mcp-server) for the config block.
+
+**7. Run a validation cycle (1 min, needs a provider)**
+
+```bash
+memorymaster --db memorymaster.db run-cycle   # extract, validate, decay, compact
 ```
 
 For the one-prompt agent install (paste into any agent with shell access), see [`docs/handbook.md#one-prompt-agent-install`](docs/handbook.md#one-prompt-agent-install).
@@ -147,9 +201,9 @@ For zero-cost offline use, install [Ollama](https://ollama.com), `ollama pull ll
 }
 ```
 
-24 MCP tools: `init_db`, `ingest_claim`, `ingest_rule`, `query_rules`, `run_cycle`, `run_steward`, `classify_query`, `query_memory`, `query_for_context`, `list_claims`, `redact_claim_payload`, `pin_claim`, `compact_memory`, `list_events`, `search_verbatim`, `open_dashboard`, `list_steward_proposals`, `resolve_steward_proposal`, `extract_entities`, `entity_stats`, `find_related_claims`, `quality_scores`, `recompute_tiers`, `federated_query`.
+30 MCP tools spanning setup/lifecycle, ingest, query/retrieval, listing, knowledge graph, and governance: `init_db`, `ingest_claim`, `ingest_rule`, `query_rules`, `rules_export`, `run_cycle`, `run_steward`, `classify_query`, `query_memory`, `query_for_context`, `query_for_task`, `query_claim_paths`, `query_meta_decisions`, `federated_query`, `recall_analysis`, `read_active_tasks`, `list_claims`, `redact_claim_payload`, `pin_claim`, `compact_memory`, `list_events`, `search_verbatim`, `open_dashboard`, `list_steward_proposals`, `resolve_steward_proposal`, `extract_entities`, `entity_stats`, `find_related_claims`, `quality_scores`, `recompute_tiers`.
 
-See [`.mcp.json.example`](.mcp.json.example) for the full template.
+See [`docs/MCP-TOOLS.md`](docs/MCP-TOOLS.md) for the grouped reference (one line per tool), and [`.mcp.json.example`](.mcp.json.example) for the full config template.
 
 ## Backends
 
@@ -190,7 +244,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
 
 | Document | Description |
 |----------|-------------|
+| [docs/README.md](docs/README.md) | Documentation index — where to find each living doc |
 | [docs/handbook.md](docs/handbook.md) | Full operator handbook — hooks, dashboard, steward, dream bridge, troubleshooting, one-prompt install |
+| [docs/MCP-TOOLS.md](docs/MCP-TOOLS.md) | Reference for all 30 MCP tools, grouped by purpose |
+| [docs/INTEGRATING.md](docs/INTEGRATING.md) | Integration guide for embedding MemoryMaster in your agent |
 | [INSTALLATION.md](INSTALLATION.md) | Setup guide: pip, Docker, Helm, MCP config |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Dev setup, testing, PR workflow |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design and subsystem details |
