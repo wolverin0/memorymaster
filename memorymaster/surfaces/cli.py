@@ -193,6 +193,20 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--auto-classify", action="store_true", help="Auto-classify query type and use optimal retrieval mode")
     query.add_argument("--explain", action="store_true", help="Show per-stage score attribution (relevance vs. boosts, floor-gate status) for each result")
 
+    resolve_project_cmd = sub.add_parser(
+        "resolve-project",
+        help="Resolve a fuzzy project alias to canonical on-disk path(s) with confidence + evidence",
+    )
+    resolve_project_cmd.add_argument("alias", help="Fuzzy project name (e.g. 'MemoryMaster')")
+
+    local_search_cmd = sub.add_parser(
+        "local-search",
+        help="Read-only path lookup across the machine via Everything (ES.exe)",
+    )
+    local_search_cmd.add_argument("query", help="Filename/path fragment to search for")
+    local_search_cmd.add_argument("--limit", type=int, default=50, help="Maximum results (default: 50)")
+    local_search_cmd.add_argument("--kind", choices=["any", "dir", "file"], default="any", help="Restrict results by kind")
+
     recall_analysis = sub.add_parser(
         "recall-analysis",
         help="Explain WHY claims ranked where they did (per-component score breakdown)",

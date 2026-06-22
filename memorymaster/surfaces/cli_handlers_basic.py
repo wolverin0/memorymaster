@@ -939,6 +939,83 @@ def _handle_query(args: argparse.Namespace, service, parser: argparse.ArgumentPa
     return 0
 
 
+def _handle_resolve_project(
+    args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str
+) -> int:
+    """Resolve a fuzzy project alias to canonical on-disk path(s)."""
+    from memorymaster.bridges.local_search.everything import EverythingProvider
+    from memorymaster.bridges.local_search.redact import collapse_path, load_roots
+    from memorymaster.bridges.local_search.resolver import resolve_project
+
+    roots = load_roots()
+    provider = EverythingProvider()
+    t0 = time.perf_counter()
+    result = resolve_project(args.alias, svc=service, provider=provider, roots=roots)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    def _match_dict(match) -> dict:
+        return {
+            "path": collapse_path(roots, match.path),
+            "confidence": match.confidence,
+            "evidence": list(match.evidence),
+            "source": match.source,
+        }
+
+    payload = {
+        "query": result.query,
+        "canonical_slug": result.canonical_slug,
+        "matches": [_match_dict(m) for m in result.matches],
+        "best": _match_dict(result.best) if result.best is not None else None,
+        "degraded": result.degraded,
+    }
+    if args.json_output:
+        print(_json_envelope(payload, total=len(result.matches), query_ms=elapsed_ms))
+    else:
+        print(f"query: {result.query!r}  slug={result.canonical_slug}  degraded={result.degraded}")
+        if not result.matches:
+            print("no matches")
+        for m in result.matches:
+            tag = "*" if result.best is not None and m is result.best else " "
+            print(f" {tag} [{m.source}] {collapse_path(roots, m.path)}  conf={m.confidence:.2f}")
+            for reason in m.evidence:
+                print(f"      - {reason}")
+    return 0
+
+
+def _handle_local_search(
+    args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str
+) -> int:
+    """Read-only path lookup across the machine via Everything (ES.exe)."""
+    from memorymaster.bridges.local_search.everything import EverythingProvider
+    from memorymaster.bridges.local_search.redact import collapse_path, load_roots
+
+    roots = load_roots()
+    provider = EverythingProvider()
+    degraded = not provider.available()
+    safe_limit = max(1, min(int(args.limit), 1000))
+    t0 = time.perf_counter()
+    hits = provider.search(args.query, limit=safe_limit, kind=args.kind)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    rows = [
+        {
+            "path": collapse_path(roots, hit.path),
+            "kind": hit.kind,
+            "size": hit.size,
+            "modified": hit.modified,
+        }
+        for hit in hits
+    ]
+    if args.json_output:
+        print(_json_envelope({"hits": rows, "degraded": degraded}, total=len(rows), query_ms=elapsed_ms))
+    else:
+        print(f"query: {args.query!r}  kind={args.kind}  degraded={degraded}")
+        if not rows:
+            print("no hits")
+        for row in rows:
+            print(f"  [{row['kind']}] {row['path']}")
+    return 0
+
+
 def _print_recall_analysis(analysis: dict) -> None:
     """Render the recall-analysis breakdown for humans (non-JSON path)."""
     w = analysis.get("weights", {})
