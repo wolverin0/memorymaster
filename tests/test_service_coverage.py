@@ -261,3 +261,24 @@ class TestRedactErrors:
     def test_redact_negative_id_raises(self, svc):
         with pytest.raises(ValueError, match="positive"):
             svc.redact_claim_payload(claim_id=-1)
+
+
+class TestRunCycleRecomputesTiers:
+    """run_cycle must recompute tiers every cycle (governance regression).
+
+    WHY: recompute_tiers was never wired into run_cycle, so on the live DB
+    tiers drifted — heavy-use claims stayed 'working' and 'peripheral' never
+    populated. This asserts the cycle now self-maintains tiers.
+    """
+
+    def test_run_cycle_includes_recompute_tiers_phase(self, tmp_path):
+        svc = MemoryService(db_target=str(tmp_path / "t.db"), workspace_root=tmp_path)
+        svc.init_db()
+        _ingest(svc, "A claim that should be tiered by the cycle")
+        result = svc.run_cycle()
+        assert "recompute_tiers" in result
+        tiers = result["recompute_tiers"]
+        # recompute_tiers returns per-tier rowcounts; an error dict would mean
+        # the phase blew up.
+        assert isinstance(tiers, dict) and "error" not in tiers
+        assert set(tiers).issubset({"core", "working", "peripheral"})

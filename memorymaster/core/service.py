@@ -768,6 +768,18 @@ class MemoryService:
         except Exception as exc:
             logger.warning("spool drain phase failed: %s", exc)
             result["spool_drain"] = {"error": str(exc)}
+        # Tier recomputation — keep recall-weight tiers current every cycle.
+        # Runs AFTER spool_drain so freshly-replayed access_count signals are
+        # reflected. Fast SQL, no LLM cost. Without this in the cycle, tiers
+        # drift: heavy-use claims stay 'working' and never get promoted to
+        # 'core', and the 'peripheral' demotion never fires (observed live —
+        # 21k claims eligible-for-core but only ~7k actually core, peripheral
+        # empty). Failure-isolated like every other phase.
+        try:
+            result["recompute_tiers"] = self.recompute_tiers()
+        except Exception as exc:
+            logger.warning("recompute_tiers phase failed: %s", exc)
+            result["recompute_tiers"] = {"error": str(exc)}
         # Per-cycle observability snapshot (P1 spec §2.10) — one
         # `integrity_metrics` event aggregating WAL/spool/drift/busy numbers
         # for the dashboard panels and the §7 escalation tripwire. Must run
