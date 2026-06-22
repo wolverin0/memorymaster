@@ -5,7 +5,6 @@ import json
 import logging
 import os
 from pathlib import Path
-import re
 import threading
 import time
 from typing import Any, TypeVar
@@ -16,6 +15,7 @@ from memorymaster.surfaces import mcp_path_policy
 from pydantic import BaseModel, ValidationError
 
 from memorymaster.core.models import CitationInput
+from memorymaster.core.scope_utils import canonicalize_slug
 from memorymaster.core.security import (
     expand_secret_scan_variants,
     redact_text,
@@ -61,19 +61,8 @@ _MAX_RATE_BUCKETS = 4096
 _INGEST_RATE_BUCKETS: dict[str, tuple[float, float]] = {}
 _INGEST_RATE_BUCKETS_LOCK = threading.Lock()
 _monotonic = time.monotonic
-_SCOPE_SAFE_RE = re.compile(r"[^a-z0-9_-]+")
-# Windows / macOS "Copy" artefacts and trailing "(1)"-style numeric variants.
-# Applied to the workspace dirname BEFORE slug derivation so `foo - Copy - Copy`
-# and `foo (2)` fold into `foo`.
-_COPY_SUFFIX_RE = re.compile(
-    r"(?:\s*[-_]?\s*copy(?:\s*[-_]?\s*copy)*|\s*\(\d+\)|_copy\d*)\s*$",
-    re.IGNORECASE,
-)
-# Deployment-channel suffixes we fold away so `whatsappbot-final` and
-# `whatsappbot-prod` both collapse to `whatsappbot`. Keep this list tight —
-# adding words here changes scope identity for every workspace dirname that
-# happens to end with one.
-_CHANNEL_SUFFIX_RE = re.compile(r"-(?:final|prod|production|dev|staging|stage|qa|test)$")
+# Slug canonicalization (copy/channel-suffix regexes) now lives in
+# core/scope_utils.canonicalize_slug; _canonicalize_slug below delegates to it.
 
 
 class _ToolInput(BaseModel):
@@ -333,25 +322,11 @@ def _parse_scope_allowlist(raw: str) -> list[str] | None:
 def _canonicalize_slug(dirname: str) -> str:
     """Canonicalize a workspace dirname into a stable project slug.
 
-    Rules (see ``omni/autoresearch-scope-canon-2026-04-22`` branch / audit):
-      1. Lowercase + strip whitespace.
-      2. Strip Windows/macOS ``- Copy``, ``- Copy - Copy``, ``(1)``, ``_copy``
-         artefacts off the tail BEFORE slugifying (dirname-level).
-      3. Slugify (non-alnum → ``-``) and trim leading/trailing ``_``/``-``/``.``
-         so ``_omniclaude`` and ``omniclaude`` collide correctly.
-      4. Fold deployment-channel suffixes (``-final``, ``-prod``, ``-dev``,
-         ``-staging``, etc) so ``whatsappbot-final`` → ``whatsappbot``.
+    Delegates to the shared :func:`memorymaster.core.scope_utils.canonicalize_slug`
+    so the slug logic + the three regexes live in exactly one place. Behaviour is
+    identical to the historical in-module implementation.
     """
-    base = (dirname or "").strip().lower()
-    prev = None
-    while prev != base:
-        prev = base
-        base = _COPY_SUFFIX_RE.sub("", base).strip()
-    if not base:
-        return "workspace"
-    slug = _SCOPE_SAFE_RE.sub("-", base).strip("-._") or "workspace"
-    folded = _CHANNEL_SUFFIX_RE.sub("", slug)
-    return folded or slug
+    return canonicalize_slug(dirname)
 
 
 def _project_scope(workspace: str) -> str:
@@ -599,6 +574,91 @@ if FastMCP is not None:
             logger.debug("Timeline entry failed: %s", exc)
 
         return {"ok": True, "claim": _claim_to_dict(claim)}
+
+    @mcp.tool()
+    def resolve_project(
+        alias: str,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Resolve a fuzzy project *alias* to canonical on-disk path(s).
+
+        Memory-first, Everything-second resolution returning every candidate
+        with an explainable confidence score and human-readable evidence. A
+        confident, non-sensitive match is auto-ingested as a governed
+        ``reference`` claim so the next call is memory-only. All returned paths
+        are collapsed to root-relative tokens (no raw username/IP ever leaves).
+        """
+        from memorymaster.bridges.local_search.everything import EverythingProvider
+        from memorymaster.bridges.local_search.redact import collapse_path, load_roots
+        from memorymaster.bridges.local_search.resolver import resolve_project as _resolve
+
+        raw_alias = str(alias or "").strip()
+        if not raw_alias:
+            return _structured_error("alias must be a non-empty string", "VALIDATION_ERROR", "alias")
+        try:
+            svc = _service(db, workspace)
+        except (ValueError, OSError) as exc:
+            return _structured_error(str(exc), "VALIDATION_ERROR", "workspace")
+        roots = load_roots()
+        provider = EverythingProvider()
+        result = _resolve(raw_alias, svc=svc, provider=provider, roots=roots)
+
+        def _match_dict(match: Any) -> dict[str, Any]:
+            return {
+                "path": collapse_path(roots, match.path),
+                "confidence": match.confidence,
+                "evidence": list(match.evidence),
+                "source": match.source,
+            }
+
+        return {
+            "ok": True,
+            "query": result.query,
+            "canonical_slug": result.canonical_slug,
+            "matches": [_match_dict(m) for m in result.matches],
+            "best": _match_dict(result.best) if result.best is not None else None,
+            "degraded": result.degraded,
+        }
+
+    @mcp.tool()
+    def local_search(
+        query: str,
+        limit: int = 50,
+        kind: str = "any",
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Read-only path lookup across the machine via Everything (ES.exe).
+
+        Thin wrapper over the local-search provider; performs no ingest. Output
+        paths are collapsed to root-relative tokens so a tool result never
+        prints a raw ``C:\\Users\\<name>`` path into a transcript. Returns
+        ``degraded: true`` when the search backend is unavailable.
+        """
+        from memorymaster.bridges.local_search.everything import EverythingProvider
+        from memorymaster.bridges.local_search.redact import collapse_path, load_roots
+
+        raw_query = str(query or "").strip()
+        if not raw_query:
+            return _structured_error("query must be a non-empty string", "VALIDATION_ERROR", "query")
+        if kind not in ("any", "dir", "file"):
+            return _structured_error("kind must be one of: any, dir, file", "VALIDATION_ERROR", "kind")
+        safe_limit = max(1, min(int(limit), 1000))
+        roots = load_roots()
+        provider = EverythingProvider()
+        degraded = not provider.available()
+        hits = provider.search(raw_query, limit=safe_limit, kind=kind)
+        rows = [
+            {
+                "path": collapse_path(roots, hit.path),
+                "kind": hit.kind,
+                "size": hit.size,
+                "modified": hit.modified,
+            }
+            for hit in hits
+        ]
+        return {"ok": True, "hits": rows, "degraded": degraded}
 
     @mcp.tool()
     def run_cycle(

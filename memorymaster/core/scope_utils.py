@@ -26,10 +26,50 @@ __all__ = [
     "scope_from_cwd",
     "cwd_from_transcript",
     "scope_from_transcript",
+    "canonicalize_slug",
 ]
 
 
 _SLUG_NORMALIZER_RE = re.compile(r"\s+")
+
+# ---- slug canonicalization (copied verbatim from surfaces/mcp_server.py) ----
+# These regexes are the single source of truth; mcp_server.py imports them
+# from here (or keeps its own copy for now — both produce identical output).
+
+_SCOPE_SAFE_RE = re.compile(r"[^a-z0-9_-]+")
+# Windows / macOS "Copy" artefacts and trailing "(1)"-style numeric variants.
+_COPY_SUFFIX_RE = re.compile(
+    r"(?:\s*[-_]?\s*copy(?:\s*[-_]?\s*copy)*|\s*\(\d+\)|_copy\d*)\s*$",
+    re.IGNORECASE,
+)
+# Deployment-channel suffixes: whatsappbot-final -> whatsappbot
+_CHANNEL_SUFFIX_RE = re.compile(r"-(?:final|prod|production|dev|staging|stage|qa|test)$")
+
+
+def canonicalize_slug(dirname: str) -> str:
+    """Canonicalize a workspace dirname into a stable project slug.
+
+    Rules:
+      1. Lowercase + strip whitespace.
+      2. Strip Windows/macOS ``- Copy``, ``- Copy - Copy``, ``(1)``, ``_copy``
+         suffixes (loop until stable).
+      3. Replace non-slug chars with ``-``; strip leading/trailing ``-._``.
+      4. Strip deployment-channel suffix (``-final``, ``-prod``, …).
+
+    This is the same logic as ``_canonicalize_slug`` in
+    ``memorymaster.surfaces.mcp_server``; kept here as the shared utility so
+    the local-search resolver and other callers do not import from surfaces.
+    """
+    base = (dirname or "").strip().lower()
+    prev = None
+    while prev != base:
+        prev = base
+        base = _COPY_SUFFIX_RE.sub("", base).strip()
+    if not base:
+        return "workspace"
+    slug = _SCOPE_SAFE_RE.sub("-", base).strip("-._") or "workspace"
+    folded = _CHANNEL_SUFFIX_RE.sub("", slug)
+    return folded or slug
 
 
 def scope_from_cwd(cwd: str | os.PathLike[str] | None) -> str:
