@@ -93,3 +93,6 @@ memorymaster_recover.sql
 graphify-out/
 **/graphify-out/
 .claude/_backups/
+
+# Mined claim scratch (LLM labeling batches) — may contain ambient PII/IPs; never commit
+artifacts/label-batches-*/
