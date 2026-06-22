@@ -391,11 +391,15 @@ def install_mcp_codex(*, force: bool = False):
 def append_instructions():
     banner("Append MemoryMaster Instructions")
 
-    # Claude global CLAUDE.md
+    # Claude global CLAUDE.md — only when ~/.claude exists (Claude Code
+    # installed). Mirrors the Codex guard below; without it a from-zero box
+    # (no Claude Code yet) crashes writing into a non-existent ~/.claude.
     claude_md = CLAUDE_DIR / "CLAUDE.md"
     marker = "## MemoryMaster (Cross-Session Memory)"
 
-    if claude_md.exists() and marker in claude_md.read_text(encoding="utf-8"):
+    if not CLAUDE_DIR.exists():
+        print(f"  {CLAUDE_DIR} not found — skipping CLAUDE.md (install Claude Code, then re-run)")
+    elif claude_md.exists() and marker in claude_md.read_text(encoding="utf-8"):
         print(f"  {claude_md} already has MemoryMaster section — skipping")
     elif ask_yn("Append MemoryMaster instructions to ~/.claude/CLAUDE.md?"):
         append = (TEMPLATES_DIR / "claude-md-append.md").read_text(encoding="utf-8")
@@ -753,8 +757,19 @@ def main(argv: Optional[list[str]] = None) -> int:
 def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
     global PROJECT_ROOT
 
-    set_non_interactive(bool(args.yes))
+    # Never prompt when stdout may be parsed (--json), when explicitly
+    # non-interactive (--yes), or for a quick --verify-only check — stdin may
+    # not be a tty (CI, `docker exec`, an agent), where input() raises EOFError.
+    set_non_interactive(bool(args.yes) or bool(args.json) or bool(args.verify_only))
     want_full_stack = True if args.full_stack is None else bool(args.full_stack)
+
+    # --verify-only short-circuits BEFORE any project-root prompt: it only needs
+    # --db (defaulting to cwd/memorymaster.db) and must never block on input.
+    if args.verify_only:
+        vdb = Path(args.db).expanduser().resolve() if args.db else Path.cwd() / "memorymaster.db"
+        verify = verify_install(vdb)
+        rc = 0 if verify.get("status") in ("PASS", "PARTIAL") else 1
+        return rc, ({"verify": verify} if args.json else None)
 
     # --- Resolve project root (flag > prompt > cwd) ---
     if args.project_root:
@@ -766,12 +781,6 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
     PROJECT_ROOT.mkdir(parents=True, exist_ok=True)
 
     db_path = Path(args.db).expanduser().resolve() if args.db else PROJECT_ROOT / "memorymaster.db"
-
-    # --- Verify-only short-circuit ---
-    if args.verify_only:
-        verify = verify_install(db_path)
-        rc = 0 if verify.get("status") in ("PASS", "PARTIAL") else 1
-        return rc, ({"verify": verify} if args.json else None)
 
     # --- Detect-first ---
     detected = detect_environment(cwd=PROJECT_ROOT)
@@ -795,8 +804,16 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
             print("\n  Initializing database...")
         try:
             subprocess.run(
-                [PYTHON_EXE, "-m", "memorymaster", "init-db", "--db", str(db_path)],
+                # `--db` is a GLOBAL arg — it MUST precede the subcommand,
+                # else argparse exits 2 (unrecognized arguments).
+                [PYTHON_EXE, "-m", "memorymaster", "--db", str(db_path), "init-db"],
                 check=True,
+                # capture_output: the subprocess writes to the REAL stdout fd,
+                # which contextlib.redirect_stdout (a sys.stdout swap) does NOT
+                # cover — without this its "initialized db" line corrupts the
+                # --json document on stdout.
+                capture_output=True,
+                text=True,
             )
             applied["db_init"] = True
         except Exception as exc:  # noqa: BLE001
@@ -831,15 +848,15 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
     else:
         applied["mcp_codex"] = "skipped"
 
-    # --- Steward cron ---
-    if not args.no_cron:
+    # --- Steward cron (references the Claude hook script; needs ~/.claude) ---
+    if not args.no_cron and detected.claude_code:
         setup_steward_cron()
         applied["cron"] = "configured"
     else:
-        applied["cron"] = "skipped"
+        applied["cron"] = "skipped" if args.no_cron else "skipped (no ~/.claude/)"
 
-    # --- Obsidian skills ---
-    if not args.no_obsidian_skills:
+    # --- Obsidian skills (installed into ~/.claude/skills) ---
+    if not args.no_obsidian_skills and detected.claude_code:
         install_obsidian_skills()
         applied["obsidian_skills"] = "attempted"
     else:
@@ -860,19 +877,25 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
     verify = verify_install(db_path)
 
     banner("Setup Complete!")
-    print("  Restart all Claude Code / Codex sessions to apply changes.")
-    print()
-    print("  What's configured:")
-    print("    - Recall hook (UserPromptSubmit) — injects relevant claims into each prompt")
-    print("    - Auto-ingest hook (Stop) — extracts learnings via LLM after each response")
-    print("    - MemoryMaster MCP — registered (memorymaster.surfaces.mcp_server)")
+    print("  What actually happened (skips reflect what's installed on this box):")
+    if detected.claude_code:
+        print("    - Claude hooks (recall + auto-ingest + session-start) — installed")
+        print("    - MemoryMaster MCP — registered (memorymaster.surfaces.mcp_server)")
+    else:
+        print("    - Claude Code not detected — hooks + MCP SKIPPED. Install Claude")
+        print("      Code, then re-run `memorymaster-setup` to wire them.")
+    print(f"    - Codex MCP — {applied.get('mcp_codex')}")
+    print(f"    - DB: {db_path}  |  verify: {verify.get('status')}")
     print(f"    - LLM provider: {llm_config['provider']}")
     if degraded:
-        print("    - Stack: SQLite-only (degraded) — see message above")
+        print("    - Stack: SQLite-only (degraded) — vector recall + local LLM OFF")
     print()
     print("  Next steps:")
-    print("    1. Restart Claude Code / Codex sessions")
-    print("    2. Run: memorymaster-setup --verify-only")
+    if detected.claude_code or detected.codex:
+        print("    1. Restart Claude Code / Codex sessions to load hooks + MCP")
+    else:
+        print("    1. Install Claude Code or Codex, then re-run memorymaster-setup")
+    print("    2. Re-check anytime with: memorymaster-setup --verify-only")
     print()
 
     if args.json:

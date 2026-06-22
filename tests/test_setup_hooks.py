@@ -451,3 +451,55 @@ class TestMalformedConfigBackup:
             assert backups[0].read_text(encoding="utf-8") == original
         finally:
             sh.set_non_interactive(False)
+
+
+class TestFromZeroRegressions:
+    """Regressions found by a real from-zero container install (not catchable by
+    the stub-detect/populated-HOME unit harness). Each fails if its bug returns.
+    """
+
+    def test_no_claude_code_completes_without_crash(self, hermetic_home, no_real_subprocess, monkeypatch, capsys):
+        """~/.claude absent + claude_code=False: setup must finish (exit 0), not
+        crash in append_instructions writing into a non-existent ~/.claude."""
+        import shutil
+        shutil.rmtree(hermetic_home["claude_dir"], ignore_errors=True)
+        monkeypatch.setattr(sh, "detect_environment", lambda *a, **kw: _detected(claude_code=False))
+        db = hermetic_home["project"] / "fz.db"
+        rc = sh.main(
+            ["--yes", "--no-full-stack", "--no-cron", "--no-obsidian-skills",
+             "--project-root", str(hermetic_home["project"]), "--db", str(db), "--json"]
+        )
+        assert rc == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["applied"]["hooks"].startswith("skipped")
+        assert payload["applied"]["mcp_claude"].startswith("skipped")
+        assert not (hermetic_home["claude_dir"] / "CLAUDE.md").exists()  # never created a fake ~/.claude
+
+    def test_db_init_passes_db_before_subcommand(self, hermetic_home, monkeypatch):
+        """init-db is invoked as `--db <path> init-db` (global arg first), not
+        `init-db --db <path>` which argparse rejects with exit 2."""
+        calls: list[list[str]] = []
+
+        def fake_run(args, *a, **kw):
+            calls.append(list(args) if isinstance(args, (list, tuple)) else [args])
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(sh.subprocess, "run", fake_run)
+        monkeypatch.setattr(sh, "detect_environment", lambda *a, **kw: _detected(claude_code=False))
+        db = hermetic_home["project"] / "order.db"  # must NOT pre-exist
+        sh.main(["--yes", "--no-full-stack", "--no-cron", "--no-obsidian-skills",
+                 "--project-root", str(hermetic_home["project"]), "--db", str(db), "--json"])
+        init_calls = [c for c in calls if "init-db" in c]
+        assert init_calls, "init-db subprocess was never invoked"
+        c = init_calls[0]
+        assert c.index("--db") < c.index("init-db"), f"--db must precede init-db: {c}"
+
+    def test_verify_only_is_non_interactive_without_yes(self, hermetic_home, monkeypatch):
+        """--verify-only (no --yes) must never call input() — stdin may be a
+        non-tty (CI/docker/agent), where input() raises EOFError."""
+        sh.set_non_interactive(False)
+        monkeypatch.setattr("builtins.input", lambda *a, **k: (_ for _ in ()).throw(AssertionError("input() called")))
+        monkeypatch.setattr(sh, "detect_environment", lambda *a, **kw: _detected())
+        db = hermetic_home["project"] / "vo2.db"
+        rc = sh.main(["--verify-only", "--db", str(db), "--json"])
+        assert rc == 0
