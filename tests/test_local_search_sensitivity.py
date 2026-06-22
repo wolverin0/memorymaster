@@ -11,6 +11,7 @@ collapsed token IS stored and re-findable, so the gate is not just blanket-deny.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -75,13 +76,20 @@ def _refindable_local_path_claims(svc: MemoryService, slug: str) -> list:
 
 @pytest.mark.unit
 def test_username_path_is_not_ingested(tmp_path: Path) -> None:
-    """A path that collapses to a raw C:\\Users\\<name> token must NOT be stored.
+    """A path that collapses to a raw home-dir/<name> token must NOT be stored.
 
     No root matches the candidate, so collapse_path returns it unchanged; the
     scan then flags the username and the gate must abort the ingest. This is the
     test that fails if the scan_text_for_findings guard is removed.
     """
-    leaky = r"C:\Users\victim\projects\memorymaster"
+    # OS-native separator so Path(...).name == "memorymaster" on BOTH platforms
+    # (POSIX does not split on backslashes — a Windows literal would make the
+    # candidate's basename the whole string and drop it before the gate runs).
+    leaky = (
+        r"C:\Users\victim\projects\memorymaster"
+        if os.name == "nt"
+        else "/home/victim/projects/memorymaster"
+    )
     # Sanity: the scanner really does flag this (anchors the test's premise).
     assert scan_text_for_findings(f"memorymaster resolves to {leaky}")
 
