@@ -3,6 +3,9 @@
 > Scope: how ANY AI coding agent (Claude Code, Codex, Gemini, droid, opencode, or a
 > remote VM bridge like Hermes) uses MemoryMaster for cross-session memory.
 > Companion design map: `.planning/P4-AGENTS-CONTRACT.md` (file:line evidence).
+>
+> **Install / setup:** see [INSTALLATION.md](../INSTALLATION.md) and [docs/AGENT-INSTALL.md](AGENT-INSTALL.md).
+> This document covers the integration contract only — not how to install or configure MemoryMaster.
 
 Every agent that uses MemoryMaster runs the **same three beats**. The beats are the
 contract; the *mechanism* differs per agent class (installed hooks vs. a reference
@@ -71,7 +74,9 @@ and is a defect.
 
 ### Claude Code — fully turnkey (installed hooks)
 
-`setup_hooks.py` installs three hooks; no manual wiring needed.
+`memorymaster-setup` (or `python scripts/setup-hooks.py`) installs the hooks automatically.
+See [INSTALLATION.md](../INSTALLATION.md) for setup flags and [docs/AGENT-INSTALL.md](AGENT-INSTALL.md)
+for the one-paste agent prompt. Once installed, all three beats fire automatically with no manual wiring.
 
 | Beat | Mechanism | Template |
 |------|-----------|----------|
@@ -79,11 +84,9 @@ and is a defect.
 | 2 RECALL | `UserPromptSubmit` hook runs `recall()` read-only and injects `[MemoryMaster recall]` | `config_templates/hooks/memorymaster-recall.py` |
 | 3 INGEST | `Stop` hook: block-to-save every 15 msgs + passive ≤3 distill → `service.ingest` with `source_agent="llm-stop-hook"`; the block reason tells Claude to ingest with `source_agent="claude-session"` | `config_templates/hooks/memorymaster-auto-ingest.py` |
 
-Nothing to do beyond running `python scripts/setup-hooks.py`.
-
 ### Codex / generic MCP agents — AGENTS.md (instruction) + reference script (automation)
 
-There are **two layers**, and you need both:
+There are **two layers**, and you need both. `memorymaster-setup` (see [INSTALLATION.md](../INSTALLATION.md)) wires both automatically when `~/.codex/` is detected.
 
 **Instruction layer** — `setup_hooks.append_instructions()` appends
 `config_templates/codex-agents-md-append.md` to `~/.codex/AGENTS.md` (CODEX_DIR-aware).

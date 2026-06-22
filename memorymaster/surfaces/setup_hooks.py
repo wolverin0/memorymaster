@@ -15,18 +15,23 @@ Interactive prompts for:
     - Steward cron (every 6h)
     - Obsidian skills installation
 """
+import argparse
 import json
 import os
 import platform
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
+from typing import Any, Optional
 
 try:
     from importlib.resources import files as _resource_files
 except ImportError:  # pragma: no cover - Python < 3.9
     from importlib_resources import files as _resource_files  # type: ignore
+
+from memorymaster.surfaces.setup_detect import Detected, detect_environment, format_plan
 
 # Templates are shipped inside the package as importable resources.
 TEMPLATES_DIR = Path(str(_resource_files("memorymaster") / "config_templates"))
@@ -43,16 +48,60 @@ CLAUDE_JSON = HOME / ".claude.json"
 CODEX_DIR = HOME / ".codex"
 PYTHON_EXE = sys.executable
 
+# ---------------------------------------------------------------------------
+# Non-interactive mode (set by main() when --yes is passed). When True,
+# ask()/ask_yn() never call input() — they return the supplied default. This
+# is what makes the installer scriptable + hermetic-testable.
+# ---------------------------------------------------------------------------
+NON_INTERACTIVE = False
+
+
+def set_non_interactive(value: bool) -> None:
+    """Toggle module-level non-interactive mode (no input() prompts)."""
+    global NON_INTERACTIVE
+    NON_INTERACTIVE = bool(value)
+
+
+def _load_json_preserving(path: Path) -> dict:
+    """Load a JSON object from *path*, returning ``{}`` when it's absent.
+
+    If the file EXISTS but is malformed JSON, back it up to
+    ``<name>.corrupt-<timestamp>.bak`` and warn BEFORE returning ``{}`` — so a
+    later write never silently overwrites (and loses) a user's hand-edited
+    config. If the backup itself can't be written we raise rather than wipe:
+    losing the data in place is worse than a clear, actionable abort.
+    """
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        backup = path.with_name(f"{path.name}.corrupt-{time.strftime('%Y%m%d-%H%M%S')}.bak")
+        try:
+            shutil.copy2(path, backup)
+        except OSError as exc:
+            raise RuntimeError(
+                f"{path} is not valid JSON and a backup could not be written ({exc}); "
+                "refusing to overwrite. Fix or move the file, then re-run."
+            ) from exc
+        print(f"  WARNING: {path} is not valid JSON — backed up to {backup} before rewriting.")
+        return {}
+    return data if isinstance(data, dict) else {}
+
 
 def ask(prompt, default=""):
-    """Prompt user for input."""
+    """Prompt user for input. In non-interactive mode, returns the default."""
+    if NON_INTERACTIVE:
+        return default
     suffix = f" [{default}]" if default else ""
     result = input(f"  {prompt}{suffix}: ").strip()
     return result or default
 
 
 def ask_yn(prompt, default=True):
-    """Yes/no prompt."""
+    """Yes/no prompt. In non-interactive mode, returns the default."""
+    if NON_INTERACTIVE:
+        return default
     suffix = " [Y/n]" if default else " [y/N]"
     result = input(f"  {prompt}{suffix}: ").strip().lower()
     if not result:
@@ -118,14 +167,10 @@ def install_hooks(llm_config):
         dest.write_text(content, encoding="utf-8")
         print(f"  Installed: {dest}")
 
-    # Update settings.json with hooks config
+    # Update settings.json with hooks config. A malformed pre-existing file is
+    # backed up (never silently wiped) by _load_json_preserving.
     settings_path = CLAUDE_DIR / "settings.json"
-    settings = {}
-    if settings_path.exists():
-        try:
-            settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            settings = {}
+    settings = _load_json_preserving(settings_path)
 
     # Add env vars
     env = settings.setdefault("env", {})
@@ -234,33 +279,110 @@ def install_hooks(llm_config):
 # ---------------------------------------------------------------------------
 # 3. MCP config
 # ---------------------------------------------------------------------------
-def install_mcp():
-    banner("MemoryMaster MCP Server (Global)")
+def _mcp_command_args() -> tuple[str, list[str]]:
+    """Return the (command, args) pair for the MCP server entry.
 
-    if not CLAUDE_JSON.exists():
-        print(f"  {CLAUDE_JSON} not found — creating")
-        CLAUDE_JSON.write_text("{}", encoding="utf-8")
+    Uses the non-deprecated module path memorymaster.surfaces.mcp_server.
+    The installed console-script entry point is ``memorymaster-mcp`` (see
+    pyproject), but we register the explicit interpreter + module form so the
+    registration is robust even when the script dir is not on PATH.
+    """
+    return PYTHON_EXE, ["-m", "memorymaster.surfaces.mcp_server"]
 
-    data = json.loads(CLAUDE_JSON.read_text(encoding="utf-8"))
-    servers = data.setdefault("mcpServers", {})
 
-    if "memorymaster" in servers:
-        if not ask_yn("memorymaster MCP already configured. Overwrite?", False):
-            return
-
-    db_path = str(PROJECT_ROOT / "memorymaster.db")
-    servers["memorymaster"] = {
+def _mcp_server_entry(db_path: str) -> dict[str, Any]:
+    command, args = _mcp_command_args()
+    return {
         "type": "stdio",
-        "command": PYTHON_EXE,
-        "args": ["-m", "memorymaster.mcp_server"],
+        "command": command,
+        "args": args,
         "env": {
             "MEMORYMASTER_DEFAULT_DB": db_path,
             "MEMORYMASTER_WORKSPACE": str(PROJECT_ROOT),
-        }
+        },
     }
+
+
+def install_mcp(*, force: bool = False, already_registered: bool = False):
+    """Register the MemoryMaster MCP server in ~/.claude.json.
+
+    Brownfield-safe: if an entry already exists, skip (no clobber) unless
+    ``force`` is set. ``already_registered`` lets the caller pass the
+    Detected report so we avoid touching the file when nothing would change.
+    """
+    banner("MemoryMaster MCP Server (Global)")
+
+    # Read-merge-write. A malformed pre-existing .claude.json is backed up
+    # (never silently wiped) by _load_json_preserving; absent -> {}.
+    data = _load_json_preserving(CLAUDE_JSON)
+    servers = data.setdefault("mcpServers", {})
+
+    if "memorymaster" in servers and not force:
+        if not ask_yn("memorymaster MCP already configured. Overwrite?", False):
+            print("  Keeping existing MCP entry (brownfield) — pass --force to replace.")
+            return
+
+    db_path = str(PROJECT_ROOT / "memorymaster.db")
+    servers["memorymaster"] = _mcp_server_entry(db_path)
 
     CLAUDE_JSON.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"  Added memorymaster to {CLAUDE_JSON}")
+
+
+# Marker-bounded block for the Codex config.toml MCP table. We do NOT parse
+# the whole TOML (no writer in stdlib for 3.10); instead we manage an
+# idempotent fenced block so re-runs replace cleanly and unknown content is
+# preserved untouched.
+_CODEX_MCP_BEGIN = "# >>> memorymaster mcp (managed by memorymaster-setup) >>>"
+_CODEX_MCP_END = "# <<< memorymaster mcp (managed by memorymaster-setup) <<<"
+
+
+def install_mcp_codex(*, force: bool = False):
+    """Register the MCP server for Codex (~/.codex/config.toml).
+
+    Codex reads MCP servers from ``[mcp_servers.<name>]`` TOML tables. We
+    write a marker-bounded block so re-runs are idempotent and any
+    pre-existing user TOML outside the block is preserved verbatim.
+    """
+    if not CODEX_DIR.exists():
+        return
+    banner("MemoryMaster MCP Server (Codex)")
+    config_path = CODEX_DIR / "config.toml"
+    existing = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+
+    has_block = _CODEX_MCP_BEGIN in existing
+    if has_block and not force:
+        if not ask_yn("memorymaster MCP already in Codex config. Overwrite?", False):
+            print("  Keeping existing Codex MCP entry (brownfield) — pass --force to replace.")
+            return
+
+    db_path = str(PROJECT_ROOT / "memorymaster.db")
+    command, args = _mcp_command_args()
+    args_toml = ", ".join(json.dumps(a) for a in args)
+    block = (
+        f"{_CODEX_MCP_BEGIN}\n"
+        "[mcp_servers.memorymaster]\n"
+        f"command = {json.dumps(command)}\n"
+        f"args = [{args_toml}]\n"
+        "[mcp_servers.memorymaster.env]\n"
+        f"MEMORYMASTER_DEFAULT_DB = {json.dumps(db_path)}\n"
+        f"MEMORYMASTER_WORKSPACE = {json.dumps(str(PROJECT_ROOT))}\n"
+        f"{_CODEX_MCP_END}\n"
+    )
+
+    if has_block:
+        before, _, rest = existing.partition(_CODEX_MCP_BEGIN)
+        _, _, after = rest.partition(_CODEX_MCP_END)
+        # Drop a single trailing newline left by the old block end marker.
+        new_content = before.rstrip("\n") + "\n\n" + block + after.lstrip("\n")
+    else:
+        sep = "\n\n" if existing.strip() else ""
+        new_content = existing.rstrip("\n") + sep + ("\n" if existing.strip() else "") + block
+        if not existing.strip():
+            new_content = block
+
+    config_path.write_text(new_content, encoding="utf-8")
+    print(f"  Registered memorymaster MCP in {config_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -378,38 +500,364 @@ def install_obsidian_skills():
 
 
 # ---------------------------------------------------------------------------
+# 7. Full-stack orchestration (Qdrant + Ollama via Docker Compose)
+# ---------------------------------------------------------------------------
+SQLITE_ONLY_MESSAGE = (
+    "Running in SQLite-only mode. Vector recall + local LLM auto-ingest are OFF.\n"
+    "  To enable them: install Docker and re-run with --full-stack, or point\n"
+    "  QDRANT_URL / OLLAMA_URL at existing services."
+)
+
+
+def setup_full_stack(detected: Detected, *, interactive: bool, yes: bool, model: str = "") -> dict[str, Any]:
+    """Bring up the optional vector + local-LLM stack (Qdrant + Ollama).
+
+    Brownfield: reuse already-healthy services. No-Docker fallback: print the
+    SQLite-only degraded message and CONTINUE (never block core install).
+
+    Returns a dict describing what happened (for --json), including a
+    ``degraded`` boolean and a human ``message`` when degraded.
+    """
+    banner("Full-Stack (Qdrant + Ollama)")
+    result: dict[str, Any] = {
+        "qdrant": "absent",
+        "ollama": "absent",
+        "degraded": False,
+        "message": "",
+        "compose_run": False,
+    }
+
+    # Brownfield: already-healthy services are reused as-is.
+    if detected.qdrant:
+        result["qdrant"] = "reused"
+        print("  Qdrant already reachable — reusing.")
+    if detected.ollama:
+        result["ollama"] = "reused"
+        print("  Ollama already reachable — reusing.")
+
+    qdrant_needed = not detected.qdrant
+    ollama_needed = not detected.ollama
+
+    if not (qdrant_needed or ollama_needed):
+        print("  Full stack already healthy — nothing to do.")
+        return result
+
+    # No Docker Compose → degraded fallback (non-fatal).
+    if not detected.docker_compose:
+        result["degraded"] = True
+        result["message"] = SQLITE_ONLY_MESSAGE
+        print(f"  {SQLITE_ONLY_MESSAGE}")
+        return result
+
+    if interactive and not yes:
+        if not ask_yn("Start Qdrant + Ollama via docker compose?", True):
+            result["degraded"] = True
+            result["message"] = SQLITE_ONLY_MESSAGE
+            print("  Skipped full-stack at user request.")
+            print(f"  {SQLITE_ONLY_MESSAGE}")
+            return result
+
+    compose_file = PROJECT_ROOT / "docker-compose.yml"
+    up_args = ["docker", "compose"]
+    if compose_file.is_file():
+        up_args += ["-f", str(compose_file)]
+    services = [s for s, needed in (("qdrant", qdrant_needed), ("ollama", ollama_needed)) if needed]
+    up_args += ["up", "-d", *services]
+
+    try:
+        proc = subprocess.run(up_args, capture_output=True, text=True, timeout=120)
+        if proc.returncode == 0:
+            result["compose_run"] = True
+            for svc in services:
+                result[svc] = "started"
+            print(f"  docker compose up -d {' '.join(services)} — OK")
+        else:
+            result["degraded"] = True
+            result["message"] = SQLITE_ONLY_MESSAGE
+            print(f"  docker compose failed (rc={proc.returncode}); continuing degraded.")
+            print(f"  {SQLITE_ONLY_MESSAGE}")
+            return result
+    except Exception as exc:  # noqa: BLE001 — stack failure must never block core install
+        result["degraded"] = True
+        result["message"] = SQLITE_ONLY_MESSAGE
+        print(f"  docker compose error: {exc}; continuing degraded.")
+        print(f"  {SQLITE_ONLY_MESSAGE}")
+        return result
+
+    # Best-effort model pull (non-fatal).
+    if ollama_needed and model:
+        try:
+            subprocess.run(["ollama", "pull", model], capture_output=True, text=True, timeout=300)
+            print(f"  ollama pull {model} — requested")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ollama pull {model} failed (non-fatal): {exc}")
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 8. Verify install (sentinel round-trip)
+# ---------------------------------------------------------------------------
+def verify_install(db_path: str | Path) -> dict[str, Any]:
+    """Ingest a sentinel claim via the core service, then query it back.
+
+    Returns {"status": "PASS"|"PARTIAL"|"FAIL", "detail": str, "mcp_note": str}.
+    Never raises — a failure degrades to a FAIL/PARTIAL result.
+    """
+    banner("Verify Install")
+    db_path = str(db_path)
+    result: dict[str, Any] = {"status": "FAIL", "detail": "", "mcp_note": ""}
+
+    try:
+        from memorymaster.core.models import CitationInput
+        from memorymaster.core.service import MemoryService
+    except Exception as exc:  # noqa: BLE001
+        result["detail"] = f"could not import core service: {exc}"
+        print(f"  FAIL — {result['detail']}")
+        return result
+
+    sentinel = "memorymaster setup verification sentinel claim"
+    try:
+        svc = MemoryService(db_path)
+        svc.init_db()
+        svc.ingest(
+            sentinel,
+            [CitationInput(source="setup-verify", locator="verify_install")],
+            scope="project:memorymaster-verify",
+            source_agent="memorymaster-setup",
+            idempotency_key="memorymaster-setup-verify-sentinel",
+        )
+        hits = svc.query(
+            "verification sentinel",
+            limit=10,
+            include_candidates=True,
+            scope_allowlist=["project:memorymaster-verify"],
+        )
+        round_tripped = any("sentinel" in (getattr(c, "text", "") or "") for c in hits)
+    except Exception as exc:  # noqa: BLE001
+        result["detail"] = f"round-trip failed: {exc}"
+        print(f"  FAIL — {result['detail']}")
+        return result
+
+    if round_tripped:
+        result["status"] = "PASS"
+        result["detail"] = "sentinel claim ingested and recalled successfully"
+        print("  PASS — sentinel claim ingested and recalled.")
+    else:
+        result["status"] = "PARTIAL"
+        result["detail"] = "ingest succeeded but query did not return the sentinel"
+        print("  PARTIAL — ingest OK but recall did not find the sentinel.")
+
+    if detect_environment(cwd=PROJECT_ROOT).mm_mcp_registered:
+        result["mcp_note"] = "MCP registered — restart your session to load it."
+        print(f"  {result['mcp_note']}")
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# argparse
+# ---------------------------------------------------------------------------
+def build_arg_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="memorymaster-setup",
+        description="Detect-first, idempotent MemoryMaster onboarding.",
+    )
+    p.add_argument("-y", "--yes", action="store_true", help="non-interactive; accept all defaults")
+    p.add_argument("--db", help="path to memorymaster.db (overrides project-root default)")
+    p.add_argument(
+        "--provider",
+        choices=["google", "openai", "anthropic", "ollama"],
+        help="LLM provider for the auto-ingest Stop hook",
+    )
+    p.add_argument("--api-key", help="API key for the chosen provider")
+    p.add_argument("--model", help="LLM model id")
+    p.add_argument("--project-root", help="directory where memorymaster.db lives")
+    p.add_argument(
+        "--full-stack",
+        dest="full_stack",
+        action="store_true",
+        default=None,
+        help="bring up Qdrant + Ollama (default)",
+    )
+    p.add_argument(
+        "--no-full-stack",
+        dest="full_stack",
+        action="store_false",
+        help="skip the vector + local-LLM stack",
+    )
+    p.add_argument("--no-cron", action="store_true", help="skip steward cron setup")
+    p.add_argument("--no-obsidian-skills", action="store_true", help="skip Obsidian skills install")
+    p.add_argument(
+        "--codex",
+        dest="codex",
+        action="store_true",
+        default=None,
+        help="force Codex MCP + instructions wiring",
+    )
+    p.add_argument("--no-codex", dest="codex", action="store_false", help="skip Codex wiring")
+    p.add_argument("--force", action="store_true", help="overwrite existing MCP entries")
+    p.add_argument("--verify-only", action="store_true", help="run only the verify round-trip and exit")
+    p.add_argument("--json", action="store_true", help="emit machine-readable JSON result")
+    return p
+
+
+def _resolve_provider_config(args: argparse.Namespace) -> dict[str, str]:
+    """Build the llm_config from flags, falling back to interactive prompts."""
+    defaults = {
+        "google": ("GEMINI_API_KEY", "gemini-3.1-flash-lite-preview"),
+        "openai": ("OPENAI_API_KEY", "gpt-4o-mini"),
+        "anthropic": ("ANTHROPIC_API_KEY", "claude-haiku-4-5-20251001"),
+        "ollama": ("", "llama3.2:3b"),
+    }
+    if args.provider:
+        _, default_model = defaults[args.provider]
+        return {
+            "provider": args.provider,
+            "api_key": args.api_key or "",
+            "model": args.model or default_model,
+        }
+    # No provider flag: prompt (honors NON_INTERACTIVE → returns defaults).
+    cfg = setup_llm_provider()
+    if args.api_key:
+        cfg["api_key"] = args.api_key
+    if args.model:
+        cfg["model"] = args.model
+    return cfg
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-def main():
+def _emit_json(payload: dict[str, Any]) -> None:
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    """Entry point. In --json mode, all human chatter is routed to stderr so
+    that stdout contains ONLY the parseable JSON document."""
+    args = build_arg_parser().parse_args(argv)
+    if not args.json:
+        rc, _payload = _run_main(args)
+        return rc
+
+    import contextlib
+
+    with contextlib.redirect_stdout(sys.stderr):
+        rc, payload = _run_main(args)
+    if payload is not None:
+        _emit_json(payload)
+    return rc
+
+
+def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
     global PROJECT_ROOT
-    banner('MemoryMaster Setup')
-    default_root = str(Path.cwd())
-    root_input = ask('Project root (where memorymaster.db lives)', default_root)
+
+    set_non_interactive(bool(args.yes))
+    want_full_stack = True if args.full_stack is None else bool(args.full_stack)
+
+    # --- Resolve project root (flag > prompt > cwd) ---
+    if args.project_root:
+        root_input = args.project_root
+    else:
+        banner("MemoryMaster Setup")
+        root_input = ask("Project root (where memorymaster.db lives)", str(Path.cwd()))
     PROJECT_ROOT = Path(root_input).expanduser().resolve()
     PROJECT_ROOT.mkdir(parents=True, exist_ok=True)
-    print(f'  Using project root: {PROJECT_ROOT}')
 
-    banner("MemoryMaster Setup")
-    print("  This will configure hooks, MCP, steward cron, and optional integrations.")
+    db_path = Path(args.db).expanduser().resolve() if args.db else PROJECT_ROOT / "memorymaster.db"
+
+    # --- Verify-only short-circuit ---
+    if args.verify_only:
+        verify = verify_install(db_path)
+        rc = 0 if verify.get("status") in ("PASS", "PARTIAL") else 1
+        return rc, ({"verify": verify} if args.json else None)
+
+    # --- Detect-first ---
+    detected = detect_environment(cwd=PROJECT_ROOT)
+    plan = format_plan(detected, want_full_stack=want_full_stack)
+    banner("Detection + Plan")
     print(f"  Project root: {PROJECT_ROOT}")
     print(f"  Python: {PYTHON_EXE}")
     print()
+    for line in plan:
+        print(line)
+    print()
 
-    if not ask_yn("Continue?"):
-        return
+    if not args.json and not ask_yn("Continue?"):
+        return 0, None
 
-    # Init DB if needed
-    db_path = PROJECT_ROOT / "memorymaster.db"
+    applied: dict[str, Any] = {}
+
+    # --- Init DB if needed ---
     if not db_path.exists():
-        print("\n  Initializing database...")
-        subprocess.run([PYTHON_EXE, "-m", "memorymaster", "init-db", "--db", str(db_path)], check=True)
+        if not args.json:
+            print("\n  Initializing database...")
+        try:
+            subprocess.run(
+                [PYTHON_EXE, "-m", "memorymaster", "init-db", "--db", str(db_path)],
+                check=True,
+            )
+            applied["db_init"] = True
+        except Exception as exc:  # noqa: BLE001
+            applied["db_init"] = f"error: {exc}"
 
-    llm_config = setup_llm_provider()
-    install_hooks(llm_config)
-    install_mcp()
+    # --- LLM provider config ---
+    llm_config = _resolve_provider_config(args)
+    applied["provider"] = llm_config["provider"]
+
+    # --- Claude Code hooks (idempotent remove-then-add; brownfield-safe) ---
+    if detected.claude_code:
+        install_hooks(llm_config)
+        applied["hooks"] = "installed"
+    else:
+        applied["hooks"] = "skipped (no ~/.claude/)"
+
+    # --- MCP registration (skip-if-present unless --force) ---
+    if detected.claude_code:
+        install_mcp(force=args.force, already_registered=detected.mm_mcp_registered)
+        applied["mcp_claude"] = "present" if (detected.mm_mcp_registered and not args.force) else "registered"
+    else:
+        applied["mcp_claude"] = "skipped (no ~/.claude/)"
+
+    # --- Instructions (CLAUDE.md / AGENTS.md / Codex session-end) ---
     append_instructions()
-    setup_steward_cron()
-    install_obsidian_skills()
+
+    # --- Codex MCP wiring ---
+    want_codex = detected.codex if args.codex is None else bool(args.codex)
+    if want_codex and detected.codex:
+        install_mcp_codex(force=args.force)
+        applied["mcp_codex"] = "registered"
+    else:
+        applied["mcp_codex"] = "skipped"
+
+    # --- Steward cron ---
+    if not args.no_cron:
+        setup_steward_cron()
+        applied["cron"] = "configured"
+    else:
+        applied["cron"] = "skipped"
+
+    # --- Obsidian skills ---
+    if not args.no_obsidian_skills:
+        install_obsidian_skills()
+        applied["obsidian_skills"] = "attempted"
+    else:
+        applied["obsidian_skills"] = "skipped"
+
+    # --- Full-stack orchestration ---
+    degraded = False
+    if want_full_stack:
+        stack = setup_full_stack(
+            detected, interactive=not args.yes, yes=bool(args.yes), model=llm_config.get("model", "")
+        )
+        applied["full_stack"] = stack
+        degraded = bool(stack.get("degraded"))
+    else:
+        applied["full_stack"] = {"skipped": True}
+
+    # --- Verify ---
+    verify = verify_install(db_path)
 
     banner("Setup Complete!")
     print("  Restart all Claude Code / Codex sessions to apply changes.")
@@ -417,16 +865,29 @@ def main():
     print("  What's configured:")
     print("    - Recall hook (UserPromptSubmit) — injects relevant claims into each prompt")
     print("    - Auto-ingest hook (Stop) — extracts learnings via LLM after each response")
-    print("    - MemoryMaster MCP — 21 tools available in all sessions")
-    print("    - Steward cron — validates claims every 6 hours")
+    print("    - MemoryMaster MCP — registered (memorymaster.surfaces.mcp_server)")
     print(f"    - LLM provider: {llm_config['provider']}")
+    if degraded:
+        print("    - Stack: SQLite-only (degraded) — see message above")
     print()
     print("  Next steps:")
-    print("    1. Restart Claude Code sessions")
-    print("    2. Run: memorymaster --db memorymaster.db run-cycle")
-    print("    3. Open Obsidian vault at: obsidian-vault/")
+    print("    1. Restart Claude Code / Codex sessions")
+    print("    2. Run: memorymaster-setup --verify-only")
     print()
+
+    if args.json:
+        from dataclasses import asdict
+
+        payload = {
+            "detected": asdict(detected),
+            "planned": plan,
+            "applied": applied,
+            "verify": verify,
+            "degraded": degraded,
+        }
+        return 0, payload
+    return 0, None
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

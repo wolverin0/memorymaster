@@ -47,27 +47,70 @@ pip install -e ".[dev,mcp,security]"
 memorymaster --db memory.db init-db
 ```
 
-### Interactive setup (hooks + MCP + cron)
+### Setup (hooks + MCP + cron)
 
-After `pip install memorymaster`, run the interactive installer to wire
-MemoryMaster into Claude Code (hooks, MCP server, steward cron) and
-optionally into Codex:
+After `pip install memorymaster`, run the installer to wire MemoryMaster into
+Claude Code (hooks, MCP server, steward cron) and optionally Codex.
+
+**Recommended — let your agent drive it** (paste [`docs/AGENT-INSTALL.md`](docs/AGENT-INSTALL.md)
+into Claude Code or Codex):
+
+```bash
+memorymaster-setup --yes --full-stack --json
+```
+
+**Manual / interactive:**
 
 ```bash
 memorymaster-setup
 ```
 
-This will:
-
-- Ask for your LLM provider (Gemini / OpenAI / Anthropic / Ollama) and API key
-- Ask where `memorymaster.db` should live (default: current directory)
-- Copy 7 hook scripts to `~/.claude/hooks/` and wire them into `~/.claude/settings.json`: recall, classify, validate-wiki, session-start, auto-ingest, pre-compact, plus the 6-hour steward cron
-- Register the `memorymaster` MCP server globally in `~/.claude.json`
-- Optionally append Codex `AGENTS.md` + global `CLAUDE.md` integration snippets
-- Optionally install the steward cron (Linux/macOS) or Task Scheduler job (Windows)
-
 Running from a cloned repo? `python scripts/setup-hooks.py` also works — it is
-a 3-line shim that calls the same `memorymaster.setup_hooks:main` function.
+a 3-line shim that calls the same `memorymaster.surfaces.setup_hooks:main` function.
+
+#### `memorymaster-setup` flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-y` / `--yes` | off | Non-interactive; accept all defaults (no `input()` prompts) |
+| `--db PATH` | `<project-root>/memorymaster.db` | Path to the SQLite database |
+| `--provider {google,openai,anthropic,ollama}` | prompted | LLM provider for the auto-ingest Stop hook |
+| `--api-key KEY` | prompted | API key for the chosen provider |
+| `--model MODEL` | provider default | LLM model id |
+| `--project-root PATH` | cwd | Directory where `memorymaster.db` lives |
+| `--full-stack` | on | Bring up Qdrant + Ollama via Docker Compose |
+| `--no-full-stack` | off | Skip the vector + local-LLM stack |
+| `--no-cron` | off | Skip steward cron setup |
+| `--no-obsidian-skills` | off | Skip Obsidian skills install |
+| `--codex` | auto-detect | Force Codex MCP + instructions wiring |
+| `--no-codex` | — | Skip Codex wiring |
+| `--force` | off | Overwrite existing MCP entries (default: skip if present) |
+| `--verify-only` | off | Run only the sentinel round-trip verify and exit |
+| `--json` | off | Emit machine-readable JSON result on stdout (human chatter goes to stderr) |
+
+#### What the installer does
+
+- Probes your environment first (Python, Docker, Qdrant, Ollama, `~/.claude/`, `~/.codex/`) and prints a plan; existing components are reused, not overwritten.
+- Copies 7 hook scripts to `~/.claude/hooks/` and wires them into `~/.claude/settings.json`: recall, classify, validate-wiki, session-start, auto-ingest, pre-compact, plus the 6-hour steward cron.
+- Registers the `memorymaster` MCP server globally in `~/.claude.json` (using `memorymaster.surfaces.mcp_server` — not the deprecated path).
+- Optionally appends Codex `AGENTS.md` + global `CLAUDE.md` integration snippets.
+- Optionally installs the steward cron (Linux/macOS) or Task Scheduler job (Windows).
+- Runs a sentinel round-trip verify at the end (`--verify-only` to run this step alone).
+
+#### No-Docker degraded mode
+
+If Docker is absent and Qdrant/Ollama are not already running, the installer
+continues without them and prints:
+
+```
+Running in SQLite-only mode. Vector recall + local LLM auto-ingest are OFF.
+To enable them: install Docker and re-run with --full-stack, or point
+QDRANT_URL / OLLAMA_URL at existing services.
+```
+
+Setup exits 0. Core hooks, MCP, and SQLite-based recall all work normally in
+degraded mode. Add vector search later by installing Docker and re-running
+`memorymaster-setup --full-stack --yes`.
 
 ## Docker Compose
 

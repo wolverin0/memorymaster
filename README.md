@@ -104,72 +104,38 @@ Reproduce: `python tests/bench_longmemeval.py --retrieval-only`. Full methodolog
 
 - **Docker** for Qdrant — vector retrieval. SQLite FTS5 is the default and works out of the box; add Qdrant when you want semantic recall on top of keyword search.
 
-## 15-minute quickstart
+## 30-second quickstart
 
-From zero to a recalled claim and a live dashboard. No Qdrant, no Postgres, no LLM key required for these steps (SQLite + FTS5 is the default).
-
-**1. Install (2 min)**
+**1. Install**
 
 ```bash
-pip install "memorymaster[mcp]"
-memorymaster --db memorymaster.db init-db
+pip install "memorymaster[mcp,security,qdrant,embeddings]"
 ```
 
-**2. Configure a provider (3 min, optional for this walkthrough)**
+**2. Let your agent do the rest**
 
-Recall and ingest below work with zero config. An LLM provider is only needed for the steward/wiki cycles — pick one when you're ready (see [Pick your LLM provider](#pick-your-llm-provider)). For a Claude Code subscriber, the cheapest path is:
+Paste the contents of [`docs/AGENT-INSTALL.md`](docs/AGENT-INSTALL.md) into Claude Code or Codex. The agent will:
+- run `memorymaster-setup --yes --full-stack --json` (detects your environment, wires hooks + MCP, starts Qdrant + Ollama if Docker is present, or falls back to SQLite-only mode gracefully)
+- report what was wired, what was reused (brownfield), and what degraded
+- run `memorymaster-setup --verify-only` and show the round-trip result
 
-```bash
-export MEMORYMASTER_LLM_PROVIDER=claude_cli   # reuses your Claude Code OAuth, no API key
+**3. Restart your session**
+
+Hooks and MCP load on session start. Restart Claude Code / Codex once.
+
+**4. Verify**
+
+After restart, run in your agent:
+
+```
+query_memory("test")
 ```
 
-**3. Ingest a claim via CLI (1 min)**
+You should get a recall response from the MCP server. Done.
 
-```bash
-memorymaster --db memorymaster.db ingest \
-  --text "Server uses PostgreSQL 16" \
-  --source "session://chat|turn-3|user confirmed"
-```
+---
 
-**4. Recall it (1 min)**
-
-A freshly-ingested claim starts life as a `candidate` (unvalidated). The CLI `query`/`context` paths *exclude* candidates by default — that's the governance model: unvalidated facts don't silently leak into recall until the steward promotes them. To see your brand-new claim before a validation cycle, pass `--include-candidates`:
-
-```bash
-# Hybrid retrieval (lexical + freshness + confidence)
-memorymaster --db memorymaster.db query "database version" \
-  --retrieval-mode hybrid --include-candidates
-
-# Token-budgeted context block — the killer feature for agents
-memorymaster --db memorymaster.db context "database" \
-  --budget 4000 --format xml --include-candidates
-```
-
-You should see the PostgreSQL 16 claim come back, ranked, with its citation. (Drop `--include-candidates` and you'll get zero results until step 7's `run-cycle` promotes it to `confirmed` — that's working as designed, not a bug.)
-
-**5. Open the dashboard (2 min)**
-
-```bash
-memorymaster --db memorymaster.db run-dashboard   # serves on http://127.0.0.1:8765
-```
-
-Open the URL: you'll see your claim in **Claims**, plus governance panels — **Conflicts**, **Review Queue**, **Recall Analysis** (why each claim ranked where it did), **Audit Log**, **Provenance by Agent**, and **Reliability**.
-
-**6. Wire it into your agent (3 min)**
-
-```bash
-memorymaster-setup     # interactive: hooks, MCP, steward cron, CLAUDE.md / AGENTS.md
-```
-
-That installs the MCP server and the auto-ingest Stop hook so your agent recalls and stores memory automatically. See [MCP server](#mcp-server) for the config block.
-
-**7. Run a validation cycle (1 min, needs a provider)**
-
-```bash
-memorymaster --db memorymaster.db run-cycle   # extract, validate, decay, compact
-```
-
-For the one-prompt agent install (paste into any agent with shell access), see [`docs/handbook.md#one-prompt-agent-install`](docs/handbook.md#one-prompt-agent-install).
+For manual setup, advanced flags (`--provider`, `--db`, `--no-cron`, `--no-full-stack`, `--verify-only`, `--json`, and more), Docker, Helm, and Postgres, see [INSTALLATION.md](INSTALLATION.md).
 
 ## Pick your LLM provider
 
