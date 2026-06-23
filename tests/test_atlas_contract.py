@@ -173,6 +173,7 @@ def test_extract_atlas_claims_envelope(tmp_path: Path, capsys) -> None:
     capsys.readouterr()
     env = _run_cli(
         "--db", str(db), "--json", "extract-atlas-claims", "--scope", "project:atlas-test",
+        "--extractor", "deterministic",  # contract test predates the llm default
         capsys=capsys,
     )
     _assert_envelope(env, subcommand="extract-atlas-claims")
@@ -347,6 +348,7 @@ def test_whatsapp_basic_fixture_full_pipeline(tmp_path: Path, capsys) -> None:
     capsys.readouterr()
     env_extract = _run_cli(
         "--db", str(db), "--json", "extract-atlas-claims", "--scope", "project:atlas-fixture",
+        "--extractor", "deterministic",  # contract test asserts deterministic output; default is now llm
         capsys=capsys,
     )
     _assert_envelope(env_extract, subcommand="extract-atlas-claims")
@@ -761,7 +763,7 @@ def test_text_import_unaffected_by_media_failure(tmp_path: Path, capsys) -> None
     db, _ = _seed_with_source_item(tmp_path)
     capsys.readouterr()
     env = _run_cli("--db", str(db), "--json", "extract-atlas-claims",
-                   "--scope", "project:atlas-test", capsys=capsys)
+                   "--scope", "project:atlas-test", "--extractor", "deterministic", capsys=capsys)
     _assert_envelope(env, subcommand="extract-atlas-claims")
     # Text-only evidence still produces matched claims; media retry state is independent
     assert env["data"]["scanned"] >= 3, "text evidence must be scanned regardless of media state"
