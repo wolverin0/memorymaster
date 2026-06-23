@@ -101,6 +101,22 @@ def build_parser() -> argparse.ArgumentParser:
     extract_atlas_claims = sub.add_parser("extract-atlas-claims", help="Extract candidate claims from Atlas evidence")
     extract_atlas_claims.add_argument("--scope", default=None, help="Claim scope (defaults to project:<cwd-basename>)")
     extract_atlas_claims.add_argument("--limit", type=int, default=200, help="Maximum evidence rows to scan")
+    extract_atlas_claims.add_argument(
+        "--extractor",
+        choices=["llm", "deterministic"],
+        default="llm",
+        help="Extraction strategy: 'llm' (default, typed-entity LLM pass) or 'deterministic' (keyword matcher)",
+    )
+    extract_atlas_claims.add_argument(
+        "--model",
+        default=None,
+        help="LLM model to use (only applies when --extractor llm; overrides MEMORYMASTER_LLM_MODEL env var)",
+    )
+    extract_atlas_claims.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview extracted claims without ingesting (only applies when --extractor llm)",
+    )
 
     action_proposals = sub.add_parser("action-proposals", help="List Atlas action proposals")
     action_proposals.add_argument("--status", default=None, help="Filter by status")
