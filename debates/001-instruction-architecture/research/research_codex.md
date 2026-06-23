@@ -23,7 +23,7 @@ What is wrong or incomplete:
 
 - The project-setup skill does not actually generate the path-specific layer; it only mentions `.claude/rules/`.
 - The example `AGENTS.md` still contains volatile facts that belong in ephemeral or generated docs, not canonical instructions: module counts, test counts, indexed symbol counts.
-- The example leaks environment-specific detail (`192.168.100.186:6333`) even though the file says “never hardcode IPs.”
+- The example leaks environment-specific detail (`192.168.1.1:6333`) even though the file says “never hardcode IPs.”
 
 ## 2. Does the generator produce what projects need?
 

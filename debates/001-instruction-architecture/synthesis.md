@@ -34,7 +34,7 @@
 
 2. **Add Gemini support to /project-setup** — Generate either `.gemini/settings.json` with `context.fileName: ["AGENTS.md"]` or a 3-line `GEMINI.md` wrapper.
 
-3. **Remove hardcoded IP from example** — The memorymaster AGENTS.md still has `192.168.100.186:6333`. Use env var reference instead.
+3. **Remove hardcoded IP from example** — The memorymaster AGENTS.md still has `192.168.1.1:6333`. Use env var reference instead.
 
 ### Should Fix (2/3 agree)
 
