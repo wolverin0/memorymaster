@@ -10,6 +10,7 @@ import argparse
 import csv
 from datetime import datetime, timedelta
 import json
+import logging
 import os
 from dataclasses import asdict
 from pathlib import Path
@@ -34,6 +35,8 @@ from memorymaster.surfaces.cli_helpers import (
 )
 from memorymaster.govern.scheduler import run_daemon
 from memorymaster.core.security import resolve_allow_sensitive_access
+
+logger = logging.getLogger(__name__)
 
 
 def _handle_create_snapshot(args: argparse.Namespace, db_resolved: Path) -> int:
@@ -432,11 +435,43 @@ def _handle_propose_actions(args: argparse.Namespace, service, parser: argparse.
 
 
 def _handle_extract_atlas_claims(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
-    from memorymaster.bridges.atlas_claim_extractor import extract_atlas_claims_from_evidence
     from memorymaster.bridges.atlas_contract import atlas_meta
 
+    extractor = getattr(args, "extractor", "llm")
     t0 = time.perf_counter()
-    result = extract_atlas_claims_from_evidence(service, scope=args.scope, limit=args.limit)
+
+    if extractor == "deterministic":
+        from memorymaster.bridges.atlas_claim_extractor import extract_atlas_claims_from_evidence
+
+        result = extract_atlas_claims_from_evidence(service, scope=args.scope, limit=args.limit)
+    else:
+        # LLM path — degrade gracefully if no LLM is usable; never fall back to deterministic.
+        from memorymaster.bridges.atlas_llm_extractor import (
+            AtlasLlmExtractionResult,
+            extract_atlas_claims_llm,
+        )
+
+        model: str | None = getattr(args, "model", None)
+        dry_run: bool = getattr(args, "dry_run", False)
+        try:
+            result = extract_atlas_claims_llm(
+                service,
+                scope=args.scope,
+                limit=args.limit,
+                model=model,
+                dry_run=dry_run,
+            )
+        except Exception as exc:  # noqa: BLE001 — graceful degrade, never fall back
+            logger.warning("extract-atlas-claims: LLM extractor failed: %s", exc)
+            result = AtlasLlmExtractionResult(
+                scanned=0,
+                matched=0,
+                ingested=0,
+                degraded=0,
+                emitted=0,
+                claims=[],
+            )
+
     elapsed_ms = (time.perf_counter() - t0) * 1000
     payload = result.to_dict()
     if args.json_output:
@@ -447,9 +482,16 @@ def _handle_extract_atlas_claims(args: argparse.Namespace, service, parser: argp
             extra_meta=atlas_meta("extract-atlas-claims"),
         ))
     else:
+        ingested_note = " (dry-run)" if getattr(args, "dry_run", False) else ""
+        degraded_note = ""
+        if hasattr(result, "degraded") and result.degraded:
+            degraded_note = f" degraded={result.degraded}"
+        emitted_note = ""
+        if hasattr(result, "emitted"):
+            emitted_note = f" emitted={result.emitted}"
         print(
             f"atlas claims: scanned={result.scanned} matched={result.matched} "
-            f"ingested={result.ingested}"
+            f"ingested={result.ingested}{ingested_note}{emitted_note}{degraded_note}"
         )
         for claim in result.claims[:20]:
             print(f"  #{claim.id} [{claim.status}] {claim.text}")

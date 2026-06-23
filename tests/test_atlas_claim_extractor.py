@@ -53,7 +53,9 @@ def test_extract_atlas_claims_cli_json_output(tmp_path: Path, capsys) -> None:
     assert main(["--db", str(db), "init-db"]) == 0
     assert main(["--db", str(db), "import-whatsapp", "--input", str(export_path)]) == 0
     capsys.readouterr()
-    assert main(["--db", str(db), "--json", "extract-atlas-claims", "--scope", "project:atlas-cli"]) == 0
+    # Pin to the deterministic extractor: this test asserts the keyword-matcher's
+    # 'problem' output. The default is now --extractor llm (see ATLAS-LLM-EXTRACTOR-SPEC).
+    assert main(["--db", str(db), "--json", "extract-atlas-claims", "--scope", "project:atlas-cli", "--extractor", "deterministic"]) == 0
     payload = json.loads(capsys.readouterr().out.strip())
 
     assert payload["ok"] is True
