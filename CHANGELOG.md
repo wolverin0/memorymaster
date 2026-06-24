@@ -24,6 +24,10 @@ claims via an LLM instead of a keyword matcher.
   Backend-agnostic `LocalSearchProvider` Protocol in
   `memorymaster/bridges/local_search/` (`EverythingProvider` today;
   `plocate`/`fd`/`mdfind` can drop in later). All filesystem I/O is read-only.
+  **Optional and Windows-focused:** requires Everything + its ES CLI with
+  `MEMORYMASTER_EVERYTHING_ES_PATH` set, and degrades to a no-op when absent.
+  Most useful for agents without strong native file search (e.g. Codex);
+  marginal for clients that already have a good file-glob.
 - **LLM typed-entity Atlas extractor** (#166):
   `extract-atlas-claims --extractor llm` turns evidence (WhatsApp / email /
   notes) into typed, cited life-knowledge claims
