@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [4.1.0] - 2026-06-24
+
+**Local-filesystem awareness + LLM life-knowledge extraction.** Agents can now
+resolve real on-disk paths privately, and ingested evidence becomes typed, cited
+claims via an LLM instead of a keyword matcher.
+
+### Added
+
+- **Local-filesystem search bridge** (#161): `resolve_project()` does
+  **memory-first, [Everything](https://www.voidtools.com/) (`ES.exe`)-second**
+  path resolution with explainable, evidence-weighted confidence. Confident,
+  non-sensitive matches are written back as governed `reference` claims, so the
+  next lookup is memory-only. Absolute paths are redacted to root-relative tokens
+  (`redact.py`) — usernames and internal directory structure are never stored.
+  Backend-agnostic `LocalSearchProvider` Protocol in
+  `memorymaster/bridges/local_search/` (`EverythingProvider` today;
+  `plocate`/`fd`/`mdfind` can drop in later). All filesystem I/O is read-only.
+- **LLM typed-entity Atlas extractor** (#166):
+  `extract-atlas-claims --extractor llm` turns evidence (WhatsApp / email /
+  notes) into typed, cited life-knowledge claims
+  (`person`/`project`/`commitment`/`decision`/`event`/…) with strict subject and
+  type validation — the `subject` is always the real named entity, never the
+  source app. Replaces the deterministic keyword matcher (kept as
+  `--extractor deterministic`).
+- **Detect-first, brownfield-aware installer** (#162): the setup flow detects
+  existing hooks/MCP/config and is idempotent, with
+  `--extractor`/`--yes`/`--full-stack`/`--json`/`--verify-only` flags and a
+  no-Docker fallback. Malformed config files are backed up before any rewrite.
+
+### Fixed
+
+- **Steward tiers every cycle** (#165): `recompute_tiers` now runs on every
+  `run_cycle`, so `core`/`working`/`peripheral` tiers stay current instead of
+  drifting between manual `recompute-tiers` invocations.
+- **Test import path** (#163): a repo-root `conftest.py` restores
+  `from scripts import ...` under the scoped editable install, fixing CI.
+
+### Security
+
+- **Scrubbed maintainer home-lab IP** (#164) from the tracked repository.
+
 ## [4.0.0] - 2026-06-20
 
 **The v4 consolidation — MemoryMaster becomes a top-tier governed memory layer.**
