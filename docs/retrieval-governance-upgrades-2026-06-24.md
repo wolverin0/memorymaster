@@ -97,3 +97,18 @@ Metrics from `scripts/eval_recall_precision_at_5.py` on `real-prompts-1000-top50
 5. `python -m memorymaster --db memorymaster.db run-cycle` runs without crash.
 6. Postgres parity verified for 2.1 + 3.2 (schema/store touches).
 7. Atomic commits per phase; a single PR opened against `main` summarizing the deltas + the harness numbers.
+
+## Outcome (2026-06-24) — gate MET
+
+| Gate | Result |
+|---|---|
+| 1 — acceptance | ✅ all `[x]` or deferred-with-reason (1.2 / 3.1 / 3.2 deferred — see those sections) |
+| 2 — full suite | ✅ **3104 passed**, 54 skipped, 1 xfailed (baseline 3083 → **+21 new tests, 0 new failures**) |
+| 3 — ruff | ✅ `All checks passed!` |
+| 4 — harness | ✅ table filled; shipped config = `linear` = baseline (no regression; RRF/auto regress or tie) |
+| 5 — run-cycle | ✅ exit 0 on a fresh DB |
+| 6 — Postgres parity | ✅ 2.1 guard is backend-agnostic (`PostgresStore(SQLiteStore)` ingests through `service.ingest`); 3.2 deferred |
+| 7 — PR | ✅ #169 |
+
+**Shipped:** 1.1 (RRF measured→keep linear), 1.3 (intent routing, opt-in), 2.1 (bitemporal guard), 2.2 (capability probe), 4.1 (positioning). Commits: `3fee77d`, `ac705eb`, `4f8a8e7`, `511b5c6` (+ plan `820e943`).
+**Deferred for maintainer decision:** 1.2 LLM rerank (hot-path latency), 3.1 community detection (runtime dep), 3.2a `delete_by_source` (hard-delete vs archive), 3.2b `checkpoint` (safe, quick once greenlit).
