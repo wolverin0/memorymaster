@@ -106,6 +106,68 @@ class _LifecycleMixin:
         return updated
 
 
+    def archive_by_source(
+        self,
+        source_agent: str,
+        *,
+        dry_run: bool = True,
+        limit: int | None = None,
+    ) -> dict:
+        """Archive — never hard-delete — every live claim from ``source_agent``.
+
+        Lifecycle-safe bulk cleanup for eval/backfill pollution: MM has no
+        ``DELETE FROM claims``; claims terminate at ``archived``. ``dry_run=True``
+        (the default) only reports what WOULD be archived — call again with
+        ``dry_run=False`` to apply. Backend-agnostic: it composes
+        :meth:`claim_ids_by_source_agent` + :meth:`apply_status_transition`, both
+        of which have SQLite + Postgres implementations, so PostgresStore inherits
+        this method unchanged.
+
+        Never silently truncates — when ``limit`` caps the match set the result
+        carries ``truncated=True``. Each archival is event-logged + version-guarded
+        by ``apply_status_transition``; a concurrent writer just skips that id.
+        """
+        ids = self.claim_ids_by_source_agent(source_agent, include_archived=False)
+        truncated = False
+        if limit is not None and len(ids) > limit:
+            ids = ids[:limit]
+            truncated = True
+        if dry_run:
+            return {
+                "source_agent": source_agent,
+                "matched": len(ids),
+                "archived": 0,
+                "dry_run": True,
+                "truncated": truncated,
+                "claim_ids": ids,
+            }
+        archived = 0
+        skipped: list[int] = []
+        for cid in ids:
+            claim = self.get_claim(cid, include_citations=False)
+            if claim is None or claim.status == "archived":
+                continue
+            try:
+                self.apply_status_transition(
+                    claim,
+                    to_status="archived",
+                    reason=f"archive_by_source:{source_agent}",
+                    event_type="transition",
+                )
+                archived += 1
+            except ConcurrentModificationError:
+                skipped.append(cid)
+        return {
+            "source_agent": source_agent,
+            "matched": len(ids),
+            "archived": archived,
+            "dry_run": False,
+            "truncated": truncated,
+            "skipped": skipped,
+            "claim_ids": ids,
+        }
+
+
     def set_supersedes(self, claim_id: int, supersedes_claim_id: int) -> None:
         now = utc_now()
         with self.connect() as conn:
