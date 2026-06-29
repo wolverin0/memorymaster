@@ -221,6 +221,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design and subsystem details |
 | [USER_GUIDE.md](USER_GUIDE.md) | Usage, MCP integration, troubleshooting |
 | [CHANGELOG.md](CHANGELOG.md) | Version history and release notes |
+| [CREDITS.md](CREDITS.md) | Prior art & acknowledgments — the projects we borrowed ideas from, plus a re-survey watchlist |
 | [ROADMAP.md](ROADMAP.md) | Release plan and future tracks |
 | [docs/enabling-v2-systems.md](docs/enabling-v2-systems.md) | v3 statistical classifier + cadence policy opt-in |
 
