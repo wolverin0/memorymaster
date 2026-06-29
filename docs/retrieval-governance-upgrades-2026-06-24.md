@@ -44,7 +44,8 @@
 ### 2.2 Fail-loud LLM CLI resolver (claude-mem "parseable-response = only success")
 - **State:** `core/llm_provider.py:_call_claude_cli` (293-350) returns `""` on timeout/OSError/non-zero exit (336-349) — empty failure is indistinguishable from a legit empty response (silent data loss).
 - **Do:** capability-probe the resolved binary (`--version`, cache result), and make failure DISTINCT from empty (raise/return a typed error, log loudly) so callers don't treat a dead CLI as "no memory". Don't mask non-zero exits.
-- **Acceptance:** [ ] test: a failed CLI call is distinguishable from a successful empty response  [ ] stale/missing binary fails loud, not silent.
+- **Acceptance:** [x] test: a failed CLI call is distinguishable from a successful empty response (`tests/test_claude_cli_probe.py`, 6 tests — broken binary → `available()==False`, empty-but-working → `available()==True`)  [x] stale/missing binary fails loud, not silent (distinct loud warnings in `_probe_claude_cli`; per-call failures already logged).
+  - **Implemented:** `core/llm_provider.py` — `_resolve_claude_bin()`, cached `_probe_claude_cli()`, public `claude_cli_available()`. Kept the module-wide "" -on-failure contract (graceful degradation is intentional — a dead LLM must not crash recall/steward); the probe is the explicit capability check, NOT added to `_call_claude_cli`'s hot path (would double cold-start latency + broke 7 existing arg-asserting tests). 17 tests green (6 new + 11 existing).
 
 ---
 

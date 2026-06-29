@@ -290,6 +290,70 @@ def _call_ollama(prompt: str, text: str) -> str:
     return _http_post(url, payload, _extract_ollama, timeout=60)
 
 
+# Capability-probe cache for the `claude` CLI. A binary that is present on PATH
+# but broken/stale (e.g. a half-upgraded install) would otherwise fail EVERY
+# call and return "" — indistinguishable from a model that legitimately produced
+# no output, so the operator never learns the CLI is dead. We probe `--version`
+# once per resolved binary, cache the verdict, and log a DISTINCT loud warning.
+# Borrowed from claude-mem's capability-probed binary resolver (re-survey 2026-06-24).
+_CLAUDE_CLI_PROBE_CACHE: dict[str, bool] = {}
+
+
+def _resolve_claude_bin() -> str | None:
+    """Resolve the claude CLI path (env override first, then PATH)."""
+    return _env("MEMORYMASTER_CLAUDE_CLI_BIN", "") or shutil.which("claude")
+
+
+def _probe_claude_cli(bin_path: str) -> bool:
+    """Verify ``bin_path --version`` runs cleanly. Cached per resolved binary.
+
+    A present-but-broken binary is logged loudly so the failure is diagnosable
+    rather than a silent stream of empty results.
+    """
+    cached = _CLAUDE_CLI_PROBE_CACHE.get(bin_path)
+    if cached is not None:
+        return cached
+    log = logging.getLogger(__name__)
+    extra_kwargs: dict = {}
+    if sys.platform == "win32":
+        extra_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    ok = False
+    try:
+        result = subprocess.run(
+            [bin_path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            encoding="utf-8",
+            errors="replace",
+            **extra_kwargs,
+        )
+        ok = result.returncode == 0
+        if not ok:
+            log.warning(
+                "claude_cli: binary %r present but `--version` failed (exit=%d) "
+                "— stale/broken install, calls will be skipped", bin_path, result.returncode,
+            )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.warning(
+            "claude_cli: binary %r present but unprobeable (%s) — stale/broken "
+            "install, calls will be skipped", bin_path, exc,
+        )
+    _CLAUDE_CLI_PROBE_CACHE[bin_path] = ok
+    return ok
+
+
+def claude_cli_available() -> bool:
+    """True iff a working ``claude`` CLI is resolvable and passes a ``--version``
+    probe. Lets callers/telemetry distinguish 'CLI unusable' from 'CLI ran and
+    returned empty' — both look like "" to :func:`call_llm` otherwise.
+    """
+    bin_path = _resolve_claude_bin()
+    if not bin_path:
+        return False
+    return _probe_claude_cli(bin_path)
+
+
 def _call_claude_cli(prompt: str, text: str) -> str:
     """Claude Code OAuth via local `claude --print` binary.
 
@@ -302,10 +366,15 @@ def _call_claude_cli(prompt: str, text: str) -> str:
     binary location (default: 'claude' from PATH).
     """
     log = logging.getLogger(__name__)
-    bin_path = _env("MEMORYMASTER_CLAUDE_CLI_BIN", "") or shutil.which("claude")
+    bin_path = _resolve_claude_bin()
     if not bin_path:
         log.warning("claude_cli: binary not found on PATH (set MEMORYMASTER_CLAUDE_CLI_BIN)")
         return ""
+    # NOTE: we do NOT capability-probe here on the hot path — the generate call's
+    # own failure branches below already log loudly (exit/stderr/timeout), and
+    # adding a `--version` round-trip per call would double cold-start latency.
+    # Callers/telemetry that need to distinguish 'CLI unusable' from 'CLI ran and
+    # returned empty' should consult claude_cli_available() (cached probe).
 
     model = _env("MEMORYMASTER_LLM_MODEL", "claude-haiku-4-5-20251001")
     timeout_s = int(_env("MEMORYMASTER_CLAUDE_CLI_TIMEOUT", "120"))
