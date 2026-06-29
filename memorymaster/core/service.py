@@ -994,6 +994,17 @@ class MemoryService:
 
         statuses = self._build_query_statuses(include_stale, include_conflicted, include_candidates)
         normalized_scopes = self._normalize_scope_allowlist(scope_allowlist)
+        # Intent-aware ranking (plan 1.3): retrieval_profile="auto" derives the
+        # weight profile from the query's intent (explicit query_type if given,
+        # else rule-based classification). Opt-in only — any other value (incl.
+        # None) leaves ranking exactly as before.
+        if retrieval_profile == "auto":
+            from memorymaster.recall.query_classifier import (
+                classify_query,
+                profile_for_query_type,
+            )
+            resolved_type = query_type or classify_query(query_text)
+            retrieval_profile = profile_for_query_type(resolved_type)
         profile_weights = _retrieval_profile_weights(retrieval_profile)
         if profile_weights is not None and retrieval_mode == "legacy":
             retrieval_mode = "hybrid"

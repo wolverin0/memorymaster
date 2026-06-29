@@ -71,3 +71,26 @@ def recommended_retrieval_mode(query_type: str) -> str:
         "verification": "legacy",      # Keyword match
         "open_ended": "qdrant",        # Semantic exploration
     }.get(query_type, "legacy")
+
+
+def profile_for_query_type(query_type: str) -> str:
+    """Map a query intent to the best ranking weight profile (intent-aware
+    ranking, plan 1.3). Profile names are the keys of
+    ``service.RETRIEVAL_PROFILES`` (recall / precision / fresh / semantic).
+
+    Rationale: a *temporal* query wants freshness-weighted ranking; a
+    *relational*/*preference* query wants semantic (vector) weight; a
+    *fact*/*constraint*/*verification* query wants precision (confidence-weighted
+    exact match). *open_ended* falls back to the broad recall profile. This is
+    consumed only when a caller opts in with ``retrieval_profile="auto"`` — the
+    default ranking is unchanged.
+    """
+    return {
+        "fact_lookup": "precision",
+        "constraint_check": "precision",
+        "verification": "precision",
+        "temporal": "fresh",
+        "relational": "semantic",
+        "preference": "semantic",
+        "open_ended": "recall",
+    }.get(query_type, "recall")

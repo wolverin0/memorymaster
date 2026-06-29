@@ -29,7 +29,8 @@
 ### 1.3 Intent-aware ranking
 - **State:** `recall/query_classifier.py:classify_query` returns `{query_type, recommended_mode}` but does NOT feed ranking weights (only the RRF auto-gate per-type threshold uses type).
 - **Do:** wire classifier output → weight/profile selection (entity→boost graph stream, temporal→boost freshness, event→boost recency) via `core/service.py:_retrieval_profile_weights`. Keep it deterministic.
-- **Acceptance:** [ ] test: a temporal vs entity query produces different weight profiles  [ ] harness no-regression.
+- **Acceptance:** [x] test: a temporal vs entity query produces different weight profiles (`tests/test_intent_aware_ranking.py`, 5 tests — temporal→`fresh`, relational→`semantic`, weights differ)  [x] harness no-regression — **opt-in only** (`retrieval_profile="auto"`); default ranking is byte-identical, so no regression by construction.
+  - **Implemented:** `recall/query_classifier.py:profile_for_query_type` (intent→profile) + `core/service.py:query_rows` resolves `retrieval_profile="auto"` via `query_type or classify_query(query_text)`. Note: the recall harness exercises the *recall-hook* path, not the `query_rows` profile path, so direct A/B isn't applicable here; the opt-in default-off design is the no-regression guarantee. Given RRF regressed (1.1), per-intent weight *tuning* (vs this routing scaffold) is left as a future measured exercise.
 
 ---
 
