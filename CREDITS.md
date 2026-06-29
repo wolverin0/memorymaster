@@ -46,12 +46,13 @@ Obsidian (wiki vault) · Claude Auto Dream (Dream Bridge sync) · Qdrant / SQLit
 
 **Re-read the v3.9 six for new releases** (gbrain, MemPalace, graphify, claude-mem, My-Brain-Is-Full-Crew, GitNexus) — many features above were partials; check what they shipped since 2026-04.
 
-**New candidates to evaluate** (found post-survey, not yet assessed):
+### Re-survey COMPLETED 2026-06-24 → full detail in `artifacts/steal-from-others-2026-06-24.md` (all 12 cloned to `cloned/`)
 
-| Project | Stars | What it is | Why look |
-|---|---|---|---|
-| **DeusData/codebase-memory-mcp** | ~20.9k | MCP server building a SQLite **code** knowledge graph via tree-sitter ASTs + "Hybrid LSP" type resolution; 14 tools, 158 langs, single static C binary, 3D graph viz | Claims **99.2% token reduction** vs file-grep, **sub-ms** queries (indexed 28M-LOC Linux kernel in 3 min). Directly relevant to our GRAPH/retrieval stream (the v3.9 TIER-S #1 we proved flat). The C-binary zero-dep packaging + RAM-first indexing are notable. **Code memory, not life/claims memory** — complementary, not a competitor. |
-| _(add as found)_ | | | |
+- **Corrected upstreams** (our docs had wrong/fabricated URLs): gbrain = `garrytan/gbrain` (was unrecorded), graphify = `safishamsi/graphify`, GitNexus = `abhigyanpatwari/GitNexus` (the `wolverin0/*` URLs were fabricated), My-Brain-Is-Full-Crew = `gnekt/My-Brain-Is-Full-Crew`. **claude-mem relicensed AGPL → Apache-2.0 at v13.0** (code now borrowable).
+- **Current versions:** gbrain **v0.42** (was v0.22.4 — huge), MemPalace v3.5.0, claude-mem v13.8.0, cognee v1.2.2, codebase-memory-mcp v0.8.1, GitNexus v1.5.3, graphify 0.9.2.
+- **Top steal candidates** (detail in the survey doc): ⭐ **Reciprocal Rank Fusion** — *convergent* (gbrain + GitNexus both) — principled hybrid fusion to replace our ad-hoc blend [LOW]; **cross-encoder reranker** (gbrain `zerank`/Zep) to kill "fresh-but-wrong" top hits [MED]; **Leiden/Louvain community detection** (graphify, ~270 LOC) to de-flatten the entity graph [LOW]; **bitemporal write-time guard** (MemPalace) [SMALL]; **capability-probed binary resolver + "parseable-response = only success"** (claude-mem) [SMALL]; **PreToolUse grep-intercept → inject memory** (codebase-memory-mcp) [LOW-MED].
+- **Positioning sharpened:** the "vector store" strawman is dead — mem0/Letta/Zep/cognee all do hybrid/temporal/graph now (and now *lead* on graph reasoning). MM's durable wedge is **governance** (lifecycle/steward/citations/conflict) — none of them have it; mem0 went the opposite way (ADD-only, no conflict resolution). Reposition: **"we govern what's remembered" — curation over accumulation.**
+- **codebase-memory-mcp** (~20.9k★): **assessed** — CODE-structure memory (tree-sitter graph; 99.2% token cut via a PreToolUse grep-intercept hook + `get_architecture` overview). Complementary to MM's life/claims memory, not a competitor.
+- **My-Brain-Is-Full-Crew** (gnekt): the most **vision-aligned** peer to the user's **Atlas/Jarvis** layer (8 agents + 14 skills over Obsidian, dispatcher→delegate router, `weekly-agenda`/`email-triage` skills). Steal for Atlas orchestration, not MM's memory engine.
 
-**Next re-survey target: ~2026-09** (or sooner if a memory project goes viral). When doing it,
-regenerate `artifacts/steal-from-others-<date>.md` and fold the deltas back into this table.
+**Next re-survey target: ~2026-09** (or sooner if a memory project goes viral). Regenerate `artifacts/steal-from-others-<date>.md` + refresh this section.
