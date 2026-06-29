@@ -446,6 +446,75 @@ def _qdrant_query(query: str, db: str, workspace: str, limit: int) -> dict[str, 
     }
 
 
+def _checkpoint_batch(
+    svc: MemoryService,
+    items: list,
+    *,
+    default_scope: str,
+    workspace: str,
+    source_agent: str,
+) -> dict[str, Any]:
+    """Core batch-ingest loop for the ``checkpoint`` tool (plan 3.2b).
+
+    Each item runs through the SAME per-item sensitivity filter + ``svc.ingest``
+    as ``ingest_claim`` — this is a round-trip optimization, never a filter
+    bypass. Returns a per-item summary so a partial batch never silently drops a
+    claim (no silent-dropper): ingested ids, sensitive-skips, and per-index errors.
+    """
+    claim_ids: list[int] = []
+    errors: list[dict[str, Any]] = []
+    skipped_sensitive = 0
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            errors.append({"index": idx, "error": "item is not a JSON object"})
+            continue
+        text = str(item.get("text", "") or "").strip()
+        if not text:
+            errors.append({"index": idx, "error": "missing text"})
+            continue
+        # Sacred sensitivity filter — same firewall as ingest_claim, per item.
+        if _sensitive_input_error(text) is not None:
+            skipped_sensitive += 1
+            errors.append({"index": idx, "error": "sensitive_input_blocked"})
+            continue
+        try:
+            citations = _parse_sources_json(str(item.get("sources_json", "[]") or "[]"))
+        except ValueError as exc:
+            errors.append({"index": idx, "error": f"sources_json: {exc}"})
+            continue
+        item_scope = str(item.get("scope") or default_scope or "project")
+        if not citations:
+            citations = [CitationInput(source="mcp-session", locator=item_scope)]
+        try:
+            claim = svc.ingest(
+                text=text,
+                citations=citations,
+                idempotency_key=_empty_to_none(str(item.get("idempotency_key", "") or "")),
+                claim_type=_empty_to_none(str(item.get("claim_type", "") or "")),
+                subject=_empty_to_none(str(item.get("subject", "") or "")),
+                predicate=_empty_to_none(str(item.get("predicate", "") or "")),
+                object_value=_empty_to_none(str(item.get("object_value", "") or "")),
+                scope=_effective_ingest_scope(item_scope, workspace),
+                volatility=str(item.get("volatility", "medium") or "medium"),
+                confidence=float(item.get("confidence") or 0.5),
+                event_time=_empty_to_none(str(item.get("event_time", "") or "")),
+                valid_from=_empty_to_none(str(item.get("valid_from", "") or "")),
+                valid_until=_empty_to_none(str(item.get("valid_until", "") or "")),
+                source_agent=source_agent,
+                require_source_agent=True,
+            )
+            claim_ids.append(claim.id)
+        except (ValueError, TypeError) as exc:
+            errors.append({"index": idx, "error": str(exc)})
+    return {
+        "ok": True,
+        "ingested": len(claim_ids),
+        "skipped_sensitive": skipped_sensitive,
+        "errors": errors,
+        "claim_ids": claim_ids,
+    }
+
+
 if FastMCP is not None:
     mcp = FastMCP("memorymaster")
 
@@ -574,6 +643,44 @@ if FastMCP is not None:
             logger.debug("Timeline entry failed: %s", exc)
 
         return {"ok": True, "claim": _claim_to_dict(claim)}
+
+    @mcp.tool()
+    def checkpoint(
+        claims_json: str,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+        scope: str = "project",
+        source_agent: str = "",
+    ) -> dict[str, Any]:
+        """Batch-ingest many claims in ONE call (session checkpoint, plan 3.2b).
+
+        `claims_json` is a JSON array of objects, each with at least `text` and
+        optionally: sources_json, claim_type, subject, predicate, object_value,
+        scope, volatility, confidence, event_time, valid_from, valid_until.
+        Every item passes through the SAME sensitivity filter + ingest path as
+        ingest_claim — this only saves N round-trips, it does not bypass anything.
+        Returns a per-item summary (ingested ids, sensitive-skips, per-index
+        errors) so a partial batch never silently drops a claim.
+        """
+        import json as _json
+        try:
+            items = _json.loads(claims_json)
+        except (ValueError, TypeError) as exc:
+            return _structured_error(f"claims_json is not valid JSON: {exc}", "VALIDATION_ERROR", "claims_json")
+        if not isinstance(items, list):
+            return _structured_error("claims_json must be a JSON array", "VALIDATION_ERROR", "claims_json")
+        if len(items) > 200:
+            return _structured_error("checkpoint batch too large (max 200 items)", "VALIDATION_ERROR", "claims_json")
+        effective_source = _empty_to_none(source_agent) or "mcp-session"
+        rate_limit_error = _check_ingest_rate_limit(effective_source)
+        if rate_limit_error is not None:
+            return rate_limit_error
+        if not items:
+            return {"ok": True, "ingested": 0, "skipped_sensitive": 0, "errors": [], "claim_ids": []}
+        svc = _service(db, workspace)
+        return _checkpoint_batch(
+            svc, items, default_scope=scope, workspace=workspace, source_agent=effective_source,
+        )
 
     @mcp.tool()
     def resolve_project(

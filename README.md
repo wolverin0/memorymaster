@@ -15,7 +15,7 @@ MemoryMaster prevents the #1 problem with agent memory: **drift, stale assumptio
 
 ### How it's different
 
-Most agent-memory systems (mem0, Letta/MemGPT, Zep) optimize for **storing and recalling more** — embeddings, summaries, a fast vector store. MemoryMaster optimizes for **trusting what you recall**. The differentiator is **governance**: every memory is a lifecycle-managed *claim*, not an opaque embedding.
+Agent-memory systems (mem0, Letta/MemGPT, Zep, cognee) have largely converged on strong **retrieval** — hybrid search, temporal and graph reasoning, ontologies. MemoryMaster competes on a different axis: **governance**. The wedge is **curation over accumulation** — every memory is a lifecycle-managed *claim* (status, citations, decay, conflict arbitration), not an opaque embedding that lingers until overwritten. Tellingly, the market moved the other way: mem0's 2026 model is explicitly *add-only with no conflict resolution* — the opposite of a steward.
 
 | | mem0 / Letta / Zep | **MemoryMaster** |
 |---|---|---|
