@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 CLAIM_STATUSES = (
@@ -205,6 +206,47 @@ def _validate_audit_payload(p: dict[str, object] | None, details: str | None) ->
     if str(details or "").startswith("triage_"):
         _as_str("audit", p, "source")
     return p
+
+
+def _parse_iso_strict(field_name: str, value: str | None) -> datetime | None:
+    """Parse an ISO-8601 timestamp, raising ValueError on malformed input.
+
+    Unlike the lenient parsers elsewhere (which return None on bad input),
+    this is the ingest-boundary guard: a malformed temporal field must be
+    rejected loudly, not silently dropped. Naive datetimes are treated as UTC
+    so cross-field comparisons never raise on mixed tz-awareness.
+    """
+    if value is None or value == "":
+        return None
+    raw = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"{field_name} is not valid ISO-8601: {value!r}") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def validate_temporal_fields(
+    event_time: str | None,
+    valid_from: str | None,
+    valid_until: str | None,
+) -> None:
+    """Reject malformed/contradictory bitemporal fields at the ingest boundary.
+
+    Raises ValueError when any field is not ISO-8601, or when the validity
+    interval is inverted (``valid_until`` strictly before ``valid_from``).
+    A durable-but-invisible row (valid_until < valid_from) silently hides a
+    claim from every time-filtered read — this is the guard against it.
+    """
+    _parse_iso_strict("event_time", event_time)
+    vf = _parse_iso_strict("valid_from", valid_from)
+    vu = _parse_iso_strict("valid_until", valid_until)
+    if vf is not None and vu is not None and vu < vf:
+        raise ValueError(
+            f"valid_until ({valid_until!r}) is before valid_from ({valid_from!r})"
+        )
 
 
 def validate_event_payload(

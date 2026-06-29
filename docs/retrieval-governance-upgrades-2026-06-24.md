@@ -18,7 +18,8 @@
 ### 1.1 RRF: validate → promote to default  ⭐ (convergent signal: gbrain + GitNexus)
 - **State:** EXISTS but not default. `recall/recall_fusion.py:rrf_fuse` (48-79); dispatch via `MEMORYMASTER_RECALL_FUSION = linear|rrf|auto` in `recall/context_hook.py` (~1981-2031). Linear combiner = `_relevance` (1902-1972).
 - **Do:** A/B `linear` vs `rrf` vs `auto` on the harness; add a unit test for `rrf_fuse` (ordering, ties, k-param); if `rrf`/`auto` ≥ baseline, flip the default + document the env flag.
-- **Acceptance:** [ ] `rrf_fuse` unit test passes  [ ] harness table filled  [ ] winning mode set as default (or documented why linear stays)  [ ] env flag documented in handbook/README.
+- **Acceptance:** [x] `rrf_fuse` unit test passes (`tests/test_recall_fusion.py`+`test_rrf_auto_gate.py`, 23 tests green)  [x] harness table filled (below)  [x] **DECISION: linear STAYS default** — RRF measurably *regresses* on our harness (953 GT prompts: precision −29%, MAP −49%, hit −20%); `auto` safely falls back to linear. Root cause: the harness runs `skip_qdrant=True` (no vector stream) so RRF fuses by rank only and discards the score-magnitude MM's calibrated linear blend exploits; the external gbrain/GitNexus "RRF wins" signal assumed a vector-inclusive fusion we can't reproduce here. RRF kept available behind `MEMORYMASTER_RECALL_FUSION=rrf|auto` for the vector-on case.  [x] env flag already documented in `context_hook.py` (1975-1990).
+  - **No code change** — RRF already shipped + tested; the work was measurement, and the measurement says don't promote it.
 
 ### 1.2 Rerank in the per-prompt recall path
 - **State:** `recall/llm_rerank.py:rerank_with_llm` exists but is wired ONLY in `core/service.py:query_for_context` (1096-1099, gated by `_llm_rerank_enabled`). The recall hook (`context_hook.recall`) does NOT rerank.
@@ -37,7 +38,8 @@
 ### 2.1 Bitemporal write-time guard (MemPalace)
 - **State:** NO `valid_until < valid_from` guard anywhere. Fields set in `stores/_storage_write_claims.py:create_claim` (103-104); ingest in `core/service.py:ingest` (413-574).
 - **Do:** reject inverted intervals + ISO-8601 sanitize `event_time`/`valid_from`/`valid_until` at ingest (raise a clear error, before `create_claim`). Mirror in Postgres path.
-- **Acceptance:** [ ] test: inverted interval rejected with a clear error  [ ] valid ISO normalization test  [ ] SQLite + Postgres parity.
+- **Acceptance:** [x] test: inverted interval rejected with a clear error (`tests/test_bitemporal_guard.py`, 10 tests green)  [x] malformed-ISO rejected + valid passes  [x] SQLite + Postgres parity — guard lives in `MemoryService.ingest` (backend-agnostic; `PostgresStore(SQLiteStore)` ingests through the same path); 47 passed / 39 PG-skipped on the temporal-touching suites, no regression.
+  - **Implemented:** `core/models.py:validate_temporal_fields` (+ `_parse_iso_strict`) called from `core/service.py:ingest` after the empty-text check. Scope note: only rejects when BOTH bounds are explicitly passed + inverted (the clear bug); the auto-populate-`now` edge case is left as-is to preserve existing `valid_until`-only behavior (`test_integration_workflows.py`).
 
 ### 2.2 Fail-loud LLM CLI resolver (claude-mem "parseable-response = only success")
 - **State:** `core/llm_provider.py:_call_claude_cli` (293-350) returns `""` on timeout/OSError/non-zero exit (336-349) — empty failure is indistinguishable from a legit empty response (silent data loss).
@@ -70,13 +72,15 @@
 
 ## Harness results table (fill during Phase 1)
 
-| Config | R@5 | MRR | Δ vs linear | Notes |
-|---|---|---|---|---|
-| linear (baseline) | | | — | current default |
-| rrf | | | | |
-| auto | | | | |
-| rrf + rerank | | | | |
-| rrf + intent weights | | | | |
+Metrics from `scripts/eval_recall_precision_at_5.py` on `real-prompts-1000-top50.jsonl` (953 ground-truth-labeled prompts, live 4.6GB DB, `skip_qdrant=True`). R@5≈precision@5, MRR≈MAP@5.
+
+| Config | precision@5 | MAP@5 | hit@5 | Δ vs linear | Notes |
+|---|---|---|---|---|---|
+| **linear (baseline, SHIPPED)** | **0.072** | **0.164** | **0.250** | — | current default — kept |
+| rrf | 0.051 | 0.083 | 0.201 | −29% / −49% / −20% | regresses; rank-only fusion loses score magnitude w/o vector |
+| auto | 0.072 | 0.164 | 0.250 | 0 / 0 / 0 | gate falls back to linear on these prompts — safe |
+| rrf + rerank | _(deferred — see 1.2)_ | | | | |
+| intent weights | _(see 1.3)_ | | | | |
 
 ## Out of scope / non-goals
 - Native code-structure memory (gbrain Cathedral / codebase-memory-mcp / GitNexus call-graphs) — MM delegates code-intel to GitNexus.

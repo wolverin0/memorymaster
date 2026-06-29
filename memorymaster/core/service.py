@@ -14,7 +14,7 @@ from memorymaster.govern import candidate_dedupe
 from memorymaster.recall import query_cache
 from memorymaster.recall.embeddings import EmbeddingProvider, create_best_provider
 from memorymaster.govern.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, integrity, qdrant_reconcile, spool_drain, validator
-from memorymaster.core.models import ActionProposal, CitationInput, Claim, ClaimLink, Event, EvidenceItem, ExternalSource, MediaRetryItem, SourceItem
+from memorymaster.core.models import ActionProposal, CitationInput, Claim, ClaimLink, Event, EvidenceItem, ExternalSource, MediaRetryItem, SourceItem, validate_temporal_fields
 from memorymaster.core.policy import select_revalidation_candidates
 from memorymaster.recall.context_optimizer import ContextResult, pack_context
 from memorymaster.core.config import get_config
@@ -434,6 +434,11 @@ class MemoryService:
     ) -> Claim:
         if not text.strip():
             raise ValueError("Claim text cannot be empty.")
+        # Bitemporal write-time guard: reject malformed ISO-8601 or an inverted
+        # validity interval at the boundary, before any dedup/sanitize work, so
+        # a durable-but-invisible row (valid_until < valid_from) never reaches
+        # the store. Backend-agnostic — both SQLite and Postgres ingest here.
+        validate_temporal_fields(event_time, valid_from, valid_until)
         if not citations:
             citations = [CitationInput(source="mcp-session", locator=scope or "project")]
         # Normalize claim_type to lowercase so routing hints like "DECISION"
