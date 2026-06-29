@@ -198,6 +198,27 @@ class _ReadMixin:
         return clauses, params
 
 
+    def claim_ids_by_source_agent(
+        self,
+        source_agent: str,
+        *,
+        include_archived: bool = False,
+    ) -> list[int]:
+        """Return ids of claims authored by ``source_agent`` (newest first).
+
+        Powers ``archive_by_source`` — lifecycle-safe bulk retirement of an
+        ingest source (e.g. an eval/backfill batch). Excludes already-archived
+        rows by default so a re-run is a clean no-op.
+        """
+        clauses = ["source_agent = ?"]
+        params: list[object] = [source_agent]
+        if not include_archived:
+            clauses.append("status != 'archived'")
+        sql = f"SELECT id FROM claims WHERE {' AND '.join(clauses)} ORDER BY id DESC"
+        with self.connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [int(r[0]) for r in rows]
+
     def list_claims(
         self,
         *,

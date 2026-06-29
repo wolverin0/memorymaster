@@ -530,6 +530,23 @@ class PostgresStore(SQLiteStore):
             claim.citations = self.list_citations(claim.id)
         return claim
 
+    def claim_ids_by_source_agent(
+        self,
+        source_agent: str,
+        *,
+        include_archived: bool = False,
+    ) -> list[int]:
+        """Postgres parity for :meth:`SQLiteStore.claim_ids_by_source_agent`."""
+        clauses = ["source_agent = %s"]
+        params: list[object] = [source_agent]
+        if not include_archived:
+            clauses.append("status <> 'archived'")
+        sql = f"SELECT id FROM claims WHERE {' AND '.join(clauses)} ORDER BY id DESC"
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [int(row["id"]) for row in rows]
+
     def list_claims(
         self,
         *,

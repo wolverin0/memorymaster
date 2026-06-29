@@ -683,6 +683,30 @@ if FastMCP is not None:
         )
 
     @mcp.tool()
+    def archive_by_source(
+        source_agent: str,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+        dry_run: bool = True,
+        limit: int = 0,
+    ) -> dict[str, Any]:
+        """Bulk-ARCHIVE (never delete) all live claims from one `source_agent`.
+
+        Lifecycle-safe cleanup for eval/backfill pollution: matched claims move
+        to status `archived` (MemoryMaster has no hard delete; claims terminate
+        at archived). `dry_run=True` (default) only REPORTS what would be archived
+        — call again with `dry_run=False` to apply. `limit=0` means no cap; when a
+        cap truncates the match set the result carries `truncated=True`.
+        Returns matched/archived counts + claim_ids.
+        """
+        if not source_agent or not source_agent.strip():
+            return _structured_error("source_agent is required", "VALIDATION_ERROR", "source_agent")
+        eff_limit = limit if limit and limit > 0 else None
+        svc = _service(db, workspace)
+        result = svc.store.archive_by_source(source_agent.strip(), dry_run=dry_run, limit=eff_limit)
+        return {"ok": True, **result}
+
+    @mcp.tool()
     def resolve_project(
         alias: str,
         db: str = "memorymaster.db",
