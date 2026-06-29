@@ -24,7 +24,7 @@
 ### 1.2 Rerank in the per-prompt recall path
 - **State:** `recall/llm_rerank.py:rerank_with_llm` exists but is wired ONLY in `core/service.py:query_for_context` (1096-1099, gated by `_llm_rerank_enabled`). The recall hook (`context_hook.recall`) does NOT rerank.
 - **Do:** add an optional rerank pass to the recall-hook path behind `MEMORYMASTER_RECALL_RERANK` (default **off**); reuse `rerank_with_llm`, and evaluate adding a true cross-encoder option (bge-reranker / ZeroEntropy) as an alternative backend. Over-fetch candidates before rerank (mirror service.py 1037/1066).
-- **Acceptance:** [ ] flag toggles rerank in the hook path  [ ] default off  [ ] harness shows no regression (ideally lift) with it on  [ ] test for the gate.
+- **Acceptance:** ⏸️ **DEFERRED (needs decision).** Reason: the rerank already exists in the appropriate *non*-latency-sensitive path (`service.query_for_context`). Adding an LLM rerank to the per-prompt recall HOT path adds 1 LLM round-trip on every prompt (latency-prohibitive), and the 1.1 RRF regression is direct evidence that reordering passes don't beat MM's calibrated linear blend on this harness. Recommend deferring until a cheap LOCAL cross-encoder backend (bge-reranker) exists + a measurement budget — not an LLM-per-prompt call. Low risk to defer (rerank stays available where it belongs).
 
 ### 1.3 Intent-aware ranking
 - **State:** `recall/query_classifier.py:classify_query` returns `{query_type, recommended_mode}` but does NOT feed ranking weights (only the RRF auto-gate per-type threshold uses type).
@@ -55,12 +55,12 @@
 ### 3.1 Community detection on the entity graph (graphify)
 - **State:** entity graph in `knowledge/entity_graph.py` (`EntityGraph`, entity_edges) + `recall/graph_store.py:claims_for_entities_with_distance`. **networkx is NOT a declared dep** (only an optional fallback). GRAPH stream proven FLAT in v3.6.
 - **Do:** add `networkx` + `leidenalg`/`python-igraph` as real deps; compute Leiden (Louvain fallback) communities over entity_edges with **stable size-ranked IDs** (`remap_communities_to_previous` pattern) so wiki articles don't churn; expose counts via `entity_stats`; optionally boost recall for claims whose entities share a community. Keep it opt-in if the dep is heavy.
-- **Acceptance:** [ ] communities computed  [ ] IDs stable across two runs (test)  [ ] entity recall unaffected when disabled  [ ] dep added to pyproject.
+- **Acceptance:** ⏸️ **DEFERRED (needs your decision — adds a runtime dependency).** Reason: this requires adding `networkx` (+ ideally `leidenalg`/`igraph`) as a **declared runtime dependency** to the released pip package — a distribution-weight decision the maintainer should make, not the agent. It's also unmeasurable on the current recall harness (which exercises the hook path, not entity-graph clustering), and the valuable part (community-boosted recall) is research-grade, beyond the MED tag. **Recommended as the #1 follow-up.** A dependency-light first cut is possible: `networkx` is already an optional fallback dep, and its built-in `greedy_modularity_communities` avoids `leidenalg` — exposing topic clusters via `entity_stats` *without* touching recall. Awaiting go/no-go on declaring the dep.
 
 ### 3.2 MCP tools: `delete_by_source` + `checkpoint` (MemPalace)
 - **State:** no hard-delete/purge tool or `DELETE FROM claims` anywhere; `ingest_claim` (surfaces/mcp_server.py 462-511) already has `intake_batch_id/max` batch params.
 - **Do:** (a) `delete_by_source(source, dry_run=True)` → new `store.delete_by_source(...)` in `stores/_storage_write_claims.py` + Postgres parity, **dry-run default** (lists what would go), for eval/backfill-pollution cleanup. (b) `checkpoint(claims=[...])` batch-ingest tool modeled on `ingest_claim`, one round-trip for N claims, **through the sensitivity filter + auto-citation**.
-- **Acceptance:** [ ] `delete_by_source` dry-run lists, real-run deletes, both backends  [ ] `checkpoint` ingests N in one call, filter enforced  [ ] tests for both.
+- **Acceptance:** ⏸️ **DEFERRED (split decision).** (a) **`delete_by_source` needs your decision** — MM deliberately has NO hard-delete (`DELETE FROM claims` exists nowhere); claims terminate at `archived`. A bulk hard-delete tool conflicts with that lifecycle invariant + the bitemporal/audit design. Options: (i) hard-delete (eval-pollution cleanup, as planned), or (ii) **archive-by-source** (lifecycle-consistent — recommended). (b) **`checkpoint` (batch-ingest) is safe + quick** — a thin loop over `service.ingest` (sensitivity filter + parity automatic), no lifecycle conflict; ~30 min once greenlit. Deferred together pending the (a) hard-delete-vs-archive call.
 
 ---
 
@@ -68,7 +68,7 @@
 
 ### 4.1 Reposition messaging around governance
 - **Do:** update README "How it's different" + mission to lead with **governance / curation-over-accumulation** (the survey's verdict: the vector-store strawman is dead; the field closed the retrieval gap; our wedge is lifecycle+steward+citations+conflict). Keep consistent with `CREDITS.md`.
-- **Acceptance:** [ ] README + CREDITS consistent; no over-claiming on retrieval.
+- **Acceptance:** [x] README "How it's different" rewritten — acknowledges mem0/Letta/Zep/cognee converged on strong retrieval, sharpens wedge to "curation over accumulation", cites mem0's add-only model; consistent with `CREDITS.md`; no over-claiming on retrieval.
 
 ---
 
