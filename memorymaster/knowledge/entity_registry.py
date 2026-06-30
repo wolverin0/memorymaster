@@ -20,7 +20,9 @@ canonical FK used for grouping and traversal.
 """
 from __future__ import annotations
 
+import difflib
 import logging
+import os
 import re
 import sqlite3
 from datetime import datetime, timezone
@@ -28,6 +30,97 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 _NORMALIZE_RE = re.compile(r"[\s_\-\.]+")
+
+# --- Guarded fuzzy resolver (anti-hallucination, default-OFF) -------------
+# When MEMORYMASTER_ENTITY_FUZZY_RESOLVE is truthy, resolve_or_create will,
+# *before creating a new entity*, attempt to collapse a near-miss alias onto
+# an existing entity (e.g. "memory master" → the "MemoryMaster" entity). The
+# guard is the whole point: a fuzzy match is only accepted when it is
+# UNAMBIGUOUS. If two or more existing entities tie at the top of the
+# similarity ranking, we REFUSE (return 0) rather than guess — guessing is
+# how a memory system hallucinates a merge and silently corrupts the graph.
+#
+# Default OFF so the canonical "every distinct normalized form is its own
+# entity" behavior is byte-identical when the flag is absent.
+_FUZZY_ACCEPT_THRESHOLD = 0.82  # min similarity to consider a match at all
+_FUZZY_AMBIGUITY_MARGIN = 0.05  # runner-up within this of the top → ambiguous
+
+
+def _fuzzy_resolve_enabled() -> bool:
+    """Opt-in gate for the guarded fuzzy entity resolver.
+
+    Default "0" = off, so resolve_or_create's create path is unchanged and a
+    near-miss subject produces a brand-new entity exactly as before.
+    """
+    raw = os.environ.get("MEMORYMASTER_ENTITY_FUZZY_RESOLVE", "0").strip()
+    return raw not in ("0", "false", "False", "no", "off", "")
+
+
+# Sentinel returned by _fuzzy_match_entity when a confident match exists but
+# is AMBIGUOUS (a tie). Distinct from 0 ("no confident match — fall through
+# and create") so resolve_or_create can refuse instead of creating.
+_FUZZY_REFUSE = -1
+
+
+def _fuzzy_match_entity(conn: sqlite3.Connection, alias: str) -> int:
+    """Resolve ``alias`` (a normalized form) against existing entity aliases.
+
+    Returns:
+      * a positive entity_id when ONE existing entity unambiguously matches;
+      * ``_FUZZY_REFUSE`` (-1) when the top match is confident but AMBIGUOUS
+        (another entity ties within the margin) — caller must refuse, not
+        guess;
+      * 0 when nothing clears the acceptance threshold — caller may create.
+
+    Anti-hallucination contract:
+      * scores every distinct entity by its best-matching alias against
+        ``alias`` (normalized SequenceMatcher ratio in [0, 1]);
+      * accepts only if the top score >= ``_FUZZY_ACCEPT_THRESHOLD``;
+      * a *different* entity scoring within ``_FUZZY_AMBIGUITY_MARGIN`` of the
+        top means we cannot tell which entity the caller meant, and silently
+        picking one is the exact failure mode this guard exists to prevent.
+
+    Read-only: never mutates the DB.
+    """
+    rows = conn.execute(
+        "SELECT entity_id, alias FROM entity_aliases"
+    ).fetchall()
+    if not rows:
+        return 0
+
+    matcher = difflib.SequenceMatcher()
+    matcher.set_seq2(alias)
+
+    best_by_entity: dict[int, float] = {}
+    for entity_id, candidate in rows:
+        if not candidate:
+            continue
+        matcher.set_seq1(candidate)
+        score = matcher.ratio()
+        prev = best_by_entity.get(entity_id)
+        if prev is None or score > prev:
+            best_by_entity[entity_id] = score
+
+    if not best_by_entity:
+        return 0
+
+    ranked = sorted(best_by_entity.items(), key=lambda kv: kv[1], reverse=True)
+    top_id, top_score = ranked[0]
+    if top_score < _FUZZY_ACCEPT_THRESHOLD:
+        return 0
+
+    # Ambiguity check: any OTHER entity within the margin of the top score
+    # makes the match unsafe. Refuse rather than hallucinate a merge.
+    if len(ranked) > 1:
+        runner_id, runner_score = ranked[1]
+        if runner_id != top_id and (top_score - runner_score) <= _FUZZY_AMBIGUITY_MARGIN:
+            logger.debug(
+                "fuzzy resolve refused (ambiguous): %r top=%.3f runner=%.3f",
+                alias, top_score, runner_score,
+            )
+            return _FUZZY_REFUSE
+
+    return int(top_id)
 
 
 def normalize_alias(raw: str) -> str:
@@ -101,6 +194,33 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _create_entity(
+    conn: sqlite3.Connection,
+    display: str,
+    entity_type: str,
+    scope: str,
+    now: str,
+) -> int:
+    """Insert a new canonical entity (INSERT OR IGNORE on canonical_name) and
+    return its id. On a (paranoid) name collision, look the existing row up.
+
+    Concurrency-safe: under SQLite serialization the INSERT OR IGNORE +
+    fallback SELECT collapse 10 racing creators onto a single entity row.
+    """
+    cur = conn.execute(
+        """INSERT OR IGNORE INTO entities
+               (canonical_name, entity_type, scope, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)""",
+        (display, entity_type, scope, now, now),
+    )
+    if cur.lastrowid and cur.rowcount > 0:
+        return cur.lastrowid
+    existing = conn.execute(
+        "SELECT id FROM entities WHERE canonical_name = ?", (display,)
+    ).fetchone()
+    return existing[0] if existing else 0
+
+
 def resolve_or_create(
     conn: sqlite3.Connection,
     subject: str,
@@ -131,23 +251,24 @@ def resolve_or_create(
     ).fetchone()
     if row:
         entity_id = row[0]
-    else:
-        # Create new entity. If canonical_name collides (shouldn't, since
-        # no alias row exists for this normalized form, but paranoia)
-        # INSERT OR IGNORE then look up.
-        cur = conn.execute(
-            """INSERT OR IGNORE INTO entities
-                   (canonical_name, entity_type, scope, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (display, entity_type, scope, now, now),
-        )
-        if cur.lastrowid and cur.rowcount > 0:
-            entity_id = cur.lastrowid
+    elif _fuzzy_resolve_enabled():
+        # Guarded fuzzy path (opt-in). The exact-alias lookup missed, so try
+        # to collapse a near-miss onto an existing entity — but only if the
+        # match is unambiguous. A refusal short-circuits the whole call with
+        # no write, so an ambiguous subject never silently invents a merge
+        # NOR creates a polluting near-duplicate entity.
+        matched = _fuzzy_match_entity(conn, alias)
+        if matched == _FUZZY_REFUSE:
+            return 0
+        if matched > 0:
+            entity_id = matched
+            # Record this surface form as a new alias of the matched entity
+            # so subsequent exact lookups hit the fast path (Step 2 below).
         else:
-            existing = conn.execute(
-                "SELECT id FROM entities WHERE canonical_name = ?", (display,)
-            ).fetchone()
-            entity_id = existing[0] if existing else 0
+            entity_id = _create_entity(conn, display, entity_type, scope, now)
+    else:
+        # Create new entity (canonical create path — unchanged default behavior).
+        entity_id = _create_entity(conn, display, entity_type, scope, now)
 
     # Step 2: ALWAYS record this variant. INSERT OR IGNORE is deduped by
     # the (entity_id, variant_key) UNIQUE constraint — so calling
