@@ -1177,6 +1177,102 @@ if FastMCP is not None:
         return response
 
     @mcp.tool()
+    def volunteer_context(
+        query: str,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+        token_budget: int = 4000,
+        output_format: str = "text",
+        limit: int = 100,
+        retrieval_mode: str = "legacy",
+        include_stale: bool = True,
+        include_conflicted: bool = True,
+        include_candidates: bool = True,
+        allow_sensitive: bool = False,
+        scope_allowlist: str = "",
+        detail_level: str = "standard",
+        min_confidence: float = 0.0,
+    ) -> dict[str, Any]:
+        """Push/volunteer relevant context — confidence-gated, zero-LLM.
+
+        Like ``query_for_context`` but adds a ``min_confidence`` gate so a
+        pre-prompt hook can *proactively* surface only high-confidence claims
+        from recent turns without flooding the window with weak guesses.
+
+        The gate is a pure post-filter on the ranked rows: only claims whose
+        ``confidence >= min_confidence`` survive before packing. It is purely
+        additive — with the default ``min_confidence=0.0`` every ranked row
+        passes and the output is identical to ``query_for_context`` with the
+        same arguments. No LLM call is made; ranking, sensitivity filtering and
+        scope handling are inherited unchanged from ``query_rows`` (sensitive
+        claims are already dropped there, so none can be volunteered).
+
+        detail_level options (applied to the structured claims list in the response):
+          - "summary": claim_id, human_id, status, confidence, text[:80]
+          - "standard" (default): full claim dict
+          - "full": full claim dict with citations inlined
+        """
+        from memorymaster.recall.context_optimizer import pack_context
+
+        resolve_allow_sensitive_access(
+            allow_sensitive=allow_sensitive,
+            context="mcp.volunteer_context",
+        )
+        svc = _service(db, workspace)
+        effective_allowlist = _effective_scope_allowlist(scope_allowlist, workspace)
+        rows = svc.query_rows(
+            query_text=query,
+            limit=limit,
+            retrieval_mode=retrieval_mode,
+            include_stale=include_stale,
+            include_conflicted=include_conflicted,
+            include_candidates=include_candidates,
+            allow_sensitive=allow_sensitive,
+            scope_allowlist=effective_allowlist,
+        )
+        # Confidence gate — pure post-filter on the already-ranked, already
+        # sensitivity-filtered rows. >= so min_confidence=0.0 keeps everything
+        # (additive, no recall change vs query_for_context when the gate is open).
+        gated_rows = [
+            row
+            for row in rows
+            if float(getattr(row["claim"], "confidence", 0.0) or 0.0) >= min_confidence
+        ]
+        result = pack_context(
+            gated_rows,
+            token_budget=token_budget,
+            output_format=output_format,
+        )
+        response: dict[str, Any] = {
+            "ok": True,
+            "output": result.output,
+            "claims_considered": result.claims_considered,
+            "claims_included": result.claims_included,
+            "tokens_used": result.tokens_used,
+            "token_budget": result.token_budget,
+            "format": result.format,
+            "min_confidence": min_confidence,
+        }
+        if detail_level != "standard":
+            if detail_level == "full":
+                filtered_claims = []
+                for row in gated_rows:
+                    cid = getattr(row["claim"], "id", None)
+                    claim_obj = row["claim"]
+                    if cid is not None:
+                        full_claim = svc.store.get_claim(int(cid), include_citations=True)
+                        if full_claim is not None:
+                            claim_obj = full_claim
+                    filtered_claims.append(_apply_detail_level(_claim_to_dict(claim_obj), detail_level))
+            else:
+                filtered_claims = [
+                    _apply_detail_level(_claim_to_dict(row["claim"]), detail_level)
+                    for row in gated_rows
+                ]
+            response["claims"] = filtered_claims
+        return response
+
+    @mcp.tool()
     def query_for_task(
         task_description: str,
         project_scope: str = "",
