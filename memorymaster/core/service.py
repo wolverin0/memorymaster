@@ -709,6 +709,16 @@ class MemoryService:
                 result["validator"] = validate_res
                 decay_res = decay.run(self.store, limit=batch_limit)
                 result["decay"] = decay_res
+                # Hebbian/Ebbinghaus edge decay (MemPalace forgetting curve) —
+                # RECALL-ALTERING, default OFF behind MEMORYMASTER_HEBBIAN_DECAY.
+                # Failure-isolated: an entity-graph error must never crash the
+                # cycle. When the flag is unset this is a cheap no-op that
+                # mutates nothing (result records enabled=False).
+                try:
+                    result["entity_edge_decay"] = decay.decay_entity_edges(self.store)
+                except Exception as exc:
+                    logger.warning("entity edge decay phase failed: %s", exc)
+                    result["entity_edge_decay"] = {"error": str(exc)}
                 compact_res = (
                     compactor.run(
                         self.store,

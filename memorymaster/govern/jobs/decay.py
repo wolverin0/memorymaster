@@ -1,16 +1,149 @@
 from __future__ import annotations
 
+import logging
+import math
+import os
 from datetime import datetime, timezone
 
 from memorymaster.core import observability
 from memorymaster.core.config import get_config
 from memorymaster.core.lifecycle import transition_claim
 
+logger = logging.getLogger(__name__)
+
+# Hebbian/Ebbinghaus tuning. Floor keeps a decayed edge traversable (never 0,
+# so a recall path is never fully erased — matches the MemPalace forgetting
+# curve where memories fade but leave a trace). Default lambda gives a ~35-day
+# half-life: weight*EXP(-0.02*35) ≈ weight*0.5.
+EDGE_WEIGHT_FLOOR = 0.01
+DEFAULT_EDGE_DECAY_LAMBDA = 0.02
+
+
 def _parse_iso(dt: str) -> datetime:
     parsed = datetime.fromisoformat(dt)
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _edge_decay_enabled() -> bool:
+    """Hebbian/Ebbinghaus edge decay is RECALL-ALTERING — default OFF.
+
+    Gated behind MEMORYMASTER_HEBBIAN_DECAY so default behavior is byte-identical:
+    when unset/falsey, decay_entity_edges() never mutates a single weight and
+    find_related_claims ordering is unchanged from the pre-feature baseline.
+    """
+    raw = os.environ.get("MEMORYMASTER_HEBBIAN_DECAY", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _edge_decay_lambda() -> float:
+    raw = os.environ.get("MEMORYMASTER_HEBBIAN_DECAY_LAMBDA", "").strip()
+    if not raw:
+        return DEFAULT_EDGE_DECAY_LAMBDA
+    try:
+        val = float(raw)
+        return val if val >= 0 else DEFAULT_EDGE_DECAY_LAMBDA
+    except ValueError:
+        return DEFAULT_EDGE_DECAY_LAMBDA
+
+
+def decay_entity_edges(store, *, now: datetime | None = None) -> dict:
+    """Ebbinghaus forgetting curve over entity-graph edges.
+
+    For each edge: ``weight = MAX(floor, weight * EXP(-lambda * elapsed_days))``
+    where elapsed_days is measured from ``last_reinforced_at`` (Hebbian stamp).
+    Edges missing the timestamp are default-filled to ``created_at`` (or NOW)
+    so they participate on the next pass instead of decaying from epoch.
+
+    RECALL-ALTERING: gated behind ``MEMORYMASTER_HEBBIAN_DECAY`` (default OFF).
+    When disabled, returns ``{"enabled": False, "decayed": 0}`` and touches
+    nothing. Migration-safe: if ``entity_edges`` (or the column) doesn't exist,
+    returns a clean ``skipped`` result rather than raising.
+
+    Computed in Python (not SQL ``EXP``) so SQLite and Postgres behave
+    identically without engine-specific functions.
+    """
+    if not _edge_decay_enabled():
+        return {"enabled": False, "decayed": 0}
+
+    lam = _edge_decay_lambda()
+    now = now or datetime.now(timezone.utc)
+    # The steward passes the MemoryService store (exposes .connect()); tests and
+    # the EntityGraph path expose ._connect(). Accept either so the job is usable
+    # from both without a second adapter.
+    open_conn = getattr(store, "connect", None) or getattr(store, "_connect")
+    conn = open_conn()
+    try:
+        skipped = {"enabled": True, "skipped": "missing entity_edges.last_reinforced_at", "decayed": 0}
+        try:
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(entity_edges)").fetchall()}
+        except Exception:
+            # Postgres / non-sqlite stores have no PRAGMA; fall back to a probe
+            # SELECT and treat any error as a graceful skip (table/column absent).
+            cols = set()
+        if cols:
+            # PRAGMA succeeded: empty set = no such table; column absent = un-migrated.
+            if not cols or "last_reinforced_at" not in cols:
+                return skipped
+        else:
+            try:
+                conn.execute("SELECT last_reinforced_at FROM entity_edges LIMIT 1")
+            except Exception:
+                return skipped
+
+        rows = conn.execute(
+            "SELECT source_id, target_id, relation, weight, last_reinforced_at, created_at "
+            "FROM entity_edges"
+        ).fetchall()
+
+        decayed = 0
+        floored = 0
+        backfilled = 0
+        for row in rows:
+            stamp = row["last_reinforced_at"]
+            if not stamp:
+                # Default-fill: anchor to created_at (or NOW) so the edge starts
+                # its decay clock from a real point instead of decaying instantly.
+                stamp = row["created_at"] or now.isoformat()
+                conn.execute(
+                    "UPDATE entity_edges SET last_reinforced_at = ? "
+                    "WHERE source_id = ? AND target_id = ? AND relation = ?",
+                    (stamp, row["source_id"], row["target_id"], row["relation"]),
+                )
+                backfilled += 1
+
+            try:
+                elapsed_days = max((now - _parse_iso(stamp)).total_seconds() / 86400.0, 0.0)
+            except (ValueError, TypeError):
+                continue
+            if elapsed_days <= 0:
+                continue
+
+            old_weight = float(row["weight"])
+            new_weight = max(EDGE_WEIGHT_FLOOR, old_weight * math.exp(-lam * elapsed_days))
+            if new_weight == old_weight:
+                continue
+            conn.execute(
+                "UPDATE entity_edges SET weight = ? "
+                "WHERE source_id = ? AND target_id = ? AND relation = ?",
+                (new_weight, row["source_id"], row["target_id"], row["relation"]),
+            )
+            decayed += 1
+            if new_weight <= EDGE_WEIGHT_FLOOR:
+                floored += 1
+
+        conn.commit()
+        return {
+            "enabled": True,
+            "processed": len(rows),
+            "decayed": decayed,
+            "floored": floored,
+            "backfilled": backfilled,
+            "lambda": lam,
+        }
+    finally:
+        conn.close()
 
 
 def run(
