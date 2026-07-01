@@ -481,4 +481,8 @@ class Claim:
     visibility: str = "public"
     version: int = 1
     wiki_article: str | None = None
+    # takes_vs_facts (gbrain multi-holder-belief dimension): who holds this
+    # belief. None = holder-agnostic. The belief-TYPE axis (take/fact/bet/hunch)
+    # already rides on the free-form claim_type string.
+    holder: str | None = None
     citations: list[Citation] = field(default_factory=list)

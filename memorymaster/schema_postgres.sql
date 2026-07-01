@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS claims (
     valid_until TIMESTAMPTZ,
     source_agent TEXT,
     visibility TEXT NOT NULL DEFAULT 'public',
-    wiki_article TEXT
+    wiki_article TEXT,
+    holder TEXT
 );
 
 ALTER TABLE claims
@@ -60,6 +61,9 @@ ALTER TABLE claims ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ;
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS valid_until TIMESTAMPTZ;
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS source_agent TEXT;
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'public';
+-- takes_vs_facts (gbrain multi-holder-belief dimension): nullable holder of the
+-- belief. NULL = holder-agnostic (default, byte-identical to pre-holder rows).
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS holder TEXT;
 
 CREATE OR REPLACE FUNCTION memorymaster_claims_confirmed_tuple_guard()
 RETURNS trigger

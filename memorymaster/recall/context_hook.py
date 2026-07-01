@@ -411,6 +411,11 @@ _RECALL_WEIGHT_DEFAULTS: dict[str, float] = {
     # bit-identical even when the stream is on. MemPalace measured R@1
     # 0.42 → 0.58 (+38%) with regex-derived closets.
     "W_CLOSETS": 0.0,
+    # W_HOLDER (takes_vs_facts, gbrain multi-holder-belief dimension). When > 0,
+    # ranking could boost/route claims by their `holder` field. Default 0.0 =
+    # ZERO ranking impact, so the default recall path stays byte-identical. No
+    # always-on holder ranking is wired; this is the reserved weight slot only.
+    "W_HOLDER": 0.0,
 }
 
 

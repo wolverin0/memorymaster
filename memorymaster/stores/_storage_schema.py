@@ -699,6 +699,19 @@ class _SchemaMixin:
 
 
     @staticmethod
+    def _ensure_holder_column(conn: sqlite3.Connection) -> None:
+        """Add nullable holder column (takes_vs_facts, gbrain multi-holder-belief).
+
+        NULL = holder-agnostic (the default; byte-identical to pre-holder rows).
+        """
+        try:
+            conn.execute("ALTER TABLE claims ADD COLUMN holder TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
+
+
+    @staticmethod
     def _canonical_payload(payload_json: str | None) -> str:
         if payload_json is None:
             return ""

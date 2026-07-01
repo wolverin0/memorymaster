@@ -498,6 +498,7 @@ class _ReadMixin:
             visibility=row["visibility"] if "visibility" in keys else "public",
             version=version,
             wiki_article=wiki_article,
+            holder=row["holder"] if "holder" in keys else None,
         )
 
 
