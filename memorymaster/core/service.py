@@ -346,6 +346,11 @@ class MemoryService:
         self._embedding_provider: EmbeddingProvider | None = None
         self.policy_config = policy_config
         self.tenant_id = (tenant_id or "").strip() or None
+        # Rollup telemetry (additive, default-safe): when set by a surface,
+        # recall events are attributed to this agent / session for the usage
+        # rollup. Default None keeps recall behaviour byte-identical.
+        self.source_agent: str | None = None
+        self.session_id: int | None = None
         self.qdrant = self._init_qdrant()
 
     @property
@@ -709,6 +714,16 @@ class MemoryService:
                 result["validator"] = validate_res
                 decay_res = decay.run(self.store, limit=batch_limit)
                 result["decay"] = decay_res
+                # Hebbian/Ebbinghaus edge decay (MemPalace forgetting curve) —
+                # RECALL-ALTERING, default OFF behind MEMORYMASTER_HEBBIAN_DECAY.
+                # Failure-isolated: an entity-graph error must never crash the
+                # cycle. When the flag is unset this is a cheap no-op that
+                # mutates nothing (result records enabled=False).
+                try:
+                    result["entity_edge_decay"] = decay.decay_entity_edges(self.store)
+                except Exception as exc:
+                    logger.warning("entity edge decay phase failed: %s", exc)
+                    result["entity_edge_decay"] = {"error": str(exc)}
                 compact_res = (
                     compactor.run(
                         self.store,
@@ -1252,6 +1267,12 @@ class MemoryService:
         if not claim_ids:
             return
 
+        # Rollup telemetry (additive, best-effort): one recall event per
+        # query that returned claims, attributed to the surface-supplied
+        # source_agent, plus session-level activity when a session is bound.
+        # Must never break recall — observability is fire-and-forget.
+        self._emit_recall_telemetry()
+
         if getattr(self.store, "read_only", False):
             self._spool_accesses(claim_ids, query_text)
             return
@@ -1277,6 +1298,28 @@ class MemoryService:
                     ft.record_retrieval(claim_ids, query_text)
             except Exception:
                 pass  # best-effort
+
+    def _emit_recall_telemetry(self) -> None:
+        """Bump the recall counter and session activity for a served query.
+
+        Fire-and-forget: a telemetry failure must never break recall, so the
+        whole body is suppressed. The counter always fires (labelled
+        ``unknown`` when no source_agent is bound); session activity only when
+        a session_id has been bound by the surface.
+        """
+        with contextlib.suppress(Exception):
+            observability.bump_recalls_queried(getattr(self, "source_agent", None))
+        # getattr guard: a MemoryService built via __new__ (tests, some internal
+        # paths) never runs __init__, so source_agent/session_id may be unset.
+        # Telemetry must no-op there, never raise into the recall hot path.
+        sid = getattr(self, "session_id", None)
+        if sid:
+            db_path = str(getattr(self.store, "db_path", "") or "")
+            if db_path:
+                with contextlib.suppress(Exception):
+                    from memorymaster.surfaces.session_tracker import SessionTracker
+
+                    SessionTracker(db_path).record_activity(sid, "query")
 
     def _spool_accesses(self, claim_ids: list[int], query_text: str) -> None:
         """RO-store branch of _record_accesses: spool, don't write.

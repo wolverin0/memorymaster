@@ -57,6 +57,15 @@ def bump_claim_ingested(source_agent: str | None) -> None:
     bump_counter("claims_ingested_total", source_agent=source_agent)
 
 
+def bump_recalls_queried(source_agent: str | None) -> None:
+    """Count a recall/query event, grouped by the querying source agent.
+
+    Mirrors :func:`bump_claim_ingested` so the rollup-telemetry surface can
+    report ingest and recall pressure side by side per source agent.
+    """
+    bump_counter("recalls_queried_total", source_agent=source_agent)
+
+
 def bump_claim_filtered(reason: str | None) -> None:
     bump_counter("claims_filtered_total", reason=_filter_reason(reason))
 
@@ -105,6 +114,20 @@ def metric_value(name: str, **labels: str | None) -> int | float:
         if name == "steward_cycle_duration_seconds_sum":
             return sum(_HISTOGRAMS["steward_cycle_duration_seconds"])
         return _COUNTERS.get(_counter_key(name, **labels), 0)
+
+
+def metric_family_total(name: str) -> int | float:
+    """Sum a counter family across every label combination.
+
+    Useful for rollups that want the aggregate (e.g. total recalls across all
+    source agents) without having to enumerate label values.
+    """
+    with _LOCK:
+        return sum(
+            count
+            for (counter_name, _labels_), count in _COUNTERS.items()
+            if counter_name == name
+        )
 
 
 def reset_metrics() -> None:
@@ -167,6 +190,12 @@ def metrics_text() -> str:
         _counter_family_lines(
             "claims_ingested_total",
             "Claims successfully ingested grouped by source agent.",
+        )
+    )
+    lines.extend(
+        _counter_family_lines(
+            "recalls_queried_total",
+            "Recall/query events grouped by source agent.",
         )
     )
     lines.extend(
