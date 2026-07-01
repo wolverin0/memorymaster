@@ -87,6 +87,7 @@ class IngestClaimInput(_ToolInput):
     valid_from: str = ""
     valid_until: str = ""
     source_agent: str = ""
+    holder: str = ""
 
 
 class QueryMetaDecisionsInput(_ToolInput):
@@ -570,12 +571,16 @@ if FastMCP is not None:
         valid_from: str = "",
         valid_until: str = "",
         source_agent: str = "",
+        holder: str = "",
     ) -> dict[str, Any]:
         """
         Ingest a claim into memory.
 
         `sources_json` is a JSON array of `source|locator|excerpt` strings.
         `source_agent` identifies who created this claim (e.g. "claude-session", "codex-session").
+        `holder` (takes_vs_facts): who holds this belief (e.g. a person/team/agent).
+        Omit for holder-agnostic facts. The belief TYPE (take/fact/bet/hunch)
+        rides on `claim_type`.
         Bi-temporal fields (ISO-8601 strings, all optional):
           - event_time: when the fact occurred in the real world
           - valid_from: start of the claim validity window
@@ -600,6 +605,7 @@ if FastMCP is not None:
                 "valid_from": valid_from,
                 "valid_until": valid_until,
                 "source_agent": source_agent,
+                "holder": holder,
             },
         )
         if isinstance(request, dict):
@@ -638,6 +644,7 @@ if FastMCP is not None:
                 valid_from=_empty_to_none(request.valid_from),
                 valid_until=_empty_to_none(request.valid_until),
                 source_agent=effective_source,
+                holder=_empty_to_none(request.holder),
                 require_source_agent=True,
             )
         except ValueError as exc:

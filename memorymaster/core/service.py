@@ -433,6 +433,7 @@ class MemoryService:
         valid_until: str | None = None,
         source_agent: str | None = None,
         visibility: str = "public",
+        holder: str | None = None,
         require_source_agent: bool = False,
         intake_batch_id: str | None = None,
         intake_batch_max: int | None = None,
@@ -581,6 +582,7 @@ class MemoryService:
             valid_until=valid_until,
             source_agent=source_agent,
             visibility=visibility,
+            holder=holder,
         )
 
         # Set entity_id on the claim (best-effort, don't fail ingest)

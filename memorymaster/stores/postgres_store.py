@@ -403,6 +403,7 @@ class PostgresStore(SQLiteStore):
         valid_until: str | None = None,
         source_agent: str | None = None,
         visibility: str = "private",
+        holder: str | None = None,
     ) -> Claim:
         if not citations:
             raise ValueError("At least one citation is required.")
@@ -416,10 +417,10 @@ class PostgresStore(SQLiteStore):
                         text, idempotency_key, normalized_text, claim_type, subject, predicate, object_value,
                         scope, volatility, status, confidence, pinned, supersedes_claim_id,
                         replaced_by_claim_id, created_at, updated_at, last_validated_at, archived_at,
-                        tenant_id, event_time, valid_from, valid_until, source_agent, visibility
+                        tenant_id, event_time, valid_from, valid_until, source_agent, visibility, holder
                     ) VALUES (
                         %s, %s, NULL, %s, %s, %s, %s, %s, %s, 'candidate', %s, FALSE, NULL, NULL, %s, %s, NULL, NULL,
-                        %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT (idempotency_key) DO NOTHING
                     RETURNING id
@@ -442,6 +443,7 @@ class PostgresStore(SQLiteStore):
                     valid_until,
                     source_agent,
                     visibility,
+                    holder,
                 ),
             )
             claim_row = cur.fetchone()
@@ -1436,6 +1438,7 @@ class PostgresStore(SQLiteStore):
             source_agent=cls._as_text(row.get("source_agent")),
             visibility=cls._as_text(row.get("visibility")) or "public",
             wiki_article=cls._as_text(row.get("wiki_article")),
+            holder=cls._as_text(row.get("holder")),
         )
 
     @classmethod
