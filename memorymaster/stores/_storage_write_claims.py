@@ -65,6 +65,7 @@ class _WriteClaimsMixin:
         valid_until: str | None = None,
         source_agent: str | None = None,
         visibility: str = "public",
+        holder: str | None = None,
     ) -> Claim:
         if not citations:
             raise ValueError("At least one citation is required.")
@@ -83,8 +84,8 @@ class _WriteClaimsMixin:
                         text, idempotency_key, normalized_text, claim_type, subject, predicate, object_value,
                         scope, volatility, status, confidence, pinned, supersedes_claim_id,
                         replaced_by_claim_id, created_at, updated_at, last_validated_at, archived_at,
-                        tenant_id, event_time, valid_from, valid_until, source_agent, visibility
-                    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'candidate', ?, 0, NULL, NULL, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)
+                        tenant_id, event_time, valid_from, valid_until, source_agent, visibility, holder
+                    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'candidate', ?, 0, NULL, NULL, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         text,
@@ -104,6 +105,7 @@ class _WriteClaimsMixin:
                         valid_until or None,
                         source_agent or None,
                         visibility or "public",
+                        holder or None,
                     ),
                 )
             except sqlite3.IntegrityError:
