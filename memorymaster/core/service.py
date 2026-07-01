@@ -346,6 +346,11 @@ class MemoryService:
         self._embedding_provider: EmbeddingProvider | None = None
         self.policy_config = policy_config
         self.tenant_id = (tenant_id or "").strip() or None
+        # Rollup telemetry (additive, default-safe): when set by a surface,
+        # recall events are attributed to this agent / session for the usage
+        # rollup. Default None keeps recall behaviour byte-identical.
+        self.source_agent: str | None = None
+        self.session_id: int | None = None
         self.qdrant = self._init_qdrant()
 
     @property
@@ -1262,6 +1267,12 @@ class MemoryService:
         if not claim_ids:
             return
 
+        # Rollup telemetry (additive, best-effort): one recall event per
+        # query that returned claims, attributed to the surface-supplied
+        # source_agent, plus session-level activity when a session is bound.
+        # Must never break recall — observability is fire-and-forget.
+        self._emit_recall_telemetry()
+
         if getattr(self.store, "read_only", False):
             self._spool_accesses(claim_ids, query_text)
             return
@@ -1287,6 +1298,24 @@ class MemoryService:
                     ft.record_retrieval(claim_ids, query_text)
             except Exception:
                 pass  # best-effort
+
+    def _emit_recall_telemetry(self) -> None:
+        """Bump the recall counter and session activity for a served query.
+
+        Fire-and-forget: a telemetry failure must never break recall, so the
+        whole body is suppressed. The counter always fires (labelled
+        ``unknown`` when no source_agent is bound); session activity only when
+        a session_id has been bound by the surface.
+        """
+        with contextlib.suppress(Exception):
+            observability.bump_recalls_queried(self.source_agent)
+        if self.session_id:
+            db_path = str(getattr(self.store, "db_path", "") or "")
+            if db_path:
+                with contextlib.suppress(Exception):
+                    from memorymaster.surfaces.session_tracker import SessionTracker
+
+                    SessionTracker(db_path).record_activity(self.session_id, "query")
 
     def _spool_accesses(self, claim_ids: list[int], query_text: str) -> None:
         """RO-store branch of _record_accesses: spool, don't write.

@@ -281,6 +281,30 @@ def _service(db: str, workspace: str) -> MemoryService:
     return MemoryService(db_target=_resolve_db(db), workspace_root=Path(_resolve_workspace(workspace)))
 
 
+def _usage_rollup(db: str) -> dict[str, Any]:
+    """Build the usage-telemetry rollup payload.
+
+    Returns the Prometheus-style metrics text (including the
+    ``recalls_queried_total`` family) plus the active agent sessions. Session
+    lookup is best-effort: a missing/empty DB yields an empty list rather than
+    an error. Only aggregate counters and session metadata are exposed — never
+    claim text — so this stays safe to surface over MCP.
+    """
+    from memorymaster.surfaces.session_tracker import SessionTracker
+
+    sessions: list[dict[str, Any]] = []
+    try:
+        sessions = SessionTracker(_resolve_db(db)).get_active_sessions()
+    except Exception:  # pragma: no cover - defensive, tracker is itself guarded
+        sessions = []
+    return {
+        "ok": True,
+        "recalls_queried_total": observability.metric_family_total("recalls_queried_total"),
+        "metrics_text": observability.metrics_text(),
+        "active_sessions": sessions,
+    }
+
+
 def _empty_to_none(value: str) -> str | None:
     v = value.strip()
     return v if v else None
@@ -1529,6 +1553,19 @@ if FastMCP is not None:
         from memorymaster.recall.verbatim_store import search_verbatim as _search
         results = _search(_resolve_db(db), query, scope=scope or None, limit=limit, mode=mode)
         return {"ok": True, "rows": len(results), "results": results}
+
+    @mcp.tool()
+    def get_usage_rollup(
+        db: str = "memorymaster.db",
+    ) -> dict[str, Any]:
+        """Aggregate recall/ingest telemetry per source agent and session.
+
+        Returns the Prometheus-style ``metrics_text`` (including the
+        ``recalls_queried_total`` and ``claims_ingested_total`` families) plus
+        the agent sessions active in the last hour. Exposes only aggregate
+        counters and session metadata — never claim text.
+        """
+        return _usage_rollup(db)
 
     @mcp.tool()
     def open_dashboard(
