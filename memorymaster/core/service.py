@@ -1308,14 +1308,18 @@ class MemoryService:
         a session_id has been bound by the surface.
         """
         with contextlib.suppress(Exception):
-            observability.bump_recalls_queried(self.source_agent)
-        if self.session_id:
+            observability.bump_recalls_queried(getattr(self, "source_agent", None))
+        # getattr guard: a MemoryService built via __new__ (tests, some internal
+        # paths) never runs __init__, so source_agent/session_id may be unset.
+        # Telemetry must no-op there, never raise into the recall hot path.
+        sid = getattr(self, "session_id", None)
+        if sid:
             db_path = str(getattr(self.store, "db_path", "") or "")
             if db_path:
                 with contextlib.suppress(Exception):
                     from memorymaster.surfaces.session_tracker import SessionTracker
 
-                    SessionTracker(db_path).record_activity(self.session_id, "query")
+                    SessionTracker(db_path).record_activity(sid, "query")
 
     def _spool_accesses(self, claim_ids: list[int], query_text: str) -> None:
         """RO-store branch of _record_accesses: spool, don't write.
