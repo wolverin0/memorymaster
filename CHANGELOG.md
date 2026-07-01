@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [4.2.0] - 2026-07-01
+
+**Governance & correctness upgrades + a prior-art evolution pass.** New ingest/lifecycle guards, plus eight capabilities distilled from a re-survey of neighboring memory/code-graph projects (gbrain, MemPalace, claude-mem, GitNexus, codebase-memory-mcp). Everything is **opt-in or additive** — the default recall/ranking path is byte-identical, proven by a 0-regression full-suite run.
+
+### Added
+
+- **Bitemporal write-time guard** (#169): `validate_temporal_fields` rejects malformed ISO-8601 and inverted `valid_until < valid_from` at ingest, before the row reaches the store — a durable-but-invisible claim can no longer be written. Backend-agnostic.
+- **Intent-aware ranking** (#169, opt-in): `retrieval_profile="auto"` routes query intent (temporal→fresh, relational→semantic, fact/constraint→precision) to a weight profile. Default ranking unchanged.
+- **`archive_by_source`** (#170): lifecycle-safe bulk cleanup — archives (never hard-deletes) every live claim from a given `source_agent`; `dry_run=True` default, never silently truncates. CLI + MCP.
+- **`checkpoint`** batch-ingest MCP tool (#169): files N claims in one round-trip through the same per-item sensitivity filter as `ingest_claim`; per-item summary so a partial batch never silently drops a claim.
+- **Rollup usage telemetry** (#172): per-agent recall counters in `observability.py` + a `get_usage_rollup` MCP tool (aggregate counters + active sessions only, no claim text).
+- **Guarded fuzzy entity resolver** (#172, `MEMORYMASTER_ENTITY_FUZZY_RESOLVE`, default off): `difflib`-scored alias matching that **refuses on ambiguity** (anti-hallucination) instead of silently fragmenting `MemoryMaster`/`memory-master`/`MM` into separate entities.
+- **Hebbian + Ebbinghaus entity-edge dynamics** (#172, `MEMORYMASTER_HEBBIAN_DECAY`, default off): usage strengthens, time decays entity-graph edge weights (steward-cycle decay job).
+- **`volunteer_context`** MCP tool (#172): confidence-gated, zero-LLM proactive recall — the brain surfaces relevant claims from recent turns.
+- **PreToolUse grep/glob recall-inject hook** (#173, `MEMORYMASTER_PRETOOLUSE_RECALL`, default off): injects relevant memory as `additionalContext` when the agent runs Grep/Glob.
+- **Belief `holder` field** (#173): nullable per-claim `holder` (Takes-vs-Facts multi-holder beliefs from gbrain); belief *type* (take/fact/bet/hunch) reuses the existing free-form `claim_type`. Threaded through SQLite + Postgres with an idempotent migration; ranking-neutral (`W_HOLDER=0.0`) by default.
+- **Capability-probed `claude` CLI resolver** (#169): `claude_cli_available()` distinguishes "CLI unusable" from "CLI ran and returned empty" — a broken binary fails loud instead of masquerading as no-memory.
+
+### Changed
+
+- **Repositioning** (#169): README "How it's different" now leads with **governance / curation over accumulation** — the field (mem0/Letta/Zep/cognee) has closed the retrieval gap; MM's wedge is lifecycle + steward + citations + conflict, not "we retrieve better".
+- **RRF fusion** (#169): Reciprocal Rank Fusion is available via `MEMORYMASTER_RECALL_FUSION=rrf|auto`, but `linear` **stays the default** — an A/B on the LongMemEval-style harness showed RRF *regressed* (−49% MAP) because the harness fuses by rank without the vector stream. Measured, not assumed.
+
+### Fixed
+
+- **GitNexus doc templates** (#171) falsely claimed a PostToolUse hook auto-reindexes after `git commit`/`merge`; corrected (at the template source) to "detects staleness + reminds you to run `analyze`" — the hook never reindexed, which is why indexes silently went stale.
+- Telemetry hot-path `AttributeError` on a `MemoryService` built via `__new__` (test/internal paths that skip `__init__`) — guarded with `getattr`.
+
 ## [4.1.0] - 2026-06-24
 
 **Local-filesystem awareness + LLM life-knowledge extraction.** Agents can now
