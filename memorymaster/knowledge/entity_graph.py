@@ -135,6 +135,7 @@ class EntityGraph:
                     weight REAL NOT NULL DEFAULT 1.0,
                     claim_id INTEGER,
                     created_at TEXT NOT NULL,
+                    last_reinforced_at TEXT,
                     PRIMARY KEY (source_id, target_id, relation)
                 );
                 CREATE TABLE IF NOT EXISTS claim_entity_links (
@@ -145,6 +146,7 @@ class EntityGraph:
                 CREATE INDEX IF NOT EXISTS idx_cel_entity
                     ON claim_entity_links(entity_id);
             """)
+            self._migrate_edge_columns(conn)
             conn.commit()
             self._schema_ready = True
         except sqlite3.OperationalError as exc:
@@ -153,6 +155,22 @@ class EntityGraph:
         finally:
             if own_conn:
                 conn.close()
+
+    @staticmethod
+    def _migrate_edge_columns(conn: sqlite3.Connection) -> None:
+        """Add Hebbian/Ebbinghaus columns to a pre-existing entity_edges table.
+
+        The CREATE TABLE above only fires for fresh DBs; a DB created before the
+        ``last_reinforced_at`` column existed keeps its old schema. ``ALTER TABLE
+        ADD COLUMN`` is the additive, default-safe path — guarded so re-running
+        on an already-migrated DB is a silent no-op (no "duplicate column" raise).
+        """
+        try:
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(entity_edges)").fetchall()}
+        except sqlite3.OperationalError:
+            return
+        if "last_reinforced_at" not in cols:
+            conn.execute("ALTER TABLE entity_edges ADD COLUMN last_reinforced_at TEXT")
 
     def _process_entities(self, data: dict, conn) -> tuple[dict[str, str], list[str]]:
         """Process extracted entities and return (name->id mapping, original names)."""
@@ -252,22 +270,35 @@ class EntityGraph:
                 return []
             seed_ids = [r["id"] for r in seed_rows]
             ph = ",".join("?" * len(seed_ids))
+            # Propagate edge weight along the traversal: a seed entity starts at
+            # path_weight 1.0, and each hop multiplies in the traversed edge's
+            # weight. Hebbian-strengthened edges (high weight) therefore pull
+            # their claims to the top; Ebbinghaus-decayed edges (weight → floor)
+            # sink. We MAX(path_weight) per reachable entity, sum across the
+            # entities a claim links to, and return claim_ids ordered by that
+            # accumulated weight DESC so the caller's scoring sees the strongest
+            # graph paths first. Return type stays list[int] for callers.
             rows = conn.execute(
                 f"""
-                WITH RECURSIVE reachable(entity_id, depth) AS (
-                    SELECT id, 0 FROM entities WHERE id IN ({ph})
+                WITH RECURSIVE reachable(entity_id, depth, path_weight) AS (
+                    SELECT id, 0, 1.0 FROM entities WHERE id IN ({ph})
                     UNION
-                    SELECT e.target_id, r.depth + 1
+                    SELECT e.target_id, r.depth + 1, r.path_weight * e.weight
                     FROM entity_edges e JOIN reachable r ON e.source_id = r.entity_id
                     WHERE r.depth < ?
                     UNION
-                    SELECT e.source_id, r.depth + 1
+                    SELECT e.source_id, r.depth + 1, r.path_weight * e.weight
                     FROM entity_edges e JOIN reachable r ON e.target_id = r.entity_id
                     WHERE r.depth < ?
+                ),
+                best(entity_id, w) AS (
+                    SELECT entity_id, MAX(path_weight) FROM reachable GROUP BY entity_id
                 )
-                SELECT DISTINCT cl.claim_id
-                FROM reachable r
-                JOIN claim_entity_links cl ON cl.entity_id = r.entity_id
+                SELECT cl.claim_id AS claim_id, SUM(b.w) AS total_weight
+                FROM best b
+                JOIN claim_entity_links cl ON cl.entity_id = b.entity_id
+                GROUP BY cl.claim_id
+                ORDER BY total_weight DESC, cl.claim_id ASC
                 LIMIT ?
                 """,
                 seed_ids + [hops, hops, limit],
@@ -328,13 +359,18 @@ class EntityGraph:
         return row["id"]
 
     def _upsert_edge(self, conn, source_id: str, target_id: str, relation: str, claim_id: int) -> None:
+        # Hebbian potentiation: every co-occurrence strengthens the edge
+        # (weight += 0.1) and stamps last_reinforced_at = NOW. The timestamp is
+        # what the Ebbinghaus decay job reads to compute elapsed-days; without it
+        # decay cannot distinguish a freshly-reinforced edge from a stale one.
+        now = datetime.now(timezone.utc).isoformat()
         conn.execute(
-            """INSERT INTO entity_edges (source_id, target_id, relation, weight, claim_id, created_at)
-               VALUES (?, ?, ?, 1.0, ?, ?)
+            """INSERT INTO entity_edges
+                   (source_id, target_id, relation, weight, claim_id, created_at, last_reinforced_at)
+               VALUES (?, ?, ?, 1.0, ?, ?, ?)
                ON CONFLICT(source_id, target_id, relation)
-               DO UPDATE SET weight = weight + 0.1, claim_id = ?""",
-            (source_id, target_id, relation, claim_id,
-             datetime.now(timezone.utc).isoformat(), claim_id),
+               DO UPDATE SET weight = weight + 0.1, claim_id = ?, last_reinforced_at = ?""",
+            (source_id, target_id, relation, claim_id, now, now, claim_id, now),
         )
 
     def _get_known_entity_names(
