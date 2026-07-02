@@ -90,6 +90,14 @@ def export_delta(
     # fresh delta file gets the uniform writer envelope.
     src = connect_ro(source_db)
     out = open_conn(output_path)
+    # The delta is a TRANSPORT file, not a live DB. The claims DDL is copied
+    # verbatim (incl. supersedes/replaced_by FKs to claims.id), and a claim in
+    # the window may legitimately reference a claim OUTSIDE it — with FK
+    # enforcement on, one such row kills the whole export (this silently broke
+    # the Windows->Hermes sync for 3 weeks: nightly 'FOREIGN KEY constraint
+    # failed' since 2026-06-10). Integrity is re-established by the idempotent
+    # merge into the target DB, which already holds (or dedups) the parents.
+    out.execute("PRAGMA foreign_keys=OFF")
     try:
         for table in _DELTA_TABLES:
             _copy_table_ddl(src, out, table)
