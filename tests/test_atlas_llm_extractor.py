@@ -595,3 +595,30 @@ def test_validate_row_accepts_real_entity_subject():
     assert typed is not None
     assert typed.subject == "Pablo Lujan"
     assert typed.claim_type == "person"
+
+
+# --- event_time normalization (fresh-eyes remediation 2026-07-02) ------------
+
+def test_normalize_event_time_rejects_junk_keeps_real_dates():
+    """WHY: the LLM emits junk event_times ('later', '18:00', '2028', bare
+    ranges) despite the prompt. A junk string poisons every date(event_time)
+    query downstream — date() yields NULL, which sorts BEFORE real dates and
+    crowds genuinely dated items out of agenda queries (observed live: the
+    Jarvis bot answered 'no events this week' while July deadlines existed).
+    Junk must be dropped (claim ingests WITHOUT event_time); real ISO dates
+    and datetimes must survive untouched."""
+    from memorymaster.bridges.atlas_llm_extractor import _normalize_event_time
+
+    # Real dates/datetimes survive verbatim.
+    assert _normalize_event_time("2026-06-26") == "2026-06-26"
+    assert _normalize_event_time("2026-06-09T23:22:35Z") == "2026-06-09T23:22:35Z"
+    assert _normalize_event_time("2026-06-16T10:00:00") == "2026-06-16T10:00:00"
+    # Junk the live DB actually accumulated — all must be dropped.
+    for junk in ("later", "18:00", "16:00", "2028", "2026",
+                 "T15:00:00/T20:30:00", "next week", "mañana"):
+        assert _normalize_event_time(junk) is None, junk
+    # Invalid date parts are junk too, even if date-shaped.
+    assert _normalize_event_time("2026-13-99") is None
+    # None/empty stay None.
+    assert _normalize_event_time(None) is None
+    assert _normalize_event_time("  ") is None

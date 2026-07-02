@@ -295,10 +295,24 @@ def _clamp_confidence(value: Any) -> float:
 
 
 def _normalize_event_time(value: Any) -> str | None:
+    """Only a real ISO date(-time) survives. Despite the prompt, the LLM emits
+    junk like 'later', '18:00', '2028', or bare time ranges — a bogus
+    event_time poisons every ``date(event_time)`` query downstream (junk sorts
+    before real dates because ``date()`` yields NULL), so junk is DROPPED (the
+    claim ingests without an event_time) rather than stored."""
     if value is None:
         return None
+    import re as _re
+    from datetime import datetime as _dt
+
     text = str(value).strip()
-    return text or None
+    if not _re.match(r"^\d{4}-\d{2}-\d{2}", text):
+        return None
+    try:
+        _dt.fromisoformat(text[:10])  # validates the date part (e.g. no month 13)
+    except ValueError:
+        return None
+    return text
 
 
 def _ingest_typed_claim(
