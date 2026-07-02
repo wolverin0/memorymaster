@@ -9,7 +9,8 @@ Usage (from a clone):
 Interactive prompts for:
     - LLM provider (google/openai/anthropic/ollama) + API key
     - Project root (where memorymaster.db lives)
-    - Claude Code hooks (recall, classify, validate-wiki, session-start, auto-ingest, precompact)
+    - Claude Code hooks (recall, classify, validate-wiki, session-start, auto-ingest, precompact;
+      plus opt-in --pretooluse grep/glob recall-inject)
     - Codex AGENTS.md integration
     - CLAUDE.md global integration
     - Steward cron (every 6h)
@@ -153,7 +154,7 @@ def setup_llm_provider():
 # ---------------------------------------------------------------------------
 # 2. Install hooks
 # ---------------------------------------------------------------------------
-def install_hooks(llm_config):
+def install_hooks(llm_config, include_pretooluse: bool = False):
     banner("Claude Code Hooks")
 
     hooks_dir = CLAUDE_DIR / "hooks"
@@ -271,6 +272,23 @@ def install_hooks(llm_config):
     precompact_hooks = hooks.setdefault("PreCompact", [])
     precompact_hooks[:] = [h for h in precompact_hooks if "memorymaster" not in json.dumps(h)]
     precompact_hooks.append(precompact_hook)
+
+    # PreToolUse — recall-inject on Grep/Glob (OPT-IN, --pretooluse). The hook
+    # template itself is additionally gated by MEMORYMASTER_PRETOOLUSE_RECALL=1
+    # at runtime. Previously the template was copied to disk but never
+    # registered anywhere (fresh-eyes audit 2026-07-01) — README's "opt-in
+    # hook" silently required hand-editing settings.json.
+    pretooluse_hooks = hooks.setdefault("PreToolUse", [])
+    pretooluse_hooks[:] = [h for h in pretooluse_hooks if "memorymaster-pretooluse-recall" not in json.dumps(h)]
+    if include_pretooluse:
+        pretooluse_hooks.append({
+            "matcher": "Grep|Glob",
+            "hooks": [{
+                "type": "command",
+                "command": f'python "{hooks_dir / "memorymaster-pretooluse-recall.py"}"',
+                "timeout": 5
+            }]
+        })
 
     settings_path.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"  Updated: {settings_path}")
@@ -701,6 +719,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--no-codex", dest="codex", action="store_false", help="skip Codex wiring")
     p.add_argument("--force", action="store_true", help="overwrite existing MCP entries")
+    p.add_argument(
+        "--pretooluse",
+        action="store_true",
+        help="also register the opt-in PreToolUse Grep/Glob recall-inject hook "
+             "(runtime-gated by MEMORYMASTER_PRETOOLUSE_RECALL=1)",
+    )
     p.add_argument("--verify-only", action="store_true", help="run only the verify round-trip and exit")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON result")
     return p
@@ -825,7 +849,7 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
 
     # --- Claude Code hooks (idempotent remove-then-add; brownfield-safe) ---
     if detected.claude_code:
-        install_hooks(llm_config)
+        install_hooks(llm_config, include_pretooluse=getattr(args, "pretooluse", False))
         applied["hooks"] = "installed"
     else:
         applied["hooks"] = "skipped (no ~/.claude/)"

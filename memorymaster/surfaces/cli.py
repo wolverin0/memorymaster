@@ -82,6 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--event-time", default=None, help="ISO-8601 timestamp: when the fact occurred in the real world")
     ingest.add_argument("--valid-from", default=None, help="ISO-8601 timestamp: start of the claim validity window")
     ingest.add_argument("--valid-until", default=None, help="ISO-8601 timestamp: end of the validity window (omit if still current)")
+    ingest.add_argument("--holder", default=None, help="Who holds this belief (takes-vs-facts; omit for holder-agnostic facts)")
 
     ingest_daydream = sub.add_parser("ingest-daydream", help="Ingest daydream insights as candidate hypothesis claims")
     ingest_daydream.add_argument("insights_dir", help="Daydreams directory containing insight JSON or Markdown files")
