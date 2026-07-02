@@ -278,8 +278,38 @@ def _resolve_workspace(workspace: str) -> str:
     return resolved
 
 
+# Per-process usage-telemetry sessions, one per DB path (fresh-eyes audit
+# 2026-07-01): SessionTracker was runtime-dead — nothing ever called
+# start_session or bound MemoryService.session_id, so get_usage_rollup's
+# session half always returned []. The MCP server is long-lived per client,
+# so one session per DB per process is the honest granularity.
+_TELEMETRY_SESSION_IDS: dict[str, int] = {}
+
+
+def _bind_telemetry_session(svc: MemoryService, db_path: str) -> None:
+    """Best-effort: bind a usage-telemetry session to *svc*.
+
+    Telemetry must never break a tool call — every failure is swallowed and
+    the service simply stays unbound (counters still work via source_agent).
+    """
+    try:
+        sid = _TELEMETRY_SESSION_IDS.get(db_path)
+        if sid is None:
+            from memorymaster.surfaces.session_tracker import SessionTracker
+
+            sid = SessionTracker(db_path).start_session("mcp-session")
+            _TELEMETRY_SESSION_IDS[db_path] = sid
+        svc.session_id = sid
+        if not getattr(svc, "source_agent", None):
+            svc.source_agent = "mcp-session"
+    except Exception:
+        pass
+
+
 def _service(db: str, workspace: str) -> MemoryService:
-    return MemoryService(db_target=_resolve_db(db), workspace_root=Path(_resolve_workspace(workspace)))
+    svc = MemoryService(db_target=_resolve_db(db), workspace_root=Path(_resolve_workspace(workspace)))
+    _bind_telemetry_session(svc, _resolve_db(db))
+    return svc
 
 
 def _usage_rollup(db: str) -> dict[str, Any]:
@@ -525,6 +555,9 @@ def _checkpoint_batch(
                 event_time=_empty_to_none(str(item.get("event_time", "") or "")),
                 valid_from=_empty_to_none(str(item.get("valid_from", "") or "")),
                 valid_until=_empty_to_none(str(item.get("valid_until", "") or "")),
+                # holder landed after checkpoint (fresh-eyes audit seam gap):
+                # keep batch items at parity with ingest_claim's fields.
+                holder=_empty_to_none(str(item.get("holder", "") or "")),
                 source_agent=source_agent,
                 require_source_agent=True,
             )
@@ -1222,7 +1255,7 @@ if FastMCP is not None:
         allow_sensitive: bool = False,
         scope_allowlist: str = "",
         detail_level: str = "standard",
-        min_confidence: float = 0.0,
+        min_confidence: float = 0.65,
     ) -> dict[str, Any]:
         """Push/volunteer relevant context — confidence-gated, zero-LLM.
 
@@ -1231,10 +1264,12 @@ if FastMCP is not None:
         from recent turns without flooding the window with weak guesses.
 
         The gate is a pure post-filter on the ranked rows: only claims whose
-        ``confidence >= min_confidence`` survive before packing. It is purely
-        additive — with the default ``min_confidence=0.0`` every ranked row
-        passes and the output is identical to ``query_for_context`` with the
-        same arguments. No LLM call is made; ranking, sensitivity filtering and
+        ``confidence >= min_confidence`` survive before packing. The default
+        (0.65, the gbrain-inspired volunteer threshold) is what distinguishes
+        this tool from ``query_for_context`` — only claims worth volunteering
+        unprompted survive. Pass ``min_confidence=0.0`` to open the gate fully,
+        which makes the output identical to ``query_for_context`` with the same
+        arguments. No LLM call is made; ranking, sensitivity filtering and
         scope handling are inherited unchanged from ``query_rows`` (sensitive
         claims are already dropped there, so none can be volunteered).
 
@@ -1449,8 +1484,9 @@ if FastMCP is not None:
         limit: int = 50,
         include_archived: bool = False,
         allow_sensitive: bool = False,
+        holder: str = "",
     ) -> dict[str, Any]:
-        """List claims by optional status."""
+        """List claims by optional status and/or belief holder (takes-vs-facts)."""
         resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
             context="mcp.list_claims",
@@ -1461,6 +1497,7 @@ if FastMCP is not None:
             limit=limit,
             include_archived=include_archived,
             allow_sensitive=allow_sensitive,
+            holder=_empty_to_none(holder),
         )
         return {"ok": True, "rows": len(claims), "claims": [_claim_to_dict(c) for c in claims]}
 

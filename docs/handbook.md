@@ -8,6 +8,7 @@ If a section here goes stale, that's a bug — open an issue or PR. The CHANGELO
 
 ## Table of contents
 
+- [What's new in v4.2](#whats-new-in-v42)
 - [End-to-end flow](#end-to-end-flow)
 - [Hooks installed by `memorymaster-setup`](#hooks-installed-by-memorymaster-setup)
 - [Operator runtime](#operator-runtime)
@@ -26,6 +27,27 @@ If a section here goes stale, that's a bug — open an issue or PR. The CHANGELO
 - [Performance SLOs](#performance-slos)
 - [Security model](#security-model)
 - [One-prompt agent install](#one-prompt-agent-install)
+
+---
+
+## What's new in v4.2
+
+Everything below is **opt-in or additive** — the default recall/ranking path is unchanged. Full details per entry in `CHANGELOG.md` `[4.2.0]`.
+
+| Capability | Surface | Activation |
+|---|---|---|
+| Bitemporal write-time guard | automatic on every ingest | always on — rejects malformed ISO / inverted `valid_until < valid_from`; a lone past `valid_until` backdates `valid_from` so a born-inverted row can never be stored |
+| `archive_by_source` | MCP tool | `dry_run=True` default; archives (never deletes) every live claim from one `source_agent` |
+| `checkpoint` | MCP tool | batch-ingest N claims in one call (same per-item sensitivity filter as `ingest_claim`; items accept the same fields incl. `holder`) |
+| Usage telemetry | `get_usage_rollup` MCP tool | always on — per-agent recall counters + per-session activity (sessions are bound automatically by the MCP server) |
+| `volunteer_context` | MCP tool | confidence-gated proactive recall; default gate `min_confidence=0.65` (pass `0.0` to behave exactly like `query_for_context`) |
+| Intent-aware ranking | `retrieval_profile="auto"` on query tools | opt-in per call; temporal→fresh, relational→semantic, fact/constraint→precision |
+| Guarded fuzzy entity resolver | ingest-time alias matching | `MEMORYMASTER_ENTITY_FUZZY_RESOLVE=1` (refuses ambiguous matches) |
+| Hebbian/Ebbinghaus entity edges | steward cycle + `find_related_claims` | `MEMORYMASTER_HEBBIAN_DECAY=1` |
+| PreToolUse grep/glob recall-inject | Claude Code hook | install with `memorymaster-setup --pretooluse`, then set `MEMORYMASTER_PRETOOLUSE_RECALL=1` |
+| Belief `holder` (takes-vs-facts) | `ingest_claim` / `checkpoint` / CLI `--holder`; filter via `list_claims(holder=…)` | additive nullable field; belief *type* (take/fact/bet/hunch) rides on `claim_type` |
+
+> Recall-stream flags ship intentionally weight-gated: `MEMORYMASTER_RECALL_GRAPH` / `_TWO_PASS` / `_CLOSETS` enable a stream, and the matching `MEMORYMASTER_RECALL_W_GRAPH` / `_W_TWO_PASS` / `_W_CLOSETS` weight (default `0.0`) controls how much it counts. Set **both** — the flag alone hydrates candidates but does not change ranking.
 
 ---
 
@@ -458,7 +480,7 @@ Step 1 — Prerequisites
 
 Step 2 — Install the package
   • `pip install "memorymaster[mcp,security]"`
-  • Confirm `python -c "import memorymaster; print(memorymaster.__version__)"` reports 3.5.0 or higher.
+  • Confirm `python -c "import memorymaster; print(memorymaster.__version__)"` reports 4.2.0 or higher.
 
 Step 3 — Initialize the project DB
   • `memorymaster --db memorymaster.db init-db`

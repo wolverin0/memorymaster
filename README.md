@@ -6,9 +6,9 @@ Lifecycle-managed claims with citations, conflict detection, steward governance,
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-2927-green.svg)]()
-[![MCP Tools](https://img.shields.io/badge/MCP%20tools-30-purple.svg)]()
-[![CLI Commands](https://img.shields.io/badge/CLI%20commands-104-orange.svg)]()
+[![Tests](https://img.shields.io/badge/tests-3200%2B-green.svg)]()
+[![MCP Tools](https://img.shields.io/badge/MCP%20tools-36-purple.svg)]()
+[![CLI Commands](https://img.shields.io/badge/CLI%20commands-106-orange.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memorymaster.svg)](https://pypi.org/project/memorymaster/)
 
 MemoryMaster prevents the #1 problem with agent memory: **drift, stale assumptions, and unsafe disclosure**. It gives Claude Code, Codex, and any MCP-compatible agent persistent, verifiable memory with a full claim lifecycle, citation tracking, conflict detection, and human-in-the-loop governance.
@@ -79,7 +79,7 @@ recent PR status, and sensitivity-filter invariants.
 - **Belief `holder`** (new in v4.2.0): nullable per-claim `holder` for multi-holder beliefs (take/fact/bet/hunch reuse `claim_type`); SQLite+Postgres, ranking-neutral by default.
 - **Dual backend**: SQLite (zero-config) and Postgres (full feature parity with pgvector)
 - **Dream Bridge** for bidirectional sync with Claude Code's Auto Dream
-- **7-hook stack**: recall, classify, validate-wiki, session-start, auto-ingest, precompact, steward-cron
+- **Hook stack**: recall, classify, validate-wiki, session-start, auto-ingest, precompact (settings.json) + steward-cycle (cron/schtasks) + opt-in `--pretooluse` grep/glob recall-inject
 
 Full feature index lives in [`docs/handbook.md`](docs/handbook.md).
 
