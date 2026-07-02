@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+**Fresh-eyes audit fixes** (see `artifacts/2026-07-01-fresh-eyes-gap-audit.html`): a cross-model review found the v4.2 features failed at *seams* — tested-but-unexercised paths, cross-feature gaps, single-bound edge cases.
+
+### Fixed
+
+- **Bitemporal single-bound hole**: `ingest(valid_until=<past>)` with `valid_from` omitted used to combine with the store's `valid_from=now` auto-populate into a born-inverted row (`valid_until < valid_from`) — the exact state the v4.2 guard blocks. `valid_from` is now backdated to `valid_until` in that case; future `valid_until` keeps the old behavior.
+- **Usage-telemetry sessions were runtime-dead**: nothing ever called `SessionTracker.start_session`, so `get_usage_rollup`'s session half always returned `[]`. The MCP `_service()` factory now binds one session per DB per process (best-effort, never breaks a tool call).
+- **`checkpoint` × `holder` seam**: batch items now accept `holder` (field parity with `ingest_claim`); the CLI `ingest` command gained `--holder`.
+- **`holder` was write-only**: `list_claims` (store, service, and MCP tool) now accepts a `holder` filter, closing the read path for takes-vs-facts beliefs.
+
+### Changed
+
+- **`volunteer_context` default gate raised 0.0 → 0.65**: at 0.0 the tool was output-identical to `query_for_context`; the default now actually volunteers only high-confidence claims (pass `min_confidence=0.0` for the old behavior).
+- **`memorymaster-setup --pretooluse`**: the PreToolUse grep/glob recall-inject hook was copied to disk but never registered anywhere; the installer can now (opt-in) write the registration.
+
+### Docs
+
+- `docs/handbook.md` un-frozen from v3.5.0: new "What's new in v4.2" section, version check updated, and the recall-stream flag/weight pairing (`MEMORYMASTER_RECALL_GRAPH`/`_TWO_PASS`/`_CLOSETS` + their `_W_*` weights) documented — the flag alone does not change ranking.
+- New generated `docs/env-reference.md` (134 `MEMORYMASTER_*` vars, via `scripts/gen_env_reference.py`) — ~70 were previously documented nowhere.
+- README badges corrected (tests 3200+, MCP tools 36, CLI commands 106) and the hook-stack list fixed.
+
 ## [4.2.0] - 2026-07-01
 
 **Governance & correctness upgrades + a prior-art evolution pass.** New ingest/lifecycle guards, plus eight capabilities distilled from a re-survey of neighboring memory/code-graph projects (gbrain, MemPalace, claude-mem, GitNexus, codebase-memory-mcp). Everything is **opt-in or additive** — the default recall/ranking path is byte-identical, proven by a 0-regression full-suite run.

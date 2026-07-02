@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MemoryMaster — Fresh-Eyes Gap Audit (Fable 5 reviewing Opus/Sonnet/Haiku work)</title>
+<style>
+  :root{--bg:#0f1117;--card:#181b23;--ink:#d7dae2;--dim:#8b90a0;--red:#ff6b6b;--orange:#ffa94d;--yellow:#ffd43b;--green:#69db7c;--blue:#74c0fc;--mono:'Cascadia Code',Consolas,monospace}
+  body{background:var(--bg);color:var(--ink);font:15px/1.55 'Segoe UI',system-ui,sans-serif;margin:0;padding:32px;max-width:1100px;margin-inline:auto}
+  h1{font-size:24px;margin:0 0 4px}
+  h2{font-size:18px;margin:36px 0 10px;border-bottom:1px solid #2a2e3a;padding-bottom:6px}
+  .sub{color:var(--dim);margin-bottom:24px}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13.5px}
+  th{background:#20242f;text-align:left;padding:8px 10px;border:1px solid #2a2e3a;color:var(--blue)}
+  td{padding:8px 10px;border:1px solid #2a2e3a;vertical-align:top}
+  code{font-family:var(--mono);font-size:12.5px;background:#20242f;padding:1px 5px;border-radius:3px;color:#a5d8ff}
+  .sev{font-weight:700;font-family:var(--mono);font-size:12px;padding:2px 8px;border-radius:10px;white-space:nowrap}
+  .s1{background:#3b1219;color:var(--red)} .s2{background:#3b2a12;color:var(--orange)} .s3{background:#33301a;color:var(--yellow)} .ok{background:#12321c;color:var(--green)}
+  .card{background:var(--card);border:1px solid #2a2e3a;border-radius:10px;padding:16px 20px;margin:14px 0}
+  .kpi{display:flex;gap:14px;flex-wrap:wrap;margin:18px 0}
+  .kpi div{background:var(--card);border:1px solid #2a2e3a;border-radius:10px;padding:12px 20px;text-align:center}
+  .kpi b{display:block;font-size:26px}
+  .meta{background:#161a26;border-left:3px solid var(--blue);padding:12px 16px;margin:14px 0;border-radius:0 8px 8px 0}
+  .fix{color:var(--green)}
+  ul{margin:6px 0;padding-left:22px}
+</style>
+</head>
+<body>
+<h1>🔍 MemoryMaster — Fresh-Eyes Gap Audit</h1>
+<div class="sub">2026-07-01 · Fable 5 reviewing code developed by Opus/Sonnet/Haiku · scope: v4.2.0 features + systemic LLM-failure signatures · method: 1 direct review + 2 parallel reachability/doc-drift sweeps, every finding re-verified before inclusion</div>
+
+<div class="kpi">
+  <div><b style="color:var(--red)">2</b>functional bugs</div>
+  <div><b style="color:var(--orange)">4</b>half-integrated features</div>
+  <div><b style="color:var(--yellow)">4</b>doc-drift clusters</div>
+  <div><b style="color:var(--green)">7</b>suspicions disproven</div>
+</div>
+
+<h2>A · Functional bugs (fix first)</h2>
+<table>
+<tr><th>Sev</th><th>Finding</th><th>Proof</th><th class="fix">Fix</th></tr>
+<tr>
+  <td><span class="sev s1">HIGH</span></td>
+  <td><b>Born-inverted bitemporal row still creatable.</b> <code>ingest(valid_until=&lt;past&gt;)</code> with <code>valid_from</code> omitted passes the v4.2 guard (single bound → no comparison), then <code>create_claim</code> auto-populates <code>valid_from=now</code> → stored row has <code>valid_until &lt; valid_from</code> — the exact durable-but-invisible bug the guard was built to block.</td>
+  <td><code>core/models.py:validate_temporal_fields</code> + <code>stores/_storage_write_claims.py:~103</code> (<code>valid_from or now</code>)</td>
+  <td>When <code>valid_until</code> arrives alone and is &lt; now: reject, or backdate <code>valid_from</code> to <code>valid_until</code>. ~10 LOC + tests.</td>
+</tr>
+<tr>
+  <td><span class="sev s1">HIGH</span></td>
+  <td><b>SessionTracker is runtime-dead → <code>get_usage_rollup</code>'s session half always returns <code>[]</code>.</b> <code>MemoryService.session_id</code> is assigned <code>None</code> once and never rebound anywhere; <code>SessionTracker.start_session</code> has zero callers. The per-session telemetry shipped in v4.2 is permanently blank in production — its tests bind sessions manually, no real surface ever does.</td>
+  <td><code>core/service.py:353</code> (only assignment) · <code>core/service.py:1318</code> (<code>if sid:</code> always False) · <code>surfaces/session_tracker.py:51</code> (0 callers)</td>
+  <td>Bind <code>source_agent</code>/<code>session_id</code> in the MCP <code>_service()</code> factory (start a session on first tool call per client). Counters half already works.</td>
+</tr>
+</table>
+
+<h2>B · Half-integrated features (implemented + tested, but disconnected)</h2>
+<table>
+<tr><th>Sev</th><th>Finding</th><th>Proof</th><th class="fix">Fix</th></tr>
+<tr>
+  <td><span class="sev s2">MED</span></td>
+  <td><b><code>holder</code> is write-and-display-only.</b> <code>W_HOLDER</code> is the only weight never fetched into the scoring sum — even <code>MEMORYMASTER_RECALL_W_HOLDER=1</code> does nothing. No query surface filters/ranks by holder. And two ingest surfaces can't set it: <code>checkpoint</code> batch items (built in batch 1, before holder existed) and the CLI.</td>
+  <td><code>recall/context_hook.py:418</code> (absent from <code>:1729-49</code> fetch + <code>:1947-60</code> sum) · <code>mcp_server.py:_checkpoint_batch</code> item fields stop at <code>valid_until</code></td>
+  <td>Either wire a holder filter param on <code>query_memory</code>/<code>list_claims</code> + add <code>holder</code> to checkpoint items &amp; CLI, or explicitly document it as schema-only groundwork.</td>
+</tr>
+<tr>
+  <td><span class="sev s2">MED</span></td>
+  <td><b><code>volunteer_context</code> adds nothing at default.</b> <code>min_confidence=0.0</code> makes it output-identical to <code>query_for_context</code> (its own docstring admits it), and nothing proactive ever invokes it — the "push" half of the gbrain idea never landed. It's a pull tool with an inert filter.</td>
+  <td><code>surfaces/mcp_server.py:1225</code> · symbol referenced nowhere outside its own definition</td>
+  <td>Default <code>min_confidence≈0.65</code> (the original scoping intent), and/or call it from the recall/session-start hook to make it actually proactive.</td>
+</tr>
+<tr>
+  <td><span class="sev s2">MED</span></td>
+  <td><b>PreToolUse recall hook ships unwired.</b> The installer copies the template to disk but registers only UserPromptSubmit/PostToolUse/SessionStart/Stop/PreCompact — no PreToolUse block. README's "opt-in hook" really means "hand-edit settings.json yourself." <code>memorymaster-dream-sync.py</code> is likewise copied-but-never-registered.</td>
+  <td><code>surfaces/setup_hooks.py:163</code> (glob copy) vs <code>:204-273</code> (no PreToolUse)</td>
+  <td>Add an opt-in <code>--pretooluse</code> installer flag that writes the PreToolUse registration.</td>
+</tr>
+<tr>
+  <td><span class="sev s2">MED</span></td>
+  <td><b>Pre-existing: three recall flags are double-gated no-ops</b> (older Opus-era work). <code>MEMORYMASTER_RECALL_CLOSETS</code> / <code>_TWO_PASS</code> / <code>_GRAPH</code> each enable a stream whose score is multiplied by a <i>separate undocumented</i> <code>W_*</code> weight defaulting to <b>0.0</b> — enabling the advertised flag alone has zero ranking effect (linear mode).</td>
+  <td><code>context_hook.py:503/491/424</code> (flags) vs <code>:413/:406/:1957-59</code> (0.0 weights)</td>
+  <td>Either give each stream a sane non-zero default weight when its flag is on, or document the required <code>W_*</code> pair next to each flag.</td>
+</tr>
+</table>
+
+<h2>C · Doc-vs-reality drift</h2>
+<table>
+<tr><th>Sev</th><th>Finding</th><th>Reality</th><th class="fix">Fix</th></tr>
+<tr><td><span class="sev s2">MED</span></td><td><b><code>docs/handbook.md</code> frozen at v3.5.0</b> while README calls it the "full feature index" — zero mentions of any v4.2 feature (volunteer_context, get_usage_rollup, archive_by_source, checkpoint, HEBBIAN_DECAY, FUZZY_RESOLVE, PRETOOLUSE, holder).</td><td><code>handbook.md:461</code> "confirm … 3.5.0 or higher"; 0 grep hits for all 8</td><td>Handbook refresh pass, or demote the README claim.</td></tr>
+<tr><td><span class="sev s3">LOW</span></td><td><b>Hardcoded README badges all stale:</b> tests <code>2927</code> (real ≈3100+), MCP tools <code>30</code> (real <b>36</b>), CLI commands <code>104</code> (real 106).</td><td><code>README.md:9-11</code> vs live counts</td><td>Generate badges in CI or drop the numbers.</td></tr>
+<tr><td><span class="sev s3">LOW</span></td><td><b>~70 of 133 <code>MEMORYMASTER_*</code> env vars documented nowhere</b>, incl. security-relevant ones (<code>ENCRYPTION_KEY</code>, <code>ALLOW_SENSITIVE_BYPASS</code>, <code>KEY_FILE</code>, the <code>INTAKE_*</code> family). Operators can't discover toggles that affect security posture.</td><td>133 vars read in code vs ~60 in any doc</td><td>Auto-generate an env-var reference (grep-driven) into docs/.</td></tr>
+<tr><td><span class="sev s3">LOW</span></td><td><b>Hook-list inconsistencies:</b> README "7-hook stack" names <code>steward-cron</code> (real: <code>steward-cycle</code> via schtasks, not settings.json); <code>setup_hooks.py</code> docstring lists 6 and omits pretooluse + dream-sync.</td><td><code>README.md:82</code> vs <code>setup_hooks.py:12,447</code></td><td>One-line doc fixes alongside B-3.</td></tr>
+</table>
+
+<h2>D · Suspicions raised and disproven (equally important — no phantom fixes)</h2>
+<div class="card">
+<ul>
+<li><span class="sev ok">CLEAN</span> <b>Hebbian/Ebbinghaus fully wired</b> — decay job runs from <code>run_cycle</code> behind its flag; edge <code>weight</code> is consumed (<code>ORDER BY total_weight DESC</code>) and reachable via the real <code>find_related_claims</code> MCP tool.</li>
+<li><span class="sev ok">CLEAN</span> <b>Fuzzy resolver reachable</b> from the real ingest path (<code>service.ingest → resolve_or_create</code> fuzzy branch when flag on).</li>
+<li><span class="sev ok">CLEAN</span> <b><code>ALLOW_SENSITIVE_BYPASS</code> is NOT an ingest bypass</b> (sweep agent overclaimed; re-verified): it's a read-side, <i>deny-by-default</i> gate — callers passing <code>allow_sensitive=True</code> are refused unless the operator set it. Ingest redaction runs unconditionally. Only "undocumented" stands.</li>
+<li><span class="sev ok">CLEAN</span> <b><code>_claim_to_dict</code></b> uses <code>dataclasses.asdict</code> → holder IS in MCP output (verified live: ingest response carries <code>"holder": null</code>).</li>
+<li><span class="sev ok">CLEAN</span> <b><code>db_merge.py</code></b> (OpenClaw sync) is schema-agnostic (<code>PRAGMA table_info</code> + column intersection) → holder syncs automatically.</li>
+<li><span class="sev ok">CLEAN</span> <b>CHANGELOG spot-check passes</b> — all older command claims (mine-rules, migrate, export-delta, detect-contradictions, verbatim-cleanup, resolve-project, local-search) still exist post-restructure.</li>
+<li><span class="sev ok">CLEAN</span> <b>All four advertised v4.2 MCP tools exist and are registered.</b></li>
+</ul>
+</div>
+
+<h2>E · The meta-pattern (the actual answer)</h2>
+<div class="meta">
+<b>The model-induced gap signature here is not broken code — it's <i>disconnected</i> code.</b> Every unit works; the failure lives in the seams:
+<ul>
+<li><b>Tested-but-unexercised:</b> features whose tests construct the world manually (bind a session, set a weight) while no production surface ever does — SessionTracker, W_HOLDER, volunteer_context's gate. The tests pass forever; the feature never runs.</li>
+<li><b>Cross-feature seams between separately-built features:</b> checkpoint (batch 1) never learned about holder (batch 2). Per-feature agents + per-feature tests structurally cannot see this.</li>
+<li><b>Docs asserting intent, not behavior:</b> "opt-in hook" (nothing installs it), "7-hook stack" (6 registered), frozen badges/handbook — docs written at design time and never re-derived from code.</li>
+<li><b>Double-gating:</b> a flag added in one pass, its weight defaulted safe in another — individually correct, jointly a no-op.</li>
+</ul>
+<b>Countermeasure that would have caught ~80% of this:</b> a periodic <i>reachability audit</i> (exactly this exercise: trace each flag/tool/field from a real production entry point) + generated-not-hand-typed docs (badges, env-var reference, tool counts). Worth running after every multi-feature batch.
+</div>
+
+<h2>Recommended fix batch (if you want it)</h2>
+<div class="card">
+<b>Batch A — bugs (~1h):</b> bitemporal single-bound hole · bind session/source_agent in the MCP <code>_service()</code> factory.<br>
+<b>Batch B — connect the disconnected (~2h):</b> volunteer_context default 0.65 + hook invocation · holder in checkpoint/CLI + a <code>holder</code> filter on query · installer <code>--pretooluse</code> flag · non-zero stream weights when flags on.<br>
+<b>Batch C — docs (30m, partly scriptable):</b> handbook v4.2 section · generated badges + env-var reference · hook-list corrections.
+</div>
+
+<div class="sub" style="margin-top:28px">Generated by the fresh-eyes audit session · findings cross-verified before inclusion · companion memory claims: mm-761d (+ final consolidation)</div>
+</body>
+</html>

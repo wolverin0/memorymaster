@@ -560,6 +560,7 @@ class PostgresStore(SQLiteStore):
         include_citations: bool = False,
         scope_allowlist: list[str] | None = None,
         tenant_id: str | None = None,
+        holder: str | None = None,
     ) -> list[Claim]:
         clauses: list[str] = []
         params: list[object] = []
@@ -567,6 +568,11 @@ class PostgresStore(SQLiteStore):
         if tenant_id is not None:
             clauses.append("tenant_id = %s")
             params.append(tenant_id)
+
+        # takes-vs-facts holder filter — parity with SQLiteStore._build_list_clauses.
+        if holder is not None and holder.strip():
+            clauses.append("holder = %s")
+            params.append(holder.strip())
 
         if status is not None:
             clauses.append("status = %s")

@@ -162,6 +162,7 @@ class _ReadMixin:
         include_archived: bool,
         scope_allowlist: list[str] | None,
         tenant_id: str | None,
+        holder: str | None = None,
     ) -> tuple[list[str], list[object]]:
         """Build WHERE clauses and parameters for list_claims."""
         clauses: list[str] = []
@@ -170,6 +171,12 @@ class _ReadMixin:
         if tenant_id is not None:
             clauses.append("tenant_id = ?")
             params.append(tenant_id)
+
+        # takes-vs-facts: filter to one belief-holder's claims. Without a read
+        # filter the holder column was write-only (fresh-eyes audit 2026-07-01).
+        if holder is not None and holder.strip():
+            clauses.append("holder = ?")
+            params.append(holder.strip())
 
         if status is not None:
             clauses.append("status = ?")
@@ -230,8 +237,9 @@ class _ReadMixin:
         include_citations: bool = False,
         scope_allowlist: list[str] | None = None,
         tenant_id: str | None = None,
+        holder: str | None = None,
     ) -> list[Claim]:
-        clauses, params = self._build_list_clauses(status, status_in, include_archived, scope_allowlist, tenant_id)
+        clauses, params = self._build_list_clauses(status, status_in, include_archived, scope_allowlist, tenant_id, holder)
 
         fts_query = ""
         if text_query:

@@ -345,6 +345,7 @@ def _handle_ingest(args: argparse.Namespace, service, parser: argparse.ArgumentP
         claim_type=args.claim_type, subject=args.subject, predicate=args.predicate,
         object_value=args.object_value, scope=args.scope, volatility=args.volatility, confidence=args.confidence,
         event_time=args.event_time, valid_from=args.valid_from, valid_until=args.valid_until,
+        holder=getattr(args, "holder", None),
         source_agent=getattr(args, "source_agent", None),
     )
     elapsed_ms = (time.perf_counter() - t0) * 1000

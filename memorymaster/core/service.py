@@ -445,6 +445,21 @@ class MemoryService:
         # a durable-but-invisible row (valid_until < valid_from) never reaches
         # the store. Backend-agnostic — both SQLite and Postgres ingest here.
         validate_temporal_fields(event_time, valid_from, valid_until)
+        # Single-bound hole (fresh-eyes audit 2026-07-01): valid_until passed
+        # ALONE sails past the pairwise guard, then the store auto-populates
+        # valid_from=now — so a past valid_until yields a BORN-INVERTED row
+        # (valid_until < valid_from), the exact state the guard blocks.
+        # Backdate valid_from to valid_until (zero-width interval, valid) so
+        # "this stopped being true at X" ingests successfully and can never
+        # invert. Future valid_until keeps the auto-populate (now < until).
+        if valid_until and not valid_from:
+            from datetime import datetime, timezone
+
+            from memorymaster.core.models import _parse_iso_strict
+
+            _vu = _parse_iso_strict("valid_until", valid_until)
+            if _vu is not None and _vu <= datetime.now(timezone.utc):
+                valid_from = valid_until
         if not citations:
             citations = [CitationInput(source="mcp-session", locator=scope or "project")]
         # Normalize claim_type to lowercase so routing hints like "DECISION"
@@ -1670,6 +1685,7 @@ class MemoryService:
         include_archived: bool = False,
         *,
         allow_sensitive: bool = False,
+        holder: str | None = None,
     ) -> list[Claim]:
         include_sensitive = self._allow_sensitive(
             allow_sensitive=allow_sensitive,
@@ -1682,6 +1698,7 @@ class MemoryService:
             include_archived=include_archived,
             include_citations=True,
             tenant_id=self.tenant_id,
+            holder=holder,
         )
         if not include_sensitive:
             claims = [claim for claim in claims if not is_sensitive_claim(claim)]
