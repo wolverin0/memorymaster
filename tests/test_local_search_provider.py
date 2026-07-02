@@ -452,3 +452,65 @@ def test_timeout_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_timeout_invalid_env_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MEMORYMASTER_EVERYTHING_TIMEOUT", "not-a-number")
     assert _timeout() == 5.0
+
+
+# ---------------------------------------------------------------------------
+# Multi-word term splitting (ES argv bug, fixed 2026-07-02)
+# ---------------------------------------------------------------------------
+
+def _capture_provider(monkeypatch: pytest.MonkeyPatch, captured: list) -> EverythingProvider:
+    """Provider whose subprocess.run records the search argv."""
+    monkeypatch.setenv("MEMORYMASTER_EVERYTHING_ES_PATH", "C:/tools/es.exe")
+
+    def _fake_run(args: list, **kwargs: Any) -> MagicMock:
+        if "-version" in args:
+            return _make_completed("Everything 1.4.1", 0)
+        captured.append(list(args))
+        return _make_completed("", 0)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(
+        "memorymaster.bridges.local_search.everything.os.path.isfile",
+        lambda _path: True,
+    )
+    return EverythingProvider()
+
+
+@pytest.mark.unit
+def test_multiword_query_terms_are_separate_argv_items(monkeypatch: pytest.MonkeyPatch) -> None:
+    """WHY: ES.exe never re-splits an argv containing spaces — Windows arg
+    joining quotes it, so ES matched ONE literal phrase and EVERY multi-word
+    query returned 0 hits (observed live: 'path:projects jsonl' as one argv
+    -> 0; split -> 100). This silently made whole subtrees 'unsearchable' and
+    was misdiagnosed as the redactor dropping C:/Users hits."""
+    captured: list = []
+    provider = _capture_provider(monkeypatch, captured)
+    provider.search("path:projects jsonl dm:today", limit=10)
+    args = captured[-1]
+    assert "path:projects" in args
+    assert "jsonl" in args
+    assert "dm:today" in args
+    assert "path:projects jsonl dm:today" not in args
+
+
+@pytest.mark.unit
+def test_user_quoted_phrase_stays_one_term(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A user-quoted phrase must remain a single term (ES phrase semantics)."""
+    captured: list = []
+    provider = _capture_provider(monkeypatch, captured)
+    provider.search('ext:log "error report" 2026', limit=10)
+    args = captured[-1]
+    assert '"error report"' in args
+    assert "ext:log" in args
+    assert "2026" in args
+
+
+@pytest.mark.unit
+def test_whole_name_query_remains_single_argv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """whole_name resolves via wfn: and must NOT be split (regression guard for
+    the resolver path, which worked before this fix)."""
+    captured: list = []
+    provider = _capture_provider(monkeypatch, captured)
+    provider.search("my project name", limit=10, whole_name=True)
+    args = captured[-1]
+    assert 'wfn:"my project name"' in args

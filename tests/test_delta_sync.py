@@ -230,7 +230,6 @@ def test_cli_export_delta_writes_file_and_reports(populated_db, tmp_path, capsys
 
 
 def test_cli_export_delta_json_output(populated_db, tmp_path, capsys):
-    import json
     from memorymaster.surfaces.cli import main
 
     db, svc = populated_db
@@ -259,3 +258,50 @@ def test_cli_export_delta_empty_reports_no_change(populated_db, tmp_path, capsys
     assert rc == 0
     captured = capsys.readouterr()
     assert "delta is empty" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Cross-window FK references (the 3-week silent sync outage, fixed 2026-07-02)
+# ---------------------------------------------------------------------------
+
+
+def test_export_succeeds_when_claim_supersedes_out_of_window_claim(populated_db, tmp_path):
+    """WHY: the delta copies the claims DDL verbatim (incl. the
+    supersedes/replaced_by FKs to claims.id). A claim INSIDE the export window
+    that supersedes a claim OUTSIDE it then fails FK enforcement and kills the
+    ENTIRE export — this broke the Windows->Hermes sync silently for 3 weeks
+    ('FOREIGN KEY constraint failed' nightly since 2026-06-10; the steward
+    supersedes claims constantly, so any real DB hits this). The delta is a
+    transport file: FK integrity belongs to the merge target, not the wire."""
+    db, svc = populated_db
+    old = _ingest(svc, "the old belief")
+    new = _ingest(svc, "the corrected belief")
+
+    conn = sqlite3.connect(str(db))
+    try:
+        # Push OLD out of the window; make NEW supersede it without touching
+        # old.updated_at (mirrors steward supersession against an old claim).
+        conn.execute(
+            "UPDATE claims SET updated_at='2020-01-01T00:00:00+00:00' WHERE id=?",
+            (old.id,),
+        )
+        conn.execute(
+            "UPDATE claims SET supersedes_claim_id=?, updated_at='2026-01-02T00:00:00+00:00' WHERE id=?",
+            (old.id, new.id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    out = tmp_path / "delta-fk.db"
+    result = export_delta(db, since="2026-01-01T00:00:00+00:00", output_path=out)
+
+    assert result["exported"] == 1  # only NEW is in the window — and it exports
+    dconn = sqlite3.connect(str(out))
+    try:
+        row = dconn.execute(
+            "SELECT supersedes_claim_id FROM claims WHERE id=?", (new.id,)
+        ).fetchone()
+    finally:
+        dconn.close()
+    assert row[0] == old.id  # the reference travels; the target re-validates

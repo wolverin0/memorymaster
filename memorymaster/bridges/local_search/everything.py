@@ -14,10 +14,15 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 from typing import ClassVar
 
 from memorymaster.bridges.local_search.provider import PathHit
+
+# Splits a query into ES terms: whitespace-separated tokens, but a double-quoted
+# span (optionally glued to a prefix like ext: or wfn:) stays one term.
+_TERM_SPLIT_RE = re.compile(r'[^\s"]*"[^"]*"[^\s"]*|[^\s"]+')
 
 __all__ = ["EverythingProvider"]
 
@@ -115,18 +120,24 @@ class EverythingProvider:
             return []
         # ES switches (verified against ES 1.1.0.27): /ad = folders only,
         # /a-d = files only, -n = max results, wfn:<text> = whole-filename
-        # match. `term` MUST be last and is passed as its own argv item
-        # (shell=False) so it is never word-split.
+        # match.
         args: list[str] = [es, "-n", str(limit)]
         if kind == "dir":
             args.append("/ad")
         elif kind == "file":
             args.append("/a-d")
-        term = query
         if whole_name:
-            # Quote the phrase so spaces stay inside the wfn: function.
-            term = f'wfn:"{query}"' if " " in query else f"wfn:{query}"
-        args.append(term)
+            # One argv: the phrase must stay inside the wfn: function.
+            args.append(f'wfn:"{query}"' if " " in query else f"wfn:{query}")
+        else:
+            # Each TERM must be its own argv item. A multi-word query passed as
+            # ONE argv gets quoted by Windows arg-joining, so ES sees a single
+            # literal phrase and returns 0 hits for every multi-word query
+            # (verified against ES 1.1.0.27: `path:projects jsonl` split into
+            # two argv items -> hits; the same string as one argv -> 0).
+            # User-quoted phrases ("a b") are kept as one term so ES still
+            # treats them as a phrase.
+            args.extend(_TERM_SPLIT_RE.findall(query) or [query])
         try:
             result = subprocess.run(
                 args,
