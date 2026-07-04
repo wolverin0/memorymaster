@@ -450,6 +450,31 @@ class TestPostgresParityClaimLinks:
 
 
 # ---------------------------------------------------------------------------
+# Tier recompute parity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.postgres
+class TestPostgresRecomputeTiersParity:
+    def test_recompute_tiers_promotes_fresh_claim_to_core(self):
+        """WHY: the steward's recompute-tiers phase must work on Postgres,
+        not just SQLite — the inherited SQLite implementation used ``?``
+        placeholders that psycopg rejects, so tiers silently never updated
+        on Postgres. A freshly created claim (< 7 days) must land in
+        ``core`` exactly as on SQLite."""
+        svc = _make_pg_service()
+        cid = _ingest(svc, "Tier recompute parity claim")
+
+        counts = svc.store.recompute_tiers()
+        assert set(counts) == {"core", "working", "peripheral"}
+        assert counts["core"] >= 1
+
+        claim = svc.store.get_claim(cid)
+        assert claim is not None
+        assert claim.tier == "core"
+
+
+# ---------------------------------------------------------------------------
 # Full-cycle smoke test
 # ---------------------------------------------------------------------------
 
@@ -536,6 +561,56 @@ class TestPostgresStoreUnit:
         assert len(stmts) == 2
         assert "CREATE FUNCTION" in stmts[0]
         assert "SELECT 1" in stmts[1]
+
+    def test_recompute_tiers_override_uses_postgres_placeholders(self):
+        """WHY: PostgresStore must not inherit the SQLite-flavored
+        recompute_tiers — its ``?`` placeholders are a Postgres syntax
+        error, so the steward's tier phase always failed on Postgres and
+        tiers were never recomputed. The override must run the same three
+        bucket UPDATEs with psycopg-style ``%s`` placeholders."""
+        from memorymaster.stores.postgres_store import PostgresStore
+        from memorymaster.stores.storage import SQLiteStore
+
+        assert (
+            PostgresStore.recompute_tiers is not SQLiteStore.recompute_tiers
+        ), "PostgresStore must override the SQLite recompute_tiers"
+
+        executed: list[str] = []
+
+        class _FakeCursor:
+            rowcount = 0
+
+            def execute(self, sql, params=None):
+                executed.append(sql)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        class _FakeConn:
+            def cursor(self):
+                return _FakeCursor()
+
+            def commit(self):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        store = PostgresStore.__new__(PostgresStore)
+        store.connect = lambda: _FakeConn()  # type: ignore[method-assign]
+
+        counts = store.recompute_tiers()
+        assert set(counts) == {"core", "working", "peripheral"}
+        assert len(executed) == 3, "one UPDATE per tier bucket"
+        assert all("?" not in sql for sql in executed), "no sqlite placeholders on Postgres"
+        assert all("%s" in sql for sql in executed), "psycopg placeholders required"
+        assert all("status != 'archived'" in sql for sql in executed), "archived claims keep their tier"
 
     def test_canonical_payload_none(self):
         from memorymaster.stores.postgres_store import PostgresStore

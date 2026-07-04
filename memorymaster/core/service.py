@@ -22,6 +22,7 @@ from memorymaster.recall.retrieval import VectorSearchHook, _tier_bonus, rank_cl
 from memorymaster.core.security import is_sensitive_claim, resolve_allow_sensitive_access, sanitize_claim_input
 from memorymaster.core.intake_policy import IntakeRejected, evaluate_intake
 from memorymaster.stores.store_factory import create_store
+from memorymaster.stores._storage_shared import ConcurrentModificationError
 import contextlib
 
 logger = logging.getLogger(__name__)
@@ -436,6 +437,38 @@ class MemoryService:
     def init_db(self) -> None:
         self.store.init_db()
 
+    def _revive_archived_dedup_match(self, claim: Claim, source_agent: str | None) -> Claim:
+        """Resurface an archived claim matched by ingest dedup.
+
+        The dedup lookups (idempotency key / content hash) have no status
+        filter, so a byte-identical re-ingest of a fact that was archived
+        (e.g. via ``archive_by_source``) would otherwise return the archived
+        row inert: invisible to query_memory, yet blocking creation of a
+        live duplicate — that exact fact could never be re-learned.
+        Re-ingesting IS fresh evidence the fact is current again, so
+        transition it back to ``candidate`` for the steward to re-validate.
+        Non-archived matches pass through untouched (dedup unchanged).
+        """
+        if claim.status != "archived":
+            return claim
+        try:
+            revived = self.store.apply_status_transition(
+                claim,
+                to_status="candidate",
+                reason=f"reingest_revival:{source_agent or 'unknown'}",
+                event_type="transition",
+            )
+        except ConcurrentModificationError:
+            # Another writer touched the row between dedup and revival —
+            # the freshest state wins; never fail the whole ingest for it.
+            reloaded = self.store.get_claim(claim.id)
+            return reloaded if reloaded is not None else claim
+        # getattr-guard: some paths build MemoryService via __new__ and skip
+        # __init__, so the qdrant attribute may not exist.
+        if getattr(self, "qdrant", None) is not None:
+            self._qdrant_sync(revived)
+        return revived
+
     def ingest(
         self,
         text: str,
@@ -493,7 +526,7 @@ class MemoryService:
             existing_claim = self.store.get_claim_by_idempotency_key(normalized_idempotency_key)
             if existing_claim is not None:
                 observability.bump_claim_ingested(source_agent)
-                return existing_claim
+                return self._revive_archived_dedup_match(existing_claim, source_agent)
         # Dedup by content hash (catch duplicates without idempotency key)
         # Include scope + tenant to avoid cross-tenant/cross-scope dedup
         import hashlib
@@ -504,7 +537,7 @@ class MemoryService:
             existing_by_hash = self.store.get_claim_by_idempotency_key(content_hash)
             if existing_by_hash is not None:
                 observability.bump_claim_ingested(source_agent)
-                return existing_by_hash
+                return self._revive_archived_dedup_match(existing_by_hash, source_agent)
         # Set content hash as idempotency key if none provided
         if normalized_idempotency_key is None:
             normalized_idempotency_key = content_hash

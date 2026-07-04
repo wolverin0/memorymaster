@@ -531,10 +531,15 @@ def _two_pass_neighbor_ids(
 ) -> list[int]:
     """Return claim IDs that share entities with any seed claim, capped.
 
-    Walks the entity_aliases / entities tables via the store's underlying
-    SQLite connection. Defensive: any DB error returns ``[]``. Excludes IDs
-    already seen so two-pass doesn't reintroduce seeds as their own
-    neighbors.
+    Walks the ``claim_entity_links`` junction (written into the same claims
+    DB by ``EntityGraph.extract_and_link``): seed claims → their entity_ids
+    → other claims mentioning those entities. Historical note: this used to
+    query a ``claim_entities`` table that no schema ever created, through a
+    persistent ``store._conn`` attribute that real stores don't have — so
+    the stream silently returned ``[]`` even when enabled. Defensive: any
+    DB error (including a missing junction table, i.e. entity extraction
+    never ran) returns ``[]``. Excludes IDs already seen so two-pass
+    doesn't reintroduce seeds as their own neighbors.
     """
     if not seed_ids:
         return []
@@ -542,29 +547,36 @@ def _two_pass_neighbor_ids(
     placeholder_seeds = ",".join("?" for _ in seed_ids)
     out: list[int] = []
     seen: set[int] = set(excluded)
+    conn = None
+    own_conn = False
     try:
-        conn = getattr(store, "_conn", None) or getattr(store, "conn", None)
+        connect = getattr(store, "connect", None)
+        if callable(connect):
+            conn = connect()
+            own_conn = True
+        else:
+            # Legacy/test path: store exposes a raw connection attribute.
+            conn = getattr(store, "_conn", None) or getattr(store, "conn", None)
         if conn is None:
             return []
-        # 1. entity_ids referenced by any seed claim's text via the
-        #    claim_entity_mentions junction (if it exists). Defensive: try
-        #    several plausible table/column names so callers with older
-        #    schemas still work.
+        # 1. entity_ids referenced by any seed claim via the
+        #    claim_entity_links junction. entity_id is TEXT (entities.id),
+        #    so keep values opaque — no int() coercion.
         cursor = conn.execute(
             f"""
-            SELECT DISTINCT entity_id FROM claim_entities
+            SELECT DISTINCT entity_id FROM claim_entity_links
             WHERE claim_id IN ({placeholder_seeds})
             """,
             seed_ids,
         )
-        entity_ids = [int(r[0]) for r in cursor.fetchall()]
+        entity_ids = [r[0] for r in cursor.fetchall() if r and r[0]]
         if not entity_ids:
             return []
         # 2. neighbor claim_ids that mention any of those entities
         placeholder_ents = ",".join("?" for _ in entity_ids)
         cursor = conn.execute(
             f"""
-            SELECT DISTINCT claim_id FROM claim_entities
+            SELECT DISTINCT claim_id FROM claim_entity_links
             WHERE entity_id IN ({placeholder_ents})
             LIMIT ?
             """,
@@ -581,6 +593,12 @@ def _two_pass_neighbor_ids(
     except Exception as exc:  # noqa: BLE001
         logger.debug("two_pass DB walk skipped: %s", exc)
         return []
+    finally:
+        if own_conn and conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001 — best-effort close
+                pass
     return out
 
 
