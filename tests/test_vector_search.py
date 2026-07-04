@@ -25,6 +25,10 @@ from memorymaster.core.models import Claim
 from memorymaster.recall.retrieval import rank_claim_rows
 from memorymaster.stores.storage import SQLiteStore
 
+# ML/torch tests: loads real sentence-transformers/Qdrant paths; excluded from
+# the default run (see pytest.ini). Run in isolation with: pytest -m ml
+pytestmark = pytest.mark.ml
+
 
 # ---------------------------------------------------------------------------
 # Helpers

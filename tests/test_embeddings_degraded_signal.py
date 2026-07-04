@@ -16,6 +16,12 @@ from __future__ import annotations
 
 from memorymaster.recall.embeddings import EmbeddingProvider
 
+import pytest
+
+# ML/torch tests: loads real sentence-transformers/Qdrant paths; excluded from
+# the default run (see pytest.ini). Run in isolation with: pytest -m ml
+pytestmark = pytest.mark.ml
+
 
 class _BoomClient:
     class models:  # noqa: N801

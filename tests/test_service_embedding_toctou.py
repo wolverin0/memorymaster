@@ -21,6 +21,12 @@ from pathlib import Path
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
 
+import pytest
+
+# ML/torch tests: loads real sentence-transformers/Qdrant paths; excluded from
+# the default run (see pytest.ini). Run in isolation with: pytest -m ml
+pytestmark = pytest.mark.ml
+
 TOKEN = "toctoutoken"
 
 

@@ -24,6 +24,7 @@ If a section here goes stale, that's a bug — open an issue or PR. The CHANGELO
 - [GitNexus integration](#gitnexus-integration)
 - [Companion stack](#companion-stack)
 - [Verify install + troubleshooting](#verify-install--troubleshooting)
+- [Running the tests](#running-the-tests)
 - [Performance SLOs](#performance-slos)
 - [Security model](#security-model)
 - [One-prompt agent install](#one-prompt-agent-install)
@@ -441,6 +442,20 @@ If all three pass, hooks are in `~/.claude/hooks/`, MCP server is registered in 
 | Steward cron not running | Windows doesn't have cron | `memorymaster-setup` installs a Task Scheduler entry on Windows, a `launchd` plist on macOS, and a crontab line on Linux — check your platform's scheduler UI |
 | `ruff check` fails after install | You're on the dev path and haven't pinned ruff | `pip install -e ".[dev]"` |
 | Steward 404s on Gemini after switching providers | Hook used `setdefault` and an inherited shell env still pointed at the old provider | Hook MUST use direct `os.environ["KEY"] = ...` assignment, not `setdefault` |
+
+## Running the tests
+
+The suite is split by the `ml` pytest marker (see `pytest.ini`). Eight test files exercise real torch / sentence-transformers / Qdrant code paths that can SIGSEGV ("Windows fatal exception: access violation") or hang during model loads when mixed into a single process with the rest of the suite — most reliably on Windows.
+
+```bash
+# Full run (everything except ML/torch tests) — the default for dev loops and CI gating
+python -m pytest tests/ -m "not ml" -q --tb=short
+
+# ML/torch tests — run in an isolated process
+python -m pytest tests/ -m ml -q --tb=short
+```
+
+A global `pytest-timeout` safety net (`timeout = 600`, `timeout_method = thread` in `pytest.ini`) kills any single test that hangs, so a stuck model load can never freeze a run forever. Install dev deps with `pip install -e ".[dev]"` to get `pytest-timeout`.
 
 ## Performance SLOs
 

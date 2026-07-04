@@ -22,6 +22,10 @@ from memorymaster.recall import context_hook, qdrant_recall_fallback
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
 
+# ML/torch tests: loads real sentence-transformers/Qdrant paths; excluded from
+# the default run (see pytest.ini). Run in isolation with: pytest -m ml
+pytestmark = pytest.mark.ml
+
 
 @pytest.fixture
 def service(tmp_path):
