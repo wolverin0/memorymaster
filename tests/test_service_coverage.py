@@ -168,6 +168,55 @@ class TestIngestEdgeCases:
         assert first.id == second.id, "content-hash dedupe prevents citation-only reimports from duplicating claims"
         assert first.idempotency_key.startswith("hash-")
 
+    def test_reingest_after_archive_revives_claim(self, svc):
+        """WHY: archive_by_source retires bulk pollution, but the content-hash
+        dedup has no status filter — without revival, a byte-identical
+        re-ingest returns the ARCHIVED row inert (invisible to query, yet
+        blocking a live duplicate), so that exact fact could never be
+        re-learned. Re-ingesting an archived fact must resurface it as a
+        live candidate the steward can re-validate."""
+        text = "The staging Redis instance listens on port 6379"
+        first = svc.ingest(
+            text=text,
+            citations=[CitationInput(source="test.py")],
+            scope="project:memorymaster",
+            source_agent="evalbot",
+        )
+        result = svc.store.archive_by_source("evalbot", dry_run=False)
+        assert result["archived"] == 1
+        assert svc.store.get_claim(first.id).status == "archived"
+
+        second = svc.ingest(
+            text=text,
+            citations=[CitationInput(source="test.py")],
+            scope="project:memorymaster",
+            source_agent="evalbot",
+        )
+        assert second.id == first.id, "dedup must still match the same row, not create a duplicate"
+        assert second.status == "candidate", "archived dedup match must be revived, not returned inert"
+        hits = svc.query("staging Redis port", include_candidates=True)
+        assert any(c.id == first.id for c in hits), "the re-learned fact must be queryable again"
+
+    def test_reingest_archived_with_explicit_idempotency_key_revives(self, svc):
+        """WHY: the explicit idempotency-key dedup branch has the same hole as
+        the content-hash branch — an archived match must be revived on both
+        paths or key-based re-imports stay permanently unlearnable."""
+        c1 = svc.ingest(
+            text="Deploy pipeline uses blue-green switchover",
+            citations=[CitationInput(source="x")],
+            idempotency_key="deploy-key",
+            source_agent="importer",
+        )
+        svc.store.archive_by_source("importer", dry_run=False)
+        c2 = svc.ingest(
+            text="Deploy pipeline uses blue-green switchover",
+            citations=[CitationInput(source="x")],
+            idempotency_key="deploy-key",
+            source_agent="importer",
+        )
+        assert c2.id == c1.id
+        assert c2.status == "candidate"
+
     def test_sensitive_ingest_redacts_and_records_encrypted_payload(self, svc):
         fernet = pytest.importorskip("cryptography.fernet").Fernet
         secret = "sk_test_1234567890abcdef"
