@@ -304,3 +304,52 @@ class TestCli:
         assert out["ok"] is True
         assert out["data"]["rows"] == 1
         assert out["data"]["paths"][0]["claim"]["id"] == cause
+
+
+class TestPathAccessControl:
+    """Graph traversal from a known claim_id must not leak cross-scope or
+    sensitive claim text — parity with the regular query path, which every
+    other read tool enforces (audit: claim-paths-scope-gate)."""
+
+    def test_sensitive_neighbor_hidden_unless_allow_sensitive(self):
+        """A sensitive-visibility linked claim must not surface via traversal
+        unless the caller explicitly opts in with allow_sensitive."""
+        svc = _make_service()
+        start = _ingest(svc, "public start")
+        secret = _ingest(svc, "sensitive linked fact", visibility="sensitive")
+        svc.add_claim_link(start, secret, "derived_from")  # start -> secret
+        for cid in (start, secret):
+            _confirm(svc, cid)
+
+        default_ids = [r["claim"]["id"] for r in svc.query_claim_paths(start, direction="out")]
+        assert secret not in default_ids  # gated by default
+
+        allowed_ids = [
+            r["claim"]["id"]
+            for r in svc.query_claim_paths(start, direction="out", allow_sensitive=True)
+        ]
+        assert secret in allowed_ids  # explicit opt-in surfaces it
+
+    def test_scope_allowlist_filters_out_of_scope_neighbor(self):
+        """A linked claim in another scope must be dropped when a scope
+        allowlist is supplied (the MCP surface always supplies one)."""
+        svc = _make_service()
+        cit = [CitationInput(source="t", locator="l")]
+        start = svc.ingest(text="in-scope start", citations=cit,
+                           scope="project:alpha", source_agent="t").id
+        other = svc.ingest(text="other-scope fact", citations=cit,
+                           scope="project:beta", source_agent="t").id
+        svc.add_claim_link(start, other, "derived_from")
+        for cid in (start, other):
+            _confirm(svc, cid)
+
+        gated = [
+            r["claim"]["id"]
+            for r in svc.query_claim_paths(start, direction="out",
+                                           scope_allowlist=["project:alpha"])
+        ]
+        assert other not in gated  # out-of-scope neighbor filtered
+
+        # No allowlist (None) is the internal-caller path — no scope restriction.
+        ungated = [r["claim"]["id"] for r in svc.query_claim_paths(start, direction="out")]
+        assert other in ungated

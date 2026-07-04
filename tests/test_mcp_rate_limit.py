@@ -99,3 +99,31 @@ def test_disabled_via_env(mcp_db, fake_clock: FakeClock, monkeypatch: pytest.Mon
     results = [_ingest(i, db_path, workspace, "disabled-agent") for i in range(100)]
 
     assert all(result["ok"] is True for result in results)
+
+
+def test_checkpoint_charges_one_token_per_item(mcp_db, fake_clock: FakeClock) -> None:
+    """WHY: a checkpoint of N claims must consume N rate tokens, not 1.
+
+    checkpoint() charged the bucket exactly once per call regardless of batch
+    size, so an agent capped at 60 ingest_claim/min could push ~12,000
+    claims/min through 200-item checkpoints on the same source_agent bucket —
+    a ~200x bypass of the abuse/cost control (audit: checkpoint-rate-cost).
+    """
+    import json
+
+    db_path, workspace = mcp_db
+    items = [{"text": f"batch claim {i}", "sources_json": '["t"]'} for i in range(60)]
+    res = mcp_server.checkpoint(
+        claims_json=json.dumps(items),
+        db=db_path,
+        workspace=workspace,
+        source_agent="batch-agent",
+    )
+    assert res["ok"] is True
+    assert res["ingested"] == 60
+
+    # The 60-item batch drained the 60-token per-agent bucket; the very next
+    # ingest on the same agent is throttled (old bug: 59 tokens would remain).
+    follow = _ingest(0, db_path, workspace, "batch-agent")
+    assert follow["ok"] is False
+    assert follow["code"] == "RATE_LIMITED"

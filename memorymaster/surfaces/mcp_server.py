@@ -215,7 +215,20 @@ def _evict_rate_buckets() -> None:
         del _INGEST_RATE_BUCKETS[stale_key]
 
 
-def _check_ingest_rate_limit(source_agent: str, now: float | None = None) -> dict[str, Any] | None:
+def _check_ingest_rate_limit(
+    source_agent: str, now: float | None = None, *, cost: float = 1.0
+) -> dict[str, Any] | None:
+    """Debit ``cost`` tokens from the per-agent + global buckets, or reject.
+
+    ``cost`` is the number of claims this call is about to ingest — 1 for
+    ``ingest_claim``, ``len(items)`` for a ``checkpoint`` batch. The "may I
+    act?" gate stays ``tokens >= 1.0`` (so single-ingest burst is unchanged),
+    but a batch debits its full cost, which can drive the bucket negative and
+    throttle the agent until it refills. This caps a batch tool's SUSTAINED
+    throughput at ``limit``/min instead of ``limit × batch_size``/min — a
+    single 200-item checkpoint that once cost 1 token now costs 200
+    (audit: checkpoint-rate-cost).
+    """
     limit = _ingest_rate_limit_per_min()
     if limit == 0:
         return None
@@ -249,8 +262,8 @@ def _check_ingest_rate_limit(source_agent: str, now: float | None = None) -> dic
                     limit_per_min=limit,
                 )
 
-        _INGEST_RATE_BUCKETS[key] = (agent_tokens - 1.0, timestamp)
-        _INGEST_RATE_BUCKETS[_GLOBAL_RATE_AGENT] = (global_tokens - 1.0, timestamp)
+        _INGEST_RATE_BUCKETS[key] = (agent_tokens - cost, timestamp)
+        _INGEST_RATE_BUCKETS[_GLOBAL_RATE_AGENT] = (global_tokens - cost, timestamp)
         _evict_rate_buckets()
     return None
 
@@ -735,12 +748,15 @@ if FastMCP is not None:
             return _structured_error("claims_json must be a JSON array", "VALIDATION_ERROR", "claims_json")
         if len(items) > 200:
             return _structured_error("checkpoint batch too large (max 200 items)", "VALIDATION_ERROR", "claims_json")
-        effective_source = _empty_to_none(source_agent) or "mcp-session"
-        rate_limit_error = _check_ingest_rate_limit(effective_source)
-        if rate_limit_error is not None:
-            return rate_limit_error
         if not items:
             return {"ok": True, "ingested": 0, "skipped_sensitive": 0, "errors": [], "claim_ids": []}
+        effective_source = _empty_to_none(source_agent) or "mcp-session"
+        # Charge the rate bucket per-item: a batch of N claims costs N tokens,
+        # not 1 (audit: checkpoint-rate-cost — a 200-item batch previously
+        # bypassed the per-agent ingest limit ~200x).
+        rate_limit_error = _check_ingest_rate_limit(effective_source, cost=float(len(items)))
+        if rate_limit_error is not None:
+            return rate_limit_error
         svc = _service(db, workspace)
         return _checkpoint_batch(
             svc, items, default_scope=scope, workspace=workspace, source_agent=effective_source,
@@ -1079,6 +1095,8 @@ if FastMCP is not None:
         max_hops: int = 2,
         include_stale: bool = False,
         include_conflicted: bool = False,
+        scope_allowlist: str = "",
+        allow_sensitive: bool = False,
     ) -> dict[str, Any]:
         """Traverse claim relationship paths from a starting claim (read-only).
 
@@ -1095,8 +1113,19 @@ if FastMCP is not None:
         Each result row has: claim (full dict), depth, edge_chain (link types
         traversed), path (claim ids), and path_confidence (weakest-link =
         minimum claim confidence across the path). Orphaned claim → empty list.
+
+        Like every other read tool, results are gated by ``scope_allowlist``
+        (defaults to this workspace's project + global scope) and drop
+        sensitive-visibility claims unless ``allow_sensitive`` is set — so a
+        known claim_id can't leak cross-scope or sensitive claim text via graph
+        traversal (audit: claim-paths-scope-gate).
         """
         svc = _service(db, workspace)
+        normalized_scopes = _effective_scope_allowlist(scope_allowlist, workspace)
+        allow_sensitive = resolve_allow_sensitive_access(
+            allow_sensitive=allow_sensitive,
+            context="mcp.query_claim_paths",
+        )
         rows = svc.query_claim_paths(
             claim_id,
             edge_type=(edge_type.strip() or None),
@@ -1104,6 +1133,8 @@ if FastMCP is not None:
             max_hops=max_hops,
             include_stale=include_stale,
             include_conflicted=include_conflicted,
+            scope_allowlist=normalized_scopes,
+            allow_sensitive=allow_sensitive,
             requesting_agent=os.getenv("MEMORYMASTER_SOURCE_AGENT") or None,
         )
         return {"ok": True, "rows": len(rows), "paths": rows}
