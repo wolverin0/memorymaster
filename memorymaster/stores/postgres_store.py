@@ -885,6 +885,47 @@ class PostgresStore(SQLiteStore):
             raise RuntimeError("Failed to load claim after transition.")
         return updated
 
+    def recompute_tiers(self) -> dict[str, int]:
+        """Postgres override of the SQLite tier recompute — same rules.
+
+        The inherited ``_LifecycleMixin.recompute_tiers`` uses sqlite-style
+        ``?`` placeholders, which psycopg rejects (Postgres sees a literal
+        ``?`` and raises a syntax error), so on Postgres the steward's
+        recompute-tiers phase always failed and tiers were never updated.
+        Same thresholds and bucket semantics as the SQLite version; ``%s``
+        placeholders and native datetimes for the TIMESTAMPTZ ``created_at``.
+        """
+        now = datetime.now(timezone.utc)
+        core_cutoff = (now - timedelta(days=7)).replace(microsecond=0)
+        peripheral_cutoff = (now - timedelta(days=90)).replace(microsecond=0)
+
+        counts = {"core": 0, "working": 0, "peripheral": 0}
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE claims SET tier = 'core' "
+                "WHERE status != 'archived' AND tier != 'core' "
+                "AND (access_count > 5 OR created_at > %s)",
+                (core_cutoff,),
+            )
+            counts["core"] = cur.rowcount
+            cur.execute(
+                "UPDATE claims SET tier = 'peripheral' "
+                "WHERE status != 'archived' AND tier != 'peripheral' "
+                "AND access_count = 0 AND created_at <= %s",
+                (peripheral_cutoff,),
+            )
+            counts["peripheral"] = cur.rowcount
+            cur.execute(
+                "UPDATE claims SET tier = 'working' "
+                "WHERE status != 'archived' AND tier != 'working' "
+                "AND NOT (access_count > 5 OR created_at > %s) "
+                "AND NOT (access_count = 0 AND created_at <= %s)",
+                (core_cutoff, peripheral_cutoff),
+            )
+            counts["working"] = cur.rowcount
+            conn.commit()
+        return counts
+
     def set_supersedes(self, claim_id: int, supersedes_claim_id: int) -> None:
         now = utc_now()
         with self.connect() as conn, conn.cursor() as cur:
