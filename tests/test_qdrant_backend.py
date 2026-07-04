@@ -9,6 +9,12 @@ from unittest.mock import MagicMock, patch
 from memorymaster.core.models import Claim
 from memorymaster.recall.qdrant_backend import QdrantBackend, EMBEDDING_DIMS
 
+import pytest
+
+# ML/torch tests: loads real sentence-transformers/Qdrant paths; excluded from
+# the default run (see pytest.ini). Run in isolation with: pytest -m ml
+pytestmark = pytest.mark.ml
+
 
 def _fake_claim(**overrides) -> Claim:
     defaults = dict(

@@ -16,6 +16,10 @@ from memorymaster.recall.embeddings import (
     normalize,
 )
 
+# ML/torch tests: loads real sentence-transformers/Qdrant paths; excluded from
+# the default run (see pytest.ini). Run in isolation with: pytest -m ml
+pytestmark = pytest.mark.ml
+
 
 class TestEmbeddingProviderEmbed:
     def test_hash_model(self):
