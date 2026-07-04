@@ -211,6 +211,27 @@ def _is_cross_scope_sensitive(claim: Claim, current_scope: str | None) -> bool:
     return not current_scope or claim_scope != current_scope
 
 
+def _path_claim_in_scope(
+    claim: Claim,
+    scope_allowlist: list[str] | None,
+    allow_sensitive: bool,
+) -> bool:
+    """Gate a claim-path traversal hit by scope + sensitivity.
+
+    Drops claims outside ``scope_allowlist`` (when one is given) and, unless
+    ``allow_sensitive``, drops any sensitive-visibility claim — so traversal
+    from a known claim_id can't leak cross-scope or sensitive text.
+    """
+    claim_scope = (claim.scope or "").strip()
+    if scope_allowlist is not None and claim_scope not in scope_allowlist:
+        return False
+    if not allow_sensitive:
+        visibility = (getattr(claim, "visibility", "public") or "public").strip().lower()
+        if visibility == "sensitive":
+            return False
+    return True
+
+
 def _is_team_scope(scope: str) -> bool:
     return scope.startswith("team:")
 
@@ -2003,6 +2024,8 @@ class MemoryService:
         max_hops: int = 2,
         include_stale: bool = False,
         include_conflicted: bool = False,
+        scope_allowlist: list[str] | None = None,
+        allow_sensitive: bool = False,
         requesting_agent: str | None = None,
     ) -> list[dict[str, Any]]:
         """BFS path query over ``claim_links`` from a starting claim.
@@ -2053,7 +2076,10 @@ class MemoryService:
             return []
 
         allowed = self._build_query_statuses(include_stale, include_conflicted, include_candidates=True)
-        return self._assemble_path_rows(raw, start_id, allowed, requesting_agent)
+        return self._assemble_path_rows(
+            raw, start_id, allowed, requesting_agent,
+            scope_allowlist=scope_allowlist, allow_sensitive=allow_sensitive,
+        )
 
     def _assemble_path_rows(
         self,
@@ -2061,12 +2087,23 @@ class MemoryService:
         start_id: int,
         allowed_statuses: list[str],
         requesting_agent: str | None,
+        *,
+        scope_allowlist: list[str] | None = None,
+        allow_sensitive: bool = False,
     ) -> list[dict[str, Any]]:
-        """Filter traversal hits by status + visibility and shape result dicts."""
+        """Filter traversal hits by status + scope + visibility and shape rows.
+
+        Scope + sensitivity gating mirror the regular query path so graph
+        traversal from a known claim_id can't surface cross-scope or
+        sensitive claim text (audit: claim-paths-scope-gate). ``scope_allowlist``
+        None means "no scope restriction" (internal callers); the MCP surface
+        always passes an effective allowlist.
+        """
         status_set = set(allowed_statuses)
         kept = [
             entry for entry in raw
             if getattr(entry["claim"], "status", None) in status_set
+            and _path_claim_in_scope(entry["claim"], scope_allowlist, allow_sensitive)
         ]
         visible = _filter_agent_visibility([e["claim"] for e in kept], requesting_agent)
         visible_ids = {c.id for c in visible}
