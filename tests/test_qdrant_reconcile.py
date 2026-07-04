@@ -23,6 +23,10 @@ from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
 from memorymaster.stores.storage import SQLiteStore
 
+# ML/torch tests: loads real sentence-transformers/Qdrant paths; excluded from
+# the default run (see pytest.ini). Run in isolation with: pytest -m ml
+pytestmark = pytest.mark.ml
+
 
 class FakeQdrant:
     """In-memory stand-in for QdrantBackend — records what reconcile asks of it."""

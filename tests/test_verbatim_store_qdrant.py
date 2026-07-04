@@ -6,6 +6,12 @@ import sqlite3
 
 from memorymaster.recall import verbatim_store
 
+import pytest
+
+# ML/torch tests: loads real sentence-transformers/Qdrant paths; excluded from
+# the default run (see pytest.ini). Run in isolation with: pytest -m ml
+pytestmark = pytest.mark.ml
+
 
 class _Response:
     def __init__(self, payload: dict):
