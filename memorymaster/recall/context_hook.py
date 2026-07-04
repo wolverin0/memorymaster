@@ -1362,12 +1362,29 @@ def _recall_impl(
     if _query_expansion_enabled() and token_list:
         token_list = _apply_query_expansion(svc, query, token_list)
 
+    # Local cross-encoder rerank gate (MEMORYMASTER_RECALL_RERANK_LOCAL=1,
+    # default OFF — see memorymaster/recall/local_rerank.py). When on, the
+    # FTS caps below are multiplied by the over-fetch factor (default 3x)
+    # so the reranker sees a deeper pool; after ranking + rerank the pool
+    # is trimmed back by the over-fetched surplus so the rendered count
+    # stays the usual size. When off, _lr_overfetch == 1 and every cap is
+    # bit-identical to legacy — the module's model stack is never imported.
+    from memorymaster.recall.local_rerank import local_rerank_enabled
+
+    _lr_on = local_rerank_enabled()
+    _lr_overfetch = 1
+    if _lr_on:
+        from memorymaster.recall.local_rerank import overfetch_factor
+
+        _lr_overfetch = overfetch_factor()
+    _fts_cap = 8 * _lr_overfetch
+
     rows: list = []
     seen_ids: set[int] = set()
     with _phase_timer(phase_ms, "fts5"):
         if token_list:
             # Fan out: top token first (highest IDF), then widen by OR.
-            per_token_limit = max(3, 8 // max(1, len(token_list)))
+            per_token_limit = max(3, 8 // max(1, len(token_list))) * _lr_overfetch
             for tok in token_list:
                 batch = svc.query_rows(
                     query_text=tok,
@@ -1383,14 +1400,14 @@ def _recall_impl(
                         continue
                     seen_ids.add(cid)
                     rows.append(row)
-                if len(rows) >= 8:
+                if len(rows) >= _fts_cap:
                     break
 
         if not rows:
             # Fallback to raw prompt — preserves the old behaviour.
             rows = svc.query_rows(
                 query_text=query,
-                limit=8,
+                limit=_fts_cap,
                 retrieval_mode="legacy",
                 include_candidates=True,
                 scope_allowlist=None,
@@ -1400,6 +1417,12 @@ def _recall_impl(
                 cid = getattr(claim, "id", None)
                 if cid is not None:
                     seen_ids.add(cid)
+
+    # Over-fetch surplus from the local-rerank gate: how many FTS rows we
+    # pulled beyond the legacy cap of 8. Zero when the gate is off (cap is
+    # 8, so the max is 0). Used after reranking to trim the pool back to
+    # the usual size.
+    _lr_fts_surplus = max(0, len(rows) - 8) if _lr_on else 0
 
     # Entity-link fanout — mine entities from the prompt, resolve via
     # entity_aliases, and union in claims we haven't already seen.
@@ -2052,6 +2075,19 @@ def _recall_impl(
             ranked = sorted(rows, key=_relevance, reverse=True)
     else:
         ranked = sorted(rows, key=_relevance, reverse=True)
+
+    # Local cross-encoder rerank pass (gate checked above, default OFF).
+    # Reorders the fused pool by cross-encoder relevance, then trims the
+    # over-fetched FTS surplus so the rendered count matches the usual
+    # size. On any scoring failure rerank_ranked_rows returns ``ranked``
+    # unchanged and the trim still removes the lowest-ranked surplus.
+    if _lr_on:
+        from memorymaster.recall.local_rerank import rerank_ranked_rows
+
+        with _phase_timer(phase_ms, "local_rerank"):
+            ranked = rerank_ranked_rows(query, ranked)
+        if _lr_fts_surplus:
+            ranked = ranked[: max(0, len(ranked) - _lr_fts_surplus)]
 
     # Build output — top claims within budget
     lines = ["# Memory Context", ""]
