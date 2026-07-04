@@ -176,15 +176,14 @@ def test_wiki_breakdown_routes_and_emits_envelope(monkeypatch, capsys):
 
 # --------------------------------------------------------------------------- #
 # entity-stats / feedback-stats: stats handlers whose human path is the
-# supported one. NOTE: as currently written both call ``_json_envelope(stats)``
-# WITHOUT the required keyword-only ``query_ms`` argument, so ``--json`` raises
-# TypeError at runtime. These tests pin the *actual* current contract: the
-# human (non-JSON) path works and returns 0, and the JSON path raises. If the
-# JSON path is later fixed, the second assertion turns red and forces an update
-# — exactly the signal we want.
+# supported one. NOTE: feedback-stats still calls ``_json_envelope(stats)``
+# WITHOUT the required keyword-only ``query_ms`` argument, so its ``--json``
+# raises TypeError at runtime — that test pins the *actual* current contract.
+# entity-stats was FIXED (query_ms is now passed) when community detection
+# was wired in, so its test asserts the working JSON envelope.
 # --------------------------------------------------------------------------- #
 
-def test_entity_stats_human_path_ok_json_path_raises(monkeypatch, capsys):
+def test_entity_stats_human_and_json_paths_ok(monkeypatch, capsys):
     class FakeEG:
         def __init__(self, db):
             pass
@@ -196,13 +195,18 @@ def test_entity_stats_human_path_ok_json_path_raises(monkeypatch, capsys):
             return {"entities": 2, "edges": 1, "claim_links": 3, "by_type": {"person": 2}}
 
     monkeypatch.setattr("memorymaster.knowledge.entity_graph.EntityGraph", FakeEG)
+    monkeypatch.delenv("MEMORYMASTER_ENTITY_COMMUNITIES", raising=False)
 
     rc = C._handle_entity_stats(_ns(json_output=False), _FakeService(), None, "db.sqlite")
     assert rc == 0
     assert "Entities: 2" in capsys.readouterr().out
 
-    with pytest.raises(TypeError):
-        C._handle_entity_stats(_ns(json_output=True), _FakeService(), None, "db.sqlite")
+    rc = C._handle_entity_stats(_ns(json_output=True), _FakeService(), None, "db.sqlite")
+    assert rc == 0
+    data = _envelope(capsys)["data"]
+    assert data["entities"] == 2
+    # Default OFF: no communities key unless MEMORYMASTER_ENTITY_COMMUNITIES=1.
+    assert "communities" not in data
 
 
 def test_feedback_stats_human_path_ok_json_path_raises(monkeypatch, capsys):

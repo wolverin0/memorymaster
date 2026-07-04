@@ -43,7 +43,9 @@ vector = ["sentence-transformers>=3.0", "qdrant-client>=1.9"]
 # database (no server) — lightweight enough to keep MemoryMaster's
 # "single-file SQLite + optional Qdrant" story. Gated at runtime by
 # MEMORYMASTER_RECALL_GRAPH=1; off by default.
-graph = ["kuzu>=0.4"]
+# networkx powers entity community detection (knowledge.entity_communities),
+# gated at runtime by MEMORYMASTER_ENTITY_COMMUNITIES=1; off by default.
+graph = ["kuzu>=0.4", "networkx>=3.0"]
 dev = ["pytest>=8.2", "pytest-cov>=6.0"]
 mcp = ["mcp>=1.2"]
 ml = ["scikit-learn>=1.3", "joblib>=1.3"]

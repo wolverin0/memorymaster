@@ -511,16 +511,38 @@ def _handle_extract_entities(args: argparse.Namespace, service, parser: argparse
 
 
 def _handle_entity_stats(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    import os
+
     from memorymaster.knowledge.entity_graph import EntityGraph
+    t0 = time.perf_counter()
     eg = EntityGraph(str(effective_db))
     eg.ensure_tables()
     stats = eg.get_stats()
+    # Opt-in community detection (env-gated: zero cost when off; networkx is
+    # an optional [graph] extra — surface a hint instead of crashing).
+    if os.environ.get("MEMORYMASTER_ENTITY_COMMUNITIES") == "1":
+        from memorymaster.knowledge.entity_communities import (
+            CommunityDetectionUnavailable,
+            community_summary,
+        )
+        try:
+            stats["communities"] = community_summary(str(effective_db), top_n=5)
+        except CommunityDetectionUnavailable as exc:
+            stats["communities"] = {"error": str(exc)}
+    elapsed_ms = (time.perf_counter() - t0) * 1000
     if args.json_output:
-        print(_json_envelope(stats))
+        print(_json_envelope(stats, query_ms=elapsed_ms))
     else:
         print(f"Entities: {stats['entities']}, Edges: {stats['edges']}, Claim links: {stats['claim_links']}")
         for t, c in stats.get('by_type', {}).items():
             print(f"  {t}: {c}")
+        communities = stats.get("communities")
+        if communities and "error" not in communities:
+            print(f"Communities: {communities['count']} (modularity: {communities['modularity']})")
+            for comm in communities.get("top", []):
+                print(f"  [{comm['community_id']}] size={comm['size']}: {', '.join(comm['top_entities'])}")
+        elif communities:
+            print(f"Communities: {communities['error']}")
     return 0
 
 

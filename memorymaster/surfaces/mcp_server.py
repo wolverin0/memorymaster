@@ -1827,9 +1827,23 @@ if FastMCP is not None:
     ) -> dict[str, Any]:
         """Get entity knowledge graph statistics."""
         from memorymaster.knowledge.entity_graph import EntityGraph
-        eg = EntityGraph(_resolve_db(db))
+        resolved = _resolve_db(db)
+        eg = EntityGraph(resolved)
         eg.ensure_tables()
-        return {"ok": True, **eg.get_stats()}
+        stats: dict[str, Any] = {"ok": True, **eg.get_stats()}
+        # Opt-in community detection (env-gated: zero cost when off; networkx
+        # stays an optional [graph] extra — degrade to an error string instead
+        # of crashing the tool when it's absent).
+        if os.environ.get("MEMORYMASTER_ENTITY_COMMUNITIES") == "1":
+            from memorymaster.knowledge.entity_communities import (
+                CommunityDetectionUnavailable,
+                community_summary,
+            )
+            try:
+                stats["communities"] = community_summary(resolved, top_n=5)
+            except CommunityDetectionUnavailable as exc:
+                stats["communities"] = {"error": str(exc)}
+        return stats
 
     @mcp.tool()
     def find_related_claims(
