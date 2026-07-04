@@ -74,13 +74,51 @@ def test_neighbor_ids_no_conn_returns_empty():
 
 
 def test_neighbor_ids_db_error_returns_empty():
-    """If the DB raises (e.g. missing claim_entities table) → silent [] not crash."""
+    """If the DB raises (e.g. missing junction table) → silent [] not crash."""
 
     class _BadConn:
         def execute(self, *args, **kwargs):
-            raise RuntimeError("table claim_entities does not exist")
+            raise RuntimeError("table claim_entity_links does not exist")
 
     class _Store:
         _conn = _BadConn()
 
     assert context_hook._two_pass_neighbor_ids(_Store(), [1, 2, 3], set()) == []
+
+
+def test_neighbor_ids_walks_claim_entity_links_on_real_store(tmp_path):
+    """WHY: the two-pass stream exists to surface claims that share entities
+    with already-recalled seeds. It must walk the REAL junction table
+    (claim_entity_links, written by EntityGraph into the claims DB) through
+    the store's own connect() — the old code queried a ``claim_entities``
+    table no schema ever created, via a ``store._conn`` attribute real
+    stores don't have, so the stream silently returned [] even when the
+    operator enabled it."""
+    from memorymaster.stores.storage import SQLiteStore
+
+    db = str(tmp_path / "two_pass.db")
+    store = SQLiteStore(db)
+    store.init_db()
+    with store.connect() as conn:
+        # Same DDL as EntityGraph.ensure_tables (entity_graph.py). Created
+        # directly because ensure_tables' full script aborts when the claims
+        # DB already holds the registry-style ``entities`` table — the
+        # junction is what the walker contract depends on.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS claim_entity_links ("
+            " claim_id INTEGER NOT NULL,"
+            " entity_id TEXT NOT NULL,"
+            " PRIMARY KEY (claim_id, entity_id))"
+        )
+        conn.executemany(
+            "INSERT INTO claim_entity_links (claim_id, entity_id) VALUES (?, ?)",
+            [(1, "ent-redis"), (2, "ent-redis"), (3, "ent-postgres")],
+        )
+        conn.commit()
+
+    # Claim 2 shares ent-redis with seed claim 1; claim 3 shares nothing.
+    out = context_hook._two_pass_neighbor_ids(store, [1], {1})
+    assert out == [2]
+
+    # Excluded/seen IDs are never reintroduced.
+    assert context_hook._two_pass_neighbor_ids(store, [1], {1, 2}) == []
