@@ -5,7 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [4.3.0] - 2026-07-04
+
+**Reliability + retrieval + a second adversarial audit.** A measured retrieval win, a trustworthy test suite on Windows, and confirmed security/correctness fixes from a round-2 audit whose findings were each independently re-verified before landing. The default recall/ranking path stays byte-identical (the one new ranker is opt-in).
+
+### Added
+
+- **Optional local cross-encoder rerank** (#179, default OFF via `MEMORYMASTER_RECALL_RERANK_LOCAL=1`): reranks the recall hook's fused candidate pool with `cross-encoder/ms-marco-MiniLM-L-6-v2`. Measured on the real 953-prompt harness (same-day A/B): **precision@5 +23%, MAP@5 +23%, hit@5 +26%**, at ~270ms mean added recall latency + a one-time ~90MB model download. Lazy-loaded with a per-process failure latch (any load/predict failure degrades to legacy ordering); gate OFF is byte-identical.
+
+### Fixed
+
+- **Security — `query_claim_paths` scope/sensitivity leak** (#180): it alone among the read tools took no `scope_allowlist`/`allow_sensitive` params and its only filter was a no-op for typical clients, so a known `claim_id` could surface cross-scope or sensitive claim **text** via `claim_links` traversal. Now gated by an effective scope allowlist (default project+global) + sensitive-drop-unless-opted-in, via the same helpers the query path uses.
+- **Security — `checkpoint` rate under-charge** (#180): a batch of up to 200 claims charged the ingest rate bucket exactly 1 token (~200x under vs `ingest_claim`). It now charges `len(items)`; single-ingest burst is byte-identical, but a batch tool's sustained throughput is capped at `limit`/min.
+- **Data-loss — archived claims un-relearnable** (#181): `ingest` content-hash dedup matched archived rows and returned them inert, so a fact archived via `archive_by_source` could never be re-ingested. An archived dedup match is now revived to `candidate` (event-logged, version-guarded, backend-agnostic).
+- **Postgres — `recompute_tiers` silently broken** (#181): the inherited SQLite SQL used `?` placeholders + ISO-string cutoffs, invalid on psycopg3/`TIMESTAMPTZ`, and `run_cycle` swallowed the error — so tiers were never recomputed on Postgres. Added a Postgres override (`%s`, native datetimes; SQLite untouched).
+- **Dead code — two-pass entity neighbor walk** (#181): queried a table no schema creates via a connection attr real stores lack; wired to the real `claim_entity_links` junction (flag-off recall byte-identical).
+- **Extraction — junk `event_time` strings rejected** (#176): the Atlas LLM extractor now strict-validates ISO dates, so values like `later`/`18:00` no longer poison agenda ordering.
+- **`local_search` multi-word queries returned 0 hits** (#177): the whole query was passed as one argv, so ES.exe matched a single literal phrase; terms are now split (quoted phrases preserved).
+- **Windows→Hermes delta sync FK crash** (#177): `export_delta` copied the claims FK DDL and enforced it, so an in-window claim superseding an out-of-window one killed the whole export (dead since Jun 10); the transport file now disables FK enforcement (integrity belongs to the idempotent merge target).
+
+### Changed
+
+- **Test suite is trustworthy on Windows** (#178): the 8 torch/qdrant files that random-SIGSEGV are marked `ml`; `pytest tests/ -m "not ml"` is the daily driver, plus a `pytest-timeout` net so a hung test can't freeze a run.
+
+### Ops (operational fixes, not shipped in the package)
+
+- Steward scheduled task was found hung ~14h (blocking all later runs, ~19k candidates backlogged); added a 2h execution-time cap so a zombie run can't recur.
+- Atlas extractor autoloop revived (dead since Jun 24: keyfile crash then a quota-dead model that zeroed extraction and advanced the watermark past 131 items); model + failure-safe watermark fixed, backlog recovered.
+- **Evaluated & rejected**: entity-graph community detection — built + measured against the live brain but the `entity_edges` table is unpopulated in production (needs local Ollama) and even a simulated graph scores modularity 0.05–0.10; branch preserved unmerged for when the entity registry is de-noised.
+
+---
 
 **Fresh-eyes audit fixes** (see `artifacts/2026-07-01-fresh-eyes-gap-audit.html`): a cross-model review found the v4.2 features failed at *seams* — tested-but-unexercised paths, cross-feature gaps, single-bound edge cases.
 
