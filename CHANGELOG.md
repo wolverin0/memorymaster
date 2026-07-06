@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.1] - 2026-07-06
+
+### Added
+
+- **Steward self-purge for isolated `claude_cli` scratch transcripts.** v4.4.0 moved headless `claude --print` sessions to a scratch cwd so they stop flooding the caller's `--continue` folder; that isolated pile now gets reclaimed each steward cycle via `llm_provider.purge_claude_cli_scratch()` (deletes `*.jsonl` older than 2 days, matched by the scratch dir's basename so a `MEMORYMASTER_CLAUDE_CLI_CWD` override still works). Best-effort, never raises. Closes the "scratch folder grows on disk" follow-up from 4.4.0.
+
 ## [4.4.0] - 2026-07-06
 
 **The wiki layer is now opt-in, and headless LLM calls no longer flood the session folder.** Two coupled fixes to a real-world failure: a MemoryMaster install had generated a **2 GB / 5,921-file Obsidian vault** (which hung Obsidian) *and* **~154,000 Claude Code session transcripts / 12 GB** (which froze `claude --continue`). Root cause of both: the steward's periodic `wiki-absorb` ran the `claude_cli` stack in a loop over the whole vault, and every headless `claude --print` call wrote a session transcript into the caller's project folder.
