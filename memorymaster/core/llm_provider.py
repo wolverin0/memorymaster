@@ -391,6 +391,23 @@ def _call_claude_cli(prompt: str, text: str) -> str:
     if sys.platform == "win32":
         extra_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
+    # Isolate the headless session transcript OUT of the caller's project folder.
+    # `claude --print` writes a session file to ~/.claude/projects/<cwd>/ on every
+    # call. Run from a dedicated scratch dir so memorymaster's own automation
+    # (steward cycle, wiki, dream) can't flood ~/.claude/projects/<the-project>/
+    # with thousands of transcripts and freeze `claude --continue` — observed
+    # live at 154k files / 12 GB, ~1,800 sessions/day. The scratch folder is never
+    # `--continue`d, so it can grow freely and be purged anytime. Prompt is passed
+    # via stdin, so no project context is needed from the cwd.
+    scratch = _env("MEMORYMASTER_CLAUDE_CLI_CWD", "") or os.path.join(
+        os.path.expanduser("~"), ".memorymaster", "claude_cli_scratch"
+    )
+    try:
+        os.makedirs(scratch, exist_ok=True)
+        extra_kwargs["cwd"] = scratch
+    except OSError:
+        pass  # fall back to the parent cwd rather than fail the LLM call
+
     try:
         result = subprocess.run(
             [bin_path, "--print", "--model", model],

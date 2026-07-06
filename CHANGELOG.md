@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.0] - 2026-07-06
+
+**The wiki layer is now opt-in, and headless LLM calls no longer flood the session folder.** Two coupled fixes to a real-world failure: a MemoryMaster install had generated a **2 GB / 5,921-file Obsidian vault** (which hung Obsidian) *and* **~154,000 Claude Code session transcripts / 12 GB** (which froze `claude --continue`). Root cause of both: the steward's periodic `wiki-absorb` ran the `claude_cli` stack in a loop over the whole vault, and every headless `claude --print` call wrote a session transcript into the caller's project folder.
+
+### Changed
+
+- **`wiki-absorb` is now opt-in (default OFF)** behind `MEMORYMASTER_WIKI_ABSORB=1`. Research on the LLM-Wiki pattern (Karpathy) confirms the markdown wiki is designed for *a few hundred* pages that fit in a context window — past that you switch to a search DB with lifecycle rules, which **is exactly what MemoryMaster's claims DB already is** (FTS5 + vectors + entity graph + supersession + decay + tiers). The Obsidian markdown layer was a redundant, non-scaling duplicate; the DB + recall is the memory system. The steward still runs validate/decay/dedup/tiers every cycle — it just no longer materializes markdown. Nothing in recall depends on the vault (the only reader, the Closets stream, is already default-OFF).
+- **Recall wiki breadcrumbs are gated on the same flag**: `(compiled in [[slug]])` pointers only render when the wiki view is enabled, so recall never points at an archived/absent vault.
+
+### Fixed
+
+- **Headless `claude_cli` calls no longer pollute the caller's session folder.** `_call_claude_cli` now runs `claude --print` from a dedicated scratch cwd (`~/.memorymaster/claude_cli_scratch`, override `MEMORYMASTER_CLAUDE_CLI_CWD`) instead of the parent cwd. Previously every steward/wiki/dream LLM call wrote a transcript into `~/.claude/projects/<project>/`, which — at automation volume — grew to 154k files / 12 GB and froze `claude --continue`. The scratch folder is never `--continue`d, so it can grow freely and be purged anytime; the prompt is passed via stdin so no project context is lost.
+
 ## [4.3.0] - 2026-07-04
 
 **Reliability + retrieval + a second adversarial audit.** A measured retrieval win, a trustworthy test suite on Windows, and confirmed security/correctness fixes from a round-2 audit whose findings were each independently re-verified before landing. The default recall/ranking path stays byte-identical (the one new ranker is opt-in).

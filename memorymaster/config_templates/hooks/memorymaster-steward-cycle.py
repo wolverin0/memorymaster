@@ -64,12 +64,18 @@ try:
 except Exception as e:
     print(f"[MemoryMaster] auto-archive error: {e}", file=sys.stderr)
 
-# Wiki absorb (compiled truth + timeline articles). Inherits the LLM provider
-# block above — uses the same OAuth-backed haiku stack as the steward.
-try:
-    from memorymaster.knowledge.wiki_engine import absorb
-    wiki_path = os.path.join(PROJECT_ROOT, "obsidian-vault", "wiki")
-    stats = absorb(DB_PATH, wiki_path)
-    print(f"[MemoryMaster] wiki absorb: {stats}")
-except Exception as e:
-    print(f"[MemoryMaster] wiki absorb error: {e}", file=sys.stderr)
+# Wiki layer (Obsidian markdown) — OPT-IN, default OFF (2026-07-06).
+# The claims DB + FTS5 + Qdrant + entity graph + recall IS the scalable "LLM
+# wiki"; the markdown vault is a redundant, non-scaling duplicate that grows
+# unbounded (real install hit 2 GB / 5,921 files, hung Obsidian) and its
+# absorb runs the claude_cli stack in a loop — a heavy source of headless
+# session churn. Nothing in recall depends on it (the only reader, the Closets
+# stream, is default-OFF). Set MEMORYMASTER_WIKI_ABSORB=1 to enable it.
+if os.environ.get("MEMORYMASTER_WIKI_ABSORB", "0").strip().lower() in ("1", "true", "yes"):
+    try:
+        from memorymaster.knowledge.wiki_engine import absorb
+        wiki_path = os.path.join(PROJECT_ROOT, "obsidian-vault", "wiki")
+        stats = absorb(DB_PATH, wiki_path)
+        print(f"[MemoryMaster] wiki absorb: {stats}")
+    except Exception as e:
+        print(f"[MemoryMaster] wiki absorb error: {e}", file=sys.stderr)
