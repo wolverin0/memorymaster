@@ -2116,8 +2116,12 @@ def _recall_impl(
         if not hasattr(claim, "text"):
             continue
         text = claim.text[:300]
+        # Only surface the "(compiled in [[slug]])" wiki breadcrumb when the
+        # Obsidian markdown view is explicitly enabled — otherwise it points at
+        # an archived/absent vault (the wiki layer is opt-in as of 2026-07-06;
+        # the claims DB + recall is the memory system). See MEMORYMASTER_WIKI_ABSORB.
         wiki_slug = getattr(claim, "wiki_article", None)
-        if wiki_slug:
+        if wiki_slug and os.environ.get("MEMORYMASTER_WIKI_ABSORB", "0").strip().lower() in ("1", "true", "yes"):
             chunk = f"- {text}  (compiled in [[{wiki_slug}]])"
         else:
             chunk = f"- {text}"

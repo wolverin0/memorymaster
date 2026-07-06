@@ -106,7 +106,11 @@ def test_row_to_claim_reads_wiki_article(tmp_path: Path) -> None:
 
 
 def test_recall_appends_wiki_pointer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Recall formatter should append `(compiled in [[slug]])` for bound claims."""
+    """Recall appends `(compiled in [[slug]])` ONLY when the Obsidian wiki view
+    is enabled. WHY: the markdown wiki is opt-in (default OFF) as of 2026-07-06 —
+    the claims DB + recall is the memory system — so a bound claim must surface
+    normally without pointing recall at an absent/archived vault, and the
+    breadcrumb returns only when MEMORYMASTER_WIKI_ABSORB=1."""
     from memorymaster.recall import context_hook
     from memorymaster.core.models import Claim
 
@@ -142,9 +146,17 @@ def test_recall_appends_wiki_pointer(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr("memorymaster.core.service.MemoryService", _fake_ctor)
 
-    out = context_hook.recall("qdrant", db_path=str(tmp_path / "nope.db"), skip_qdrant=True)
-    assert "[[qdrant]]" in out
-    assert "compiled in" in out
+    # Default (wiki view OFF): claim surfaces, but NO dead [[slug]] pointer.
+    monkeypatch.delenv("MEMORYMASTER_WIKI_ABSORB", raising=False)
+    out_off = context_hook.recall("qdrant", db_path=str(tmp_path / "nope.db"), skip_qdrant=True)
+    assert "Qdrant is deployed" in out_off
+    assert "[[qdrant]]" not in out_off
+
+    # Wiki view explicitly ON: the breadcrumb returns.
+    monkeypatch.setenv("MEMORYMASTER_WIKI_ABSORB", "1")
+    out_on = context_hook.recall("qdrant", db_path=str(tmp_path / "nope.db"), skip_qdrant=True)
+    assert "[[qdrant]]" in out_on
+    assert "compiled in" in out_on
 
 
 def test_backfill_bindings_updates_claims_from_frontmatter(tmp_path: Path) -> None:
