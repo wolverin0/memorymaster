@@ -44,7 +44,7 @@ Production-grade memory reliability system for AI coding agents. Provides lifecy
 - **Never mutate the claims DB schema** without updating `storage.py` + `postgres_store.py` + all tests
 - **Never hardcode IPs, paths, or credentials** — use env vars
 - **Never skip the sensitivity filter** in dream-seed or MCP ingest
-- **The wiki is the READ layer, claims DB is the WRITE layer** — use `wiki-absorb`
+- **The claims DB is the memory system** (read + write via recall / `query_memory`). The Obsidian wiki is an **opt-in** human-browsable view (`MEMORYMASTER_WIKI_ABSORB=1`, off by default), not the read layer
 - **WAL mode is mandatory** — prevents DB corruption from concurrent access
 - **Wiki article frontmatter is schema-enforced**: every `obsidian-vault/wiki/**/*.md` must have `title`, `description` (50-200 chars), `type`, `scope`, `tags`, `date`, and at least one `[[wikilink]]` if body > 300 chars. The `memorymaster-validate-wiki.py` hook fires warnings on Edit/Write when any is missing. Generated Obsidian Bases (`obsidian-vault/bases/*.base`) regenerate automatically on `wiki-absorb` — do not hand-edit.
 
@@ -84,7 +84,7 @@ After any change, verify:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **memorymaster** (9898 symbols, 26669 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **memorymaster** (10089 symbols, 26774 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
