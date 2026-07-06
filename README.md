@@ -33,8 +33,8 @@ If you want an agent that recalls more, any vector store works. If you want an a
 ## Architecture
 
 MemoryMaster is layered around MCP/CLI entry points, the `MemoryService` facade, SQLite/Postgres
-storage, optional Qdrant vector search, scheduled jobs, and the Obsidian wiki/vault layer. The
-canonical ingest path is:
+storage, optional Qdrant vector search, scheduled jobs, and an **optional** Obsidian wiki/vault
+layer (opt-in, off by default — see below). The canonical ingest path is:
 
 ```text
 MCP/CLI -> sensitivity filter -> MemoryService.ingest -> store write -> FTS5 index
@@ -65,7 +65,7 @@ recent PR status, and sensitivity-filter invariants.
 - **Steward governance**: multi-probe validators (filesystem, format, citation, semantic, tool) with proposal review
 - **Conflict resolution**: 5-tier auto (confidence > freshness > citations > LLM > manual)
 - **Auto-redaction** at ingest: JWT, GitHub tokens, Bearer, AWS keys, SSH keys, custom patterns
-- **LLM Wiki**: compiled-truth + append-only timeline articles with progressive-disclosure frontmatter, `explored: true|false` operator-review marker, and inline `> [!contradiction]` Obsidian callouts
+- **LLM Wiki** *(opt-in, off by default — set `MEMORYMASTER_WIKI_ABSORB=1`)*: compiled-truth + append-only timeline articles with progressive-disclosure frontmatter, `explored: true|false` operator-review marker, and inline `> [!contradiction]` Obsidian callouts. A redundant human-browsable **view** of the claims DB — the DB + recall is the memory system; the Markdown wiki does not scale past a few hundred pages (Karpathy LLM-Wiki pattern) so it stays off unless you want to browse it
 - **Atlas Inbox V1** (new in v3.13.0): WhatsApp ingestion → source/evidence/action proposal lifecycle → Super-Productivity export. Versioned API/CLI contract for downstream consumers (LifeAgent, etc.) — see [`docs/atlas-api-contract-v1.md`](docs/atlas-api-contract-v1.md). Real provider adapters (`OpenAIWhisperTranscriptionProvider`, `TesseractOcrProvider`) behind `Protocol`s; mock providers stay default.
 - **Optional local-path resolution** (new in v4.1.0): `resolve-project` / `local-search` (CLI + MCP) turn a fuzzy project/file name into its real on-disk path and cache it as a recallable `reference` claim. Most useful for agents **without** strong native file search (e.g. Codex on Windows) and for cross-session "where was project X?" — for clients that already have a good file-glob this is marginal. Backed by [Everything](https://www.voidtools.com/)'s read-only `ES.exe` CLI via a backend-agnostic `LocalSearchProvider` Protocol (`memorymaster/bridges/local_search/`; `plocate`/`fd`/`mdfind` can drop in later). **Requires Everything + the ES CLI with `MEMORYMASTER_EVERYTHING_ES_PATH` set; degrades to a no-op when absent.** Paths are redacted to root-relative tokens so usernames/structure are never stored.
 - **LLM typed-entity Atlas extractor** (new in v4.1.0): turns ingested evidence (WhatsApp / email / notes) into *typed*, cited life-knowledge claims (`person`/`project`/`commitment`/`decision`/`event`/…) via an LLM with strict subject/type validation — replacing the deterministic keyword matcher. The `subject` is always the real named entity, never the source app.
@@ -103,12 +103,12 @@ Reproduce: `python tests/bench_longmemeval.py --retrieval-only`. Full methodolog
 
 - Python **3.10+** with `pip`
 - Claude Code, Codex, or any MCP-compatible agent
-- **An LLM provider** — pick one: Claude Code OAuth (free if you're a subscriber, set `MEMORYMASTER_LLM_PROVIDER=claude_cli`), a free Gemini API key from [aistudio.google.com](https://aistudio.google.com), OpenAI, Anthropic API, or local Ollama. The steward, auto-ingest, and wiki-absorb cycles all need an LLM — without one, claims pile up as `candidate` and never get validated, deduped, or compiled into the wiki.
+- **An LLM provider** — pick one: Claude Code OAuth (free if you're a subscriber, set `MEMORYMASTER_LLM_PROVIDER=claude_cli`), a free Gemini API key from [aistudio.google.com](https://aistudio.google.com), OpenAI, Anthropic API, or local Ollama. The steward and auto-ingest cycles need an LLM — without one, claims pile up as `candidate` and never get validated or deduped. (The opt-in `wiki-absorb` needs one too, if you enable it.)
 
 **Strongly recommended (you'll lose ~80% of the value without these)**
 
 - **Node.js 18+** for [graphify](https://github.com/wolverin0/graphify) and [GitNexus](https://github.com/wolverin0/gitnexus) — these are the cached intelligence layers that make MemoryMaster cheap to query. Without them, every "what does this codebase do?" question burns tokens cold-exploring files the graph already mapped. The `intelligence-first` workflow in `CLAUDE.md` assumes both are installed.
-- **Obsidian 1.6+** with the [Bases](https://help.obsidian.md/Plugins/Bases) core plugin — the wiki engine writes plain Markdown so any editor works, but Obsidian's backlinks, graph view, and Bases dashboards are how you actually navigate `wiki-absorb` output. Without Obsidian, the wiki is just a folder of files.
+- **Obsidian 1.6+** with the [Bases](https://help.obsidian.md/Plugins/Bases) core plugin — **only if you opt into the Markdown wiki** (`MEMORYMASTER_WIKI_ABSORB=1`, off by default). The claims DB + recall is the memory system and needs no editor; if you turn `wiki-absorb` on, Obsidian's backlinks/graph/Bases are how you'd browse that (redundant) view. Not needed for normal use.
 
 **Optional (nice to have)**
 
