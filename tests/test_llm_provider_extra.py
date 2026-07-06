@@ -714,3 +714,41 @@ class TestCallGoogleDispatch:
         # WHY: the file-rotator path is the desktop default; a success on the
         # first labelled key must be returned directly.
         assert lp._call_google("p", "t") == "FILE_OK"
+
+
+def test_purge_claude_cli_scratch_removes_old_keeps_new(tmp_path, monkeypatch):
+    """WHY: _call_claude_cli isolates headless `claude --print` sessions to a
+    scratch cwd so they don't flood the caller's --continue folder (which hit
+    154k files / 12GB in the wild). That isolated pile must still be reclaimable,
+    so the steward purges transcripts older than the cutoff and keeps recent ones."""
+    import os
+    import time
+    from memorymaster.core.llm_provider import purge_claude_cli_scratch
+
+    # Fake HOME so ~/.claude/projects resolves under tmp.
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("MEMORYMASTER_CLAUDE_CLI_CWD", raising=False)
+
+    # A projects folder whose name contains the scratch basename.
+    proj = tmp_path / ".claude" / "projects" / "X--claude_cli_scratch"
+    proj.mkdir(parents=True)
+    old = proj / "old.jsonl"
+    new = proj / "new.jsonl"
+    old.write_text("{}", encoding="utf-8")
+    new.write_text("{}", encoding="utf-8")
+    stale = time.time() - 5 * 86400  # 5 days old
+    os.utime(old, (stale, stale))
+
+    result = purge_claude_cli_scratch(max_age_days=2.0)
+
+    assert result["removed"] == 1
+    assert not old.exists()      # old transcript reclaimed
+    assert new.exists()          # recent transcript kept
+
+
+def test_purge_claude_cli_scratch_never_raises(monkeypatch):
+    """Hygiene helper must swallow all errors — it runs inside the steward cycle."""
+    from memorymaster.core.llm_provider import purge_claude_cli_scratch
+    monkeypatch.setenv("HOME", "/nonexistent/path/that/does/not/exist")
+    assert purge_claude_cli_scratch()["removed"] == 0

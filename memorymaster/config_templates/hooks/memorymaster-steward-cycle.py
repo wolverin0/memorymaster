@@ -64,6 +64,17 @@ try:
 except Exception as e:
     print(f"[MemoryMaster] auto-archive error: {e}", file=sys.stderr)
 
+# Reclaim isolated claude_cli scratch transcripts so they never grow unbounded.
+# _call_claude_cli runs `claude --print` from a scratch cwd; those session
+# transcripts pile up in a separate ~/.claude/projects/ folder — purge the old ones.
+try:
+    from memorymaster.core.llm_provider import purge_claude_cli_scratch
+    _p = purge_claude_cli_scratch()
+    if _p.get("removed"):
+        print(f"[MemoryMaster] purged {_p['removed']} old claude_cli scratch transcripts")
+except Exception as e:
+    print(f"[MemoryMaster] scratch purge error: {e}", file=sys.stderr)
+
 # Wiki layer (Obsidian markdown) — OPT-IN, default OFF (2026-07-06).
 # The claims DB + FTS5 + Qdrant + entity graph + recall IS the scalable "LLM
 # wiki"; the markdown vault is a redundant, non-scaling duplicate that grows

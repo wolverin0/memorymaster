@@ -436,6 +436,43 @@ def _call_claude_cli(prompt: str, text: str) -> str:
     return (result.stdout or "").strip()
 
 
+def purge_claude_cli_scratch(max_age_days: float = 2.0, scratch: str | None = None) -> dict:
+    """Delete old headless-session transcripts from the claude_cli scratch folder.
+
+    ``_call_claude_cli`` runs ``claude --print`` from a scratch cwd so its session
+    transcripts land in ``~/.claude/projects/<sanitized-scratch-path>/`` instead of
+    the caller's ``--continue`` folder. That isolated pile still grows over time;
+    this reclaims it (delete ``*.jsonl`` older than ``max_age_days``). Matched by
+    the scratch dir's basename so a ``MEMORYMASTER_CLAUDE_CLI_CWD`` override still
+    works. Best-effort — never raises; returns ``{"removed": N}``.
+    """
+    import glob
+    import time
+
+    removed = 0
+    try:
+        scratch = scratch or (
+            _env("MEMORYMASTER_CLAUDE_CLI_CWD", "")
+            or os.path.join(os.path.expanduser("~"), ".memorymaster", "claude_cli_scratch")
+        )
+        base = os.path.basename(os.path.normpath(scratch))
+        if not base:
+            return {"removed": 0}
+        projects = os.path.join(os.path.expanduser("~"), ".claude", "projects")
+        cutoff = time.time() - max_age_days * 86400.0
+        for proj_dir in glob.glob(os.path.join(projects, f"*{base}*")):
+            for jf in glob.glob(os.path.join(proj_dir, "*.jsonl")):
+                try:
+                    if os.path.getmtime(jf) < cutoff:
+                        os.remove(jf)
+                        removed += 1
+                except OSError:
+                    pass
+    except Exception:  # noqa: BLE001 - hygiene helper must never break a caller
+        pass
+    return {"removed": removed}
+
+
 # ---------------------------------------------------------------------------
 # Response extractors
 # ---------------------------------------------------------------------------
