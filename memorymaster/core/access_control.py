@@ -17,8 +17,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Iterator, Mapping
 import contextlib
 
 logger = logging.getLogger(__name__)
@@ -30,6 +34,23 @@ class Role(str, Enum):
     ADMIN = "admin"
     WRITER = "writer"
     READER = "reader"
+
+
+class AuthMode(str, Enum):
+    LOCAL_TRUSTED = "local-trusted"
+    TEAM = "team"
+
+
+@dataclass(frozen=True, slots=True)
+class RequestContext:
+    mode: AuthMode
+    principal: str
+    role: Role
+    tenant_id: str | None
+    workspace: str
+    allowed_scopes: tuple[str, ...]
+    allow_sensitive: bool
+    db_target: str
 
 
 # Permissions per role
@@ -82,6 +103,111 @@ def get_role(agent_id: str | None) -> Role:
         logger.debug("get_role: agent_id is None or invalid, returning DEFAULT_ROLE")
         return DEFAULT_ROLE
     return _agent_roles.get(agent_id.lower(), DEFAULT_ROLE)
+
+
+def get_configured_role(agent_id: str | None) -> Role | None:
+    """Return only an explicitly configured role; never the legacy default."""
+    _load_roles()
+    if not agent_id or not isinstance(agent_id, str):
+        return None
+    return _agent_roles.get(agent_id.lower())
+
+
+def _is_postgres_target(db_target: str, env: Mapping[str, str]) -> bool:
+    target = str(db_target or "").strip().lower()
+    backend = str(env.get("MEMORYMASTER_STORE_BACKEND", "")).strip().lower()
+    return target.startswith(("postgres://", "postgresql://")) or backend == "postgres"
+
+
+def _team_value(env: Mapping[str, str], name: str) -> str:
+    value = str(env.get(name, "")).strip()
+    if not value:
+        raise PermissionError(f"Team MCP authorization requires {name}.")
+    return value
+
+
+def _parse_team_scopes(raw: str) -> tuple[str, ...]:
+    scopes = tuple(dict.fromkeys(part.strip() for part in raw.split(",") if part.strip()))
+    if not scopes or "*" in scopes:
+        raise PermissionError("Team MCP authorization requires explicit non-wildcard scopes.")
+    return scopes
+
+
+def resolve_request_context(
+    *,
+    db_target: str = "",
+    workspace: str = "",
+    environ: Mapping[str, str] | None = None,
+) -> RequestContext:
+    """Derive MCP authority from operator configuration, never tool arguments."""
+    env = os.environ if environ is None else environ
+    raw_mode = str(env.get("MEMORYMASTER_MCP_AUTH_MODE", "")).strip().lower()
+    if not raw_mode:
+        if _is_postgres_target(db_target, env):
+            raise PermissionError("Postgres MCP access requires an explicit authorization mode.")
+        raw_mode = AuthMode.LOCAL_TRUSTED.value
+    try:
+        mode = AuthMode(raw_mode)
+    except ValueError as exc:
+        raise PermissionError("MEMORYMASTER_MCP_AUTH_MODE must be local-trusted or team.") from exc
+
+    if mode is AuthMode.LOCAL_TRUSTED:
+        return RequestContext(
+            mode=mode,
+            principal=str(env.get("MEMORYMASTER_MCP_PRINCIPAL", "")).strip() or "mcp-session",
+            role=Role.ADMIN,
+            tenant_id=None,
+            workspace=str(workspace or "").strip(),
+            allowed_scopes=(),
+            allow_sensitive=True,
+            db_target=str(db_target or "").strip(),
+        )
+
+    principal = _team_value(env, "MEMORYMASTER_MCP_PRINCIPAL")
+    role = get_configured_role(principal)
+    if role is None:
+        raise PermissionError("Team MCP principal has no explicitly configured role.")
+    return RequestContext(
+        mode=mode,
+        principal=principal,
+        role=role,
+        tenant_id=_team_value(env, "MEMORYMASTER_MCP_TENANT_ID"),
+        workspace=_team_value(env, "MEMORYMASTER_MCP_WORKSPACE"),
+        allowed_scopes=_parse_team_scopes(_team_value(env, "MEMORYMASTER_MCP_ALLOWED_SCOPES")),
+        allow_sensitive=str(env.get("MEMORYMASTER_MCP_ALLOW_SENSITIVE", "")).strip().lower()
+        in {"1", "true", "yes", "on"},
+        db_target=_team_value(env, "MEMORYMASTER_MCP_DB"),
+    )
+
+
+_request_context: ContextVar[RequestContext | None] = ContextVar(
+    "memorymaster_request_context",
+    default=None,
+)
+
+
+@contextmanager
+def bind_request_context(context: RequestContext) -> Iterator[RequestContext]:
+    token = _request_context.set(context)
+    try:
+        yield context
+    finally:
+        _request_context.reset(token)
+
+
+def current_request_context(*, required: bool = False) -> RequestContext | None:
+    context = _request_context.get()
+    if required and context is None:
+        raise PermissionError("No authenticated MCP request context is bound.")
+    return context
+
+
+def authorize_context_action(context: RequestContext, action: str) -> None:
+    if action not in ROLE_PERMISSIONS.get(context.role, set()):
+        raise PermissionError(
+            f"MCP principal '{context.principal}' with role '{context.role.value}' "
+            f"cannot perform '{action}'."
+        )
 
 
 def check_permission(agent_id: str | None, action: str) -> bool:
