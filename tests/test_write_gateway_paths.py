@@ -44,10 +44,6 @@ def _claim_and_citation_text(db_path: Path) -> str:
     return "\n".join(str(value) for row in [*claims, *citations] for value in row if value is not None)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="MM-SEC-04: compact-summary output writes directly to the store without sensitivity filtering",
-)
 def test_compact_summary_output_never_persists_secret_shaped_llm_content(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

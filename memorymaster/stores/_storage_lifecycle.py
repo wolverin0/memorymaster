@@ -24,6 +24,7 @@ from memorymaster.core.models import (
     validate_event_type,
     validate_transition_event_type,
 )
+from memorymaster.core.security import sanitize_event_input
 
 from memorymaster.stores._storage_shared import (
     EVENT_HASH_ALGO,
@@ -518,13 +519,24 @@ class _LifecycleMixin:
         details: str | None = None,
         payload: dict[str, object] | None = None,
     ) -> None:
+        now = utc_now()
+        sanitized = sanitize_event_input(
+            event_type=event_type,
+            from_status=from_status,
+            to_status=to_status,
+            details=details,
+            payload=payload,
+            created_at=now,
+        )
+        details = sanitized.details
+        if sanitized.payload is not None and not isinstance(sanitized.payload, dict):
+            raise ValueError("Event payload must be a JSON object.")
         validated_event_type = validate_event_type(event_type)
         validated_payload = validate_event_payload(
             validated_event_type,
-            payload,
+            sanitized.payload,
             details=details,
         )
-        now = utc_now()
         payload_json = json.dumps(validated_payload) if validated_payload is not None else None
         with self.connect() as conn:
             self._insert_event_row(

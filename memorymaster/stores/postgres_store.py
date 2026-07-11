@@ -27,6 +27,13 @@ from memorymaster.core.models import (
     validate_transition_event_type,
 )
 from memorymaster.core.retry import connect_with_retry
+from memorymaster.core.security import (
+    sanitize_claim_input,
+    sanitize_claim_structure_input,
+    sanitize_event_input,
+    sanitize_persisted_text,
+    validate_persisted_metadata,
+)
 from memorymaster.stores._storage_shared import (
     ConcurrentModificationError,
     EVENT_HASH_ALGO,
@@ -164,6 +171,15 @@ class PostgresStore(SQLiteStore):
         if any("*" in scope for scope in self.allowed_scopes):
             raise PermissionError("Postgres team scopes cannot contain wildcards.")
         return self.tenant_id, self.principal, tuple(sorted(self.allowed_scopes))
+
+    def _validate_bound_persistence_identity(self) -> None:
+        validate_persisted_metadata(
+            {
+                "bound_tenant_id": self.tenant_id,
+                "bound_principal": self.principal,
+                "bound_scope": self.allowed_scopes,
+            }
+        )
 
     @staticmethod
     def _cleanup_failed_connection(conn) -> None:
@@ -1054,6 +1070,7 @@ class PostgresStore(SQLiteStore):
                 "Postgres application connections require authenticated team authority. "
                 "Use SQLite for local trusted mode or init_db() with a dedicated migrator DSN."
             )
+        self._validate_bound_persistence_identity()
         authority = self._require_team_authority()
         conn = self._open_connection()
         try:
@@ -1527,9 +1544,22 @@ class PostgresStore(SQLiteStore):
         payload: dict[str, object] | None,
         created_at: datetime,
     ) -> int:
+        sanitized = sanitize_event_input(
+            event_type=event_type,
+            from_status=from_status,
+            to_status=to_status,
+            details=details,
+            payload=payload,
+            created_at=created_at,
+        )
+        details = sanitized.details
+        if sanitized.payload is not None and not isinstance(sanitized.payload, dict):
+            raise ValueError("Event payload must be a JSON object.")
+        payload = sanitized.payload
         _, _, Jsonb = self._load_psycopg()
         with conn.cursor() as cur:
             tenant_id = self._event_tenant_for_claim(cur, claim_id)
+            validate_persisted_metadata({"effective_tenant_id": tenant_id})
             prev_event_hash, hash_algo, tenant_prev_event_hash = self._event_chain_head(
                 cur,
                 tenant_id,
@@ -1651,15 +1681,56 @@ class PostgresStore(SQLiteStore):
         visibility: str = "public",
         holder: str | None = None,
     ) -> Claim:
+        if not citations:
+            raise ValueError("At least one citation is required.")
+        citation_inputs = [
+            CitationInput(
+                source=cite.get("source", ""),
+                locator=cite.get("locator"),
+                excerpt=cite.get("excerpt"),
+            )
+            if isinstance(cite, dict)
+            else CitationInput(cite.source, cite.locator, cite.excerpt)
+            for cite in citations
+        ]
+        sanitized = sanitize_claim_input(
+            text=text,
+            object_value=object_value,
+            citations=citation_inputs,
+            subject=subject,
+            predicate=predicate,
+            idempotency_key=idempotency_key,
+            claim_type=claim_type,
+            scope=scope,
+            volatility=volatility,
+            source_agent=source_agent,
+            visibility=visibility,
+            holder=holder,
+            confidence=confidence,
+            event_time=event_time,
+            valid_from=valid_from,
+            valid_until=valid_until,
+            tenant_id=tenant_id,
+        )
+        self._validate_bound_persistence_identity()
+        text = sanitized.text
+        object_value = sanitized.object_value
+        citations = sanitized.citations
+        subject = sanitized.subject
+        predicate = sanitized.predicate
         visibility, source_agent = normalize_claim_identity(
             visibility,
             source_agent,
             allow_sensitive=not self.require_tenant,
         )
-        if not citations:
-            raise ValueError("At least one citation is required.")
         normalized_idempotency_key = (idempotency_key or "").strip() or None
         normalized_tenant_id = self._tenant_for_operation(tenant_id)
+        validate_persisted_metadata(
+            {
+                "effective_source_agent": source_agent,
+                "effective_tenant_id": normalized_tenant_id,
+            }
+        )
         now = utc_now()
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(
@@ -1764,6 +1835,22 @@ class PostgresStore(SQLiteStore):
                 payload=ingest_payload,
                 created_at=now,
             )
+            if sanitized.is_sensitive:
+                policy_payload = validate_event_payload(
+                    "policy_decision",
+                    {"findings": sanitized.findings},
+                    details="sensitive_redaction_applied",
+                )
+                self._insert_event_row(
+                    conn,
+                    claim_id=claim_id,
+                    event_type="policy_decision",
+                    from_status="candidate",
+                    to_status="candidate",
+                    details="sensitive_redaction_applied",
+                    payload=policy_payload,
+                    created_at=now,
+                )
 
         claim = self.get_claim(claim_id)
         if claim is None:
@@ -2001,17 +2088,22 @@ class PostgresStore(SQLiteStore):
         return {claim_id: self.count_citations(claim_id) for claim_id in claim_ids}
 
     def set_normalized_text(self, claim_id: int, normalized_text: str) -> None:
+        sanitized_text, _ = sanitize_persisted_text(normalized_text)
         now = utc_now()
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(
                 "UPDATE claims SET normalized_text = %s, updated_at = %s WHERE id = %s",
-                (normalized_text, now, claim_id),
+                (sanitized_text, now, claim_id),
             )
 
     def set_normalized_texts_batch(self, updates: dict[int, str]) -> None:
         if not updates:
             return
-        for claim_id, normalized_text in updates.items():
+        sanitized_updates = {
+            claim_id: sanitize_persisted_text(normalized_text)[0]
+            for claim_id, normalized_text in updates.items()
+        }
+        for claim_id, normalized_text in sanitized_updates.items():
             self.set_normalized_text(claim_id, normalized_text)
 
     def redact_claim_payload(
@@ -2123,6 +2215,12 @@ class PostgresStore(SQLiteStore):
         predicate: str | None = None,
         object_value: str | None = None,
     ) -> None:
+        sanitized = sanitize_claim_structure_input(
+            claim_type=claim_type,
+            subject=subject,
+            predicate=predicate,
+            object_value=object_value,
+        )
         now = utc_now()
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(
@@ -2135,7 +2233,14 @@ class PostgresStore(SQLiteStore):
                         updated_at = %s
                     WHERE id = %s
                     """,
-                (claim_type, subject, predicate, object_value, now, claim_id),
+                (
+                    sanitized.claim_type,
+                    sanitized.subject,
+                    sanitized.predicate,
+                    sanitized.object_value,
+                    now,
+                    claim_id,
+                ),
             )
 
     def set_confidence(self, claim_id: int, confidence: float, details: str | None = None) -> None:
@@ -2861,13 +2966,25 @@ class PostgresStore(SQLiteStore):
         details: str | None = None,
         payload: dict[str, object] | None = None,
     ) -> None:
+        self._validate_bound_persistence_identity()
+        now = utc_now()
+        sanitized = sanitize_event_input(
+            event_type=event_type,
+            from_status=from_status,
+            to_status=to_status,
+            details=details,
+            payload=payload,
+            created_at=now,
+        )
+        details = sanitized.details
+        if sanitized.payload is not None and not isinstance(sanitized.payload, dict):
+            raise ValueError("Event payload must be a JSON object.")
         validated_event_type = validate_event_type(event_type)
         validated_payload = validate_event_payload(
             validated_event_type,
-            payload,
+            sanitized.payload,
             details=details,
         )
-        now = utc_now()
         with self.connect() as conn:
             self._insert_event_row(
                 conn,

@@ -12,6 +12,7 @@ import logging
 import sqlite3
 from importlib.resources import files
 
+from memorymaster.core.security import sanitize_event_input, validate_persisted_metadata
 
 from memorymaster.stores._storage_shared import (
     EVENT_HASH_ALGO,
@@ -987,6 +988,24 @@ class _SchemaMixin:
         payload_json: str | None,
         created_at: str,
     ) -> int:
+        try:
+            payload = json.loads(payload_json) if payload_json is not None else None
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("Event payload_json must contain valid JSON.") from exc
+        sanitized = sanitize_event_input(
+            event_type=event_type,
+            from_status=from_status,
+            to_status=to_status,
+            details=details,
+            payload=payload,
+            created_at=created_at,
+        )
+        details = sanitized.details
+        payload_json = (
+            json.dumps(sanitized.payload, sort_keys=True)
+            if payload_json is not None
+            else None
+        )
         tenant_id: str | None = None
         if claim_id is not None:
             try:
@@ -998,6 +1017,7 @@ class _SchemaMixin:
                 claim_row = None
             if claim_row is not None:
                 tenant_id = claim_row["tenant_id"]
+        validate_persisted_metadata({"effective_tenant_id": tenant_id})
         try:
             prev_row = conn.execute(
                 "SELECT event_hash FROM events WHERE event_hash IS NOT NULL ORDER BY id DESC LIMIT 1"

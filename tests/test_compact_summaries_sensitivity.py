@@ -22,12 +22,17 @@ def store(tmp_path):
 
 def _create_archived_claim(store, text: str):
     claim = store.create_claim(
-        text=text,
+        text="Test-only placeholder before injecting a legacy row.",
         citations=[CitationInput(source="test")],
         subject="legacy-secret",
         predicate="contains",
         object_value="synthetic test fixture",
     )
+    # Explicitly simulate a pre-gateway legacy row. Going through create_claim
+    # here would sanitize the fixture and make the read-time egress test vacuous.
+    with store.connect() as conn:
+        conn.execute("UPDATE claims SET text = ? WHERE id = ?", (text, claim.id))
+        conn.commit()
     transition_claim(store, claim.id, to_status="confirmed", reason="test", event_type="transition")
     transition_claim(store, claim.id, to_status="stale", reason="test", event_type="decay")
     transition_claim(store, claim.id, to_status="archived", reason="test", event_type="compactor")

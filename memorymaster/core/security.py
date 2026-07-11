@@ -164,6 +164,22 @@ class SanitizedClaimInput:
     predicate: str | None = None
 
 
+@dataclass(slots=True)
+class SanitizedClaimStructureInput:
+    claim_type: str | None
+    subject: str | None
+    predicate: str | None
+    object_value: str | None
+    findings: list[str]
+
+
+@dataclass(slots=True)
+class SanitizedEventInput:
+    details: str | None
+    payload: object
+    findings: list[str]
+
+
 class SensitiveMetadataError(ValueError):
     """Fail-closed metadata rejection that never echoes the supplied value."""
 
@@ -502,6 +518,114 @@ def sanitize_persisted_text(text: str) -> tuple[str, list[str]]:
     return redacted, findings
 
 
+def _structured_context_findings(value: str, context_keys: tuple[str, ...]) -> list[str]:
+    independent_findings = scan_persisted_value(value)
+    findings: list[str] = []
+    for key in context_keys:
+        for finding in scan_text_for_findings(f"{key}={value}"):
+            if finding not in independent_findings and finding not in findings:
+                findings.append(finding)
+    return findings
+
+
+def _sanitize_persisted_json(
+    value: object,
+    context_keys: tuple[str, ...],
+) -> tuple[object, list[str]]:
+    if isinstance(value, str):
+        sanitized, findings = sanitize_persisted_text(value)
+        structured_findings = _structured_context_findings(value, context_keys)
+        if structured_findings:
+            sanitized = "[REDACTED:structured_secret]"
+            findings.extend(structured_findings)
+        return sanitized, sorted(set(findings))
+    if isinstance(value, (int, float, bool)):
+        structured_findings = _structured_context_findings(str(value), context_keys)
+        if structured_findings:
+            return "[REDACTED:structured_secret]", structured_findings
+        return value, []
+    if isinstance(value, Mapping):
+        sanitized: dict[str, object] = {}
+        findings: list[str] = []
+        for key, nested in value.items():
+            if not isinstance(key, str):
+                raise ValueError("Persisted JSON object keys must be strings.")
+            validate_persisted_metadata({"payload_json_key": key})
+            sanitized_value, nested_findings = _sanitize_persisted_json(
+                nested,
+                (*context_keys, key),
+            )
+            sanitized[key] = sanitized_value
+            findings.extend(nested_findings)
+        return sanitized, sorted(set(findings))
+    if isinstance(value, (list, tuple)):
+        sanitized_items: list[object] = []
+        findings = []
+        for nested in value:
+            sanitized_value, nested_findings = _sanitize_persisted_json(
+                nested,
+                context_keys,
+            )
+            sanitized_items.append(sanitized_value)
+            findings.extend(nested_findings)
+        return sanitized_items, sorted(set(findings))
+    return value, []
+
+
+def sanitize_persisted_json(value: object) -> tuple[object, list[str]]:
+    """Return a recursively sanitized JSON-compatible copy of ``value``."""
+    return _sanitize_persisted_json(value, ())
+
+
+def sanitize_claim_structure_input(
+    *,
+    claim_type: str | None,
+    subject: str | None,
+    predicate: str | None,
+    object_value: str | None,
+) -> SanitizedClaimStructureInput:
+    validate_persisted_metadata({"claim_type": claim_type})
+    sanitized_subject, subject_findings = _sanitize_optional_claim_text(subject)
+    sanitized_predicate, predicate_findings = _sanitize_optional_claim_text(predicate)
+    sanitized_object, object_findings = _sanitize_optional_claim_text(object_value)
+    findings = sorted(set(subject_findings + predicate_findings + object_findings))
+    return SanitizedClaimStructureInput(
+        claim_type=claim_type,
+        subject=sanitized_subject,
+        predicate=sanitized_predicate,
+        object_value=sanitized_object,
+        findings=findings,
+    )
+
+
+def sanitize_event_input(
+    *,
+    event_type: str,
+    from_status: str | None,
+    to_status: str | None,
+    details: str | None,
+    payload: object,
+    created_at: object,
+    tenant_id: str | None = None,
+) -> SanitizedEventInput:
+    validate_persisted_metadata(
+        {
+            "event_type": event_type,
+            "from_status": from_status,
+            "to_status": to_status,
+            "created_at": created_at,
+            "tenant_id": tenant_id,
+        }
+    )
+    sanitized_details, detail_findings = _sanitize_optional_claim_text(details)
+    sanitized_payload, payload_findings = sanitize_persisted_json(payload)
+    return SanitizedEventInput(
+        details=sanitized_details,
+        payload=sanitized_payload,
+        findings=sorted(set(detail_findings + payload_findings)),
+    )
+
+
 def _get_fernet():
     key = os.getenv(_ENCRYPTION_ENV_VAR)
     if not key:
@@ -561,6 +685,7 @@ def sanitize_claim_input(
     valid_from: str | None = None,
     valid_until: str | None = None,
     intake_batch_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> SanitizedClaimInput:
     citation_metadata = {
         "citation_source": [citation.source for citation in citations],
@@ -579,6 +704,7 @@ def sanitize_claim_input(
         "valid_from": valid_from,
         "valid_until": valid_until,
         "intake_batch_id": intake_batch_id,
+        "tenant_id": tenant_id,
         **citation_metadata,
     })
     redacted_text, findings = sanitize_persisted_text(text)

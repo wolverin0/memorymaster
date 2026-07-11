@@ -16,6 +16,12 @@ from memorymaster.core.models import (
     Claim,
     validate_event_payload,
 )
+from memorymaster.core.security import (
+    sanitize_claim_input,
+    sanitize_claim_structure_input,
+    sanitize_persisted_text,
+    validate_persisted_metadata,
+)
 from memorymaster.stores._storage_shared import (
     utc_now,
 )
@@ -94,9 +100,49 @@ class _WriteClaimsMixin:
     ) -> Claim:
         if not citations:
             raise ValueError("At least one citation is required.")
+        citation_inputs = [
+            CitationInput(
+                source=cite.get("source", ""),
+                locator=cite.get("locator"),
+                excerpt=cite.get("excerpt"),
+            )
+            if isinstance(cite, dict)
+            else CitationInput(cite.source, cite.locator, cite.excerpt)
+            for cite in citations
+        ]
+        sanitized = sanitize_claim_input(
+            text=text,
+            object_value=object_value,
+            citations=citation_inputs,
+            subject=subject,
+            predicate=predicate,
+            idempotency_key=idempotency_key,
+            claim_type=claim_type,
+            scope=scope,
+            volatility=volatility,
+            source_agent=source_agent,
+            visibility=visibility,
+            holder=holder,
+            confidence=confidence,
+            event_time=event_time,
+            valid_from=valid_from,
+            valid_until=valid_until,
+            tenant_id=tenant_id,
+        )
+        text = sanitized.text
+        object_value = sanitized.object_value
+        citations = sanitized.citations
+        subject = sanitized.subject
+        predicate = sanitized.predicate
         visibility, source_agent = normalize_claim_identity(visibility, source_agent)
         normalized_idempotency_key = (idempotency_key or "").strip() or None
         normalized_tenant_id = (tenant_id or "").strip() or None
+        validate_persisted_metadata(
+            {
+                "effective_source_agent": source_agent,
+                "effective_tenant_id": normalized_tenant_id,
+            }
+        )
         now = utc_now()
         with self.connect() as conn:
             existing = self._check_idempotency(
@@ -191,21 +237,12 @@ class _WriteClaimsMixin:
                 # Column may not exist in legacy schemas; skip gracefully.
                 pass
             for cite in citations:
-                # Accept both CitationInput objects and plain dicts
-                if isinstance(cite, dict):
-                    _src = cite.get("source", "")
-                    _loc = cite.get("locator")
-                    _exc = cite.get("excerpt")
-                else:
-                    _src = cite.source
-                    _loc = cite.locator
-                    _exc = cite.excerpt
                 conn.execute(
                     """
                     INSERT INTO citations (claim_id, source, locator, excerpt, created_at)
                     VALUES (?, ?, ?, ?, ?)
                     """,
-                    (claim_id, _src, _loc, _exc, now),
+                    (claim_id, cite.source, cite.locator, cite.excerpt, now),
                 )
             ingest_payload = validate_event_payload(
                 "ingest",
@@ -222,6 +259,22 @@ class _WriteClaimsMixin:
                 payload_json=json.dumps(ingest_payload),
                 created_at=now,
             )
+            if sanitized.is_sensitive:
+                policy_payload = validate_event_payload(
+                    "policy_decision",
+                    {"findings": sanitized.findings},
+                    details="sensitive_redaction_applied",
+                )
+                self._insert_event_row(
+                    conn,
+                    claim_id=claim_id,
+                    event_type="policy_decision",
+                    from_status="candidate",
+                    to_status="candidate",
+                    details="sensitive_redaction_applied",
+                    payload_json=json.dumps(policy_payload),
+                    created_at=now,
+                )
             conn.commit()
         claim = self.get_claim(claim_id)
         if claim is None:
@@ -230,11 +283,12 @@ class _WriteClaimsMixin:
 
 
     def set_normalized_text(self, claim_id: int, normalized_text: str) -> None:
+        sanitized_text, _ = sanitize_persisted_text(normalized_text)
         now = utc_now()
         with self.connect() as conn:
             conn.execute(
                 "UPDATE claims SET normalized_text = ?, updated_at = ? WHERE id = ?",
-                (normalized_text, now, claim_id),
+                (sanitized_text, now, claim_id),
             )
             conn.commit()
 
@@ -247,9 +301,13 @@ class _WriteClaimsMixin:
         """
         if not updates:
             return
+        sanitized_updates = {
+            claim_id: sanitize_persisted_text(normalized_text)[0]
+            for claim_id, normalized_text in updates.items()
+        }
         now = utc_now()
         with self.connect() as conn:
-            for claim_id, normalized_text in updates.items():
+            for claim_id, normalized_text in sanitized_updates.items():
                 conn.execute(
                     "UPDATE claims SET normalized_text = ?, updated_at = ? WHERE id = ?",
                     (normalized_text, now, claim_id),
@@ -367,6 +425,12 @@ class _WriteClaimsMixin:
         predicate: str | None = None,
         object_value: str | None = None,
     ) -> None:
+        sanitized = sanitize_claim_structure_input(
+            claim_type=claim_type,
+            subject=subject,
+            predicate=predicate,
+            object_value=object_value,
+        )
         now = utc_now()
         with self.connect() as conn:
             conn.execute(
@@ -379,7 +443,14 @@ class _WriteClaimsMixin:
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (claim_type, subject, predicate, object_value, now, claim_id),
+                (
+                    sanitized.claim_type,
+                    sanitized.subject,
+                    sanitized.predicate,
+                    sanitized.object_value,
+                    now,
+                    claim_id,
+                ),
             )
             conn.commit()
 
