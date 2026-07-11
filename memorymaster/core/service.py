@@ -19,7 +19,12 @@ from memorymaster.core.policy import select_revalidation_candidates
 from memorymaster.recall.context_optimizer import ContextResult, pack_context
 from memorymaster.core.config import get_config
 from memorymaster.recall.retrieval import VectorSearchHook, _tier_bonus, rank_claim_rows
-from memorymaster.core.security import is_sensitive_claim, resolve_allow_sensitive_access, sanitize_claim_input
+from memorymaster.core.security import (
+    is_sensitive_claim,
+    resolve_allow_sensitive_access,
+    sanitize_claim_input,
+    validate_persisted_metadata,
+)
 from memorymaster.core.intake_policy import (
     IntakePolicyConfig,
     IntakeRejected,
@@ -530,11 +535,45 @@ class MemoryService:
     ) -> Claim:
         if not text.strip():
             raise ValueError("Claim text cannot be empty.")
+        if not citations:
+            citations = [CitationInput(source="mcp-session", locator=scope or "project")]
+        sanitized = sanitize_claim_input(
+            text=text.strip(),
+            object_value=object_value,
+            citations=citations,
+            subject=subject,
+            predicate=predicate,
+            idempotency_key=idempotency_key,
+            claim_type=claim_type,
+            scope=scope,
+            volatility=volatility,
+            source_agent=source_agent,
+            visibility=visibility,
+            holder=holder,
+            confidence=confidence,
+            event_time=event_time,
+            valid_from=valid_from,
+            valid_until=valid_until,
+            intake_batch_id=intake_batch_id,
+        )
+        if not sanitized.citations:
+            raise ValueError("At least one citation is required.")
+        text = sanitized.text
+        object_value = sanitized.object_value
+        subject = sanitized.subject
+        predicate = sanitized.predicate
+        citations = sanitized.citations
         visibility, source_agent = self._prepare_ingest_identity(
             scope,
             visibility,
             source_agent,
             require_source_agent=require_source_agent,
+        )
+        validate_persisted_metadata(
+            {
+                "effective_source_agent": source_agent,
+                "tenant_id": self.tenant_id,
+            }
         )
         # Bitemporal write-time guard: reject malformed ISO-8601 or an inverted
         # validity interval at the boundary, before any dedup/sanitize work, so
@@ -556,8 +595,6 @@ class MemoryService:
             _vu = _parse_iso_strict("valid_until", valid_until)
             if _vu is not None and _vu <= datetime.now(timezone.utc):
                 valid_from = valid_until
-        if not citations:
-            citations = [CitationInput(source="mcp-session", locator=scope or "project")]
         # Normalize claim_type to lowercase so routing hints like "DECISION"
         # from the classify hook don't create a separate type from "decision".
         if claim_type:
@@ -595,19 +632,6 @@ class MemoryService:
         # Set content hash as idempotency key if none provided
         if normalized_idempotency_key is None:
             normalized_idempotency_key = content_hash
-        sanitized = sanitize_claim_input(
-            text=text.strip(),
-            object_value=object_value,
-            citations=citations,
-            subject=subject,
-            predicate=predicate,
-        )
-        if not sanitized.citations:
-            raise ValueError("At least one citation is required.")
-        # Use the sanitized subject/predicate everywhere downstream so a secret
-        # placed in those fields is redacted at rest, not just at display time.
-        subject = sanitized.subject
-        predicate = sanitized.predicate
         # Intake policy (P3) — runs AFTER the sacred sensitivity filter above and
         # BEFORE create_claim. Additive admission control: may reject more or
         # default-tag attribution, never weakens the filter or flips a prior
@@ -649,6 +673,12 @@ class MemoryService:
             visibility,
             source_agent,
             allow_sensitive=not getattr(self, "require_tenant", False),
+        )
+        validate_persisted_metadata(
+            {
+                "effective_source_agent": source_agent,
+                "tenant_id": self.tenant_id,
+            }
         )
         # Resolve subject → canonical entity (GBrain-inspired entity registry)
         # and mine text for pattern-based entities (#127 Wave 3).

@@ -164,6 +164,16 @@ class SanitizedClaimInput:
     predicate: str | None = None
 
 
+class SensitiveMetadataError(ValueError):
+    """Fail-closed metadata rejection that never echoes the supplied value."""
+
+    def __init__(self, field: str, findings: list[str]) -> None:
+        self.field = field
+        self.findings = tuple(sorted(set(findings)))
+        labels = ", ".join(self.findings)
+        super().__init__(f"{field} contains sensitive data ({labels})")
+
+
 def _as_bool(value: object, *, field: str) -> bool:
     if isinstance(value, bool):
         return value
@@ -450,6 +460,48 @@ def scan_text_for_findings(text: str) -> list[str]:
     return findings
 
 
+def _iter_persisted_strings(value: object) -> Iterator[str]:
+    if isinstance(value, str):
+        yield value
+        return
+    if isinstance(value, Mapping):
+        for key, nested in value.items():
+            if isinstance(key, str):
+                yield key
+            yield from _iter_persisted_strings(nested)
+        return
+    if isinstance(value, (list, tuple, set, frozenset)):
+        for nested in value:
+            yield from _iter_persisted_strings(nested)
+
+
+def scan_persisted_value(value: object) -> list[str]:
+    """Scan every string leaf/key in a persisted scalar or JSON-like value."""
+    findings: list[str] = []
+    for text in _iter_persisted_strings(value):
+        for finding in scan_text_for_findings(text):
+            if finding not in findings:
+                findings.append(finding)
+    return findings
+
+
+def validate_persisted_metadata(fields: Mapping[str, object]) -> None:
+    """Reject secret-shaped identifiers/provenance before any durable write."""
+    for field, value in fields.items():
+        findings = scan_persisted_value(value)
+        if findings:
+            raise SensitiveMetadataError(field, findings)
+
+
+def sanitize_persisted_text(text: str) -> tuple[str, list[str]]:
+    """Redact literal secrets and neutralize encoded secrets in content fields."""
+    redacted, literal_findings = _redact(text)
+    findings = sorted(set(literal_findings + scan_text_for_findings(text)))
+    if findings and scan_text_for_findings(redacted):
+        redacted = "[REDACTED:encoded_secret]"
+    return redacted, findings
+
+
 def _get_fernet():
     key = os.getenv(_ENCRYPTION_ENV_VAR)
     if not key:
@@ -472,6 +524,24 @@ def _encrypt_payload(payload: dict[str, object]) -> str | None:
     return base64.urlsafe_b64encode(fernet.encrypt(raw)).decode("utf-8")
 
 
+def _sanitize_optional_claim_text(value: str | None) -> tuple[str | None, list[str]]:
+    if value is None:
+        return None, []
+    return sanitize_persisted_text(value)
+
+
+def _sanitize_claim_citations(
+    citations: list[CitationInput],
+) -> tuple[list[CitationInput], list[str]]:
+    sanitized: list[CitationInput] = []
+    findings: list[str] = []
+    for citation in citations:
+        excerpt, excerpt_findings = _sanitize_optional_claim_text(citation.excerpt)
+        findings.extend(excerpt_findings)
+        sanitized.append(CitationInput(citation.source, citation.locator, excerpt))
+    return sanitized, findings
+
+
 def sanitize_claim_input(
     *,
     text: str,
@@ -479,50 +549,44 @@ def sanitize_claim_input(
     citations: list[CitationInput],
     subject: str | None = None,
     predicate: str | None = None,
+    idempotency_key: str | None = None,
+    claim_type: str | None = None,
+    scope: str | None = None,
+    volatility: str | None = None,
+    source_agent: str | None = None,
+    visibility: str | None = None,
+    holder: str | None = None,
+    confidence: object = None,
+    event_time: str | None = None,
+    valid_from: str | None = None,
+    valid_until: str | None = None,
+    intake_batch_id: str | None = None,
 ) -> SanitizedClaimInput:
-    redacted_text, findings = _redact(text)
-    redacted_object = object_value
-    object_findings: list[str] = []
-    if object_value:
-        redacted_object, object_findings = _redact(object_value)
-        findings.extend(object_findings)
-
-    # subject/predicate are structured-claim fields that reach the store
-    # alongside text/object_value. They are exposed MCP ingest parameters, so a
-    # secret placed there must be caught by the ingest filter — the last line of
-    # defense — not only at display time. (audit: ingest-subject-skips-filter)
-    redacted_subject = subject
-    if subject:
-        redacted_subject, subject_findings = _redact(subject)
-        findings.extend(subject_findings)
-    redacted_predicate = predicate
-    if predicate:
-        redacted_predicate, predicate_findings = _redact(predicate)
-        findings.extend(predicate_findings)
-
-    sanitized_citations: list[CitationInput] = []
-    citation_findings: list[str] = []
-    for cite in citations:
-        excerpt = cite.excerpt
-        if excerpt:
-            excerpt, c_findings = _redact(excerpt)
-            citation_findings.extend(c_findings)
-        sanitized_citations.append(CitationInput(source=cite.source, locator=cite.locator, excerpt=excerpt))
-    findings.extend(citation_findings)
-
-    # Encoded-secret sweep (audit: ingest-encoded-secret): a credential hidden
-    # behind base64/hex/confusable encoding survives the literal `_redact`
-    # substitution above (the regexes don't match the encoded bytes). Scan the
-    # decoded variants of every inbound field so the claim is flagged sensitive
-    # (and thus encrypted-at-rest / hidden from recall) even when the raw text
-    # we persist still carries the encoded form.
-    for raw_field in (text, object_value, subject, predicate):
-        if raw_field:
-            findings.extend(scan_text_for_findings(raw_field))
-    for cite in citations:
-        if cite.excerpt:
-            findings.extend(scan_text_for_findings(cite.excerpt))
-
+    citation_metadata = {
+        "citation_source": [citation.source for citation in citations],
+        "citation_locator": [citation.locator for citation in citations],
+    }
+    validate_persisted_metadata({
+        "idempotency_key": idempotency_key,
+        "claim_type": claim_type,
+        "scope": scope,
+        "volatility": volatility,
+        "source_agent": source_agent,
+        "visibility": visibility,
+        "holder": holder,
+        "confidence": confidence,
+        "event_time": event_time,
+        "valid_from": valid_from,
+        "valid_until": valid_until,
+        "intake_batch_id": intake_batch_id,
+        **citation_metadata,
+    })
+    redacted_text, findings = sanitize_persisted_text(text)
+    redacted_object, object_findings = _sanitize_optional_claim_text(object_value)
+    redacted_subject, subject_findings = _sanitize_optional_claim_text(subject)
+    redacted_predicate, predicate_findings = _sanitize_optional_claim_text(predicate)
+    sanitized_citations, citation_findings = _sanitize_claim_citations(citations)
+    findings.extend(object_findings + subject_findings + predicate_findings + citation_findings)
     dedup_findings = sorted(set(findings))
     is_sensitive = len(dedup_findings) > 0
     encrypted_payload = _encrypt_payload(
