@@ -7,6 +7,10 @@ EXCEPTION
 END
 $$;
 
+-- Tenant row-security policy is intentionally versioned in migration 0008.
+-- Several protected tables are themselves created by migrations, so applying
+-- the complete policy set here would run before those relations exist.
+
 CREATE TABLE IF NOT EXISTS claims (
     id BIGSERIAL PRIMARY KEY,
     text TEXT NOT NULL,
