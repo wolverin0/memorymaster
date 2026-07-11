@@ -1,0 +1,75 @@
+{
+  "audit_head": "9c2e2bf4b10c9acbbb5ed5832af730b3b3ca851a",
+  "audit_scope": "entire repository",
+  "stack": {
+    "language": "Python 3.10+",
+    "mcp": "FastMCP stdio",
+    "dashboard": "BaseHTTPRequestHandler",
+    "primary_database": "SQLite FTS5 with WAL",
+    "optional_databases": ["PostgreSQL", "Qdrant", "Kuzu"],
+    "llm_providers": ["Google", "OpenAI", "Anthropic", "Ollama"]
+  },
+  "counts": {
+    "http_routes": 28,
+    "mcp_tools": 36,
+    "cli_parser_registrations": 106,
+    "db_migrations": 6,
+    "supabase_tables": 0,
+    "environment_controls": 151,
+    "binary_feature_flags": 36,
+    "logical_tables": 32,
+    "production_python_files": 272,
+    "production_nonblank_loc": 50099,
+    "test_python_files": 270,
+    "test_nonblank_loc": 47441,
+    "deployment_assets": 10
+  },
+  "source_commands": {
+    "http_routes": "AST/read of dashboard.py route map, dynamic lineage parser, and POST dispatch",
+    "mcp_tools": "rg -n --glob '*.py' '@mcp\\.tool' memorymaster",
+    "cli_parser_registrations": "rg -n --glob '*.py' '\\.add_parser\\(' memorymaster",
+    "migrations": "memorymaster/stores/migrations/0*.py excluding runner.py",
+    "supabase_tables": "repository dependency/schema scan",
+    "environment_controls": "unique concrete MEMORYMASTER_* tokens in memorymaster/ and scripts/",
+    "feature_flags": "semantic review of explicit binary runtime toggles",
+    "loc": "Python file line inventory excluding virtualenvs, caches, and tooling directories"
+  },
+  "completeness": {
+    "http_routes": "28/28",
+    "mcp_tools": "36/36",
+    "db_migrations": "6/6",
+    "supabase_tables": "0/0",
+    "environment_controls": "151/151",
+    "feature_flags": "36/36"
+  },
+  "gitnexus": {
+    "repo": "memorymaster-remediation-20260710",
+    "indexed_head": "9c2e2bf4b10c9acbbb5ed5832af730b3b3ca851a",
+    "files": 742,
+    "symbols": 9977,
+    "processes": 300,
+    "embeddings": 7517,
+    "fresh": true
+  },
+  "commands_and_assets": {
+    "entrypoints": [
+      "memorymaster",
+      "memorymaster-mcp",
+      "memorymaster-dashboard",
+      "memorymaster-steward",
+      "memorymaster-setup"
+    ],
+    "deployment_files": [
+      "Dockerfile",
+      "docker-compose.yml",
+      "docker-compose.postgres.yml",
+      "helm/memorymaster/Chart.yaml",
+      "helm/memorymaster/values.yaml",
+      "helm/memorymaster/templates/deployment.yaml",
+      "helm/memorymaster/templates/pvc.yaml",
+      "helm/memorymaster/templates/service.yaml",
+      ".github/workflows/ci.yml",
+      ".github/workflows/publish.yml"
+    ]
+  }
+}
