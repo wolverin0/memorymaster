@@ -54,6 +54,16 @@ class PostgresStore(SQLiteStore):
         self._psycopg: Any = None
         self._vector_table_available: bool | None = None
 
+    def _tenant_for_operation(self, tenant_id: str | None = None) -> str | None:
+        requested = (tenant_id or "").strip() or None
+        if self.require_tenant:
+            if self.tenant_id is None:
+                raise PermissionError("Postgres team mode requires a tenant context.")
+            if requested is not None and requested != self.tenant_id:
+                raise PermissionError("Caller tenant does not match the bound tenant context.")
+            return self.tenant_id
+        return requested if requested is not None else self.tenant_id
+
     def _load_psycopg(self) -> Any:
         if self._psycopg is None:
             try:
@@ -170,6 +180,7 @@ class PostgresStore(SQLiteStore):
 
     @staticmethod
     def _ensure_confirmed_tuple_uniqueness_schema(conn) -> None:
+        PostgresStore._ensure_tenant_id_schema(conn)
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -188,9 +199,10 @@ class PostgresStore(SQLiteStore):
                              AND c.subject = NEW.subject
                              AND c.predicate = NEW.predicate
                              AND c.scope = NEW.scope
+                             AND c.tenant_id IS NOT DISTINCT FROM NEW.tenant_id
                              AND (TG_OP = 'INSERT' OR c.id <> NEW.id)
                        ) THEN
-                        RAISE EXCEPTION 'only one confirmed claim is allowed per (subject,predicate,scope)'
+                        RAISE EXCEPTION 'only one confirmed claim is allowed per tenant and (subject,predicate,scope)'
                             USING ERRCODE = '23505';
                     END IF;
                     RETURN NEW;
@@ -199,22 +211,14 @@ class PostgresStore(SQLiteStore):
                 """
             )
             cur.execute(
+                f"DROP TRIGGER IF EXISTS {POSTGRES_CONFIRMED_TUPLE_GUARD_TRIGGER} ON claims"
+            )
+            cur.execute(
                 f"""
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1
-                        FROM pg_trigger
-                        WHERE tgname = '{POSTGRES_CONFIRMED_TUPLE_GUARD_TRIGGER}'
-                          AND tgrelid = 'claims'::regclass
-                    ) THEN
-                        CREATE TRIGGER {POSTGRES_CONFIRMED_TUPLE_GUARD_TRIGGER}
-                        BEFORE INSERT OR UPDATE OF status, subject, predicate, scope ON claims
-                        FOR EACH ROW
-                        EXECUTE FUNCTION memorymaster_claims_confirmed_tuple_guard();
-                    END IF;
-                END
-                $$;
+                CREATE TRIGGER {POSTGRES_CONFIRMED_TUPLE_GUARD_TRIGGER}
+                BEFORE INSERT OR UPDATE OF status, subject, predicate, scope, tenant_id ON claims
+                FOR EACH ROW
+                EXECUTE FUNCTION memorymaster_claims_confirmed_tuple_guard()
                 """
             )
             PostgresStore._try_create_confirmed_tuple_unique_index(cur)
@@ -227,7 +231,7 @@ class PostgresStore(SQLiteStore):
             cur.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_confirmed_tuple_unique
-                ON claims(subject, predicate, scope)
+                ON claims(COALESCE(tenant_id, ''), subject, predicate, scope)
                 WHERE status = 'confirmed'
                   AND subject IS NOT NULL
                   AND predicate IS NOT NULL
@@ -430,7 +434,7 @@ class PostgresStore(SQLiteStore):
         if not citations:
             raise ValueError("At least one citation is required.")
         normalized_idempotency_key = (idempotency_key or "").strip() or None
-        normalized_tenant_id = (tenant_id or "").strip() or None
+        normalized_tenant_id = self._tenant_for_operation(tenant_id)
         now = utc_now()
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(
@@ -444,7 +448,7 @@ class PostgresStore(SQLiteStore):
                         %s, %s, NULL, %s, %s, %s, %s, %s, %s, 'candidate', %s, FALSE, NULL, NULL, %s, %s, NULL, NULL,
                         %s, %s, %s, %s, %s, %s, %s
                     )
-                    ON CONFLICT (idempotency_key) DO NOTHING
+                    ON CONFLICT DO NOTHING
                     RETURNING id
                     """,
                 (
@@ -473,8 +477,12 @@ class PostgresStore(SQLiteStore):
                 if normalized_idempotency_key is None:
                     raise RuntimeError("Failed to create claim.")
                 cur.execute(
-                    "SELECT id FROM claims WHERE idempotency_key = %s",
-                    (normalized_idempotency_key,),
+                    """
+                    SELECT id FROM claims
+                    WHERE idempotency_key = %s
+                      AND tenant_id IS NOT DISTINCT FROM %s
+                    """,
+                    (normalized_idempotency_key, normalized_tenant_id),
                 )
                 existing_row = cur.fetchone()
                 if existing_row is None:
@@ -488,7 +496,13 @@ class PostgresStore(SQLiteStore):
 
             # Assign a human-readable ID.
             try:
-                human_id = self._allocate_human_id(cur, subject, text, claim_id)
+                human_id = self._allocate_human_id(
+                    cur,
+                    subject,
+                    text,
+                    claim_id,
+                    tenant_id=normalized_tenant_id,
+                )
                 cur.execute(
                     "UPDATE claims SET human_id = %s WHERE id = %s",
                     (human_id, claim_id),
@@ -537,14 +551,25 @@ class PostgresStore(SQLiteStore):
             claim.citations = self.list_citations(claim.id)
         return claim
 
-    def get_claim_by_idempotency_key(self, idempotency_key: str, include_citations: bool = True) -> Claim | None:
+    def get_claim_by_idempotency_key(
+        self,
+        idempotency_key: str,
+        include_citations: bool = True,
+        *,
+        tenant_id: str | None = None,
+    ) -> Claim | None:
         normalized_idempotency_key = idempotency_key.strip()
         if not normalized_idempotency_key:
             return None
+        effective_tenant = self._tenant_for_operation(tenant_id)
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT * FROM claims WHERE idempotency_key = %s",
-                (normalized_idempotency_key,),
+                """
+                SELECT * FROM claims
+                WHERE idempotency_key = %s
+                  AND tenant_id IS NOT DISTINCT FROM %s
+                """,
+                (normalized_idempotency_key, effective_tenant),
             )
             row = cur.fetchone()
         if row is None:
@@ -1020,12 +1045,15 @@ class PostgresStore(SQLiteStore):
         predicate: str | None,
         scope: str | None,
         exclude_claim_id: int | None = None,
+        tenant_id: str | None = None,
     ) -> list[Claim]:
         if not subject or not predicate:
             return []
 
         clauses = ["status = 'confirmed'", "subject = %s", "predicate = %s", "scope = %s"]
         params: list[object] = [subject, predicate, scope or "project"]
+        clauses.append("tenant_id IS NOT DISTINCT FROM %s")
+        params.append(self._tenant_for_operation(tenant_id))
         if exclude_claim_id is not None:
             clauses.append("id <> %s")
             params.append(exclude_claim_id)
@@ -1657,10 +1685,35 @@ class PostgresStore(SQLiteStore):
     @staticmethod
     def _ensure_human_id_schema(conn) -> None:
         """Add human_id column if missing and backfill existing claims."""
+        PostgresStore._ensure_tenant_id_schema(conn)
         with conn.cursor() as cur:
             cur.execute("ALTER TABLE claims ADD COLUMN IF NOT EXISTS human_id TEXT")
             cur.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id)"
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM pg_class idx
+                        JOIN pg_index meta ON meta.indexrelid = idx.oid
+                        WHERE idx.relname = 'idx_claims_human_id'
+                          AND meta.indisunique
+                    ) THEN
+                        DROP INDEX idx_claims_human_id;
+                    END IF;
+                END
+                $$
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id)"
+            )
+            cur.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_tenant_human_id
+                ON claims(COALESCE(tenant_id, ''), human_id)
+                WHERE human_id IS NOT NULL
+                """
             )
         PostgresStore._backfill_human_ids(conn)
 
@@ -1669,7 +1722,10 @@ class PostgresStore(SQLiteStore):
         """Assign human_id to all claims that lack one."""
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, subject, text FROM claims WHERE human_id IS NULL ORDER BY id ASC"
+                """
+                SELECT id, subject, text, tenant_id
+                FROM claims WHERE human_id IS NULL ORDER BY id ASC
+                """
             )
             rows = cur.fetchall()
             if not rows:
@@ -1679,7 +1735,13 @@ class PostgresStore(SQLiteStore):
                 claim_id = int(row["id"])
                 subject = PostgresStore._as_text(row["subject"])
                 text = str(row["text"])
-                human_id = PostgresStore._allocate_human_id(cur, subject, text, claim_id)
+                human_id = PostgresStore._allocate_human_id(
+                    cur,
+                    subject,
+                    text,
+                    claim_id,
+                    tenant_id=row.get("tenant_id"),
+                )
                 cur.execute(
                     "UPDATE claims SET human_id = %s WHERE id = %s",
                     (human_id, claim_id),
@@ -1688,7 +1750,13 @@ class PostgresStore(SQLiteStore):
             return updated
 
     @staticmethod
-    def _allocate_human_id(cur, subject: str | None, text: str, claim_id: int) -> str:
+    def _allocate_human_id(
+        cur,
+        subject: str | None,
+        text: str,
+        claim_id: int,
+        tenant_id: str | None = None,
+    ) -> str:
         """Build a unique human_id, checking for derived_from parent links."""
         cur.execute(
             """
@@ -1698,17 +1766,22 @@ class PostgresStore(SQLiteStore):
             WHERE cl.source_id = %s
               AND cl.link_type = 'derived_from'
               AND c.human_id IS NOT NULL
+              AND c.tenant_id IS NOT DISTINCT FROM %s
             LIMIT 1
             """,
-            (claim_id,),
+            (claim_id, tenant_id),
         )
         parent_row = cur.fetchone()
 
         if parent_row and parent_row["human_id"]:
             parent_hid = str(parent_row["human_id"])
             cur.execute(
-                "SELECT COUNT(*) AS cnt FROM claims WHERE human_id LIKE %s AND human_id != %s",
-                (parent_hid + ".%", parent_hid),
+                """
+                SELECT COUNT(*) AS cnt FROM claims
+                WHERE human_id LIKE %s AND human_id != %s
+                  AND tenant_id IS NOT DISTINCT FROM %s
+                """,
+                (parent_hid + ".%", parent_hid, tenant_id),
             )
             child_count = cur.fetchone()
             next_child = (int(child_count["cnt"]) if child_count else 0) + 1
@@ -1719,7 +1792,13 @@ class PostgresStore(SQLiteStore):
         final = candidate
         suffix = 1
         while True:
-            cur.execute("SELECT 1 FROM claims WHERE human_id = %s", (final,))
+            cur.execute(
+                """
+                SELECT 1 FROM claims
+                WHERE human_id = %s AND tenant_id IS NOT DISTINCT FROM %s
+                """,
+                (final, tenant_id),
+            )
             existing = cur.fetchone()
             if existing is None:
                 return final
@@ -2557,16 +2636,27 @@ class PostgresStore(SQLiteStore):
             rows = cur.fetchall()
         return [self._row_to_action_proposal(row) for row in rows]
 
-    def get_claim_by_human_id(self, human_id: str, include_citations: bool = True) -> Claim | None:
+    def get_claim_by_human_id(
+        self,
+        human_id: str,
+        include_citations: bool = True,
+        *,
+        tenant_id: str | None = None,
+    ) -> Claim | None:
         """Look up a claim by its human-readable ID (e.g. ``mm-a3f8``)."""
         normalized = human_id.strip()
         if not normalized:
             return None
+        effective_tenant = self._tenant_for_operation(tenant_id)
         with self.connect() as conn, conn.cursor() as cur:
             try:
                 cur.execute(
-                    "SELECT * FROM claims WHERE human_id = %s",
-                    (normalized,),
+                    """
+                    SELECT * FROM claims
+                    WHERE human_id = %s
+                      AND tenant_id IS NOT DISTINCT FROM %s
+                    """,
+                    (normalized, effective_tenant),
                 )
                 row = cur.fetchone()
             except Exception:
@@ -2579,7 +2669,12 @@ class PostgresStore(SQLiteStore):
             claim.citations = self.list_citations(claim.id)
         return claim
 
-    def resolve_claim_id(self, identifier: str | int) -> int:
+    def resolve_claim_id(
+        self,
+        identifier: str | int,
+        *,
+        tenant_id: str | None = None,
+    ) -> int:
         """Resolve a numeric ID or human_id string to a numeric claim ID."""
         if isinstance(identifier, int):
             return identifier
@@ -2588,7 +2683,11 @@ class PostgresStore(SQLiteStore):
             return int(raw)
         except ValueError:
             pass
-        claim = self.get_claim_by_human_id(raw, include_citations=False)
+        claim = self.get_claim_by_human_id(
+            raw,
+            include_citations=False,
+            tenant_id=tenant_id,
+        )
         if claim is not None:
             return claim.id
         raise ValueError(f"No claim found for identifier '{raw}'.")

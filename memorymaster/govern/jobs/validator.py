@@ -131,6 +131,7 @@ def run(
             predicate=claim.predicate,
             scope=claim.scope,
             exclude_claim_id=claim.id,
+            tenant_id=claim.tenant_id,
         )
 
         duplicate = next((x for x in related if x.object_value == claim.object_value and x.object_value), None)

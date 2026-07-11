@@ -530,7 +530,10 @@ class MemoryService:
         # Dedup by idempotency key
         normalized_idempotency_key = (idempotency_key or "").strip() or None
         if normalized_idempotency_key is not None and hasattr(self.store, "get_claim_by_idempotency_key"):
-            existing_claim = self.store.get_claim_by_idempotency_key(normalized_idempotency_key)
+            existing_claim = self.store.get_claim_by_idempotency_key(
+                normalized_idempotency_key,
+                tenant_id=self.tenant_id,
+            )
             if existing_claim is not None:
                 observability.bump_claim_ingested(source_agent)
                 return self._revive_archived_dedup_match(existing_claim, source_agent)
@@ -541,7 +544,10 @@ class MemoryService:
         hash_input = f"{text.strip().lower()}|{scope}|{_tenant}"
         content_hash = "hash-" + hashlib.sha256(hash_input.encode()).hexdigest()[:16]
         if hasattr(self.store, "get_claim_by_idempotency_key"):
-            existing_by_hash = self.store.get_claim_by_idempotency_key(content_hash)
+            existing_by_hash = self.store.get_claim_by_idempotency_key(
+                content_hash,
+                tenant_id=self.tenant_id,
+            )
             if existing_by_hash is not None:
                 observability.bump_claim_ingested(source_agent)
                 return self._revive_archived_dedup_match(existing_by_hash, source_agent)
@@ -2101,7 +2107,10 @@ class MemoryService:
         result is simply empty (logged, no crash).
         """
         try:
-            start_id = self.store.resolve_claim_id(claim_id)
+            start_id = self.store.resolve_claim_id(
+                claim_id,
+                tenant_id=self.tenant_id,
+            )
         except ValueError:
             logger.info("query_claim_paths: unknown claim_id %r", claim_id)
             return []

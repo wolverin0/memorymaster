@@ -53,6 +53,9 @@ ALTER TABLE claims
 ALTER TABLE claims
     ADD COLUMN IF NOT EXISTS wiki_article TEXT;
 
+ALTER TABLE claims
+    ADD COLUMN IF NOT EXISTS tenant_id TEXT;
+
 -- Parity with SQLite schema.sql / dataclass defaults (postgres-parity audit).
 -- Forward-migrate these columns on pre-existing Postgres DBs created before
 -- the parity fix, BEFORE the 0004 query_cache trigger references valid_from/
@@ -84,30 +87,21 @@ BEGIN
              AND c.subject = NEW.subject
              AND c.predicate = NEW.predicate
              AND c.scope = NEW.scope
+             AND c.tenant_id IS NOT DISTINCT FROM NEW.tenant_id
              AND (TG_OP = 'INSERT' OR c.id <> NEW.id)
        ) THEN
-        RAISE EXCEPTION 'only one confirmed claim is allowed per (subject,predicate,scope)'
+        RAISE EXCEPTION 'only one confirmed claim is allowed per tenant and (subject,predicate,scope)'
             USING ERRCODE = '23505';
     END IF;
     RETURN NEW;
 END;
 $$;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_trigger
-        WHERE tgname = 'trg_claims_confirmed_tuple_guard'
-          AND tgrelid = 'claims'::regclass
-    ) THEN
-        CREATE TRIGGER trg_claims_confirmed_tuple_guard
-        BEFORE INSERT OR UPDATE OF status, subject, predicate, scope ON claims
-        FOR EACH ROW
-        EXECUTE FUNCTION memorymaster_claims_confirmed_tuple_guard();
-    END IF;
-END
-$$;
+DROP TRIGGER IF EXISTS trg_claims_confirmed_tuple_guard ON claims;
+CREATE TRIGGER trg_claims_confirmed_tuple_guard
+BEFORE INSERT OR UPDATE OF status, subject, predicate, scope, tenant_id ON claims
+FOR EACH ROW
+EXECUTE FUNCTION memorymaster_claims_confirmed_tuple_guard();
 
 CREATE TABLE IF NOT EXISTS citations (
     id BIGSERIAL PRIMARY KEY,
@@ -170,11 +164,22 @@ BEGIN
 END
 $$;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id);
+CREATE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_tenant_human_id
+    ON claims(COALESCE(tenant_id, ''), human_id)
+    WHERE human_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_claims_tenant_id ON claims(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status);
 CREATE INDEX IF NOT EXISTS idx_claims_updated_at ON claims(updated_at);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_idempotency_key ON claims(idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_claims_idempotency_key ON claims(idempotency_key);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_tenant_idempotency_key
+    ON claims(COALESCE(tenant_id, ''), idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_confirmed_tuple_unique
+    ON claims(COALESCE(tenant_id, ''), subject, predicate, scope)
+    WHERE status = 'confirmed'
+      AND subject IS NOT NULL
+      AND predicate IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_claims_tuple ON claims(subject, predicate, scope);
 CREATE INDEX IF NOT EXISTS idx_claims_replaced_by ON claims(replaced_by_claim_id);
 CREATE INDEX IF NOT EXISTS idx_citations_claim_id ON citations(claim_id);

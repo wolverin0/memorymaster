@@ -72,7 +72,10 @@ def _resolve_claim_id(service: MemoryService, raw: str | int) -> int:
     try:
         return int(text)
     except ValueError:
-        return service.store.resolve_claim_id(text)
+        return service.store.resolve_claim_id(
+            text,
+            tenant_id=service.tenant_id,
+        )
 
 
 def _add_cycle_policy_args(p: argparse.ArgumentParser, policy_default: str = "legacy") -> None:

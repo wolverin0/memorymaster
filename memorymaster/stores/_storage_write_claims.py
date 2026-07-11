@@ -27,11 +27,23 @@ class _WriteClaimsMixin:
     if TYPE_CHECKING:
         def connect(self) -> sqlite3.Connection: ...
 
-        def _check_idempotency(self, conn: sqlite3.Connection, idempotency_key: str | None) -> Claim | None: ...
+        def _check_idempotency(
+            self,
+            conn: sqlite3.Connection,
+            idempotency_key: str | None,
+            tenant_id: str | None = None,
+        ) -> Claim | None: ...
 
         def get_claim(self, claim_id: int, include_citations: bool = True) -> Claim | None: ...
 
-        def _allocate_human_id(self, conn: sqlite3.Connection, subject: str | None, text: str, claim_id: int) -> str: ...
+        def _allocate_human_id(
+            self,
+            conn: sqlite3.Connection,
+            subject: str | None,
+            text: str,
+            claim_id: int,
+            tenant_id: str | None = None,
+        ) -> str: ...
 
         def _insert_event_row(
             self,
@@ -73,7 +85,11 @@ class _WriteClaimsMixin:
         normalized_tenant_id = (tenant_id or "").strip() or None
         now = utc_now()
         with self.connect() as conn:
-            existing = self._check_idempotency(conn, idempotency_key)
+            existing = self._check_idempotency(
+                conn,
+                idempotency_key,
+                tenant_id=normalized_tenant_id,
+            )
             if existing is not None:
                 return existing
 
@@ -113,8 +129,11 @@ class _WriteClaimsMixin:
                     raise
                 conn.rollback()
                 existing_row = conn.execute(
-                    "SELECT id FROM claims WHERE idempotency_key = ?",
-                    (normalized_idempotency_key,),
+                    """
+                    SELECT id FROM claims
+                    WHERE idempotency_key = ? AND tenant_id IS ?
+                    """,
+                    (normalized_idempotency_key, normalized_tenant_id),
                 ).fetchone()
                 if existing_row is None:
                     raise
@@ -126,7 +145,13 @@ class _WriteClaimsMixin:
             claim_id = int(cur.lastrowid)
             # Assign a human-readable ID.
             try:
-                human_id = self._allocate_human_id(conn, subject, text, claim_id)
+                human_id = self._allocate_human_id(
+                    conn,
+                    subject,
+                    text,
+                    claim_id,
+                    tenant_id=normalized_tenant_id,
+                )
                 conn.execute(
                     "UPDATE claims SET human_id = ? WHERE id = ?",
                     (human_id, claim_id),

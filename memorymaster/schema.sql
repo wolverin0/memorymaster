@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS claims (
     valid_until TEXT,
     wiki_article TEXT,
     holder TEXT,
+    tenant_id TEXT,
     FOREIGN KEY (supersedes_claim_id) REFERENCES claims(id) ON DELETE SET NULL,
     FOREIGN KEY (replaced_by_claim_id) REFERENCES claims(id) ON DELETE SET NULL
 );
@@ -47,13 +48,14 @@ WHEN NEW.status = 'confirmed'
       AND c.subject = NEW.subject
       AND c.predicate = NEW.predicate
       AND c.scope = NEW.scope
+      AND c.tenant_id IS NEW.tenant_id
   )
 BEGIN
     SELECT RAISE(ABORT, 'only one confirmed claim is allowed per (subject,predicate,scope)');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_claims_confirmed_tuple_guard_update
-BEFORE UPDATE OF status, subject, predicate, scope ON claims
+BEFORE UPDATE OF status, subject, predicate, scope, tenant_id ON claims
 WHEN NEW.status = 'confirmed'
   AND NEW.subject IS NOT NULL
   AND NEW.predicate IS NOT NULL
@@ -65,6 +67,7 @@ WHEN NEW.status = 'confirmed'
       AND c.subject = NEW.subject
       AND c.predicate = NEW.predicate
       AND c.scope = NEW.scope
+      AND c.tenant_id IS NEW.tenant_id
   )
 BEGIN
     SELECT RAISE(ABORT, 'only one confirmed claim is allowed per (subject,predicate,scope)');
@@ -190,14 +193,25 @@ CREATE TABLE IF NOT EXISTS mcp_usage (
 
 CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status);
 CREATE INDEX IF NOT EXISTS idx_claims_updated_at ON claims(updated_at);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_idempotency_key ON claims(idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_claims_idempotency_key ON claims(idempotency_key);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_tenant_idempotency_key
+    ON claims(COALESCE(tenant_id, ''), idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_claims_tuple ON claims(subject, predicate, scope);
 CREATE INDEX IF NOT EXISTS idx_claims_replaced_by ON claims(replaced_by_claim_id);
 CREATE INDEX IF NOT EXISTS idx_citations_claim_id ON citations(claim_id);
 CREATE INDEX IF NOT EXISTS idx_events_claim_id ON events(claim_id);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
 CREATE INDEX IF NOT EXISTS idx_embeddings_updated_at ON claim_embeddings(updated_at);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id);
+CREATE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_tenant_human_id
+    ON claims(COALESCE(tenant_id, ''), human_id)
+    WHERE human_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_confirmed_tuple_unique
+    ON claims(COALESCE(tenant_id, ''), subject, predicate, scope)
+    WHERE status = 'confirmed'
+      AND subject IS NOT NULL
+      AND predicate IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_external_sources_type ON external_sources(source_type);
 CREATE INDEX IF NOT EXISTS idx_source_items_source_id ON source_items(source_id);
 CREATE INDEX IF NOT EXISTS idx_source_items_chat_id ON source_items(chat_id);

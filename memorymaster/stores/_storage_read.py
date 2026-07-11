@@ -28,7 +28,12 @@ class _ReadMixin:
 
         def init_db(self) -> None: ...
 
-    def _check_idempotency(self, conn: sqlite3.Connection, idempotency_key: str | None) -> Claim | None:
+    def _check_idempotency(
+        self,
+        conn: sqlite3.Connection,
+        idempotency_key: str | None,
+        tenant_id: str | None = None,
+    ) -> Claim | None:
         """Check if a claim with this idempotency key already exists. Returns existing claim or None."""
         normalized_key = (idempotency_key or "").strip() or None
         if normalized_key is None:
@@ -36,8 +41,8 @@ class _ReadMixin:
         # Hydrate the full row from the already-open conn instead of paying
         # a fresh get_claim() connection open on every duplicate re-ingest.
         existing_row = conn.execute(
-            "SELECT * FROM claims WHERE idempotency_key = ?",
-            (normalized_key,),
+            "SELECT * FROM claims WHERE idempotency_key = ? AND tenant_id IS ?",
+            (normalized_key, tenant_id),
         ).fetchone()
         if existing_row is None:
             return None
@@ -72,14 +77,20 @@ class _ReadMixin:
         return claim
 
 
-    def get_claim_by_idempotency_key(self, idempotency_key: str, include_citations: bool = True) -> Claim | None:
+    def get_claim_by_idempotency_key(
+        self,
+        idempotency_key: str,
+        include_citations: bool = True,
+        *,
+        tenant_id: str | None = None,
+    ) -> Claim | None:
         normalized_idempotency_key = idempotency_key.strip()
         if not normalized_idempotency_key:
             return None
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT * FROM claims WHERE idempotency_key = ?",
-                (normalized_idempotency_key,),
+                "SELECT * FROM claims WHERE idempotency_key = ? AND tenant_id IS ?",
+                (normalized_idempotency_key, tenant_id),
             ).fetchone()
         if row is None:
             return None
@@ -89,7 +100,13 @@ class _ReadMixin:
         return claim
 
 
-    def get_claim_by_human_id(self, human_id: str, include_citations: bool = True) -> Claim | None:
+    def get_claim_by_human_id(
+        self,
+        human_id: str,
+        include_citations: bool = True,
+        *,
+        tenant_id: str | None = None,
+    ) -> Claim | None:
         """Look up a claim by its human-readable ID (e.g. ``mm-a3f8``)."""
         normalized = human_id.strip()
         if not normalized:
@@ -97,8 +114,8 @@ class _ReadMixin:
         with self.connect() as conn:
             try:
                 row = conn.execute(
-                    "SELECT * FROM claims WHERE human_id = ?",
-                    (normalized,),
+                    "SELECT * FROM claims WHERE human_id = ? AND tenant_id IS ?",
+                    (normalized, tenant_id),
                 ).fetchone()
             except sqlite3.OperationalError:
                 # Column may not exist yet.
@@ -111,7 +128,12 @@ class _ReadMixin:
         return claim
 
 
-    def resolve_claim_id(self, identifier: str | int) -> int:
+    def resolve_claim_id(
+        self,
+        identifier: str | int,
+        *,
+        tenant_id: str | None = None,
+    ) -> int:
         """Resolve a numeric ID or human_id string to a numeric claim ID.
 
         Raises ``ValueError`` if the claim cannot be found.
@@ -125,7 +147,11 @@ class _ReadMixin:
         except ValueError:
             pass
         # Try human_id lookup.
-        claim = self.get_claim_by_human_id(raw, include_citations=False)
+        claim = self.get_claim_by_human_id(
+            raw,
+            include_citations=False,
+            tenant_id=tenant_id,
+        )
         if claim is not None:
             return claim.id
         raise ValueError(f"No claim found for identifier '{raw}'.")
@@ -443,12 +469,15 @@ class _ReadMixin:
         predicate: str | None,
         scope: str | None,
         exclude_claim_id: int | None = None,
+        tenant_id: str | None = None,
     ) -> list[Claim]:
         if not subject or not predicate:
             return []
 
         clauses = ["status = 'confirmed'", "subject = ?", "predicate = ?", "scope = ?"]
         params: list[object] = [subject, predicate, scope or "project"]
+        clauses.append("tenant_id IS ?")
+        params.append(tenant_id)
         if exclude_claim_id is not None:
             clauses.append("id <> ?")
             params.append(exclude_claim_id)

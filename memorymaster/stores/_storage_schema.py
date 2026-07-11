@@ -212,16 +212,27 @@ class _SchemaMixin:
 
     @staticmethod
     def _ensure_claim_idempotency_schema(conn: sqlite3.Connection) -> None:
+        _SchemaMixin._ensure_tenant_id_schema(conn)
         try:
             conn.execute("ALTER TABLE claims ADD COLUMN idempotency_key TEXT")
         except sqlite3.OperationalError as exc:
             if "duplicate column name" not in str(exc).lower():
                 raise
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_idempotency_key ON claims(idempotency_key)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_claims_idempotency_key ON claims(idempotency_key)"
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_tenant_idempotency_key
+            ON claims(COALESCE(tenant_id, ''), idempotency_key)
+            WHERE idempotency_key IS NOT NULL
+            """
+        )
 
 
     @staticmethod
     def _ensure_confirmed_tuple_uniqueness_schema(conn: sqlite3.Connection) -> None:
+        _SchemaMixin._ensure_tenant_id_schema(conn)
         for trigger in SQLITE_CONFIRMED_TUPLE_GUARD_TRIGGERS:
             conn.execute(f"DROP TRIGGER IF EXISTS {trigger}")
         conn.executescript(
@@ -238,13 +249,14 @@ class _SchemaMixin:
                   AND c.subject = NEW.subject
                   AND c.predicate = NEW.predicate
                   AND c.scope = NEW.scope
+                  AND c.tenant_id IS NEW.tenant_id
               )
             BEGIN
                 SELECT RAISE(ABORT, 'only one confirmed claim is allowed per (subject,predicate,scope)');
             END;
 
             CREATE TRIGGER IF NOT EXISTS trg_claims_confirmed_tuple_guard_update
-            BEFORE UPDATE OF status, subject, predicate, scope ON claims
+            BEFORE UPDATE OF status, subject, predicate, scope, tenant_id ON claims
             WHEN NEW.status = 'confirmed'
               AND NEW.subject IS NOT NULL
               AND NEW.predicate IS NOT NULL
@@ -256,6 +268,7 @@ class _SchemaMixin:
                   AND c.subject = NEW.subject
                   AND c.predicate = NEW.predicate
                   AND c.scope = NEW.scope
+                  AND c.tenant_id IS NEW.tenant_id
               )
             BEGIN
                 SELECT RAISE(ABORT, 'only one confirmed claim is allowed per (subject,predicate,scope)');
@@ -266,7 +279,7 @@ class _SchemaMixin:
             conn.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_confirmed_tuple_unique
-                ON claims(subject, predicate, scope)
+                ON claims(COALESCE(tenant_id, ''), subject, predicate, scope)
                 WHERE status = 'confirmed'
                   AND subject IS NOT NULL
                   AND predicate IS NOT NULL
@@ -499,13 +512,31 @@ class _SchemaMixin:
     @staticmethod
     def _ensure_human_id_schema(conn: sqlite3.Connection) -> None:
         """Add human_id column if missing and backfill existing claims."""
+        _SchemaMixin._ensure_tenant_id_schema(conn)
         try:
             conn.execute("ALTER TABLE claims ADD COLUMN human_id TEXT")
         except sqlite3.OperationalError as exc:
             if "duplicate column name" not in str(exc).lower():
                 raise
+        human_index = next(
+            (
+                row
+                for row in conn.execute("PRAGMA index_list(claims)").fetchall()
+                if row[1] == "idx_claims_human_id"
+            ),
+            None,
+        )
+        if human_index is not None and bool(human_index[2]):
+            conn.execute("DROP INDEX idx_claims_human_id")
         conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id)"
+            "CREATE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id)"
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_tenant_human_id
+            ON claims(COALESCE(tenant_id, ''), human_id)
+            WHERE human_id IS NOT NULL
+            """
         )
         _SchemaMixin._backfill_human_ids(conn)
 
@@ -520,7 +551,7 @@ class _SchemaMixin:
         per-row claim_links JOIN and generate ids in-memory + executemany.
         """
         rows = conn.execute(
-            "SELECT id, subject, text FROM claims WHERE human_id IS NULL ORDER BY id ASC"
+            "SELECT id, subject, text, tenant_id FROM claims WHERE human_id IS NULL ORDER BY id ASC"
         ).fetchall()
         if not rows:
             return 0
@@ -537,7 +568,13 @@ class _SchemaMixin:
             claim_id = int(row["id"])
             subject = row["subject"]
             text = str(row["text"])
-            human_id = _SchemaMixin._allocate_human_id(conn, subject, text, claim_id)
+            human_id = _SchemaMixin._allocate_human_id(
+                conn,
+                subject,
+                text,
+                claim_id,
+                tenant_id=row["tenant_id"],
+            )
             conn.execute(
                 "UPDATE claims SET human_id = ? WHERE id = ?",
                 (human_id, claim_id),
@@ -552,22 +589,23 @@ class _SchemaMixin:
         Collisions are resolved in-memory against ids already present in the DB
         plus ids minted within this batch, then written via a single executemany.
         """
-        taken: set[str] = {
-            str(r[0])
+        taken: set[tuple[str | None, str]] = {
+            (r[0], str(r[1]))
             for r in conn.execute(
-                "SELECT human_id FROM claims WHERE human_id IS NOT NULL"
+                "SELECT tenant_id, human_id FROM claims WHERE human_id IS NOT NULL"
             ).fetchall()
         }
         updates: list[tuple[str, int]] = []
         for row in rows:
             claim_id = int(row["id"])
+            tenant_id = row["tenant_id"]
             candidate = generate_top_level_human_id(row["subject"], str(row["text"]))
             final = candidate
             suffix = 1
-            while final in taken:
+            while (tenant_id, final) in taken:
                 suffix += 1
                 final = f"{candidate}~{suffix}"
-            taken.add(final)
+            taken.add((tenant_id, final))
             updates.append((final, claim_id))
         conn.executemany("UPDATE claims SET human_id = ? WHERE id = ?", updates)
         return len(updates)
@@ -579,6 +617,7 @@ class _SchemaMixin:
         subject: str | None,
         text: str,
         claim_id: int,
+        tenant_id: str | None = None,
     ) -> str:
         """Build a unique human_id, checking for derived_from parent links.
 
@@ -595,16 +634,20 @@ class _SchemaMixin:
             WHERE cl.source_id = ?
               AND cl.link_type = 'derived_from'
               AND c.human_id IS NOT NULL
+              AND c.tenant_id IS ?
             LIMIT 1
             """,
-            (claim_id,),
+            (claim_id, tenant_id),
         ).fetchone()
 
         if parent_row and parent_row["human_id"]:
             parent_hid = str(parent_row["human_id"])
             child_count = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM claims WHERE human_id LIKE ? AND human_id != ?",
-                (parent_hid + ".%", parent_hid),
+                """
+                SELECT COUNT(*) AS cnt FROM claims
+                WHERE human_id LIKE ? AND human_id != ? AND tenant_id IS ?
+                """,
+                (parent_hid + ".%", parent_hid, tenant_id),
             ).fetchone()
             next_child = (int(child_count["cnt"]) if child_count else 0) + 1
             candidate = f"{parent_hid}.{next_child}"
@@ -616,7 +659,8 @@ class _SchemaMixin:
         suffix = 1
         while True:
             existing = conn.execute(
-                "SELECT 1 FROM claims WHERE human_id = ?", (final,)
+                "SELECT 1 FROM claims WHERE human_id = ? AND tenant_id IS ?",
+                (final, tenant_id),
             ).fetchone()
             if existing is None:
                 return final
