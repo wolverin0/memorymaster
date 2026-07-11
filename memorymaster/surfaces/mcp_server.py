@@ -1,6 +1,8 @@
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
+from functools import wraps
 import hashlib
 import http.client
+import inspect
 import json
 import logging
 import os
@@ -11,6 +13,12 @@ from typing import Any, TypeVar
 from urllib.parse import urlparse
 
 from memorymaster.core import observability
+from memorymaster.core.access_control import (
+    AuthMode,
+    authorize_context_action,
+    bind_request_context,
+    resolve_request_context,
+)
 from memorymaster.surfaces import mcp_path_policy
 from pydantic import BaseModel, ValidationError
 
@@ -586,8 +594,99 @@ def _checkpoint_batch(
     }
 
 
+@dataclass(frozen=True, slots=True)
+class McpToolPolicy:
+    action: str
+    team_enabled: bool = False
+
+
+MCP_TOOL_POLICIES: dict[str, McpToolPolicy] = {
+    "archive_by_source": McpToolPolicy("compact"),
+    "checkpoint": McpToolPolicy("ingest"),
+    "classify_query": McpToolPolicy("query", team_enabled=True),
+    "compact_memory": McpToolPolicy("compact"),
+    "entity_stats": McpToolPolicy("configure"),
+    "extract_entities": McpToolPolicy("ingest"),
+    "federated_query": McpToolPolicy("query"),
+    "find_related_claims": McpToolPolicy("configure"),
+    "get_usage_rollup": McpToolPolicy("query"),
+    "ingest_claim": McpToolPolicy("ingest"),
+    "ingest_rule": McpToolPolicy("ingest"),
+    "init_db": McpToolPolicy("configure"),
+    "list_claims": McpToolPolicy("query"),
+    "list_events": McpToolPolicy("query"),
+    "list_steward_proposals": McpToolPolicy("query"),
+    "local_search": McpToolPolicy("query"),
+    "open_dashboard": McpToolPolicy("query"),
+    "pin_claim": McpToolPolicy("steward"),
+    "quality_scores": McpToolPolicy("steward"),
+    "query_claim_paths": McpToolPolicy("query"),
+    "query_for_context": McpToolPolicy("query"),
+    "query_for_task": McpToolPolicy("query"),
+    "query_memory": McpToolPolicy("query"),
+    "query_meta_decisions": McpToolPolicy("query"),
+    "query_rules": McpToolPolicy("query"),
+    "read_active_tasks": McpToolPolicy("query"),
+    "recall_analysis": McpToolPolicy("query"),
+    "recompute_tiers": McpToolPolicy("steward"),
+    "redact_claim_payload": McpToolPolicy("delete"),
+    "resolve_project": McpToolPolicy("ingest"),
+    "resolve_steward_proposal": McpToolPolicy("steward"),
+    "rules_export": McpToolPolicy("export"),
+    "run_cycle": McpToolPolicy("steward"),
+    "run_steward": McpToolPolicy("steward"),
+    "search_verbatim": McpToolPolicy("export"),
+    "volunteer_context": McpToolPolicy("query"),
+}
+
+
+def _authorized_tool_callable(func: Any, policy: McpToolPolicy) -> Any:
+    call_signature = inspect.signature(func)
+
+    @wraps(func)
+    def guarded(*args: Any, **kwargs: Any) -> Any:
+        bound = call_signature.bind_partial(*args, **kwargs)
+        bound.apply_defaults()
+        context = resolve_request_context(
+            db_target=str(bound.arguments.get("db", "") or ""),
+            workspace=str(bound.arguments.get("workspace", "") or ""),
+        )
+        authorize_context_action(context, policy.action)
+        if context.mode is AuthMode.TEAM and not policy.team_enabled:
+            raise PermissionError(
+                f"MCP tool '{func.__name__}' is disabled in team mode until its scope contract is verified."
+            )
+        if bool(bound.arguments.get("allow_sensitive", False)) and not context.allow_sensitive:
+            raise PermissionError("Authenticated MCP context does not allow sensitive-data access.")
+        with bind_request_context(context):
+            return func(*args, **kwargs)
+
+    setattr(guarded, "__mcp_action__", policy.action)
+    setattr(guarded, "__mcp_team_enabled__", policy.team_enabled)
+    return guarded
+
+
 if FastMCP is not None:
-    mcp = FastMCP("memorymaster")
+    class AuthorizedFastMCP(FastMCP):
+        """FastMCP registration that cannot omit authorization metadata."""
+
+        def tool(self, *args: Any, **kwargs: Any) -> Any:
+            register = super().tool(*args, **kwargs)
+
+            def decorator(func: Any) -> Any:
+                policy = MCP_TOOL_POLICIES.get(func.__name__)
+                if policy is None:
+                    raise RuntimeError(f"MCP tool '{func.__name__}' has no authorization policy.")
+                return register(_authorized_tool_callable(func, policy))
+
+            return decorator
+
+else:  # pragma: no cover - import fallback when MCP dependency is unavailable
+    AuthorizedFastMCP = None  # type: ignore[misc,assignment]
+
+
+if FastMCP is not None:
+    mcp = AuthorizedFastMCP("memorymaster")
 
     @mcp.tool()
     def init_db(

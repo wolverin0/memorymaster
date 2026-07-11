@@ -59,12 +59,17 @@ def _was_denied(call) -> bool:
     return isinstance(result, dict) and result.get("ok") is False
 
 
-@AUDIT_BASELINE
-def test_reader_cannot_ingest_by_spoofing_source_agent(tmp_path) -> None:
+def test_reader_cannot_ingest_by_spoofing_source_agent(tmp_path, monkeypatch) -> None:
     """An attribution field cannot replace the authenticated MCP principal."""
     db, workspace = _init_mcp_db(tmp_path)
     access_control.set_role("mcp-session", access_control.Role.READER)
     access_control.set_role("forged-writer", access_control.Role.WRITER)
+    monkeypatch.setenv("MEMORYMASTER_MCP_AUTH_MODE", "team")
+    monkeypatch.setenv("MEMORYMASTER_MCP_PRINCIPAL", "mcp-session")
+    monkeypatch.setenv("MEMORYMASTER_MCP_TENANT_ID", "tenant-alpha")
+    monkeypatch.setenv("MEMORYMASTER_MCP_WORKSPACE", workspace)
+    monkeypatch.setenv("MEMORYMASTER_MCP_ALLOWED_SCOPES", "project:alpha,global")
+    monkeypatch.setenv("MEMORYMASTER_MCP_DB", db)
 
     denied = _was_denied(
         lambda: mcp_server.ingest_claim(

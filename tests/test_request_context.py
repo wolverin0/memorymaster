@@ -32,7 +32,7 @@ def test_local_context_is_explicit_trusted_and_immutable() -> None:
     context = access_control.resolve_request_context(
         db_target="memorymaster.db",
         workspace="C:/work/alpha",
-        environ={},
+        environ={"MEMORYMASTER_MCP_AUTH_MODE": "local-trusted"},
     )
 
     assert context.mode is access_control.AuthMode.LOCAL_TRUSTED
@@ -43,7 +43,9 @@ def test_local_context_is_explicit_trusted_and_immutable() -> None:
 
 
 def test_context_binding_is_scoped_and_reset() -> None:
-    context = access_control.resolve_request_context(environ={})
+    context = access_control.resolve_request_context(
+        environ={"MEMORYMASTER_MCP_AUTH_MODE": "local-trusted"},
+    )
 
     assert access_control.current_request_context() is None
     with access_control.bind_request_context(context):
@@ -88,12 +90,9 @@ def test_team_context_carries_frozen_authority() -> None:
         access_control.authorize_context_action(context, "ingest")
 
 
-def test_implicit_postgres_context_is_rejected() -> None:
+def test_missing_auth_mode_is_rejected() -> None:
     with pytest.raises(PermissionError, match="explicit authorization mode"):
-        access_control.resolve_request_context(
-            db_target="postgresql://memorymaster.invalid/app",
-            environ={},
-        )
+        access_control.resolve_request_context(db_target="memorymaster.db", environ={})
 
 
 def test_team_context_rejects_wildcard_scope() -> None:

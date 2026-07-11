@@ -9,6 +9,12 @@ import pytest
 _CASE_ROOT = Path(".tmp_cases")
 
 
+@pytest.fixture(autouse=True)
+def _explicit_local_mcp_auth(monkeypatch) -> None:
+    """Make legacy MCP test calls exercise the named local-trusted profile."""
+    monkeypatch.setenv("MEMORYMASTER_MCP_AUTH_MODE", "local-trusted")
+
+
 # ---------------------------------------------------------------------------
 # Backend parametrization for parity tests (v3.20.0-S2)
 # ---------------------------------------------------------------------------

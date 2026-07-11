@@ -143,9 +143,7 @@ def resolve_request_context(
     env = os.environ if environ is None else environ
     raw_mode = str(env.get("MEMORYMASTER_MCP_AUTH_MODE", "")).strip().lower()
     if not raw_mode:
-        if _is_postgres_target(db_target, env):
-            raise PermissionError("Postgres MCP access requires an explicit authorization mode.")
-        raw_mode = AuthMode.LOCAL_TRUSTED.value
+        raise PermissionError("MCP access requires an explicit authorization mode.")
     try:
         mode = AuthMode(raw_mode)
     except ValueError as exc:
