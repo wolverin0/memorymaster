@@ -32,6 +32,7 @@ from memorymaster.core.security import (
     sanitize_claim_input,
     sanitize_claim_structure_input,
     sanitize_event_input,
+    sanitize_persisted_json,
     sanitize_persisted_text,
     validate_persisted_metadata,
 )
@@ -52,6 +53,15 @@ from memorymaster.stores.postgres_policy_contract import (
     expressions_match,
 )
 from memorymaster.stores.storage import SQLiteStore
+from memorymaster.stores._storage_sources import (
+    _ACTION_FIELDS,
+    _EVIDENCE_FIELDS,
+    _EXTERNAL_SOURCE_FIELDS,
+    _RETRY_FIELDS,
+    _SOURCE_FIELDS,
+    _atlas_row_is_safe,
+    _safe_text,
+)
 
 POSTGRES_EVENTS_APPEND_ONLY_TRIGGERS = (
     "trg_events_append_only_update",
@@ -3566,10 +3576,10 @@ class PostgresStore(SQLiteStore):
             if not stripped:
                 return None
             try:
-                return json.loads(stripped)
+                value = json.loads(stripped)
             except json.JSONDecodeError:
-                return stripped
-        return value
+                value = stripped
+        return sanitize_persisted_json(value)[0]
 
     def upsert_external_source(
         self,
@@ -3580,6 +3590,7 @@ class PostgresStore(SQLiteStore):
     ) -> ExternalSource:
         self._deny_unsupported_team_surface("upsert_external_source")
         _, _, Jsonb = self._load_psycopg()
+        validate_persisted_metadata({"source_type": source_type, "display_name": display_name})
         normalized_source_type = source_type.strip().lower()
         normalized_display_name = display_name.strip()
         if not normalized_source_type:
@@ -3589,6 +3600,13 @@ class PostgresStore(SQLiteStore):
         now = utc_now()
         payload = self._json_payload(config_json)
         with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM external_sources WHERE source_type = %s AND display_name = %s",
+                (normalized_source_type, normalized_display_name),
+            )
+            existing = cur.fetchone()
+            if existing is not None and not _atlas_row_is_safe(existing, _EXTERNAL_SOURCE_FIELDS):
+                raise ValueError("Existing external source contains unsafe persisted data.")
             cur.execute(
                 """
                 INSERT INTO external_sources (source_type, display_name, config_json, created_at, updated_at)
@@ -3607,8 +3625,10 @@ class PostgresStore(SQLiteStore):
                 ),
             )
             row = cur.fetchone()
-        if row is None:
-            raise RuntimeError("Failed to upsert external source.")
+            if row is None:
+                raise RuntimeError("Failed to upsert external source.")
+            if not _atlas_row_is_safe(row, _EXTERNAL_SOURCE_FIELDS):
+                raise ValueError("External source contains unsafe persisted data.")
         return self._row_to_external_source(row)
 
     def upsert_source_item(
@@ -3630,6 +3650,7 @@ class PostgresStore(SQLiteStore):
         from memorymaster.stores._storage_sources import _normalize_sensitivity
 
         _, _, Jsonb = self._load_psycopg()
+        validate_persisted_metadata({"source_item_id": source_item_id, "item_type": item_type, "occurred_at": occurred_at, "content_hash": content_hash})
         normalized_source_item_id = source_item_id.strip()
         normalized_item_type = item_type.strip().lower()
         if source_id <= 0:
@@ -3639,6 +3660,7 @@ class PostgresStore(SQLiteStore):
         if not normalized_item_type:
             raise ValueError("item_type must be non-empty.")
         normalized_sensitivity = _normalize_sensitivity(sensitivity)
+        chat_id, sender_id, sender_name, text = map(_safe_text, (chat_id, sender_id, sender_name, text))
         now = utc_now()
         payload = self._json_payload(payload_json)
         # Preserve existing sensitivity on re-import unless caller passed one
@@ -3649,10 +3671,12 @@ class PostgresStore(SQLiteStore):
         )
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT id FROM source_items WHERE source_id = %s AND source_item_id = %s",
+                "SELECT * FROM source_items WHERE source_id = %s AND source_item_id = %s",
                 (source_id, normalized_source_item_id),
             )
             existing = cur.fetchone()
+            if existing is not None and not _atlas_row_is_safe(existing, _SOURCE_FIELDS):
+                raise ValueError("Existing source item contains unsafe persisted data.")
             cur.execute(
                 f"""
                 INSERT INTO source_items (
@@ -3705,8 +3729,10 @@ class PostgresStore(SQLiteStore):
                     },
                     created_at=now,
                 )
-        if row is None:
-            raise RuntimeError("Failed to upsert source item.")
+            if row is None:
+                raise RuntimeError("Failed to upsert source item.")
+            if not _atlas_row_is_safe(row, _SOURCE_FIELDS):
+                raise ValueError("Source item contains unsafe persisted data.")
         return self._row_to_source_item(row)
 
     def get_source_item(self, *, source_id: int, source_item_id: str) -> SourceItem | None:
@@ -3722,7 +3748,7 @@ class PostgresStore(SQLiteStore):
                 (source_id, normalized_source_item_id),
             )
             row = cur.fetchone()
-        return self._row_to_source_item(row) if row is not None else None
+        return self._row_to_source_item(row) if row is not None and _atlas_row_is_safe(row, _SOURCE_FIELDS) else None
 
     def get_source_item_by_id(self, source_item_row_id: int) -> SourceItem | None:
         self._deny_unsupported_team_surface("get_source_item_by_id")
@@ -3731,7 +3757,7 @@ class PostgresStore(SQLiteStore):
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute("SELECT * FROM source_items WHERE id = %s", (source_item_row_id,))
             row = cur.fetchone()
-        return self._row_to_source_item(row) if row is not None else None
+        return self._row_to_source_item(row) if row is not None and _atlas_row_is_safe(row, _SOURCE_FIELDS) else None
 
     def add_evidence_item(
         self,
@@ -3749,12 +3775,14 @@ class PostgresStore(SQLiteStore):
         from memorymaster.stores._storage_sources import _normalize_sensitivity
 
         _, _, Jsonb = self._load_psycopg()
+        validate_persisted_metadata({"evidence_type": evidence_type})
         normalized_evidence_type = evidence_type.strip().lower()
         if source_item_id <= 0:
             raise ValueError("source_item_id must be positive.")
         if not normalized_evidence_type:
             raise ValueError("evidence_type must be non-empty.")
         normalized_sensitivity = _normalize_sensitivity(sensitivity)
+        text, media_path, provider = map(_safe_text, (text, media_path, provider))
         now = utc_now()
         bounded = None if confidence is None else max(0.0, min(1.0, float(confidence)))
         payload = self._json_payload(payload_json)
@@ -3817,15 +3845,33 @@ class PostgresStore(SQLiteStore):
         if evidence_type:
             clauses.append("evidence_type = %s")
             params.append(evidence_type.strip().lower())
-        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        params.append(limit)
+        if limit <= 0:
+            return []
+        page_size = min(max(limit, 25), 250)
+        results: list[EvidenceItem] = []
+        cursor: tuple[object, int] | None = None
         with self.connect() as conn, conn.cursor() as cur:
-            cur.execute(
-                f"SELECT * FROM evidence_items {where_sql} ORDER BY created_at ASC, id ASC LIMIT %s",
-                params,
-            )
-            rows = cur.fetchall()
-        return [self._row_to_evidence_item(row) for row in rows]
+            while len(results) < limit:
+                page_clauses = list(clauses)
+                page_params = list(params)
+                if cursor is not None:
+                    page_clauses.append("(created_at > %s OR (created_at = %s AND id > %s))")
+                    page_params.extend((cursor[0], cursor[0], cursor[1]))
+                where_sql = f"WHERE {' AND '.join(page_clauses)}" if page_clauses else ""
+                cur.execute(
+                    f"SELECT * FROM evidence_items {where_sql} ORDER BY created_at ASC, id ASC LIMIT %s",
+                    [*page_params, page_size],
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    break
+                for row in rows:
+                    if _atlas_row_is_safe(row, _EVIDENCE_FIELDS):
+                        results.append(self._row_to_evidence_item(row))
+                        if len(results) == limit:
+                            break
+                cursor = (rows[-1]["created_at"], int(rows[-1]["id"]))
+        return results
 
     def create_action_proposal(
         self,
@@ -3844,10 +3890,13 @@ class PostgresStore(SQLiteStore):
     ) -> ActionProposal:
         self._deny_unsupported_team_surface("create_action_proposal")
         _, _, Jsonb = self._load_psycopg()
+        validate_persisted_metadata({"proposal_type": proposal_type, "destination": destination, "idempotency_key": idempotency_key, "suggested_due_at": suggested_due_at})
         normalized_type = proposal_type.strip().lower()
         normalized_title = title.strip()
         normalized_destination = destination.strip() or "manual"
         normalized_idempotency_key = (idempotency_key or "").strip() or None
+        normalized_title = _safe_text(normalized_title) or "[REDACTED]"
+        description = _safe_text(description)
         if not normalized_type:
             raise ValueError("proposal_type must be non-empty.")
         if not normalized_title:
@@ -3913,7 +3962,7 @@ class PostgresStore(SQLiteStore):
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute("SELECT * FROM action_proposals WHERE idempotency_key = %s", (normalized,))
             row = cur.fetchone()
-        return self._row_to_action_proposal(row) if row is not None else None
+        return self._row_to_action_proposal(row) if row is not None and _atlas_row_is_safe(row, _ACTION_FIELDS) else None
 
     def update_action_proposal_status(
         self,
@@ -3931,13 +3980,17 @@ class PostgresStore(SQLiteStore):
             raise ValueError("proposal_id must be positive.")
         if normalized_status not in {"candidate", "approved", "rejected", "exported", "failed"}:
             raise ValueError("status must be one of: candidate, approved, rejected, exported, failed.")
+        validate_persisted_metadata({"exported_at": exported_at})
         now = utc_now()
         payload = self._json_payload(payload_json)
+        external_ref = _safe_text(external_ref)
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute("SELECT * FROM action_proposals WHERE id = %s", (proposal_id,))
             current = cur.fetchone()
             if current is None:
                 raise ValueError(f"Action proposal {proposal_id} does not exist.")
+            if not _atlas_row_is_safe(current, _ACTION_FIELDS):
+                raise ValueError(f"Action proposal {proposal_id} contains unsafe persisted data.")
             final_exported_at = exported_at if exported_at is not None else current["exported_at"]
             if normalized_status == "exported" and final_exported_at is None:
                 final_exported_at = now
@@ -3994,6 +4047,8 @@ class PostgresStore(SQLiteStore):
             current = cur.fetchone()
             if current is None:
                 raise ValueError(f"Source item {source_item_row_id} does not exist.")
+            if not _atlas_row_is_safe(current, _SOURCE_FIELDS):
+                raise ValueError(f"Source item {source_item_row_id} contains unsafe persisted data.")
             current_sensitivity = current.get("sensitivity")
             if current_sensitivity == normalized:
                 return self._row_to_source_item(current)
@@ -4031,6 +4086,8 @@ class PostgresStore(SQLiteStore):
             current = cur.fetchone()
             if current is None:
                 raise ValueError(f"Evidence item {evidence_item_row_id} does not exist.")
+            if not _atlas_row_is_safe(current, _EVIDENCE_FIELDS):
+                raise ValueError(f"Evidence item {evidence_item_row_id} contains unsafe persisted data.")
             current_sensitivity = current.get("sensitivity")
             if current_sensitivity == normalized:
                 return self._row_to_evidence_item(current)
@@ -4090,6 +4147,8 @@ class PostgresStore(SQLiteStore):
         if source_item_id <= 0:
             raise ValueError("source_item_id must be positive.")
         normalized_key = (media_key or "").strip()
+        validate_persisted_metadata({"media_key": normalized_key, "status": status, "next_attempt_time": next_attempt_time})
+        chat_id, media_type, media_path, media_url = map(_safe_text, (chat_id, media_type, media_path, media_url))
         if not normalized_key:
             raise ValueError("media_key must be non-empty.")
         if status not in MEDIA_RETRY_STATUSES:
@@ -4102,6 +4161,8 @@ class PostgresStore(SQLiteStore):
             )
             existing = cur.fetchone()
             if existing is not None:
+                if not _atlas_row_is_safe(existing, _RETRY_FIELDS):
+                    raise ValueError("Existing media retry contains unsafe persisted data.")
                 cur.execute(
                     """
                     UPDATE media_retry_queue
@@ -4152,26 +4213,45 @@ class PostgresStore(SQLiteStore):
             return []
         now = utc_now()
         with self.connect() as conn, conn.cursor() as cur:
+            safe_ids: list[int] = []
+            cursor_id = 0
+            page_size = min(max(limit, 25), 250)
+            while len(safe_ids) < limit:
+                cur.execute(
+                    """SELECT * FROM media_retry_queue
+                       WHERE status = 'pending' AND id > %s
+                         AND (next_attempt_time IS NULL OR next_attempt_time <= %s)
+                       ORDER BY id ASC LIMIT %s FOR UPDATE SKIP LOCKED""",
+                    (cursor_id, now, page_size),
+                )
+                candidates = cur.fetchall()
+                if not candidates:
+                    break
+                safe_ids.extend(
+                    int(row["id"])
+                    for row in candidates
+                    if _atlas_row_is_safe(row, _RETRY_FIELDS)
+                )
+                safe_ids = safe_ids[:limit]
+                cursor_id = int(candidates[-1]["id"])
+            if not safe_ids:
+                return []
+            placeholders = ", ".join(["%s"] * len(safe_ids))
             cur.execute(
-                """
+                f"""
                 UPDATE media_retry_queue
                 SET status = 'retrying',
                     attempt_count = attempt_count + 1,
                     updated_at = %s
-                WHERE id IN (
-                    SELECT id FROM media_retry_queue
-                    WHERE status = 'pending'
-                      AND (next_attempt_time IS NULL OR next_attempt_time <= %s)
-                    ORDER BY id ASC
-                    LIMIT %s
-                    FOR UPDATE SKIP LOCKED
-                )
+                WHERE status = 'pending' AND id IN ({placeholders})
                 RETURNING *
                 """,
-                (now, now, limit),
+                (now, *safe_ids),
             )
             rows = cur.fetchall()
-            for row in rows:
+            by_id = {int(row["id"]): row for row in rows}
+            ordered_rows = [by_id[row_id] for row_id in safe_ids if row_id in by_id]
+            for row in ordered_rows:
                 self._insert_event_row(
                     conn,
                     claim_id=None,
@@ -4182,7 +4262,7 @@ class PostgresStore(SQLiteStore):
                     payload={"retry_id": int(row["id"])},
                     created_at=now,
                 )
-        return [self._row_to_media_retry(r) for r in rows]
+        return [self._row_to_media_retry(row) for row in ordered_rows]
 
     def record_media_retry_outcome(
         self,
@@ -4201,12 +4281,16 @@ class PostgresStore(SQLiteStore):
             raise ValueError(f"status must be one of: {', '.join(MEDIA_RETRY_STATUSES)}.")
         if status == "done" and not media_path:
             raise ValueError("media_path is required when status='done'.")
+        media_path, last_error = map(_safe_text, (media_path, last_error))
+        validate_persisted_metadata({"status": status, "next_attempt_time": next_attempt_time})
         now = utc_now()
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute("SELECT * FROM media_retry_queue WHERE id = %s", (retry_id,))
             current = cur.fetchone()
             if current is None:
                 raise ValueError(f"media_retry_queue row {retry_id} does not exist.")
+            if not _atlas_row_is_safe(current, _RETRY_FIELDS):
+                raise ValueError(f"media_retry_queue row {retry_id} contains unsafe persisted data.")
             new_path = media_path if media_path is not None else current["media_path"]
             new_http = last_http_status if last_http_status is not None else current["last_http_status"]
             new_err = last_error if last_error is not None else current["last_error"]
@@ -4262,15 +4346,33 @@ class PostgresStore(SQLiteStore):
                 raise ValueError("source_item_id must be positive.")
             clauses.append("source_item_id = %s")
             params.append(source_item_id)
-        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        params.append(limit)
+        if limit <= 0:
+            return []
+        page_size = min(max(limit, 25), 250)
+        results: list[MediaRetryItem] = []
+        cursor: tuple[object, int] | None = None
         with self.connect() as conn, conn.cursor() as cur:
-            cur.execute(
-                f"SELECT * FROM media_retry_queue {where_sql} ORDER BY updated_at DESC, id DESC LIMIT %s",
-                params,
-            )
-            rows = cur.fetchall()
-        return [self._row_to_media_retry(r) for r in rows]
+            while len(results) < limit:
+                page_clauses = list(clauses)
+                page_params = list(params)
+                if cursor is not None:
+                    page_clauses.append("(updated_at < %s OR (updated_at = %s AND id < %s))")
+                    page_params.extend((cursor[0], cursor[0], cursor[1]))
+                where_sql = f"WHERE {' AND '.join(page_clauses)}" if page_clauses else ""
+                cur.execute(
+                    f"SELECT * FROM media_retry_queue {where_sql} ORDER BY updated_at DESC, id DESC LIMIT %s",
+                    [*page_params, page_size],
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    break
+                for row in rows:
+                    if _atlas_row_is_safe(row, _RETRY_FIELDS):
+                        results.append(self._row_to_media_retry(row))
+                        if len(results) == limit:
+                            break
+                cursor = (rows[-1]["updated_at"], int(rows[-1]["id"]))
+        return results
 
     def media_retry_status_counts(self) -> dict[str, int]:
         self._deny_unsupported_team_surface("media_retry_status_counts")
@@ -4299,8 +4401,11 @@ class PostgresStore(SQLiteStore):
             raise ValueError("proposal_id must be positive.")
         if title is None and description is None and suggested_due_at is None and confidence is None and payload_json is None:
             raise ValueError("at least one field must be provided to update.")
+        validate_persisted_metadata({"suggested_due_at": suggested_due_at})
 
         normalized_title = title.strip() if title is not None else None
+        normalized_title = _safe_text(normalized_title)
+        description = _safe_text(description)
         if normalized_title is not None and not normalized_title:
             raise ValueError("title cannot be blank when provided.")
         bounded = max(0.0, min(1.0, float(confidence))) if confidence is not None else None
@@ -4312,6 +4417,8 @@ class PostgresStore(SQLiteStore):
             current = cur.fetchone()
             if current is None:
                 raise ValueError(f"Action proposal {proposal_id} does not exist.")
+            if not _atlas_row_is_safe(current, _ACTION_FIELDS):
+                raise ValueError(f"Action proposal {proposal_id} contains unsafe persisted data.")
 
             updates: list[str] = []
             params: list[object] = []
@@ -4379,15 +4486,33 @@ class PostgresStore(SQLiteStore):
         if destination:
             clauses.append("destination = %s")
             params.append(destination.strip())
-        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        params.append(limit)
+        if limit <= 0:
+            return []
+        page_size = min(max(limit, 25), 250)
+        results: list[ActionProposal] = []
+        cursor: tuple[object, int] | None = None
         with self.connect() as conn, conn.cursor() as cur:
-            cur.execute(
-                f"SELECT * FROM action_proposals {where_sql} ORDER BY updated_at DESC, id DESC LIMIT %s",
-                params,
-            )
-            rows = cur.fetchall()
-        return [self._row_to_action_proposal(row) for row in rows]
+            while len(results) < limit:
+                page_clauses = list(clauses)
+                page_params = list(params)
+                if cursor is not None:
+                    page_clauses.append("(updated_at < %s OR (updated_at = %s AND id < %s))")
+                    page_params.extend((cursor[0], cursor[0], cursor[1]))
+                where_sql = f"WHERE {' AND '.join(page_clauses)}" if page_clauses else ""
+                cur.execute(
+                    f"SELECT * FROM action_proposals {where_sql} ORDER BY updated_at DESC, id DESC LIMIT %s",
+                    [*page_params, page_size],
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    break
+                for row in rows:
+                    if _atlas_row_is_safe(row, _ACTION_FIELDS):
+                        results.append(self._row_to_action_proposal(row))
+                        if len(results) == limit:
+                            break
+                cursor = (rows[-1]["updated_at"], int(rows[-1]["id"]))
+        return results
 
     def get_claim_by_human_id(
         self,
