@@ -1,9 +1,4 @@
-"""Red contracts for the MCP authorization boundary (MM-SEC-01).
-
-These tests intentionally describe the required team-safe behavior before the
-request-context implementation exists.  They stay strict-xfailed until the
-MCP boundary derives identity and intersects caller scopes with policy.
-"""
+"""Adversarial contracts for the MCP authorization boundary (MM-SEC-01)."""
 from __future__ import annotations
 
 import sqlite3
@@ -14,12 +9,6 @@ import memorymaster.core.access_control as access_control
 import memorymaster.surfaces.mcp_server as mcp_server
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
-
-
-AUDIT_BASELINE = pytest.mark.xfail(
-    strict=True,
-    reason="audit baseline MM-SEC-01: MCP request authorization is not enforced",
-)
 
 
 @pytest.fixture(autouse=True)
@@ -85,7 +74,6 @@ def test_reader_cannot_ingest_by_spoofing_source_agent(tmp_path, monkeypatch) ->
     assert _claim_count(db) == 0, "a denied write may not mutate domain state"
 
 
-@AUDIT_BASELINE
 def test_list_claims_is_restricted_to_the_workspace_scope(tmp_path) -> None:
     """A project-scoped MCP client must not enumerate another project."""
     db, workspace = _init_mcp_db(tmp_path)

@@ -1740,6 +1740,8 @@ class MemoryService:
         *,
         allow_sensitive: bool = False,
         holder: str | None = None,
+        scope_allowlist: list[str] | None = None,
+        requesting_agent: str | None = None,
     ) -> list[Claim]:
         include_sensitive = self._allow_sensitive(
             allow_sensitive=allow_sensitive,
@@ -1751,9 +1753,11 @@ class MemoryService:
             limit=limit,
             include_archived=include_archived,
             include_citations=True,
+            scope_allowlist=scope_allowlist,
             tenant_id=self.tenant_id,
             holder=holder,
         )
+        claims = _filter_agent_visibility(claims, requesting_agent)
         if not include_sensitive:
             claims = [claim for claim in claims if not is_sensitive_claim(claim)]
         return claims

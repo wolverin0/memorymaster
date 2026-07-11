@@ -15,8 +15,10 @@ from urllib.parse import urlparse
 from memorymaster.core import observability
 from memorymaster.core.access_control import (
     AuthMode,
+    RequestContext,
     authorize_context_action,
     bind_request_context,
+    current_request_context,
     resolve_request_context,
 )
 from memorymaster.surfaces import mcp_path_policy
@@ -304,32 +306,48 @@ def _resolve_workspace(workspace: str) -> str:
 # start_session or bound MemoryService.session_id, so get_usage_rollup's
 # session half always returned []. The MCP server is long-lived per client,
 # so one session per DB per process is the honest granularity.
-_TELEMETRY_SESSION_IDS: dict[str, int] = {}
+_TELEMETRY_SESSION_IDS: dict[tuple[str, str, str], int] = {}
 
 
-def _bind_telemetry_session(svc: MemoryService, db_path: str) -> None:
+def _bind_telemetry_session(
+    svc: MemoryService,
+    db_path: str,
+    principal: str = "mcp-session",
+    tenant_id: str | None = None,
+) -> None:
     """Best-effort: bind a usage-telemetry session to *svc*.
 
     Telemetry must never break a tool call — every failure is swallowed and
     the service simply stays unbound (counters still work via source_agent).
     """
     try:
-        sid = _TELEMETRY_SESSION_IDS.get(db_path)
+        session_key = (db_path, principal, tenant_id or "")
+        sid = _TELEMETRY_SESSION_IDS.get(session_key)
         if sid is None:
             from memorymaster.surfaces.session_tracker import SessionTracker
 
-            sid = SessionTracker(db_path).start_session("mcp-session")
-            _TELEMETRY_SESSION_IDS[db_path] = sid
+            sid = SessionTracker(db_path).start_session(principal)
+            _TELEMETRY_SESSION_IDS[session_key] = sid
         svc.session_id = sid
         if not getattr(svc, "source_agent", None):
-            svc.source_agent = "mcp-session"
+            svc.source_agent = principal
     except Exception:
         pass
 
 
 def _service(db: str, workspace: str) -> MemoryService:
-    svc = MemoryService(db_target=_resolve_db(db), workspace_root=Path(_resolve_workspace(workspace)))
-    _bind_telemetry_session(svc, _resolve_db(db))
+    db_path = _resolve_db(db)
+    workspace_path = _resolve_workspace(workspace)
+    context = current_request_context()
+    principal = context.principal if context is not None else "mcp-session"
+    tenant_id = context.tenant_id if context is not None else None
+    svc = MemoryService(
+        db_target=db_path,
+        workspace_root=Path(workspace_path),
+        tenant_id=tenant_id,
+    )
+    _bind_telemetry_session(svc, db_path, principal, tenant_id)
+    svc.source_agent = principal
     return svc
 
 
@@ -437,19 +455,27 @@ def _project_scope(workspace: str) -> str:
 
 def _effective_ingest_scope(scope: str, workspace: str) -> str:
     raw = (scope or "").strip()
-    if not raw or raw == "project":
-        return _project_scope(workspace)
-    return raw
+    effective = _project_scope(workspace) if not raw or raw == "project" else raw
+    context = current_request_context()
+    if context is not None and context.mode is AuthMode.TEAM and effective not in context.allowed_scopes:
+        raise PermissionError("Requested claim scope is outside the authenticated scope grant.")
+    return effective
 
 
 def _effective_scope_allowlist(raw: str, workspace: str) -> list[str] | None:
     parsed = _parse_scope_allowlist(raw)
-    if parsed:
+    context = current_request_context()
+    if context is not None and context.mode is AuthMode.TEAM:
+        requested = parsed or list(context.allowed_scopes)
+        scopes = [scope for scope in requested if scope in context.allowed_scopes]
+        if not scopes:
+            raise PermissionError("Requested scopes do not intersect the authenticated scope grant.")
+    elif parsed:
         return parsed
-    scopes = [_project_scope(workspace), "global"]
-    if _ENV_QUERY_INCLUDE_LEGACY_PROJECT:
-        scopes.append("project")
-    # Keep order and dedupe.
+    else:
+        scopes = [_project_scope(workspace), "global"]
+        if _ENV_QUERY_INCLUDE_LEGACY_PROJECT:
+            scopes.append("project")
     seen: set[str] = set()
     deduped: list[str] = []
     for value in scopes:
@@ -610,10 +636,10 @@ MCP_TOOL_POLICIES: dict[str, McpToolPolicy] = {
     "federated_query": McpToolPolicy("query"),
     "find_related_claims": McpToolPolicy("configure"),
     "get_usage_rollup": McpToolPolicy("query"),
-    "ingest_claim": McpToolPolicy("ingest"),
+    "ingest_claim": McpToolPolicy("ingest", team_enabled=True),
     "ingest_rule": McpToolPolicy("ingest"),
     "init_db": McpToolPolicy("configure"),
-    "list_claims": McpToolPolicy("query"),
+    "list_claims": McpToolPolicy("query", team_enabled=True),
     "list_events": McpToolPolicy("query"),
     "list_steward_proposals": McpToolPolicy("query"),
     "local_search": McpToolPolicy("query"),
@@ -623,7 +649,7 @@ MCP_TOOL_POLICIES: dict[str, McpToolPolicy] = {
     "query_claim_paths": McpToolPolicy("query"),
     "query_for_context": McpToolPolicy("query"),
     "query_for_task": McpToolPolicy("query"),
-    "query_memory": McpToolPolicy("query"),
+    "query_memory": McpToolPolicy("query", team_enabled=True),
     "query_meta_decisions": McpToolPolicy("query"),
     "query_rules": McpToolPolicy("query"),
     "read_active_tasks": McpToolPolicy("query"),
@@ -640,6 +666,72 @@ MCP_TOOL_POLICIES: dict[str, McpToolPolicy] = {
 }
 
 
+def _same_configured_location(left: str, right: str) -> bool:
+    if "://" in left or "://" in right:
+        return left == right
+    return Path(left).resolve() == Path(right).resolve()
+
+
+def _team_default_scope(context: RequestContext) -> str:
+    workspace_scope = _project_scope(context.workspace)
+    if workspace_scope in context.allowed_scopes:
+        return workspace_scope
+    project_scopes = [scope for scope in context.allowed_scopes if scope.startswith("project:")]
+    if len(project_scopes) == 1:
+        return project_scopes[0]
+    raise PermissionError("Authenticated workspace has no unambiguous project scope.")
+
+
+def _team_request_principal() -> str | None:
+    context = current_request_context()
+    if context is None or context.mode is not AuthMode.TEAM:
+        return None
+    return context.principal
+
+
+def _normalize_team_arguments(
+    bound: inspect.BoundArguments,
+    context: RequestContext,
+    tool_name: str,
+) -> None:
+    if "db" in bound.arguments:
+        requested_db = str(bound.arguments["db"] or "")
+        if requested_db not in {"", _DEFAULT_DB} and not _same_configured_location(requested_db, context.db_target):
+            raise PermissionError("Caller-selected database is outside the authenticated context.")
+        bound.arguments["db"] = context.db_target
+    if "workspace" in bound.arguments:
+        requested_workspace = str(bound.arguments["workspace"] or "")
+        if requested_workspace not in {"", _DEFAULT_WORKSPACE} and not _same_configured_location(
+            requested_workspace,
+            context.workspace,
+        ):
+            raise PermissionError("Caller-selected workspace is outside the authenticated context.")
+        bound.arguments["workspace"] = context.workspace
+    default_scope = _team_default_scope(context)
+    for field in ("scope", "current_scope", "project_scope"):
+        if field not in bound.arguments:
+            continue
+        requested_scope = str(bound.arguments[field] or "").strip()
+        effective_scope = default_scope if requested_scope in {"", "project"} else requested_scope
+        if effective_scope not in context.allowed_scopes:
+            raise PermissionError("Caller-selected scope is outside the authenticated context.")
+        bound.arguments[field] = effective_scope
+    if "scope_allowlist" in bound.arguments:
+        requested_scopes = _parse_scope_allowlist(str(bound.arguments["scope_allowlist"] or ""))
+        narrowed = [scope for scope in (requested_scopes or context.allowed_scopes) if scope in context.allowed_scopes]
+        if not narrowed:
+            raise PermissionError("Caller scope allowlist does not intersect authenticated scopes.")
+        bound.arguments["scope_allowlist"] = ",".join(narrowed)
+    for field in ("source_agent", "actor"):
+        if field in bound.arguments:
+            bound.arguments[field] = context.principal
+    if tool_name == "query_memory" and (
+        str(bound.arguments.get("retrieval_mode", "legacy")) != "legacy"
+        or bool(bound.arguments.get("auto_classify", False))
+    ):
+        raise PermissionError("Semantic MCP retrieval remains disabled in team mode pending planner containment.")
+
+
 def _authorized_tool_callable(func: Any, policy: McpToolPolicy) -> Any:
     call_signature = inspect.signature(func)
 
@@ -652,6 +744,8 @@ def _authorized_tool_callable(func: Any, policy: McpToolPolicy) -> Any:
             workspace=str(bound.arguments.get("workspace", "") or ""),
         )
         authorize_context_action(context, policy.action)
+        if context.mode is AuthMode.TEAM:
+            _normalize_team_arguments(bound, context, func.__name__)
         if context.mode is AuthMode.TEAM and not policy.team_enabled:
             raise PermissionError(
                 f"MCP tool '{func.__name__}' is disabled in team mode until its scope contract is verified."
@@ -659,7 +753,7 @@ def _authorized_tool_callable(func: Any, policy: McpToolPolicy) -> Any:
         if bool(bound.arguments.get("allow_sensitive", False)) and not context.allow_sensitive:
             raise PermissionError("Authenticated MCP context does not allow sensitive-data access.")
         with bind_request_context(context):
-            return func(*args, **kwargs)
+            return func(*bound.args, **bound.kwargs)
 
     setattr(guarded, "__mcp_action__", policy.action)
     setattr(guarded, "__mcp_team_enabled__", policy.team_enabled)
@@ -1145,6 +1239,7 @@ if FastMCP is not None:
             include_candidates=include_candidates,
             allow_sensitive=allow_sensitive,
             scope_allowlist=_effective_scope_allowlist(scope_allowlist, workspace),
+            requesting_agent=_team_request_principal(),
         )
         # For "full" detail level, re-fetch each claim with citations inline.
         if detail_level == "full":
@@ -1628,6 +1723,8 @@ if FastMCP is not None:
             include_archived=include_archived,
             allow_sensitive=allow_sensitive,
             holder=_empty_to_none(holder),
+            scope_allowlist=_effective_scope_allowlist("", workspace),
+            requesting_agent=_team_request_principal(),
         )
         return {"ok": True, "rows": len(claims), "claims": [_claim_to_dict(c) for c in claims]}
 

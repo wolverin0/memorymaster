@@ -8,7 +8,7 @@ Statuses: `OPEN`, `IN-PROGRESS`, `RESOLVED`, `BLOCKED-EXTERNAL`, `BLOCKED-POLICY
 
 | ID | Primary domain | Severity / exploitability | Summary | Package | Status | Acceptance evidence |
 |---|---|---|---|---|---|---|
-| MM-SEC-01 | Security/Database | Critical / EXPLOITABLE-NOW / H1 | MCP roles, project scopes, and Postgres tenant isolation are not enforced centrally | R1.1-R1.2 | IN-PROGRESS | Frozen context and complete 36-tool action registry committed; reader spoof denial passes before service entry; cross-project/tenant matrix and Postgres RLS remain |
+| MM-SEC-01 | Security/Database | Critical / EXPLOITABLE-NOW / H1 | MCP roles, project scopes, and Postgres tenant isolation are not enforced centrally | R1.1-R1.2 | IN-PROGRESS | Frozen context and complete 36-tool action registry; reader spoof denial before service; SQLite team matrix proves tenant/scope intersection and principal pinning; auxiliary tools and Postgres RLS remain |
 | MM-SEC-02 | Security/Database | Critical / EXPLOITABLE-NOW / H1 | Qdrant can return archived, sensitive, cross-scope/tenant, or orphan payloads | R1.3,R2.1 | OPEN | Fake and real Qdrant authoritative-filter tests |
 | MM-OPS-01 | DevOps | Critical / EXPLOITABLE-LOW-EFFORT / H4 | Postgres Compose publishes a fixed credential | R1.5 | OPEN | Fail-closed Compose config, private port, external rotation evidence |
 | MM-SEC-03 | Security | High / EXPLOITABLE-NOW | Persisted metadata/provenance fields bypass sensitivity scanning | R1.4 | OPEN | Complete field-matrix adversarial suite and legacy dry-run |
