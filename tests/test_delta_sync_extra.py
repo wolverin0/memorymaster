@@ -8,9 +8,8 @@ into the four contract corners that are easiest to break silently:
    boundary claim is silent data loss when several claims share a same-second
    timestamp. We also prove a claim one tick BELOW the watermark is excluded,
    so the boundary is the real ``>=`` cut, not "export everything".
-2. **DDL / CREATE-TABLE copy** — the delta file must carry the verbatim
-   ``CREATE TABLE`` statements for ``claims`` and ``citations`` so it is a
-   valid standalone merge source. A missing/altered DDL breaks the merge.
+2. **DDL / CREATE-TABLE synthesis** — the delta file must carry safe,
+   value-only tables with ordered source-column parity.
 3. **Empty export** — nothing newer than the watermark yields zero rows,
    ``max_updated_at is None``, yet a valid (schema-only) file still exists.
 4. **Full export** — empty/whitespace ``since`` exports every claim and
@@ -85,6 +84,14 @@ def _table_ddl(db: Path, table: str) -> str | None:
         return row[0] if row else None
     finally:
         conn.close()
+
+
+def _table_columns(db: Path, table: str) -> list[tuple[str, str]]:
+    with sqlite3.connect(str(db)) as conn:
+        return [
+            (str(row[1]), str(row[2]).upper())
+            for row in conn.execute(f'PRAGMA table_info("{table}")').fetchall()
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -196,11 +203,8 @@ def test_delta_carries_create_table_ddl_for_both_tables(populated_db, tmp_path):
     assert citations_ddl is not None and citations_ddl.startswith("CREATE TABLE")
 
 
-def test_delta_ddl_is_verbatim_copy_of_source(populated_db, tmp_path):
-    """CONTRACT: ``_copy_table_ddl`` copies the source CREATE statement
-    *verbatim* — the delta schema must be byte-identical to the source schema
-    for these tables, so column order/types match exactly and inserts line up.
-    If the copy were regenerated or altered, this equality breaks."""
+def test_delta_ddl_is_synthesized_from_source_columns(populated_db, tmp_path):
+    """Transport DDL preserves ordered columns but no source constraints."""
     db, svc = populated_db
     _ingest(svc, "schema parity")
 
@@ -208,9 +212,12 @@ def test_delta_ddl_is_verbatim_copy_of_source(populated_db, tmp_path):
     export_delta(db, "", out)
 
     for table in ("claims", "citations"):
-        assert _table_ddl(out, table) == _table_ddl(db, table), (
-            f"{table} DDL in delta diverged from source"
-        )
+        assert [name for name, _ in _table_columns(out, table)] == [
+            name for name, _ in _table_columns(db, table)
+        ]
+        ddl = _table_ddl(out, table) or ""
+        assert "FOREIGN KEY" not in ddl.upper()
+        assert "CHECK" not in ddl.upper()
 
 
 def test_ddl_copied_even_when_export_is_empty(populated_db, tmp_path):

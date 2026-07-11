@@ -1,7 +1,8 @@
 """Bidirectional DB merge — import claims from a remote memorymaster DB.
 
 Merges claims from a source DB into the local DB without duplicating.
-Uses idempotency_key + text hash for dedup. Preserves both sides' claims.
+Uses idempotency_key + text hash for dedup. Preserves both sides' claims while
+redacting content and rejecting secret-shaped metadata before target writes.
 
 Usage:
     memorymaster merge-db --source /path/to/remote.db
@@ -13,13 +14,32 @@ from __future__ import annotations
 import hashlib
 import logging
 import sqlite3
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
+from memorymaster.bridges.persisted_envelope import (
+    claim_envelope_is_safe,
+    persisted_claim_id,
+    sanitize_claim_envelope,
+)
+from memorymaster.core.security import SensitiveMetadataError, validate_persisted_metadata
 from memorymaster.stores._storage_shared import connect_ro, open_conn
 from memorymaster.stores.store_factory import is_postgres_dsn
 
 logger = logging.getLogger(__name__)
+
+
+def _claim_log_id(row: Mapping[str, object]) -> str:
+    claim_id = row.get("id")
+    return str(claim_id) if isinstance(claim_id, int) and not isinstance(claim_id, bool) else "unknown"
+
+
+def _quote_identifier(identifier: str) -> str:
+    validate_persisted_metadata({"merge_identifier": identifier})
+    if not identifier or "\x00" in identifier:
+        raise ValueError("Merge schema contains an invalid identifier.")
+    return '"' + identifier.replace('"', '""') + '"'
 
 
 def _text_hash(text: str) -> str:
@@ -60,20 +80,80 @@ def _build_insert_values(
     return cols_to_insert, values
 
 
-def _copy_claim_citations(src: sqlite3.Connection, tgt: sqlite3.Connection, old_id: int, new_id: int) -> None:
-    """Copy citations from source claim to target claim."""
+def _copy_claim_citations(
+    tgt: sqlite3.Connection,
+    new_id: int,
+    citations: Sequence[Mapping[str, object]],
+) -> None:
+    """Copy preflighted citations into the target transaction."""
+    for citation in citations:
+        tgt.execute(
+            "INSERT INTO citations "
+            "(claim_id, source, locator, excerpt, created_at) VALUES (?, ?, ?, ?, ?)",
+            (
+                new_id,
+                citation["source"],
+                citation.get("locator"),
+                citation.get("excerpt"),
+                citation["created_at"],
+            ),
+        )
+
+
+def _source_citations(
+    src: sqlite3.Connection, claim_id: int
+) -> list[dict[str, object]]:
     try:
-        cites = src.execute(
-            "SELECT source, locator, excerpt, created_at FROM citations WHERE claim_id = ?",
-            (old_id,),
+        rows = src.execute(
+            "SELECT * FROM citations WHERE claim_id = ?",
+            (claim_id,),
         ).fetchall()
-        for cite in cites:
-            tgt.execute(
-                "INSERT INTO citations (claim_id, source, locator, excerpt, created_at) VALUES (?, ?, ?, ?, ?)",
-                (new_id, cite["source"], cite["locator"], cite["excerpt"], cite["created_at"]),
-            )
     except sqlite3.OperationalError:
-        pass  # citations table might differ
+        return []
+    return [dict(row) for row in rows]
+
+
+def _unsafe_citation_claim_ids(
+    conn: sqlite3.Connection,
+) -> set[int] | None:
+    """Return claim ids with unsafe citations; None means fail closed globally."""
+    try:
+        rows = conn.execute("SELECT * FROM citations")
+    except sqlite3.OperationalError:
+        return set()
+    unsafe: set[int] = set()
+    for raw_row in rows:
+        citation = dict(raw_row)
+        try:
+            claim_id = persisted_claim_id({"id": citation.get("claim_id")})
+        except SensitiveMetadataError:
+            return None
+        if not claim_envelope_is_safe({"text": "safe"}, [citation]):
+            unsafe.add(claim_id)
+    return unsafe
+
+
+def _target_claim_envelope_is_safe(
+    tgt: sqlite3.Connection, target_claim: Mapping[str, object]
+) -> bool:
+    """Revalidate one target claim and its citations in the active snapshot."""
+    try:
+        claim_id = persisted_claim_id(target_claim)
+        citations = tgt.execute(
+            "SELECT * FROM citations WHERE claim_id = ?",
+            (claim_id,),
+        ).fetchall()
+    except (SensitiveMetadataError, sqlite3.Error):
+        return False
+    return claim_envelope_is_safe(
+        target_claim,
+        [dict(citation) for citation in citations],
+    )
+
+
+def _sqlite_error_label(exc: sqlite3.Error) -> str:
+    label = getattr(exc, "sqlite_errorname", None)
+    return str(label) if isinstance(label, str) and label.startswith("SQLITE_") else "SQLITE_ERROR"
 
 
 def _parse_timestamp(value: object) -> datetime:
@@ -253,7 +333,19 @@ def _find_existing_target_claim(
         if claim_id is None:
             return None
         row = tgt.execute("SELECT * FROM claims WHERE id = ?", (claim_id,)).fetchone()
-        return dict(row) if row else None
+        if row:
+            candidate = dict(row)
+            candidate_text = candidate.get("text")
+            if (
+                isinstance(candidate_text, str)
+                and _identity_namespace(
+                    candidate,
+                    available_columns=target_cols,
+                )
+                == namespace
+                and _text_hash(candidate_text) == text_hash
+            ):
+                return candidate
 
     for row in tgt.execute(
         f"SELECT * FROM claims WHERE {identity_sql}", identity_params
@@ -338,20 +430,24 @@ def _apply_conflict_resolution(
 
 
 def _insert_claim_into_target(
-    row: sqlite3.Row,
+    row: Mapping[str, object],
     common_cols: list[str],
     ikey: str,
     text: str,
-    src: sqlite3.Connection,
     tgt: sqlite3.Connection,
+    citations: Sequence[Mapping[str, object]],
 ) -> int | None:
     """Insert a single claim into target DB and copy citations. Returns new id if successful."""
-    src_id = row["id"] if "id" in row.keys() else "?"
+    src_id = _claim_log_id(row)
     text_hash = _text_hash(text)
+    savepoint = "merge_claim_insert"
     try:
+        if not tgt.in_transaction:
+            tgt.execute("BEGIN")
+        tgt.execute(f"SAVEPOINT {savepoint}")
         cols_to_insert, values = _build_insert_values(row, common_cols, ikey)
         placeholders = ",".join("?" for _ in cols_to_insert)
-        col_names = ",".join(cols_to_insert)
+        col_names = ",".join(_quote_identifier(column) for column in cols_to_insert)
 
         tgt.execute(
             f"INSERT INTO claims ({col_names}) VALUES ({placeholders})",
@@ -359,22 +455,31 @@ def _insert_claim_into_target(
         )
         new_id = tgt.execute("SELECT last_insert_rowid()").fetchone()[0]
 
-        _copy_claim_citations(src, tgt, row["id"], new_id)
+        _copy_claim_citations(tgt, new_id, citations)
+        tgt.execute(f"RELEASE SAVEPOINT {savepoint}")
         return int(new_id)
     except sqlite3.IntegrityError as exc:
+        tgt.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+        tgt.execute(f"RELEASE SAVEPOINT {savepoint}")
         # A genuine UNIQUE/constraint collision (e.g. idempotency_key already
         # present after another path inserted it). Log enough to trace which
         # claim was dropped — do NOT swallow it as a generic "merge error".
         logger.warning(
-            "Constraint collision merging claim src_id=%s text_hash=%s: %s",
-            src_id, text_hash, exc,
+            "Constraint collision merging claim src_id=%s text_hash=%s error=%s",
+            src_id,
+            text_hash,
+            _sqlite_error_label(exc),
         )
         return None
     except sqlite3.OperationalError as exc:
+        tgt.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+        tgt.execute(f"RELEASE SAVEPOINT {savepoint}")
         # Schema/operational problem (missing column, locked DB after retries).
         logger.warning(
-            "Operational error merging claim src_id=%s text_hash=%s: %s",
-            src_id, text_hash, exc,
+            "Operational error merging claim src_id=%s text_hash=%s error=%s",
+            src_id,
+            text_hash,
+            _sqlite_error_label(exc),
         )
         return None
 
@@ -432,7 +537,8 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
     """Merge claims from source_db into target_db.
 
     Skips claims that already exist (matched by idempotency_key or text hash).
-    Copies citations for newly merged claims.
+    Copies preflighted citations for newly merged claims. Unsafe source metadata
+    counts as an error; unsafe legacy target rows are excluded from mutation.
 
     Returns dict with: scanned, merged, skipped, errors
     """
@@ -452,6 +558,7 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
     tgt = _open_target(target_db)
 
     try:
+        src.execute("BEGIN")
         # Refuse to import rows the target's CHECK constraints may forbid.
         _check_schema_compatibility(src, tgt)
         tgt_cols = _target_columns(tgt)
@@ -464,13 +571,22 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
         existing_hashes: set[tuple[IdentityNamespace, str]] = set()
         hash_to_id: dict[tuple[IdentityNamespace, str], int] = {}
 
-        identity_columns = [
-            column
-            for column in ("tenant_id", "scope", "visibility", "source_agent")
-            if column in tgt_cols
-        ]
-        select_columns = ", ".join(("id", "idempotency_key", "text", *identity_columns))
-        for row in tgt.execute(f"SELECT {select_columns} FROM claims").fetchall():
+        unsafe_target_citations = _unsafe_citation_claim_ids(tgt)
+        unsafe_target_rows = 0
+        for raw_row in tgt.execute("SELECT * FROM claims").fetchall():
+            row = dict(raw_row)
+            try:
+                target_id = persisted_claim_id(row)
+            except SensitiveMetadataError:
+                unsafe_target_rows += 1
+                continue
+            if (
+                unsafe_target_citations is None
+                or target_id in unsafe_target_citations
+                or not claim_envelope_is_safe(row)
+            ):
+                unsafe_target_rows += 1
+                continue
             namespace = _identity_namespace(
                 row,
                 available_columns=tgt_cols,
@@ -480,7 +596,12 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
                 existing_keys.add((namespace, str(row["idempotency_key"])))
             thash = _text_hash(row["text"])
             existing_hashes.add((namespace, thash))
-            hash_to_id.setdefault((namespace, thash), int(row["id"]))
+            hash_to_id.setdefault((namespace, thash), target_id)
+        if unsafe_target_rows:
+            logger.warning(
+                "merge: quarantined %d unsafe legacy target rows from mutation",
+                unsafe_target_rows,
+            )
 
         # Get all columns from source claims table
         src_cols = [col[1] for col in src.execute("PRAGMA table_info(claims)").fetchall()]
@@ -492,8 +613,24 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
 
         batch_size = 200
         pending = 0
-        for row in source_claims:
+        for source_row in source_claims:
             stats["scanned"] += 1
+            raw_row = dict(source_row)
+            try:
+                envelope = sanitize_claim_envelope(
+                    raw_row,
+                    _source_citations(src, persisted_claim_id(raw_row)),
+                )
+            except SensitiveMetadataError as exc:
+                logger.warning(
+                    "merge: rejected source claim id=%s unsafe field=%s findings=%s",
+                    _claim_log_id(raw_row),
+                    exc.field,
+                    ",".join(exc.findings),
+                )
+                stats["errors"] += 1
+                continue
+            row = envelope.row
             ikey = row["idempotency_key"] if "idempotency_key" in row.keys() else None
             text = row["text"]
             namespace = _identity_namespace(
@@ -506,28 +643,111 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
 
             # Reconcile duplicates deterministically instead of letting merge order win.
             if (identity_key and identity_key in existing_keys) or hash_key in existing_hashes:
-                existing_claim = _find_existing_target_claim(
-                    tgt,
-                    ikey,
-                    text,
-                    namespace,
-                    tgt_cols,
-                    hash_to_id,
-                )
-                if existing_claim:
-                    _reconcile_existing_claim(tgt, row, existing_claim, tgt_cols)
-                stats["skipped"] += 1
-                continue
+                claim_savepoint = "merge_duplicate_envelope"
+                if not tgt.in_transaction:
+                    tgt.execute("BEGIN")
+                tgt.execute(f"SAVEPOINT {claim_savepoint}")
+                existing_claim = None
+                try:
+                    existing_claim = _find_existing_target_claim(
+                        tgt,
+                        ikey,
+                        text,
+                        namespace,
+                        tgt_cols,
+                        hash_to_id,
+                    )
+                    if (
+                        existing_claim
+                        and not envelope.findings
+                        and _target_claim_envelope_is_safe(tgt, existing_claim)
+                    ):
+                        _reconcile_existing_claim(tgt, row, existing_claim, tgt_cols)
+                except sqlite3.Error as exc:
+                    tgt.execute(f"ROLLBACK TO SAVEPOINT {claim_savepoint}")
+                    tgt.execute(f"RELEASE SAVEPOINT {claim_savepoint}")
+                    logger.warning(
+                        "Duplicate reconciliation rejected src_id=%s error=%s",
+                        _claim_log_id(raw_row),
+                        _sqlite_error_label(exc),
+                    )
+                    stats["errors"] += 1
+                    pending += 1
+                    if pending >= batch_size:
+                        tgt.commit()
+                        pending = 0
+                    continue
+                else:
+                    tgt.execute(f"RELEASE SAVEPOINT {claim_savepoint}")
+                if existing_claim is not None:
+                    stats["skipped"] += 1
+                    pending += 1
+                    if pending >= batch_size:
+                        tgt.commit()
+                        pending = 0
+                    continue
+
+                # A writer changed the cached row's identity after a prior batch
+                # committed. Drop the stale fingerprints and import this now-new
+                # source claim instead of mutating the unrelated target row or
+                # silently skipping the source.
+                if identity_key is not None:
+                    existing_keys.discard(identity_key)
+                existing_hashes.discard(hash_key)
+                hash_to_id.pop(hash_key, None)
 
             # Build idempotency key if missing
             if not ikey:
                 ikey = f"merge-{_text_hash(text)}"
 
             # Insert into target
-            conflicts = _find_conflicting_target_claims(tgt, row, tgt_cols)
-            new_id = _insert_claim_into_target(row, common_cols, ikey, text, src, tgt)
+            row = envelope.row
+            if envelope.findings:
+                row = {
+                    **row,
+                    **({"status": "candidate"} if "status" in row else {}),
+                    **({"pinned": 0} if "pinned" in row else {}),
+                }
+            claim_savepoint = "merge_claim_envelope"
+            if not tgt.in_transaction:
+                tgt.execute("BEGIN")
+            tgt.execute(f"SAVEPOINT {claim_savepoint}")
+            try:
+                conflicts = []
+                if not envelope.findings:
+                    conflicts = [
+                        conflict
+                        for conflict in _find_conflicting_target_claims(tgt, row, tgt_cols)
+                        if _target_claim_envelope_is_safe(tgt, conflict)
+                    ]
+                new_id = _insert_claim_into_target(
+                    row,
+                    common_cols,
+                    str(ikey),
+                    str(text),
+                    tgt,
+                    envelope.citations,
+                )
+                if new_id is not None:
+                    _apply_conflict_resolution(tgt, row, new_id, tgt_cols, conflicts)
+            except sqlite3.Error as exc:
+                tgt.execute(f"ROLLBACK TO SAVEPOINT {claim_savepoint}")
+                tgt.execute(f"RELEASE SAVEPOINT {claim_savepoint}")
+                logger.warning(
+                    "Merge claim transaction rejected src_id=%s error=%s",
+                    _claim_log_id(raw_row),
+                    _sqlite_error_label(exc),
+                )
+                new_id = None
+            else:
+                tgt.execute(f"RELEASE SAVEPOINT {claim_savepoint}")
             if new_id is not None:
-                _apply_conflict_resolution(tgt, row, new_id, tgt_cols, conflicts)
+                if envelope.findings:
+                    logger.warning(
+                        "merge: redacted source claim id=%s findings=%s",
+                        _claim_log_id(raw_row),
+                        ",".join(envelope.findings),
+                    )
                 existing_keys.add((namespace, str(ikey)))
                 thash = _text_hash(text)
                 existing_hashes.add((namespace, thash))
