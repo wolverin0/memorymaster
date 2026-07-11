@@ -40,7 +40,7 @@ Statuses: `OPEN`, `IN-PROGRESS`, `RESOLVED`, `BLOCKED-EXTERNAL`, `BLOCKED-POLICY
 | MM-OBS-01 | Missing Operations | High / BAD-PRACTICE | Failures/metrics are process-local without central alert ownership | R3.5 | OPEN | Persistent metrics, trace/error capture, alert tests/runbook |
 | MM-DB-01 | Database | Medium / BAD-PRACTICE | Fast schema fingerprint can omit legacy ensure-helper changes | R3.2 | OPEN | All DDL versioned or fingerprint covers every schema source |
 | MM-INTEGRITY-01 | Code Integrity | Medium / BAD-PRACTICE | `importlib.util` probe is wrong in clean Python and its test masks failure | R4.4 | OPEN | Clean subprocess test and explicit import |
-| MM-TEST-01 | Maintainability/Reliability | Medium / BAD-PRACTICE | Full non-ML suite produced two different order/load-only failures that pass immediately in isolation | Phase 0/R4.4 | IN-PROGRESS | Root cause isolated; three consecutive full gates pass or deterministic test isolation is fixed |
+| MM-TEST-01 | Maintainability/Reliability | Medium / BAD-PRACTICE | Validator candidate winner changed under load because mutable `updated_at` controlled processing order | Phase 0/R4.4 | RESOLVED | Deterministic timestamp-inversion regression passes; targeted lifecycle suite 35 passed; full isolated non-ML gate 3,094 passed, 56 skipped, 95 deselected, 24 intentional xfails |
 
 ## Source-domain reconciliation
 

@@ -57,6 +57,11 @@ def _merge_claims(primary: list[Claim], secondary: list[Claim]) -> list[Claim]:
     return merged
 
 
+def _candidate_recency_key(claim: Claim) -> tuple[str, int]:
+    """Order candidates by immutable ingest recency, never mutable confidence writes."""
+    return (claim.created_at, claim.id)
+
+
 def run(
     store,
     limit: int = 200,
@@ -87,7 +92,11 @@ def run(
     cfg = get_config()
     if min_score is None:
         min_score = cfg.validation_threshold
-    candidate_claims = store.find_by_status("candidate", limit=limit)
+    candidate_claims = sorted(
+        store.find_by_status("candidate", limit=limit),
+        key=_candidate_recency_key,
+        reverse=True,
+    )
     due_revalidation_claims: list[Claim] = []
     if policy_mode != "legacy":
         due_revalidation_claims = [

@@ -81,7 +81,7 @@ Phase 0 must replace qualitative capacity goals with recorded numeric gates in t
 
 ### Program tracker
 
-- [ ] Phase 0 — evidence, numerical gates, and red tests
+- [x] Phase 0 — evidence, numerical gates, and red tests
 - [ ] R1.1 — authenticated request context and MCP authorization
 - [ ] R1.2 — Postgres tenant enforcement and RLS
 - [ ] R1.3 — immediate Qdrant containment
@@ -107,14 +107,14 @@ Phase 0 must replace qualitative capacity goals with recorded numeric gates in t
 
 **Goal:** Preserve the audit evidence and prevent false fixes.
 
-- [ ] **R0.1 — Execution isolation**
+- [x] **R0.1 — Execution isolation**
   - Capture `git status`, branch, Python path, installed package version, DB size/counts, and relevant service versions.
   - Establish an isolated branch/worktree and dedicated virtual environment, or document why the main checkout is required.
   - Verify imports point at the intended checkout.
-- [ ] **R0.2 — Finding ledger**
+- [x] **R0.2 — Finding ledger**
   - Create `audit-remediation-ledger.md` mapping every audit finding to owner, package, status, commit, verification evidence, and rollback.
   - Deduplicate cross-domain findings without losing source-domain traceability.
-- [ ] **R0.3 — Adversarial regression fixtures**
+- [x] **R0.3 — Adversarial regression fixtures**
   - Reader-agent mutation denial.
   - Cross-project and cross-tenant list/query/mutation denial.
   - Archived, sensitive, wrong-scope, wrong-tenant, and orphan Qdrant hits.
@@ -122,7 +122,7 @@ Phase 0 must replace qualitative capacity goals with recorded numeric gates in t
   - Registry-initialized entity graph.
   - Conversational query parity across MCP, hooks, CLI, and context packing.
   - Container entrypoint/readiness contract.
-- [ ] **R0.4 — Numerical operating envelope**
+- [x] **R0.4 — Numerical operating envelope**
   - Measure and write the required capacity, retention, DB-growth, disk-watermark, and backlog-completion numbers into the ledger.
   - Record the measurement query/window and make every later performance/cost gate consume those frozen values.
 
