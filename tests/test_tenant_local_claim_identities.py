@@ -78,16 +78,16 @@ def test_identity_lookups_are_tenant_qualified(tmp_path) -> None:
     )
 
     by_key_a = tenant_a.store.get_claim_by_idempotency_key(
-        "same-key", tenant_id="tenant-a"
+        "same-key", tenant_id="tenant-a", scope="project:shared"
     )
     by_key_b = tenant_b.store.get_claim_by_idempotency_key(
-        "same-key", tenant_id="tenant-b"
+        "same-key", tenant_id="tenant-b", scope="project:shared"
     )
     by_human_a = tenant_a.store.get_claim_by_human_id(
-        claim_a.human_id, tenant_id="tenant-a"
+        claim_a.human_id, tenant_id="tenant-a", scope="project:shared"
     )
     by_human_b = tenant_b.store.get_claim_by_human_id(
-        claim_b.human_id, tenant_id="tenant-b"
+        claim_b.human_id, tenant_id="tenant-b", scope="project:shared"
     )
 
     assert by_key_a and by_key_a.id == claim_a.id
@@ -98,6 +98,7 @@ def test_identity_lookups_are_tenant_qualified(tmp_path) -> None:
         tenant_a.store.resolve_claim_id(
             claim_a.human_id,
             tenant_id="tenant-a",
+            scope="project:shared",
         )
         == claim_a.id
     )
@@ -105,6 +106,7 @@ def test_identity_lookups_are_tenant_qualified(tmp_path) -> None:
         tenant_b.store.resolve_claim_id(
             claim_b.human_id,
             tenant_id="tenant-b",
+            scope="project:shared",
         )
         == claim_b.id
     )
@@ -144,7 +146,7 @@ def test_same_confirmed_tuple_can_coexist_across_tenants(tmp_path) -> None:
     )
 
     with tenant_a.store.connect() as conn:
-        with pytest.raises(sqlite3.IntegrityError, match="only one confirmed claim"):
+        with pytest.raises(sqlite3.IntegrityError, match="confirmed_tuple_unique"):
             conn.execute(
                 "UPDATE claims SET tenant_id = ? WHERE id = ?",
                 ("tenant-a", claim_b.id),
@@ -191,7 +193,7 @@ def test_duplicate_identity_and_tuple_still_fail_within_tenant(tmp_path) -> None
         reason="first-confirm",
         event_type="validator",
     )
-    with pytest.raises(sqlite3.IntegrityError, match="only one confirmed claim"):
+    with pytest.raises(sqlite3.IntegrityError, match="confirmed_tuple_unique"):
         transition_claim(
             service.store,
             second_tuple.id,

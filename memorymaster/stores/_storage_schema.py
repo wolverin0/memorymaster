@@ -21,6 +21,7 @@ from memorymaster.stores._storage_shared import (
     compute_tenant_event_hash,
     generate_top_level_human_id,
 )
+from memorymaster.stores.claim_identity import identity_namespace_key
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,46 @@ def load_schema_postgres_sql() -> str:
 
 
 class _SchemaMixin:
+
+    @staticmethod
+    def _sqlite_identity_clause(
+        visibility: str,
+        source_agent: str | None,
+        *,
+        alias: str = "",
+    ) -> tuple[str, tuple[object, ...]]:
+        prefix = f"{alias}." if alias else ""
+        if visibility == "public":
+            return f"{prefix}visibility = ?", ("public",)
+        return (
+            f"{prefix}visibility = ? AND {prefix}source_agent = ?",
+            (visibility, source_agent),
+        )
+
+    @staticmethod
+    def _ensure_claim_identity_guards(conn: sqlite3.Connection) -> None:
+        conn.executescript(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_claims_identity_guard_insert
+            BEFORE INSERT ON claims
+            WHEN NEW.visibility NOT IN ('public', 'private', 'sensitive')
+              OR (NEW.visibility <> 'public'
+                  AND NULLIF(TRIM(NEW.source_agent), '') IS NULL)
+            BEGIN
+                SELECT RAISE(ABORT,
+                    'invalid claim visibility or missing non-public source_agent');
+            END;
+            CREATE TRIGGER IF NOT EXISTS trg_claims_identity_guard_update
+            BEFORE UPDATE ON claims
+            WHEN NEW.visibility NOT IN ('public', 'private', 'sensitive')
+              OR (NEW.visibility <> 'public'
+                  AND NULLIF(TRIM(NEW.source_agent), '') IS NULL)
+            BEGIN
+                SELECT RAISE(ABORT,
+                    'invalid claim visibility or missing non-public source_agent');
+            END;
+            """
+        )
 
     @staticmethod
     def _ensure_version_column(conn: sqlite3.Connection) -> None:
@@ -215,6 +256,8 @@ class _SchemaMixin:
     @staticmethod
     def _ensure_claim_idempotency_schema(conn: sqlite3.Connection) -> None:
         _SchemaMixin._ensure_tenant_id_schema(conn)
+        _SchemaMixin._ensure_scope_schema(conn)
+        _SchemaMixin._ensure_agent_columns(conn)
         try:
             conn.execute("ALTER TABLE claims ADD COLUMN idempotency_key TEXT")
         except sqlite3.OperationalError as exc:
@@ -223,74 +266,51 @@ class _SchemaMixin:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_claims_idempotency_key ON claims(idempotency_key)"
         )
-        conn.execute(
+        conn.executescript(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_tenant_idempotency_key
-            ON claims(COALESCE(tenant_id, ''), idempotency_key)
-            WHERE idempotency_key IS NOT NULL
+            DROP INDEX IF EXISTS idx_claims_tenant_idempotency_key;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_public_idempotency_key_unique
+                ON claims(COALESCE(tenant_id, ''), scope, idempotency_key)
+                WHERE visibility = 'public' AND idempotency_key IS NOT NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_nonpublic_principal_idempotency_key_unique
+                ON claims(COALESCE(tenant_id, ''), scope, visibility, source_agent, idempotency_key)
+                WHERE visibility <> 'public' AND source_agent IS NOT NULL
+                  AND idempotency_key IS NOT NULL;
             """
         )
+        _SchemaMixin._ensure_claim_identity_guards(conn)
 
 
     @staticmethod
     def _ensure_confirmed_tuple_uniqueness_schema(conn: sqlite3.Connection) -> None:
         _SchemaMixin._ensure_tenant_id_schema(conn)
+        _SchemaMixin._ensure_scope_schema(conn)
+        _SchemaMixin._ensure_agent_columns(conn)
         for trigger in SQLITE_CONFIRMED_TUPLE_GUARD_TRIGGERS:
             conn.execute(f"DROP TRIGGER IF EXISTS {trigger}")
-        conn.executescript(
-            """
-            CREATE TRIGGER IF NOT EXISTS trg_claims_confirmed_tuple_guard_insert
-            BEFORE INSERT ON claims
-            WHEN NEW.status = 'confirmed'
-              AND NEW.subject IS NOT NULL
-              AND NEW.predicate IS NOT NULL
-              AND EXISTS (
-                SELECT 1
-                FROM claims c
-                WHERE c.status = 'confirmed'
-                  AND c.subject = NEW.subject
-                  AND c.predicate = NEW.predicate
-                  AND c.scope = NEW.scope
-                  AND c.tenant_id IS NEW.tenant_id
-              )
-            BEGIN
-                SELECT RAISE(ABORT, 'only one confirmed claim is allowed per (subject,predicate,scope)');
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS trg_claims_confirmed_tuple_guard_update
-            BEFORE UPDATE OF status, subject, predicate, scope, tenant_id ON claims
-            WHEN NEW.status = 'confirmed'
-              AND NEW.subject IS NOT NULL
-              AND NEW.predicate IS NOT NULL
-              AND EXISTS (
-                SELECT 1
-                FROM claims c
-                WHERE c.id <> OLD.id
-                  AND c.status = 'confirmed'
-                  AND c.subject = NEW.subject
-                  AND c.predicate = NEW.predicate
-                  AND c.scope = NEW.scope
-                  AND c.tenant_id IS NEW.tenant_id
-              )
-            BEGIN
-                SELECT RAISE(ABORT, 'only one confirmed claim is allowed per (subject,predicate,scope)');
-            END;
-            """
-        )
         try:
-            conn.execute(
+            conn.executescript(
                 """
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_confirmed_tuple_unique
-                ON claims(COALESCE(tenant_id, ''), subject, predicate, scope)
-                WHERE status = 'confirmed'
-                  AND subject IS NOT NULL
-                  AND predicate IS NOT NULL
+                DROP INDEX IF EXISTS idx_claims_confirmed_tuple_unique;
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_public_confirmed_tuple_unique
+                    ON claims(COALESCE(tenant_id, ''), subject, predicate, scope)
+                    WHERE visibility = 'public' AND status = 'confirmed'
+                      AND subject IS NOT NULL AND predicate IS NOT NULL;
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_nonpublic_principal_confirmed_tuple_unique
+                    ON claims(
+                        COALESCE(tenant_id, ''), visibility, source_agent,
+                        subject, predicate, scope
+                    )
+                    WHERE visibility <> 'public' AND source_agent IS NOT NULL
+                      AND status = 'confirmed'
+                      AND subject IS NOT NULL AND predicate IS NOT NULL;
                 """
             )
         except sqlite3.IntegrityError as exc:
             lowered = str(exc).lower()
             if "unique constraint failed" not in lowered:
                 raise
+        _SchemaMixin._ensure_claim_identity_guards(conn)
 
 
     @staticmethod
@@ -518,6 +538,8 @@ class _SchemaMixin:
     def _ensure_human_id_schema(conn: sqlite3.Connection) -> None:
         """Add human_id column if missing and backfill existing claims."""
         _SchemaMixin._ensure_tenant_id_schema(conn)
+        _SchemaMixin._ensure_scope_schema(conn)
+        _SchemaMixin._ensure_agent_columns(conn)
         try:
             conn.execute("ALTER TABLE claims ADD COLUMN human_id TEXT")
         except sqlite3.OperationalError as exc:
@@ -536,13 +558,19 @@ class _SchemaMixin:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id)"
         )
-        conn.execute(
+        conn.executescript(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_tenant_human_id
-            ON claims(COALESCE(tenant_id, ''), human_id)
-            WHERE human_id IS NOT NULL
+            DROP INDEX IF EXISTS idx_claims_tenant_human_id;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_public_human_id_unique
+                ON claims(COALESCE(tenant_id, ''), scope, human_id)
+                WHERE visibility = 'public' AND human_id IS NOT NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_nonpublic_principal_human_id_unique
+                ON claims(COALESCE(tenant_id, ''), scope, visibility, source_agent, human_id)
+                WHERE visibility <> 'public' AND source_agent IS NOT NULL
+                  AND human_id IS NOT NULL;
             """
         )
+        _SchemaMixin._ensure_claim_identity_guards(conn)
         _SchemaMixin._backfill_human_ids(conn)
 
 
@@ -556,7 +584,10 @@ class _SchemaMixin:
         per-row claim_links JOIN and generate ids in-memory + executemany.
         """
         rows = conn.execute(
-            "SELECT id, subject, text, tenant_id FROM claims WHERE human_id IS NULL ORDER BY id ASC"
+            """
+            SELECT id, subject, text, tenant_id, scope, visibility, source_agent
+            FROM claims WHERE human_id IS NULL ORDER BY id ASC
+            """
         ).fetchall()
         if not rows:
             return 0
@@ -579,6 +610,9 @@ class _SchemaMixin:
                 text,
                 claim_id,
                 tenant_id=row["tenant_id"],
+                scope=str(row["scope"]),
+                visibility=row["visibility"],
+                source_agent=row["source_agent"],
             )
             conn.execute(
                 "UPDATE claims SET human_id = ? WHERE id = ?",
@@ -594,23 +628,32 @@ class _SchemaMixin:
         Collisions are resolved in-memory against ids already present in the DB
         plus ids minted within this batch, then written via a single executemany.
         """
-        taken: set[tuple[str | None, str]] = {
-            (r[0], str(r[1]))
+        taken: set[tuple[tuple[str | None, str, str, str | None], str]] = {
+            (identity_namespace_key(r[0], str(r[1]), str(r[2]), r[3]), str(r[4]))
             for r in conn.execute(
-                "SELECT tenant_id, human_id FROM claims WHERE human_id IS NOT NULL"
+                """
+                SELECT tenant_id, scope, visibility, source_agent, human_id
+                FROM claims WHERE human_id IS NOT NULL
+                """
             ).fetchall()
         }
         updates: list[tuple[str, int]] = []
         for row in rows:
             claim_id = int(row["id"])
             tenant_id = row["tenant_id"]
+            namespace = identity_namespace_key(
+                tenant_id,
+                str(row["scope"]),
+                str(row["visibility"]),
+                row["source_agent"],
+            )
             candidate = generate_top_level_human_id(row["subject"], str(row["text"]))
             final = candidate
             suffix = 1
-            while (tenant_id, final) in taken:
+            while (namespace, final) in taken:
                 suffix += 1
                 final = f"{candidate}~{suffix}"
-            taken.add((tenant_id, final))
+            taken.add((namespace, final))
             updates.append((final, claim_id))
         conn.executemany("UPDATE claims SET human_id = ? WHERE id = ?", updates)
         return len(updates)
@@ -623,6 +666,9 @@ class _SchemaMixin:
         text: str,
         claim_id: int,
         tenant_id: str | None = None,
+        scope: str = "project",
+        visibility: str = "public",
+        source_agent: str | None = None,
     ) -> str:
         """Build a unique human_id, checking for derived_from parent links.
 
@@ -631,8 +677,13 @@ class _SchemaMixin:
         top-level id (e.g. ``mm-a3f8``).  Collisions are resolved by appending a
         numeric suffix.
         """
+        identity_clause, identity_params = _SchemaMixin._sqlite_identity_clause(
+            visibility,
+            source_agent,
+            alias="c",
+        )
         parent_row = conn.execute(
-            """
+            f"""
             SELECT c.human_id
             FROM claim_links cl
             JOIN claims c ON c.id = cl.target_id
@@ -640,19 +691,23 @@ class _SchemaMixin:
               AND cl.link_type = 'derived_from'
               AND c.human_id IS NOT NULL
               AND c.tenant_id IS ?
+              AND c.scope = ?
+              AND {identity_clause}
             LIMIT 1
             """,
-            (claim_id, tenant_id),
+            (claim_id, tenant_id, scope, *identity_params),
         ).fetchone()
 
         if parent_row and parent_row["human_id"]:
             parent_hid = str(parent_row["human_id"])
             child_count = conn.execute(
-                """
+                f"""
                 SELECT COUNT(*) AS cnt FROM claims
                 WHERE human_id LIKE ? AND human_id != ? AND tenant_id IS ?
+                  AND scope = ?
+                  AND {identity_clause.replace('c.', '')}
                 """,
-                (parent_hid + ".%", parent_hid, tenant_id),
+                (parent_hid + ".%", parent_hid, tenant_id, scope, *identity_params),
             ).fetchone()
             next_child = (int(child_count["cnt"]) if child_count else 0) + 1
             candidate = f"{parent_hid}.{next_child}"
@@ -664,8 +719,13 @@ class _SchemaMixin:
         suffix = 1
         while True:
             existing = conn.execute(
-                "SELECT 1 FROM claims WHERE human_id = ? AND tenant_id IS ?",
-                (final, tenant_id),
+                f"""
+                SELECT 1 FROM claims
+                WHERE human_id = ? AND tenant_id IS ?
+                  AND scope = ?
+                  AND {identity_clause.replace('c.', '')}
+                """,
+                (final, tenant_id, scope, *identity_params),
             ).fetchone()
             if existing is None:
                 return final
@@ -684,6 +744,18 @@ class _SchemaMixin:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_claims_tenant_id ON claims(tenant_id)"
         )
+
+
+    @staticmethod
+    def _ensure_scope_schema(conn: sqlite3.Connection) -> None:
+        """Give legacy claims the historical default identity scope."""
+        try:
+            conn.execute(
+                "ALTER TABLE claims ADD COLUMN scope TEXT NOT NULL DEFAULT 'project'"
+            )
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
 
 
     @staticmethod

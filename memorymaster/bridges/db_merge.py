@@ -114,6 +114,83 @@ def _target_columns(tgt: sqlite3.Connection) -> set[str]:
     return {col[1] for col in tgt.execute("PRAGMA table_info(claims)").fetchall()}
 
 
+def _sqlite_literal_default(value: object | None) -> object | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if raw.upper() == "NULL":
+        return None
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {"'", '"'}:
+        quote = raw[0]
+        return raw[1:-1].replace(quote * 2, quote)
+    return raw
+
+
+def _target_identity_defaults(tgt: sqlite3.Connection) -> dict[str, object | None]:
+    identity_columns = {"tenant_id", "scope", "visibility", "source_agent"}
+    defaults = {
+        str(row[1]): _sqlite_literal_default(row[4])
+        for row in tgt.execute("PRAGMA table_info(claims)").fetchall()
+        if str(row[1]) in identity_columns
+    }
+    defaults.setdefault("visibility", "public")
+    return defaults
+
+
+IdentityNamespace = tuple[object | None, object, str, object | None]
+
+
+def _identity_namespace(
+    row: sqlite3.Row | dict[str, object],
+    *,
+    available_columns: set[str] | None = None,
+    defaults: dict[str, object | None] | None = None,
+) -> IdentityNamespace:
+    keys = set(row.keys())
+    usable = keys if available_columns is None else keys & available_columns
+    defaults = defaults or {}
+    tenant_id = row["tenant_id"] if "tenant_id" in usable else defaults.get("tenant_id")
+    scope = row["scope"] if "scope" in usable else defaults.get("scope")
+    visibility = (
+        str(row["visibility"] or "public")
+        if "visibility" in usable
+        else str(defaults.get("visibility") or "public")
+    )
+    source_agent = (
+        row["source_agent"]
+        if "source_agent" in usable
+        else defaults.get("source_agent")
+    )
+    return tenant_id, scope, visibility.strip().lower(), (
+        source_agent if visibility.strip().lower() != "public" else None
+    )
+
+
+def _identity_where(
+    namespace: IdentityNamespace,
+    *,
+    alias: str = "",
+    available_columns: set[str] | None = None,
+) -> tuple[str, tuple]:
+    required = {"tenant_id", "scope", "visibility", "source_agent"}
+    if available_columns is not None and not required.issubset(available_columns):
+        return "1 = 1", ()
+    prefix = f"{alias}." if alias else ""
+    tenant_id, scope, visibility, source_agent = namespace
+    if visibility == "public":
+        return (
+            f"{prefix}tenant_id IS ? AND {prefix}scope IS ? "
+            f"AND {prefix}visibility = 'public'",
+            (tenant_id, scope),
+        )
+    return (
+        f"{prefix}tenant_id IS ? AND {prefix}scope IS ? "
+        f"AND {prefix}visibility = ? "
+        f"AND {prefix}source_agent IS ?",
+        (tenant_id, scope, visibility, source_agent),
+    )
+
+
 def _find_conflicting_target_claims(
     tgt: sqlite3.Connection, row: sqlite3.Row, target_cols: set[str]
 ) -> list[dict[str, object]]:
@@ -122,16 +199,27 @@ def _find_conflicting_target_claims(
         return []
     if row["subject"] is None or row["predicate"] is None:
         return []
+    identity_sql, identity_params = _identity_where(
+        _identity_namespace(row, available_columns=target_cols),
+        available_columns=target_cols,
+    )
     conflicts = tgt.execute(
-        """
+        f"""
         SELECT * FROM claims
         WHERE status != 'archived'
           AND COALESCE(subject, '') = COALESCE(?, '')
           AND COALESCE(predicate, '') = COALESCE(?, '')
           AND COALESCE(scope, '') = COALESCE(?, '')
           AND COALESCE(object_value, '') != COALESCE(?, '')
+          AND {identity_sql}
         """,
-        (row["subject"], row["predicate"], row["scope"], row["object_value"]),
+        (
+            row["subject"],
+            row["predicate"],
+            row["scope"],
+            row["object_value"],
+            *identity_params,
+        ),
     ).fetchall()
     return [dict(conflict) for conflict in conflicts]
 
@@ -140,10 +228,19 @@ def _find_existing_target_claim(
     tgt: sqlite3.Connection,
     ikey: object,
     text: str,
-    hash_to_id: dict[str, int] | None = None,
+    namespace: IdentityNamespace,
+    target_cols: set[str],
+    hash_to_id: dict[tuple[IdentityNamespace, str], int] | None = None,
 ) -> dict[str, object] | None:
+    identity_sql, identity_params = _identity_where(
+        namespace,
+        available_columns=target_cols,
+    )
     if ikey:
-        row = tgt.execute("SELECT * FROM claims WHERE idempotency_key = ?", (ikey,)).fetchone()
+        row = tgt.execute(
+            f"SELECT * FROM claims WHERE idempotency_key = ? AND {identity_sql}",
+            (ikey, *identity_params),
+        ).fetchone()
         if row:
             return dict(row)
 
@@ -151,13 +248,15 @@ def _find_existing_target_claim(
     # Indexed primary-key lookup via a precomputed {text_hash: id} map avoids the
     # O(n) full-table scan per source row (which made the merge O(n^2) overall).
     if hash_to_id is not None:
-        claim_id = hash_to_id.get(text_hash)
+        claim_id = hash_to_id.get((namespace, text_hash))
         if claim_id is None:
             return None
         row = tgt.execute("SELECT * FROM claims WHERE id = ?", (claim_id,)).fetchone()
         return dict(row) if row else None
 
-    for row in tgt.execute("SELECT * FROM claims").fetchall():
+    for row in tgt.execute(
+        f"SELECT * FROM claims WHERE {identity_sql}", identity_params
+    ).fetchall():
         if _text_hash(row["text"]) == text_hash:
             return dict(row)
     return None
@@ -349,25 +448,37 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
     try:
         # Refuse to import rows the target's CHECK constraints may forbid.
         _check_schema_compatibility(src, tgt)
+        tgt_cols = _target_columns(tgt)
+        identity_defaults = _target_identity_defaults(tgt)
 
         # Build set of existing claim fingerprints in target. The {text_hash: id}
         # map lets reconciliation look claims up by primary key instead of
         # re-scanning the whole table per source row (the old O(n^2) cost).
-        existing_keys: set[str] = set()
-        existing_hashes: set[str] = set()
-        hash_to_id: dict[str, int] = {}
+        existing_keys: set[tuple[IdentityNamespace, str]] = set()
+        existing_hashes: set[tuple[IdentityNamespace, str]] = set()
+        hash_to_id: dict[tuple[IdentityNamespace, str], int] = {}
 
-        for row in tgt.execute("SELECT id, idempotency_key, text FROM claims").fetchall():
+        identity_columns = [
+            column
+            for column in ("tenant_id", "scope", "visibility", "source_agent")
+            if column in tgt_cols
+        ]
+        select_columns = ", ".join(("id", "idempotency_key", "text", *identity_columns))
+        for row in tgt.execute(f"SELECT {select_columns} FROM claims").fetchall():
+            namespace = _identity_namespace(
+                row,
+                available_columns=tgt_cols,
+                defaults=identity_defaults,
+            )
             if row["idempotency_key"]:
-                existing_keys.add(row["idempotency_key"])
+                existing_keys.add((namespace, str(row["idempotency_key"])))
             thash = _text_hash(row["text"])
-            existing_hashes.add(thash)
-            hash_to_id.setdefault(thash, int(row["id"]))
+            existing_hashes.add((namespace, thash))
+            hash_to_id.setdefault((namespace, thash), int(row["id"]))
 
         # Get all columns from source claims table
         src_cols = [col[1] for col in src.execute("PRAGMA table_info(claims)").fetchall()]
         # Filter to columns that exist in target
-        tgt_cols = _target_columns(tgt)
         common_cols = [c for c in src_cols if c in tgt_cols and c != "id"]
 
         # Scan source claims
@@ -379,10 +490,24 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
             stats["scanned"] += 1
             ikey = row["idempotency_key"] if "idempotency_key" in row.keys() else None
             text = row["text"]
+            namespace = _identity_namespace(
+                row,
+                available_columns=tgt_cols,
+                defaults=identity_defaults,
+            )
+            identity_key = (namespace, str(ikey)) if ikey else None
+            hash_key = (namespace, _text_hash(text))
 
             # Reconcile duplicates deterministically instead of letting merge order win.
-            if (ikey and ikey in existing_keys) or _text_hash(text) in existing_hashes:
-                existing_claim = _find_existing_target_claim(tgt, ikey, text, hash_to_id)
+            if (identity_key and identity_key in existing_keys) or hash_key in existing_hashes:
+                existing_claim = _find_existing_target_claim(
+                    tgt,
+                    ikey,
+                    text,
+                    namespace,
+                    tgt_cols,
+                    hash_to_id,
+                )
                 if existing_claim:
                     _reconcile_existing_claim(tgt, row, existing_claim, tgt_cols)
                 stats["skipped"] += 1
@@ -397,10 +522,10 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
             new_id = _insert_claim_into_target(row, common_cols, ikey, text, src, tgt)
             if new_id is not None:
                 _apply_conflict_resolution(tgt, row, new_id, tgt_cols, conflicts)
-                existing_keys.add(ikey)
+                existing_keys.add((namespace, str(ikey)))
                 thash = _text_hash(text)
-                existing_hashes.add(thash)
-                hash_to_id.setdefault(thash, new_id)
+                existing_hashes.add((namespace, thash))
+                hash_to_id.setdefault((namespace, thash), new_id)
                 stats["merged"] += 1
             else:
                 stats["errors"] += 1

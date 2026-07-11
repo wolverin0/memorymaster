@@ -12,6 +12,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+from memorymaster.core.lifecycle import can_transition
 from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity
 from memorymaster.core.models import (
     CLAIM_LINK_TYPES,
@@ -212,17 +213,11 @@ class _LifecycleMixin:
 
 
     def set_supersedes(self, claim_id: int, supersedes_claim_id: int) -> None:
-        now = utc_now()
-        with self.connect() as conn:
-            conn.execute(
-                """
-                UPDATE claims
-                SET supersedes_claim_id = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (supersedes_claim_id, now, claim_id),
-            )
-            conn.commit()
+        self.mark_superseded(
+            supersedes_claim_id,
+            claim_id,
+            "set_supersedes compatibility path",
+        )
 
 
     def mark_superseded(self, old_claim_id: int, new_claim_id: int, reason: str) -> None:
@@ -232,6 +227,10 @@ class _LifecycleMixin:
         if old_claim.status == "superseded" or old_claim.replaced_by_claim_id is not None:
             raise ConcurrentModificationError(
                 f"Claim {old_claim_id} was already superseded. Reload and retry."
+            )
+        if not can_transition(old_claim.status, "superseded"):
+            raise ValueError(
+                f"Invalid transition: {old_claim.status} -> superseded"
             )
 
         now = utc_now()

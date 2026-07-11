@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS claims (
     event_time TEXT,
     valid_from TEXT,
     valid_until TEXT,
+    source_agent TEXT,
+    visibility TEXT NOT NULL DEFAULT 'public',
     wiki_article TEXT,
     holder TEXT,
     tenant_id TEXT,
@@ -36,41 +38,20 @@ CREATE TABLE IF NOT EXISTS claims (
     FOREIGN KEY (replaced_by_claim_id) REFERENCES claims(id) ON DELETE SET NULL
 );
 
-CREATE TRIGGER IF NOT EXISTS trg_claims_confirmed_tuple_guard_insert
+CREATE TRIGGER IF NOT EXISTS trg_claims_identity_guard_insert
 BEFORE INSERT ON claims
-WHEN NEW.status = 'confirmed'
-  AND NEW.subject IS NOT NULL
-  AND NEW.predicate IS NOT NULL
-  AND EXISTS (
-    SELECT 1
-    FROM claims c
-    WHERE c.status = 'confirmed'
-      AND c.subject = NEW.subject
-      AND c.predicate = NEW.predicate
-      AND c.scope = NEW.scope
-      AND c.tenant_id IS NEW.tenant_id
-  )
+WHEN NEW.visibility NOT IN ('public', 'private', 'sensitive')
+  OR (NEW.visibility <> 'public' AND NULLIF(TRIM(NEW.source_agent), '') IS NULL)
 BEGIN
-    SELECT RAISE(ABORT, 'only one confirmed claim is allowed per (subject,predicate,scope)');
+    SELECT RAISE(ABORT, 'invalid claim visibility or missing non-public source_agent');
 END;
 
-CREATE TRIGGER IF NOT EXISTS trg_claims_confirmed_tuple_guard_update
-BEFORE UPDATE OF status, subject, predicate, scope, tenant_id ON claims
-WHEN NEW.status = 'confirmed'
-  AND NEW.subject IS NOT NULL
-  AND NEW.predicate IS NOT NULL
-  AND EXISTS (
-    SELECT 1
-    FROM claims c
-    WHERE c.id <> OLD.id
-      AND c.status = 'confirmed'
-      AND c.subject = NEW.subject
-      AND c.predicate = NEW.predicate
-      AND c.scope = NEW.scope
-      AND c.tenant_id IS NEW.tenant_id
-  )
+CREATE TRIGGER IF NOT EXISTS trg_claims_identity_guard_update
+BEFORE UPDATE ON claims
+WHEN NEW.visibility NOT IN ('public', 'private', 'sensitive')
+  OR (NEW.visibility <> 'public' AND NULLIF(TRIM(NEW.source_agent), '') IS NULL)
 BEGIN
-    SELECT RAISE(ABORT, 'only one confirmed claim is allowed per (subject,predicate,scope)');
+    SELECT RAISE(ABORT, 'invalid claim visibility or missing non-public source_agent');
 END;
 
 CREATE TABLE IF NOT EXISTS citations (
@@ -201,9 +182,13 @@ CREATE TABLE IF NOT EXISTS mcp_usage (
 CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status);
 CREATE INDEX IF NOT EXISTS idx_claims_updated_at ON claims(updated_at);
 CREATE INDEX IF NOT EXISTS idx_claims_idempotency_key ON claims(idempotency_key);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_tenant_idempotency_key
-    ON claims(COALESCE(tenant_id, ''), idempotency_key)
-    WHERE idempotency_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_public_idempotency_key_unique
+    ON claims(COALESCE(tenant_id, ''), scope, idempotency_key)
+    WHERE visibility = 'public' AND idempotency_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_nonpublic_principal_idempotency_key_unique
+    ON claims(COALESCE(tenant_id, ''), scope, visibility, source_agent, idempotency_key)
+    WHERE visibility <> 'public' AND source_agent IS NOT NULL
+      AND idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_claims_tuple ON claims(subject, predicate, scope);
 CREATE INDEX IF NOT EXISTS idx_claims_replaced_by ON claims(replaced_by_claim_id);
 CREATE INDEX IF NOT EXISTS idx_citations_claim_id ON citations(claim_id);
@@ -218,12 +203,22 @@ CREATE INDEX IF NOT EXISTS idx_events_tenant_algo_head
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
 CREATE INDEX IF NOT EXISTS idx_embeddings_updated_at ON claim_embeddings(updated_at);
 CREATE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_tenant_human_id
-    ON claims(COALESCE(tenant_id, ''), human_id)
-    WHERE human_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_confirmed_tuple_unique
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_public_human_id_unique
+    ON claims(COALESCE(tenant_id, ''), scope, human_id)
+    WHERE visibility = 'public' AND human_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_nonpublic_principal_human_id_unique
+    ON claims(COALESCE(tenant_id, ''), scope, visibility, source_agent, human_id)
+    WHERE visibility <> 'public' AND source_agent IS NOT NULL
+      AND human_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_public_confirmed_tuple_unique
     ON claims(COALESCE(tenant_id, ''), subject, predicate, scope)
-    WHERE status = 'confirmed'
+    WHERE visibility = 'public' AND status = 'confirmed'
+      AND subject IS NOT NULL
+      AND predicate IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_nonpublic_principal_confirmed_tuple_unique
+    ON claims(COALESCE(tenant_id, ''), visibility, source_agent, subject, predicate, scope)
+    WHERE visibility <> 'public' AND source_agent IS NOT NULL
+      AND status = 'confirmed'
       AND subject IS NOT NULL
       AND predicate IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_external_sources_type ON external_sources(source_type);

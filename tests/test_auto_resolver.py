@@ -91,11 +91,11 @@ class TestResolveConflictPair:
         )
 
     @patch("memorymaster.govern.auto_resolver._llm_evaluate")
-    @patch("memorymaster.govern.auto_resolver.transition_claim")
-    def test_resolve_conflict_pair_lllm_called(self, mock_transition, mock_llm):
+    def test_resolve_conflict_pair_lllm_called(self, mock_llm):
         """resolve_conflict_pair calls LLM with formatted prompt."""
         mock_llm.return_value = {"winner": "A", "reason": "test"}
         mock_store = MagicMock()
+        mock_store.get_claim.return_value = MagicMock(replaced_by_claim_id=1)
 
         claim_a = self.make_claim(1, "Claim A", 0.8, "2024-01-01")
         claim_b = self.make_claim(2, "Claim B", 0.6, "2024-01-02")
@@ -106,23 +106,28 @@ class TestResolveConflictPair:
         prompt_arg = mock_llm.call_args[0][0]
         assert "Claim A" in prompt_arg
         assert "Claim B" in prompt_arg
+        mock_store.mark_superseded.assert_called_once_with(
+            2,
+            1,
+            "llm_conflict_resolution: test",
+        )
 
     @patch("memorymaster.govern.auto_resolver._llm_evaluate")
-    @patch("memorymaster.govern.auto_resolver.transition_claim")
-    def test_resolve_conflict_pair_winner_a(self, mock_transition, mock_llm):
+    def test_resolve_conflict_pair_winner_a(self, mock_llm):
         """Resolves with winner A."""
         mock_llm.return_value = {"winner": "A", "reason": "better evidence"}
         mock_store = MagicMock()
+        mock_store.get_claim.return_value = MagicMock(replaced_by_claim_id=1)
 
         claim_a = self.make_claim(1, "A", 0.8, "2024-01-01")
         claim_b = self.make_claim(2, "B", 0.6, "2024-01-02")
 
         result = resolve_conflict_pair(mock_store, claim_a, claim_b)
-        assert mock_transition.called
+        assert result["resolved"] is True
+        mock_store.mark_superseded.assert_called_once()
 
     @patch("memorymaster.govern.auto_resolver._llm_evaluate")
-    @patch("memorymaster.govern.auto_resolver.transition_claim")
-    def test_resolve_conflict_pair_no_result(self, mock_transition, mock_llm):
+    def test_resolve_conflict_pair_no_result(self, mock_llm):
         """No result from LLM returns error."""
         mock_llm.return_value = {}
         mock_store = MagicMock()

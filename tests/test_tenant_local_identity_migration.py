@@ -111,9 +111,12 @@ def test_bootstrap_schemas_declare_tenant_local_identity_indexes() -> None:
     postgres_schema = (root / "schema_postgres.sql").read_text(encoding="utf-8")
 
     for name in (
-        "idx_claims_tenant_idempotency_key",
-        "idx_claims_tenant_human_id",
-        "idx_claims_confirmed_tuple_unique",
+        "idx_claims_public_idempotency_key_unique",
+        "idx_claims_nonpublic_principal_idempotency_key_unique",
+        "idx_claims_public_human_id_unique",
+        "idx_claims_nonpublic_principal_human_id_unique",
+        "idx_claims_public_confirmed_tuple_unique",
+        "idx_claims_nonpublic_principal_confirmed_tuple_unique",
     ):
         assert name in sqlite_schema
         assert name in postgres_schema
@@ -134,9 +137,17 @@ def test_sqlite_reinit_does_not_restore_global_unique_indexes(tmp_path) -> None:
 
     assert indexes["idx_claims_idempotency_key"] is False
     assert indexes["idx_claims_human_id"] is False
-    assert indexes["idx_claims_tenant_idempotency_key"] is True
-    assert indexes["idx_claims_tenant_human_id"] is True
-    assert indexes["idx_claims_confirmed_tuple_unique"] is True
+    identity_indexes = {
+        name for name, unique in indexes.items() if unique and name.startswith("idx_claims_")
+    }
+    assert identity_indexes == {
+        "idx_claims_public_idempotency_key_unique",
+        "idx_claims_nonpublic_principal_idempotency_key_unique",
+        "idx_claims_public_human_id_unique",
+        "idx_claims_nonpublic_principal_human_id_unique",
+        "idx_claims_public_confirmed_tuple_unique",
+        "idx_claims_nonpublic_principal_confirmed_tuple_unique",
+    }
 
 
 def test_legacy_human_id_index_is_converted_before_backfill() -> None:

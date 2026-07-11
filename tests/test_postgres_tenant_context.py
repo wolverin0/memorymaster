@@ -56,23 +56,21 @@ def test_required_tenant_fails_before_loading_postgres_driver(monkeypatch) -> No
         store.connect()
 
 
-def test_connect_sets_tenant_context_on_every_connection() -> None:
-    connection = FakeConnection()
-    driver = FakePsycopg(connection)
+def test_non_team_postgres_runtime_fails_closed_before_driver_load(
+    monkeypatch,
+) -> None:
     store = PostgresStore(
         "postgresql://db.invalid/app",
         tenant_id="tenant-alpha",
-        require_tenant=True,
     )
-    store._psycopg = (driver, object(), object())
+    monkeypatch.setattr(
+        store,
+        "_load_psycopg",
+        lambda: pytest.fail("non-team Postgres runtime reached the driver"),
+    )
 
-    returned = store.connect()
-
-    assert returned is connection
-    assert driver.calls == 1
-    sql, params = connection.cursor_instance.executed[0]
-    assert "set_config('memorymaster.tenant_id'" in sql
-    assert params == ("tenant-alpha",)
+    with pytest.raises(PermissionError, match="(?i)(team|authority|sqlite)"):
+        store.connect()
 
 
 def test_store_factory_propagates_postgres_tenant_context() -> None:
@@ -80,6 +78,8 @@ def test_store_factory_propagates_postgres_tenant_context() -> None:
         "postgresql://db.invalid/app",
         tenant_id="tenant-alpha",
         require_tenant=True,
+        principal="agent@example.test",
+        allowed_scopes=("project:alpha",),
     )
 
     assert isinstance(store, PostgresStore)
@@ -101,6 +101,8 @@ def test_memory_service_propagates_tenant_requirement(monkeypatch) -> None:
         "postgresql://db.invalid/app",
         tenant_id="tenant-alpha",
         require_tenant=True,
+        principal="agent@example.test",
+        allowed_scopes=("project:alpha",),
     )
 
     assert captured["tenant_id"] == "tenant-alpha"

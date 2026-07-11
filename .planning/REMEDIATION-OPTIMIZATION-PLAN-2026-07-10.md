@@ -43,7 +43,7 @@ Do not describe a blocked profile as production-ready until its gate is demonstr
 - Prefer an isolated worktree with a dedicated virtual environment. Before testing, prove `memorymaster.__file__` resolves into that worktree; otherwise stop using it and avoid the editable-install import-pin trap.
 - Use temporary databases and fake/local services until a phase's live-migration gate is approved.
 - No production credential rotation, push, publish, deployment, or live database mutation without explicit authority.
-- A `BLOCKED-POLICY` disposition requires the `audit-decisions` workflow and a complete, approved, unexpired `baseline-policy.md` entry.
+- **WARNING LEGAL REVIEW REQUIRED:** a `BLOCKED-POLICY` or `ACCEPT` disposition requires the `audit-decisions` workflow, legal sign-off, and a complete, approved, unexpired `baseline-policy.md` entry. This does not pause remediation.
 - Schema changes update SQLite, Postgres, versioned migrations, parity tests, and documentation together.
 - Every security defect gets a failing adversarial test before its implementation fix.
 - One logical work package per conventional commit. Keep rollback possible after every package.

@@ -702,7 +702,14 @@ def dream_ingest(
 
             # Check for duplicates by looking for source marker
             existing = conn.execute(
-                "SELECT id FROM claims WHERE idempotency_key = ? LIMIT 1",
+                """
+                SELECT id FROM claims
+                WHERE idempotency_key = ?
+                  AND visibility = 'public'
+                  AND tenant_id IS NULL
+                  AND scope = 'project'
+                LIMIT 1
+                """,
                 (claim["source_marker"],),
             ).fetchone()
             if existing:

@@ -470,16 +470,21 @@ def _process_candidate(
     confidence = _bootstrapped_confidence(conn, rule)
 
     idem = f"rule-miner-v{int(asst['id'])}-{int(row['id'])}"
+    claim_scope = row["scope"] or "project"
     store = getattr(service, "store", None)
     if store is not None and hasattr(store, "get_claim_by_idempotency_key"):
-        if store.get_claim_by_idempotency_key(idem) is not None:
+        if store.get_claim_by_idempotency_key(
+            idem,
+            tenant_id=getattr(service, "tenant_id", None),
+            scope=claim_scope,
+        ) is not None:
             stats["duplicates"] += 1
             return "done"
 
     service.ingest(
         **build_rule_fields(rule["trigger"], rule["action"], rule["rationale"]),
         citations=[CitationInput(source="verbatim", locator=idem)],
-        scope=row["scope"] or "project",
+        scope=claim_scope,
         confidence=confidence,
         source_agent="rule-miner",
         idempotency_key=idem,
@@ -591,7 +596,11 @@ def mine_transcript_rules(
                 confidence = _transcript_confidence(service, rule)
                 store = getattr(service, "store", None)
                 if store is not None and hasattr(store, "get_claim_by_idempotency_key"):
-                    if store.get_claim_by_idempotency_key(idem) is not None:
+                    if store.get_claim_by_idempotency_key(
+                        idem,
+                        tenant_id=getattr(service, "tenant_id", None),
+                        scope=scope,
+                    ) is not None:
                         stats["skipped"] += 1
                         continue
                 service.ingest(

@@ -19,6 +19,7 @@ from memorymaster.core.models import (
 from memorymaster.stores._storage_shared import (
     utc_now,
 )
+from memorymaster.stores.claim_identity import normalize_claim_identity
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,9 @@ class _WriteClaimsMixin:
             conn: sqlite3.Connection,
             idempotency_key: str | None,
             tenant_id: str | None = None,
+            scope: str = "project",
+            visibility: str = "public",
+            source_agent: str | None = None,
         ) -> Claim | None: ...
 
         def get_claim(self, claim_id: int, include_citations: bool = True) -> Claim | None: ...
@@ -43,7 +47,16 @@ class _WriteClaimsMixin:
             text: str,
             claim_id: int,
             tenant_id: str | None = None,
+            scope: str = "project",
+            visibility: str = "public",
+            source_agent: str | None = None,
         ) -> str: ...
+
+        def _claim_identity_filter(
+            self,
+            visibility: str,
+            source_agent: str | None,
+        ) -> tuple[str, tuple[object, ...]]: ...
 
         def _insert_event_row(
             self,
@@ -81,6 +94,7 @@ class _WriteClaimsMixin:
     ) -> Claim:
         if not citations:
             raise ValueError("At least one citation is required.")
+        visibility, source_agent = normalize_claim_identity(visibility, source_agent)
         normalized_idempotency_key = (idempotency_key or "").strip() or None
         normalized_tenant_id = (tenant_id or "").strip() or None
         now = utc_now()
@@ -89,6 +103,9 @@ class _WriteClaimsMixin:
                 conn,
                 idempotency_key,
                 tenant_id=normalized_tenant_id,
+                scope=scope,
+                visibility=visibility,
+                source_agent=source_agent,
             )
             if existing is not None:
                 return existing
@@ -119,8 +136,8 @@ class _WriteClaimsMixin:
                         event_time or None,
                         valid_from or now,  # Auto-populate: claim is valid from creation time
                         valid_until or None,
-                        source_agent or None,
-                        visibility or "public",
+                        source_agent,
+                        visibility,
                         holder or None,
                     ),
                 )
@@ -128,12 +145,23 @@ class _WriteClaimsMixin:
                 if normalized_idempotency_key is None:
                     raise
                 conn.rollback()
+                identity_sql, identity_params = self._claim_identity_filter(
+                    visibility,
+                    source_agent,
+                )
                 existing_row = conn.execute(
-                    """
+                    f"""
                     SELECT id FROM claims
                     WHERE idempotency_key = ? AND tenant_id IS ?
+                      AND scope = ?
+                      AND {identity_sql}
                     """,
-                    (normalized_idempotency_key, normalized_tenant_id),
+                    (
+                        normalized_idempotency_key,
+                        normalized_tenant_id,
+                        scope,
+                        *identity_params,
+                    ),
                 ).fetchone()
                 if existing_row is None:
                     raise
@@ -151,6 +179,9 @@ class _WriteClaimsMixin:
                     text,
                     claim_id,
                     tenant_id=normalized_tenant_id,
+                    scope=scope,
+                    visibility=visibility,
+                    source_agent=source_agent,
                 )
                 conn.execute(
                     "UPDATE claims SET human_id = ? WHERE id = ?",

@@ -42,6 +42,23 @@ def test_local_context_is_explicit_trusted_and_immutable() -> None:
         context.principal = "forged"  # type: ignore[misc]
 
 
+@pytest.mark.parametrize(
+    ("db_target", "extra_env"),
+    [
+        ("postgresql://memorymaster.invalid/admin", {}),
+        ("memorymaster.db", {"MEMORYMASTER_STORE_BACKEND": "postgres"}),
+    ],
+)
+def test_local_trusted_context_rejects_postgres_before_service_creation(
+    db_target: str,
+    extra_env: dict[str, str],
+) -> None:
+    env = {"MEMORYMASTER_MCP_AUTH_MODE": "local-trusted", **extra_env}
+
+    with pytest.raises(PermissionError, match="(?i)(postgres|team|sqlite)"):
+        access_control.resolve_request_context(db_target=db_target, environ=env)
+
+
 def test_context_binding_is_scoped_and_reset() -> None:
     context = access_control.resolve_request_context(
         environ={"MEMORYMASTER_MCP_AUTH_MODE": "local-trusted"},
@@ -83,11 +100,20 @@ def test_team_context_carries_frozen_authority() -> None:
 
     assert context.mode is access_control.AuthMode.TEAM
     assert context.tenant_id == "tenant-alpha"
-    assert context.allowed_scopes == ("project:alpha", "global")
+    assert context.allowed_scopes == frozenset({"project:alpha", "global"})
     assert context.allow_sensitive is False
     access_control.authorize_context_action(context, "query")
     with pytest.raises(PermissionError, match="cannot perform 'ingest'"):
         access_control.authorize_context_action(context, "ingest")
+
+
+def test_team_context_rejects_unimplemented_sensitive_grant() -> None:
+    access_control.set_role("mcp-reader", access_control.Role.READER)
+
+    with pytest.raises(PermissionError, match="(?i)(sensitive|team|disabled)"):
+        access_control.resolve_request_context(
+            environ=_team_env(MEMORYMASTER_MCP_ALLOW_SENSITIVE="1")
+        )
 
 
 def test_missing_auth_mode_is_rejected() -> None:

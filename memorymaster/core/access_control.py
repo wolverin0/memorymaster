@@ -48,7 +48,7 @@ class RequestContext:
     role: Role
     tenant_id: str | None
     workspace: str
-    allowed_scopes: tuple[str, ...]
+    allowed_scopes: frozenset[str]
     allow_sensitive: bool
     db_target: str
 
@@ -126,11 +126,57 @@ def _team_value(env: Mapping[str, str], name: str) -> str:
     return value
 
 
-def _parse_team_scopes(raw: str) -> tuple[str, ...]:
-    scopes = tuple(dict.fromkeys(part.strip() for part in raw.split(",") if part.strip()))
-    if not scopes or "*" in scopes:
+def _parse_team_scopes(raw: str) -> frozenset[str]:
+    scopes = frozenset(part.strip() for part in raw.split(",") if part.strip())
+    if not scopes or any("*" in scope for scope in scopes):
         raise PermissionError("Team MCP authorization requires explicit non-wildcard scopes.")
     return scopes
+
+
+def _local_trusted_context(
+    env: Mapping[str, str],
+    db_target: str,
+    workspace: str,
+) -> RequestContext:
+    if _is_postgres_target(db_target, env):
+        raise PermissionError(
+            "Local-trusted MCP mode is SQLite-only; Postgres requires team authority."
+        )
+    return RequestContext(
+        mode=AuthMode.LOCAL_TRUSTED,
+        principal=str(env.get("MEMORYMASTER_MCP_PRINCIPAL", "")).strip()
+        or "mcp-session",
+        role=Role.ADMIN,
+        tenant_id=None,
+        workspace=str(workspace or "").strip(),
+        allowed_scopes=frozenset(),
+        allow_sensitive=True,
+        db_target=str(db_target or "").strip(),
+    )
+
+
+def _team_context(env: Mapping[str, str]) -> RequestContext:
+    principal = _team_value(env, "MEMORYMASTER_MCP_PRINCIPAL")
+    role = get_configured_role(principal)
+    if role is None:
+        raise PermissionError("Team MCP principal has no explicitly configured role.")
+    sensitive = str(env.get("MEMORYMASTER_MCP_ALLOW_SENSITIVE", "")).strip().lower()
+    if sensitive in {"1", "true", "yes", "on"}:
+        raise PermissionError(
+            "Sensitive reads remain disabled in team mode until database policy support exists."
+        )
+    return RequestContext(
+        mode=AuthMode.TEAM,
+        principal=principal,
+        role=role,
+        tenant_id=_team_value(env, "MEMORYMASTER_MCP_TENANT_ID"),
+        workspace=_team_value(env, "MEMORYMASTER_MCP_WORKSPACE"),
+        allowed_scopes=_parse_team_scopes(
+            _team_value(env, "MEMORYMASTER_MCP_ALLOWED_SCOPES")
+        ),
+        allow_sensitive=False,
+        db_target=_team_value(env, "MEMORYMASTER_MCP_DB"),
+    )
 
 
 def resolve_request_context(
@@ -150,32 +196,8 @@ def resolve_request_context(
         raise PermissionError("MEMORYMASTER_MCP_AUTH_MODE must be local-trusted or team.") from exc
 
     if mode is AuthMode.LOCAL_TRUSTED:
-        return RequestContext(
-            mode=mode,
-            principal=str(env.get("MEMORYMASTER_MCP_PRINCIPAL", "")).strip() or "mcp-session",
-            role=Role.ADMIN,
-            tenant_id=None,
-            workspace=str(workspace or "").strip(),
-            allowed_scopes=(),
-            allow_sensitive=True,
-            db_target=str(db_target or "").strip(),
-        )
-
-    principal = _team_value(env, "MEMORYMASTER_MCP_PRINCIPAL")
-    role = get_configured_role(principal)
-    if role is None:
-        raise PermissionError("Team MCP principal has no explicitly configured role.")
-    return RequestContext(
-        mode=mode,
-        principal=principal,
-        role=role,
-        tenant_id=_team_value(env, "MEMORYMASTER_MCP_TENANT_ID"),
-        workspace=_team_value(env, "MEMORYMASTER_MCP_WORKSPACE"),
-        allowed_scopes=_parse_team_scopes(_team_value(env, "MEMORYMASTER_MCP_ALLOWED_SCOPES")),
-        allow_sensitive=str(env.get("MEMORYMASTER_MCP_ALLOW_SENSITIVE", "")).strip().lower()
-        in {"1", "true", "yes", "on"},
-        db_target=_team_value(env, "MEMORYMASTER_MCP_DB"),
-    )
+        return _local_trusted_context(env, db_target, workspace)
+    return _team_context(env)
 
 
 _request_context: ContextVar[RequestContext | None] = ContextVar(

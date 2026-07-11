@@ -17,6 +17,10 @@ from memorymaster.core.models import (
     ClaimLink,
     Event,
 )
+from memorymaster.stores.claim_identity import (
+    normalize_claim_identity,
+    require_unambiguous_identity_row,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,16 +37,28 @@ class _ReadMixin:
         conn: sqlite3.Connection,
         idempotency_key: str | None,
         tenant_id: str | None = None,
+        scope: str = "project",
+        visibility: str = "public",
+        source_agent: str | None = None,
     ) -> Claim | None:
         """Check if a claim with this idempotency key already exists. Returns existing claim or None."""
         normalized_key = (idempotency_key or "").strip() or None
         if normalized_key is None:
             return None
+        visibility, source_agent = normalize_claim_identity(visibility, source_agent)
+        identity_sql, identity_params = self._claim_identity_filter(
+            visibility,
+            source_agent,
+        )
         # Hydrate the full row from the already-open conn instead of paying
         # a fresh get_claim() connection open on every duplicate re-ingest.
         existing_row = conn.execute(
-            "SELECT * FROM claims WHERE idempotency_key = ? AND tenant_id IS ?",
-            (normalized_key, tenant_id),
+            f"""
+            SELECT * FROM claims
+            WHERE idempotency_key = ? AND tenant_id IS ? AND scope = ?
+              AND {identity_sql}
+            """,
+            (normalized_key, tenant_id, scope, *identity_params),
         ).fetchone()
         if existing_row is None:
             return None
@@ -83,15 +99,39 @@ class _ReadMixin:
         include_citations: bool = True,
         *,
         tenant_id: str | None = None,
+        scope: str | None = None,
+        visibility: str = "public",
+        source_agent: str | None = None,
     ) -> Claim | None:
         normalized_idempotency_key = idempotency_key.strip()
         if not normalized_idempotency_key:
             return None
+        visibility, source_agent = normalize_claim_identity(visibility, source_agent)
+        identity_sql, identity_params = self._claim_identity_filter(
+            visibility,
+            source_agent,
+        )
+        scope_sql = "AND scope = ?" if scope is not None else ""
+        scope_params: tuple[object, ...] = (scope,) if scope is not None else ()
         with self.connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM claims WHERE idempotency_key = ? AND tenant_id IS ?",
-                (normalized_idempotency_key, tenant_id),
-            ).fetchone()
+            rows = conn.execute(
+                f"""
+                SELECT * FROM claims
+                WHERE idempotency_key = ? AND tenant_id IS ? {scope_sql}
+                  AND {identity_sql}
+                LIMIT 2
+                """,
+                (
+                    normalized_idempotency_key,
+                    tenant_id,
+                    *scope_params,
+                    *identity_params,
+                ),
+            ).fetchall()
+        row = require_unambiguous_identity_row(
+            list(rows),
+            identifier="idempotency key",
+        )
         if row is None:
             return None
         claim = self._row_to_claim(row)
@@ -106,20 +146,39 @@ class _ReadMixin:
         include_citations: bool = True,
         *,
         tenant_id: str | None = None,
+        scope: str | None = None,
+        visibility: str = "public",
+        source_agent: str | None = None,
     ) -> Claim | None:
         """Look up a claim by its human-readable ID (e.g. ``mm-a3f8``)."""
         normalized = human_id.strip()
         if not normalized:
             return None
+        visibility, source_agent = normalize_claim_identity(visibility, source_agent)
+        identity_sql, identity_params = self._claim_identity_filter(
+            visibility,
+            source_agent,
+        )
+        scope_sql = "AND scope = ?" if scope is not None else ""
+        scope_params: tuple[object, ...] = (scope,) if scope is not None else ()
         with self.connect() as conn:
             try:
-                row = conn.execute(
-                    "SELECT * FROM claims WHERE human_id = ? AND tenant_id IS ?",
-                    (normalized, tenant_id),
-                ).fetchone()
+                rows = conn.execute(
+                    f"""
+                    SELECT * FROM claims
+                    WHERE human_id = ? AND tenant_id IS ? {scope_sql}
+                      AND {identity_sql}
+                    LIMIT 2
+                    """,
+                    (normalized, tenant_id, *scope_params, *identity_params),
+                ).fetchall()
             except sqlite3.OperationalError:
                 # Column may not exist yet.
                 return None
+        row = require_unambiguous_identity_row(
+            list(rows),
+            identifier="human_id",
+        )
         if row is None:
             return None
         claim = self._row_to_claim(row)
@@ -133,6 +192,9 @@ class _ReadMixin:
         identifier: str | int,
         *,
         tenant_id: str | None = None,
+        scope: str | None = None,
+        visibility: str = "public",
+        source_agent: str | None = None,
     ) -> int:
         """Resolve a numeric ID or human_id string to a numeric claim ID.
 
@@ -151,6 +213,9 @@ class _ReadMixin:
             raw,
             include_citations=False,
             tenant_id=tenant_id,
+            scope=scope,
+            visibility=visibility,
+            source_agent=source_agent,
         )
         if claim is not None:
             return claim.id
@@ -470,6 +535,8 @@ class _ReadMixin:
         scope: str | None,
         exclude_claim_id: int | None = None,
         tenant_id: str | None = None,
+        visibility: str = "public",
+        source_agent: str | None = None,
     ) -> list[Claim]:
         if not subject or not predicate:
             return []
@@ -478,6 +545,13 @@ class _ReadMixin:
         params: list[object] = [subject, predicate, scope or "project"]
         clauses.append("tenant_id IS ?")
         params.append(tenant_id)
+        visibility, source_agent = normalize_claim_identity(visibility, source_agent)
+        identity_sql, identity_params = self._claim_identity_filter(
+            visibility,
+            source_agent,
+        )
+        clauses.append(identity_sql)
+        params.extend(identity_params)
         if exclude_claim_id is not None:
             clauses.append("id <> ?")
             params.append(exclude_claim_id)
@@ -490,6 +564,15 @@ class _ReadMixin:
         with self.connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [self._row_to_claim(row) for row in rows]
+
+    @staticmethod
+    def _claim_identity_filter(
+        visibility: str,
+        source_agent: str | None,
+    ) -> tuple[str, tuple[object, ...]]:
+        if visibility == "public":
+            return "visibility = ?", ("public",)
+        return "visibility = ? AND source_agent = ?", (visibility, source_agent)
 
 
     @staticmethod

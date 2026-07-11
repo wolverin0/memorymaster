@@ -88,11 +88,9 @@ def _plan(conn: sqlite3.Connection, except_patterns: list[str]) -> list[tuple[st
 def _archive_confirmed_collisions(conn: sqlite3.Connection, old: str, new: str) -> int:
     """Archive older confirmed claims that would collide in the target scope.
 
-    The DB has a partial UNIQUE index ``idx_claims_confirmed_tuple_unique`` on
-    ``(subject, predicate, scope) WHERE status = 'confirmed'`` plus trigger
-    guards. Re-pointing the scope of a confirmed claim into a scope that
-    already holds a confirmed claim with the same ``(subject, predicate)``
-    would violate that constraint.
+    Confirmed-tuple indexes are tenant-wide for public claims and exact
+    visibility/principal-local for non-public claims. Re-pointing a scope must
+    archive only a row that would collide inside that same identity namespace.
 
     Resolution policy: keep the more recent of the two (by ``updated_at``);
     archive the older one in-place. Both rows survive, history is preserved,
@@ -109,6 +107,9 @@ def _archive_confirmed_collisions(conn: sqlite3.Connection, old: str, new: str) 
         JOIN claims b
           ON a.subject = b.subject
          AND a.predicate = b.predicate
+         AND a.tenant_id IS b.tenant_id
+         AND a.visibility = b.visibility
+         AND (a.visibility = 'public' OR a.source_agent IS b.source_agent)
          AND a.status = 'confirmed'
          AND b.status = 'confirmed'
         WHERE a.scope = ? AND b.scope = ?

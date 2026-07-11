@@ -50,14 +50,14 @@ def team_claims(tmp_path, monkeypatch):
     access_control._agent_roles.clear()
 
 
-def test_team_list_and_query_intersect_tenant_and_scope(team_claims) -> None:
+def test_team_list_and_query_enforce_tenant_and_scope(team_claims) -> None:
     db, _workspace, allowed, wrong_scope, wrong_tenant = team_claims
 
     listed = mcp_server.list_claims(limit=20)
     queried = mcp_server.query_memory(
         query="authorization matrix marker",
         retrieval_mode="legacy",
-        scope_allowlist="project:alpha,project:beta",
+        scope_allowlist="project:alpha",
         limit=20,
     )
 

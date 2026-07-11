@@ -346,6 +346,8 @@ def _service(db: str, workspace: str) -> MemoryService:
         workspace_root=Path(workspace_path),
         tenant_id=tenant_id,
         require_tenant=context is not None and context.mode is AuthMode.TEAM,
+        principal=principal,
+        allowed_scopes=context.allowed_scopes if context is not None else frozenset(),
     )
     _bind_telemetry_session(svc, db_path, principal, tenant_id)
     svc.source_agent = principal
@@ -719,7 +721,9 @@ def _normalize_team_arguments(
         bound.arguments[field] = effective_scope
     if "scope_allowlist" in bound.arguments:
         requested_scopes = _parse_scope_allowlist(str(bound.arguments["scope_allowlist"] or ""))
-        narrowed = [scope for scope in (requested_scopes or context.allowed_scopes) if scope in context.allowed_scopes]
+        if requested_scopes and any(scope not in context.allowed_scopes for scope in requested_scopes):
+            raise PermissionError("Caller scope allowlist exceeds authenticated scopes.")
+        narrowed = list(requested_scopes) if requested_scopes else sorted(context.allowed_scopes)
         if not narrowed:
             raise PermissionError("Caller scope allowlist does not intersect authenticated scopes.")
         bound.arguments["scope_allowlist"] = ",".join(narrowed)

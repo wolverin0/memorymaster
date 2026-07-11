@@ -132,17 +132,16 @@ def run(
             scope=claim.scope,
             exclude_claim_id=claim.id,
             tenant_id=claim.tenant_id,
+            visibility=claim.visibility,
+            source_agent=claim.source_agent,
         )
 
         duplicate = next((x for x in related if x.object_value == claim.object_value and x.object_value), None)
         if duplicate is not None and not is_revalidation:
-            transition_claim(
-                store,
-                claim_id=claim.id,
-                to_status="superseded",
+            store.mark_superseded(
+                old_claim_id=claim.id,
+                new_claim_id=duplicate.id,
                 reason=f"duplicate_of_confirmed_claim:{duplicate.id}",
-                event_type="validator",
-                replaced_by_claim_id=duplicate.id,
             )
             superseded += 1
             continue

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Iterable
 
 from memorymaster.stores.storage import SQLiteStore
 
@@ -16,6 +17,8 @@ def create_store(
     read_only: bool = False,
     tenant_id: str | None = None,
     require_tenant: bool = False,
+    principal: str | None = None,
+    allowed_scopes: Iterable[str] | None = None,
 ):
     """Build the store for ``db_target``.
 
@@ -33,5 +36,7 @@ def create_store(
             target,
             tenant_id=tenant_id,
             require_tenant=require_tenant,
+            principal=principal,
+            allowed_scopes=allowed_scopes,
         )
     return SQLiteStore(Path(target), read_only=read_only)

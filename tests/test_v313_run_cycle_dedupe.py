@@ -39,6 +39,10 @@ def _force_confirmed(db: Path, claim_id: int) -> None:
     con.execute("DROP TRIGGER IF EXISTS trg_claims_confirmed_tuple_guard_update")
     con.execute("DROP TRIGGER IF EXISTS trg_claims_confirmed_tuple_guard_insert")
     con.execute("DROP INDEX IF EXISTS idx_claims_confirmed_tuple_unique")
+    con.execute("DROP INDEX IF EXISTS idx_claims_public_confirmed_tuple_unique")
+    con.execute(
+        "DROP INDEX IF EXISTS idx_claims_nonpublic_principal_confirmed_tuple_unique"
+    )
     con.execute("UPDATE claims SET status='confirmed' WHERE id=?", (claim_id,))
     con.commit()
     con.close()

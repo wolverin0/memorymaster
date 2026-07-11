@@ -3,8 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Iterable
 
+from memorymaster.core.lifecycle import can_transition
 from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity
 from memorymaster.core.models import (
     ActionProposal,
@@ -27,10 +28,20 @@ from memorymaster.core.models import (
 )
 from memorymaster.core.retry import connect_with_retry
 from memorymaster.stores._storage_shared import (
+    ConcurrentModificationError,
     EVENT_HASH_ALGO,
     TENANT_EVENT_HASH_ALGO,
     compute_tenant_event_hash,
     generate_top_level_human_id,
+)
+from memorymaster.stores.claim_identity import (
+    normalize_claim_identity,
+    require_unambiguous_identity_row,
+)
+from memorymaster.stores.postgres_policy_contract import (
+    canonicalize_sql_tokens,
+    expected_policy_expressions,
+    expressions_match,
 )
 from memorymaster.stores.storage import SQLiteStore
 
@@ -40,6 +51,81 @@ POSTGRES_EVENTS_APPEND_ONLY_TRIGGERS = (
 )
 POSTGRES_CONFIRMED_TUPLE_GUARD_TRIGGER = "trg_claims_confirmed_tuple_guard"
 POSTGRES_TENANT_EVENT_HASH_ALGO = TENANT_EVENT_HASH_ALGO
+POSTGRES_TENANT_POLICY_TABLES = (
+    "claims",
+    "citations",
+    "events",
+    "claim_links",
+    "claim_embeddings",
+    "contradiction_verdicts",
+    "mcp_usage",
+)
+POSTGRES_TEAM_DENY_TABLES = (
+    "action_proposals",
+    "external_sources",
+    "source_items",
+    "evidence_items",
+    "media_retry_queue",
+    "query_cache",
+    "miner_state",
+    "rule_stats",
+)
+POSTGRES_PROTECTED_TABLES = POSTGRES_TENANT_POLICY_TABLES + POSTGRES_TEAM_DENY_TABLES
+POSTGRES_AUTHORITY_GUCS = (
+    "memorymaster.tenant_id",
+    "memorymaster.principal",
+    "memorymaster.allowed_scopes",
+)
+POSTGRES_COMMAND_POLICIES = {
+    "SELECT": "memorymaster_tenant_select",
+    "INSERT": "memorymaster_tenant_insert",
+    "UPDATE": "memorymaster_tenant_update",
+    "DELETE": "memorymaster_tenant_delete",
+}
+POSTGRES_PERMIT_POLICIES = {
+    command: f"{name}_permit"
+    for command, name in POSTGRES_COMMAND_POLICIES.items()
+}
+POSTGRES_POLICY_FIELDS = (
+    "schemaname",
+    "tablename",
+    "policyname",
+    "permissive",
+    "roles",
+    "cmd",
+    "qual",
+    "with_check",
+)
+POSTGRES_POLICY_MANIFEST_PREFIX = "memorymaster.rls/v1;manifest=0011;sha256="
+POSTGRES_METADATA_TABLES = ("cache_meta", "schema_versions")
+POSTGRES_CLAIM_IDENTITY_INDEXES = frozenset(
+    {
+        "idx_claims_public_idempotency_key_unique",
+        "idx_claims_nonpublic_principal_idempotency_key_unique",
+        "idx_claims_public_human_id_unique",
+        "idx_claims_nonpublic_principal_human_id_unique",
+        "idx_claims_public_confirmed_tuple_unique",
+        "idx_claims_nonpublic_principal_confirmed_tuple_unique",
+    }
+)
+POSTGRES_HUMAN_IDENTITY_INDEXES = frozenset(
+    {
+        "idx_claims_public_human_id_unique",
+        "idx_claims_nonpublic_principal_human_id_unique",
+    }
+)
+POSTGRES_CLAIM_OWNER_CONSTRAINT = "ck_claims_identity_visibility_owner"
+POSTGRES_CLAIM_OWNER_CHECK = (
+    "CHECK (visibility IN ('public', 'private', 'sensitive') "
+    "AND NULLIF(BTRIM(source_agent), '') IS NOT NULL)"
+)
+POSTGRES_EVENT_GUARD_SOURCE = """
+BEGIN
+    RAISE EXCEPTION 'events table is append-only; % is not allowed', TG_OP;
+END;
+""".strip()
+POSTGRES_SUPERSESSION_GUARD_TRIGGER = "trg_claims_supersession_boundary"
+POSTGRES_SUPERSESSION_GUARD_FUNCTION = "memorymaster_claim_supersession_guard"
 
 
 def utc_now() -> datetime:
@@ -53,12 +139,868 @@ class PostgresStore(SQLiteStore):
         *,
         tenant_id: str | None = None,
         require_tenant: bool = False,
+        principal: str | None = None,
+        allowed_scopes: Iterable[str] | None = None,
     ) -> None:
         self.dsn = dsn
         self.tenant_id = (tenant_id or "").strip() or None
         self.require_tenant = bool(require_tenant)
+        self.principal = (principal or "").strip() or None
+        self.allowed_scopes = frozenset(
+            scope.strip()
+            for scope in (allowed_scopes or ())
+            if scope and scope.strip()
+        )
         self._psycopg: Any = None
         self._vector_table_available: bool | None = None
+
+    def _require_team_authority(self) -> tuple[str, str, tuple[str, ...]]:
+        if self.tenant_id is None:
+            raise PermissionError("Postgres team mode requires a tenant context.")
+        if self.principal is None:
+            raise PermissionError("Postgres team mode requires an authenticated principal.")
+        if not self.allowed_scopes:
+            raise PermissionError("Postgres team mode requires explicit allowed scopes.")
+        if any("*" in scope for scope in self.allowed_scopes):
+            raise PermissionError("Postgres team scopes cannot contain wildcards.")
+        return self.tenant_id, self.principal, tuple(sorted(self.allowed_scopes))
+
+    @staticmethod
+    def _cleanup_failed_connection(conn) -> None:
+        try:
+            rollback = getattr(conn, "rollback", None)
+            if callable(rollback):
+                rollback()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _row_bool(row: dict[str, object], *names: str) -> bool:
+        return any(bool(row.get(name)) for name in names)
+
+    @staticmethod
+    def _canonical_catalog_sql(value: object) -> str:
+        return canonicalize_sql_tokens(value)
+
+    @staticmethod
+    def _canonical_identity_sql(value: object) -> str:
+        return canonicalize_sql_tokens(value, drop_parentheses=True)
+
+    @staticmethod
+    def _canonical_ddl(value: object) -> str:
+        normalized = canonicalize_sql_tokens(value)
+        normalized = normalized.replace("public.", "")
+        return " ".join(normalized.rstrip(" ;").split())
+
+    @staticmethod
+    def _policy_roles(row: dict[str, object]) -> set[str]:
+        raw = row.get("roles")
+        if isinstance(raw, str):
+            return {part.strip() for part in raw.strip("{}").split(",") if part.strip()}
+        if isinstance(raw, (list, tuple, set, frozenset)):
+            return {str(part) for part in raw}
+        return set()
+
+    @staticmethod
+    def _policy_is_restrictive(row: dict[str, object]) -> bool:
+        permissive = row.get("permissive")
+        if isinstance(permissive, str):
+            return permissive.upper() == "RESTRICTIVE"
+        return row.get("polpermissive") is False
+
+    @classmethod
+    def _validate_runtime_role(cls, cur) -> None:
+        cur.execute(
+            """
+            SELECT current_user, session_user, rolname, rolsuper, rolbypassrls,
+                   rolreplication, rolcreaterole, rolcreatedb,
+                   EXISTS (
+                       SELECT 1 FROM pg_roles AS privileged
+                       WHERE privileged.rolname <> current_user
+                         AND (privileged.rolsuper OR privileged.rolbypassrls)
+                         AND pg_has_role(current_user, privileged.oid, 'SET')
+                   ) AS member_of_privileged_role
+            FROM pg_roles WHERE rolname = current_user
+            """
+        )
+        row = cur.fetchone()
+        if not isinstance(row, dict):
+            raise PermissionError("Postgres runtime role could not be verified.")
+        if row.get("current_user") != row.get("session_user"):
+            raise PermissionError("Postgres runtime role cannot use session impersonation.")
+        if bool(row.get("rolsuper")):
+            raise PermissionError("Postgres runtime role cannot be a superuser.")
+        if bool(row.get("rolbypassrls")):
+            raise PermissionError("Postgres runtime role cannot have BYPASSRLS.")
+        if bool(row.get("rolreplication")):
+            raise PermissionError("Postgres runtime role cannot have REPLICATION.")
+        if bool(row.get("rolcreaterole")):
+            raise PermissionError("Postgres runtime role cannot have CREATEROLE.")
+        if bool(row.get("rolcreatedb")):
+            raise PermissionError("Postgres runtime role cannot have CREATEDB.")
+        if bool(row.get("member_of_privileged_role")):
+            raise PermissionError(
+                "Postgres runtime role cannot be a member of a privileged superuser/BYPASSRLS role."
+            )
+        cur.execute(
+            "SELECT has_schema_privilege(current_user, current_schema(), 'CREATE') "
+            "AS public_schema_create"
+        )
+        schema_row = cur.fetchone()
+        if isinstance(schema_row, dict) and cls._row_bool(
+            schema_row, "public_schema_create", "can_create_public"
+        ):
+            raise PermissionError("Postgres runtime role cannot have schema CREATE privilege.")
+
+    @classmethod
+    def _validate_runtime_tables(cls, cur) -> None:
+        by_name = cls._runtime_table_catalog(cur)
+        for table, row in by_name.items():
+            cls._validate_runtime_table_contract(table, row)
+
+    @classmethod
+    def _runtime_table_catalog(cls, cur) -> dict[str, dict[str, object]]:
+        cur.execute(
+            """
+            SELECT c.relname AS table_name, c.relrowsecurity, c.relforcerowsecurity,
+                   pg_get_userbyid(c.relowner) AS owner_name,
+                   pg_has_role(current_user, c.relowner, 'MEMBER') AS owner_member,
+                   has_table_privilege(current_user, c.oid, 'TRUNCATE') AS can_truncate,
+                   has_table_privilege(current_user, c.oid, 'REFERENCES') AS can_references,
+                   has_table_privilege(current_user, c.oid, 'TRIGGER') AS can_trigger,
+                   has_table_privilege(current_user, c.oid, 'SELECT') AS can_select,
+                   has_table_privilege(current_user, c.oid, 'INSERT') AS can_insert,
+                   has_table_privilege(current_user, c.oid, 'UPDATE') AS can_update,
+                   has_any_column_privilege(current_user, c.oid, 'UPDATE')
+                       AS can_update_any_column,
+                   has_table_privilege(current_user, c.oid, 'DELETE') AS can_delete
+            FROM pg_class AS c
+            JOIN pg_namespace AS n ON n.oid = c.relnamespace
+            WHERE n.nspname = current_schema() AND c.relname = ANY(%s)
+            """,
+            (list(POSTGRES_PROTECTED_TABLES),),
+        )
+        rows = cur.fetchall()
+        by_name = {str(row.get("table_name") or row.get("relname")): row for row in rows}
+        if set(by_name) != set(POSTGRES_PROTECTED_TABLES):
+            raise PermissionError("Postgres runtime requires all 15 protected tables.")
+        return by_name
+
+    @classmethod
+    def _validate_runtime_table_contract(
+        cls,
+        table: str,
+        row: dict[str, object],
+    ) -> None:
+        if not bool(row.get("relrowsecurity")) or not bool(row.get("relforcerowsecurity")):
+            raise PermissionError(f"Postgres table {table} must ENABLE and FORCE RLS.")
+        if cls._row_bool(row, "owner_member", "is_owner_member"):
+            raise PermissionError(f"Postgres runtime role cannot own {table} or its owner role.")
+        for privilege in ("truncate", "references", "trigger"):
+            if cls._row_bool(row, f"can_{privilege}", f"has_{privilege}"):
+                raise PermissionError(
+                    f"Postgres runtime role cannot have {privilege.upper()} on {table}."
+                )
+        if table == "events":
+            cls._validate_event_table_privileges(row)
+        if table in POSTGRES_TEAM_DENY_TABLES:
+            cls._validate_team_deny_table_privileges(table, row)
+
+    @classmethod
+    def _validate_event_table_privileges(cls, row: dict[str, object]) -> None:
+        for privilege in ("select", "insert"):
+            if not cls._row_bool(row, f"can_{privilege}", f"has_{privilege}"):
+                raise PermissionError(
+                    f"Postgres runtime role requires {privilege.upper()} "
+                    "on append-only events."
+                )
+        if cls._row_bool(row, "can_update_any_column", "has_update_any_column"):
+            raise PermissionError(
+                "Postgres runtime role cannot UPDATE append-only event columns."
+            )
+        for privilege in ("update", "delete"):
+            if cls._row_bool(row, f"can_{privilege}", f"has_{privilege}"):
+                raise PermissionError(
+                    f"Postgres runtime role cannot {privilege.upper()} append-only events."
+                )
+
+    @classmethod
+    def _validate_team_deny_table_privileges(
+        cls,
+        table: str,
+        row: dict[str, object],
+    ) -> None:
+        for privilege in ("insert", "update", "delete"):
+            if cls._row_bool(row, f"can_{privilege}", f"has_{privilege}"):
+                raise PermissionError(
+                    f"Postgres runtime role cannot have {privilege.upper()} on "
+                    f"team-deny table {table}."
+                )
+
+    @classmethod
+    def _validate_runtime_metadata_tables(cls, cur) -> None:
+        cur.execute(
+            """
+            SELECT c.relname AS table_name,
+                   has_table_privilege(current_user, c.oid, 'SELECT') AS can_select,
+                   has_table_privilege(current_user, c.oid, 'INSERT') AS can_insert,
+                   has_table_privilege(current_user, c.oid, 'UPDATE') AS can_update,
+                   has_table_privilege(current_user, c.oid, 'DELETE') AS can_delete,
+                   has_table_privilege(current_user, c.oid, 'TRUNCATE') AS can_truncate,
+                   has_table_privilege(current_user, c.oid, 'REFERENCES') AS can_references,
+                   has_table_privilege(current_user, c.oid, 'TRIGGER') AS can_trigger
+            FROM pg_class AS c
+            JOIN pg_namespace AS n ON n.oid = c.relnamespace
+            WHERE n.nspname = current_schema() AND c.relname = ANY(%s)
+            """,
+            (list(POSTGRES_METADATA_TABLES),),
+        )
+        rows = cur.fetchall()
+        by_name = {str(row.get("table_name") or row.get("relname")): row for row in rows}
+        if set(by_name) != set(POSTGRES_METADATA_TABLES):
+            raise PermissionError("Postgres runtime requires both metadata tables.")
+        for table, row in by_name.items():
+            if not cls._row_bool(row, "can_select", "has_select"):
+                raise PermissionError(f"Postgres runtime requires SELECT on {table}.")
+            for privilege in ("insert", "update", "delete", "truncate", "references", "trigger"):
+                if cls._row_bool(row, f"can_{privilege}", f"has_{privilege}"):
+                    raise PermissionError(
+                        f"Postgres runtime role cannot have {privilege.upper()} on {table}."
+                    )
+
+    @classmethod
+    def _validate_confirmed_tuple_index(cls, cur) -> None:
+        """Compatibility alias for the v12 six-index identity validator."""
+        cls._validate_claim_identity_indexes(cur)
+
+    @classmethod
+    def _validate_claim_owner_constraint(cls, cur) -> None:
+        cur.execute(
+            """
+            SELECT n.nspname AS schema_name, t.relname AS table_name,
+                   c.conname AS constraint_name, c.contype AS constraint_type,
+                   c.convalidated AS validated, c.conislocal AS is_local,
+                   c.connoinherit AS no_inherit,
+                   pg_get_constraintdef(c.oid, true) AS constraint_definition
+            FROM pg_constraint AS c
+            JOIN pg_class AS t ON t.oid = c.conrelid
+            JOIN pg_namespace AS n ON n.oid = t.relnamespace
+            WHERE n.nspname = current_schema() AND t.relname = 'claims'
+              AND c.conname = %s
+            """,
+            (POSTGRES_CLAIM_OWNER_CONSTRAINT,),
+        )
+        row = cur.fetchone()
+        if not isinstance(row, dict):
+            raise PermissionError("Postgres claim owner constraint is missing.")
+        metadata = (
+            row.get("schema_name") == "public",
+            row.get("table_name") == "claims",
+            (row.get("constraint_name") or row.get("conname"))
+            == POSTGRES_CLAIM_OWNER_CONSTRAINT,
+            (row.get("constraint_type") or row.get("contype")) == "c",
+            cls._row_bool(row, "validated", "convalidated"),
+            cls._row_bool(row, "is_local", "conislocal"),
+            not cls._row_bool(row, "no_inherit", "connoinherit"),
+        )
+        definition = row.get("constraint_definition") or row.get("definition")
+        if not all(metadata) or not expressions_match(
+            definition,
+            POSTGRES_CLAIM_OWNER_CHECK,
+        ):
+            raise PermissionError(
+                "Postgres claim owner constraint is unsafe or not validated."
+            )
+
+    @classmethod
+    def _expected_claim_identity_catalog(cls) -> dict[str, tuple[str, str]]:
+        identities = {
+            "idempotency_key": ("scope, idempotency_key", "idempotency_key IS NOT NULL"),
+            "human_id": ("scope, human_id", "human_id IS NOT NULL"),
+            "confirmed_tuple": (
+                "subject, predicate, scope",
+                "status = 'confirmed'::text AND subject IS NOT NULL "
+                "AND predicate IS NOT NULL",
+            ),
+        }
+        expected: dict[str, tuple[str, str]] = {}
+        for suffix, (columns, required) in identities.items():
+            for namespace in ("public", "nonpublic_principal"):
+                name = f"idx_claims_{namespace}_{suffix}_unique"
+                public = namespace == "public"
+                keys = f"COALESCE(tenant_id, ''::text), {columns}"
+                predicate = f"visibility = 'public'::text AND {required}"
+                if not public:
+                    if suffix == "confirmed_tuple":
+                        keys = (
+                            "COALESCE(tenant_id, ''::text), visibility, source_agent, "
+                            f"{columns}"
+                        )
+                    else:
+                        keys = (
+                            "COALESCE(tenant_id, ''::text), scope, visibility, "
+                            f"source_agent, {columns.removeprefix('scope, ')}"
+                        )
+                    predicate = (
+                        "visibility <> 'public'::text AND source_agent IS NOT NULL "
+                        f"AND {required}"
+                    )
+                definition = (
+                    f"CREATE UNIQUE INDEX {name} ON public.claims USING btree ({keys}) "
+                    f"WHERE ({predicate})"
+                )
+                expected[name] = (definition, predicate)
+        return expected
+
+    @classmethod
+    def _validate_claim_identity_indexes(cls, cur) -> None:
+        cur.execute(
+            """
+            SELECT i.relname AS index_name, x.indisunique, x.indisvalid, x.indisready,
+                   pg_get_indexdef(i.oid) AS indexdef,
+                   pg_get_expr(x.indpred, x.indrelid, false) AS predicate
+            FROM pg_index AS x
+            JOIN pg_class AS i ON i.oid = x.indexrelid
+            JOIN pg_class AS t ON t.oid = x.indrelid
+            JOIN pg_namespace AS n ON n.oid = t.relnamespace
+            WHERE n.nspname = current_schema() AND t.relname = 'claims'
+              AND x.indisunique AND NOT x.indisprimary
+            """
+        )
+        rows = list(cur.fetchall())
+        by_name = {
+            str(row.get("index_name") or row.get("relname")): row for row in rows
+        }
+        expected = cls._expected_claim_identity_catalog()
+        if set(by_name) != set(expected) or len(rows) != len(expected):
+            raise PermissionError("Postgres claim identity index catalog is unsafe.")
+        for name, (definition, predicate) in expected.items():
+            row = by_name[name]
+            flags = (("indisunique", "is_unique"), ("indisvalid", "is_valid"),
+                     ("indisready", "is_ready"))
+            if not all(cls._row_bool(row, primary, alias) for primary, alias in flags):
+                raise PermissionError(f"Postgres claim identity index {name} is unsafe.")
+            actual_definition = row.get("indexdef") or row.get("index_definition")
+            actual_predicate = row.get("predicate") or row.get("index_predicate")
+            if cls._canonical_identity_sql(actual_definition) != cls._canonical_identity_sql(
+                definition
+            ) or cls._canonical_identity_sql(actual_predicate) != cls._canonical_identity_sql(
+                predicate
+            ):
+                raise PermissionError(f"Postgres claim identity index {name} has drifted.")
+
+    @classmethod
+    def _validate_event_chain_head_function(cls, cur) -> None:
+        cur.execute(
+            """
+            SELECT n.nspname AS schema_name, p.proname AS function_name,
+                   p.pronargs AS argument_count,
+                   pg_get_function_result(p.oid) AS result_signature,
+                   l.lanname AS language_name, p.prosecdef AS security_definer,
+                   COALESCE(p.proconfig, ARRAY[]::text[]) AS function_config,
+                   p.provolatile AS volatility, p.proparallel AS parallel_safety,
+                   p.proleakproof AS leakproof, p.proisstrict AS strict,
+                   p.prosrc AS function_source,
+                   EXISTS (
+                       SELECT 1
+                       FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) AS acl
+                       WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'
+                   ) AS public_execute,
+                   has_function_privilege(current_user, p.oid, 'EXECUTE') AS runtime_execute,
+                    p.proowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)
+                        AS owner_is_runtime,
+                    pg_has_role(current_user, p.proowner, 'MEMBER') AS owner_member,
+                    owner_role.rolsuper AS owner_superuser,
+                    owner_role.rolbypassrls AS owner_bypassrls,
+                    pg_get_functiondef(p.oid) AS function_definition
+            FROM pg_proc AS p
+            JOIN pg_namespace AS n ON n.oid = p.pronamespace
+            JOIN pg_language AS l ON l.oid = p.prolang
+            JOIN pg_roles AS owner_role ON owner_role.oid = p.proowner
+            WHERE n.nspname = 'public'
+              AND p.proname = 'memorymaster_event_chain_head'
+              AND p.pronargs = 0
+            """
+        )
+        row = cur.fetchone()
+        if not isinstance(row, dict):
+            raise PermissionError("Postgres event-chain head function is missing.")
+        cls._validate_event_chain_head_metadata(row)
+
+    @classmethod
+    def _validate_event_chain_head_metadata(cls, row: dict[str, object]) -> None:
+        if row.get("schema_name") != "public" or row.get("function_name") != (
+            "memorymaster_event_chain_head"
+        ):
+            raise PermissionError("Postgres event-chain head function signature is unsafe.")
+        argument_count = row.get("argument_count")
+        if argument_count is None or int(argument_count) != 0:
+            raise PermissionError("Postgres event-chain head function argument signature is unsafe.")
+        result = cls._canonical_identity_sql(row.get("result_signature"))
+        if result != "table global_event_hash text, tenant_event_hash text":
+            raise PermissionError("Postgres event-chain head result signature is unsafe.")
+        if str(row.get("language_name") or "").lower() != "plpgsql":
+            raise PermissionError("Postgres event-chain head language is unsafe.")
+        if not bool(row.get("security_definer")):
+            raise PermissionError("Postgres event-chain head function must be SECURITY DEFINER.")
+        configs = row.get("function_config") or ()
+        if isinstance(configs, str):
+            configs = (configs,)
+        normalized_configs = {cls._canonical_catalog_sql(value) for value in configs}
+        if normalized_configs != {"search_path=pg_catalog, pg_temp"}:
+            raise PermissionError("Postgres event-chain head function has an unsafe search_path.")
+        if (
+            row.get("volatility") != "v"
+            or row.get("parallel_safety") != "u"
+            or bool(row.get("leakproof"))
+            or bool(row.get("strict"))
+        ):
+            raise PermissionError("Postgres event-chain head function catalog has drifted.")
+        if bool(row.get("public_execute")) or not bool(row.get("runtime_execute")):
+            raise PermissionError("Postgres event-chain head EXECUTE privileges are unsafe.")
+        cls._validate_event_chain_head_owner(row)
+        import importlib
+
+        migration = importlib.import_module(
+            "memorymaster.stores.migrations.0011_postgres_scoped_force_rls"
+        )
+        expected_source = str(migration._EVENT_HEAD_FUNCTION).split(
+            "AS $$", 1
+        )[1].rsplit("$$", 1)[0].strip()
+        if cls._canonical_catalog_sql(row.get("function_source")) != (
+            cls._canonical_catalog_sql(expected_source)
+        ):
+            raise PermissionError("Postgres event-chain head function body has drifted.")
+
+    @staticmethod
+    def _validate_event_chain_head_owner(row: dict[str, object]) -> None:
+        if bool(row.get("owner_is_runtime")) or bool(row.get("owner_member")):
+            raise PermissionError("Postgres runtime role cannot own the event-chain head function.")
+        if not (
+            bool(row.get("owner_superuser"))
+            or bool(row.get("owner_bypassrls"))
+        ):
+            raise PermissionError(
+                "Postgres event-chain head owner must be SUPERUSER or BYPASSRLS."
+            )
+
+    @classmethod
+    def _validate_event_append_only_catalog(cls, cur) -> None:
+        cur.execute(
+            """
+            SELECT tg.tgname AS trigger_name, ns.nspname AS table_schema,
+                   tbl.relname AS table_name, tg.tgenabled AS enabled_code,
+                   tg.tgisinternal AS is_internal, fns.nspname AS function_schema,
+                   fn.proname AS function_name,
+                   pg_get_triggerdef(tg.oid, true) AS trigger_definition
+            FROM pg_trigger AS tg
+            JOIN pg_class AS tbl ON tbl.oid = tg.tgrelid
+            JOIN pg_namespace AS ns ON ns.oid = tbl.relnamespace
+            JOIN pg_proc AS fn ON fn.oid = tg.tgfoid
+            JOIN pg_namespace AS fns ON fns.oid = fn.pronamespace
+            WHERE ns.nspname = 'public' AND tbl.relname = 'events'
+              AND NOT tg.tgisinternal
+            """,
+        )
+        rows = list(cur.fetchall())
+        by_name = {str(row.get("trigger_name")): row for row in rows}
+        if (
+            set(by_name) != set(POSTGRES_EVENTS_APPEND_ONLY_TRIGGERS)
+            or len(rows) != len(POSTGRES_EVENTS_APPEND_ONLY_TRIGGERS)
+        ):
+            raise PermissionError("Postgres append-only event trigger catalog is unsafe.")
+        for operation in ("update", "delete"):
+            cls._validate_event_trigger_row(
+                by_name[f"trg_events_append_only_{operation}"],
+                operation,
+            )
+        cls._validate_event_guard_function(cur)
+
+    @classmethod
+    def _validate_claim_supersession_guard(cls, cur) -> None:
+        cur.execute(
+            """
+            SELECT tg.tgname AS trigger_name, ns.nspname AS table_schema,
+                   tbl.relname AS table_name, tg.tgenabled AS enabled_code,
+                   tg.tgisinternal AS is_internal, fns.nspname AS function_schema,
+                   fn.proname AS function_name,
+                   pg_get_triggerdef(tg.oid, true) AS trigger_definition
+            FROM pg_trigger AS tg
+            JOIN pg_class AS tbl ON tbl.oid = tg.tgrelid
+            JOIN pg_namespace AS ns ON ns.oid = tbl.relnamespace
+            JOIN pg_proc AS fn ON fn.oid = tg.tgfoid
+            JOIN pg_namespace AS fns ON fns.oid = fn.pronamespace
+            WHERE ns.nspname = 'public' AND tbl.relname = 'claims'
+              AND NOT tg.tgisinternal
+            """,
+        )
+        rows = list(cur.fetchall())
+        by_name = {str(row.get("trigger_name")): row for row in rows}
+        if set(by_name) != {POSTGRES_SUPERSESSION_GUARD_TRIGGER} or len(rows) != 1:
+            raise PermissionError(
+                "Postgres claim supersession trigger catalog is unsafe."
+            )
+        row = by_name[POSTGRES_SUPERSESSION_GUARD_TRIGGER]
+        cls._validate_supersession_trigger_row(row)
+        cls._validate_supersession_guard_function(cur)
+
+    @classmethod
+    def _validate_supersession_trigger_row(cls, row: dict[str, object]) -> None:
+        expected = (
+            f"CREATE TRIGGER {POSTGRES_SUPERSESSION_GUARD_TRIGGER} BEFORE INSERT OR "
+            "UPDATE OF tenant_id, scope, visibility, source_agent, "
+            "supersedes_claim_id, replaced_by_claim_id ON public.claims "
+            "FOR EACH ROW EXECUTE FUNCTION "
+            f"public.{POSTGRES_SUPERSESSION_GUARD_FUNCTION}()"
+        )
+        metadata = (
+            row.get("trigger_name") == POSTGRES_SUPERSESSION_GUARD_TRIGGER,
+            row.get("table_schema") == "public",
+            row.get("table_name") == "claims",
+            row.get("enabled_code") == "O",
+            not bool(row.get("is_internal")),
+            row.get("function_schema") == "public",
+            row.get("function_name") == POSTGRES_SUPERSESSION_GUARD_FUNCTION,
+        )
+        if not all(metadata) or cls._canonical_ddl(
+            row.get("trigger_definition")
+        ) != cls._canonical_ddl(expected):
+            raise PermissionError("Postgres claim supersession trigger has drifted.")
+
+    @classmethod
+    def _validate_supersession_guard_function(cls, cur) -> None:
+        cur.execute(
+            """
+            SELECT n.nspname AS schema_name, p.proname AS function_name,
+                   p.pronargs AS argument_count,
+                   pg_get_function_result(p.oid) AS result_signature,
+                   l.lanname AS language_name, p.prosecdef AS security_definer,
+                   COALESCE(p.proconfig, ARRAY[]::text[]) AS function_config,
+                   p.provolatile AS volatility, p.proparallel AS parallel_safety,
+                   p.proleakproof AS leakproof, p.proisstrict AS strict,
+                   p.prosrc AS function_source,
+                   pg_has_role(current_user, p.proowner, 'MEMBER') AS owner_member
+            FROM pg_proc AS p
+            JOIN pg_namespace AS n ON n.oid = p.pronamespace
+            JOIN pg_language AS l ON l.oid = p.prolang
+            WHERE n.nspname = 'public' AND p.proname = %s AND p.pronargs = 0
+            """,
+            (POSTGRES_SUPERSESSION_GUARD_FUNCTION,),
+        )
+        row = cur.fetchone()
+        if not isinstance(row, dict):
+            raise PermissionError("Postgres claim supersession guard function is missing.")
+        if not cls._supersession_guard_metadata_matches(row):
+            raise PermissionError("Postgres claim supersession guard has drifted.")
+
+    @classmethod
+    def _supersession_guard_metadata_matches(
+        cls,
+        row: dict[str, object],
+    ) -> bool:
+        import importlib
+
+        migration = importlib.import_module(
+            "memorymaster.stores.migrations.0012_principal_local_claim_identities"
+        )
+        expected_source = str(migration._SUPERSESSION_GUARD_FUNCTION).split(
+            "AS $$", 1
+        )[1].rsplit("$$", 1)[0].strip()
+        configs = row.get("function_config") or ()
+        if isinstance(configs, str):
+            configs = (configs,)
+        metadata = (
+            row.get("schema_name") == "public",
+            row.get("function_name") == POSTGRES_SUPERSESSION_GUARD_FUNCTION,
+            row.get("argument_count") is not None
+            and int(row["argument_count"]) == 0,
+            cls._canonical_identity_sql(row.get("result_signature")) == "trigger",
+            str(row.get("language_name") or "").lower() == "plpgsql",
+            not bool(row.get("security_definer")),
+            not tuple(configs),
+            row.get("volatility") == "v",
+            row.get("parallel_safety") == "u",
+            not bool(row.get("leakproof")),
+            not bool(row.get("strict")),
+            not bool(row.get("owner_member")),
+            cls._canonical_catalog_sql(row.get("function_source"))
+            == cls._canonical_catalog_sql(expected_source),
+        )
+        return all(metadata)
+
+    @classmethod
+    def _validate_event_trigger_row(
+        cls,
+        row: dict[str, object],
+        operation: str,
+    ) -> None:
+        name = f"trg_events_append_only_{operation}"
+        expected = (
+            f"CREATE TRIGGER {name} BEFORE {operation.upper()} ON public.events "
+            "FOR EACH ROW EXECUTE FUNCTION "
+            "public.memorymaster_events_append_only_guard()"
+        )
+        metadata = (
+            row.get("trigger_name") == name,
+            row.get("table_schema") == "public",
+            row.get("table_name") == "events",
+            row.get("enabled_code") == "O",
+            not bool(row.get("is_internal")),
+            row.get("function_schema") == "public",
+            row.get("function_name") == "memorymaster_events_append_only_guard",
+        )
+        if not all(metadata) or cls._canonical_ddl(
+            row.get("trigger_definition")
+        ) != cls._canonical_ddl(expected):
+            raise PermissionError(f"Postgres append-only {operation} trigger has drifted.")
+
+    @classmethod
+    def _validate_event_guard_function(cls, cur) -> None:
+        cur.execute(
+            """
+            SELECT n.nspname AS schema_name, p.proname AS function_name,
+                   p.pronargs AS argument_count,
+                   pg_get_function_result(p.oid) AS result_signature,
+                   l.lanname AS language_name, p.prosecdef AS security_definer,
+                   COALESCE(p.proconfig, ARRAY[]::text[]) AS function_config,
+                   p.provolatile AS volatility, p.proparallel AS parallel_safety,
+                   p.proleakproof AS leakproof, p.proisstrict AS strict,
+                   p.prosrc AS function_source,
+                   pg_has_role(current_user, p.proowner, 'MEMBER') AS owner_member
+            FROM pg_proc AS p
+            JOIN pg_namespace AS n ON n.oid = p.pronamespace
+            JOIN pg_language AS l ON l.oid = p.prolang
+            WHERE n.nspname = 'public'
+              AND p.proname = 'memorymaster_events_append_only_guard'
+              AND p.pronargs = 0
+            """
+        )
+        row = cur.fetchone()
+        if not isinstance(row, dict):
+            raise PermissionError("Postgres append-only event guard is missing.")
+        configs = row.get("function_config") or ()
+        if isinstance(configs, str):
+            configs = (configs,)
+        metadata = (
+            row.get("schema_name") == "public",
+            row.get("function_name") == "memorymaster_events_append_only_guard",
+            row.get("argument_count") is not None
+            and int(row["argument_count"]) == 0,
+            cls._canonical_identity_sql(row.get("result_signature")) == "trigger",
+            str(row.get("language_name") or "").lower() == "plpgsql",
+            not bool(row.get("security_definer")),
+            not tuple(configs),
+            row.get("volatility") == "v",
+            row.get("parallel_safety") == "u",
+            not bool(row.get("leakproof")),
+            not bool(row.get("strict")),
+            not bool(row.get("owner_member")),
+            cls._canonical_catalog_sql(row.get("function_source"))
+            == cls._canonical_catalog_sql(POSTGRES_EVENT_GUARD_SOURCE),
+        )
+        if not all(metadata):
+            raise PermissionError("Postgres append-only event guard has drifted.")
+
+    @staticmethod
+    def _canonical_policy_payload(rows: Iterable[dict[str, object]]) -> str:
+        payload: list[dict[str, object]] = []
+        for policy in rows:
+            row = {field: policy.get(field) for field in POSTGRES_POLICY_FIELDS}
+            roles = row["roles"]
+            if isinstance(roles, (list, tuple, set, frozenset)):
+                row["roles"] = sorted(str(role) for role in roles)
+            payload.append(row)
+        payload.sort(
+            key=lambda row: (
+                str(row["schemaname"]),
+                str(row["tablename"]),
+                str(row["policyname"]),
+            )
+        )
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+    @classmethod
+    def _policy_manifest_comment(cls, rows: Iterable[dict[str, object]]) -> str:
+        payload = cls._canonical_policy_payload(rows).encode("utf-8")
+        return f"{POSTGRES_POLICY_MANIFEST_PREFIX}{hashlib.sha256(payload).hexdigest()}"
+
+    @staticmethod
+    def _expected_policy_inventory() -> dict[tuple[str, str], tuple[bool, str]]:
+        expected: dict[tuple[str, str], tuple[bool, str]] = {}
+        for table in POSTGRES_TENANT_POLICY_TABLES:
+            for command, restrict_name in POSTGRES_COMMAND_POLICIES.items():
+                expected[(table, restrict_name)] = (True, command)
+                expected[(table, POSTGRES_PERMIT_POLICIES[command])] = (False, command)
+        for table in POSTGRES_TEAM_DENY_TABLES:
+            expected[(table, "memorymaster_team_deny")] = (True, "ALL")
+        return expected
+
+    @classmethod
+    def _validate_policy_shape(
+        cls,
+        row: dict[str, object],
+        expected: tuple[bool, str],
+    ) -> None:
+        restrictive, command = expected
+        if cls._policy_is_restrictive(row) is not restrictive:
+            raise PermissionError("Postgres runtime RLS policy mode is unsafe.")
+        if str(row.get("cmd", "")).upper() != command:
+            raise PermissionError("Postgres runtime RLS policy command is unsafe.")
+        if cls._policy_roles(row) != {"public"}:
+            raise PermissionError("Postgres runtime RLS policy roles are unsafe.")
+        qual_present = row.get("qual") is not None
+        check_present = row.get("with_check") is not None
+        expected_shape = {
+            "SELECT": (True, False),
+            "INSERT": (False, True),
+            "UPDATE": (True, True),
+            "DELETE": (True, False),
+            "ALL": (True, True),
+        }[command]
+        if (qual_present, check_present) != expected_shape:
+            raise PermissionError("Postgres runtime RLS policy expression shape is unsafe.")
+
+    @staticmethod
+    def _validate_paired_policy_expressions(
+        policies: dict[tuple[str, str], dict[str, object]],
+    ) -> None:
+        for table in POSTGRES_TENANT_POLICY_TABLES:
+            for command, restrict_name in POSTGRES_COMMAND_POLICIES.items():
+                permit = policies[(table, POSTGRES_PERMIT_POLICIES[command])]
+                restrict = policies[(table, restrict_name)]
+                if (permit.get("qual"), permit.get("with_check")) != (
+                    restrict.get("qual"),
+                    restrict.get("with_check"),
+                ):
+                    raise PermissionError("Postgres paired RLS policy expressions differ.")
+
+    @staticmethod
+    def _validate_policy_expression_contract(
+        policies: dict[tuple[str, str], dict[str, object]],
+    ) -> None:
+        expected = expected_policy_expressions(
+            POSTGRES_TENANT_POLICY_TABLES,
+            POSTGRES_TEAM_DENY_TABLES,
+            POSTGRES_COMMAND_POLICIES,
+            POSTGRES_PERMIT_POLICIES,
+        )
+        for identity, (expected_qual, expected_check) in expected.items():
+            policy = policies[identity]
+            if not expressions_match(policy.get("qual"), expected_qual) or not (
+                expressions_match(policy.get("with_check"), expected_check)
+            ):
+                raise PermissionError(
+                    f"Postgres RLS policy expression contract drifted: "
+                    f"{identity[0]}.{identity[1]}."
+                )
+
+    @staticmethod
+    def _validate_runtime_migration(cur) -> None:
+        from memorymaster.stores.migrations import discover_migrations
+
+        required_versions = (11, 12)
+        migrations = {
+            item.version: item
+            for item in discover_migrations()
+            if item.version in required_versions
+        }
+        cur.execute(
+            """
+            SELECT version, checksum FROM schema_versions
+            WHERE version IN (%s, %s)
+            """,
+            required_versions,
+        )
+        rows = list(cur.fetchall())
+        stored = {
+            int(row["version"]): str(row["checksum"])
+            for row in rows
+            if isinstance(row, dict)
+        }
+        expected = {version: migrations[version].checksum() for version in required_versions}
+        if stored != expected:
+            raise PermissionError("Postgres runtime migration checksums are missing or invalid.")
+
+    @classmethod
+    def _validate_runtime_policies(cls, cur) -> None:
+        cur.execute(
+            """
+            SELECT schemaname, tablename, policyname, permissive, roles, cmd, qual, with_check
+            FROM pg_policies
+            WHERE schemaname = current_schema() AND tablename = ANY(%s)
+            """,
+            (list(POSTGRES_PROTECTED_TABLES),),
+        )
+        rows = list(cur.fetchall())
+        policies = {
+            (str(row.get("tablename") or row.get("table_name")),
+             str(row.get("policyname") or row.get("policy_name"))): row
+            for row in rows
+        }
+        expected = cls._expected_policy_inventory()
+        if set(policies) != set(expected) or len(rows) != len(expected):
+            raise PermissionError("Postgres runtime RLS policy inventory is unsafe.")
+        for identity, contract in expected.items():
+            cls._validate_policy_shape(policies[identity], contract)
+        cls._validate_paired_policy_expressions(policies)
+        cls._validate_policy_expression_contract(policies)
+        for table in POSTGRES_TEAM_DENY_TABLES:
+            deny = policies[(table, "memorymaster_team_deny")]
+            if str(deny.get("qual")).upper() != "FALSE" or str(
+                deny.get("with_check")
+            ).upper() != "FALSE":
+                raise PermissionError("Postgres team-deny RLS policy must remain FALSE.")
+        cur.execute(
+            """
+            SELECT obj_description(p.oid, 'pg_policy') AS manifest_comment
+            FROM pg_policy AS p
+            JOIN pg_class AS c ON c.oid = p.polrelid
+            JOIN pg_namespace AS n ON n.oid = c.relnamespace
+            WHERE n.nspname = current_schema()
+              AND c.relname = 'claims'
+              AND p.polname = 'memorymaster_tenant_select'
+            """
+        )
+        comment_row = cur.fetchone()
+        comment = comment_row.get("manifest_comment") if isinstance(comment_row, dict) else None
+        if comment != cls._policy_manifest_comment(rows):
+            raise PermissionError("Postgres RLS policy manifest fingerprint is invalid.")
+
+    @staticmethod
+    def _authority_settings(cur) -> dict[str, str]:
+        cur.execute(
+            """
+            SELECT current_setting('memorymaster.tenant_id', true) AS tenant_id,
+                   current_setting('memorymaster.principal', true) AS principal,
+                   current_setting('memorymaster.allowed_scopes', true) AS allowed_scopes
+            """
+        )
+        row = cur.fetchone() or {}
+        return {name: str(row.get(name) or "") for name in ("tenant_id", "principal", "allowed_scopes")}
+
+    @classmethod
+    def _bind_runtime_authority(
+        cls,
+        cur,
+        tenant_id: str,
+        principal: str,
+        allowed_scopes: tuple[str, ...],
+    ) -> None:
+        if any(cls._authority_settings(cur).values()):
+            raise PermissionError("Postgres authority GUC defaults must be empty.")
+        values = {
+            "memorymaster.tenant_id": tenant_id,
+            "memorymaster.principal": principal,
+            "memorymaster.allowed_scopes": json.dumps(allowed_scopes, separators=(",", ":")),
+        }
+        for key, value in values.items():
+            cur.execute("SELECT set_config(%s, %s, true)", (key, value))
+        if cls._authority_settings(cur) != {
+            "tenant_id": tenant_id,
+            "principal": principal,
+            "allowed_scopes": values["memorymaster.allowed_scopes"],
+        }:
+            raise PermissionError("Postgres transaction-local authority binding failed verification.")
 
     def _tenant_for_operation(self, tenant_id: str | None = None) -> str | None:
         requested = (tenant_id or "").strip() or None
@@ -69,6 +1011,21 @@ class PostgresStore(SQLiteStore):
                 raise PermissionError("Caller tenant does not match the bound tenant context.")
             return self.tenant_id
         return requested if requested is not None else self.tenant_id
+
+    @staticmethod
+    def _postgres_identity_filter(
+        visibility: str,
+        source_agent: str | None,
+        *,
+        alias: str = "",
+    ) -> tuple[str, tuple[object, ...]]:
+        prefix = f"{alias}." if alias else ""
+        if visibility == "public":
+            return f"{prefix}visibility = %s", ("public",)
+        return (
+            f"{prefix}visibility = %s AND {prefix}source_agent = %s",
+            (visibility, source_agent),
+        )
 
     def _load_psycopg(self) -> Any:
         if self._psycopg is None:
@@ -83,34 +1040,81 @@ class PostgresStore(SQLiteStore):
             self._psycopg = (psycopg, dict_row, Jsonb)
         return self._psycopg
 
-    def connect(self) -> Any:
-        if self.require_tenant and self.tenant_id is None:
-            raise PermissionError("Postgres team mode requires a tenant context before connecting.")
+    def _open_connection(self) -> Any:
         psycopg, dict_row, _ = self._load_psycopg()
 
         def _open() -> Any:
             return psycopg.connect(self.dsn, row_factory=dict_row)
 
-        conn = connect_with_retry(_open)
-        if self.tenant_id is None:
-            return conn
+        return connect_with_retry(_open)
+
+    def connect(self) -> Any:
+        if not self.require_tenant:
+            raise PermissionError(
+                "Postgres application connections require authenticated team authority. "
+                "Use SQLite for local trusted mode or init_db() with a dedicated migrator DSN."
+            )
+        authority = self._require_team_authority()
+        conn = self._open_connection()
         try:
+            conn.autocommit = False
+            with conn.cursor() as cur:
+                self._validate_runtime_role(cur)
+                self._validate_runtime_tables(cur)
+                self._validate_runtime_metadata_tables(cur)
+                self._validate_claim_owner_constraint(cur)
+                self._validate_claim_identity_indexes(cur)
+                self._validate_claim_supersession_guard(cur)
+                self._validate_event_append_only_catalog(cur)
+                self._validate_event_chain_head_function(cur)
+                self._validate_runtime_migration(cur)
+                self._validate_runtime_policies(cur)
+                self._bind_runtime_authority(cur, *authority)
+        except Exception:
+            self._cleanup_failed_connection(conn)
+            raise
+        return conn
+
+    def _connect_schema_admin(self) -> Any:
+        if self.require_tenant:
+            raise PermissionError(
+                "Postgres team runtime stores cannot open schema-administration connections."
+            )
+        conn = self._open_connection()
+        try:
+            conn.autocommit = False
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT set_config('memorymaster.tenant_id', %s, false)",
-                    (self.tenant_id,),
+                    """
+                    SELECT current_user, session_user, rolsuper, rolbypassrls
+                    FROM pg_roles WHERE rolname = current_user
+                    """
+                )
+                row = cur.fetchone()
+            if not isinstance(row, dict):
+                raise PermissionError("Postgres migration role could not be verified.")
+            if row.get("current_user") != row.get("session_user"):
+                raise PermissionError("Postgres migration role cannot use session impersonation.")
+            if not bool(row.get("rolsuper")) and not bool(row.get("rolbypassrls")):
+                raise PermissionError(
+                    "Postgres migration role requires SUPERUSER or BYPASSRLS."
                 )
         except Exception:
-            conn.close()
+            self._cleanup_failed_connection(conn)
             raise
         return conn
 
     def init_db(self) -> None:
-        from memorymaster.stores._storage_schema import load_schema_postgres_sql
+        if self.require_tenant:
+            self._require_team_authority()
+            raise PermissionError(
+                "Postgres team runtime stores cannot initialize or migrate schema."
+            )
+        with self._connect_schema_admin() as conn, conn.cursor() as cur:
+            from memorymaster.stores._storage_schema import load_schema_postgres_sql
 
-        sql = load_schema_postgres_sql()
-        statements = self._split_sql_statements(sql)
-        with self.connect() as conn, conn.cursor() as cur:
+            sql = load_schema_postgres_sql()
+            statements = self._split_sql_statements(sql)
             for statement in statements:
                 cur.execute(statement)
             self._ensure_confirmed_tuple_uniqueness_schema(conn)
@@ -126,7 +1130,7 @@ class PostgresStore(SQLiteStore):
         # the SQLite backend, ensuring parity between the two stores.
         from memorymaster.stores.migrations import MigrationRunner
 
-        with self.connect() as mig_conn:
+        with self._connect_schema_admin() as mig_conn:
             MigrationRunner(mig_conn, backend="postgres").apply_pending()
 
     @staticmethod
@@ -211,43 +1215,10 @@ class PostgresStore(SQLiteStore):
         PostgresStore._ensure_tenant_id_schema(conn)
         with conn.cursor() as cur:
             cur.execute(
-                """
-                CREATE OR REPLACE FUNCTION memorymaster_claims_confirmed_tuple_guard()
-                RETURNS trigger
-                LANGUAGE plpgsql
-                AS $$
-                BEGIN
-                    IF NEW.status = 'confirmed'
-                       AND NEW.subject IS NOT NULL
-                       AND NEW.predicate IS NOT NULL
-                       AND EXISTS (
-                           SELECT 1
-                           FROM claims c
-                           WHERE c.status = 'confirmed'
-                             AND c.subject = NEW.subject
-                             AND c.predicate = NEW.predicate
-                             AND c.scope = NEW.scope
-                             AND c.tenant_id IS NOT DISTINCT FROM NEW.tenant_id
-                             AND (TG_OP = 'INSERT' OR c.id <> NEW.id)
-                       ) THEN
-                        RAISE EXCEPTION 'only one confirmed claim is allowed per tenant and (subject,predicate,scope)'
-                            USING ERRCODE = '23505';
-                    END IF;
-                    RETURN NEW;
-                END;
-                $$;
-                """
-            )
-            cur.execute(
                 f"DROP TRIGGER IF EXISTS {POSTGRES_CONFIRMED_TUPLE_GUARD_TRIGGER} ON claims"
             )
             cur.execute(
-                f"""
-                CREATE TRIGGER {POSTGRES_CONFIRMED_TUPLE_GUARD_TRIGGER}
-                BEFORE INSERT OR UPDATE OF status, subject, predicate, scope, tenant_id ON claims
-                FOR EACH ROW
-                EXECUTE FUNCTION memorymaster_claims_confirmed_tuple_guard()
-                """
+                "DROP FUNCTION IF EXISTS memorymaster_claims_confirmed_tuple_guard()"
             )
             PostgresStore._try_create_confirmed_tuple_unique_index(cur)
 
@@ -256,13 +1227,25 @@ class PostgresStore(SQLiteStore):
         savepoint = "sp_claims_confirmed_tuple_unique_idx"
         cur.execute(f"SAVEPOINT {savepoint}")
         try:
+            cur.execute("DROP INDEX IF EXISTS idx_claims_confirmed_tuple_unique")
             cur.execute(
                 """
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_confirmed_tuple_unique
-                ON claims(COALESCE(tenant_id, ''), subject, predicate, scope)
-                WHERE status = 'confirmed'
-                  AND subject IS NOT NULL
-                  AND predicate IS NOT NULL
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_public_confirmed_tuple_unique
+                    ON claims(COALESCE(tenant_id, ''), subject, predicate, scope)
+                    WHERE visibility = 'public' AND status = 'confirmed'
+                      AND subject IS NOT NULL AND predicate IS NOT NULL
+                """
+            )
+            cur.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_nonpublic_principal_confirmed_tuple_unique
+                    ON claims(
+                        COALESCE(tenant_id, ''), visibility, source_agent,
+                        subject, predicate, scope
+                    )
+                    WHERE visibility <> 'public' AND source_agent IS NOT NULL
+                      AND status = 'confirmed'
+                      AND subject IS NOT NULL AND predicate IS NOT NULL
                 """
             )
         except Exception as exc:
@@ -491,6 +1474,21 @@ class PostgresStore(SQLiteStore):
             "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
             (f"memorymaster:event:{lock_key}",),
         )
+        if tenant_id is not None:
+            cur.execute(
+                """
+                SELECT global_event_hash, tenant_event_hash
+                FROM public.memorymaster_event_chain_head()
+                """
+            )
+            row = cur.fetchone()
+            primary = row.get("global_event_hash") if isinstance(row, dict) and row else None
+            tenant = row.get("tenant_event_hash") if isinstance(row, dict) and row else None
+            return (
+                str(primary) if primary else None,
+                POSTGRES_TENANT_EVENT_HASH_ALGO,
+                str(tenant) if tenant else None,
+            )
         if tenant_id is None:
             algo = EVENT_HASH_ALGO
             cur.execute(
@@ -502,35 +1500,9 @@ class PostgresStore(SQLiteStore):
                 """,
                 (algo,),
             )
-        else:
-            algo = POSTGRES_TENANT_EVENT_HASH_ALGO
-            cur.execute(
-                """
-                SELECT event_hash FROM events
-                WHERE event_hash IS NOT NULL
-                  AND hash_algo = %s
-                  AND tenant_id IS NOT DISTINCT FROM %s
-                ORDER BY id DESC LIMIT 1
-                """,
-                (algo, tenant_id),
-            )
         row = cur.fetchone()
         value = row.get("event_hash") if isinstance(row, dict) and row else None
-        tenant_head: str | None = None
-        if tenant_id is not None:
-            cur.execute(
-                """
-                SELECT tenant_event_hash FROM events
-                WHERE tenant_id IS NOT DISTINCT FROM %s
-                  AND tenant_event_hash IS NOT NULL
-                ORDER BY id DESC LIMIT 1
-                """,
-                (tenant_id,),
-            )
-            tenant_row = cur.fetchone()
-            if isinstance(tenant_row, dict) and tenant_row.get("tenant_event_hash"):
-                tenant_head = str(tenant_row["tenant_event_hash"])
-        return (str(value) if value else None), algo, tenant_head
+        return (str(value) if value else None), algo, None
 
     def _insert_event_row(
         self,
@@ -605,6 +1577,48 @@ class PostgresStore(SQLiteStore):
             raise RuntimeError("Failed to insert event row.")
         return int(inserted["id"])
 
+    def _assign_human_id(
+        self,
+        cur,
+        *,
+        subject: str | None,
+        text: str,
+        claim_id: int,
+        tenant_id: str | None,
+        scope: str,
+        visibility: str,
+        source_agent: str | None,
+    ) -> str:
+        psycopg, _, _ = self._load_psycopg()
+        savepoint = "sp_claim_human_id_assignment"
+        for _attempt in range(100):
+            human_id = self._allocate_human_id(
+                cur,
+                subject,
+                text,
+                claim_id,
+                tenant_id=tenant_id,
+                scope=scope,
+                visibility=visibility,
+                source_agent=source_agent,
+            )
+            cur.execute(f"SAVEPOINT {savepoint}")
+            try:
+                cur.execute(
+                    "UPDATE claims SET human_id = %s WHERE id = %s",
+                    (human_id, claim_id),
+                )
+            except psycopg.errors.UniqueViolation as exc:
+                cur.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                cur.execute(f"RELEASE SAVEPOINT {savepoint}")
+                constraint = getattr(getattr(exc, "diag", None), "constraint_name", None)
+                if constraint not in POSTGRES_HUMAN_IDENTITY_INDEXES:
+                    raise
+                continue
+            cur.execute(f"RELEASE SAVEPOINT {savepoint}")
+            return human_id
+        raise RuntimeError("Unable to allocate a unique human_id after 100 attempts.")
+
     def create_claim(
         self,
         text: str,
@@ -623,9 +1637,14 @@ class PostgresStore(SQLiteStore):
         valid_from: str | None = None,
         valid_until: str | None = None,
         source_agent: str | None = None,
-        visibility: str = "private",
+        visibility: str = "public",
         holder: str | None = None,
     ) -> Claim:
+        visibility, source_agent = normalize_claim_identity(
+            visibility,
+            source_agent,
+            allow_sensitive=not self.require_tenant,
+        )
         if not citations:
             raise ValueError("At least one citation is required.")
         normalized_idempotency_key = (idempotency_key or "").strip() or None
@@ -671,13 +1690,24 @@ class PostgresStore(SQLiteStore):
             if claim_row is None:
                 if normalized_idempotency_key is None:
                     raise RuntimeError("Failed to create claim.")
+                identity_sql, identity_params = self._postgres_identity_filter(
+                    visibility,
+                    source_agent,
+                )
                 cur.execute(
-                    """
+                    f"""
                     SELECT id FROM claims
                     WHERE idempotency_key = %s
                       AND tenant_id IS NOT DISTINCT FROM %s
+                      AND scope = %s
+                      AND {identity_sql}
                     """,
-                    (normalized_idempotency_key, normalized_tenant_id),
+                    (
+                        normalized_idempotency_key,
+                        normalized_tenant_id,
+                        scope,
+                        *identity_params,
+                    ),
                 )
                 existing_row = cur.fetchone()
                 if existing_row is None:
@@ -689,22 +1719,16 @@ class PostgresStore(SQLiteStore):
                 return claim
             claim_id = int(claim_row["id"])
 
-            # Assign a human-readable ID.
-            try:
-                human_id = self._allocate_human_id(
-                    cur,
-                    subject,
-                    text,
-                    claim_id,
-                    tenant_id=normalized_tenant_id,
-                )
-                cur.execute(
-                    "UPDATE claims SET human_id = %s WHERE id = %s",
-                    (human_id, claim_id),
-                )
-            except Exception:
-                # Column may not exist in legacy schemas; skip gracefully.
-                pass
+            self._assign_human_id(
+                cur,
+                subject=subject,
+                text=text,
+                claim_id=claim_id,
+                tenant_id=normalized_tenant_id,
+                scope=scope,
+                visibility=visibility,
+                source_agent=source_agent,
+            )
 
             for cite in citations:
                 cur.execute(
@@ -746,33 +1770,86 @@ class PostgresStore(SQLiteStore):
             claim.citations = self.list_citations(claim.id)
         return claim
 
-    def get_claim_by_idempotency_key(
+    def _select_claim_identity_rows(
         self,
-        idempotency_key: str,
-        include_citations: bool = True,
+        column: str,
+        value: str,
         *,
-        tenant_id: str | None = None,
-    ) -> Claim | None:
-        normalized_idempotency_key = idempotency_key.strip()
-        if not normalized_idempotency_key:
-            return None
-        effective_tenant = self._tenant_for_operation(tenant_id)
+        tenant_id: str | None,
+        scope: str | None,
+        visibility: str,
+        source_agent: str | None,
+    ) -> list[Any]:
+        if column not in {"idempotency_key", "human_id"}:
+            raise ValueError(f"Unsupported claim identity column: {column}")
+        visibility, source_agent = normalize_claim_identity(
+            visibility,
+            source_agent,
+            allow_sensitive=not self.require_tenant,
+        )
+        identity_sql, identity_params = self._postgres_identity_filter(
+            visibility,
+            source_agent,
+        )
+        clauses = [
+            f"{column} = %s",
+            identity_sql,
+            "tenant_id IS NOT DISTINCT FROM %s",
+        ]
+        params: list[object] = [
+            value,
+            *identity_params,
+            self._tenant_for_operation(tenant_id),
+        ]
+        if scope is not None:
+            clauses.append("scope = %s")
+            params.append(scope)
+        sql = f"SELECT * FROM claims WHERE {' AND '.join(clauses)} LIMIT 2"
         with self.connect() as conn, conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT * FROM claims
-                WHERE idempotency_key = %s
-                  AND tenant_id IS NOT DISTINCT FROM %s
-                """,
-                (normalized_idempotency_key, effective_tenant),
-            )
-            row = cur.fetchone()
+            cur.execute(sql, params)
+            return list(cur.fetchall())
+
+    def _claim_from_identity_rows(
+        self,
+        rows: list[Any],
+        *,
+        identifier: str,
+        include_citations: bool,
+    ) -> Claim | None:
+        row = require_unambiguous_identity_row(rows, identifier=identifier)
         if row is None:
             return None
         claim = self._row_to_claim(row)
         if include_citations:
             claim.citations = self.list_citations(claim.id)
         return claim
+
+    def get_claim_by_idempotency_key(
+        self,
+        idempotency_key: str,
+        include_citations: bool = True,
+        *,
+        tenant_id: str | None = None,
+        scope: str | None = None,
+        visibility: str = "public",
+        source_agent: str | None = None,
+    ) -> Claim | None:
+        normalized_idempotency_key = idempotency_key.strip()
+        if not normalized_idempotency_key:
+            return None
+        rows = self._select_claim_identity_rows(
+            "idempotency_key",
+            normalized_idempotency_key,
+            tenant_id=tenant_id,
+            scope=scope,
+            visibility=visibility,
+            source_agent=source_agent,
+        )
+        return self._claim_from_identity_rows(
+            rows,
+            identifier="idempotency key",
+            include_citations=include_citations,
+        )
 
     def claim_ids_by_source_agent(
         self,
@@ -1173,29 +2250,107 @@ class PostgresStore(SQLiteStore):
         return counts
 
     def set_supersedes(self, claim_id: int, supersedes_claim_id: int) -> None:
+        self.mark_superseded(
+            supersedes_claim_id,
+            claim_id,
+            "set_supersedes compatibility path",
+        )
+
+    def mark_superseded(self, old_claim_id: int, new_claim_id: int, reason: str) -> None:
+        if old_claim_id == new_claim_id:
+            raise ValueError("Supersession claims are unavailable.")
         now = utc_now()
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                    UPDATE claims
-                    SET supersedes_claim_id = %s, updated_at = %s
-                    WHERE id = %s
-                    """,
-                (supersedes_claim_id, now, claim_id),
+                SELECT id, status, version, replaced_by_claim_id,
+                       supersedes_claim_id
+                FROM claims
+                WHERE id IN (%s, %s)
+                ORDER BY id
+                FOR UPDATE
+                """,
+                (old_claim_id, new_claim_id),
+            )
+            rows = {int(row["id"]): row for row in cur.fetchall()}
+            if set(rows) != {old_claim_id, new_claim_id}:
+                raise ValueError("Supersession claims are unavailable.")
+            self._apply_atomic_supersession(
+                conn,
+                cur,
+                rows[old_claim_id],
+                rows[new_claim_id],
+                reason,
+                now,
             )
 
-    def mark_superseded(self, old_claim_id: int, new_claim_id: int, reason: str) -> None:
-        old_claim = self.get_claim(old_claim_id, include_citations=False)
-        if old_claim is None:
-            return
-        self.apply_status_transition(
-            old_claim,
-            to_status="superseded",
-            reason=reason,
+    def _apply_atomic_supersession(
+        self,
+        conn,
+        cur,
+        old: dict[str, object],
+        new: dict[str, object],
+        reason: str,
+        now: datetime,
+    ) -> None:
+        old_id = int(old["id"])
+        new_id = int(new["id"])
+        if old.get("status") == "superseded" or old.get("replaced_by_claim_id") is not None:
+            raise ConcurrentModificationError(
+                f"Claim {old_id} was already superseded. Reload and retry."
+            )
+        old_status = str(old.get("status") or "")
+        if not can_transition(old_status, "superseded"):
+            raise ValueError(f"Invalid transition: {old_status} -> superseded")
+        if new.get("supersedes_claim_id") not in {None, old_id}:
+            raise ConcurrentModificationError(
+                f"Claim {new_id} already supersedes another claim. Reload and retry."
+            )
+        self._update_superseded_claim(cur, old, new_id, now)
+        self._update_replacement_claim(cur, new, old_id, now)
+        self._insert_event_row(
+            conn,
+            claim_id=old_id,
             event_type="supersession",
-            replaced_by_claim_id=new_claim_id,
+            from_status=str(old.get("status") or "candidate"),
+            to_status="superseded",
+            details=reason,
+            payload={"replaced_by_claim_id": new_id},
+            created_at=now,
         )
-        self.set_supersedes(new_claim_id, old_claim_id)
+
+    @staticmethod
+    def _update_superseded_claim(cur, old: dict[str, object], new_id: int, now) -> None:
+        old_id = int(old["id"])
+        cur.execute(
+            """
+            UPDATE claims
+            SET status = 'superseded', updated_at = %s, replaced_by_claim_id = %s,
+                version = version + 1, valid_until = COALESCE(%s, valid_until)
+            WHERE id = %s AND version = %s AND status != 'superseded'
+              AND replaced_by_claim_id IS NULL
+            """,
+            (now, new_id, now, old_id, int(old.get("version") or 1)),
+        )
+        if cur.rowcount != 1:
+            raise ConcurrentModificationError(
+                f"Claim {old_id} was modified by another writer. Reload and retry."
+            )
+    @staticmethod
+    def _update_replacement_claim(cur, new: dict[str, object], old_id: int, now) -> None:
+        new_id = int(new["id"])
+        cur.execute(
+            """
+            UPDATE claims
+            SET supersedes_claim_id = %s, updated_at = %s
+            WHERE id = %s AND (supersedes_claim_id IS NULL OR supersedes_claim_id = %s)
+            """,
+            (old_id, now, new_id, old_id),
+        )
+        if cur.rowcount != 1:
+            raise ConcurrentModificationError(
+                f"Claim {new_id} was modified by another writer. Reload and retry."
+            )
 
     def find_by_status(self, status: str, limit: int = 100, include_citations: bool = False) -> list[Claim]:
         return self.list_claims(
@@ -1245,12 +2400,25 @@ class PostgresStore(SQLiteStore):
         scope: str | None,
         exclude_claim_id: int | None = None,
         tenant_id: str | None = None,
+        visibility: str = "public",
+        source_agent: str | None = None,
     ) -> list[Claim]:
         if not subject or not predicate:
             return []
 
         clauses = ["status = 'confirmed'", "subject = %s", "predicate = %s", "scope = %s"]
         params: list[object] = [subject, predicate, scope or "project"]
+        visibility, source_agent = normalize_claim_identity(
+            visibility,
+            source_agent,
+            allow_sensitive=not self.require_tenant,
+        )
+        identity_sql, identity_params = self._postgres_identity_filter(
+            visibility,
+            source_agent,
+        )
+        clauses.append(identity_sql)
+        params.extend(identity_params)
         clauses.append("tenant_id IS NOT DISTINCT FROM %s")
         params.append(self._tenant_for_operation(tenant_id))
         if exclude_claim_id is not None:
@@ -2115,10 +3283,21 @@ class PostgresStore(SQLiteStore):
                 "CREATE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id)"
             )
             cur.execute(
+                "DROP INDEX IF EXISTS idx_claims_tenant_human_id"
+            )
+            cur.execute(
                 """
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_tenant_human_id
-                ON claims(COALESCE(tenant_id, ''), human_id)
-                WHERE human_id IS NOT NULL
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_public_human_id_unique
+                ON claims(COALESCE(tenant_id, ''), scope, human_id)
+                WHERE visibility = 'public' AND human_id IS NOT NULL
+                """
+            )
+            cur.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_nonpublic_principal_human_id_unique
+                ON claims(COALESCE(tenant_id, ''), scope, visibility, source_agent, human_id)
+                WHERE visibility <> 'public' AND source_agent IS NOT NULL
+                  AND human_id IS NOT NULL
                 """
             )
         PostgresStore._backfill_human_ids(conn)
@@ -2129,7 +3308,7 @@ class PostgresStore(SQLiteStore):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, subject, text, tenant_id
+                SELECT id, subject, text, tenant_id, scope, visibility, source_agent
                 FROM claims WHERE human_id IS NULL ORDER BY id ASC
                 """
             )
@@ -2147,6 +3326,9 @@ class PostgresStore(SQLiteStore):
                     text,
                     claim_id,
                     tenant_id=row.get("tenant_id"),
+                    scope=PostgresStore._as_text(row.get("scope")) or "project",
+                    visibility=PostgresStore._as_text(row.get("visibility")) or "public",
+                    source_agent=PostgresStore._as_text(row.get("source_agent")),
                 )
                 cur.execute(
                     "UPDATE claims SET human_id = %s WHERE id = %s",
@@ -2162,10 +3344,18 @@ class PostgresStore(SQLiteStore):
         text: str,
         claim_id: int,
         tenant_id: str | None = None,
+        scope: str = "project",
+        visibility: str = "public",
+        source_agent: str | None = None,
     ) -> str:
         """Build a unique human_id, checking for derived_from parent links."""
+        identity_sql, identity_params = PostgresStore._postgres_identity_filter(
+            visibility,
+            source_agent,
+            alias="c",
+        )
         cur.execute(
-            """
+            f"""
             SELECT c.human_id
             FROM claim_links cl
             JOIN claims c ON c.id = cl.target_id
@@ -2173,21 +3363,25 @@ class PostgresStore(SQLiteStore):
               AND cl.link_type = 'derived_from'
               AND c.human_id IS NOT NULL
               AND c.tenant_id IS NOT DISTINCT FROM %s
+              AND c.scope = %s
+              AND {identity_sql}
             LIMIT 1
             """,
-            (claim_id, tenant_id),
+            (claim_id, tenant_id, scope, *identity_params),
         )
         parent_row = cur.fetchone()
 
         if parent_row and parent_row["human_id"]:
             parent_hid = str(parent_row["human_id"])
             cur.execute(
-                """
+                f"""
                 SELECT COUNT(*) AS cnt FROM claims
                 WHERE human_id LIKE %s AND human_id != %s
                   AND tenant_id IS NOT DISTINCT FROM %s
+                  AND scope = %s
+                  AND {identity_sql.replace('c.', '')}
                 """,
-                (parent_hid + ".%", parent_hid, tenant_id),
+                (parent_hid + ".%", parent_hid, tenant_id, scope, *identity_params),
             )
             child_count = cur.fetchone()
             next_child = (int(child_count["cnt"]) if child_count else 0) + 1
@@ -2199,11 +3393,13 @@ class PostgresStore(SQLiteStore):
         suffix = 1
         while True:
             cur.execute(
-                """
+                f"""
                 SELECT 1 FROM claims
                 WHERE human_id = %s AND tenant_id IS NOT DISTINCT FROM %s
+                  AND scope = %s
+                  AND {identity_sql.replace('c.', '')}
                 """,
-                (final, tenant_id),
+                (final, tenant_id, scope, *identity_params),
             )
             existing = cur.fetchone()
             if existing is None:
@@ -3048,38 +4244,41 @@ class PostgresStore(SQLiteStore):
         include_citations: bool = True,
         *,
         tenant_id: str | None = None,
+        scope: str | None = None,
+        visibility: str = "public",
+        source_agent: str | None = None,
     ) -> Claim | None:
         """Look up a claim by its human-readable ID (e.g. ``mm-a3f8``)."""
         normalized = human_id.strip()
         if not normalized:
             return None
-        effective_tenant = self._tenant_for_operation(tenant_id)
-        with self.connect() as conn, conn.cursor() as cur:
-            try:
-                cur.execute(
-                    """
-                    SELECT * FROM claims
-                    WHERE human_id = %s
-                      AND tenant_id IS NOT DISTINCT FROM %s
-                    """,
-                    (normalized, effective_tenant),
-                )
-                row = cur.fetchone()
-            except Exception:
-                # Column may not exist yet.
+        try:
+            rows = self._select_claim_identity_rows(
+                "human_id",
+                normalized,
+                tenant_id=tenant_id,
+                scope=scope,
+                visibility=visibility,
+                source_agent=source_agent,
+            )
+        except Exception as exc:
+            if getattr(exc, "sqlstate", None) == "42703":
                 return None
-        if row is None:
-            return None
-        claim = self._row_to_claim(row)
-        if include_citations:
-            claim.citations = self.list_citations(claim.id)
-        return claim
+            raise
+        return self._claim_from_identity_rows(
+            rows,
+            identifier="human_id",
+            include_citations=include_citations,
+        )
 
     def resolve_claim_id(
         self,
         identifier: str | int,
         *,
         tenant_id: str | None = None,
+        scope: str | None = None,
+        visibility: str = "public",
+        source_agent: str | None = None,
     ) -> int:
         """Resolve a numeric ID or human_id string to a numeric claim ID."""
         if isinstance(identifier, int):
@@ -3093,6 +4292,9 @@ class PostgresStore(SQLiteStore):
             raw,
             include_citations=False,
             tenant_id=tenant_id,
+            scope=scope,
+            visibility=visibility,
+            source_agent=source_agent,
         )
         if claim is not None:
             return claim.id

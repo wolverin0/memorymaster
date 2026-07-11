@@ -77,7 +77,7 @@ recent PR status, and sensitivity-filter invariants.
 - **Hebbian/Ebbinghaus entity edges** (new in v4.2.0, opt-in `MEMORYMASTER_HEBBIAN_DECAY`): usage strengthens, time decays entity-graph edge weights.
 - **Proactive + tool-triggered recall** (new in v4.2.0): a `volunteer_context` MCP tool (confidence-gated, zero-LLM) and an opt-in PreToolUse hook (`MEMORYMASTER_PRETOOLUSE_RECALL`) that injects memory as `additionalContext` on Grep/Glob.
 - **Belief `holder`** (new in v4.2.0): nullable per-claim `holder` for multi-holder beliefs (take/fact/bet/hunch reuse `claim_type`); SQLite+Postgres, ranking-neutral by default.
-- **Dual backend**: SQLite (zero-config) and Postgres (full feature parity with pgvector)
+- **Dual backend**: SQLite for local-trusted/single-agent use; PostgreSQL for authenticated team runtime with tenant, principal, and explicit-scope isolation
 - **Dream Bridge** for bidirectional sync with Claude Code's Auto Dream
 - **Hook stack**: recall, classify, validate-wiki, session-start, auto-ingest, precompact (settings.json) + steward-cycle (cron/schtasks) + opt-in `--pretooluse` grep/glob recall-inject
 
@@ -178,11 +178,13 @@ For zero-cost offline use, install [Ollama](https://ollama.com), `ollama pull ll
 }
 ```
 
-MCP authorization mode is mandatory. Use `local-trusted` only for a private
-stdio process controlled by one OS user. Team mode instead requires an
-operator-configured principal, explicit role, tenant, database, workspace, and
-scope allowlist; unverified host-wide and maintenance tools fail closed. Existing
-brownfield MCP entries must add the mode or be regenerated with setup `--force`.
+MCP authorization mode is mandatory. Use `local-trusted` only with SQLite in a
+private stdio process controlled by one OS user. PostgreSQL application runtime
+is team-only and requires an operator-configured principal, tenant, non-owner
+application DSN, workspace, and explicit scope allowlist. Schema initialization
+uses a distinct migrator DSN/role; never give that role to the MCP runtime.
+Unverified host-wide and maintenance tools fail closed. Existing brownfield MCP
+entries must add the mode or be regenerated with setup `--force`.
 
 30 MCP tools spanning setup/lifecycle, ingest, query/retrieval, listing, knowledge graph, and governance: `init_db`, `ingest_claim`, `ingest_rule`, `query_rules`, `rules_export`, `run_cycle`, `run_steward`, `classify_query`, `query_memory`, `query_for_context`, `query_for_task`, `query_claim_paths`, `query_meta_decisions`, `federated_query`, `recall_analysis`, `read_active_tasks`, `list_claims`, `redact_claim_payload`, `pin_claim`, `compact_memory`, `list_events`, `search_verbatim`, `open_dashboard`, `list_steward_proposals`, `resolve_steward_proposal`, `extract_entities`, `entity_stats`, `find_related_claims`, `quality_scores`, `recompute_tiers`.
 
@@ -192,8 +194,29 @@ See [`docs/MCP-TOOLS.md`](docs/MCP-TOOLS.md) for the grouped reference (one line
 
 | Backend | Install | Use case |
 |---------|---------|----------|
-| **SQLite** | Built-in | Local development, single-agent, zero-config |
-| **Postgres** | `pip install "memorymaster[postgres]"` | Team deployment, multi-agent, pgvector search |
+| **SQLite** | Built-in | Local-trusted development, single-agent, zero-config |
+| **Postgres 16.x** | `pip install "memorymaster[postgres]"` | Authenticated team deployment with isolated app/migrator roles |
+
+PostgreSQL v0011 enables and forces row-level security. Reads are tenant/scope
+bounded and expose public claims or the principal's own private claims; writes
+are owner-only, require a nonblank `source_agent` on every team claim, and are
+limited to public/private rows. Migration v0012 makes public claim identities
+tenant + exact-scope local; non-public idempotency keys, human IDs, and
+confirmed tuples additionally include exact visibility and principal. A
+tenant-derived hash-only function preserves the event chain across private
+principals/scopes without exposing payloads. The application role must read and
+append events but cannot update any event column or delete events. Unscoped
+human-ID/idempotency-key reads fail when an identifier is ambiguous across
+scopes. The supersession guard denies self- and cross-tenant/scope/visibility/
+principal links; the canonical lifecycle locks both claims and commits reciprocal
+pointers plus one event atomically. Startup rejects drift in exact policy,
+function, trigger, privilege, and identity-index catalogs. Brownfield
+owner/duplicate/unsafe-supersession repair requires a reviewed external
+maintenance action. Team action proposals and raw merge/sync paths remain disabled.
+See [INSTALLATION.md](INSTALLATION.md#postgresql-team-runtime-security-boundary)
+and [deployment profiles](docs/deployment_profiles.md) before enabling this
+backend. Real PostgreSQL verification requires two distinct DSNs targeting a
+disposable database; repository tests do not constitute a production proof.
 
 ## Docker Compose
 

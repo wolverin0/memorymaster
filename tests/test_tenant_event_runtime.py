@@ -43,6 +43,8 @@ class RecordingCursor:
     def fetchone(self):
         if "SELECT tenant_id FROM claims" in self.last_sql:
             return {"tenant_id": self.claim_tenant}
+        if "memorymaster_event_chain_head()" in self.last_sql:
+            return {"global_event_hash": None, "tenant_event_hash": None}
         if "INSERT INTO events" in self.last_sql:
             return {"id": 42}
         return None
@@ -75,10 +77,11 @@ class RecordingConnection:
 
 class HistoricalHeadCursor(RecordingCursor):
     def fetchone(self):
-        if "SELECT event_hash FROM events" in self.last_sql:
-            return {"event_hash": "primary-v2-head"}
-        if "SELECT tenant_event_hash FROM events" in self.last_sql:
-            return {"tenant_event_hash": "tenant-history-head"}
+        if "memorymaster_event_chain_head()" in self.last_sql:
+            return {
+                "global_event_hash": "primary-v2-head",
+                "tenant_event_hash": "tenant-history-head",
+            }
         return super().fetchone()
 
 
@@ -211,8 +214,9 @@ def test_postgres_event_insert_uses_tenant_chain_and_advisory_lock() -> None:
     )
     assert event_id == 42
     assert "pg_advisory_xact_lock" in emitted
-    assert "hash_algo = %s" in emitted
-    assert "tenant_id IS NOT DISTINCT FROM %s" in emitted
+    assert "memorymaster_event_chain_head()" in emitted
+    assert "SELECT event_hash FROM events" not in emitted
+    assert "SELECT tenant_event_hash FROM events" not in emitted
     assert "tenant_id" in next(
         sql for sql, _ in conn.cursor_instance.executed if "INSERT INTO events" in sql
     )

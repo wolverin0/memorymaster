@@ -28,6 +28,12 @@ def _safe_dirname(scope: str) -> str:
     return _SAFE_FILENAME_RE.sub("-", name.lower()).strip("-") or "default"
 
 
+def _vault_claim_key(claim: Claim) -> str:
+    """Return a collision-free Obsidian basename while retaining human ID."""
+    human_id = getattr(claim, "human_id", None) or f"claim-{claim.id}"
+    return f"{human_id}--claim-{claim.id}"
+
+
 def _claim_to_markdown(claim: Claim, links: list[dict[str, Any]] | None = None) -> str:
     """Render a claim as Obsidian-flavored Markdown with YAML frontmatter."""
     lines = ["---"]
@@ -127,11 +133,11 @@ def export_vault(
         include_citations=True,
     )
 
-    # Build human_id lookup for link resolution
+    # Human IDs intentionally collide across private namespaces. Vault keys
+    # include the numeric claim ID so files and wikilinks remain exact.
     human_id_map: dict[int, str] = {}
     for c in claims:
-        hid = getattr(c, "human_id", None) or f"claim-{c.id}"
-        human_id_map[c.id] = hid
+        human_id_map[c.id] = _vault_claim_key(c)
 
     for claim in claims:
         # Scope filter
@@ -167,8 +173,7 @@ def export_vault(
             pass  # links table might not exist on old DBs
 
         # Render and write
-        human_id = getattr(claim, "human_id", None) or f"claim-{claim.id}"
-        filename = f"{human_id}.md"
+        filename = f"{_vault_claim_key(claim)}.md"
         md_content = _claim_to_markdown(claim, links_raw)
         (claim_dir / filename).write_text(md_content, encoding="utf-8")
         stats["exported"] += 1
