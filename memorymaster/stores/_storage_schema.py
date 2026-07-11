@@ -15,8 +15,10 @@ from importlib.resources import files
 
 from memorymaster.stores._storage_shared import (
     EVENT_HASH_ALGO,
+    TENANT_EVENT_HASH_ALGO,
     SQLITE_CONFIRMED_TUPLE_GUARD_TRIGGERS,
     SQLITE_EVENTS_APPEND_ONLY_TRIGGERS,
+    compute_tenant_event_hash,
     generate_top_level_human_id,
 )
 
@@ -320,21 +322,24 @@ class _SchemaMixin:
 
     @staticmethod
     def _ensure_events_append_only_triggers(conn: sqlite3.Connection) -> None:
-        conn.executescript(
+        statements = (
             """
             CREATE TRIGGER IF NOT EXISTS trg_events_append_only_update
             BEFORE UPDATE ON events
             BEGIN
                 SELECT RAISE(ABORT, 'events table is append-only; UPDATE is not allowed');
-            END;
-
+            END
+            """,
+            """
             CREATE TRIGGER IF NOT EXISTS trg_events_append_only_delete
             BEFORE DELETE ON events
             BEGIN
                 SELECT RAISE(ABORT, 'events table is append-only; DELETE is not allowed');
-            END;
-            """
+            END
+            """,
         )
+        for statement in statements:
+            conn.execute(statement)
 
 
     @staticmethod
@@ -857,6 +862,48 @@ class _SchemaMixin:
 
 
     @staticmethod
+    def _backfill_tenant_event_chain(
+        conn: sqlite3.Connection,
+        *,
+        rebuild_all: bool = False,
+    ) -> int:
+        rows = conn.execute(
+            """
+            SELECT id, tenant_id, event_hash, tenant_event_hash
+            FROM events ORDER BY id ASC
+            """
+        ).fetchall()
+        heads: dict[str, str | None] = {}
+        updated = 0
+        for row in rows:
+            if row["tenant_id"] is None:
+                continue
+            tenant_id = str(row["tenant_id"])
+            if row["tenant_event_hash"] and not rebuild_all:
+                heads[tenant_id] = str(row["tenant_event_hash"])
+                continue
+            if row["event_hash"] is None:
+                raise RuntimeError("Cannot build tenant event chain before global hashes exist.")
+            previous = heads.get(tenant_id)
+            tenant_hash = compute_tenant_event_hash(
+                tenant_id=tenant_id,
+                event_hash=str(row["event_hash"]),
+                tenant_prev_event_hash=previous,
+            )
+            conn.execute(
+                """
+                UPDATE events
+                SET tenant_prev_event_hash = ?, tenant_event_hash = ?, tenant_hash_algo = ?
+                WHERE id = ?
+                """,
+                (previous, tenant_hash, TENANT_EVENT_HASH_ALGO, int(row["id"])),
+            )
+            heads[tenant_id] = tenant_hash
+            updated += 1
+        return updated
+
+
+    @staticmethod
     def _insert_event_row(
         conn: sqlite3.Connection,
         *,
@@ -868,6 +915,17 @@ class _SchemaMixin:
         payload_json: str | None,
         created_at: str,
     ) -> int:
+        tenant_id: str | None = None
+        if claim_id is not None:
+            try:
+                claim_row = conn.execute(
+                    "SELECT tenant_id FROM claims WHERE id = ?",
+                    (claim_id,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                claim_row = None
+            if claim_row is not None:
+                tenant_id = claim_row["tenant_id"]
         try:
             prev_row = conn.execute(
                 "SELECT event_hash FROM events WHERE event_hash IS NOT NULL ORDER BY id DESC LIMIT 1"
@@ -886,14 +944,38 @@ class _SchemaMixin:
             prev_event_hash=prev_event_hash,
             hash_algo=EVENT_HASH_ALGO,
         )
+        tenant_prev_event_hash: str | None = None
+        tenant_event_hash: str | None = None
+        tenant_hash_algo: str | None = None
+        if tenant_id is not None:
+            try:
+                tenant_prev_row = conn.execute(
+                    """
+                    SELECT tenant_event_hash FROM events
+                    WHERE tenant_id IS ? AND tenant_event_hash IS NOT NULL
+                    ORDER BY id DESC LIMIT 1
+                    """,
+                    (tenant_id,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                tenant_prev_row = None
+            if tenant_prev_row is not None:
+                tenant_prev_event_hash = tenant_prev_row["tenant_event_hash"]
+            tenant_event_hash = compute_tenant_event_hash(
+                tenant_id=str(tenant_id),
+                event_hash=event_hash,
+                tenant_prev_event_hash=tenant_prev_event_hash,
+            )
+            tenant_hash_algo = TENANT_EVENT_HASH_ALGO
         try:
             cur = conn.execute(
                 """
                 INSERT INTO events (
                     claim_id, event_type, from_status, to_status, details, payload_json, created_at,
-                    prev_event_hash, event_hash, hash_algo
+                    prev_event_hash, event_hash, hash_algo, tenant_id,
+                    tenant_prev_event_hash, tenant_event_hash, tenant_hash_algo
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     claim_id,
@@ -906,6 +988,10 @@ class _SchemaMixin:
                     prev_event_hash,
                     event_hash,
                     EVENT_HASH_ALGO,
+                    tenant_id,
+                    tenant_prev_event_hash,
+                    tenant_event_hash,
+                    tenant_hash_algo,
                 ),
             )
             return int(cur.lastrowid)
@@ -922,15 +1008,28 @@ class _SchemaMixin:
                         from_status TEXT, to_status TEXT,
                         details TEXT, payload_json TEXT,
                         created_at TEXT NOT NULL,
-                        prev_event_hash TEXT, event_hash TEXT, hash_algo TEXT
+                        prev_event_hash TEXT, event_hash TEXT, hash_algo TEXT,
+                        tenant_id TEXT, tenant_prev_event_hash TEXT,
+                        tenant_event_hash TEXT, tenant_hash_algo TEXT
                     )
                 """)
             cur = conn.execute(
                 """
-                INSERT INTO events (claim_id, event_type, from_status, to_status, details, payload_json, created_at)
+                INSERT INTO events (
+                    claim_id, event_type, from_status, to_status, details,
+                    payload_json, created_at
+                )
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (claim_id, event_type, from_status, to_status, details, payload_json, created_at),
+                (
+                    claim_id,
+                    event_type,
+                    from_status,
+                    to_status,
+                    details,
+                    payload_json,
+                    created_at,
+                ),
             )
             return int(cur.lastrowid)
 

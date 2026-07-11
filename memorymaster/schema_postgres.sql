@@ -120,7 +120,14 @@ CREATE TABLE IF NOT EXISTS events (
     to_status TEXT,
     details TEXT,
     payload_json JSONB,
-    created_at TIMESTAMPTZ NOT NULL
+    created_at TIMESTAMPTZ NOT NULL,
+    prev_event_hash TEXT,
+    event_hash TEXT,
+    hash_algo TEXT,
+    tenant_id TEXT,
+    tenant_prev_event_hash TEXT,
+    tenant_event_hash TEXT,
+    tenant_hash_algo TEXT
 );
 
 CREATE OR REPLACE FUNCTION memorymaster_events_append_only_guard()
@@ -184,6 +191,13 @@ CREATE INDEX IF NOT EXISTS idx_claims_tuple ON claims(subject, predicate, scope)
 CREATE INDEX IF NOT EXISTS idx_claims_replaced_by ON claims(replaced_by_claim_id);
 CREATE INDEX IF NOT EXISTS idx_citations_claim_id ON citations(claim_id);
 CREATE INDEX IF NOT EXISTS idx_events_claim_id ON events(claim_id);
+CREATE INDEX IF NOT EXISTS idx_events_tenant_id ON events(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_events_tenant_hash
+    ON events(tenant_id, tenant_event_hash);
+CREATE INDEX IF NOT EXISTS idx_events_tenant_head
+    ON events(tenant_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_events_tenant_algo_head
+    ON events(tenant_id, hash_algo, id DESC);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
 
 CREATE TABLE IF NOT EXISTS external_sources (

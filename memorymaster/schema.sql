@@ -92,6 +92,13 @@ CREATE TABLE IF NOT EXISTS events (
     details TEXT,
     payload_json TEXT,
     created_at TEXT NOT NULL,
+    prev_event_hash TEXT,
+    event_hash TEXT,
+    hash_algo TEXT,
+    tenant_id TEXT,
+    tenant_prev_event_hash TEXT,
+    tenant_event_hash TEXT,
+    tenant_hash_algo TEXT,
     FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE CASCADE
 );
 
@@ -201,6 +208,13 @@ CREATE INDEX IF NOT EXISTS idx_claims_tuple ON claims(subject, predicate, scope)
 CREATE INDEX IF NOT EXISTS idx_claims_replaced_by ON claims(replaced_by_claim_id);
 CREATE INDEX IF NOT EXISTS idx_citations_claim_id ON citations(claim_id);
 CREATE INDEX IF NOT EXISTS idx_events_claim_id ON events(claim_id);
+CREATE INDEX IF NOT EXISTS idx_events_tenant_id ON events(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_events_tenant_hash
+    ON events(tenant_id, tenant_event_hash);
+CREATE INDEX IF NOT EXISTS idx_events_tenant_head
+    ON events(tenant_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_events_tenant_algo_head
+    ON events(tenant_id, hash_algo, id DESC);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
 CREATE INDEX IF NOT EXISTS idx_embeddings_updated_at ON claim_embeddings(updated_at);
 CREATE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id);

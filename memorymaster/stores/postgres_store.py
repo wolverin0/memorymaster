@@ -26,7 +26,12 @@ from memorymaster.core.models import (
     validate_transition_event_type,
 )
 from memorymaster.core.retry import connect_with_retry
-from memorymaster.stores._storage_shared import EVENT_HASH_ALGO, generate_top_level_human_id
+from memorymaster.stores._storage_shared import (
+    EVENT_HASH_ALGO,
+    TENANT_EVENT_HASH_ALGO,
+    compute_tenant_event_hash,
+    generate_top_level_human_id,
+)
 from memorymaster.stores.storage import SQLiteStore
 
 POSTGRES_EVENTS_APPEND_ONLY_TRIGGERS = (
@@ -34,6 +39,7 @@ POSTGRES_EVENTS_APPEND_ONLY_TRIGGERS = (
     "trg_events_append_only_delete",
 )
 POSTGRES_CONFIRMED_TUPLE_GUARD_TRIGGER = "trg_claims_confirmed_tuple_guard"
+POSTGRES_TENANT_EVENT_HASH_ALGO = TENANT_EVENT_HASH_ALGO
 
 
 def utc_now() -> datetime:
@@ -149,11 +155,20 @@ class PostgresStore(SQLiteStore):
         payload: object | None,
         created_at: datetime,
         prev_event_hash: str | None,
+        tenant_id: str | None = None,
         hash_algo: str = EVENT_HASH_ALGO,
+        canonicalize_timestamp: bool = True,
     ) -> str:
-        created_iso = created_at.replace(microsecond=0).isoformat()
-        components = [
-            hash_algo,
+        normalized_created_at = created_at
+        if canonicalize_timestamp and created_at.tzinfo is not None:
+            normalized_created_at = created_at.astimezone(timezone.utc)
+        created_iso = normalized_created_at.replace(microsecond=0).isoformat()
+        components = [hash_algo]
+        if hash_algo == POSTGRES_TENANT_EVENT_HASH_ALGO:
+            if tenant_id is None:
+                raise ValueError("Tenant event hashes require tenant_id.")
+            components.append(tenant_id)
+        components.extend([
             str(claim_id) if claim_id is not None else "",
             event_type,
             from_status or "",
@@ -162,9 +177,22 @@ class PostgresStore(SQLiteStore):
             PostgresStore._canonical_payload(payload),
             created_iso,
             prev_event_hash or "",
-        ]
+        ])
         material = "\x1f".join(components)
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _compute_tenant_event_hash(
+        *,
+        tenant_id: str,
+        event_hash: str,
+        tenant_prev_event_hash: str | None,
+    ) -> str:
+        return compute_tenant_event_hash(
+            tenant_id=tenant_id,
+            event_hash=event_hash,
+            tenant_prev_event_hash=tenant_prev_event_hash,
+        )
 
     @staticmethod
     def _ensure_event_integrity_schema(conn) -> None:
@@ -309,51 +337,200 @@ class PostgresStore(SQLiteStore):
         )
 
     @staticmethod
+    def _primary_event_partition(
+        row: dict[str, object],
+        global_head: str | None,
+        tenant_heads: dict[str, str | None],
+    ) -> tuple[str, str | None, str | None]:
+        hash_algo = PostgresStore._as_text(row.get("hash_algo")) or EVENT_HASH_ALGO
+        tenant_id = PostgresStore._as_text(row.get("tenant_id"))
+        if hash_algo == EVENT_HASH_ALGO:
+            return hash_algo, tenant_id, global_head
+        if hash_algo == POSTGRES_TENANT_EVENT_HASH_ALGO and tenant_id is not None:
+            return hash_algo, tenant_id, tenant_heads.get(tenant_id)
+        raise RuntimeError(f"Invalid primary event partition at event {row['id']}.")
+
+    @staticmethod
+    def _hash_primary_event_row(
+        row: dict[str, object],
+        *,
+        previous: str | None,
+        tenant_id: str | None,
+        hash_algo: str,
+    ) -> str:
+        created_at = row["created_at"]
+        if not isinstance(created_at, datetime):
+            created_at = datetime.fromisoformat(str(created_at))
+        return PostgresStore._compute_event_hash(
+            claim_id=int(row["claim_id"]) if row["claim_id"] is not None else None,
+            event_type=str(row["event_type"]),
+            from_status=PostgresStore._as_text(row["from_status"]),
+            to_status=PostgresStore._as_text(row["to_status"]),
+            details=PostgresStore._as_text(row["details"]),
+            payload=row.get("payload_json"),
+            created_at=created_at,
+            prev_event_hash=previous,
+            tenant_id=tenant_id,
+            hash_algo=hash_algo,
+        )
+
+    @staticmethod
     def _backfill_event_chain(conn, *, rebuild_all: bool = False) -> int:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, claim_id, event_type, from_status, to_status, details, payload_json, created_at, event_hash, hash_algo
-                FROM events
+                SELECT event.id, event.claim_id, event.event_type, event.from_status,
+                       event.to_status, event.details, event.payload_json,
+                       event.created_at, event.prev_event_hash, event.event_hash,
+                       event.hash_algo, to_jsonb(event)->>'tenant_id' AS tenant_id
+                FROM events AS event
                 ORDER BY id ASC
                 """
             )
             rows = cur.fetchall()
             if not rows:
                 return 0
+            if rebuild_all and any(
+                PostgresStore._as_text(row.get("hash_algo")) == POSTGRES_TENANT_EVENT_HASH_ALGO
+                for row in rows
+            ):
+                raise RuntimeError("Cannot rebuild a mixed v1/tenant-v2 primary event ledger.")
 
             updated = 0
-            prev_hash: str | None = None
+            global_head: str | None = None
+            tenant_heads: dict[str, str | None] = {}
             for row in rows:
-                row_hash = row.get("event_hash")
-                row_algo = row.get("hash_algo")
+                row_hash = PostgresStore._as_text(row.get("event_hash"))
+                row_algo, tenant_id, previous = PostgresStore._primary_event_partition(
+                    row,
+                    global_head,
+                    tenant_heads,
+                )
                 if row_hash and not rebuild_all:
-                    prev_hash = str(row_hash)
-                    continue
+                    if PostgresStore._as_text(row.get("prev_event_hash")) != previous:
+                        raise RuntimeError(f"Invalid primary event predecessor at event {row['id']}.")
+                    event_hash = row_hash
+                else:
+                    event_hash = PostgresStore._hash_primary_event_row(
+                        row,
+                        previous=previous,
+                        tenant_id=tenant_id,
+                        hash_algo=row_algo,
+                    )
+                    cur.execute(
+                        "UPDATE events SET prev_event_hash = %s, event_hash = %s, hash_algo = %s WHERE id = %s",
+                        (previous, event_hash, row_algo, int(row["id"])),
+                    )
+                    updated += 1
+                if row_algo == EVENT_HASH_ALGO:
+                    global_head = event_hash
+                else:
+                    tenant_heads[tenant_id] = event_hash
+            return updated
 
-                algo = str(row_algo) if row_algo else EVENT_HASH_ALGO
-                payload = row.get("payload_json")
-                created_at = row["created_at"]
-                if not isinstance(created_at, datetime):
-                    created_at = datetime.fromisoformat(str(created_at))
-                event_hash = PostgresStore._compute_event_hash(
-                    claim_id=int(row["claim_id"]) if row["claim_id"] is not None else None,
-                    event_type=str(row["event_type"]),
-                    from_status=PostgresStore._as_text(row["from_status"]),
-                    to_status=PostgresStore._as_text(row["to_status"]),
-                    details=PostgresStore._as_text(row["details"]),
-                    payload=payload,
-                    created_at=created_at,
-                    prev_event_hash=prev_hash,
-                    hash_algo=algo,
+    @staticmethod
+    def _backfill_tenant_event_chain(conn, *, rebuild_all: bool = False) -> int:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, tenant_id, event_hash, tenant_event_hash
+                FROM events ORDER BY id ASC
+                """
+            )
+            heads: dict[str, str | None] = {}
+            updated = 0
+            for row in cur.fetchall():
+                tenant_id = PostgresStore._as_text(row.get("tenant_id"))
+                if tenant_id is None:
+                    continue
+                existing_hash = PostgresStore._as_text(row.get("tenant_event_hash"))
+                if existing_hash and not rebuild_all:
+                    heads[tenant_id] = existing_hash
+                    continue
+                event_hash = PostgresStore._as_text(row.get("event_hash"))
+                if event_hash is None:
+                    raise RuntimeError("Cannot build tenant event chain before global hashes exist.")
+                previous = heads.get(tenant_id)
+                tenant_hash = compute_tenant_event_hash(
+                    tenant_id=tenant_id,
+                    event_hash=event_hash,
+                    tenant_prev_event_hash=previous,
                 )
                 cur.execute(
-                    "UPDATE events SET prev_event_hash = %s, event_hash = %s, hash_algo = %s WHERE id = %s",
-                    (prev_hash, event_hash, algo, int(row["id"])),
+                    """
+                    UPDATE events SET tenant_prev_event_hash = %s,
+                        tenant_event_hash = %s, tenant_hash_algo = %s
+                    WHERE id = %s
+                    """,
+                    (previous, tenant_hash, TENANT_EVENT_HASH_ALGO, int(row["id"])),
                 )
+                heads[tenant_id] = tenant_hash
                 updated += 1
-                prev_hash = event_hash
             return updated
+
+    def _event_tenant_for_claim(self, cur, claim_id: int | None) -> str | None:
+        if claim_id is None:
+            return self._tenant_for_operation() if self.require_tenant else self.tenant_id
+        cur.execute("SELECT tenant_id FROM claims WHERE id = %s", (claim_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise ValueError(f"Claim {claim_id} does not exist.")
+        raw_tenant = row.get("tenant_id") if isinstance(row, dict) else row[0]
+        claim_tenant = self._as_text(raw_tenant)
+        if self.require_tenant and claim_tenant is None:
+            raise PermissionError("Tenant-owned events require a tenant-owned claim.")
+        return self._tenant_for_operation(claim_tenant)
+
+    @staticmethod
+    def _event_chain_head(
+        cur,
+        tenant_id: str | None,
+    ) -> tuple[str | None, str, str | None]:
+        lock_key = tenant_id or "__memorymaster_global_events__"
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"memorymaster:event:{lock_key}",),
+        )
+        if tenant_id is None:
+            algo = EVENT_HASH_ALGO
+            cur.execute(
+                """
+                SELECT event_hash FROM events
+                WHERE event_hash IS NOT NULL
+                  AND (hash_algo IS NULL OR hash_algo = %s)
+                ORDER BY id DESC LIMIT 1
+                """,
+                (algo,),
+            )
+        else:
+            algo = POSTGRES_TENANT_EVENT_HASH_ALGO
+            cur.execute(
+                """
+                SELECT event_hash FROM events
+                WHERE event_hash IS NOT NULL
+                  AND hash_algo = %s
+                  AND tenant_id IS NOT DISTINCT FROM %s
+                ORDER BY id DESC LIMIT 1
+                """,
+                (algo, tenant_id),
+            )
+        row = cur.fetchone()
+        value = row.get("event_hash") if isinstance(row, dict) and row else None
+        tenant_head: str | None = None
+        if tenant_id is not None:
+            cur.execute(
+                """
+                SELECT tenant_event_hash FROM events
+                WHERE tenant_id IS NOT DISTINCT FROM %s
+                  AND tenant_event_hash IS NOT NULL
+                ORDER BY id DESC LIMIT 1
+                """,
+                (tenant_id,),
+            )
+            tenant_row = cur.fetchone()
+            if isinstance(tenant_row, dict) and tenant_row.get("tenant_event_hash"):
+                tenant_head = str(tenant_row["tenant_event_hash"])
+        return (str(value) if value else None), algo, tenant_head
 
     def _insert_event_row(
         self,
@@ -369,9 +546,11 @@ class PostgresStore(SQLiteStore):
     ) -> int:
         _, _, Jsonb = self._load_psycopg()
         with conn.cursor() as cur:
-            cur.execute("SELECT event_hash FROM events WHERE event_hash IS NOT NULL ORDER BY id DESC LIMIT 1")
-            prev_row = cur.fetchone()
-            prev_event_hash = str(prev_row["event_hash"]) if prev_row and prev_row.get("event_hash") else None
+            tenant_id = self._event_tenant_for_claim(cur, claim_id)
+            prev_event_hash, hash_algo, tenant_prev_event_hash = self._event_chain_head(
+                cur,
+                tenant_id,
+            )
             event_hash = self._compute_event_hash(
                 claim_id=claim_id,
                 event_type=event_type,
@@ -381,15 +560,27 @@ class PostgresStore(SQLiteStore):
                 payload=payload,
                 created_at=created_at,
                 prev_event_hash=prev_event_hash,
-                hash_algo=EVENT_HASH_ALGO,
+                tenant_id=tenant_id,
+                hash_algo=hash_algo,
             )
+            tenant_event_hash = (
+                compute_tenant_event_hash(
+                    tenant_id=tenant_id,
+                    event_hash=event_hash,
+                    tenant_prev_event_hash=tenant_prev_event_hash,
+                )
+                if tenant_id is not None
+                else None
+            )
+            tenant_hash_algo = TENANT_EVENT_HASH_ALGO if tenant_id is not None else None
             cur.execute(
                 """
                 INSERT INTO events (
                     claim_id, event_type, from_status, to_status, details, payload_json, created_at,
-                    prev_event_hash, event_hash, hash_algo
+                    prev_event_hash, event_hash, hash_algo, tenant_id,
+                    tenant_prev_event_hash, tenant_event_hash, tenant_hash_algo
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -402,7 +593,11 @@ class PostgresStore(SQLiteStore):
                     created_at,
                     prev_event_hash,
                     event_hash,
-                    EVENT_HASH_ALGO,
+                    hash_algo,
+                    tenant_id,
+                    tenant_prev_event_hash,
+                    tenant_event_hash,
+                    tenant_hash_algo,
                 ),
             )
             inserted = cur.fetchone()
@@ -680,6 +875,10 @@ class PostgresStore(SQLiteStore):
     ) -> list[Event]:
         clauses: list[str] = []
         params: list[object] = []
+
+        if self.tenant_id is not None:
+            clauses.append("tenant_id IS NOT DISTINCT FROM %s")
+            params.append(self._tenant_for_operation())
 
         if claim_id is not None:
             clauses.append("claim_id = %s")
@@ -1072,7 +1271,226 @@ class PostgresStore(SQLiteStore):
         # Events are append-only by contract; retention trim is a no-op.
         return 0
 
+    @staticmethod
+    def _event_chain_link_issues(
+        rows: list[dict[str, object]],
+        limit: int,
+    ) -> list[dict[str, object]]:
+        issues: list[dict[str, object]] = []
+        v1_expected: str | None = None
+        tenant_expected: dict[str, str | None] = {}
+        for row in rows:
+            event_id = int(row["id"])
+            row_prev = PostgresStore._as_text(row.get("prev_event_hash"))
+            row_hash = PostgresStore._as_text(row.get("event_hash"))
+            row_algo = PostgresStore._as_text(row.get("hash_algo")) or EVENT_HASH_ALGO
+            tenant_id = PostgresStore._as_text(row.get("tenant_id"))
+            if row_hash is None:
+                issues.append({"event_id": event_id, "reason": "missing_hash"})
+                continue
+            if row_algo == EVENT_HASH_ALGO:
+                expected = v1_expected
+                v1_expected = row_hash
+            elif row_algo == POSTGRES_TENANT_EVENT_HASH_ALGO and tenant_id is not None:
+                expected = tenant_expected.get(tenant_id)
+                tenant_expected[tenant_id] = row_hash
+            else:
+                issues.append(
+                    {
+                        "event_id": event_id,
+                        "reason": "unexpected_hash_algo_or_tenant",
+                        "hash_algo": row_algo,
+                        "tenant_id": tenant_id,
+                    }
+                )
+                continue
+            if row_prev != expected:
+                issues.append(
+                    {
+                        "event_id": event_id,
+                        "reason": "broken_prev_link",
+                        "expected_prev_event_hash": expected,
+                        "actual_prev_event_hash": row_prev,
+                    }
+                )
+            if len(issues) >= limit:
+                break
+        return issues
+
+    @staticmethod
+    def _expected_primary_event_hash(
+        row: dict[str, object],
+        *,
+        canonicalize_timestamp: bool = True,
+    ) -> str | None:
+        tenant_id = PostgresStore._as_text(row.get("tenant_id"))
+        event_type = PostgresStore._as_text(row.get("event_type"))
+        created_at = row.get("created_at")
+        hash_algo = PostgresStore._as_text(row.get("hash_algo")) or EVENT_HASH_ALGO
+        if hash_algo not in {EVENT_HASH_ALGO, POSTGRES_TENANT_EVENT_HASH_ALGO}:
+            return None
+        if isinstance(created_at, str):
+            try:
+                created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        if event_type is None or not isinstance(created_at, datetime):
+            return None
+        if hash_algo == POSTGRES_TENANT_EVENT_HASH_ALGO and tenant_id is None:
+            return None
+        claim_id = row.get("claim_id")
+        return PostgresStore._compute_event_hash(
+            claim_id=int(claim_id) if claim_id is not None else None,
+            event_type=event_type,
+            from_status=PostgresStore._as_text(row.get("from_status")),
+            to_status=PostgresStore._as_text(row.get("to_status")),
+            details=PostgresStore._as_text(row.get("details")),
+            payload=row.get("payload_json"),
+            created_at=created_at,
+            prev_event_hash=PostgresStore._as_text(row.get("prev_event_hash")),
+            tenant_id=tenant_id,
+            hash_algo=hash_algo,
+            canonicalize_timestamp=canonicalize_timestamp,
+        )
+
+    @staticmethod
+    def _expected_v2_event_hash(row: dict[str, object]) -> str | None:
+        if PostgresStore._as_text(row.get("hash_algo")) != POSTGRES_TENANT_EVENT_HASH_ALGO:
+            return None
+        return PostgresStore._expected_primary_event_hash(row)
+
+    @staticmethod
+    def _event_content_issues(
+        rows: list[dict[str, object]],
+        limit: int,
+    ) -> list[dict[str, object]]:
+        issues: list[dict[str, object]] = []
+        for row in rows:
+            hash_algo = PostgresStore._as_text(row.get("hash_algo")) or EVENT_HASH_ALGO
+            if hash_algo not in {EVENT_HASH_ALGO, POSTGRES_TENANT_EVENT_HASH_ALGO}:
+                continue
+            expected_hash = PostgresStore._expected_primary_event_hash(row)
+            stored_hash = PostgresStore._as_text(row.get("event_hash"))
+            if expected_hash is None:
+                issues.append(
+                    {"event_id": int(row["id"]), "reason": "missing_event_hash_material"}
+                )
+            else:
+                expected_hashes = {expected_hash}
+                hash_algo = PostgresStore._as_text(row.get("hash_algo")) or EVENT_HASH_ALGO
+                if hash_algo == EVENT_HASH_ALGO:
+                    legacy_hash = PostgresStore._expected_primary_event_hash(
+                        row,
+                        canonicalize_timestamp=False,
+                    )
+                    if legacy_hash is not None:
+                        expected_hashes.add(legacy_hash)
+                if stored_hash not in expected_hashes:
+                    issues.append(
+                        {"event_id": int(row["id"]), "reason": "event_hash_mismatch"}
+                    )
+            if len(issues) >= limit:
+                break
+        return issues
+
+    @staticmethod
+    def _event_chain_issues(
+        rows: list[dict[str, object]],
+        limit: int,
+        *,
+        verify_content: bool = True,
+    ) -> list[dict[str, object]]:
+        issues = PostgresStore._event_chain_link_issues(rows, limit)
+        if verify_content and len(issues) < limit:
+            issues.extend(PostgresStore._event_content_issues(rows, limit - len(issues)))
+        return issues
+
+    @staticmethod
+    def _tenant_event_chain_issues(
+        rows: list[dict[str, object]],
+        limit: int,
+    ) -> list[dict[str, object]]:
+        issues: list[dict[str, object]] = []
+        heads: dict[str, str | None] = {}
+        for row in rows:
+            event_id = int(row["id"])
+            tenant_id = PostgresStore._as_text(row.get("tenant_id"))
+            if tenant_id is None:
+                continue
+            previous = PostgresStore._as_text(row.get("tenant_prev_event_hash"))
+            stored_hash = PostgresStore._as_text(row.get("tenant_event_hash"))
+            hash_algo = PostgresStore._as_text(row.get("tenant_hash_algo"))
+            event_hash = PostgresStore._as_text(row.get("event_hash"))
+            expected_previous = heads.get(tenant_id)
+            if previous != expected_previous:
+                issues.append(
+                    {
+                        "event_id": event_id,
+                        "reason": "broken_tenant_prev_link",
+                        "expected_prev_event_hash": expected_previous,
+                        "actual_prev_event_hash": previous,
+                    }
+                )
+            if hash_algo != TENANT_EVENT_HASH_ALGO or event_hash is None or stored_hash is None:
+                issues.append({"event_id": event_id, "reason": "missing_tenant_hash_material"})
+            else:
+                expected_hash = compute_tenant_event_hash(
+                    tenant_id=tenant_id,
+                    event_hash=event_hash,
+                    tenant_prev_event_hash=previous,
+                )
+                if stored_hash != expected_hash:
+                    issues.append({"event_id": event_id, "reason": "tenant_hash_mismatch"})
+            heads[tenant_id] = stored_hash
+            if len(issues) >= limit:
+                break
+        return issues
+
+    def _reconcile_tenant_event_integrity(self, limit: int) -> dict[str, object]:
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, claim_id, event_type, from_status, to_status, details,
+                       payload_json, created_at, prev_event_hash, event_hash, hash_algo,
+                       tenant_id, tenant_prev_event_hash, tenant_event_hash, tenant_hash_algo
+                FROM events
+                WHERE tenant_id IS NOT DISTINCT FROM %s
+                ORDER BY id ASC
+                """,
+                (self._tenant_for_operation(),),
+            )
+            rows = cur.fetchall()
+            v2_rows = [
+                row
+                for row in rows
+                if self._as_text(row.get("hash_algo")) == POSTGRES_TENANT_EVENT_HASH_ALGO
+            ]
+            original_chain_issues = self._event_chain_link_issues(v2_rows, limit)
+            content_issues = self._event_content_issues(rows, limit)
+            chain_issues = self._tenant_event_chain_issues(rows, limit)
+        return {
+            "checked_at": utc_now().isoformat(),
+            "fix_mode": False,
+            "issues": {
+                "hash_chain_issues": original_chain_issues,
+                "event_content_issues": content_issues,
+                "tenant_hash_chain_issues": chain_issues,
+            },
+            "summary": {
+                "hash_chain_issues": len(original_chain_issues),
+                "event_content_issues": len(content_issues),
+                "tenant_hash_chain_issues": len(chain_issues),
+            },
+            "actions": [],
+        }
+
     def reconcile_integrity(self, *, fix: bool = False, limit: int = 500) -> dict[str, object]:
+        if self.require_tenant:
+            if fix:
+                raise PermissionError(
+                    "Integrity repair requires a privileged maintenance store."
+                )
+            return self._reconcile_tenant_event_integrity(limit)
         report: dict[str, object] = {
             "checked_at": utc_now().isoformat(),
             "fix_mode": bool(fix),
@@ -1080,7 +1498,8 @@ class PostgresStore(SQLiteStore):
             "actions": [],
         }
         with self.connect() as conn:
-            self._ensure_event_integrity_schema(conn)
+            if fix:
+                self._ensure_event_integrity_schema(conn)
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -1189,31 +1608,17 @@ class PostgresStore(SQLiteStore):
                             }
                         )
 
-                cur.execute("SELECT id, prev_event_hash, event_hash, hash_algo FROM events ORDER BY id ASC")
+                cur.execute(
+                    """
+                    SELECT id, claim_id, event_type, from_status, to_status, details,
+                           payload_json, created_at, prev_event_hash, event_hash, hash_algo,
+                           tenant_id, tenant_prev_event_hash, tenant_event_hash, tenant_hash_algo
+                    FROM events ORDER BY id ASC
+                    """
+                )
                 chain_rows = cur.fetchall()
-                chain_issues: list[dict[str, object]] = []
-                expected_prev: str | None = None
-                for row in chain_rows:
-                    row_prev = self._as_text(row["prev_event_hash"])
-                    row_hash = self._as_text(row["event_hash"])
-                    row_algo = self._as_text(row["hash_algo"])
-                    if row_hash is None:
-                        chain_issues.append({"event_id": int(row["id"]), "reason": "missing_hash"})
-                        continue
-                    if row_algo not in {None, EVENT_HASH_ALGO}:
-                        chain_issues.append(
-                            {"event_id": int(row["id"]), "reason": "unexpected_hash_algo", "hash_algo": row_algo}
-                        )
-                    if row_prev != expected_prev:
-                        chain_issues.append(
-                            {
-                                "event_id": int(row["id"]),
-                                "reason": "broken_prev_link",
-                                "expected_prev_event_hash": expected_prev,
-                                "actual_prev_event_hash": row_prev,
-                            }
-                        )
-                    expected_prev = row_hash
+                chain_issues = self._event_chain_issues(chain_rows, limit)
+                tenant_chain_issues = self._tenant_event_chain_issues(chain_rows, limit)
 
                 issues = {
                     "orphan_events": orphan_events,
@@ -1223,6 +1628,7 @@ class PostgresStore(SQLiteStore):
                     "dangling_supersedes": dangling_supersedes,
                     "transition_issues": transition_issues[:limit],
                     "hash_chain_issues": chain_issues[:limit],
+                    "tenant_hash_chain_issues": tenant_chain_issues[:limit],
                 }
                 report["issues"] = issues
                 report["summary"] = {

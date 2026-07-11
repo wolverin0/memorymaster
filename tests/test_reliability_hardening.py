@@ -104,7 +104,11 @@ def test_reconcile_integrity_reports_and_fixes_orphans_and_chain() -> None:
     assert report["summary"]["orphan_events"] >= 1
     assert report["summary"]["orphan_citations"] >= 1
     assert report["summary"]["superseded_without_replacement"] >= 1
-    assert report["summary"]["hash_chain_issues"] == 0
+    assert report["summary"]["hash_chain_issues"] >= 1
+    assert any(
+        issue["reason"] == "missing_hash"
+        for issue in report["issues"]["hash_chain_issues"]
+    )
 
     fixed = service.store.reconcile_integrity(fix=True, limit=50)
     action_names = {str(action.get("action")) for action in fixed.get("actions", [])}

@@ -26,11 +26,54 @@ from memorymaster.core.models import (
 
 from memorymaster.stores._storage_shared import (
     EVENT_HASH_ALGO,
+    TENANT_EVENT_HASH_ALGO,
     ConcurrentModificationError,
+    compute_tenant_event_hash,
     utc_now,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _tenant_event_chain_issues(rows, limit: int) -> list[dict[str, object]]:
+    issues: list[dict[str, object]] = []
+    heads: dict[str, str | None] = {}
+    for row in rows:
+        tenant_id = str(row["tenant_id"]) if row["tenant_id"] is not None else None
+        if tenant_id is None:
+            continue
+        previous = (
+            str(row["tenant_prev_event_hash"])
+            if row["tenant_prev_event_hash"] is not None
+            else None
+        )
+        stored_hash = (
+            str(row["tenant_event_hash"])
+            if row["tenant_event_hash"] is not None
+            else None
+        )
+        expected_previous = heads.get(tenant_id)
+        event_hash = str(row["event_hash"]) if row["event_hash"] is not None else None
+        if previous != expected_previous:
+            issues.append({"event_id": int(row["id"]), "reason": "broken_tenant_prev_link"})
+        if (
+            row["tenant_hash_algo"] != TENANT_EVENT_HASH_ALGO
+            or stored_hash is None
+            or event_hash is None
+        ):
+            issues.append({"event_id": int(row["id"]), "reason": "missing_tenant_hash_material"})
+        else:
+            expected_hash = compute_tenant_event_hash(
+                tenant_id=tenant_id,
+                event_hash=event_hash,
+                tenant_prev_event_hash=previous,
+            )
+            if stored_hash != expected_hash:
+                issues.append({"event_id": int(row["id"]), "reason": "tenant_hash_mismatch"})
+        heads[tenant_id] = stored_hash
+        if len(issues) >= limit:
+            break
+    return issues
 
 
 class _LifecycleMixin:
@@ -259,7 +302,8 @@ class _LifecycleMixin:
             "actions": [],
         }
         with self.connect() as conn:
-            self._ensure_event_integrity_schema(conn)
+            if fix:
+                self._ensure_event_integrity_schema(conn)
 
             orphan_events = conn.execute(
                 """
@@ -361,7 +405,9 @@ class _LifecycleMixin:
             chain_issues: list[dict[str, object]] = []
             chain_rows = conn.execute(
                 """
-                SELECT id, prev_event_hash, event_hash, hash_algo
+                SELECT id, claim_id, event_type, from_status, to_status, details,
+                       payload_json, created_at, prev_event_hash, event_hash, hash_algo,
+                       tenant_id, tenant_prev_event_hash, tenant_event_hash, tenant_hash_algo
                 FROM events
                 ORDER BY id ASC
                 """
@@ -378,6 +424,21 @@ class _LifecycleMixin:
                     chain_issues.append(
                         {"event_id": int(row["id"]), "reason": "unexpected_hash_algo", "hash_algo": row_algo}
                     )
+                expected_hash = self._compute_event_hash(
+                    claim_id=int(row["claim_id"]) if row["claim_id"] is not None else None,
+                    event_type=str(row["event_type"]),
+                    from_status=row["from_status"],
+                    to_status=row["to_status"],
+                    details=row["details"],
+                    payload_json=row["payload_json"],
+                    created_at=str(row["created_at"]),
+                    prev_event_hash=row_prev,
+                    hash_algo=row_algo or EVENT_HASH_ALGO,
+                )
+                if row_hash != expected_hash:
+                    chain_issues.append(
+                        {"event_id": int(row["id"]), "reason": "event_hash_mismatch"}
+                    )
                 if row_prev != expected_prev:
                     chain_issues.append(
                         {
@@ -389,6 +450,8 @@ class _LifecycleMixin:
                     )
                 expected_prev = row_hash
 
+            tenant_chain_issues = _tenant_event_chain_issues(chain_rows, limit)
+
             issues = {
                 "orphan_events": [int(row["id"]) for row in orphan_events],
                 "orphan_citations": [int(row["id"]) for row in orphan_citations],
@@ -397,6 +460,7 @@ class _LifecycleMixin:
                 "dangling_supersedes": [int(row["id"]) for row in dangling_supersedes],
                 "transition_issues": transition_issues[:limit],
                 "hash_chain_issues": chain_issues[:limit],
+                "tenant_hash_chain_issues": tenant_chain_issues[:limit],
             }
             report["issues"] = issues
             report["summary"] = {
@@ -432,7 +496,7 @@ class _LifecycleMixin:
                         issues["dangling_supersedes"],
                     )
                     actions.append({"action": "clear_dangling_supersedes", "rows": int(cur.rowcount)})
-                if issues["hash_chain_issues"]:
+                if issues["hash_chain_issues"] or issues["tenant_hash_chain_issues"]:
                     actions.append(
                         {
                             "action": "skip_rebuild_event_hash_chain_append_only",
