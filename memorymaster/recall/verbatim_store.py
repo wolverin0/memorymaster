@@ -23,32 +23,72 @@ from pathlib import Path
 
 # Credential detection delegated to the canonical filter in memorymaster.core.security.
 from memorymaster.core import spool
+from memorymaster.core.security import scan_persisted_value
 from memorymaster.stores._storage_shared import open_conn
-from memorymaster.core.security import redact_text as _redact_text
 
 logger = logging.getLogger(__name__)
 
 
 
 def _contains_sensitive(text: str) -> bool:
-    _, findings = _redact_text(text)
-    return bool(findings)
+    return bool(scan_persisted_value(text))
 
 
-def _row_has_sensitive_field(role: str, source_agent: str, content: str) -> bool:
-    """Defense-in-depth: check role and source_agent in addition to content.
+def _row_has_sensitive_field(
+    role: str,
+    source_agent: str,
+    content: str,
+    *,
+    session_id: str = "",
+    scope: str = "",
+    timestamp: str = "",
+    created_at: str = "",
+) -> bool:
+    """Defense-in-depth: scan every textual field persisted for a turn.
 
     F-4 fix (overnight audit 2026-05-04): role and source_agent are
     user-controlled in some upstream paths (CLI flags, dream-bridge config,
     transcript miner). A maliciously crafted or misconfigured
     source_agent='Bearer ghp_xxx...' would persist a token to
-    verbatim_memories undetected if we only checked content. The canonical
-    redact_text covers all three fields here — refuse the whole row if any
-    finding appears anywhere. Don't redact-and-store; just drop.
+    verbatim_memories undetected if we only checked content. The decoded
+    durable-envelope scanner covers current and encoded secret
+    shapes across all fields. Don't redact-and-store verbatim content; drop
+    the complete row so callers never mistake a marker for a raw transcript.
     """
-    joined = " | ".join(filter(None, (role, source_agent, content)))
-    _, findings = _redact_text(joined)
-    return bool(findings)
+    return bool(
+        scan_persisted_value(
+            {
+                "session_id": session_id,
+                "role": role,
+                "content": content,
+                "scope": scope,
+                "timestamp": timestamp,
+                "source_agent": source_agent,
+                "created_at": created_at,
+            }
+        )
+    )
+
+
+def _row_value(row: sqlite3.Row | dict, field: str, default: object = "") -> object:
+    """Read an optional row field across current and legacy schemas."""
+    try:
+        return row[field] if field in row.keys() else default
+    except (AttributeError, KeyError, TypeError, IndexError):
+        return default
+
+
+def _verbatim_row_has_sensitive_field(row: sqlite3.Row | dict) -> bool:
+    """Apply the durable envelope scanner to a current or legacy DB row."""
+    return _row_has_sensitive_field(
+        str(_row_value(row, "role") or ""),
+        str(_row_value(row, "source_agent") or ""),
+        str(_row_value(row, "content") or ""),
+        session_id=str(_row_value(row, "session_id") or ""),
+        scope=str(_row_value(row, "scope") or ""),
+        timestamp=str(_row_value(row, "timestamp") or ""),
+        created_at=str(_row_value(row, "created_at") or ""),
+    )
 
 # Vector search is opt-in: an unset QDRANT_URL means "vector disabled", exactly
 # like a missing OPENAI_API_KEY. NEVER hardcode a routable private LAN IP here —
@@ -115,6 +155,19 @@ def store_verbatim(
     timestamp: str | None = None,
 ) -> int | None:
     """Store a verbatim conversation turn. Returns row ID or None if filtered."""
+    now = timestamp or datetime.now(timezone.utc).isoformat()
+    if not content or len(content) < 20:
+        return None
+    if _row_has_sensitive_field(
+        role or "",
+        source_agent or "",
+        content,
+        session_id=session_id or "",
+        scope=scope or "",
+        timestamp=now,
+    ):
+        return None
+
     # closing() guarantees the connection (and its WAL write lock) is released
     # even if an INSERT/commit raises (e.g. "database is locked" under
     # concurrent MCP/Stop-hook writers) - this is the hottest write path.
@@ -126,7 +179,7 @@ def store_verbatim(
             content,
             scope,
             source_agent,
-            timestamp,
+            now,
         )
         conn.commit()
         return row_id
@@ -144,10 +197,17 @@ def _store_verbatim_conn(
     """Store one turn using an existing connection without committing."""
     if not content or len(content) < 20:
         return None
-    if _row_has_sensitive_field(role or "", source_agent or "", content):
-        return None
 
     now = timestamp or datetime.now(timezone.utc).isoformat()
+    if _row_has_sensitive_field(
+        role or "",
+        source_agent or "",
+        content,
+        session_id=session_id or "",
+        scope=scope or "",
+        timestamp=now,
+    ):
+        return None
 
     # Dedup by exact content within the same session. The composite
     # idx_verbatim_session_content(session_id, content) (migration 0006) makes
@@ -376,6 +436,7 @@ def _search_fts(db_path: str, query: str, scope: str | None, limit: int) -> list
     clean_query = " ".join(w for w in query.split() if len(w) > 2)
     if not clean_query:
         return []
+    fetch_limit = max(limit * 5, limit + 20)
 
     # closing() guarantees the connection is released even if the JOIN raises a
     # non-OperationalError (corrupt/locked DB, programming error) — the bare
@@ -384,35 +445,47 @@ def _search_fts(db_path: str, query: str, scope: str | None, limit: int) -> list
         try:
             if scope:
                 rows = conn.execute(
-                    """SELECT v.id, v.session_id, v.role, v.content, v.scope, v.timestamp,
-                              rank as score
+                    """SELECT v.*, rank as score
                        FROM verbatim_fts f
                        JOIN verbatim_memories v ON v.id = f.rowid
-                       WHERE verbatim_fts MATCH ? AND v.scope LIKE ?
+                       WHERE verbatim_fts MATCH ?
+                         AND (v.scope = ? OR (? = 'project' AND v.scope LIKE 'project:%'))
                        ORDER BY rank
                        LIMIT ?""",
-                    (clean_query, f"{scope}%", limit),
+                    (clean_query, scope, scope, fetch_limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    """SELECT v.id, v.session_id, v.role, v.content, v.scope, v.timestamp,
-                              rank as score
+                    """SELECT v.*, rank as score
                        FROM verbatim_fts f
                        JOIN verbatim_memories v ON v.id = f.rowid
                        WHERE verbatim_fts MATCH ?
                        ORDER BY rank
                        LIMIT ?""",
-                    (clean_query, limit),
+                    (clean_query, fetch_limit),
                 ).fetchall()
         except sqlite3.OperationalError:
             rows = []
 
-    return [
-        {"id": r["id"], "session_id": r["session_id"], "role": r["role"],
-         "content": r["content"], "scope": r["scope"], "timestamp": r["timestamp"],
-         "score": abs(r["score"]) if r["score"] else 0, "source": "fts"}
-        for r in rows
-    ]
+    results: list[dict] = []
+    for row in rows:
+        if _verbatim_row_has_sensitive_field(row):
+            continue
+        results.append(
+            {
+                "id": row["id"],
+                "session_id": row["session_id"],
+                "role": row["role"],
+                "content": row["content"],
+                "scope": row["scope"],
+                "timestamp": row["timestamp"],
+                "score": abs(row["score"]) if row["score"] else 0,
+                "source": "fts",
+            }
+        )
+        if len(results) >= limit:
+            break
+    return results
 
 
 def _search_vector(query: str, scope: str | None, limit: int) -> list[dict]:
@@ -435,12 +508,30 @@ def sync_to_qdrant(db_path: str, batch_size: int = 50) -> dict[str, int]:
     # including the initial SELECT raising or the final UPDATE/commit raising.
     with closing(_connect(db_path)) as conn:
         rows = conn.execute(
-            "SELECT id, content, scope, session_id, role FROM verbatim_memories WHERE embedding_synced = 0 LIMIT ?",
+            "SELECT * FROM verbatim_memories WHERE embedding_synced = 0 LIMIT ?",
             (batch_size,),
         ).fetchall()
 
         if not rows:
             return {"synced": 0}
+
+        safe_rows: list[sqlite3.Row] = []
+        unsafe_ids: list[int] = []
+        for row in rows:
+            if _verbatim_row_has_sensitive_field(row):
+                unsafe_ids.append(int(row["id"]))
+            else:
+                safe_rows.append(row)
+        excluded_sensitive = len(unsafe_ids)
+        if unsafe_ids:
+            placeholders = ",".join("?" for _ in unsafe_ids)
+            conn.execute(
+                f"UPDATE verbatim_memories SET embedding_synced = -1 WHERE id IN ({placeholders})",
+                unsafe_ids,
+            )
+            conn.commit()
+        if not safe_rows:
+            return {"synced": 0, "excluded_sensitive": excluded_sensitive}
 
         # Ensure collection exists
         try:
@@ -460,7 +551,7 @@ def sync_to_qdrant(db_path: str, batch_size: int = 50) -> dict[str, int]:
                 return {"synced": 0, "error": str(e)}
 
         # Embed in batches
-        texts = [r["content"][:2000] for r in rows]
+        texts = [r["content"][:2000] for r in safe_rows]
         try:
             embed_url = "https://api.openai.com/v1/embeddings"
             payload = {"model": "text-embedding-3-small", "input": texts}
@@ -475,10 +566,12 @@ def sync_to_qdrant(db_path: str, batch_size: int = 50) -> dict[str, int]:
             embeddings = [d["embedding"] for d in result["data"]]
         except Exception as e:
             return {"synced": 0, "error": str(e)}
+        if len(embeddings) != len(safe_rows):
+            return {"synced": 0, "error": "embedding response cardinality mismatch"}
 
         # Upsert to Qdrant
         points = []
-        for i, (row, emb) in enumerate(zip(rows, embeddings)):
+        for row, emb in zip(safe_rows, embeddings):
             points.append({
                 "id": row["id"],
                 "vector": emb,
@@ -503,9 +596,12 @@ def sync_to_qdrant(db_path: str, batch_size: int = 50) -> dict[str, int]:
             return {"synced": 0, "error": str(e)}
 
         # Mark as synced
-        ids = [r["id"] for r in rows]
+        ids = [r["id"] for r in safe_rows]
         placeholders = ",".join("?" for _ in ids)
         conn.execute(f"UPDATE verbatim_memories SET embedding_synced = 1 WHERE id IN ({placeholders})", ids)
         conn.commit()
 
-        return {"synced": len(rows)}
+        result = {"synced": len(safe_rows)}
+        if excluded_sensitive:
+            result["excluded_sensitive"] = excluded_sensitive
+        return result

@@ -6,6 +6,7 @@ import json
 import os
 import re
 import unicodedata
+from collections.abc import Iterable
 from collections.abc import Iterator
 from collections.abc import Mapping
 from dataclasses import asdict
@@ -188,6 +189,20 @@ class SensitiveMetadataError(ValueError):
         self.findings = tuple(sorted(set(findings)))
         labels = ", ".join(self.findings)
         super().__init__(f"{field} contains sensitive data ({labels})")
+
+
+def normalize_sensitivity_findings(findings: Iterable[str] | None) -> list[str]:
+    """Validate and canonicalize findings-only security metadata."""
+    if findings is None:
+        return []
+    if isinstance(findings, (str, bytes)):
+        raise ValueError("Sensitivity findings must be a collection of labels.")
+    normalized: set[str] = set()
+    for value in findings:
+        if not isinstance(value, str) or re.fullmatch(r"[a-z0-9_]{1,64}", value) is None:
+            raise ValueError("Invalid sensitivity finding label.")
+        normalized.add(value)
+    return sorted(normalized)
 
 
 def _as_bool(value: object, *, field: str) -> bool:

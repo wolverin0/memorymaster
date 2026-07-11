@@ -17,6 +17,7 @@ from memorymaster.core.models import (
     validate_event_payload,
 )
 from memorymaster.core.security import (
+    normalize_sensitivity_findings,
     sanitize_claim_input,
     sanitize_claim_structure_input,
     sanitize_persisted_text,
@@ -97,6 +98,7 @@ class _WriteClaimsMixin:
         source_agent: str | None = None,
         visibility: str = "public",
         holder: str | None = None,
+        _pre_sanitization_findings: list[str] | None = None,
     ) -> Claim:
         if not citations:
             raise ValueError("At least one citation is required.")
@@ -128,6 +130,9 @@ class _WriteClaimsMixin:
             valid_from=valid_from,
             valid_until=valid_until,
             tenant_id=tenant_id,
+        )
+        redaction_findings = normalize_sensitivity_findings(
+            [*sanitized.findings, *(_pre_sanitization_findings or [])]
         )
         text = sanitized.text
         object_value = sanitized.object_value
@@ -259,10 +264,10 @@ class _WriteClaimsMixin:
                 payload_json=json.dumps(ingest_payload),
                 created_at=now,
             )
-            if sanitized.is_sensitive:
+            if redaction_findings:
                 policy_payload = validate_event_payload(
                     "policy_decision",
-                    {"findings": sanitized.findings},
+                    {"findings": redaction_findings},
                     details="sensitive_redaction_applied",
                 )
                 self._insert_event_row(

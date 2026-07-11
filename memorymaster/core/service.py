@@ -21,8 +21,10 @@ from memorymaster.core.config import get_config
 from memorymaster.recall.retrieval import VectorSearchHook, _tier_bonus, rank_claim_rows
 from memorymaster.core.security import (
     is_sensitive_claim,
+    normalize_sensitivity_findings,
     resolve_allow_sensitive_access,
     sanitize_claim_input,
+    sanitize_persisted_text,
     validate_persisted_metadata,
 )
 from memorymaster.core.intake_policy import (
@@ -532,6 +534,7 @@ class MemoryService:
         require_source_agent: bool = False,
         intake_batch_id: str | None = None,
         intake_batch_max: int | None = None,
+        _pre_sanitization_findings: list[str] | None = None,
     ) -> Claim:
         if not text.strip():
             raise ValueError("Claim text cannot be empty.")
@@ -555,6 +558,9 @@ class MemoryService:
             valid_from=valid_from,
             valid_until=valid_until,
             intake_batch_id=intake_batch_id,
+        )
+        redaction_findings = normalize_sensitivity_findings(
+            [*sanitized.findings, *(_pre_sanitization_findings or [])]
         )
         if not sanitized.citations:
             raise ValueError("At least one citation is required.")
@@ -741,6 +747,7 @@ class MemoryService:
             source_agent=source_agent,
             visibility=visibility,
             holder=holder,
+            _pre_sanitization_findings=redaction_findings,
         )
 
         # Set entity_id on the claim (best-effort, don't fail ingest)
@@ -754,14 +761,8 @@ class MemoryService:
                     _conn.commit()
             except Exception:
                 pass
-        if sanitized.is_sensitive:
-            observability.bump_claim_filtered_findings(sanitized.findings)
-            self.store.record_event(
-                claim_id=claim.id,
-                event_type="policy_decision",
-                details="sensitive_redaction_applied",
-                payload={"findings": sanitized.findings},
-            )
+        if redaction_findings:
+            observability.bump_claim_filtered_findings(redaction_findings)
             if sanitized.encrypted_payload:
                 self.store.record_event(
                     claim_id=claim.id,
@@ -1578,20 +1579,21 @@ class MemoryService:
 
         from memorymaster.core import spool
 
+        safe_query, _ = sanitize_persisted_text(query_text or "")
         query_hash = (
-            hashlib.sha1(query_text.encode("utf-8")).hexdigest()[:12]
-            if query_text
+            hashlib.sha256(safe_query.encode("utf-8")).hexdigest()[:12]
+            if safe_query
             else None
         )
         with contextlib.suppress(Exception):
             spool.append(
                 db_path, "access", {"claim_ids": claim_ids, "query_hash": query_hash}
             )
-            if query_text:
+            if safe_query:
                 spool.append(
                     db_path,
                     "feedback",
-                    {"claim_ids": claim_ids, "query_text": query_text},
+                    {"claim_ids": claim_ids, "query_text": safe_query},
                 )
 
     def recompute_tiers(self) -> dict[str, int]:
