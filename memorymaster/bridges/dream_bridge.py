@@ -8,6 +8,7 @@ files with YAML frontmatter.
 """
 from __future__ import annotations
 
+from collections import defaultdict
 import logging
 import os
 import re
@@ -17,7 +18,7 @@ from pathlib import Path
 from memorymaster.core import observability, spool
 from memorymaster.stores._storage_shared import open_conn
 from memorymaster.core.security import redact_text as _redact_text
-from memorymaster.core.security import sanitize_claim_input
+from memorymaster.core.security import sanitize_claim_input, scan_persisted_value
 
 log = logging.getLogger(__name__)
 
@@ -471,7 +472,26 @@ def _query_exportable_claims(
         )
         rows = conn.execute(sql_fallback, [*allowed_tiers, *scope_params, fetch_limit]).fetchall()
 
-    return [dict(row) for row in rows]
+    claims = [dict(row) for row in rows]
+    citations_by_claim_id = _load_citations_by_claim_id(conn, claims)
+    for claim in claims:
+        claim["citations"] = citations_by_claim_id[claim["id"]]
+    return claims
+
+
+def _load_citations_by_claim_id(conn: sqlite3.Connection, claims: list[dict]) -> dict[int, list[dict]]:
+    """Load citations in SQLite-safe batches rather than one query per claim."""
+    citations_by_claim_id: dict[int, list[dict]] = defaultdict(list)
+    claim_ids = [claim["id"] for claim in claims]
+    for start in range(0, len(claim_ids), 900):
+        batch = claim_ids[start : start + 900]
+        placeholders = ",".join("?" for _ in batch)
+        sql = f"SELECT claim_id, source, locator, excerpt FROM citations WHERE claim_id IN ({placeholders})"
+        for row in conn.execute(sql, batch).fetchall():
+            citation = dict(row)
+            claim_id = citation.pop("claim_id")
+            citations_by_claim_id[claim_id].append(citation)
+    return citations_by_claim_id
 
 
 # ---------------------------------------------------------------------------
@@ -528,7 +548,7 @@ def dream_seed(
             break
 
         text = claim.get("text") or ""
-        if _is_sensitive(text):
+        if _is_sensitive(text) or scan_persisted_value(claim):
             skipped += 1
             continue
 

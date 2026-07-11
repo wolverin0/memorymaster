@@ -23,6 +23,7 @@ from typing import Any
 import httpx
 
 from memorymaster.core.models import Claim
+from memorymaster.core.security import scan_persisted_value
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,20 @@ class QdrantBackend:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _claim_representation(claim: Claim) -> dict[str, Any]:
+        return {
+            "text": claim.text,
+            "subject": claim.subject,
+            "predicate": claim.predicate,
+            "object_value": claim.object_value,
+            "claim_type": claim.claim_type,
+            "scope": claim.scope,
+            "citations": [
+                {"source": item.source, "locator": item.locator, "excerpt": item.excerpt} for item in claim.citations
+            ],
+        }
+
+    @staticmethod
     def _claim_text(claim: Claim) -> str:
         """Build the text string used for embedding a claim."""
         parts = []
@@ -149,6 +164,10 @@ class QdrantBackend:
 
     def upsert_claim(self, claim: Claim, source: str = "memorymaster") -> bool:
         """Embed and upsert a single claim.  Returns True on success."""
+        findings = scan_persisted_value(self._claim_representation(claim))
+        if findings:
+            logger.warning("Qdrant upsert rejected sensitive claim %d (%s)", claim.id, ",".join(findings))
+            return False
         vec = self._embed(self._claim_text(claim))
         if vec is None:
             return False
@@ -309,6 +328,11 @@ class QdrantBackend:
 
             batch: list[dict[str, Any]] = []
             for _idx, claim in enumerate(claims):
+                findings = scan_persisted_value(self._claim_representation(claim))
+                if findings:
+                    stats["skipped"] += 1
+                    logger.warning("Qdrant sync skipped sensitive claim %d (%s)", claim.id, ",".join(findings))
+                    continue
                 vec = self._embed(self._claim_text(claim))
                 if vec is None:
                     stats["errors"] += 1

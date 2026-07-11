@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from memorymaster.core import observability
+from memorymaster.core.security import scan_persisted_value
 from memorymaster.stores._storage_shared import ConcurrentModificationError
 from memorymaster.core.lifecycle import can_transition, transition_claim
 
@@ -112,11 +113,30 @@ def run(
     summary_graph_path = out_dir / "summary_graph.json"
     traceability_path = out_dir / "traceability.json"
 
-    archive_candidates = store.find_for_compaction(retain_days=retain_days)
+    all_candidates = store.find_for_compaction(retain_days=retain_days)
+    archive_candidates = []
+    skipped_sensitive_ids: list[int] = []
+    for claim in all_candidates:
+        citations = store.list_citations(claim.id)
+        representation = {
+            "text": claim.text,
+            "subject": claim.subject,
+            "predicate": claim.predicate,
+            "object_value": claim.object_value,
+            "scope": claim.scope,
+            "citations": [
+                {"source": item.source, "locator": item.locator, "excerpt": item.excerpt} for item in citations
+            ],
+        }
+        if scan_persisted_value(representation):
+            skipped_sensitive_ids.append(claim.id)
+            continue
+        archive_candidates.append(claim)
     if dry_run:
         return {
             "dry_run": True,
             "candidate_claims": len(archive_candidates),
+            "skipped_sensitive": len(skipped_sensitive_ids),
             "archived_claims": 0,
             "deleted_events": 0,
             "planned_archives": [
@@ -250,6 +270,7 @@ def run(
         "retain_days": retain_days,
         "event_retain_days": event_retain_days,
         "candidate_claims": len(archive_candidates),
+        "skipped_sensitive": len(skipped_sensitive_ids),
         "archived_claims": archived,
         "deleted_events": deleted_events,
     }
@@ -285,6 +306,7 @@ def run(
             "event_retain_days": event_retain_days,
             "archived_claims": archived,
             "deleted_events": deleted_events,
+            "skipped_sensitive": len(skipped_sensitive_ids),
             "artifacts": {
                 "summary_graph": str(summary_graph_path),
                 "traceability": str(traceability_path),
