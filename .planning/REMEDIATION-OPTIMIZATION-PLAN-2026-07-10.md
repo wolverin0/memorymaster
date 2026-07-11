@@ -83,7 +83,7 @@ Phase 0 must replace qualitative capacity goals with recorded numeric gates in t
 
 - [x] Phase 0 — evidence, numerical gates, and red tests
 - [x] R1.1 — authenticated request context and MCP authorization
-- [ ] R1.2 — Postgres tenant enforcement and RLS
+- [x] R1.2 — Postgres tenant enforcement and RLS (repository complete; external proof blocked)
 - [ ] R1.3 — immediate Qdrant containment
 - [ ] R1.4 — complete sensitivity/write gateway and legacy inventory
 - [ ] R1.5 — secure deployment and supply-chain defaults

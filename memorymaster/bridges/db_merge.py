@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from memorymaster.stores._storage_shared import connect_ro, open_conn
+from memorymaster.stores.store_factory import is_postgres_dsn
 
 logger = logging.getLogger(__name__)
 
@@ -435,6 +436,11 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
 
     Returns dict with: scanned, merged, skipped, errors
     """
+    if is_postgres_dsn(str(target_db)) or is_postgres_dsn(str(source_db)):
+        raise ValueError(
+            "merge-db supports SQLite paths only; raw Postgres team merges are disabled."
+        )
+
     stats = {"scanned": 0, "merged": 0, "skipped": 0, "errors": 0}
 
     if not Path(source_db).exists():

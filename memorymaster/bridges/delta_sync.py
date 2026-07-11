@@ -28,6 +28,7 @@ import sqlite3
 from pathlib import Path
 
 from memorymaster.stores._storage_shared import connect_ro, open_conn
+from memorymaster.stores.store_factory import is_postgres_dsn
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,11 @@ def export_delta(
         FileNotFoundError: source DB missing.
         ValueError: source DB lacks the expected tables.
     """
+    if is_postgres_dsn(str(source_db)) or is_postgres_dsn(str(output_path)):
+        raise ValueError(
+            "export-delta supports SQLite paths only; raw Postgres team deltas are disabled."
+        )
+
     source_db = str(source_db)
     output_path = Path(output_path)
     if not Path(source_db).exists():

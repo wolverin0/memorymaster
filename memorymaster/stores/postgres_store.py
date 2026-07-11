@@ -1075,6 +1075,17 @@ class PostgresStore(SQLiteStore):
             raise
         return conn
 
+    def connect_ro(self) -> Any:
+        raise PermissionError(
+            "connect_ro is a SQLite-only surface and is unavailable in Postgres team mode."
+        )
+
+    def _deny_unsupported_team_surface(self, surface: str) -> None:
+        raise PermissionError(
+            f"{surface} is unavailable in Postgres team mode until its tables "
+            "have tenant-scoped policy coverage."
+        )
+
     def _connect_schema_admin(self) -> Any:
         if self.require_tenant:
             raise PermissionError(
@@ -3445,6 +3456,7 @@ class PostgresStore(SQLiteStore):
         display_name: str,
         config_json: dict[str, object] | str | None = None,
     ) -> ExternalSource:
+        self._deny_unsupported_team_surface("upsert_external_source")
         _, _, Jsonb = self._load_psycopg()
         normalized_source_type = source_type.strip().lower()
         normalized_display_name = display_name.strip()
@@ -3492,6 +3504,7 @@ class PostgresStore(SQLiteStore):
         content_hash: str | None = None,
         sensitivity: str | None = None,
     ) -> SourceItem:
+        self._deny_unsupported_team_surface("upsert_source_item")
         from memorymaster.stores._storage_sources import _normalize_sensitivity
 
         _, _, Jsonb = self._load_psycopg()
@@ -3575,6 +3588,7 @@ class PostgresStore(SQLiteStore):
         return self._row_to_source_item(row)
 
     def get_source_item(self, *, source_id: int, source_item_id: str) -> SourceItem | None:
+        self._deny_unsupported_team_surface("get_source_item")
         normalized_source_item_id = source_item_id.strip()
         if source_id <= 0:
             raise ValueError("source_id must be positive.")
@@ -3589,6 +3603,7 @@ class PostgresStore(SQLiteStore):
         return self._row_to_source_item(row) if row is not None else None
 
     def get_source_item_by_id(self, source_item_row_id: int) -> SourceItem | None:
+        self._deny_unsupported_team_surface("get_source_item_by_id")
         if source_item_row_id <= 0:
             raise ValueError("source_item_row_id must be positive.")
         with self.connect() as conn, conn.cursor() as cur:
@@ -3608,6 +3623,7 @@ class PostgresStore(SQLiteStore):
         payload_json: dict[str, object] | str | None = None,
         sensitivity: str | None = None,
     ) -> EvidenceItem:
+        self._deny_unsupported_team_surface("add_evidence_item")
         from memorymaster.stores._storage_sources import _normalize_sensitivity
 
         _, _, Jsonb = self._load_psycopg()
@@ -3668,6 +3684,7 @@ class PostgresStore(SQLiteStore):
         evidence_type: str | None = None,
         limit: int = 100,
     ) -> list[EvidenceItem]:
+        self._deny_unsupported_team_surface("list_evidence_items")
         clauses: list[str] = []
         params: list[object] = []
         if source_item_id is not None:
@@ -3703,6 +3720,7 @@ class PostgresStore(SQLiteStore):
         payload_json: dict[str, object] | str | None = None,
         idempotency_key: str | None = None,
     ) -> ActionProposal:
+        self._deny_unsupported_team_surface("create_action_proposal")
         _, _, Jsonb = self._load_psycopg()
         normalized_type = proposal_type.strip().lower()
         normalized_title = title.strip()
@@ -3766,6 +3784,7 @@ class PostgresStore(SQLiteStore):
         return self._row_to_action_proposal(row)
 
     def get_action_proposal_by_idempotency_key(self, idempotency_key: str) -> ActionProposal | None:
+        self._deny_unsupported_team_surface("get_action_proposal_by_idempotency_key")
         normalized = idempotency_key.strip()
         if not normalized:
             return None
@@ -3783,6 +3802,7 @@ class PostgresStore(SQLiteStore):
         exported_at: str | None = None,
         payload_json: dict[str, object] | str | None = None,
     ) -> ActionProposal:
+        self._deny_unsupported_team_surface("update_action_proposal_status")
         _, _, Jsonb = self._load_psycopg()
         normalized_status = status.strip().lower()
         if proposal_id <= 0:
@@ -3840,6 +3860,7 @@ class PostgresStore(SQLiteStore):
         source_item_row_id: int,
         sensitivity: str | None,
     ) -> SourceItem:
+        self._deny_unsupported_team_surface("set_source_item_sensitivity")
         from memorymaster.stores._storage_sources import _normalize_sensitivity
 
         if source_item_row_id <= 0:
@@ -3876,6 +3897,7 @@ class PostgresStore(SQLiteStore):
         evidence_item_row_id: int,
         sensitivity: str | None,
     ) -> EvidenceItem:
+        self._deny_unsupported_team_surface("set_evidence_item_sensitivity")
         from memorymaster.stores._storage_sources import _normalize_sensitivity
 
         if evidence_item_row_id <= 0:
@@ -3942,6 +3964,7 @@ class PostgresStore(SQLiteStore):
         status: str = "pending",
         next_attempt_time: str | None = None,
     ) -> MediaRetryItem:
+        self._deny_unsupported_team_surface("enqueue_media_retry")
         if source_item_id <= 0:
             raise ValueError("source_item_id must be positive.")
         normalized_key = (media_key or "").strip()
@@ -4002,6 +4025,7 @@ class PostgresStore(SQLiteStore):
         return self._row_to_media_retry(row)
 
     def claim_pending_media_retries(self, limit: int = 25) -> list[MediaRetryItem]:
+        self._deny_unsupported_team_surface("claim_pending_media_retries")
         if limit <= 0:
             return []
         now = utc_now()
@@ -4048,6 +4072,7 @@ class PostgresStore(SQLiteStore):
         last_error: str | None = None,
         next_attempt_time: str | None = None,
     ) -> MediaRetryItem:
+        self._deny_unsupported_team_surface("record_media_retry_outcome")
         if retry_id <= 0:
             raise ValueError("retry_id must be positive.")
         if status not in MEDIA_RETRY_STATUSES:
@@ -4102,6 +4127,7 @@ class PostgresStore(SQLiteStore):
         source_item_id: int | None = None,
         limit: int = 100,
     ) -> list[MediaRetryItem]:
+        self._deny_unsupported_team_surface("list_media_retries")
         clauses: list[str] = []
         params: list[object] = []
         if status:
@@ -4125,6 +4151,7 @@ class PostgresStore(SQLiteStore):
         return [self._row_to_media_retry(r) for r in rows]
 
     def media_retry_status_counts(self) -> dict[str, int]:
+        self._deny_unsupported_team_surface("media_retry_status_counts")
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute("SELECT status, COUNT(*) AS n FROM media_retry_queue GROUP BY status")
             rows = cur.fetchall()
@@ -4144,6 +4171,7 @@ class PostgresStore(SQLiteStore):
         payload_json: dict[str, object] | str | None = None,
     ) -> ActionProposal:
         """Postgres mirror of SQLite update_action_proposal_fields."""
+        self._deny_unsupported_team_surface("update_action_proposal_fields")
         _, _, Jsonb = self._load_psycopg()
         if proposal_id <= 0:
             raise ValueError("proposal_id must be positive.")
@@ -4220,6 +4248,7 @@ class PostgresStore(SQLiteStore):
         destination: str | None = None,
         limit: int = 100,
     ) -> list[ActionProposal]:
+        self._deny_unsupported_team_surface("list_action_proposals")
         clauses: list[str] = []
         params: list[object] = []
         if status:

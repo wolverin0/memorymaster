@@ -7,7 +7,7 @@ from memorymaster.stores.storage import SQLiteStore
 
 
 def is_postgres_dsn(value: str) -> bool:
-    lowered = value.lower()
+    lowered = value.strip().lower()
     return lowered.startswith("postgres://") or lowered.startswith("postgresql://")
 
 
@@ -33,7 +33,7 @@ def create_store(
         from memorymaster.stores.postgres_store import PostgresStore
 
         return PostgresStore(
-            target,
+            target.strip(),
             tenant_id=tenant_id,
             require_tenant=require_tenant,
             principal=principal,
