@@ -1,4 +1,4 @@
-"""Red contracts for authoritative filtering of Qdrant candidates (MM-SEC-02)."""
+"""Containment contracts for authoritative Qdrant retrieval (MM-SEC-02)."""
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -11,21 +11,17 @@ from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
 
 
-AUDIT_BASELINE = pytest.mark.xfail(
-    strict=True,
-    reason="audit baseline MM-SEC-02: Qdrant bypasses authoritative policy filtering",
-)
-
-
 class FakeQdrant:
     """Network-free vector candidate source controlled by each test."""
 
     def __init__(self, hits: Iterable[dict]) -> None:
         self._hits = list(hits)
         self.closed = False
+        self.search_calls = 0
 
     def search(self, query_text: str, limit: int = 5) -> list[dict]:
         del query_text
+        self.search_calls += 1
         return self._hits[:limit]
 
     def close(self) -> None:
@@ -60,7 +56,6 @@ def _init_db(tmp_path) -> tuple[str, str, MemoryService]:
     return db, str(workspace_path), svc
 
 
-@AUDIT_BASELINE
 def test_qdrant_orphan_payload_is_never_returned(tmp_path, monkeypatch) -> None:
     """A vector point is only an ID candidate; payload is never authoritative."""
     db, workspace, _svc = _init_db(tmp_path)
@@ -93,10 +88,13 @@ def test_qdrant_orphan_payload_is_never_returned(tmp_path, monkeypatch) -> None:
 
     assert result["rows"] == 0
     assert result["claims"] == []
-    assert fake.closed is True
+    assert result["requested_retrieval_mode"] == "qdrant"
+    assert result["retrieval_mode"] == "legacy"
+    assert result["containment_reason"]
+    assert fake.search_calls == 0
+    assert fake.closed is False
 
 
-@AUDIT_BASELINE
 def test_qdrant_filters_archived_and_wrong_scope_rows(tmp_path, monkeypatch) -> None:
     """Primary-store lifecycle and scope policy must filter every vector hit."""
     db, workspace, svc = _init_db(tmp_path)
@@ -117,7 +115,7 @@ def test_qdrant_filters_archived_and_wrong_scope_rows(tmp_path, monkeypatch) -> 
         [CitationInput(source="test://foreign")],
         scope="project:other",
     )
-    _install_fake_qdrant(
+    fake = _install_fake_qdrant(
         monkeypatch,
         [
             {"claim_id": archived.id, "score": 0.98, "payload": {"state": "confirmed"}},
@@ -138,3 +136,4 @@ def test_qdrant_filters_archived_and_wrong_scope_rows(tmp_path, monkeypatch) -> 
 
     assert result["rows"] == 0
     assert result["claims"] == []
+    assert fake.search_calls == 0

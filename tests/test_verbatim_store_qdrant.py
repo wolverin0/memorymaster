@@ -46,32 +46,12 @@ def _create_verbatim_db(db_path):
     conn.close()
 
 
-def test_hybrid_search_keeps_qdrant_rows_with_same_2000_char_prefix(tmp_path, monkeypatch):
+def test_hybrid_search_does_not_read_qdrant_payloads_during_quarantine(tmp_path, monkeypatch):
     db_path = tmp_path / "verbatim.db"
     _create_verbatim_db(db_path)
 
-    prefix = "x" * 2000
-    full_contents = [f"{prefix} unique suffix {idx}" for idx in range(3)]
-    qdrant_rows = [
-        {
-            "id": idx,
-            "score": 1.0 - (idx * 0.01),
-            "payload": {
-                "content": content[:2000],
-                "content_hash": hashlib.sha256(content.encode()).hexdigest(),
-                "scope": "project:test",
-                "session_id": "session",
-                "role": "user",
-            },
-        }
-        for idx, content in enumerate(full_contents, start=1)
-    ]
-
     def fake_urlopen(req, timeout):
-        if req.full_url == "https://api.openai.com/v1/embeddings":
-            return _Response({"data": [{"embedding": [0.0] * verbatim_store.EMBED_DIM}]})
-        assert req.full_url.endswith("/points/search")
-        return _Response({"result": qdrant_rows})
+        pytest.fail(f"quarantined search reached network: {req.full_url}")
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(verbatim_store, "QDRANT_URL", "http://test-qdrant:6333")
@@ -85,11 +65,7 @@ def test_hybrid_search_keeps_qdrant_rows_with_same_2000_char_prefix(tmp_path, mo
         mode="hybrid",
     )
 
-    assert [r["id"] for r in results] == [1, 2, 3]
-    assert [r["content_hash"] for r in results] == [
-        hashlib.sha256(content.encode()).hexdigest()
-        for content in full_contents
-    ]
+    assert results == []
 
 
 def test_sync_to_qdrant_payload_uses_full_content_hash(tmp_path, monkeypatch):

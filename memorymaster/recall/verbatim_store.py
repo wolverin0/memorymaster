@@ -1,12 +1,12 @@
-"""Verbatim memory store — raw conversation storage with vector search.
+"""Verbatim memory store — raw conversation storage with authoritative search.
 
 Stores full conversation text without summarization or extraction.
 Complements the claims DB: claims = curated knowledge, verbatim = raw recall.
 
 Search modes:
   - FTS5 for keyword search (fast, local)
-  - Qdrant for semantic search (when available)
-  - Hybrid: FTS5 + Qdrant merged results
+  - Vector/hybrid requests currently downgrade to FTS5
+  - Qdrant remains available only for index synchronization during quarantine
 """
 from __future__ import annotations
 
@@ -20,7 +20,6 @@ import urllib.error
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 # Credential detection delegated to the canonical filter in memorymaster.core.security.
 from memorymaster.core import spool
@@ -356,22 +355,15 @@ def search_verbatim(
 ) -> list[dict]:
     """Search verbatim memories.
 
-    mode: "fts" (keyword), "vector" (Qdrant), "hybrid" (both merged)
+    Qdrant-backed ``vector`` and ``hybrid`` requests are temporarily
+    downgraded to authoritative FTS until governed rehydration is available.
     """
-    results = []
+    requested_mode = str(mode).strip().lower()
+    effective_mode = "fts" if requested_mode in {"vector", "hybrid"} else requested_mode
+    if effective_mode != "fts":
+        return []
 
-    if mode in ("fts", "hybrid"):
-        results.extend(_search_fts(db_path, query, scope, limit))
-
-    if mode in ("vector", "hybrid"):
-        vector_results = _search_vector(query, scope, limit)
-        # Merge: dedupe by stable row-id key (see _row_dedup_key for F-3 context)
-        seen = {_row_dedup_key(r) for r in results}
-        for vr in vector_results:
-            key = _row_dedup_key(vr)
-            if key not in seen:
-                results.append(vr)
-                seen.add(key)
+    results = _search_fts(db_path, query, scope, limit)
 
     # Sort by score descending, limit
     results.sort(key=lambda x: -x.get("score", 0))
@@ -424,59 +416,15 @@ def _search_fts(db_path: str, query: str, scope: str | None, limit: int) -> list
 
 
 def _search_vector(query: str, scope: str | None, limit: int) -> list[dict]:
-    """Qdrant semantic search over verbatim memories."""
-    if not QDRANT_URL:
-        return []
-    try:
-        # Embed query with OpenAI
-        api_key = os.environ.get("OPENAI_API_KEY", "")
-        if not api_key:
-            return []
-
-        embed_url = "https://api.openai.com/v1/embeddings"
-        payload = {"model": "text-embedding-3-small", "input": [query]}
-        req = urllib.request.Request(
-            embed_url,
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            result = json.loads(resp.read().decode())
-        vector = result["data"][0]["embedding"]
-
-        # Search Qdrant
-        search_payload: dict[str, Any] = {
-            "vector": vector,
-            "limit": limit,
-            "with_payload": True,
-        }
-        if scope:
-            search_payload["filter"] = {"must": [{"key": "scope", "match": {"value": scope}}]}
-
-        req = urllib.request.Request(
-            f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}/points/search",
-            data=json.dumps(search_payload).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            result = json.loads(resp.read().decode())
-
-        return [
-            {"id": h.get("id"), "content": h["payload"].get("content", ""),
-             "content_hash": h["payload"].get("content_hash", ""),
-             "scope": h["payload"].get("scope", ""),
-             "session_id": h["payload"].get("session_id", ""), "role": h["payload"].get("role", ""),
-             "score": h.get("score", 0), "source": "vector"}
-            for h in result.get("result", [])
-        ]
-    except Exception:
-        return []
+    """Reject raw Qdrant payload reads until governed rehydration exists."""
+    del query, scope, limit
+    raise PermissionError(
+        "Verbatim Qdrant retrieval is quarantined pending authoritative rehydration."
+    )
 
 
 def sync_to_qdrant(db_path: str, batch_size: int = 50) -> dict[str, int]:
-    """Sync unsynced verbatim memories to Qdrant for vector search."""
+    """Sync verbatim rows to the Qdrant index; read retrieval is quarantined."""
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
         return {"synced": 0, "error": "no OPENAI_API_KEY"}

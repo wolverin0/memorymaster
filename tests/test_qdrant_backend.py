@@ -81,11 +81,13 @@ class TestEmbedFailure:
         claim = _fake_claim()
         assert backend.upsert_claim(claim) is False
 
-    def test_search_returns_empty_on_embed_failure(self):
+    def test_search_is_quarantined_before_embed_failure(self):
         backend = QdrantBackend(qdrant_url="http://localhost:1", ollama_url="http://localhost:2")
         backend._client = MagicMock()
         backend._client.post.side_effect = Exception("connection refused")
-        assert backend.search("test query") == []
+        with pytest.raises(PermissionError, match="quarantined"):
+            backend.search("test query")
+        backend._client.post.assert_not_called()
 
     def test_delete_returns_false_on_failure(self):
         backend = QdrantBackend(qdrant_url="http://localhost:1", ollama_url="http://localhost:2")
@@ -215,27 +217,25 @@ class TestSearchSuccess:
         backend._client.post.side_effect = [embed_resp, search_resp]
         return backend
 
-    def test_search_returns_results(self):
+    def test_search_does_not_return_raw_results_during_quarantine(self):
         hits = [{"payload": {"claim_id": 1}, "score": 0.95}]
         backend = self._make_backend_with_search(hits)
-        results = backend.search("test query")
-        assert len(results) == 1
-        assert results[0]["claim_id"] == 1
-        assert results[0]["score"] == 0.95
+        with pytest.raises(PermissionError, match="quarantined"):
+            backend.search("test query")
+        backend._client.post.assert_not_called()
 
-    def test_search_empty_results(self):
+    def test_search_empty_results_still_reports_quarantine(self):
         backend = self._make_backend_with_search([])
-        assert backend.search("nothing") == []
+        with pytest.raises(PermissionError, match="quarantined"):
+            backend.search("nothing")
 
-    def test_search_with_filters(self):
+    def test_search_with_filters_remains_quarantined(self):
         backend = self._make_backend_with_search([])
-        backend.search("test", states=["confirmed"], min_confidence=0.5)
-        # Second post call is the search — check the body has filters
-        search_call = backend._client.post.call_args_list[1]
-        body = search_call[1]["json"]
-        assert "filter" in body
+        with pytest.raises(PermissionError, match="quarantined"):
+            backend.search("test", states=["confirmed"], min_confidence=0.5)
+        backend._client.post.assert_not_called()
 
-    def test_search_qdrant_failure_returns_empty(self):
+    def test_search_qdrant_failure_is_never_reached(self):
         backend = QdrantBackend(qdrant_url="http://localhost:1", ollama_url="http://localhost:2")
         backend._client = MagicMock()
         embed_resp = MagicMock()
@@ -243,7 +243,9 @@ class TestSearchSuccess:
         embed_resp.raise_for_status = MagicMock()
         embed_resp.json.return_value = {"embeddings": [[0.1] * EMBEDDING_DIMS]}
         backend._client.post.side_effect = [embed_resp, Exception("qdrant down")]
-        assert backend.search("test") == []
+        with pytest.raises(PermissionError, match="quarantined"):
+            backend.search("test")
+        backend._client.post.assert_not_called()
 
 
 class TestEnsureCollection:

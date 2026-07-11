@@ -490,65 +490,12 @@ def _effective_scope_allowlist(raw: str, workspace: str) -> list[str] | None:
 
 
 def _qdrant_query(query: str, db: str, workspace: str, limit: int) -> dict[str, Any]:
-    """Fast semantic search via Qdrant+Ollama (no local model load)."""
-    try:
-        from memorymaster.recall.qdrant_backend import QdrantBackend
-    except ImportError:
-        return {"ok": False, "error": "qdrant mode requires httpx. Install with: pip install 'memorymaster[qdrant]'"}
-    backend = QdrantBackend()
-    results = backend.search(query, limit=limit)
-    backend.close()
-    if not results:
-        return {"ok": True, "rows": 0, "claims": [], "rows_data": []}
-
-    # Enrich with full claim data from the DB
-    svc = _service(db, workspace)
-    enriched_rows: list[dict[str, Any]] = []
-    enriched_claims: list[dict[str, Any]] = []
-    for hit in results:
-        cid = hit.get("claim_id")
-        if cid is None:
-            continue
-        claim = svc.store.get_claim(int(cid), include_citations=True)
-        if claim is None:
-            # Claim may have been archived since last sync — return Qdrant payload
-            enriched_rows.append({
-                "claim": hit.get("payload", {}),
-                "status": hit.get("payload", {}).get("state", "unknown"),
-                "annotation": {},
-                "score": hit.get("score", 0.0),
-                "lexical_score": 0.0,
-                "freshness_score": 0.0,
-                "confidence_score": hit.get("payload", {}).get("confidence", 0.0),
-                "vector_score": hit.get("score", 0.0),
-            })
-            enriched_claims.append(hit.get("payload", {}))
-            continue
-        claim_dict = _claim_to_dict(claim)
-        enriched_claims.append(claim_dict)
-        enriched_rows.append({
-            "claim": claim_dict,
-            "status": claim.status,
-            "annotation": {
-                "status": claim.status,
-                "active": claim.status == "confirmed",
-                "stale": claim.status == "stale",
-                "conflicted": claim.status == "conflicted",
-                "pinned": bool(claim.pinned),
-            },
-            "score": hit.get("score", 0.0),
-            "lexical_score": 0.0,
-            "freshness_score": 0.0,
-            "confidence_score": claim.confidence,
-            "vector_score": hit.get("score", 0.0),
-        })
-    return {
-        "ok": True,
-        "rows": len(enriched_claims),
-        "claims": enriched_claims,
-        "rows_data": enriched_rows,
-        "retrieval_mode": "qdrant",
-    }
+    """Reject the legacy raw-Qdrant retrieval entrypoint during quarantine."""
+    del query, db, workspace, limit
+    raise PermissionError(
+        "Direct Qdrant retrieval is quarantined until the governed retrieval "
+        "planner can enforce authoritative policy rehydration."
+    )
 
 
 def _checkpoint_batch(
@@ -1146,10 +1093,21 @@ if FastMCP is not None:
 
     @mcp.tool()
     def classify_query(query: str) -> dict[str, Any]:
-        """Classify a query and recommend the best retrieval mode."""
+        """Classify a query and report its recommended and effective modes."""
         from memorymaster.recall.query_classifier import classify_query as _classify, recommended_retrieval_mode
         qtype = _classify(query)
-        return {"query_type": qtype, "recommended_mode": recommended_retrieval_mode(qtype)}
+        recommended_mode = recommended_retrieval_mode(qtype)
+        effective_mode = "legacy" if recommended_mode == "qdrant" else recommended_mode
+        result = {
+            "query_type": qtype,
+            "recommended_mode": recommended_mode,
+            "effective_mode": effective_mode,
+        }
+        if recommended_mode == "qdrant":
+            result["containment_reason"] = (
+                "qdrant retrieval is quarantined pending the governed retrieval planner"
+            )
+        return result
 
     def _apply_detail_level(claim_dict: dict[str, Any], detail_level: str) -> dict[str, Any]:
         """Filter claim dict fields based on requested detail level.
@@ -1202,7 +1160,7 @@ if FastMCP is not None:
 
         retrieval_mode options:
           - "legacy" (default, fastest ~0.1s): SQL text search
-          - "qdrant" (fast ~0.5s): semantic search via Qdrant+Ollama, requires QDRANT_URL
+          - "qdrant": temporarily quarantined; falls back to authoritative lexical search
           - "hybrid" (slow ~8s): local sentence-transformers vector + lexical ranking
 
         auto_classify: when True and retrieval_mode is "legacy", classify the query
@@ -1220,19 +1178,23 @@ if FastMCP is not None:
             context="mcp.query_memory",
         )
 
+        requested_retrieval_mode = retrieval_mode
+        classified_retrieval_mode: str | None = None
         query_type: str | None = None
+        containment_reason: str | None = None
         if auto_classify and retrieval_mode == "legacy":
             query_type = _classify(query)
-            retrieval_mode = recommended_retrieval_mode(query_type)
+            classified_retrieval_mode = recommended_retrieval_mode(query_type)
+            retrieval_mode = classified_retrieval_mode
 
-        # Qdrant retrieval mode: fast semantic search via network Qdrant+Ollama
+        # Qdrant payloads cannot express the full tenant/scope/visibility
+        # policy. R1.3 keeps recall useful through the authoritative lexical
+        # planner until R2.1 can safely reintroduce vector ID candidates.
         if retrieval_mode == "qdrant":
-            result = _qdrant_query(query, db, workspace, limit)
-            if query_type is not None:
-                result["query_type"] = query_type
-            if detail_level != "standard":
-                result["claims"] = [_apply_detail_level(c, detail_level) for c in result.get("claims", [])]
-            return result
+            retrieval_mode = "legacy"
+            containment_reason = (
+                "qdrant retrieval is quarantined pending the governed retrieval planner"
+            )
 
         svc = _service(db, workspace)
         rows_data = svc.query_rows(
@@ -1274,6 +1236,14 @@ if FastMCP is not None:
         }
         if query_type is not None:
             response["query_type"] = query_type
+        if containment_reason is not None:
+            response.update({
+                "requested_retrieval_mode": requested_retrieval_mode,
+                "retrieval_mode": retrieval_mode,
+                "containment_reason": containment_reason,
+            })
+            if classified_retrieval_mode is not None:
+                response["classified_retrieval_mode"] = classified_retrieval_mode
 
         # Log to vault chronicle
         try:
@@ -1918,13 +1888,27 @@ if FastMCP is not None:
     ) -> dict[str, Any]:
         """Search raw conversation memories (verbatim, unsummarized).
 
-        mode: "fts" (keyword), "vector" (Qdrant semantic), "hybrid" (both)
+        ``vector`` and ``hybrid`` temporarily use authoritative FTS because
+        direct Qdrant payload retrieval is quarantined pending rehydration.
         Use this when query_memory (claims) doesn't find what you need —
         verbatim search finds exact conversation fragments.
         """
         from memorymaster.recall.verbatim_store import search_verbatim as _search
-        results = _search(_resolve_db(db), query, scope=scope or None, limit=limit, mode=mode)
-        return {"ok": True, "rows": len(results), "results": results}
+        requested_mode = str(mode).strip().lower()
+        effective_mode = "fts" if requested_mode in {"vector", "hybrid"} else requested_mode
+        results = _search(
+            _resolve_db(db), query, scope=scope or None, limit=limit, mode=effective_mode
+        )
+        response = {"ok": True, "rows": len(results), "results": results}
+        if effective_mode != requested_mode:
+            response.update({
+                "requested_mode": requested_mode,
+                "mode": effective_mode,
+                "containment_reason": (
+                    "verbatim qdrant retrieval is quarantined pending authoritative rehydration"
+                ),
+            })
+        return response
 
     @mcp.tool()
     def get_usage_rollup(

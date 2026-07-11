@@ -29,18 +29,27 @@ tool, grouped by purpose. For the MCP server config block see the
 
 ## Query & retrieval (read)
 
+> **R1.3 Qdrant containment:** local-trusted `query_memory(retrieval_mode="qdrant")`
+> reports the requested/effective modes and uses authoritative lexical fallback.
+> Auto-classification follows the same rule. Prompt-context Qdrant fallback is
+> disconnected, and `search_verbatim(mode="vector"|"hybrid")` reports an FTS5
+> fallback instead of returning Qdrant payloads. Team MCP denies every semantic
+> mode, including Qdrant and local hybrid. Qdrant sync/reconcile are CLI/index
+> maintenance operations, not MCP read paths. Governed Qdrant reads are deferred
+> to R2.1 ID-candidate retrieval plus SQLite/Postgres rehydration.
+
 | Tool | Purpose |
 |------|---------|
-| `query_memory` | Query memory for relevant claims. Includes candidates by default for MCP use. |
+| `query_memory` | Query authoritative claims; a local-trusted Qdrant request falls back to lexical retrieval, while team semantic requests are denied. |
 | `query_for_context` | Pack the most relevant claims into a token-budgeted context block. |
 | `query_for_task` | Look-ahead task-aware briefing for an upcoming PRD task. |
 | `query_rules` | Retrieve rule-shaped claims matching a query, in prescriptive form. |
 | `query_claim_paths` | Traverse claim relationship paths from a starting claim (read-only). |
 | `query_meta_decisions` | Aggregate matching decision/architecture claims across all project scopes. |
 | `federated_query` | Query across ALL scopes — cross-project federation. |
-| `classify_query` | Classify a query and recommend the best retrieval mode. |
+| `classify_query` | Classify a query and report both the recommended mode and its containment-safe effective mode. |
 | `recall_analysis` | Explain WHY each claim ranked where it did (ranking introspection). |
-| `search_verbatim` | Search raw conversation memories (verbatim, unsummarized). |
+| `search_verbatim` | Search raw conversation memories through FTS5; vector/hybrid requests currently report an FTS5 fallback. |
 | `read_active_tasks` | Read and parse the project's `active_tasks.md`. |
 | `rules_export` | Export mined rule-shaped claims, filtered by confidence + status. |
 

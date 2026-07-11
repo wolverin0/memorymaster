@@ -303,7 +303,8 @@ def format_plan(d: Detected, *, want_full_stack: bool) -> list[str]:
                 _line(
                     _STEP_CANT,
                     "Qdrant — Docker Compose not found; running in SQLite-only mode. "
-                    "Install Docker or point QDRANT_URL at an existing service to enable vector recall.",
+                    "Install Docker or point QDRANT_URL at an existing service for Qdrant "
+                    "index maintenance; retrieval remains quarantined.",
                 )
             )
 

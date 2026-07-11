@@ -1,8 +1,9 @@
 """Qdrant vector store backend for MemoryMaster.
 
-Uses Qdrant at a network-accessible endpoint as a search index alongside
-the primary SQLite/Postgres store.  Embeddings come from Ollama
-(qwen3-embedding:8b, 4096-dim) via HTTP.
+Uses Qdrant at a network-accessible endpoint as a maintenance index alongside
+the primary SQLite/Postgres store. Embeddings come from Ollama
+(qwen3-embedding:8b, 4096-dim) via HTTP. Direct reads are quarantined until a
+governed planner can rehydrate candidate IDs from the authoritative store.
 
 Environment variables / constructor params:
     QDRANT_URL          – default http://localhost:6333
@@ -253,49 +254,11 @@ class QdrantBackend:
         min_confidence: float = 0.0,
         states: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Semantic search.  Returns list of {claim_id, score, payload}."""
-        vec = self._embed(query_text)
-        if vec is None:
-            return []
-
-        filters: dict[str, Any] = {"must": []}
-        if states:
-            filters["must"].append({
-                "key": "state",
-                "match": {"any": states},
-            })
-        if min_confidence > 0:
-            filters["must"].append({
-                "key": "confidence",
-                "range": {"gte": min_confidence},
-            })
-
-        body: dict[str, Any] = {
-            "vector": vec,
-            "limit": limit,
-            "with_payload": True,
-        }
-        if filters["must"]:
-            body["filter"] = filters
-
-        try:
-            resp = self._client.post(
-                f"{self.qdrant_url}/collections/{self.collection}/points/search",
-                json=body,
-            )
-            resp.raise_for_status()
-            results = resp.json().get("result", [])
-            return [
-                {
-                    "claim_id": hit["payload"].get("claim_id"),
-                    "score": hit["score"],
-                    "payload": hit["payload"],
-                }
-                for hit in results
-            ]
-        except Exception as exc:
-            logger.warning("Qdrant search failed: %s", exc)
-            return []
+        """Reject raw payload reads until the governed planner rehydrates IDs."""
+        del query_text, limit, min_confidence, states
+        raise PermissionError(
+            "Qdrant retrieval is quarantined pending authoritative policy rehydration."
+        )
 
     def _batch_upsert(self, points: list[dict[str, Any]]) -> bool:
         """Upsert a batch of points to Qdrant in a single request."""

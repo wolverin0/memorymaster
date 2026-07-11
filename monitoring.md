@@ -1,7 +1,7 @@
 ---
 project: memorymaster
 path: G:\_OneDrive\OneDrive\Desktop\Py Apps\memorymaster
-stack: Python 3.10+ / SQLite+FTS5 / Qdrant (optional) / FastMCP
+stack: Python 3.10+ / SQLite+FTS5 / Qdrant maintenance index (optional) / FastMCP
 repo: https://github.com/wolverin0/memorymaster
 entry_point: "python -m memorymaster --db memorymaster.db <command>"
 test_command: "python -m pytest tests/ -q --tb=short"
@@ -38,7 +38,7 @@ the core abstractions:
 | `MemoryService` | 124 | Top-level facade in `service.py` — ingest/query/run_cycle |
 | `Claim` | 115 | Dataclass in `models.py` — the atomic unit of memory |
 | `CitationInput` | 113 | Source attribution wrapper, required on every ingest |
-| `QdrantBackend` | 64 | Vector search backend (optional, `[qdrant]` extra) |
+| `QdrantBackend` | 64 | Maintenance-index backend (optional, `[qdrant]` extra); payload search is quarantined |
 | `PostgresStore` | 54 | Parity backend to SQLiteStore for multi-host deployments |
 | `EntityGraph` | 51 | Typed-edge relationship graph on top of claim_links |
 | `FeedbackTracker` | 51 | Records validator/steward outcomes for quality scoring |
@@ -86,6 +86,12 @@ relationships shipped.
 - `memorymaster/steward.py` — validator loop + proposal lifecycle (1627 LOC)
 
 ## Active Issues
+
+- R1.3 quarantines all Qdrant claim/context-fallback/verbatim payload retrieval.
+  Local-trusted claim and verbatim requests use lexical/FTS fallback; direct
+  search adapters fail closed; team MCP semantic modes are denied. Monitor
+  Qdrant only for upsert/sync/reconcile/count-ID drift maintenance until R2.1
+  adds governed ID-candidate rehydration through SQLite/Postgres.
 
 - `test_run_stream_resumes_from_checkpoint_state` previously flaky — FIXED
   in v3.2.2 (was a real bug in `_seek_to_offset`)

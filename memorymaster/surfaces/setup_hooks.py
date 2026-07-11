@@ -527,14 +527,14 @@ def install_obsidian_skills():
 # 7. Full-stack orchestration (Qdrant + Ollama via Docker Compose)
 # ---------------------------------------------------------------------------
 SQLITE_ONLY_MESSAGE = (
-    "Running in SQLite-only mode. Vector recall + local LLM auto-ingest are OFF.\n"
-    "  To enable them: install Docker and re-run with --full-stack, or point\n"
-    "  QDRANT_URL / OLLAMA_URL at existing services."
+    "Running in SQLite-only mode. Qdrant index maintenance + local LLM auto-ingest are OFF.\n"
+    "  Retrieval remains available through authoritative SQLite ranking. To enable index\n"
+    "  maintenance or local LLMs, use --full-stack or QDRANT_URL / OLLAMA_URL."
 )
 
 
 def setup_full_stack(detected: Detected, *, interactive: bool, yes: bool, model: str = "") -> dict[str, Any]:
-    """Bring up the optional vector + local-LLM stack (Qdrant + Ollama).
+    """Bring up the optional index + local-LLM stack (Qdrant + Ollama).
 
     Brownfield: reuse already-healthy services. No-Docker fallback: print the
     SQLite-only degraded message and CONTINUE (never block core install).
@@ -914,7 +914,7 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
     print(f"    - DB: {db_path}  |  verify: {verify.get('status')}")
     print(f"    - LLM provider: {llm_config['provider']}")
     if degraded:
-        print("    - Stack: SQLite-only (degraded) — vector recall + local LLM OFF")
+        print("    - Stack: SQLite-only — Qdrant index maintenance + local LLM OFF")
     print()
     print("  Next steps:")
     if detected.claude_code or detected.codex:

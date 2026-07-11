@@ -5,6 +5,21 @@ Complete inventory of `MEMORYMASTER_*` variables referenced in the package,
 script after adding or removing a variable. For what each does, follow the
 listed source files (most are read next to a docstring or comment).
 
+### R1.3 Qdrant containment
+
+An environment variable being referenced does not mean it can activate Qdrant
+claim/verbatim payload retrieval. `MEMORYMASTER_RECALL_VECTOR_FALLBACK`,
+`MEMORYMASTER_QDRANT_URL`, `MEMORYMASTER_QDRANT_COLLECTION`,
+`MEMORYMASTER_EMBED_MODEL`, `MEMORYMASTER_RECALL_VECTOR_LIMIT`,
+`MEMORYMASTER_RECALL_VECTOR_MIN_CANDIDATES`, and
+`MEMORYMASTER_RECALL_VECTOR_SCORE_THRESHOLD` are retained compatibility/tuning
+knobs for the disconnected prompt-context fallback; changing them cannot enable
+retrieval during R1.3. The non-prefixed `QDRANT_URL`, `QDRANT_COLLECTION`, and
+`OLLAMA_URL`, plus `MEMORYMASTER_QDRANT_DRIFT_MAX`, remain active for upsert,
+sync, reconcile, count/ID drift checks, orphan cleanup, and other index
+maintenance. Local/primary-store hybrid weights such as `MEMORYMASTER_W_VEC`
+are separate from Qdrant retrieval.
+
 Total: 134 variables.
 
 | Variable | Referenced in |

@@ -33,7 +33,7 @@ If you want an agent that recalls more, any vector store works. If you want an a
 ## Architecture
 
 MemoryMaster is layered around MCP/CLI entry points, the `MemoryService` facade, SQLite/Postgres
-storage, optional Qdrant vector search, scheduled jobs, and an **optional** Obsidian wiki/vault
+storage, an optional Qdrant index, scheduled jobs, and an **optional** Obsidian wiki/vault
 layer (opt-in, off by default — see below). The canonical ingest path is:
 
 ```text
@@ -43,8 +43,18 @@ MCP/CLI -> sensitivity filter -> MemoryService.ingest -> store write -> FTS5 ind
 The query path is:
 
 ```text
-query_memory -> MemoryService.query -> storage reads + optional Qdrant candidates -> ranked context
+query_memory -> MemoryService.query -> authorized SQLite/Postgres rows -> lexical/local-hybrid ranking -> context
 ```
+
+R1.3 quarantines every Qdrant-backed claim or verbatim payload retrieval path.
+In local-trusted mode, a requested Qdrant claim search falls back to
+authoritative lexical retrieval; direct Qdrant search adapters deny the
+request; prompt-context vector fallback is disconnected; and verbatim
+`vector`/`hybrid` requests fall back to FTS5. Team MCP rejects semantic
+retrieval entirely. Qdrant upsert, `qdrant-sync`, and `qdrant-reconcile`
+remain available for index maintenance, including count/ID drift reads. R2.1
+may re-enable payload retrieval only as ID candidates that are rehydrated and
+policy-filtered through SQLite/Postgres.
 
 See [docs/architecture.md](docs/architecture.md) for the current module map, data-flow details,
 recent PR status, and sensitivity-filter invariants.
@@ -53,7 +63,7 @@ recent PR status, and sensitivity-filter invariants.
 
 - **6-state lifecycle**: `candidate` → `confirmed` → `stale` → `superseded` → `conflicted` → `archived`
 - **Citation tracking** with provenance for every claim
-- **Hybrid retrieval**: vector (sentence-transformers / Gemini) + FTS5 + freshness + confidence
+- **Hybrid retrieval**: authoritative claim rows ranked with FTS5, local/primary-store embedding signals, freshness, and confidence; it does not read Qdrant while R1.3 containment is active
 - **Context optimizer**: `query_for_context(budget=4000)` returns auto-curated memory that fits your token budget
 - **Entity graph** with typed relationships and alias resolution
 - **Rule-shaped claims** (new in v3.21.0): prescriptive `when <trigger>, do <action> because <rationale>` claims (`ingest_rule` / `query_rules`) — the shape an agent needs to actually change behaviour next time, not just recall a fact
@@ -112,7 +122,7 @@ Reproduce: `python tests/bench_longmemeval.py --retrieval-only`. Full methodolog
 
 **Optional (nice to have)**
 
-- **Docker** for Qdrant — vector retrieval. SQLite FTS5 is the default and works out of the box; add Qdrant when you want semantic recall on top of keyword search.
+- **Docker** for Qdrant index maintenance and Ollama-backed jobs. SQLite/Postgres remain authoritative. Claim, prompt-context, and verbatim retrieval from Qdrant are temporarily quarantined until the governed R2.1 planner can enforce lifecycle, tenant, scope, visibility, and sensitivity policy; sync/reconcile remain available.
 
 ## 30-second quickstart
 
@@ -220,11 +230,13 @@ disposable database; repository tests do not constitute a production proof.
 
 ## Docker Compose
 
-Run the full stack (MemoryMaster + Qdrant + Ollama) with one command:
+Run MemoryMaster with the optional Qdrant maintenance index and Ollama with one command:
 
 ```bash
 docker compose up -d
 ```
+
+Starting Qdrant does not re-enable Qdrant retrieval during R1.3 containment.
 
 See [INSTALLATION.md](INSTALLATION.md) for Kubernetes / Helm.
 

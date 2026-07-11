@@ -28,7 +28,7 @@ pip install "memorymaster[embeddings]"
 # Gemini embeddings / LLM
 pip install "memorymaster[gemini]"
 
-# Qdrant vector store
+# Qdrant maintenance-index client (payload retrieval is quarantined in R1.3)
 pip install "memorymaster[qdrant]"
 
 # Fernet encryption for sensitive payloads
@@ -82,8 +82,8 @@ a 3-line shim that calls the same `memorymaster.surfaces.setup_hooks:main` funct
 | `--api-key KEY` | prompted | API key for the chosen provider |
 | `--model MODEL` | provider default | LLM model id |
 | `--project-root PATH` | cwd | Directory where `memorymaster.db` lives |
-| `--full-stack` | on | Bring up Qdrant + Ollama via Docker Compose |
-| `--no-full-stack` | off | Skip the vector + local-LLM stack |
+| `--full-stack` | on | Bring up the Qdrant maintenance index + Ollama via Docker Compose |
+| `--no-full-stack` | off | Skip the Qdrant-index + local-LLM stack |
 | `--no-cron` | off | Skip steward cron setup |
 | `--no-obsidian-skills` | off | Skip Obsidian skills install |
 | `--codex` | auto-detect | Force Codex MCP + instructions wiring |
@@ -107,18 +107,20 @@ If Docker is absent and Qdrant/Ollama are not already running, the installer
 continues without them and prints:
 
 ```
-Running in SQLite-only mode. Vector recall + local LLM auto-ingest are OFF.
-To enable them: install Docker and re-run with --full-stack, or point
-QDRANT_URL / OLLAMA_URL at existing services.
+Running in SQLite-only mode. Qdrant index maintenance + local LLM auto-ingest are OFF.
+  Retrieval remains available through authoritative SQLite ranking. To enable index
+  maintenance or local LLMs, use --full-stack or QDRANT_URL / OLLAMA_URL.
 ```
 
 Setup exits 0. Core hooks, MCP, and SQLite-based recall all work normally in
-degraded mode. Add vector search later by installing Docker and re-running
-`memorymaster-setup --full-stack --yes`.
+degraded mode. Installing or starting Qdrant enables only index maintenance
+during R1.3; it does not re-enable claim, context-fallback, or verbatim payload
+retrieval.
 
 ## Docker Compose
 
-The included `docker-compose.yml` runs the full stack: MemoryMaster + Qdrant + Ollama.
+The included `docker-compose.yml` runs MemoryMaster plus the optional Qdrant
+maintenance index and Ollama. Qdrant payload retrieval remains quarantined.
 
 ```bash
 # Clone the repo
@@ -138,7 +140,7 @@ curl http://localhost:8765/health
 | Service | Port | Description |
 |---------|------|-------------|
 | `memorymaster` | 8765 | MCP server + dashboard |
-| `qdrant` | 6333, 6334 | Vector store (REST + gRPC) |
+| `qdrant` | 6333, 6334 | Maintenance index (REST + gRPC); no claim/verbatim payload retrieval in R1.3 |
 | `ollama` | 11434 | Local LLM inference |
 
 ### Postgres variant
@@ -358,9 +360,14 @@ owner backfill, duplicate remediation, and constraint validation are separately
 blocked pending explicit operator approval and are recorded in
 `external-actions-required.md`.
 
-### With Qdrant MCP server
+### Standalone Qdrant MCP server (not a MemoryMaster retrieval path)
 
-For direct vector search alongside MemoryMaster:
+The example below exposes a separate, third-party Qdrant MCP server. It is not
+a supported way to query MemoryMaster's index during R1.3: doing so would bypass
+MemoryMaster lifecycle, tenant, scope, visibility, and sensitivity policy. Do
+not point it at a MemoryMaster collection. Keep MemoryMaster queries on the
+`memorymaster` MCP server, where Qdrant claim requests use lexical fallback and
+team semantic requests are denied.
 
 ```json
 {
@@ -400,7 +407,7 @@ All environment variables are documented in [`.env.example`](.env.example). Key 
 | `MEMORYMASTER_MCP_ALLOWED_SCOPES` | (none) | Required explicit comma-separated team scope allowlist |
 | `MEMORYMASTER_MCP_DB` | (none) | Restricted application DSN/path for team mode |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama LLM endpoint |
-| `QDRANT_URL` | (none) | Qdrant vector store endpoint |
+| `QDRANT_URL` | (none) | Qdrant maintenance-index endpoint for upsert/sync/reconcile; does not enable payload retrieval |
 | `GEMINI_API_KEY` | (none) | Google Gemini API key |
 | `MEMORYMASTER_API_KEYS` | (none) | Comma-separated LLM API keys |
 | `EXTRACTOR_LLM_MODEL` | `llama3.2` | Model for claim extraction |
@@ -439,6 +446,9 @@ python -c "import memorymaster; print('OK')"
 
 ### Qdrant connection refused
 
+This matters only for upsert, sync, reconcile, count/ID drift checks, and other
+index maintenance; authoritative retrieval continues without Qdrant.
+
 1. Verify Qdrant is running: `curl http://localhost:6333/healthz`
 2. Check the `QDRANT_URL` environment variable
 3. If using Docker Compose, ensure the `qdrant` service is healthy
@@ -466,9 +476,9 @@ pip install -e ".[dev,mcp,security]"
 # Run tests
 pytest tests/ -q
 
-# If you want to additionally exercise the optional embeddings and
-# Qdrant code paths (which are skipped via pytest.importorskip when
-# the deps are absent), install their extras too:
+# If you want to additionally exercise optional embeddings, Qdrant
+# maintenance, and payload-read containment paths (which are skipped via
+# pytest.importorskip when dependencies are absent), install their extras too:
 pip install -e ".[dev,mcp,security,embeddings,qdrant]"
 ```
 

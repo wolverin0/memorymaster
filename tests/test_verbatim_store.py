@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from memorymaster.recall import verbatim_store
 
 
-def test_hybrid_search_keeps_same_prefix_distinct_content(tmp_path, monkeypatch):
+def test_hybrid_search_uses_authoritative_fts_during_quarantine(tmp_path, monkeypatch):
     db_path = tmp_path / "verbatim.db"
     prefix = "x" * 100
     contents = [f"{prefix} distinct suffix {idx}" for idx in range(3)]
@@ -43,18 +45,11 @@ def test_hybrid_search_keeps_same_prefix_distinct_content(tmp_path, monkeypatch)
     conn.commit()
     conn.close()
 
-    vector_results = [
-        {
-            "session_id": "session",
-            "role": "user",
-            "content": content,
-            "scope": "project:test",
-            "score": 1.0 - (idx * 0.01),
-            "source": "vector",
-        }
-        for idx, content in enumerate(contents)
-    ]
-    monkeypatch.setattr(verbatim_store, "_search_vector", lambda *args: vector_results)
+    monkeypatch.setattr(
+        verbatim_store,
+        "_search_vector",
+        lambda *args: pytest.fail("quarantined vector adapter was called"),
+    )
 
     results = verbatim_store.search_verbatim(
         str(db_path),
@@ -64,4 +59,4 @@ def test_hybrid_search_keeps_same_prefix_distinct_content(tmp_path, monkeypatch)
         mode="hybrid",
     )
 
-    assert [r["content"] for r in results] == contents
+    assert results == []

@@ -1,5 +1,17 @@
 # Roadmap
 
+## Current R1.3 Qdrant safety status (2026-07-11)
+
+The checked items below record capabilities that were historically implemented;
+they do not all remain enabled. Claim, prompt-context fallback, and verbatim
+payload retrieval from Qdrant are quarantined. Local-trusted Qdrant claim
+requests use authoritative lexical fallback, verbatim vector/hybrid requests
+use FTS5, and direct backend/CLI search fails closed. Team MCP denies semantic
+retrieval. Upsert, sync, reconcile, count/ID drift reads, and orphan cleanup
+remain available. R2.1 is the future governed path: Qdrant supplies untrusted
+IDs, then SQLite/Postgres rehydrates and filters canonical rows through the
+shared policy planner.
+
 ## Completed: v2.0.0 (Current)
 
 ### Core Engine (v1.0)
@@ -24,8 +36,8 @@
 - [x] QdrantBackend with Ollama qwen3-embedding:8b (4096 dims)
 - [x] Retry with exponential backoff on embed + upsert
 - [x] Batch upsert in sync_all (50x fewer HTTP calls)
-- [x] `qdrant-sync` and `qdrant-search` CLI commands
-- [x] `retrieval_mode="qdrant"` MCP fast path (~0.5s semantic search)
+- [x] `qdrant-sync` and `qdrant-search` CLI commands implemented (`qdrant-search` is currently fail-closed; sync remains available)
+- [x] `retrieval_mode="qdrant"` MCP fast path implemented historically (currently authoritative lexical fallback in local-trusted mode and denied in team mode)
 - [x] MCP query default changed to legacy (3min → 0.1s)
 
 ### Performance (v2.0)
