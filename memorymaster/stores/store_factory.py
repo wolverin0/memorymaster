@@ -10,7 +10,13 @@ def is_postgres_dsn(value: str) -> bool:
     return lowered.startswith("postgres://") or lowered.startswith("postgresql://")
 
 
-def create_store(db_target: str | Path, *, read_only: bool = False):
+def create_store(
+    db_target: str | Path,
+    *,
+    read_only: bool = False,
+    tenant_id: str | None = None,
+    require_tenant: bool = False,
+):
     """Build the store for ``db_target``.
 
     ``read_only`` (P1 WAL-discipline, spec §2.2) puts a SQLite store into
@@ -23,5 +29,9 @@ def create_store(db_target: str | Path, *, read_only: bool = False):
     if is_postgres_dsn(target):
         from memorymaster.stores.postgres_store import PostgresStore
 
-        return PostgresStore(target)
+        return PostgresStore(
+            target,
+            tenant_id=tenant_id,
+            require_tenant=require_tenant,
+        )
     return SQLiteStore(Path(target), read_only=read_only)

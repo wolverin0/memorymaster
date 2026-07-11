@@ -41,8 +41,16 @@ def utc_now() -> datetime:
 
 
 class PostgresStore(SQLiteStore):
-    def __init__(self, dsn: str) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        tenant_id: str | None = None,
+        require_tenant: bool = False,
+    ) -> None:
         self.dsn = dsn
+        self.tenant_id = (tenant_id or "").strip() or None
+        self.require_tenant = bool(require_tenant)
         self._psycopg: Any = None
         self._vector_table_available: bool | None = None
 
@@ -60,12 +68,26 @@ class PostgresStore(SQLiteStore):
         return self._psycopg
 
     def connect(self) -> Any:
+        if self.require_tenant and self.tenant_id is None:
+            raise PermissionError("Postgres team mode requires a tenant context before connecting.")
         psycopg, dict_row, _ = self._load_psycopg()
 
         def _open() -> Any:
             return psycopg.connect(self.dsn, row_factory=dict_row)
 
-        return connect_with_retry(_open)
+        conn = connect_with_retry(_open)
+        if self.tenant_id is None:
+            return conn
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT set_config('memorymaster.tenant_id', %s, false)",
+                    (self.tenant_id,),
+                )
+        except Exception:
+            conn.close()
+            raise
+        return conn
 
     def init_db(self) -> None:
         from memorymaster.stores._storage_schema import load_schema_postgres_sql

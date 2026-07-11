@@ -358,16 +358,23 @@ class MemoryService:
         policy_config: Mapping[str, object] | None = None,
         tenant_id: str | None = None,
         read_only: bool = False,
+        require_tenant: bool = False,
     ) -> None:
         # read_only (P1 WAL-discipline, spec §2.2): SQLite store opens
         # mode=ro + query_only connections; _record_accesses spools its
         # access/feedback signal instead of writing. Used by the per-prompt
         # recall hook under MEMORYMASTER_WAL_DISCIPLINE=1.
-        self.store = create_store(db_target, read_only=read_only)
+        self.tenant_id = (tenant_id or "").strip() or None
+        self.require_tenant = bool(require_tenant)
+        self.store = create_store(
+            db_target,
+            read_only=read_only,
+            tenant_id=self.tenant_id,
+            require_tenant=self.require_tenant,
+        )
         self.workspace_root = Path(workspace_root) if workspace_root else Path.cwd()
         self._embedding_provider: EmbeddingProvider | None = None
         self.policy_config = policy_config
-        self.tenant_id = (tenant_id or "").strip() or None
         # Rollup telemetry (additive, default-safe): when set by a surface,
         # recall events are attributed to this agent / session for the usage
         # rollup. Default None keeps recall behaviour byte-identical.

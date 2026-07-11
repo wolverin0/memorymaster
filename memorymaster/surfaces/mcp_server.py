@@ -345,6 +345,7 @@ def _service(db: str, workspace: str) -> MemoryService:
         db_target=db_path,
         workspace_root=Path(workspace_path),
         tenant_id=tenant_id,
+        require_tenant=context is not None and context.mode is AuthMode.TEAM,
     )
     _bind_telemetry_session(svc, db_path, principal, tenant_id)
     svc.source_agent = principal
