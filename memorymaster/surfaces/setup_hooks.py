@@ -317,6 +317,7 @@ def _mcp_server_entry(db_path: str) -> dict[str, Any]:
         "env": {
             "MEMORYMASTER_DEFAULT_DB": db_path,
             "MEMORYMASTER_WORKSPACE": str(PROJECT_ROOT),
+            "MEMORYMASTER_MCP_AUTH_MODE": "local-trusted",
         },
     }
 
@@ -385,6 +386,7 @@ def install_mcp_codex(*, force: bool = False):
         "[mcp_servers.memorymaster.env]\n"
         f"MEMORYMASTER_DEFAULT_DB = {json.dumps(db_path)}\n"
         f"MEMORYMASTER_WORKSPACE = {json.dumps(str(PROJECT_ROOT))}\n"
+        'MEMORYMASTER_MCP_AUTH_MODE = "local-trusted"\n'
         f"{_CODEX_MCP_END}\n"
     )
 

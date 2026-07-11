@@ -72,7 +72,14 @@ Total: 134 variables.
 | `MEMORYMASTER_MAX_PROVIDER_FAILURES_PER_CYCLE` | `memorymaster/core/llm_budget.py` |
 | `MEMORYMASTER_MAX_TOKENS_PER_CYCLE` | `memorymaster/core/llm_budget.py` |
 | `MEMORYMASTER_MCP_ADMIN_MODE` | `memorymaster/surfaces/mcp_path_policy.py`, `memorymaster/surfaces/mcp_server.py` |
+| `MEMORYMASTER_MCP_ALLOWED_SCOPES` | `memorymaster/core/access_control.py` |
+| `MEMORYMASTER_MCP_ALLOW_SENSITIVE` | `memorymaster/core/access_control.py` |
+| `MEMORYMASTER_MCP_AUTH_MODE` | `memorymaster/core/access_control.py`, `memorymaster/surfaces/setup_hooks.py` |
+| `MEMORYMASTER_MCP_DB` | `memorymaster/core/access_control.py` |
 | `MEMORYMASTER_MCP_DB_ALLOWLIST` | `memorymaster/surfaces/mcp_path_policy.py`, `memorymaster/surfaces/mcp_server.py` |
+| `MEMORYMASTER_MCP_PRINCIPAL` | `memorymaster/core/access_control.py` |
+| `MEMORYMASTER_MCP_TENANT_ID` | `memorymaster/core/access_control.py` |
+| `MEMORYMASTER_MCP_WORKSPACE` | `memorymaster/core/access_control.py` |
 | `MEMORYMASTER_MCP_WORKSPACE_ALLOWLIST` | `memorymaster/surfaces/mcp_path_policy.py` |
 | `MEMORYMASTER_PATH_ROOTS` | `memorymaster/bridges/local_search/redact.py` |
 | `MEMORYMASTER_PINNED_BONUS` | `memorymaster/core/config.py` |

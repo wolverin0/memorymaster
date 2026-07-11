@@ -170,12 +170,19 @@ For zero-cost offline use, install [Ollama](https://ollama.com), `ollama pull ll
       "command": "memorymaster-mcp",
       "env": {
         "MEMORYMASTER_DEFAULT_DB": "/path/to/memorymaster.db",
-        "MEMORYMASTER_WORKSPACE": "/path/to/your/project"
+        "MEMORYMASTER_WORKSPACE": "/path/to/your/project",
+        "MEMORYMASTER_MCP_AUTH_MODE": "local-trusted"
       }
     }
   }
 }
 ```
+
+MCP authorization mode is mandatory. Use `local-trusted` only for a private
+stdio process controlled by one OS user. Team mode instead requires an
+operator-configured principal, explicit role, tenant, database, workspace, and
+scope allowlist; unverified host-wide and maintenance tools fail closed. Existing
+brownfield MCP entries must add the mode or be regenerated with setup `--force`.
 
 30 MCP tools spanning setup/lifecycle, ingest, query/retrieval, listing, knowledge graph, and governance: `init_db`, `ingest_claim`, `ingest_rule`, `query_rules`, `rules_export`, `run_cycle`, `run_steward`, `classify_query`, `query_memory`, `query_for_context`, `query_for_task`, `query_claim_paths`, `query_meta_decisions`, `federated_query`, `recall_analysis`, `read_active_tasks`, `list_claims`, `redact_claim_payload`, `pin_claim`, `compact_memory`, `list_events`, `search_verbatim`, `open_dashboard`, `list_steward_proposals`, `resolve_steward_proposal`, `extract_entities`, `entity_stats`, `find_related_claims`, `quality_scores`, `recompute_tiers`.
 

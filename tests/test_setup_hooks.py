@@ -127,6 +127,12 @@ class TestNonInteractive:
 
 
 class TestInstallMcp:
+    def test_writes_explicit_local_trusted_auth_mode(self, hermetic_home):
+        sh.install_mcp(force=True)
+        data = json.loads(hermetic_home["claude_json"].read_text(encoding="utf-8"))
+        entry = data["mcpServers"]["memorymaster"]
+        assert entry["env"]["MEMORYMASTER_MCP_AUTH_MODE"] == "local-trusted"
+
     def test_uses_non_deprecated_command(self, hermetic_home):
         sh.install_mcp(force=True)
         data = json.loads(hermetic_home["claude_json"].read_text(encoding="utf-8"))
@@ -171,6 +177,12 @@ class TestInstallMcp:
 
 
 class TestInstallMcpCodex:
+    def test_writes_explicit_local_trusted_auth_mode(self, hermetic_home):
+        hermetic_home["codex_dir"].mkdir(parents=True, exist_ok=True)
+        sh.install_mcp_codex(force=True)
+        content = (hermetic_home["codex_dir"] / "config.toml").read_text(encoding="utf-8")
+        assert 'MEMORYMASTER_MCP_AUTH_MODE = "local-trusted"' in content
+
     def test_writes_managed_block_with_correct_command(self, hermetic_home):
         hermetic_home["codex_dir"].mkdir(parents=True, exist_ok=True)
         sh.install_mcp_codex(force=True)

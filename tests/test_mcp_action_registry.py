@@ -113,3 +113,22 @@ def test_missing_team_identity_fails_before_tool_body(monkeypatch) -> None:
 
     with pytest.raises(PermissionError, match="MEMORYMASTER_MCP_PRINCIPAL"):
         mcp_server.query_memory(query="must fail before opening the database")
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    sorted(name for name, policy in mcp_server.MCP_TOOL_POLICIES.items() if not policy.team_enabled),
+)
+def test_unverified_team_tools_fail_before_body(monkeypatch, tool_name: str) -> None:
+    access_control.set_role("mcp-reader", access_control.Role.ADMIN)
+
+    def sentinel() -> None:
+        pytest.fail(f"disabled team tool reached body: {tool_name}")
+
+    sentinel.__name__ = tool_name
+    guarded = mcp_server._authorized_tool_callable(
+        sentinel,
+        mcp_server.MCP_TOOL_POLICIES[tool_name],
+    )
+    with pytest.raises(PermissionError, match="disabled in team mode"):
+        guarded()
