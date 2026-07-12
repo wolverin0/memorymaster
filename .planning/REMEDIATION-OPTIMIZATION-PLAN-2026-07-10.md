@@ -85,8 +85,9 @@ Phase 0 must replace qualitative capacity goals with recorded numeric gates in t
 - [x] R1.1 — authenticated request context and MCP authorization
 - [x] R1.2 — Postgres tenant enforcement and RLS (repository complete; external proof blocked)
 - [x] R1.3 — immediate Qdrant containment
-- [ ] R1.4 — complete sensitivity/write gateway and legacy inventory
-- [ ] R1.5 — secure deployment and supply-chain defaults
+- [x] R1.4 — complete sensitivity/write gateway and legacy inventory (repository complete; live cleanup/Qdrant inventory blocked externally)
+- [x] R1.5 — secure deployment and supply-chain defaults (repository complete; rotation, advisory/image/runtime evidence blocked externally)
+- [x] Phase 1 targeted budget audit delta (V3 scope; Phases 2-4 remain open)
 - [ ] R2.1 — unified RetrievalPlanner and governed Qdrant reintegration
 - [ ] R2.2 — lifecycle authority and read-only recall
 - [ ] R2.3 — unified entity model
