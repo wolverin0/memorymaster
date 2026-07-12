@@ -1,21 +1,19 @@
-version: '3.8'
-
 services:
   memorymaster:
     build:
       context: .
       dockerfile: Dockerfile
-    image: memorymaster:latest
     container_name: memorymaster
     ports:
       - "8765:8765"
     volumes:
       - ./data:/data
     environment:
-      - MEMORYMASTER_DEFAULT_DB=/data/memorymaster.db
-      - MEMORYMASTER_WORKSPACE=/data
-      - QDRANT_URL=http://qdrant:6333
-      - OLLAMA_URL=http://ollama:11434
+      MEMORYMASTER_DEFAULT_DB: /data/memorymaster.db
+      MEMORYMASTER_WORKSPACE: /data
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: "${QDRANT_API_KEY:?Set QDRANT_API_KEY before rendering Compose}"
+      OLLAMA_URL: http://ollama:11434
     depends_on:
       qdrant:
         condition: service_healthy
@@ -30,25 +28,32 @@ services:
       start_period: 10s
 
   qdrant:
-    image: qdrant/qdrant:latest
+    image: "qdrant/qdrant@${QDRANT_IMAGE_DIGEST:?Set QDRANT_IMAGE_DIGEST to sha256:<digest>}"
     container_name: qdrant
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    environment:
+      QDRANT__SERVICE__API_KEY: "${QDRANT_API_KEY:?Set QDRANT_API_KEY before rendering Compose}"
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:6333/healthz"]
+      test:
+        - CMD-SHELL
+        - >-
+          wget --no-verbose --tries=1 --spider
+          --header="api-key: $${QDRANT__SERVICE__API_KEY}"
+          http://127.0.0.1:6333/collections
       interval: 15s
       timeout: 5s
       retries: 3
 
   ollama:
-    image: ollama/ollama:latest
+    image: "ollama/ollama@${OLLAMA_IMAGE_DIGEST:?Set OLLAMA_IMAGE_DIGEST to sha256:<digest>}"
     container_name: ollama
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped

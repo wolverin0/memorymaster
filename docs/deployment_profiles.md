@@ -2,6 +2,36 @@
 
 This document defines practical deployment profiles for MemoryMaster with reliability/operability defaults.
 
+## Secure Container Inputs
+
+Container configuration fails closed when required deployment inputs are
+missing. Keep real values in an operator-controlled secret store or a local
+gitignored `.env`, never in Compose, Helm values, shell history, or source.
+
+- `docker-compose.postgres.yml` requires
+  `MEMORYMASTER_POSTGRES_PASSWORD`, binds PostgreSQL to `127.0.0.1`, and checks
+  health with an authenticated `SELECT 1`.
+- `docker-compose.yml` requires `QDRANT_API_KEY` plus externally verified
+  `QDRANT_IMAGE_DIGEST` and `OLLAMA_IMAGE_DIGEST` values in
+  `sha256:<64-hex>` form. Repositories are fixed in Compose so a mutable tag
+  cannot be substituted. Qdrant and Ollama host ports bind to `127.0.0.1` only.
+- The Helm chart requires `image.digest` and an existing Secret named through
+  `qdrant.apiKeySecret.name`. It never accepts a literal Qdrant API key. Set
+  `qdrant.caSecret.name` to mount an optional trusted CA as
+  `QDRANT_CA_CERT`.
+
+Validate interpolation before any runtime action:
+
+```powershell
+docker compose -f docker-compose.postgres.yml config
+docker compose -f docker-compose.yml config
+```
+
+The Compose and Helm profiles still inherit the R3.4 stdio-versus-HTTP
+entrypoint/readiness blocker. Configuration validation is not runtime or
+deployment evidence; do not expose or promote these profiles until that
+separate gate is resolved.
+
 ## Profile A: Local Developer (SQLite)
 
 Use when:
@@ -42,6 +72,8 @@ Runtime:
 - schema lifecycle: separate migrator DSN; the application runtime cannot initialize or migrate
 
 Baseline controls:
+- supply the PostgreSQL password out of band; never restore the retired fixed
+  Compose credential
 - backup policy for DB and artifacts
 - health endpoint checks (`/health`)
 - distinct migrator/application roles meeting the contract below

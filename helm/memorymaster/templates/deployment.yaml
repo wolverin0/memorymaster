@@ -1,3 +1,17 @@
+{{- $imageDigest := required "image.digest is required (use sha256:<digest>)" .Values.image.digest -}}
+{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $imageDigest) -}}
+{{- fail "image.digest must be a lowercase sha256:<64-hex-digest> reference" -}}
+{{- end -}}
+{{- if hasKey .Values.env "QDRANT_API_KEY" -}}
+{{- fail "QDRANT_API_KEY is reserved; configure it through .Values.qdrant" -}}
+{{- end -}}
+{{- if hasKey .Values.env "QDRANT_CA_CERT" -}}
+{{- fail "QDRANT_CA_CERT is reserved; configure it through .Values.qdrant" -}}
+{{- end -}}
+{{- if hasKey .Values.env "QDRANT_URL" -}}
+{{- fail "QDRANT_URL is reserved; configure it through .Values.qdrant" -}}
+{{- end -}}
+{{- $qdrantApiKeySecret := required "qdrant.apiKeySecret.name is required" .Values.qdrant.apiKeySecret.name -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -14,7 +28,7 @@ spec:
     spec:
       containers:
         - name: memorymaster
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}@{{ $imageDigest }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 8765
@@ -23,9 +37,25 @@ spec:
             - name: {{ $key }}
               value: {{ $val | quote }}
             {{- end }}
+            - name: QDRANT_URL
+              value: {{ .Values.qdrant.url | quote }}
+            - name: QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $qdrantApiKeySecret | quote }}
+                  key: {{ .Values.qdrant.apiKeySecret.key | quote }}
+            {{- if .Values.qdrant.caSecret.name }}
+            - name: QDRANT_CA_CERT
+              value: {{ printf "%s/ca.crt" .Values.qdrant.caSecret.mountPath | quote }}
+            {{- end }}
           volumeMounts:
             - name: data
               mountPath: /data
+            {{- if .Values.qdrant.caSecret.name }}
+            - name: qdrant-ca
+              mountPath: {{ .Values.qdrant.caSecret.mountPath | quote }}
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
@@ -36,3 +66,11 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if .Values.qdrant.caSecret.name }}
+        - name: qdrant-ca
+          secret:
+            secretName: {{ .Values.qdrant.caSecret.name | quote }}
+            items:
+              - key: {{ .Values.qdrant.caSecret.key | quote }}
+                path: ca.crt
+        {{- end }}
