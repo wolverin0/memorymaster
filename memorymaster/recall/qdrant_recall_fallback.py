@@ -37,6 +37,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from memorymaster.recall.qdrant_transport import QdrantTransportConfig
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_COLLECTION = "memorymaster-claims"
@@ -189,6 +191,8 @@ def _get_client():
         if _client_failed:
             return None
         try:
+            transport = QdrantTransportConfig.from_env()
+            transport.validate_url(url)
             from qdrant_client import QdrantClient
         except ImportError:
             logger.warning(
@@ -197,16 +201,21 @@ def _get_client():
             )
             _client_failed = True
             return None
-        except Exception as exc:
-            logger.warning("vector fallback disabled: import error: %s", exc)
+        except Exception:
+            logger.warning(
+                "vector fallback disabled: invalid Qdrant transport configuration."
+            )
             _client_failed = True
             return None
         try:
-            _client = QdrantClient(url=url, timeout=5.0)
-        except Exception as exc:
+            _client = QdrantClient(
+                url=url,
+                timeout=5.0,
+                **transport.qdrant_client_kwargs(),
+            )
+        except Exception:
             logger.warning(
-                "vector fallback disabled: could not create client for %s: %s",
-                url, exc,
+                "vector fallback disabled: could not create Qdrant client."
             )
             _client_failed = True
             return None

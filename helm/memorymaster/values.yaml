@@ -21,7 +21,7 @@ env:
   OLLAMA_URL: http://ollama:11434
 
 qdrant:
-  url: http://qdrant:6333
+  url: https://qdrant:6333
   apiKeySecret:
     # Required: name of an existing Secret. The chart never creates the key.
     name: ""

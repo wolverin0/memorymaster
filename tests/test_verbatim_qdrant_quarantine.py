@@ -89,7 +89,7 @@ def test_claim_qdrant_backend_search_fails_before_embedding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backend = QdrantBackend(
-        qdrant_url="http://qdrant.invalid",
+        qdrant_url="https://qdrant.invalid",
         ollama_url="http://ollama.invalid",
     )
     monkeypatch.setattr(

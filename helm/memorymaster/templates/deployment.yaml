@@ -11,6 +11,9 @@
 {{- if hasKey .Values.env "QDRANT_URL" -}}
 {{- fail "QDRANT_URL is reserved; configure it through .Values.qdrant" -}}
 {{- end -}}
+{{- if not (hasPrefix "https://" .Values.qdrant.url) -}}
+{{- fail "qdrant.url must use HTTPS" -}}
+{{- end -}}
 {{- $qdrantApiKeySecret := required "qdrant.apiKeySecret.name is required" .Values.qdrant.apiKeySecret.name -}}
 apiVersion: apps/v1
 kind: Deployment

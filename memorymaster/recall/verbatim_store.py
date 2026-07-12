@@ -8,6 +8,7 @@ Search modes:
   - Vector/hybrid requests currently downgrade to FTS5
   - Qdrant remains available only for index synchronization during quarantine
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -24,10 +25,10 @@ from pathlib import Path
 # Credential detection delegated to the canonical filter in memorymaster.core.security.
 from memorymaster.core import spool
 from memorymaster.core.security import scan_persisted_value
+from memorymaster.recall.qdrant_transport import QdrantTransportConfig
 from memorymaster.stores._storage_shared import open_conn
 
 logger = logging.getLogger(__name__)
-
 
 
 def _contains_sensitive(text: str) -> bool:
@@ -89,6 +90,7 @@ def _verbatim_row_has_sensitive_field(row: sqlite3.Row | dict) -> bool:
         timestamp=str(_row_value(row, "timestamp") or ""),
         created_at=str(_row_value(row, "created_at") or ""),
     )
+
 
 # Vector search is opt-in: an unset QDRANT_URL means "vector disabled", exactly
 # like a missing OPENAI_API_KEY. NEVER hardcode a routable private LAN IP here —
@@ -268,8 +270,7 @@ def _extract_role_content(entry: dict) -> tuple[str, str]:
         content = entry.get("content", "")
     if isinstance(content, list):
         content = " ".join(
-            part.get("text", "") for part in content
-            if isinstance(part, dict) and part.get("type") == "text"
+            part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text"
         )
     return role, content if isinstance(content, str) else ""
 
@@ -491,117 +492,157 @@ def _search_fts(db_path: str, query: str, scope: str | None, limit: int) -> list
 def _search_vector(query: str, scope: str | None, limit: int) -> list[dict]:
     """Reject raw Qdrant payload reads until governed rehydration exists."""
     del query, scope, limit
-    raise PermissionError(
-        "Verbatim Qdrant retrieval is quarantined pending authoritative rehydration."
+    raise PermissionError("Verbatim Qdrant retrieval is quarantined pending authoritative rehydration.")
+
+
+def _safe_rows_for_sync(
+    conn: sqlite3.Connection,
+    batch_size: int,
+) -> tuple[list[sqlite3.Row], int]:
+    rows = conn.execute(
+        "SELECT * FROM verbatim_memories WHERE embedding_synced = 0 LIMIT ?",
+        (batch_size,),
+    ).fetchall()
+    safe_rows: list[sqlite3.Row] = []
+    unsafe_ids: list[int] = []
+    for row in rows:
+        if _verbatim_row_has_sensitive_field(row):
+            unsafe_ids.append(int(row["id"]))
+        else:
+            safe_rows.append(row)
+    if unsafe_ids:
+        placeholders = ",".join("?" for _ in unsafe_ids)
+        conn.execute(
+            f"UPDATE verbatim_memories SET embedding_synced = -1 WHERE id IN ({placeholders})",
+            unsafe_ids,
+        )
+        conn.commit()
+    return safe_rows, len(unsafe_ids)
+
+
+def _ensure_verbatim_collection(transport: QdrantTransportConfig) -> bool:
+    collection_url = f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}"
+    try:
+        request = transport.request(collection_url, method="GET")
+        transport.open(request, timeout=5)
+        return True
+    except Exception:
+        payload = {"vectors": {"size": EMBED_DIM, "distance": "Cosine"}}
+        request = transport.request(
+            collection_url,
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="PUT",
+        )
+        try:
+            transport.open(request, timeout=60)
+            return True
+        except Exception:
+            return False
+
+
+def _openai_embeddings(api_key: str, texts: list[str]) -> list[list[float]] | None:
+    payload = {"model": "text-embedding-3-small", "input": texts}
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/embeddings",
+        data=json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
     )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            result = json.loads(response.read().decode())
+        return [item["embedding"] for item in result["data"]]
+    except Exception:
+        return None
 
 
-def sync_to_qdrant(db_path: str, batch_size: int = 50) -> dict[str, int]:
+def _verbatim_points(
+    rows: list[sqlite3.Row],
+    embeddings: list[list[float]],
+) -> list[dict]:
+    return [
+        {
+            "id": row["id"],
+            "vector": embedding,
+            "payload": {
+                "content": row["content"][:2000],
+                "content_hash": hashlib.sha256(row["content"].encode()).hexdigest(),
+                "scope": row["scope"],
+                "session_id": row["session_id"],
+                "role": row["role"],
+            },
+        }
+        for row, embedding in zip(rows, embeddings)
+    ]
+
+
+def _upsert_verbatim_points(
+    transport: QdrantTransportConfig,
+    points: list[dict],
+) -> bool:
+    request = transport.request(
+        f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}/points",
+        data=json.dumps({"points": points}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="PUT",
+    )
+    try:
+        transport.open(request, timeout=30)
+        return True
+    except Exception:
+        return False
+
+
+def _mark_verbatim_synced(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> None:
+    ids = [row["id"] for row in rows]
+    placeholders = ",".join("?" for _ in ids)
+    conn.execute(
+        f"UPDATE verbatim_memories SET embedding_synced = 1 WHERE id IN ({placeholders})",
+        ids,
+    )
+    conn.commit()
+
+
+def sync_to_qdrant(db_path: str, batch_size: int = 50) -> dict[str, int | str]:
     """Sync verbatim rows to the Qdrant index; read retrieval is quarantined."""
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
         return {"synced": 0, "error": "no OPENAI_API_KEY"}
     if not QDRANT_URL:
         return {"synced": 0, "error": "no QDRANT_URL"}
+    try:
+        transport = QdrantTransportConfig.from_env()
+    except (OSError, RuntimeError, ValueError):
+        return {"synced": 0, "error": "invalid Qdrant transport configuration"}
 
-    # closing() guarantees the connection is released on every exit path,
-    # including the initial SELECT raising or the final UPDATE/commit raising.
     with closing(_connect(db_path)) as conn:
-        rows = conn.execute(
-            "SELECT * FROM verbatim_memories WHERE embedding_synced = 0 LIMIT ?",
-            (batch_size,),
-        ).fetchall()
-
-        if not rows:
-            return {"synced": 0}
-
-        safe_rows: list[sqlite3.Row] = []
-        unsafe_ids: list[int] = []
-        for row in rows:
-            if _verbatim_row_has_sensitive_field(row):
-                unsafe_ids.append(int(row["id"]))
-            else:
-                safe_rows.append(row)
-        excluded_sensitive = len(unsafe_ids)
-        if unsafe_ids:
-            placeholders = ",".join("?" for _ in unsafe_ids)
-            conn.execute(
-                f"UPDATE verbatim_memories SET embedding_synced = -1 WHERE id IN ({placeholders})",
-                unsafe_ids,
-            )
-            conn.commit()
+        safe_rows, excluded = _safe_rows_for_sync(conn, batch_size)
         if not safe_rows:
-            return {"synced": 0, "excluded_sensitive": excluded_sensitive}
-
-        # Ensure collection exists
-        try:
-            req = urllib.request.Request(f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}")
-            urllib.request.urlopen(req, timeout=5)
-        except Exception:
-            payload = {"vectors": {"size": EMBED_DIM, "distance": "Cosine"}}
-            req = urllib.request.Request(
-                f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}",
-                data=json.dumps(payload).encode(),
-                headers={"Content-Type": "application/json"},
-                method="PUT",
-            )
-            try:
-                urllib.request.urlopen(req, timeout=60)
-            except Exception as e:
-                return {"synced": 0, "error": str(e)}
-
-        # Embed in batches
-        texts = [r["content"][:2000] for r in safe_rows]
-        try:
-            embed_url = "https://api.openai.com/v1/embeddings"
-            payload = {"model": "text-embedding-3-small", "input": texts}
-            req = urllib.request.Request(
-                embed_url,
-                data=json.dumps(payload).encode(),
-                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                result = json.loads(resp.read().decode())
-            embeddings = [d["embedding"] for d in result["data"]]
-        except Exception as e:
-            return {"synced": 0, "error": str(e)}
+            result: dict[str, int | str] = {"synced": 0}
+            if excluded:
+                result["excluded_sensitive"] = excluded
+            return result
+        if not _ensure_verbatim_collection(transport):
+            return {"synced": 0, "error": "Qdrant collection unavailable"}
+        embeddings = _openai_embeddings(
+            api_key,
+            [row["content"][:2000] for row in safe_rows],
+        )
+        if embeddings is None:
+            return {"synced": 0, "error": "embedding request failed"}
         if len(embeddings) != len(safe_rows):
             return {"synced": 0, "error": "embedding response cardinality mismatch"}
-
-        # Upsert to Qdrant
-        points = []
-        for row, emb in zip(safe_rows, embeddings):
-            points.append({
-                "id": row["id"],
-                "vector": emb,
-                "payload": {
-                    "content": row["content"][:2000],
-                    "content_hash": hashlib.sha256(row["content"].encode()).hexdigest(),
-                    "scope": row["scope"],
-                    "session_id": row["session_id"],
-                    "role": row["role"],
-                },
-            })
-
-        try:
-            req = urllib.request.Request(
-                f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}/points",
-                data=json.dumps({"points": points}).encode(),
-                headers={"Content-Type": "application/json"},
-                method="PUT",
-            )
-            urllib.request.urlopen(req, timeout=30)
-        except Exception as e:
-            return {"synced": 0, "error": str(e)}
-
-        # Mark as synced
-        ids = [r["id"] for r in safe_rows]
-        placeholders = ",".join("?" for _ in ids)
-        conn.execute(f"UPDATE verbatim_memories SET embedding_synced = 1 WHERE id IN ({placeholders})", ids)
-        conn.commit()
-
+        if not _upsert_verbatim_points(
+            transport,
+            _verbatim_points(safe_rows, embeddings),
+        ):
+            return {"synced": 0, "error": "Qdrant upsert failed"}
+        _mark_verbatim_synced(conn, safe_rows)
         result = {"synced": len(safe_rows)}
-        if excluded_sensitive:
-            result["excluded_sensitive"] = excluded_sensitive
+        if excluded:
+            result["excluded_sensitive"] = excluded
         return result

@@ -24,6 +24,7 @@ from memorymaster.core.config import get_config
 from memorymaster.govern.review import build_review_queue, queue_to_dicts
 from memorymaster.core.security import is_sensitive_claim
 from memorymaster.core.service import MemoryService
+from memorymaster.recall.qdrant_transport import QdrantTransportConfig
 import contextlib
 
 
@@ -595,27 +596,30 @@ def _check_dashboard_db(service: Any) -> dict[str, Any]:
 
 
 def _qdrant_request_headers() -> dict[str, str]:
-    api_key = os.environ.get("QDRANT_API_KEY")
-    return {"api-key": api_key} if api_key else {}
+    return QdrantTransportConfig.from_env().headers()
 
 
 def _check_qdrant(qdrant_url: str | None) -> dict[str, Any]:
     if not qdrant_url:
         return {"status": "skipped", "reason": "QDRANT_URL not set"}
+    try:
+        transport = QdrantTransportConfig.from_env()
+        transport.validate_url(qdrant_url)
+    except (OSError, RuntimeError, ValueError):
+        return {"status": "fail", "error": "invalid Qdrant transport configuration"}
     base_url = qdrant_url.rstrip("/")
-    headers = _qdrant_request_headers()
     last_error = ""
     for path in ("/healthz", "/collections"):
-        request = urllib.request.Request(f"{base_url}{path}", headers=headers, method="GET")
+        request = transport.request(f"{base_url}{path}", method="GET")
         try:
-            with urllib.request.urlopen(request, timeout=0.5) as response:
+            with transport.open(request, timeout=0.5) as response:
                 if 200 <= int(response.status) < 300:
                     return {"status": "ok", "endpoint": path}
                 last_error = f"HTTP {response.status} from {path}"
         except urllib.error.HTTPError as exc:
             last_error = f"HTTP {exc.code} from {path}"
-        except Exception as exc:
-            last_error = str(exc)
+        except Exception:
+            last_error = f"Qdrant request failed for {path}"
     return {"status": "fail", "error": last_error or "Qdrant probe failed"}
 
 

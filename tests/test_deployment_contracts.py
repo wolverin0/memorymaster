@@ -46,10 +46,17 @@ def test_auxiliary_compose_ports_are_not_public():
 def test_auxiliary_compose_requires_authenticated_qdrant():
     compose = _read("docker-compose.yml")
 
+    assert "QDRANT_URL: https://qdrant:6333" in compose
     assert re.search(r"QDRANT_API_KEY:\s*[\"']?\$\{QDRANT_API_KEY:\?", compose)
     assert re.search(r"QDRANT__SERVICE__API_KEY:\s*[\"']?\$\{QDRANT_API_KEY:\?", compose)
+    assert 'QDRANT__SERVICE__ENABLE_TLS: "true"' in compose
+    assert "QDRANT__TLS__CERT: /qdrant/tls/cert.pem" in compose
+    assert "QDRANT__TLS__KEY: /qdrant/tls/key.pem" in compose
+    for variable in ("QDRANT_TLS_CERT", "QDRANT_TLS_KEY", "QDRANT_CA_CERT"):
+        assert f"${{{variable}:?" in compose
     assert '--header="api-key: $${QDRANT__SERVICE__API_KEY}"' in compose
-    assert "http://127.0.0.1:6333/collections" in compose
+    assert "https://qdrant:6333/collections" in compose
+    assert "--ca-certificate=/qdrant/tls/ca.pem" in compose
 
 
 @pytest.mark.xfail(
@@ -120,6 +127,8 @@ def test_helm_requires_digest_and_existing_qdrant_secrets():
     assert ".Values.qdrant.caSecret.name" in deployment
     assert "QDRANT_CA_CERT" in deployment
     assert "readOnly: true" in deployment
+    assert re.search(r"^\s*url:\s*https://", values, re.MULTILINE)
+    assert 'fail "qdrant.url must use HTTPS"' in deployment
 
 
 def test_postgres_smoke_requires_operator_supplied_dsn():
@@ -136,6 +145,9 @@ def test_environment_example_documents_required_deployment_inputs():
 
     assert "# MEMORYMASTER_POSTGRES_PASSWORD=" in example
     assert "# QDRANT_API_KEY=" in example
+    assert "# QDRANT_TLS_CERT=" in example
+    assert "# QDRANT_TLS_KEY=" in example
+    assert "# QDRANT_CA_CERT=" in example
     assert re.search(r"^# QDRANT_IMAGE_DIGEST=sha256:", example, re.MULTILINE)
     assert re.search(r"^# OLLAMA_IMAGE_DIGEST=sha256:", example, re.MULTILINE)
 
