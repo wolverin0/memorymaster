@@ -415,6 +415,13 @@ class _Response:
         return json.dumps(self.payload).encode()
 
 
+def _install_qdrant_open(monkeypatch: pytest.MonkeyPatch, callback) -> None:
+    def open_request(_transport, request, *, timeout):
+        return callback(request, timeout)
+
+    monkeypatch.setattr(verbatim_store.QdrantTransportConfig, "open", open_request)
+
+
 def test_verbatim_qdrant_sync_filters_legacy_secret_before_embedding_and_upsert(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -433,7 +440,8 @@ def test_verbatim_qdrant_sync_filters_legacy_secret_before_embedding_and_upsert(
         return _Response({})
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setattr(verbatim_store, "QDRANT_URL", "http://qdrant.invalid")
+    monkeypatch.setattr(verbatim_store, "QDRANT_URL", "https://qdrant.invalid")
+    _install_qdrant_open(monkeypatch, fake_urlopen)
     monkeypatch.setattr(verbatim_store.urllib.request, "urlopen", fake_urlopen)
 
     result = verbatim_store.sync_to_qdrant(str(db_path))
@@ -483,7 +491,8 @@ def test_verbatim_qdrant_sync_rejects_embedding_cardinality_mismatch(
         pytest.fail("cardinality mismatch reached Qdrant upsert")
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setattr(verbatim_store, "QDRANT_URL", "http://qdrant.invalid")
+    monkeypatch.setattr(verbatim_store, "QDRANT_URL", "https://qdrant.invalid")
+    _install_qdrant_open(monkeypatch, fake_urlopen)
     monkeypatch.setattr(verbatim_store.urllib.request, "urlopen", fake_urlopen)
 
     result = verbatim_store.sync_to_qdrant(str(db_path))

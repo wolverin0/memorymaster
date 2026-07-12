@@ -191,8 +191,9 @@ class _FakeClient:
 
 def _unsafe_qdrant_backend() -> QdrantBackend:
     backend = QdrantBackend()
-    backend._client.close()
-    backend._client = _FakeClient()
+    backend._qdrant_client.close()
+    backend._ollama_client.close()
+    backend._qdrant_client = _FakeClient()
     backend._embed = lambda _text: [0.0] * EMBEDDING_DIMS
     return backend
 
@@ -202,7 +203,7 @@ def test_qdrant_rejects_unsafe_claim_before_embed_or_upsert(field: str) -> None:
     backend = _unsafe_qdrant_backend()
 
     assert backend.upsert_claim(_claim(2, **{field: _ENCODED})) is False
-    assert backend._client.puts == []
+    assert backend._qdrant_client.puts == []
 
 
 @pytest.mark.parametrize("field", ["source", "locator", "excerpt"])
@@ -210,4 +211,4 @@ def test_qdrant_rejects_unsafe_citation_before_embed_or_upsert(field: str) -> No
     backend = _unsafe_qdrant_backend()
 
     assert backend.upsert_claim(_claim(2, citations=[_citation(field)])) is False
-    assert backend._client.puts == []
+    assert backend._qdrant_client.puts == []

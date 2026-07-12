@@ -23,10 +23,10 @@ from memorymaster.govern.jobs._sensitivity_scan import (
     _reasons,
     _record,
     _sql_tokens,
-    _sqlite_uri,
     _surface,
     _table_columns,
 )
+from memorymaster.stores._storage_shared import connect_ro
 
 _MAX_CHUNK_BYTES = 1024 * 1024
 _MAX_FILE_BYTES = 64 * 1024 * 1024
@@ -151,8 +151,7 @@ def _sqlite_inventory(path: Path) -> dict[str, object]:
         return {"reason": "sqlite_not_available", "status": "BLOCKED"}
     conn: sqlite3.Connection | None = None
     try:
-        conn = sqlite3.connect(_sqlite_uri(path), uri=True)
-        conn.execute("PRAGMA query_only=ON")
+        conn = connect_ro(path)
         conn.execute("BEGIN")
         master = conn.execute(
             "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
