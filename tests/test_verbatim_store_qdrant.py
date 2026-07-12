@@ -96,7 +96,12 @@ def test_sync_to_qdrant_payload_uses_full_content_hash(tmp_path, monkeypatch):
         return _Response({})
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setattr(verbatim_store, "QDRANT_URL", "http://test-qdrant:6333")
+    monkeypatch.setattr(verbatim_store, "QDRANT_URL", "https://test-qdrant:6333")
+    monkeypatch.setattr(
+        verbatim_store.QdrantTransportConfig,
+        "open",
+        lambda _transport, request, *, timeout: fake_urlopen(request, timeout),
+    )
     monkeypatch.setattr(verbatim_store.urllib.request, "urlopen", fake_urlopen)
 
     assert verbatim_store.sync_to_qdrant(str(db_path)) == {"synced": 1}
