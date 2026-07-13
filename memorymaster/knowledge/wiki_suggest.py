@@ -7,7 +7,6 @@ claims to existing wiki article slugs.
 
 from __future__ import annotations
 
-import json
 import re
 import sqlite3
 from dataclasses import dataclass, field
@@ -68,13 +67,14 @@ def suggest_wikilinks(
     if not article_slugs:
         return []
 
+    graph = EntityGraph(str(db), read_only=True)
+    graph.assert_ready()
     terms = _load_entity_terms(db)
     matched = _match_entity_terms(clean_text, terms)
     if not matched:
         return []
 
     seed_names = [term.name for term in matched]
-    graph = EntityGraph(str(db))
     related_claim_ids = set(graph.find_related_claims(seed_names, hops=hops, limit=max(limit * 50, 100)))
     if not related_claim_ids:
         return []
@@ -108,36 +108,28 @@ def load_wiki_article_slugs(wiki_root: str | Path) -> set[str]:
 
 
 def _load_entity_terms(db_path: Path) -> list[EntityTerm]:
+    conn = connect_ro(db_path)
     try:
-        # Read-only; a missing DB keeps the empty-result contract.
-        conn = connect_ro(db_path)
-    except sqlite3.OperationalError:
-        return []
-    try:
-        rows = conn.execute("SELECT id, name, aliases FROM entities").fetchall()
-    except sqlite3.OperationalError:
-        return []
+        rows = conn.execute(
+            """SELECT e.id, e.canonical_name, a.original_form
+               FROM entities e
+               LEFT JOIN entity_aliases a ON a.entity_id = e.id
+               ORDER BY e.id, a.id"""
+        ).fetchall()
     finally:
         conn.close()
 
-    terms: list[EntityTerm] = []
+    grouped: dict[int, tuple[str, list[str]]] = {}
     for row in rows:
-        aliases = _parse_aliases(row["aliases"])
-        values = tuple(dict.fromkeys([row["name"], *aliases]))
-        terms.append(EntityTerm(entity_id=str(row["id"]), name=str(row["name"]), terms=values))
-    return terms
-
-
-def _parse_aliases(raw: str | None) -> list[str]:
-    if not raw:
-        return []
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(parsed, list):
-        return []
-    return [str(item) for item in parsed if str(item).strip()]
+        entity_id = int(row["id"])
+        name = str(row["canonical_name"])
+        grouped.setdefault(entity_id, (name, []))
+        if row["original_form"]:
+            grouped[entity_id][1].append(str(row["original_form"]))
+    return [
+        EntityTerm(str(entity_id), name, tuple(dict.fromkeys([name, *aliases])))
+        for entity_id, (name, aliases) in grouped.items()
+    ]
 
 
 def _match_entity_terms(text: str, terms: list[EntityTerm]) -> list[EntityTerm]:

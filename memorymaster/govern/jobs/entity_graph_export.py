@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import json
 import sqlite3
 import xml.etree.ElementTree as ET
 
@@ -46,8 +45,8 @@ def export_entity_graph(db_path: str | Path, output: str | Path, fmt: str, scope
     if normalized_format not in SUPPORTED_FORMATS:
         raise ValueError(f"unsupported format: {fmt}")
 
-    graph = EntityGraph(str(db_path))
-    graph.ensure_tables()
+    graph = EntityGraph(str(db_path), read_only=True)
+    graph.assert_ready()
     conn = graph._connect()
     try:
         nodes, edges = _load_graph(conn, scope)
@@ -77,7 +76,12 @@ def _load_graph(conn: sqlite3.Connection, scope: str | None) -> tuple[list[Entit
         ).fetchall()
         node_rows = conn.execute(
             """
-            SELECT DISTINCT en.id, en.name, en.type, en.aliases
+            SELECT DISTINCT en.id, en.canonical_name AS name,
+                   en.entity_type AS type,
+                   COALESCE((
+                       SELECT GROUP_CONCAT(a.original_form, ', ')
+                       FROM entity_aliases a WHERE a.entity_id = en.id
+                   ), '') AS aliases
             FROM entities en
             WHERE en.id IN (
                 SELECT cel.entity_id
@@ -89,7 +93,7 @@ def _load_graph(conn: sqlite3.Connection, scope: str | None) -> tuple[list[Entit
                 UNION
                 SELECT e.target_id FROM entity_edges e JOIN claims c ON c.id = e.claim_id WHERE c.scope = ?
             )
-            ORDER BY en.name COLLATE NOCASE
+            ORDER BY en.canonical_name COLLATE NOCASE
             """,
             (scope, scope, scope),
         ).fetchall()
@@ -102,7 +106,12 @@ def _load_graph(conn: sqlite3.Connection, scope: str | None) -> tuple[list[Entit
             """
         ).fetchall()
         node_rows = conn.execute(
-            "SELECT id, name, type, aliases FROM entities ORDER BY name COLLATE NOCASE"
+            """SELECT en.id, en.canonical_name AS name, en.entity_type AS type,
+                      COALESCE((
+                          SELECT GROUP_CONCAT(a.original_form, ', ')
+                          FROM entity_aliases a WHERE a.entity_id = en.id
+                      ), '') AS aliases
+               FROM entities en ORDER BY en.canonical_name COLLATE NOCASE"""
         ).fetchall()
     return [_node_from_row(row) for row in node_rows], [_edge_from_row(row) for row in edge_rows]
 
@@ -117,23 +126,21 @@ def _has_entity_graph_schema(conn: sqlite3.Connection) -> bool:
     if table_names != {"entities", "entity_edges"}:
         return False
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(entities)").fetchall()}
-    return {"id", "name", "type", "aliases"}.issubset(columns)
+    return {"id", "canonical_name", "entity_type", "scope"}.issubset(columns)
 
 
 def _node_from_row(row: sqlite3.Row) -> EntityNode:
-    return EntityNode(row["id"], row["name"], row["type"], _aliases_text(row["aliases"]))
+    return EntityNode(str(row["id"]), row["name"], row["type"], row["aliases"] or "")
 
 
 def _edge_from_row(row: sqlite3.Row) -> EntityEdge:
-    return EntityEdge(row["source_id"], row["target_id"], row["relation"], float(row["weight"]), row["claim_id"])
-
-
-def _aliases_text(raw_aliases: str) -> str:
-    try:
-        aliases = json.loads(raw_aliases or "[]")
-    except json.JSONDecodeError:
-        return ""
-    return ", ".join(str(alias) for alias in aliases)
+    return EntityEdge(
+        str(row["source_id"]),
+        str(row["target_id"]),
+        row["relation"],
+        float(row["weight"]),
+        row["claim_id"],
+    )
 
 
 def _render_dot(nodes: list[EntityNode], edges: list[EntityEdge]) -> str:

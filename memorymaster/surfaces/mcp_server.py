@@ -2020,7 +2020,7 @@ if FastMCP is not None:
         workspace: str = ".",
     ) -> dict[str, Any]:
         """Extract entities from a claim's text and link them to the knowledge graph."""
-        from memorymaster.knowledge.entity_graph import EntityGraph
+        from memorymaster.knowledge.entity_graph import EntityGraph, EntityGraphNotReady
         svc = _service(db, workspace)
         if not text:
             claim = svc.store.get_claim(claim_id, include_citations=False)
@@ -2028,24 +2028,32 @@ if FastMCP is not None:
                 return {"ok": False, "error": f"Claim {claim_id} not found"}
             text = claim.text
         eg = EntityGraph(_resolve_db(db))
-        eg.ensure_tables()
-        names = eg.extract_and_link(claim_id, text)
+        try:
+            names = eg.extract_and_link(claim_id, text)
+        except EntityGraphNotReady as exc:
+            return _structured_error(str(exc), "ENTITY_GRAPH_NOT_READY")
         return {"ok": True, "entities": names, "count": len(names)}
 
     @mcp.tool()
     def entity_stats(
         db: str = "memorymaster.db",
+        workspace: str = ".",
     ) -> dict[str, Any]:
         """Get entity knowledge graph statistics."""
-        from memorymaster.knowledge.entity_graph import EntityGraph
-        eg = EntityGraph(_resolve_db(db))
-        eg.ensure_tables()
-        return {"ok": True, **eg.get_stats()}
+        from memorymaster.knowledge.entity_graph import EntityGraph, EntityGraphNotReady
+
+        _read_service(db, workspace)
+        graph = EntityGraph(_resolve_db(db), read_only=True)
+        try:
+            return {"ok": True, **graph.get_stats()}
+        except EntityGraphNotReady as exc:
+            return _structured_error(str(exc), "ENTITY_GRAPH_NOT_READY")
 
     @mcp.tool()
     def find_related_claims(
         entity_names: str,
         db: str = "memorymaster.db",
+        workspace: str = ".",
         hops: int = 2,
         limit: int = 50,
     ) -> dict[str, Any]:
@@ -2053,11 +2061,15 @@ if FastMCP is not None:
 
         entity_names: comma-separated entity names to search from.
         """
-        from memorymaster.knowledge.entity_graph import EntityGraph
-        eg = EntityGraph(_resolve_db(db))
-        eg.ensure_tables()
+        from memorymaster.knowledge.entity_graph import EntityGraph, EntityGraphNotReady
+
+        _read_service(db, workspace)
+        graph = EntityGraph(_resolve_db(db), read_only=True)
         names = [n.strip() for n in entity_names.split(",") if n.strip()]
-        claim_ids = eg.find_related_claims(names, hops=hops, limit=limit)
+        try:
+            claim_ids = graph.find_related_claims(names, hops=hops, limit=limit)
+        except EntityGraphNotReady as exc:
+            return _structured_error(str(exc), "ENTITY_GRAPH_NOT_READY")
         return {"ok": True, "claim_ids": claim_ids, "count": len(claim_ids)}
 
     @mcp.tool()

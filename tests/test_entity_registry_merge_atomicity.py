@@ -16,6 +16,7 @@ import sqlite3
 
 import pytest
 
+from memorymaster.stores._storage_schema import load_schema_sql
 from memorymaster.knowledge.entity_registry import (
     add_alias,
     ensure_entity_schema,
@@ -28,10 +29,8 @@ from memorymaster.knowledge.entity_registry import (
 def conn():
     c = sqlite3.connect(":memory:")
     c.execute("PRAGMA foreign_keys=ON")
+    c.executescript(load_schema_sql())
     ensure_entity_schema(c)
-    c.execute(
-        "CREATE TABLE claims (id INTEGER PRIMARY KEY, subject TEXT, entity_id INTEGER)"
-    )
     yield c
     c.close()
 
@@ -44,7 +43,10 @@ def test_merge_with_colliding_variant_key_does_not_corrupt_graph(conn):
     add_alias(conn, keep, "shared-alias")
     add_alias(conn, merge, "shared-alias")
     conn.execute(
-        "INSERT INTO claims (subject, entity_id) VALUES ('QdrantDB', ?)", (merge,)
+        "INSERT INTO claims "
+        "(text, subject, entity_id, scope, status, created_at, updated_at) "
+        "VALUES ('merge test', 'QdrantDB', ?, 'project:test', 'candidate', 't', 't')",
+        (merge,),
     )
     conn.commit()
 

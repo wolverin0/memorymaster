@@ -4,22 +4,16 @@ from __future__ import annotations
 
 import sqlite3
 
-import pytest
-
 from memorymaster.core.service import MemoryService
 from memorymaster.knowledge.entity_graph import EntityGraph
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="R2.3: EntityGraph DDL conflicts with the canonical registry schema",
-)
 def test_normal_init_produces_a_graph_ready_entity_schema(tmp_path):
     db_path = tmp_path / "entity-composition.db"
     MemoryService(db_path, workspace_root=tmp_path).init_db()
 
     graph = EntityGraph(str(db_path))
-    graph.ensure_tables()
+    graph.assert_ready()
 
     with sqlite3.connect(db_path) as conn:
         tables = {

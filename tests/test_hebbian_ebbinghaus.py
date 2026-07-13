@@ -16,14 +16,15 @@ weight-ordered recall, default-OFF safety) regressed — even if the code still
 from __future__ import annotations
 
 import tempfile
-import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+from memorymaster.core.service import MemoryService
 from memorymaster.govern.jobs import decay
 from memorymaster.knowledge.entity_graph import EntityGraph
+from memorymaster.knowledge.entity_registry import resolve_or_create
 
 HEBBIAN_FLAG = "MEMORYMASTER_HEBBIAN_DECAY"
 
@@ -36,8 +37,20 @@ def db_path():
 
 @pytest.fixture
 def graph(db_path):
+    MemoryService(db_path, workspace_root=db_path.parent).init_db()
     g = EntityGraph(str(db_path))
     g.ensure_tables()
+    now = datetime.now(timezone.utc).isoformat()
+    conn = g._connect()
+    try:
+        conn.executemany(
+            "INSERT INTO claims (id, text, scope, status, created_at, updated_at) "
+            "VALUES (?, 'hebbian test', 'project:test', 'confirmed', ?, ?)",
+            [(claim_id, now, now) for claim_id in (1, 2, 10, 11, 99, 100, 200)],
+        )
+        conn.commit()
+    finally:
+        conn.close()
     return g
 
 
@@ -47,21 +60,17 @@ def enable_decay(monkeypatch):
     monkeypatch.setenv(HEBBIAN_FLAG, "1")
 
 
-def _seed_entity(graph: EntityGraph, name: str) -> str:
+def _seed_entity(graph: EntityGraph, name: str) -> int:
     conn = graph._connect()
     try:
-        ent_id = str(uuid.uuid4())
-        conn.execute(
-            "INSERT INTO entities (id, name, type, aliases, created_at) VALUES (?, ?, 'concept', '[]', ?)",
-            (ent_id, name, datetime.now(timezone.utc).isoformat()),
-        )
+        ent_id = resolve_or_create(conn, name, entity_type="concept")
         conn.commit()
         return ent_id
     finally:
         conn.close()
 
 
-def _read_edge(graph: EntityGraph, src: str, tgt: str, relation: str):
+def _read_edge(graph: EntityGraph, src: int, tgt: int, relation: str):
     conn = graph._connect()
     try:
         return conn.execute(
@@ -255,8 +264,6 @@ def test_run_cycle_includes_edge_decay(monkeypatch, tmp_path):
     steward and dashboard can observe it — and must remain failure-isolated
     (no exception escapes). This anchors the integration contract, not just the
     unit behavior."""
-    from memorymaster.core.service import MemoryService
-
     monkeypatch.setenv(HEBBIAN_FLAG, "1")
     import sqlite3
 
@@ -264,32 +271,24 @@ def test_run_cycle_includes_edge_decay(monkeypatch, tmp_path):
     svc = MemoryService(db_file, workspace_root=str(tmp_path))
     svc.init_db()
 
-    # Seed a real entity_edges row (the only table this feature mutates) directly
-    # on the service DB. We create the table with raw DDL rather than
-    # EntityGraph.ensure_tables() because the graph's executescript also
-    # (re)declares an `entities` table that collides with the registry `entities`
-    # init_db() already created — a pre-existing schema-name overlap unrelated to
-    # this feature. The decay job reads ONLY entity_edges, so this is sufficient.
+    # Seed a canonical edge and its referenced claim/entity rows directly.
     conn = sqlite3.connect(db_file)
     old = (datetime.now(timezone.utc) - timedelta(days=20)).isoformat()
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS entity_edges (
-            source_id TEXT NOT NULL,
-            target_id TEXT NOT NULL,
-            relation TEXT NOT NULL DEFAULT 'related_to',
-            weight REAL NOT NULL DEFAULT 1.0,
-            claim_id INTEGER,
-            created_at TEXT NOT NULL,
-            last_reinforced_at TEXT,
-            PRIMARY KEY (source_id, target_id, relation)
-        );
-        """
+    conn.execute(
+        "INSERT INTO claims (id, text, scope, status, created_at, updated_at) "
+        "VALUES (1, 'cycle edge', 'project:test', 'confirmed', ?, ?)",
+        (old, old),
+    )
+    conn.executemany(
+        "INSERT INTO entities "
+        "(id, canonical_name, entity_type, scope, created_at, updated_at) "
+        "VALUES (?, ?, 'concept', 'global', ?, ?)",
+        [(1, "cycle-a", old, old), (2, "cycle-b", old, old)],
     )
     conn.execute(
         "INSERT INTO entity_edges "
         "(source_id, target_id, relation, weight, claim_id, created_at, last_reinforced_at) "
-        "VALUES ('cycle-a', 'cycle-b', 'related_to', 2.0, 1, ?, ?)",
+        "VALUES (1, 2, 'related_to', 2.0, 1, ?, ?)",
         (datetime.now(timezone.utc).isoformat(), old),
     )
     conn.commit()

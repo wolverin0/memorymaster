@@ -492,7 +492,6 @@ def _handle_extract_entities(args: argparse.Namespace, service, parser: argparse
     from memorymaster.knowledge.entity_graph import EntityGraph
     t0 = time.perf_counter()
     eg = EntityGraph(str(effective_db))
-    eg.ensure_tables()
     claims = service.store.find_by_status(args.status, limit=args.limit, include_citations=False)
     total_entities = 0
     for claim in claims:
@@ -512,8 +511,7 @@ def _handle_extract_entities(args: argparse.Namespace, service, parser: argparse
 
 def _handle_entity_stats(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.knowledge.entity_graph import EntityGraph
-    eg = EntityGraph(str(effective_db))
-    eg.ensure_tables()
+    eg = EntityGraph(str(effective_db), read_only=True)
     stats = eg.get_stats()
     if args.json_output:
         print(_json_envelope(stats))

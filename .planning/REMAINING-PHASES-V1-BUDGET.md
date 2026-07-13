@@ -202,5 +202,22 @@ commit `038779f`:
 - Atomic package commit: the conventional `fix: enforce lifecycle authority and
   read-only recall` commit containing this scheduler evidence.
 
-The next separately authorized package is P2-D. Do not combine entity-schema
-convergence with P2-C or begin it from this goal.
+P2-D implementation and focused gate completed on 2026-07-13 from P2-C commit
+`732cb684efd48083523bcd86200933cd6e928a7a`:
+
+- The integer-ID entity registry is the canonical relational authority;
+  immutable migration `0013` converges legacy graph-first and registry-first
+  SQLite stores and declares the matching Postgres schema contract. Optional
+  Kuzu state remains a derived projection initialized only by its explicit
+  backfill path.
+- Relational graph, MCP, recall enrichment, wiki suggestion, export, and Kuzu
+  recall opens now validate readiness without lazy DDL. Missing or incompatible
+  schema produces an actionable initialization failure.
+- Focused P2-D gate: 116 passed in 13.02s; changed-file Ruff passed. An
+  independent disposable initialization probe reached schema version 13 with
+  all four canonical entity tables and zero foreign-key violations.
+- Atomic package commit: the conventional `fix: converge entity schema
+  authority` commit containing this scheduler evidence.
+
+The next separately authorized package is P2-E. Do not begin quiet finite
+capture or retention work from the P2-D goal.

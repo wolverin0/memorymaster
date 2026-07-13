@@ -87,13 +87,28 @@ class GraphStore:
     # lifecycle
     # ------------------------------------------------------------------
     def open(self) -> None:
-        """Open the Kuzu DB, creating the schema if it does not exist.
+        """Open an initialized Kuzu DB without creating or repairing schema.
 
-        Raises :class:`GraphStoreUnavailable` when Kuzu is not importable
-        or the DB path cannot be created. The exception message is
+        Raises :class:`GraphStoreUnavailable` when Kuzu is not importable,
+        the DB is absent, or the required graph tables are unavailable. The
+        message is
         intentionally generic — callers log it at DEBUG level because the
         graph stream is an opt-in enhancement, not a correctness layer.
         """
+        if not self.path.exists():
+            raise GraphStoreUnavailable(
+                f"graph schema is not initialized at {self.path}; "
+                "run the graph backfill initializer"
+            )
+        self._open_backend(create_parent=False)
+        self._assert_schema_ready()
+
+    def initialize(self) -> None:
+        """Explicitly create or evolve the optional derived graph store."""
+        self._open_backend(create_parent=True)
+        self._ensure_schema()
+
+    def _open_backend(self, *, create_parent: bool) -> None:
         if self._conn is not None:
             return
         try:
@@ -108,7 +123,8 @@ class GraphStore:
             # We still accept ``.kuzu`` paths for forward compatibility —
             # just make sure the PARENT directory exists and let Kuzu
             # create the file itself.
-            self.path.parent.mkdir(parents=True, exist_ok=True)
+            if create_parent:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
             self._db = kuzu.Database(str(self.path))
             self._conn = kuzu.Connection(self._db)
         except Exception as exc:
@@ -120,7 +136,22 @@ class GraphStore:
                 f"kuzu open failed at {self.path}: {exc!r}"
             ) from exc
 
-        self._ensure_schema()
+
+    def _assert_schema_ready(self) -> None:
+        """Raise an actionable error when a read opens an incomplete store."""
+        assert self._conn is not None
+        try:
+            self._conn.execute("MATCH (c:Claim) RETURN count(c)")
+            self._conn.execute("MATCH (e:Entity) RETURN count(e)")
+            self._conn.execute(
+                f"MATCH (:Claim)-[m:{MENTIONS_REL}]->(:Entity) RETURN count(m)"
+            )
+        except Exception as exc:
+            self.close()
+            raise GraphStoreUnavailable(
+                f"graph schema is not ready at {self.path}; "
+                "run the graph backfill initializer"
+            ) from exc
 
     def close(self) -> None:
         """Close the Kuzu connection + database. Safe to call twice."""
@@ -550,16 +581,22 @@ def open_graph_store(
     path: Path | str,
     *,
     allow_networkx: bool = False,
+    initialize: bool = False,
 ) -> "GraphStore | _NetworkXGraphStore":
-    """Factory — return an opened Kuzu store, or the networkx fallback
-    when ``allow_networkx=True`` and Kuzu is unavailable.
+    """Return an opened Kuzu store, or an explicitly allowed networkx fallback.
+
+    ``initialize=True`` is reserved for administration/backfill paths. Normal
+    recall opens and validates existing state without creating schema.
 
     Raises :class:`GraphStoreUnavailable` when Kuzu fails AND
     ``allow_networkx`` is False.
     """
     try:
         store = GraphStore(path)
-        store.open()
+        if initialize:
+            store.initialize()
+        else:
+            store.open()
         return store
     except GraphStoreUnavailable:
         if not allow_networkx:

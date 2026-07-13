@@ -1625,37 +1625,43 @@ class MemoryService:
         self, results: list[dict[str, Any]], query_text: str, limit: int
     ) -> list[dict[str, Any]]:
         """Add entity-related claims to query results via knowledge graph traversal."""
-        try:
-            from memorymaster.knowledge.entity_graph import EntityGraph
-            db_path = str(getattr(self.store, 'db_path', ''))
-            if not db_path:
-                return results
-            eg = EntityGraph(db_path)
-            eg.ensure_tables()
-            # Extract entity names from query (simple word-based, no LLM needed)
-            query_words = [w for w in query_text.split() if len(w) > 3 and w[0].isupper()]
-            if not query_words:
-                return results
-            related_ids = eg.find_related_claims(query_words, hops=2, limit=limit)
-            existing_ids = {row["claim"].id for row in results if hasattr(row.get("claim"), "id")}
-            new_ids = [cid for cid in related_ids if cid not in existing_ids]
-            for cid in new_ids[:limit - len(results)]:
-                claim = self.store.get_claim(cid, include_citations=True)
-                if claim and claim.status != "archived":
-                    results.append({
-                        "claim": claim,
-                        "status": claim.status,
-                        "annotation": self._annotation_for_claim(claim),
-                        "score": 0.3,  # entity-graph bonus
-                        "lexical_score": 0.0,
-                        "freshness_score": 0.0,
-                        "confidence_score": claim.confidence,
-                        "vector_score": 0.0,
-                        "source": "entity_graph",
-                    })
-        except Exception:
-            pass  # best-effort
+        from memorymaster.knowledge.entity_graph import EntityGraph
+
+        query_words = [
+            word for word in query_text.split() if len(word) > 3 and word[0].isupper()
+        ]
+        if not query_words:
+            return results
+        db_target = str(
+            getattr(self.store, "db_path", "") or getattr(self.store, "dsn", "")
+        )
+        if not db_target:
+            return results
+        graph = EntityGraph(db_target, read_only=True)
+        related_ids = graph.find_related_claims(query_words, hops=2, limit=limit)
+        existing_ids = {
+            row["claim"].id for row in results if hasattr(row.get("claim"), "id")
+        }
+        for claim_id in [cid for cid in related_ids if cid not in existing_ids][
+            : limit - len(results)
+        ]:
+            claim = self.store.get_claim(claim_id, include_citations=True)
+            if claim and claim.status != "archived":
+                results.append(self._entity_graph_row(claim))
         return results
+
+    def _entity_graph_row(self, claim: Claim) -> dict[str, Any]:
+        return {
+            "claim": claim,
+            "status": claim.status,
+            "annotation": self._annotation_for_claim(claim),
+            "score": 0.3,
+            "lexical_score": 0.0,
+            "freshness_score": 0.0,
+            "confidence_score": claim.confidence,
+            "vector_score": 0.0,
+            "source": "entity_graph",
+        }
 
     def _record_accesses(self, rows: list[dict[str, Any]], query_text: str = "") -> None:
         """Record access + feedback for each claim returned by a query.

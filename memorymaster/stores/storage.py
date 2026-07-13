@@ -156,13 +156,6 @@ class SQLiteStore(_SchemaMixin, _ReadMixin, _WriteClaimsMixin, _LifecycleMixin, 
             self._ensure_version_column(conn)
             self._ensure_embeddings_schema(conn)
             self._ensure_atlas_source_schema(conn)
-            # Entity registry (GBrain-inspired canonical entities + alias resolution)
-            from memorymaster.knowledge.entity_registry import ensure_entity_schema
-            ensure_entity_schema(conn)
-            try:
-                conn.execute("ALTER TABLE claims ADD COLUMN entity_id INTEGER")
-            except sqlite3.OperationalError:
-                pass  # already exists
             conn.commit()
 
         # v3.20.0-S1: apply versioned migrations after the legacy init flow.

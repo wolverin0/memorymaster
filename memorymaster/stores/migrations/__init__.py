@@ -41,8 +41,21 @@ from memorymaster.stores.migrations.runner import (
     discover_migrations,
 )
 
+
+def entity_schema_contract(backend: str) -> dict[str, tuple[str, ...]]:
+    """Return the backend-independent P2-D entity schema contract."""
+    if backend not in {"sqlite", "postgres"}:
+        raise ValueError("backend must be 'sqlite' or 'postgres'")
+    from importlib import import_module
+
+    migration = import_module(
+        "memorymaster.stores.migrations.0013_canonical_entity_graph"
+    )
+    return dict(migration.ENTITY_SCHEMA_CONTRACT)
+
 __all__ = [
     "MigrationDriftError",
     "MigrationRunner",
     "discover_migrations",
+    "entity_schema_contract",
 ]

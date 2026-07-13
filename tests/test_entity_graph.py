@@ -9,7 +9,27 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from memorymaster.knowledge.entity_graph import EntityGraph, _llm_chat, _parse_json
+from memorymaster.core.service import MemoryService
+from memorymaster.knowledge.entity_graph import (
+    EntityGraph,
+    EntityGraphNotReady,
+    _llm_chat,
+    _parse_json,
+)
+
+
+def _seed_claims(graph: EntityGraph, *claim_ids: int) -> None:
+    now = "2026-01-01T00:00:00+00:00"
+    conn = graph._connect()
+    try:
+        conn.executemany(
+            "INSERT INTO claims (id, text, scope, status, created_at, updated_at) "
+            "VALUES (?, 'entity graph test', 'project:test', 'confirmed', ?, ?)",
+            [(claim_id, now, now) for claim_id in claim_ids],
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 class TestParseJson:
@@ -68,6 +88,7 @@ class TestEntityGraph:
     @pytest.fixture
     def graph(self, db_path):
         """Create EntityGraph instance."""
+        MemoryService(db_path, workspace_root=db_path.parent).init_db()
         return EntityGraph(str(db_path))
 
     def test_ensure_tables_creates_schema(self, graph):
@@ -108,6 +129,7 @@ class TestEntityGraph:
     def test_extract_and_link_with_entities(self, mock_llm, graph):
         """extract_and_link extracts and links entities."""
         graph.ensure_tables()
+        _seed_claims(graph, 42)
         mock_llm.return_value = json.dumps({
             "entities": [
                 {"name": "Alice", "type": "person", "aliases": ["Ally"]},
@@ -140,6 +162,7 @@ class TestEntityGraph:
     def test_extract_and_link_skips_short_names(self, mock_llm, graph):
         """extract_and_link skips entity names with length < 2."""
         graph.ensure_tables()
+        _seed_claims(graph, 1)
         mock_llm.return_value = json.dumps({
             "entities": [
                 {"name": "A", "type": "person", "aliases": []},  # Should skip
@@ -162,6 +185,7 @@ class TestEntityGraph:
     def test_find_related_claims_with_data(self, mock_llm, graph):
         """find_related_claims finds claims via entity relationships."""
         graph.ensure_tables()
+        _seed_claims(graph, 1, 2)
 
         # Extract entities for claim 1
         mock_llm.return_value = json.dumps({
@@ -193,6 +217,7 @@ class TestEntityGraph:
     def test_get_stats_with_data(self, mock_llm, graph):
         """get_stats returns accurate counts."""
         graph.ensure_tables()
+        _seed_claims(graph, 1)
         mock_llm.return_value = json.dumps({
             "entities": [
                 {"name": "Alice", "type": "person", "aliases": []},
@@ -222,34 +247,33 @@ class TestUpsertEntityRace:
             yield Path(tmpdir) / "race.db"
 
     def test_concurrent_caseonly_insert_does_not_raise(self, db_path):
+        MemoryService(db_path, workspace_root=db_path.parent).init_db()
         graph = EntityGraph(str(db_path))
         graph.ensure_tables()
         conn = graph._connect()
         try:
-            # Simulate the race: SELECT sees nothing, then a concurrent writer
-            # inserts "Acme" before our INSERT for "ACME" (NOCASE-equal) lands.
-            assert conn.execute(
-                "SELECT id FROM entities WHERE LOWER(name) = LOWER(?)", ("ACME",)
-            ).fetchone() is None
+            # Simulate the winning writer through the canonical registry so its
+            # normalized alias is present before the case variant arrives.
             other = graph._connect()
             try:
-                other.execute(
-                    "INSERT INTO entities (id, name, type, aliases, created_at) "
-                    "VALUES ('winner', 'Acme', 'org', '[]', '2026-01-01T00:00:00')"
-                )
+                winner_id = graph._upsert_entity(other, "Acme", "org", [])
                 other.commit()
             finally:
                 other.close()
             # Must resolve to the existing row, not raise IntegrityError.
             ent_id = graph._upsert_entity(conn, "ACME", "org", ["alias-from-loser"])
             conn.commit()
-            assert ent_id == "winner"
+            assert ent_id == winner_id
             # Our aliases were merged into the winning row.
-            row = conn.execute("SELECT aliases FROM entities WHERE id = 'winner'").fetchone()
-            assert "alias-from-loser" in json.loads(row["aliases"])
+            aliases = conn.execute(
+                "SELECT original_form FROM entity_aliases WHERE entity_id = ?",
+                (ent_id,),
+            ).fetchall()
+            assert "alias-from-loser" in {row["original_form"] for row in aliases}
             # No duplicate row was created.
             count = conn.execute(
-                "SELECT COUNT(*) AS c FROM entities WHERE LOWER(name) = 'acme'"
+                "SELECT COUNT(*) AS c FROM entities "
+                "WHERE LOWER(canonical_name) = 'acme'"
             ).fetchone()["c"]
             assert count == 1
         finally:
@@ -285,6 +309,7 @@ class TestSchemaEnsuredOnce:
         return _wrapper, calls
 
     def test_ensure_tables_runs_executescript_once(self, db_path):
+        MemoryService(db_path, workspace_root=db_path.parent).init_db()
         graph = EntityGraph(str(db_path))
         assert graph._schema_ready is False
         wrapper, calls = self._count_real_ddl(graph)
@@ -296,14 +321,12 @@ class TestSchemaEnsuredOnce:
         assert calls["n"] == 1, f"DDL ran {calls['n']} times, expected 1"
 
     @patch("memorymaster.knowledge.entity_graph._llm_chat")
-    def test_extract_and_link_does_not_reissue_ddl_per_claim(self, mock_llm, db_path):
+    def test_extract_and_link_does_not_initialize_schema(self, mock_llm, db_path):
         mock_llm.return_value = json.dumps({"entities": [], "relations": []})
         graph = EntityGraph(str(db_path))
         wrapper, calls = self._count_real_ddl(graph)
         graph.ensure_tables = wrapper
-        graph.extract_and_link(claim_id=1, text="one")
-        graph.extract_and_link(claim_id=2, text="two")
-        graph.extract_and_link(claim_id=3, text="three")
-        # DDL issued exactly once across three claims, not three times.
-        assert calls["n"] == 1, f"DDL issued {calls['n']} times across 3 claims"
+        with pytest.raises(EntityGraphNotReady, match="init-db"):
+            graph.extract_and_link(claim_id=1, text="one")
+        assert calls["n"] == 0
 
