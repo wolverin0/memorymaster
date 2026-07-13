@@ -298,6 +298,7 @@ class TestMcpToolsIntegration:
             query="Python indentation",
             db=self.db_path,
             workspace=self.workspace,
+            trust_mode="exploratory",
         )
         assert query_result["ok"] is True
         assert query_result["rows"] >= 1

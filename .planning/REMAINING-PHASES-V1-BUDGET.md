@@ -132,5 +132,15 @@ delta and draft PR.
 
 ## Current next action
 
-Execute P2-A only. Stop after its atomic commit, focused evidence, and scheduler
-update; do not begin governed Qdrant reintegration in the same package.
+P2-A implementation and focused gate completed on 2026-07-12:
+
+- Immutable `RetrievalRequest`, `RetrievalPlan`, and `RetrievalResult` govern
+  service and MCP recall entrypoints.
+- Trusted mode is confirmed-only; exploratory status expansion is explicit.
+- Conversational lexical recall uses bounded safe token fan-out while Qdrant
+  remains quarantined behind the planner.
+- Focused gate: 141 passed, 1 expected xfail; FTS/planner regression slice:
+  32 passed; changed-file Ruff and `git diff --check` passed.
+
+Next package is P2-B. Start it only in a separate goal/package; do not combine
+governed Qdrant reintegration with P2-A.

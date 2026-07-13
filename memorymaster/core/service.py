@@ -19,6 +19,11 @@ from memorymaster.core.policy import select_revalidation_candidates
 from memorymaster.recall.context_optimizer import ContextResult, pack_context
 from memorymaster.core.config import get_config
 from memorymaster.recall.retrieval import VectorSearchHook, _tier_bonus, rank_claim_rows
+from memorymaster.recall.planner import (
+    RetrievalRequest,
+    RetrievalResult,
+    build_retrieval_plan,
+)
 from memorymaster.core.security import (
     is_sensitive_claim,
     normalize_sensitivity_findings,
@@ -977,8 +982,8 @@ class MemoryService:
         query_text: str,
         *,
         limit: int = 20,
-        include_stale: bool = True,
-        include_conflicted: bool = True,
+        include_stale: bool = False,
+        include_conflicted: bool = False,
         include_candidates: bool = False,
         retrieval_mode: str = "legacy",
         vector_hook: VectorSearchHook | None = None,
@@ -986,21 +991,52 @@ class MemoryService:
         allow_sensitive: bool = False,
         scope_allowlist: list[str] | None = None,
         query_type: str | None = None,
+        trust_mode: str | None = None,
     ) -> list[Claim]:
-        rows = self.query_rows(
+        resolved_trust = trust_mode or (
+            "exploratory"
+            if include_stale or include_conflicted or include_candidates
+            else "trusted"
+        )
+        result = self.retrieve(RetrievalRequest(
             query_text=query_text,
             limit=limit,
+            trust_mode=resolved_trust,
             include_stale=include_stale,
             include_conflicted=include_conflicted,
             include_candidates=include_candidates,
             retrieval_mode=retrieval_mode,
-            vector_hook=vector_hook,
             retrieval_profile=retrieval_profile,
             allow_sensitive=allow_sensitive,
-            scope_allowlist=scope_allowlist,
+            scope_allowlist=tuple(scope_allowlist) if scope_allowlist else None,
             query_type=query_type,
+        ), vector_hook=vector_hook)
+        return [row["claim"] for row in result.rows]
+
+    def retrieve(
+        self,
+        request: RetrievalRequest,
+        *,
+        vector_hook: VectorSearchHook | None = None,
+    ) -> RetrievalResult:
+        """Execute one immutable governed retrieval plan."""
+        plan = build_retrieval_plan(request)
+        statuses = set(plan.statuses)
+        rows = self.query_rows(
+            query_text=plan.search_text,
+            limit=plan.limit,
+            include_stale="stale" in statuses,
+            include_conflicted="conflicted" in statuses,
+            include_candidates="candidate" in statuses,
+            retrieval_mode=plan.effective_mode,
+            vector_hook=vector_hook,
+            retrieval_profile=plan.retrieval_profile,
+            allow_sensitive=plan.allow_sensitive,
+            scope_allowlist=list(plan.scope_allowlist) if plan.scope_allowlist else None,
+            requesting_agent=plan.requesting_agent,
+            query_type=plan.query_type,
         )
-        return [row["claim"] for row in rows]
+        return RetrievalResult(plan=plan, rows=tuple(rows))
 
     def query_rules(
         self,
@@ -1179,14 +1215,8 @@ class MemoryService:
 
     def _query_legacy_mode(self, query_text: str, limit: int, statuses: list[str], normalized_scopes: list[str] | None, include_sensitive: bool, requesting_agent: str | None) -> list[dict[str, Any]]:
         """Query using legacy retrieval mode."""
-        legacy = self.store.list_claims(
-            limit=limit,
-            text_query=query_text,
-            status_in=statuses,
-            include_archived=False,
-            include_citations=True,
-            scope_allowlist=normalized_scopes,
-            tenant_id=self.tenant_id,
+        legacy = self._legacy_candidates(
+            query_text, limit, statuses, normalized_scopes
         )
         if not include_sensitive:
             legacy = [claim for claim in legacy if not is_sensitive_claim(claim)]
@@ -1215,6 +1245,32 @@ class MemoryService:
         ]
         self._record_accesses(results, query_text=query_text)
         return results
+
+    def _legacy_candidates(
+        self,
+        query_text: str,
+        limit: int,
+        statuses: list[str],
+        normalized_scopes: list[str] | None,
+    ) -> list[Claim]:
+        """Resolve planner OR expressions without exposing raw FTS syntax."""
+        queries = [query_text]
+        if " OR " in query_text:
+            queries = [term for term in query_text.split(" OR ") if term]
+        merged: dict[int, Claim] = {}
+        for text_query in queries:
+            claims = self.store.list_claims(
+                limit=limit,
+                text_query=text_query,
+                status_in=statuses,
+                include_archived=False,
+                include_citations=True,
+                scope_allowlist=normalized_scopes,
+                tenant_id=self.tenant_id,
+            )
+            for claim in claims:
+                merged.setdefault(claim.id, claim)
+        return list(merged.values())[:limit]
 
     def query_rows(
         self,
@@ -1607,14 +1663,15 @@ class MemoryService:
         token_budget: int = 4000,
         output_format: str = "text",
         limit: int = 100,
-        include_stale: bool = True,
-        include_conflicted: bool = True,
+        include_stale: bool = False,
+        include_conflicted: bool = False,
         include_candidates: bool = False,
         retrieval_mode: str = "hybrid",
         retrieval_profile: str | None = None,
         allow_sensitive: bool = False,
         scope_allowlist: list[str] | None = None,
         provider: str | None = None,
+        trust_mode: str | None = None,
     ) -> ContextResult:
         """Return a formatted text block of the most relevant claims packed
         into *token_budget* using greedy knapsack.
@@ -1638,19 +1695,25 @@ class MemoryService:
         provider:
             Optional context-packing strategy for a target LLM provider.
         """
-        rows = self.query_rows(
+        resolved_trust = trust_mode or (
+            "exploratory"
+            if include_stale or include_conflicted or include_candidates
+            else "trusted"
+        )
+        retrieval = self.retrieve(RetrievalRequest(
             query_text=query,
             limit=limit,
+            trust_mode=resolved_trust,
             include_stale=include_stale,
             include_conflicted=include_conflicted,
             include_candidates=include_candidates,
             retrieval_mode=retrieval_mode,
             retrieval_profile=retrieval_profile,
             allow_sensitive=allow_sensitive,
-            scope_allowlist=scope_allowlist,
-        )
+            scope_allowlist=tuple(scope_allowlist) if scope_allowlist else None,
+        ))
         return pack_context(
-            rows,
+            list(retrieval.rows),
             token_budget=token_budget,
             output_format=output_format,
             provider=provider,
