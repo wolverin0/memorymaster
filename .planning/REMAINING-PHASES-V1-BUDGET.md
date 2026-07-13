@@ -33,6 +33,36 @@ external-action gates pass.
    goals. Publish one phase draft PR only after its phase convergence gate.
 8. Medium/Low findings outside the package become backlog. No broad refactors.
 
+## Agent routing gate (required before P2-C)
+
+The root coordinator runs on the composer-selected `gpt-5.6-sol` at high
+reasoning. Root owns architecture, HIGH/CRITICAL decisions and warnings,
+cross-package integration, staging, commits, and final evidence reconciliation.
+Child agents never supervise the root or independently declare a package done.
+
+MemoryMaster's project agents are pinned in `.codex/agents/`:
+
+| Agent | Model / effort | Allowed work |
+|---|---|---|
+| `mm_explorer` | `gpt-5.4-mini` / low | Read-only mapping and inventories |
+| `mm_test_runner` | `gpt-5.4-mini` / medium | Focused commands and evidence |
+| `mm_docs_ledger` | `gpt-5.4-mini` / medium | Evidence-backed planning/docs only |
+| `mm_fast_worker` | `gpt-5.6-luna` / medium | Isolated LOW/MEDIUM implementation |
+| `mm_worker` | `gpt-5.6-terra` / high | Bounded multi-step implementation |
+| `mm_security_reviewer` | `gpt-5.6-sol` / high | Read-only security/integrity review |
+
+`.codex/config.toml` sets `max_threads = 2` and `max_depth = 1`: at most one
+child may run beside root, and children cannot create grandchildren. Delegate
+only a concrete bounded task whose parallelism saves time. Every write worker
+must receive an isolated worktree and explicit owned files; root inspects and
+integrates its diff. Never run concurrent writers in one checkout.
+
+Do not silently promote routine work to Sol. If a pinned model is unavailable,
+root either performs the task or records the routing limitation; security,
+architecture, and HIGH/CRITICAL decisions must not be downgraded to Mini or
+Luna. Before starting P2-C, parse every project TOML file, verify each pinned
+model and reasoning level exists locally, and commit this routing gate.
+
 ## Phase 2 — Governed core convergence
 
 Phase 2 uses branch `remediation/phase2-governed-core-20260712` and worktree
@@ -158,5 +188,6 @@ P2-B implementation and focused gate completed on 2026-07-13:
 - Disposable authenticated/TLS Qdrant runtime parity is `BLOCKED-EXTERNAL` in
   `external-actions-required.md`.
 
-Next package is P2-C. Start it only in a separate goal/package; do not combine
-lifecycle/read-only recall changes with P2-B.
+The agent routing gate is the only prerequisite package before P2-C. After it
+is validated and atomically committed, start P2-C only in a separate goal; do
+not combine lifecycle/read-only recall changes with P2-B or routing changes.

@@ -1,9 +1,9 @@
 name = "mm_fast_worker"
 description = "Efficient implementation worker for isolated LOW/MEDIUM-risk fixes with explicit file ownership and acceptance tests."
-model = "gpt-5.6-terra"
+model = "gpt-5.6-luna"
 model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
-nickname_candidates = ["Terra Patch", "Terra Build", "Terra Fix"]
+nickname_candidates = ["Luna Patch", "Luna Build", "Luna Fix"]
 
 developer_instructions = """
 Obey the repository AGENTS.md and the exact owned-file boundary in the parent prompt.

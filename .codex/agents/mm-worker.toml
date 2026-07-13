@@ -1,9 +1,9 @@
 name = "mm_worker"
 description = "General implementation worker for bounded MemoryMaster packages that need stronger multi-step coding and validation."
-model = "gpt-5.6-sol"
-model_reasoning_effort = "medium"
+model = "gpt-5.6-terra"
+model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
-nickname_candidates = ["Core Worker", "Package Worker", "Integration Worker"]
+nickname_candidates = ["Terra Core", "Terra Package", "Terra Worker"]
 
 developer_instructions = """
 Obey the repository AGENTS.md and the exact owned-file/worktree boundary in the parent prompt.
