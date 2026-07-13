@@ -125,8 +125,8 @@ def replace_placeholder(content, project_root):
 # 1. LLM Provider config
 # ---------------------------------------------------------------------------
 def setup_llm_provider():
-    banner("LLM Provider for Auto-Ingest Stop Hook")
-    print("  The Stop hook uses a cheap LLM to extract learnings from each session.")
+    banner("LLM Provider for Session-End Distillation")
+    print("  The quiet session-end hook uses a cheap LLM to distill key learnings.")
     print("  Supported: google (Gemini Flash Lite, ~free), openai, anthropic, ollama\n")
 
     provider = ask("Provider", "google")
@@ -248,6 +248,18 @@ def install_hooks(llm_config, include_pretooluse: bool = False):
     ss_hooks = hooks.setdefault("SessionStart", [])
     ss_hooks[:] = [h for h in ss_hooks if "memorymaster" not in json.dumps(h)]
     ss_hooks.append(session_start_hook)
+
+    # SessionEnd — one distilled ingest pass, quiet and cursor/budget bounded.
+    session_end_hook = {
+        "hooks": [{
+            "type": "command",
+            "command": f'python "{hooks_dir / "memorymaster-session-end.py"}"',
+            "timeout": 30
+        }]
+    }
+    se_hooks = hooks.setdefault("SessionEnd", [])
+    se_hooks[:] = [h for h in se_hooks if "memorymaster" not in json.dumps(h)]
+    se_hooks.append(session_end_hook)
 
     # Stop — auto-ingest
     stop_hook = {
@@ -692,7 +704,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--provider",
         choices=["google", "openai", "anthropic", "ollama"],
-        help="LLM provider for the auto-ingest Stop hook",
+        help="LLM provider for quiet session-end distillation",
     )
     p.add_argument("--api-key", help="API key for the chosen provider")
     p.add_argument("--model", help="LLM model id")
@@ -905,7 +917,7 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
     banner("Setup Complete!")
     print("  What actually happened (skips reflect what's installed on this box):")
     if detected.claude_code:
-        print("    - Claude hooks (recall + auto-ingest + session-start) — installed")
+        print("    - Claude hooks (session-start + on-demand recall + session-end distill) — installed")
         print("    - MemoryMaster MCP — registered (memorymaster.surfaces.mcp_server)")
     else:
         print("    - Claude Code not detected — hooks + MCP SKIPPED. Install Claude")

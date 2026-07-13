@@ -384,6 +384,57 @@ def spool_transcript(
     return stats
 
 
+def _iter_transcript_text_turns(transcript_text: str):
+    for line in transcript_text.splitlines():
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(entry, dict):
+            yield _extract_role_content(entry)
+
+
+def store_transcript_text(
+    db_path: str,
+    transcript_text: str,
+    *,
+    session_id: str,
+    scope: str = "project",
+    source_agent: str = "transcript",
+) -> dict[str, int]:
+    """Store only the supplied JSONL increment under its authoritative session."""
+    stats = {"stored": 0, "skipped": 0}
+    with closing(_connect(db_path)) as conn:
+        for role, content in _iter_transcript_text_turns(transcript_text):
+            if role not in ("user", "assistant") or len(content) < 20:
+                stats["skipped"] += 1
+                continue
+            row_id = _store_verbatim_conn(conn, session_id, role, content, scope, source_agent)
+            stats["stored" if row_id else "skipped"] += 1
+        conn.commit()
+    return stats
+
+
+def spool_transcript_text(
+    db_path: str,
+    transcript_text: str,
+    *,
+    session_id: str,
+    scope: str = "project",
+    source_agent: str = "transcript",
+) -> dict[str, int]:
+    """Spool only the supplied JSONL increment under its authoritative session."""
+    stats = {"spooled": 0, "skipped": 0}
+    now = datetime.now(timezone.utc).isoformat()
+    for role, content in _iter_transcript_text_turns(transcript_text):
+        if role not in ("user", "assistant") or len(content) < 20 or _row_has_sensitive_field(role, source_agent, content):
+            stats["skipped"] += 1
+            continue
+        spool.append(db_path, "verbatim", {"session_id": session_id, "role": role, "content": content, "scope": scope, "source_agent": source_agent, "timestamp": now})
+        stats["spooled"] += 1
+    return stats
+
+
 def _row_dedup_key(r: dict) -> tuple:
     """Stable unique key for hybrid-mode search-result dedup.
 

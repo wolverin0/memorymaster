@@ -21,11 +21,17 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from memorymaster.stores._storage_shared import open_conn
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_MAX_AGE_DAYS = 30
+DEFAULT_MAX_BYTES = 512 * 1024 * 1024
+DEFAULT_MAX_SESSIONS = 75_000
 
 # Known pre-#128 junk content prefixes (internal LLM prompts that the broken
 # capture path mistakenly stored as if they were conversation turns).
@@ -204,3 +210,76 @@ def cleanup(
         return out
     finally:
         conn.close()
+
+
+def _read_retention_rows(db_path: str, scan_limit: int) -> tuple[bool, list[dict[str, Any]], bool]:
+    uri = f"file:{Path(db_path).resolve().as_posix()}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        if not _verbatim_present(conn):
+            return False, [], False
+        rows = conn.execute(
+            """SELECT id, session_id, length(CAST(content AS BLOB)) AS byte_count,
+                      COALESCE(NULLIF(timestamp, ''), created_at) AS retained_at
+               FROM verbatim_memories ORDER BY retained_at ASC, id ASC LIMIT ?""",
+            (scan_limit + 1,),
+        ).fetchall()
+        return True, [dict(row) for row in rows[:scan_limit]], len(rows) > scan_limit
+    finally:
+        conn.close()
+
+
+def _retained_at(value: object) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def plan_retention(
+    db_path: str,
+    *,
+    max_age_days: int = DEFAULT_MAX_AGE_DAYS,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    max_sessions: int = DEFAULT_MAX_SESSIONS,
+    scan_limit: int = 100_000,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Plan finite verbatim retention without changing persistent data."""
+    if min(max_age_days, max_bytes, max_sessions) < 0 or scan_limit <= 0:
+        raise ValueError("retention limits must be non-negative")
+    verbatim_present, rows, truncated = _read_retention_rows(db_path, scan_limit)
+    current = now or datetime.now(timezone.utc)
+    cutoff = current - timedelta(days=max_age_days)
+    session_last: dict[str, datetime] = {}
+    for row in rows:
+        key = str(row["session_id"])
+        session_last[key] = max(session_last.get(key, datetime.min.replace(tzinfo=timezone.utc)), _retained_at(row["retained_at"]))
+    kept_sessions = {key for key, _ in sorted(session_last.items(), key=lambda item: item[1], reverse=True)[:max_sessions]}
+    candidates = {
+        int(row["id"])
+        for row in rows
+        if _retained_at(row["retained_at"]) < cutoff or str(row["session_id"]) not in kept_sessions
+    }
+    retained = [row for row in rows if int(row["id"]) not in candidates]
+    retained_bytes = sum(int(row["byte_count"] or 0) for row in retained)
+    for row in retained:
+        if retained_bytes <= max_bytes:
+            break
+        candidates.add(int(row["id"]))
+        retained_bytes -= int(row["byte_count"] or 0)
+    return {
+        "dry_run": True,
+        "verbatim_present": verbatim_present,
+        "truncated": truncated,
+        "scan_limit": scan_limit,
+        "limits": {"max_age_days": max_age_days, "max_bytes": max_bytes, "max_sessions": max_sessions},
+        "total_rows": None if truncated else len(rows),
+        "candidate_rows": len(candidates),
+        "candidate_ids_sample": sorted(candidates)[:100],
+        "retained_rows": len(rows) - len(candidates),
+        "retained_bytes": retained_bytes,
+        "within_bounds": not candidates and not truncated,
+    }

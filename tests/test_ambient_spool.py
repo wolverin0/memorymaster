@@ -358,7 +358,9 @@ def test_auto_ingest_hook_template_spools_under_flag(
         "stop_hook_active": False,
     })
 
-    proc = _run_hook(hook, payload, _hook_env(tmp_path / "home", spool_root, "1"))
+    env = _hook_env(tmp_path / "home", spool_root, "1")
+    env["MEMORYMASTER_STOP_CAPTURE_VERBATIM"] = "1"
+    proc = _run_hook(hook, payload, env)
 
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout)["decision"] == "approve"
@@ -373,9 +375,7 @@ def test_auto_ingest_hook_template_spools_under_flag(
 def test_auto_ingest_hook_template_direct_path_with_flag_off(
     tmp_path: Path, spool_root: Path
 ) -> None:
-    """REQUIREMENT (flag default OFF): without the flag the template keeps the
-    legacy direct write — rows land in verbatim_memories, spool stays empty.
-    The else-branch must remain intact for the §5 rollback."""
+    """Explicit verbatim capture with WAL discipline off uses the direct path."""
     project_root = tmp_path / "proj"
     project_root.mkdir()
     db = project_root / "memorymaster.db"
@@ -389,7 +389,9 @@ def test_auto_ingest_hook_template_direct_path_with_flag_off(
         "stop_hook_active": False,
     })
 
-    proc = _run_hook(hook, payload, _hook_env(tmp_path / "home", spool_root, "0"))
+    env = _hook_env(tmp_path / "home", spool_root, "0")
+    env["MEMORYMASTER_STOP_CAPTURE_VERBATIM"] = "1"
+    proc = _run_hook(hook, payload, env)
 
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout)["decision"] == "approve"

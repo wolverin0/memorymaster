@@ -219,5 +219,27 @@ P2-D implementation and focused gate completed on 2026-07-13 from P2-C commit
 - Atomic package commit: the conventional `fix: converge entity schema
   authority` commit containing this scheduler evidence.
 
-The next separately authorized package is P2-E. Do not begin quiet finite
-capture or retention work from the P2-D goal.
+P2-E implementation and focused gate completed on 2026-07-13 from P2-D commit
+`4fb1725b234a3144299ec66a674ce1b8833fb728`:
+
+- Stop and PreCompact are quiet by default. Verbatim, per-stop distillation,
+  correction mining, and checkpoint blocking require explicit
+  maximum-capture flags; SessionEnd performs the default distilled ingest.
+- A separate WAL-backed capture ledger persists complete-line transcript
+  cursors, atomic global/provider/session reservations, effective limits, and
+  input/output usage. Default worst-case candidate inflow is bounded to 600/day
+  against the 688/day safe intake ceiling.
+- Verbatim capture uses appended-only APIs and fails closed when the dry-run
+  30-day/512-MiB/75,000-session retention plan is over bounds or its bounded
+  scan truncates. Candidate backlog planning is reviewable and read-only, with
+  zero automatic transitions.
+- The focused gate collected 84 tests: 80 passed in 13.26s and exposed four
+  bounded integration issues; the single correction batch passed all 12
+  affected/new contracts in 1.88s. Changed-file Ruff and `git diff --check`
+  passed. The independent invariant probe confirmed a 600/day maximum
+  candidate inflow and the exact retention defaults.
+- Atomic package commit: the conventional `fix: bound quiet capture and
+  retention` commit containing this scheduler evidence.
+
+The next separately authorized package is P2-F. Do not begin fake-evidence
+default removal from the P2-E goal.

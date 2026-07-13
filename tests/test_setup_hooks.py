@@ -233,6 +233,7 @@ class TestInstallHooksIdempotent:
         mm_entries = [h for h in ups if "memorymaster" in json.dumps(h)]
         # recall + classify = exactly 2, not 4.
         assert len(mm_entries) == 2
+        assert len(settings["hooks"]["SessionEnd"]) == 1
 
     def test_settings_json_stays_valid(self, hermetic_home):
         llm = {"provider": "ollama", "api_key": "", "model": "llama3.2:3b"}
