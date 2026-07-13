@@ -34,7 +34,7 @@ from memorymaster.core import llm_budget
 from memorymaster.stores._storage_shared import open_conn
 from memorymaster.core.models import CitationInput
 from memorymaster.knowledge.rules import build_rule_fields
-from memorymaster.core.security import redact_text
+from memorymaster.core.security import scan_persisted_value
 
 logger = logging.getLogger(__name__)
 
@@ -230,9 +230,26 @@ def _extract_rule(window: str) -> dict[str, str] | None:
 
 
 def _is_sensitive_rule(rule: dict[str, str]) -> bool:
-    joined = " | ".join(filter(None, (rule["trigger"], rule["action"], rule["rationale"])))
-    _, findings = redact_text(joined)
-    return bool(findings)
+    return bool(scan_persisted_value(rule))
+
+
+def _window_is_sensitive(
+    assistant_content: str,
+    user_content: str,
+    *,
+    session_id: object = None,
+    scope: object = None,
+) -> bool:
+    return bool(
+        scan_persisted_value(
+            {
+                "assistant_content": assistant_content,
+                "user_content": user_content,
+                "session_id": session_id,
+                "scope": scope,
+            }
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -442,6 +459,15 @@ def _process_candidate(
         stats["skipped"] += 1
         return "done"
 
+    if _window_is_sensitive(
+        asst["content"],
+        row["content"],
+        session_id=row["session_id"],
+        scope=row["scope"],
+    ):
+        stats["skipped"] += 1
+        return "done"
+
     window = _build_window(asst["content"], row["content"])
     if len(window) < _MIN_WINDOW_CHARS:
         stats["skipped"] += 1
@@ -470,16 +496,21 @@ def _process_candidate(
     confidence = _bootstrapped_confidence(conn, rule)
 
     idem = f"rule-miner-v{int(asst['id'])}-{int(row['id'])}"
+    claim_scope = row["scope"] or "project"
     store = getattr(service, "store", None)
     if store is not None and hasattr(store, "get_claim_by_idempotency_key"):
-        if store.get_claim_by_idempotency_key(idem) is not None:
+        if store.get_claim_by_idempotency_key(
+            idem,
+            tenant_id=getattr(service, "tenant_id", None),
+            scope=claim_scope,
+        ) is not None:
             stats["duplicates"] += 1
             return "done"
 
     service.ingest(
         **build_rule_fields(rule["trigger"], rule["action"], rule["rationale"]),
         citations=[CitationInput(source="verbatim", locator=idem)],
-        scope=row["scope"] or "project",
+        scope=claim_scope,
         confidence=confidence,
         source_agent="rule-miner",
         idempotency_key=idem,
@@ -573,6 +604,9 @@ def mine_transcript_rules(
         with llm_budget.cycle_scope():
             for asst_text, user_text in windows:
                 stats["windows"] += 1
+                if _window_is_sensitive(asst_text, user_text, scope=scope):
+                    stats["skipped"] += 1
+                    continue
                 try:
                     rule = _extract_rule(_build_window(asst_text, user_text))
                 except (llm_budget.LLMBudgetExceeded, TransientLLMError):
@@ -591,7 +625,11 @@ def mine_transcript_rules(
                 confidence = _transcript_confidence(service, rule)
                 store = getattr(service, "store", None)
                 if store is not None and hasattr(store, "get_claim_by_idempotency_key"):
-                    if store.get_claim_by_idempotency_key(idem) is not None:
+                    if store.get_claim_by_idempotency_key(
+                        idem,
+                        tenant_id=getattr(service, "tenant_id", None),
+                        scope=scope,
+                    ) is not None:
                         stats["skipped"] += 1
                         continue
                 service.ingest(

@@ -1032,66 +1032,8 @@ def _apply_vector_fallback(
     rows: list,
     seen_ids: set[int],
 ) -> list:
-    """Augment ``rows`` with Qdrant semantic-search hits when the primary
-    retrieval stages under-produced.
-
-    Triggers only when ``len(rows) < MEMORYMASTER_RECALL_VECTOR_MIN_CANDIDATES``
-    (default 3) and every env-var gate is satisfied. Silently degrades on
-    any failure (qdrant unreachable, collection missing, embedder import
-    error, etc) so the caller keeps whatever FTS5 + entity fanout produced.
-
-    Returns the (possibly augmented) row list. Always mutates ``seen_ids``
-    when new rows are added.
-    """
-    try:
-        from memorymaster.recall import qdrant_recall_fallback
-    except Exception as exc:  # pragma: no cover — import errors rare
-        logger.debug("vector fallback: module import skipped: %s", exc)
-        return rows
-
-    if not qdrant_recall_fallback.is_fallback_enabled():
-        return rows
-    if len(rows) >= qdrant_recall_fallback.fallback_threshold():
-        return rows
-
-    try:
-        hits = qdrant_recall_fallback.search(query)
-    except Exception as exc:  # pragma: no cover — search() already swallows
-        logger.debug("vector fallback: search skipped: %s", exc)
-        return rows
-
-    if not hits:
-        return rows
-
-    # Lazy security check — mirrors the entity fanout treatment.
-    try:
-        from memorymaster.core.security import is_sensitive_claim
-    except Exception:
-        is_sensitive_claim = lambda _claim: False  # type: ignore[assignment]  # noqa: E731
-
-    appended = 0
-    for hit in hits:
-        cid = hit.claim_id
-        if cid in seen_ids:
-            continue
-        try:
-            claim = svc.store.get_claim(cid, include_citations=True)
-        except Exception as exc:
-            logger.debug("vector fallback: get_claim(%d) failed: %s", cid, exc)
-            continue
-        if claim is None or getattr(claim, "status", "") == "archived":
-            continue
-        if is_sensitive_claim(claim):
-            continue
-        rows.append(_row_for_vector_hit(claim, hit.score))
-        seen_ids.add(cid)
-        appended += 1
-
-    if appended:
-        logger.debug(
-            "vector fallback: appended %d rows (total=%d) for query=%r",
-            appended, len(rows), query[:60],
-        )
+    """Return authoritative rows unchanged while Qdrant retrieval is quarantined."""
+    del svc, query, seen_ids
     return rows
 
 
@@ -1171,6 +1113,9 @@ def recall(
 
     ``return_ids`` defaults to ``False`` so every existing caller — MCP
     tools, CLI, hooks — gets the legacy ``str`` return type unchanged.
+
+    ``skip_qdrant`` is retained for caller compatibility but is a no-op while
+    R1.3 unconditionally quarantines Qdrant retrieval.
     """
     from memorymaster.core.service import MemoryService
 
@@ -1234,8 +1179,8 @@ def query_for_task(
         Max TOKENS of inner content (default 500 ≈ 2KB chars). Outer
         XML wrapper adds ~80 chars on top.
     skip_qdrant:
-        Default True — vector search adds latency; FTS5 + ranking are
-        sufficient for most task briefings.
+        Selects primary-store ``legacy`` ranking when true and local ``hybrid``
+        ranking when false. Neither mode reads external Qdrant during R1.3.
 
     Returns
     -------
@@ -1289,7 +1234,8 @@ def query_for_task(
     svc = MemoryService(db_target=db, workspace_root=Path.cwd())
 
     scope_filter = [project_scope] if project_scope else None
-    # Query in legacy mode (FTS5 only) when skip_qdrant=True for latency.
+    # Historical name retained: this now selects primary-store legacy vs
+    # local hybrid ranking; external Qdrant reads are quarantined either way.
     retrieval_mode = "legacy" if skip_qdrant else "hybrid"
 
     try:
@@ -1474,25 +1420,6 @@ def _recall_impl(
                 if is_sensitive_claim(claim):
                     continue
                 rows.append(_row_for_claim(claim))
-
-    # Vector fallback — Qdrant semantic search when FTS5 + entity fanout
-    # produced fewer than MEMORYMASTER_RECALL_VECTOR_MIN_CANDIDATES rows
-    # (default 3). Fully env-gated so default behaviour is unchanged. See
-    # ``_apply_vector_fallback`` for the exact gating logic. Only time when
-    # the fallback is enabled — otherwise we emit nothing (zero-overhead).
-    _vector_enabled = False
-    try:
-        from memorymaster.recall import qdrant_recall_fallback as _qrf
-
-        _vector_enabled = bool(_qrf.is_fallback_enabled())
-    except Exception:
-        _vector_enabled = False
-
-    if _vector_enabled:
-        with _phase_timer(phase_ms, "vector_fallback"):
-            rows = _apply_vector_fallback(svc, query, rows, seen_ids)
-    else:
-        rows = _apply_vector_fallback(svc, query, rows, seen_ids)
 
     # Verbatim retrieval — MemPalace-style raw conversation stream.
     #
@@ -1735,28 +1662,6 @@ def _recall_impl(
                         )
             except Exception as exc:  # noqa: BLE001 — defensive (claim 11907)
                 logger.debug("graph stream skipped: %s", exc)
-
-    if not rows and not skip_qdrant:
-        # Fallback to Qdrant semantic search
-        try:
-            from memorymaster.recall.qdrant_backend import QdrantBackend
-            backend = QdrantBackend()
-            hits = backend.search(query, limit=5)
-            backend.close()
-            if hits:
-                lines = ["# Memory Context (semantic)", ""]
-                for hit in hits:
-                    p = hit.get("payload", {})
-                    text = p.get("claim_text", "")[:200]
-                    lines.append(f"- {text}")
-                    if _rendered_ids is not None:
-                        cid = p.get("claim_id")
-                        if isinstance(cid, int):
-                            _rendered_ids.append(cid)
-                return "\n".join(lines).encode("ascii", errors="replace").decode("ascii")
-        except Exception:
-            pass
-        return ""
 
     if not rows:
         return ""

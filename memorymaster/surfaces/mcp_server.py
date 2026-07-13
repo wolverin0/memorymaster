@@ -1,6 +1,8 @@
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
+from functools import wraps
 import hashlib
 import http.client
+import inspect
 import json
 import logging
 import os
@@ -11,6 +13,14 @@ from typing import Any, TypeVar
 from urllib.parse import urlparse
 
 from memorymaster.core import observability
+from memorymaster.core.access_control import (
+    AuthMode,
+    RequestContext,
+    authorize_context_action,
+    bind_request_context,
+    current_request_context,
+    resolve_request_context,
+)
 from memorymaster.surfaces import mcp_path_policy
 from pydantic import BaseModel, ValidationError
 
@@ -296,32 +306,51 @@ def _resolve_workspace(workspace: str) -> str:
 # start_session or bound MemoryService.session_id, so get_usage_rollup's
 # session half always returned []. The MCP server is long-lived per client,
 # so one session per DB per process is the honest granularity.
-_TELEMETRY_SESSION_IDS: dict[str, int] = {}
+_TELEMETRY_SESSION_IDS: dict[tuple[str, str, str], int] = {}
 
 
-def _bind_telemetry_session(svc: MemoryService, db_path: str) -> None:
+def _bind_telemetry_session(
+    svc: MemoryService,
+    db_path: str,
+    principal: str = "mcp-session",
+    tenant_id: str | None = None,
+) -> None:
     """Best-effort: bind a usage-telemetry session to *svc*.
 
     Telemetry must never break a tool call — every failure is swallowed and
     the service simply stays unbound (counters still work via source_agent).
     """
     try:
-        sid = _TELEMETRY_SESSION_IDS.get(db_path)
+        session_key = (db_path, principal, tenant_id or "")
+        sid = _TELEMETRY_SESSION_IDS.get(session_key)
         if sid is None:
             from memorymaster.surfaces.session_tracker import SessionTracker
 
-            sid = SessionTracker(db_path).start_session("mcp-session")
-            _TELEMETRY_SESSION_IDS[db_path] = sid
+            sid = SessionTracker(db_path).start_session(principal)
+            _TELEMETRY_SESSION_IDS[session_key] = sid
         svc.session_id = sid
         if not getattr(svc, "source_agent", None):
-            svc.source_agent = "mcp-session"
+            svc.source_agent = principal
     except Exception:
         pass
 
 
 def _service(db: str, workspace: str) -> MemoryService:
-    svc = MemoryService(db_target=_resolve_db(db), workspace_root=Path(_resolve_workspace(workspace)))
-    _bind_telemetry_session(svc, _resolve_db(db))
+    db_path = _resolve_db(db)
+    workspace_path = _resolve_workspace(workspace)
+    context = current_request_context()
+    principal = context.principal if context is not None else "mcp-session"
+    tenant_id = context.tenant_id if context is not None else None
+    svc = MemoryService(
+        db_target=db_path,
+        workspace_root=Path(workspace_path),
+        tenant_id=tenant_id,
+        require_tenant=context is not None and context.mode is AuthMode.TEAM,
+        principal=principal,
+        allowed_scopes=context.allowed_scopes if context is not None else frozenset(),
+    )
+    _bind_telemetry_session(svc, db_path, principal, tenant_id)
+    svc.source_agent = principal
     return svc
 
 
@@ -429,19 +458,27 @@ def _project_scope(workspace: str) -> str:
 
 def _effective_ingest_scope(scope: str, workspace: str) -> str:
     raw = (scope or "").strip()
-    if not raw or raw == "project":
-        return _project_scope(workspace)
-    return raw
+    effective = _project_scope(workspace) if not raw or raw == "project" else raw
+    context = current_request_context()
+    if context is not None and context.mode is AuthMode.TEAM and effective not in context.allowed_scopes:
+        raise PermissionError("Requested claim scope is outside the authenticated scope grant.")
+    return effective
 
 
 def _effective_scope_allowlist(raw: str, workspace: str) -> list[str] | None:
     parsed = _parse_scope_allowlist(raw)
-    if parsed:
+    context = current_request_context()
+    if context is not None and context.mode is AuthMode.TEAM:
+        requested = parsed or list(context.allowed_scopes)
+        scopes = [scope for scope in requested if scope in context.allowed_scopes]
+        if not scopes:
+            raise PermissionError("Requested scopes do not intersect the authenticated scope grant.")
+    elif parsed:
         return parsed
-    scopes = [_project_scope(workspace), "global"]
-    if _ENV_QUERY_INCLUDE_LEGACY_PROJECT:
-        scopes.append("project")
-    # Keep order and dedupe.
+    else:
+        scopes = [_project_scope(workspace), "global"]
+        if _ENV_QUERY_INCLUDE_LEGACY_PROJECT:
+            scopes.append("project")
     seen: set[str] = set()
     deduped: list[str] = []
     for value in scopes:
@@ -453,65 +490,12 @@ def _effective_scope_allowlist(raw: str, workspace: str) -> list[str] | None:
 
 
 def _qdrant_query(query: str, db: str, workspace: str, limit: int) -> dict[str, Any]:
-    """Fast semantic search via Qdrant+Ollama (no local model load)."""
-    try:
-        from memorymaster.recall.qdrant_backend import QdrantBackend
-    except ImportError:
-        return {"ok": False, "error": "qdrant mode requires httpx. Install with: pip install 'memorymaster[qdrant]'"}
-    backend = QdrantBackend()
-    results = backend.search(query, limit=limit)
-    backend.close()
-    if not results:
-        return {"ok": True, "rows": 0, "claims": [], "rows_data": []}
-
-    # Enrich with full claim data from the DB
-    svc = _service(db, workspace)
-    enriched_rows: list[dict[str, Any]] = []
-    enriched_claims: list[dict[str, Any]] = []
-    for hit in results:
-        cid = hit.get("claim_id")
-        if cid is None:
-            continue
-        claim = svc.store.get_claim(int(cid), include_citations=True)
-        if claim is None:
-            # Claim may have been archived since last sync — return Qdrant payload
-            enriched_rows.append({
-                "claim": hit.get("payload", {}),
-                "status": hit.get("payload", {}).get("state", "unknown"),
-                "annotation": {},
-                "score": hit.get("score", 0.0),
-                "lexical_score": 0.0,
-                "freshness_score": 0.0,
-                "confidence_score": hit.get("payload", {}).get("confidence", 0.0),
-                "vector_score": hit.get("score", 0.0),
-            })
-            enriched_claims.append(hit.get("payload", {}))
-            continue
-        claim_dict = _claim_to_dict(claim)
-        enriched_claims.append(claim_dict)
-        enriched_rows.append({
-            "claim": claim_dict,
-            "status": claim.status,
-            "annotation": {
-                "status": claim.status,
-                "active": claim.status == "confirmed",
-                "stale": claim.status == "stale",
-                "conflicted": claim.status == "conflicted",
-                "pinned": bool(claim.pinned),
-            },
-            "score": hit.get("score", 0.0),
-            "lexical_score": 0.0,
-            "freshness_score": 0.0,
-            "confidence_score": claim.confidence,
-            "vector_score": hit.get("score", 0.0),
-        })
-    return {
-        "ok": True,
-        "rows": len(enriched_claims),
-        "claims": enriched_claims,
-        "rows_data": enriched_rows,
-        "retrieval_mode": "qdrant",
-    }
+    """Reject the legacy raw-Qdrant retrieval entrypoint during quarantine."""
+    del query, db, workspace, limit
+    raise PermissionError(
+        "Direct Qdrant retrieval is quarantined until the governed retrieval "
+        "planner can enforce authoritative policy rehydration."
+    )
 
 
 def _checkpoint_batch(
@@ -586,8 +570,169 @@ def _checkpoint_batch(
     }
 
 
+@dataclass(frozen=True, slots=True)
+class McpToolPolicy:
+    action: str
+    team_enabled: bool = False
+
+
+MCP_TOOL_POLICIES: dict[str, McpToolPolicy] = {
+    "archive_by_source": McpToolPolicy("compact"),
+    "checkpoint": McpToolPolicy("ingest"),
+    "classify_query": McpToolPolicy("query", team_enabled=True),
+    "compact_memory": McpToolPolicy("compact"),
+    "entity_stats": McpToolPolicy("configure"),
+    "extract_entities": McpToolPolicy("ingest"),
+    "federated_query": McpToolPolicy("query"),
+    "find_related_claims": McpToolPolicy("configure"),
+    "get_usage_rollup": McpToolPolicy("query"),
+    "ingest_claim": McpToolPolicy("ingest", team_enabled=True),
+    "ingest_rule": McpToolPolicy("ingest"),
+    "init_db": McpToolPolicy("configure"),
+    "list_claims": McpToolPolicy("query", team_enabled=True),
+    "list_events": McpToolPolicy("query"),
+    "list_steward_proposals": McpToolPolicy("query"),
+    "local_search": McpToolPolicy("query"),
+    "open_dashboard": McpToolPolicy("query"),
+    "pin_claim": McpToolPolicy("steward"),
+    "quality_scores": McpToolPolicy("steward"),
+    "query_claim_paths": McpToolPolicy("query"),
+    "query_for_context": McpToolPolicy("query"),
+    "query_for_task": McpToolPolicy("query"),
+    "query_memory": McpToolPolicy("query", team_enabled=True),
+    "query_meta_decisions": McpToolPolicy("query"),
+    "query_rules": McpToolPolicy("query"),
+    "read_active_tasks": McpToolPolicy("query"),
+    "recall_analysis": McpToolPolicy("query"),
+    "recompute_tiers": McpToolPolicy("steward"),
+    "redact_claim_payload": McpToolPolicy("delete"),
+    "resolve_project": McpToolPolicy("ingest"),
+    "resolve_steward_proposal": McpToolPolicy("steward"),
+    "rules_export": McpToolPolicy("export"),
+    "run_cycle": McpToolPolicy("steward"),
+    "run_steward": McpToolPolicy("steward"),
+    "search_verbatim": McpToolPolicy("export"),
+    "volunteer_context": McpToolPolicy("query"),
+}
+
+
+def _same_configured_location(left: str, right: str) -> bool:
+    if "://" in left or "://" in right:
+        return left == right
+    return Path(left).resolve() == Path(right).resolve()
+
+
+def _team_default_scope(context: RequestContext) -> str:
+    workspace_scope = _project_scope(context.workspace)
+    if workspace_scope in context.allowed_scopes:
+        return workspace_scope
+    project_scopes = [scope for scope in context.allowed_scopes if scope.startswith("project:")]
+    if len(project_scopes) == 1:
+        return project_scopes[0]
+    raise PermissionError("Authenticated workspace has no unambiguous project scope.")
+
+
+def _team_request_principal() -> str | None:
+    context = current_request_context()
+    if context is None or context.mode is not AuthMode.TEAM:
+        return None
+    return context.principal
+
+
+def _normalize_team_arguments(
+    bound: inspect.BoundArguments,
+    context: RequestContext,
+    tool_name: str,
+) -> None:
+    if "db" in bound.arguments:
+        requested_db = str(bound.arguments["db"] or "")
+        if requested_db not in {"", _DEFAULT_DB} and not _same_configured_location(requested_db, context.db_target):
+            raise PermissionError("Caller-selected database is outside the authenticated context.")
+        bound.arguments["db"] = context.db_target
+    if "workspace" in bound.arguments:
+        requested_workspace = str(bound.arguments["workspace"] or "")
+        if requested_workspace not in {"", _DEFAULT_WORKSPACE} and not _same_configured_location(
+            requested_workspace,
+            context.workspace,
+        ):
+            raise PermissionError("Caller-selected workspace is outside the authenticated context.")
+        bound.arguments["workspace"] = context.workspace
+    default_scope = _team_default_scope(context)
+    for field in ("scope", "current_scope", "project_scope"):
+        if field not in bound.arguments:
+            continue
+        requested_scope = str(bound.arguments[field] or "").strip()
+        effective_scope = default_scope if requested_scope in {"", "project"} else requested_scope
+        if effective_scope not in context.allowed_scopes:
+            raise PermissionError("Caller-selected scope is outside the authenticated context.")
+        bound.arguments[field] = effective_scope
+    if "scope_allowlist" in bound.arguments:
+        requested_scopes = _parse_scope_allowlist(str(bound.arguments["scope_allowlist"] or ""))
+        if requested_scopes and any(scope not in context.allowed_scopes for scope in requested_scopes):
+            raise PermissionError("Caller scope allowlist exceeds authenticated scopes.")
+        narrowed = list(requested_scopes) if requested_scopes else sorted(context.allowed_scopes)
+        if not narrowed:
+            raise PermissionError("Caller scope allowlist does not intersect authenticated scopes.")
+        bound.arguments["scope_allowlist"] = ",".join(narrowed)
+    for field in ("source_agent", "actor"):
+        if field in bound.arguments:
+            bound.arguments[field] = context.principal
+    if tool_name == "query_memory" and (
+        str(bound.arguments.get("retrieval_mode", "legacy")) != "legacy"
+        or bool(bound.arguments.get("auto_classify", False))
+    ):
+        raise PermissionError("Semantic MCP retrieval remains disabled in team mode pending planner containment.")
+
+
+def _authorized_tool_callable(func: Any, policy: McpToolPolicy) -> Any:
+    call_signature = inspect.signature(func)
+
+    @wraps(func)
+    def guarded(*args: Any, **kwargs: Any) -> Any:
+        bound = call_signature.bind_partial(*args, **kwargs)
+        bound.apply_defaults()
+        context = resolve_request_context(
+            db_target=str(bound.arguments.get("db", "") or ""),
+            workspace=str(bound.arguments.get("workspace", "") or ""),
+        )
+        authorize_context_action(context, policy.action)
+        if context.mode is AuthMode.TEAM:
+            _normalize_team_arguments(bound, context, func.__name__)
+        if context.mode is AuthMode.TEAM and not policy.team_enabled:
+            raise PermissionError(
+                f"MCP tool '{func.__name__}' is disabled in team mode until its scope contract is verified."
+            )
+        if bool(bound.arguments.get("allow_sensitive", False)) and not context.allow_sensitive:
+            raise PermissionError("Authenticated MCP context does not allow sensitive-data access.")
+        with bind_request_context(context):
+            return func(*bound.args, **bound.kwargs)
+
+    setattr(guarded, "__mcp_action__", policy.action)
+    setattr(guarded, "__mcp_team_enabled__", policy.team_enabled)
+    return guarded
+
+
 if FastMCP is not None:
-    mcp = FastMCP("memorymaster")
+    class AuthorizedFastMCP(FastMCP):
+        """FastMCP registration that cannot omit authorization metadata."""
+
+        def tool(self, *args: Any, **kwargs: Any) -> Any:
+            register = super().tool(*args, **kwargs)
+
+            def decorator(func: Any) -> Any:
+                policy = MCP_TOOL_POLICIES.get(func.__name__)
+                if policy is None:
+                    raise RuntimeError(f"MCP tool '{func.__name__}' has no authorization policy.")
+                return register(_authorized_tool_callable(func, policy))
+
+            return decorator
+
+else:  # pragma: no cover - import fallback when MCP dependency is unavailable
+    AuthorizedFastMCP = None  # type: ignore[misc,assignment]
+
+
+if FastMCP is not None:
+    mcp = AuthorizedFastMCP("memorymaster")
 
     @mcp.tool()
     def init_db(
@@ -948,10 +1093,21 @@ if FastMCP is not None:
 
     @mcp.tool()
     def classify_query(query: str) -> dict[str, Any]:
-        """Classify a query and recommend the best retrieval mode."""
+        """Classify a query and report its recommended and effective modes."""
         from memorymaster.recall.query_classifier import classify_query as _classify, recommended_retrieval_mode
         qtype = _classify(query)
-        return {"query_type": qtype, "recommended_mode": recommended_retrieval_mode(qtype)}
+        recommended_mode = recommended_retrieval_mode(qtype)
+        effective_mode = "legacy" if recommended_mode == "qdrant" else recommended_mode
+        result = {
+            "query_type": qtype,
+            "recommended_mode": recommended_mode,
+            "effective_mode": effective_mode,
+        }
+        if recommended_mode == "qdrant":
+            result["containment_reason"] = (
+                "qdrant retrieval is quarantined pending the governed retrieval planner"
+            )
+        return result
 
     def _apply_detail_level(claim_dict: dict[str, Any], detail_level: str) -> dict[str, Any]:
         """Filter claim dict fields based on requested detail level.
@@ -1004,7 +1160,7 @@ if FastMCP is not None:
 
         retrieval_mode options:
           - "legacy" (default, fastest ~0.1s): SQL text search
-          - "qdrant" (fast ~0.5s): semantic search via Qdrant+Ollama, requires QDRANT_URL
+          - "qdrant": temporarily quarantined; falls back to authoritative lexical search
           - "hybrid" (slow ~8s): local sentence-transformers vector + lexical ranking
 
         auto_classify: when True and retrieval_mode is "legacy", classify the query
@@ -1022,19 +1178,23 @@ if FastMCP is not None:
             context="mcp.query_memory",
         )
 
+        requested_retrieval_mode = retrieval_mode
+        classified_retrieval_mode: str | None = None
         query_type: str | None = None
+        containment_reason: str | None = None
         if auto_classify and retrieval_mode == "legacy":
             query_type = _classify(query)
-            retrieval_mode = recommended_retrieval_mode(query_type)
+            classified_retrieval_mode = recommended_retrieval_mode(query_type)
+            retrieval_mode = classified_retrieval_mode
 
-        # Qdrant retrieval mode: fast semantic search via network Qdrant+Ollama
+        # Qdrant payloads cannot express the full tenant/scope/visibility
+        # policy. R1.3 keeps recall useful through the authoritative lexical
+        # planner until R2.1 can safely reintroduce vector ID candidates.
         if retrieval_mode == "qdrant":
-            result = _qdrant_query(query, db, workspace, limit)
-            if query_type is not None:
-                result["query_type"] = query_type
-            if detail_level != "standard":
-                result["claims"] = [_apply_detail_level(c, detail_level) for c in result.get("claims", [])]
-            return result
+            retrieval_mode = "legacy"
+            containment_reason = (
+                "qdrant retrieval is quarantined pending the governed retrieval planner"
+            )
 
         svc = _service(db, workspace)
         rows_data = svc.query_rows(
@@ -1046,6 +1206,7 @@ if FastMCP is not None:
             include_candidates=include_candidates,
             allow_sensitive=allow_sensitive,
             scope_allowlist=_effective_scope_allowlist(scope_allowlist, workspace),
+            requesting_agent=_team_request_principal(),
         )
         # For "full" detail level, re-fetch each claim with citations inline.
         if detail_level == "full":
@@ -1075,6 +1236,14 @@ if FastMCP is not None:
         }
         if query_type is not None:
             response["query_type"] = query_type
+        if containment_reason is not None:
+            response.update({
+                "requested_retrieval_mode": requested_retrieval_mode,
+                "retrieval_mode": retrieval_mode,
+                "containment_reason": containment_reason,
+            })
+            if classified_retrieval_mode is not None:
+                response["classified_retrieval_mode"] = classified_retrieval_mode
 
         # Log to vault chronicle
         try:
@@ -1529,6 +1698,8 @@ if FastMCP is not None:
             include_archived=include_archived,
             allow_sensitive=allow_sensitive,
             holder=_empty_to_none(holder),
+            scope_allowlist=_effective_scope_allowlist("", workspace),
+            requesting_agent=_team_request_principal(),
         )
         return {"ok": True, "rows": len(claims), "claims": [_claim_to_dict(c) for c in claims]}
 
@@ -1717,13 +1888,27 @@ if FastMCP is not None:
     ) -> dict[str, Any]:
         """Search raw conversation memories (verbatim, unsummarized).
 
-        mode: "fts" (keyword), "vector" (Qdrant semantic), "hybrid" (both)
+        ``vector`` and ``hybrid`` temporarily use authoritative FTS because
+        direct Qdrant payload retrieval is quarantined pending rehydration.
         Use this when query_memory (claims) doesn't find what you need —
         verbatim search finds exact conversation fragments.
         """
         from memorymaster.recall.verbatim_store import search_verbatim as _search
-        results = _search(_resolve_db(db), query, scope=scope or None, limit=limit, mode=mode)
-        return {"ok": True, "rows": len(results), "results": results}
+        requested_mode = str(mode).strip().lower()
+        effective_mode = "fts" if requested_mode in {"vector", "hybrid"} else requested_mode
+        results = _search(
+            _resolve_db(db), query, scope=scope or None, limit=limit, mode=effective_mode
+        )
+        response = {"ok": True, "rows": len(results), "results": results}
+        if effective_mode != requested_mode:
+            response.update({
+                "requested_mode": requested_mode,
+                "mode": effective_mode,
+                "containment_reason": (
+                    "verbatim qdrant retrieval is quarantined pending authoritative rehydration"
+                ),
+            })
+        return response
 
     @mcp.tool()
     def get_usage_rollup(

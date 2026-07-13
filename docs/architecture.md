@@ -63,15 +63,24 @@ service boundary remains the last storage guard even when MCP is bypassed.
 query_memory / CLI query
   -> mcp_server.py or cli.py
   -> MemoryService.query / query_rows
-  -> SQLiteStore.query reads claims_fts + claim metadata
-  -> retrieval.py ranks rows by lexical, confidence, freshness, graph, and vector signals
-  -> optional qdrant_backend.py semantic candidates or fallback rerank
+  -> SQLite/Postgres returns authorized claim rows and lifecycle metadata
+  -> retrieval.py ranks those rows by lexical, confidence, freshness, graph,
+     and optional local/primary-store embedding signals
   -> context_optimizer.py packs query_for_context results into provider-aware budgets
 ```
 
 `query_for_context` reuses the ranked rows and then chooses a text, XML, or JSON envelope that fits
-the caller's token budget. Qdrant is an optional acceleration and recall path; the SQLite claim store
-remains authoritative.
+the caller's token budget. R1.3 does not admit Qdrant hits into this flow: explicit or classified
+claim requests use authoritative lexical fallback in local-trusted mode, prompt-context Qdrant
+fallback is disconnected, and team MCP denies semantic modes. Local `hybrid` ranking is distinct
+from Qdrant retrieval and operates only on rows already authorized by SQLite/Postgres.
+
+The verbatim read path follows the same containment rule. `search_verbatim(mode="vector"|"hybrid")`
+uses authoritative FTS5 and never consumes Qdrant payload text. Direct Qdrant search entry points,
+including `qdrant-search` and `QdrantBackend.search`, fail closed. Qdrant upsert, sync, reconciliation,
+orphan cleanup, and drift checks remain available as index maintenance. R2.1 may restore reads only
+by accepting Qdrant IDs as untrusted candidates, rehydrating the canonical rows from SQLite/Postgres,
+and applying the shared tenant/scope/visibility/lifecycle/sensitivity planner before ranking.
 
 ## Sensitivity Invariant
 
@@ -205,8 +214,8 @@ this track's requested inventory.
 | `memorymaster/plugins.py` | Entry-point plugin registry for validators, probes, retrieval hooks, and exporters. | `8c4f302 feat: plugin system + cross-agent scope isolation with RBAC` |
 | `memorymaster/policy.py` | Policy-mode configuration and cadence override helpers. | `0dff74a feat(policy): MEMORYMASTER_POLICY_MODE env-var opt-in for cadence` |
 | `memorymaster/postgres_store.py` | Postgres storage backend with parity methods for the service layer. | `e337c07 chore(storage): audit SQLite/Postgres parity, add 3 missing pg methods (#35)` |
-| `memorymaster/qdrant_backend.py` | Qdrant vector index backend for claim semantic search. | `7b049c5 chore: prepare for open-source release — scrub private data, add docs` |
-| `memorymaster/qdrant_recall_fallback.py` | Optional vector fallback for sparse recall-hook candidate sets. | `a1e6786 feat(recall): Qdrant vector-search fallback for sparse-candidate prompts` |
+| `memorymaster/qdrant_backend.py` | Qdrant maintenance-index backend; payload search fails closed while upsert/sync/reconcile count/ID operations remain available. | `7b049c5 chore: prepare for open-source release — scrub private data, add docs` |
+| `memorymaster/qdrant_recall_fallback.py` | Compatibility helpers for the disconnected prompt-context fallback; activation knobs cannot enable reads during R1.3. | `a1e6786 feat(recall): Qdrant vector-search fallback for sparse-candidate prompts` |
 | `memorymaster/qmd_bridge.py` | Conversion bridge between OpenClaw QMD records and MemoryMaster claims. | `a4b5dcc feat: QMD ↔ memorymaster bridge for OpenClaw integration` |
 | `memorymaster/query_classifier.py` | Rule-based routing of queries to retrieval modes. | `265d951 refactor: inline citation locator/excerpt, merge print_claim header+text` |
 | `memorymaster/query_expansion.py` | Entity alias and synonym expansion for recall queries. | `ac071de feat(recall): query expansion via entity-matched synonyms (roadmap 1.5)` |
@@ -240,7 +249,7 @@ this track's requested inventory.
 | `memorymaster/vault_query_capture.py` | Saves high-value query answers as new wiki pages. | `88d7afb feat: LLM Wiki architecture — lint, log, synthesis, query capture` |
 | `memorymaster/vault_synthesis.py` | Updates related wiki pages when new claims arrive. | `88d7afb feat: LLM Wiki architecture — lint, log, synthesis, query capture` |
 | `memorymaster/verbatim_recall.py` | Optional raw-conversation FTS recall stream. | `6e120a2 feat(recall): MemPalace-style verbatim retrieval stream (opt-in)` |
-| `memorymaster/verbatim_store.py` | Raw conversation storage with FTS5 and optional Qdrant search. | `89c900d fix(verbatim-store): use full-content hash + point IDs for Qdrant dedup (#43)` |
+| `memorymaster/verbatim_store.py` | Raw conversation storage with authoritative FTS5 reads; Qdrant sync remains, while vector/hybrid reads downgrade to FTS5. | `89c900d fix(verbatim-store): use full-content hash + point IDs for Qdrant dedup (#43)` |
 | `memorymaster/webhook.py` | Webhook notification helper for claim events. | `b3cb6c1 fix: add comprehensive error handling and edge case coverage to v2.1 modules` |
 | `memorymaster/wiki_engine.py` | Absorbs claims into compiled wiki articles and related cleanup/breakdown flows. | `bf25482 feat(dashboard): claim lineage view via /claim/<id>/lineage (#46)` |
 | `memorymaster/wiki_freshness.py` | Computes freshness scores from wiki article absorb dates. | `702c904 feat(wiki): wiki-freshness CLI + STALE_ARTICLE lint (11.8, Option A)` |

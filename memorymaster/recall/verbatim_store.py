@@ -1,13 +1,14 @@
-"""Verbatim memory store — raw conversation storage with vector search.
+"""Verbatim memory store — raw conversation storage with authoritative search.
 
 Stores full conversation text without summarization or extraction.
 Complements the claims DB: claims = curated knowledge, verbatim = raw recall.
 
 Search modes:
   - FTS5 for keyword search (fast, local)
-  - Qdrant for semantic search (when available)
-  - Hybrid: FTS5 + Qdrant merged results
+  - Vector/hybrid requests currently downgrade to FTS5
+  - Qdrant remains available only for index synchronization during quarantine
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -20,36 +21,76 @@ import urllib.error
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 # Credential detection delegated to the canonical filter in memorymaster.core.security.
 from memorymaster.core import spool
+from memorymaster.core.security import scan_persisted_value
+from memorymaster.recall.qdrant_transport import QdrantTransportConfig
 from memorymaster.stores._storage_shared import open_conn
-from memorymaster.core.security import redact_text as _redact_text
 
 logger = logging.getLogger(__name__)
 
 
-
 def _contains_sensitive(text: str) -> bool:
-    _, findings = _redact_text(text)
-    return bool(findings)
+    return bool(scan_persisted_value(text))
 
 
-def _row_has_sensitive_field(role: str, source_agent: str, content: str) -> bool:
-    """Defense-in-depth: check role and source_agent in addition to content.
+def _row_has_sensitive_field(
+    role: str,
+    source_agent: str,
+    content: str,
+    *,
+    session_id: str = "",
+    scope: str = "",
+    timestamp: str = "",
+    created_at: str = "",
+) -> bool:
+    """Defense-in-depth: scan every textual field persisted for a turn.
 
     F-4 fix (overnight audit 2026-05-04): role and source_agent are
     user-controlled in some upstream paths (CLI flags, dream-bridge config,
     transcript miner). A maliciously crafted or misconfigured
     source_agent='Bearer ghp_xxx...' would persist a token to
-    verbatim_memories undetected if we only checked content. The canonical
-    redact_text covers all three fields here — refuse the whole row if any
-    finding appears anywhere. Don't redact-and-store; just drop.
+    verbatim_memories undetected if we only checked content. The decoded
+    durable-envelope scanner covers current and encoded secret
+    shapes across all fields. Don't redact-and-store verbatim content; drop
+    the complete row so callers never mistake a marker for a raw transcript.
     """
-    joined = " | ".join(filter(None, (role, source_agent, content)))
-    _, findings = _redact_text(joined)
-    return bool(findings)
+    return bool(
+        scan_persisted_value(
+            {
+                "session_id": session_id,
+                "role": role,
+                "content": content,
+                "scope": scope,
+                "timestamp": timestamp,
+                "source_agent": source_agent,
+                "created_at": created_at,
+            }
+        )
+    )
+
+
+def _row_value(row: sqlite3.Row | dict, field: str, default: object = "") -> object:
+    """Read an optional row field across current and legacy schemas."""
+    try:
+        return row[field] if field in row.keys() else default
+    except (AttributeError, KeyError, TypeError, IndexError):
+        return default
+
+
+def _verbatim_row_has_sensitive_field(row: sqlite3.Row | dict) -> bool:
+    """Apply the durable envelope scanner to a current or legacy DB row."""
+    return _row_has_sensitive_field(
+        str(_row_value(row, "role") or ""),
+        str(_row_value(row, "source_agent") or ""),
+        str(_row_value(row, "content") or ""),
+        session_id=str(_row_value(row, "session_id") or ""),
+        scope=str(_row_value(row, "scope") or ""),
+        timestamp=str(_row_value(row, "timestamp") or ""),
+        created_at=str(_row_value(row, "created_at") or ""),
+    )
+
 
 # Vector search is opt-in: an unset QDRANT_URL means "vector disabled", exactly
 # like a missing OPENAI_API_KEY. NEVER hardcode a routable private LAN IP here —
@@ -116,6 +157,19 @@ def store_verbatim(
     timestamp: str | None = None,
 ) -> int | None:
     """Store a verbatim conversation turn. Returns row ID or None if filtered."""
+    now = timestamp or datetime.now(timezone.utc).isoformat()
+    if not content or len(content) < 20:
+        return None
+    if _row_has_sensitive_field(
+        role or "",
+        source_agent or "",
+        content,
+        session_id=session_id or "",
+        scope=scope or "",
+        timestamp=now,
+    ):
+        return None
+
     # closing() guarantees the connection (and its WAL write lock) is released
     # even if an INSERT/commit raises (e.g. "database is locked" under
     # concurrent MCP/Stop-hook writers) - this is the hottest write path.
@@ -127,7 +181,7 @@ def store_verbatim(
             content,
             scope,
             source_agent,
-            timestamp,
+            now,
         )
         conn.commit()
         return row_id
@@ -145,10 +199,17 @@ def _store_verbatim_conn(
     """Store one turn using an existing connection without committing."""
     if not content or len(content) < 20:
         return None
-    if _row_has_sensitive_field(role or "", source_agent or "", content):
-        return None
 
     now = timestamp or datetime.now(timezone.utc).isoformat()
+    if _row_has_sensitive_field(
+        role or "",
+        source_agent or "",
+        content,
+        session_id=session_id or "",
+        scope=scope or "",
+        timestamp=now,
+    ):
+        return None
 
     # Dedup by exact content within the same session. The composite
     # idx_verbatim_session_content(session_id, content) (migration 0006) makes
@@ -209,8 +270,7 @@ def _extract_role_content(entry: dict) -> tuple[str, str]:
         content = entry.get("content", "")
     if isinstance(content, list):
         content = " ".join(
-            part.get("text", "") for part in content
-            if isinstance(part, dict) and part.get("type") == "text"
+            part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text"
         )
     return role, content if isinstance(content, str) else ""
 
@@ -356,22 +416,15 @@ def search_verbatim(
 ) -> list[dict]:
     """Search verbatim memories.
 
-    mode: "fts" (keyword), "vector" (Qdrant), "hybrid" (both merged)
+    Qdrant-backed ``vector`` and ``hybrid`` requests are temporarily
+    downgraded to authoritative FTS until governed rehydration is available.
     """
-    results = []
+    requested_mode = str(mode).strip().lower()
+    effective_mode = "fts" if requested_mode in {"vector", "hybrid"} else requested_mode
+    if effective_mode != "fts":
+        return []
 
-    if mode in ("fts", "hybrid"):
-        results.extend(_search_fts(db_path, query, scope, limit))
-
-    if mode in ("vector", "hybrid"):
-        vector_results = _search_vector(query, scope, limit)
-        # Merge: dedupe by stable row-id key (see _row_dedup_key for F-3 context)
-        seen = {_row_dedup_key(r) for r in results}
-        for vr in vector_results:
-            key = _row_dedup_key(vr)
-            if key not in seen:
-                results.append(vr)
-                seen.add(key)
+    results = _search_fts(db_path, query, scope, limit)
 
     # Sort by score descending, limit
     results.sort(key=lambda x: -x.get("score", 0))
@@ -384,6 +437,7 @@ def _search_fts(db_path: str, query: str, scope: str | None, limit: int) -> list
     clean_query = " ".join(w for w in query.split() if len(w) > 2)
     if not clean_query:
         return []
+    fetch_limit = max(limit * 5, limit + 20)
 
     # closing() guarantees the connection is released even if the JOIN raises a
     # non-OperationalError (corrupt/locked DB, programming error) — the bare
@@ -392,172 +446,203 @@ def _search_fts(db_path: str, query: str, scope: str | None, limit: int) -> list
         try:
             if scope:
                 rows = conn.execute(
-                    """SELECT v.id, v.session_id, v.role, v.content, v.scope, v.timestamp,
-                              rank as score
+                    """SELECT v.*, rank as score
                        FROM verbatim_fts f
                        JOIN verbatim_memories v ON v.id = f.rowid
-                       WHERE verbatim_fts MATCH ? AND v.scope LIKE ?
+                       WHERE verbatim_fts MATCH ?
+                         AND (v.scope = ? OR (? = 'project' AND v.scope LIKE 'project:%'))
                        ORDER BY rank
                        LIMIT ?""",
-                    (clean_query, f"{scope}%", limit),
+                    (clean_query, scope, scope, fetch_limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    """SELECT v.id, v.session_id, v.role, v.content, v.scope, v.timestamp,
-                              rank as score
+                    """SELECT v.*, rank as score
                        FROM verbatim_fts f
                        JOIN verbatim_memories v ON v.id = f.rowid
                        WHERE verbatim_fts MATCH ?
                        ORDER BY rank
                        LIMIT ?""",
-                    (clean_query, limit),
+                    (clean_query, fetch_limit),
                 ).fetchall()
         except sqlite3.OperationalError:
             rows = []
 
-    return [
-        {"id": r["id"], "session_id": r["session_id"], "role": r["role"],
-         "content": r["content"], "scope": r["scope"], "timestamp": r["timestamp"],
-         "score": abs(r["score"]) if r["score"] else 0, "source": "fts"}
-        for r in rows
-    ]
+    results: list[dict] = []
+    for row in rows:
+        if _verbatim_row_has_sensitive_field(row):
+            continue
+        results.append(
+            {
+                "id": row["id"],
+                "session_id": row["session_id"],
+                "role": row["role"],
+                "content": row["content"],
+                "scope": row["scope"],
+                "timestamp": row["timestamp"],
+                "score": abs(row["score"]) if row["score"] else 0,
+                "source": "fts",
+            }
+        )
+        if len(results) >= limit:
+            break
+    return results
 
 
 def _search_vector(query: str, scope: str | None, limit: int) -> list[dict]:
-    """Qdrant semantic search over verbatim memories."""
-    if not QDRANT_URL:
-        return []
+    """Reject raw Qdrant payload reads until governed rehydration exists."""
+    del query, scope, limit
+    raise PermissionError("Verbatim Qdrant retrieval is quarantined pending authoritative rehydration.")
+
+
+def _safe_rows_for_sync(
+    conn: sqlite3.Connection,
+    batch_size: int,
+) -> tuple[list[sqlite3.Row], int]:
+    rows = conn.execute(
+        "SELECT * FROM verbatim_memories WHERE embedding_synced = 0 LIMIT ?",
+        (batch_size,),
+    ).fetchall()
+    safe_rows: list[sqlite3.Row] = []
+    unsafe_ids: list[int] = []
+    for row in rows:
+        if _verbatim_row_has_sensitive_field(row):
+            unsafe_ids.append(int(row["id"]))
+        else:
+            safe_rows.append(row)
+    if unsafe_ids:
+        placeholders = ",".join("?" for _ in unsafe_ids)
+        conn.execute(
+            f"UPDATE verbatim_memories SET embedding_synced = -1 WHERE id IN ({placeholders})",
+            unsafe_ids,
+        )
+        conn.commit()
+    return safe_rows, len(unsafe_ids)
+
+
+def _ensure_verbatim_collection(transport: QdrantTransportConfig) -> bool:
+    collection_url = f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}"
     try:
-        # Embed query with OpenAI
-        api_key = os.environ.get("OPENAI_API_KEY", "")
-        if not api_key:
-            return []
-
-        embed_url = "https://api.openai.com/v1/embeddings"
-        payload = {"model": "text-embedding-3-small", "input": [query]}
-        req = urllib.request.Request(
-            embed_url,
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            result = json.loads(resp.read().decode())
-        vector = result["data"][0]["embedding"]
-
-        # Search Qdrant
-        search_payload: dict[str, Any] = {
-            "vector": vector,
-            "limit": limit,
-            "with_payload": True,
-        }
-        if scope:
-            search_payload["filter"] = {"must": [{"key": "scope", "match": {"value": scope}}]}
-
-        req = urllib.request.Request(
-            f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}/points/search",
-            data=json.dumps(search_payload).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            result = json.loads(resp.read().decode())
-
-        return [
-            {"id": h.get("id"), "content": h["payload"].get("content", ""),
-             "content_hash": h["payload"].get("content_hash", ""),
-             "scope": h["payload"].get("scope", ""),
-             "session_id": h["payload"].get("session_id", ""), "role": h["payload"].get("role", ""),
-             "score": h.get("score", 0), "source": "vector"}
-            for h in result.get("result", [])
-        ]
+        request = transport.request(collection_url, method="GET")
+        transport.open(request, timeout=5)
+        return True
     except Exception:
-        return []
+        payload = {"vectors": {"size": EMBED_DIM, "distance": "Cosine"}}
+        request = transport.request(
+            collection_url,
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="PUT",
+        )
+        try:
+            transport.open(request, timeout=60)
+            return True
+        except Exception:
+            return False
 
 
-def sync_to_qdrant(db_path: str, batch_size: int = 50) -> dict[str, int]:
-    """Sync unsynced verbatim memories to Qdrant for vector search."""
+def _openai_embeddings(api_key: str, texts: list[str]) -> list[list[float]] | None:
+    payload = {"model": "text-embedding-3-small", "input": texts}
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/embeddings",
+        data=json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            result = json.loads(response.read().decode())
+        return [item["embedding"] for item in result["data"]]
+    except Exception:
+        return None
+
+
+def _verbatim_points(
+    rows: list[sqlite3.Row],
+    embeddings: list[list[float]],
+) -> list[dict]:
+    return [
+        {
+            "id": row["id"],
+            "vector": embedding,
+            "payload": {
+                "content": row["content"][:2000],
+                "content_hash": hashlib.sha256(row["content"].encode()).hexdigest(),
+                "scope": row["scope"],
+                "session_id": row["session_id"],
+                "role": row["role"],
+            },
+        }
+        for row, embedding in zip(rows, embeddings)
+    ]
+
+
+def _upsert_verbatim_points(
+    transport: QdrantTransportConfig,
+    points: list[dict],
+) -> bool:
+    request = transport.request(
+        f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}/points",
+        data=json.dumps({"points": points}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="PUT",
+    )
+    try:
+        transport.open(request, timeout=30)
+        return True
+    except Exception:
+        return False
+
+
+def _mark_verbatim_synced(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> None:
+    ids = [row["id"] for row in rows]
+    placeholders = ",".join("?" for _ in ids)
+    conn.execute(
+        f"UPDATE verbatim_memories SET embedding_synced = 1 WHERE id IN ({placeholders})",
+        ids,
+    )
+    conn.commit()
+
+
+def sync_to_qdrant(db_path: str, batch_size: int = 50) -> dict[str, int | str]:
+    """Sync verbatim rows to the Qdrant index; read retrieval is quarantined."""
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
         return {"synced": 0, "error": "no OPENAI_API_KEY"}
     if not QDRANT_URL:
         return {"synced": 0, "error": "no QDRANT_URL"}
+    try:
+        transport = QdrantTransportConfig.from_env()
+    except (OSError, RuntimeError, ValueError):
+        return {"synced": 0, "error": "invalid Qdrant transport configuration"}
 
-    # closing() guarantees the connection is released on every exit path,
-    # including the initial SELECT raising or the final UPDATE/commit raising.
     with closing(_connect(db_path)) as conn:
-        rows = conn.execute(
-            "SELECT id, content, scope, session_id, role FROM verbatim_memories WHERE embedding_synced = 0 LIMIT ?",
-            (batch_size,),
-        ).fetchall()
-
-        if not rows:
-            return {"synced": 0}
-
-        # Ensure collection exists
-        try:
-            req = urllib.request.Request(f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}")
-            urllib.request.urlopen(req, timeout=5)
-        except Exception:
-            payload = {"vectors": {"size": EMBED_DIM, "distance": "Cosine"}}
-            req = urllib.request.Request(
-                f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}",
-                data=json.dumps(payload).encode(),
-                headers={"Content-Type": "application/json"},
-                method="PUT",
-            )
-            try:
-                urllib.request.urlopen(req, timeout=60)
-            except Exception as e:
-                return {"synced": 0, "error": str(e)}
-
-        # Embed in batches
-        texts = [r["content"][:2000] for r in rows]
-        try:
-            embed_url = "https://api.openai.com/v1/embeddings"
-            payload = {"model": "text-embedding-3-small", "input": texts}
-            req = urllib.request.Request(
-                embed_url,
-                data=json.dumps(payload).encode(),
-                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                result = json.loads(resp.read().decode())
-            embeddings = [d["embedding"] for d in result["data"]]
-        except Exception as e:
-            return {"synced": 0, "error": str(e)}
-
-        # Upsert to Qdrant
-        points = []
-        for i, (row, emb) in enumerate(zip(rows, embeddings)):
-            points.append({
-                "id": row["id"],
-                "vector": emb,
-                "payload": {
-                    "content": row["content"][:2000],
-                    "content_hash": hashlib.sha256(row["content"].encode()).hexdigest(),
-                    "scope": row["scope"],
-                    "session_id": row["session_id"],
-                    "role": row["role"],
-                },
-            })
-
-        try:
-            req = urllib.request.Request(
-                f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}/points",
-                data=json.dumps({"points": points}).encode(),
-                headers={"Content-Type": "application/json"},
-                method="PUT",
-            )
-            urllib.request.urlopen(req, timeout=30)
-        except Exception as e:
-            return {"synced": 0, "error": str(e)}
-
-        # Mark as synced
-        ids = [r["id"] for r in rows]
-        placeholders = ",".join("?" for _ in ids)
-        conn.execute(f"UPDATE verbatim_memories SET embedding_synced = 1 WHERE id IN ({placeholders})", ids)
-        conn.commit()
-
-        return {"synced": len(rows)}
+        safe_rows, excluded = _safe_rows_for_sync(conn, batch_size)
+        if not safe_rows:
+            result: dict[str, int | str] = {"synced": 0}
+            if excluded:
+                result["excluded_sensitive"] = excluded
+            return result
+        if not _ensure_verbatim_collection(transport):
+            return {"synced": 0, "error": "Qdrant collection unavailable"}
+        embeddings = _openai_embeddings(
+            api_key,
+            [row["content"][:2000] for row in safe_rows],
+        )
+        if embeddings is None:
+            return {"synced": 0, "error": "embedding request failed"}
+        if len(embeddings) != len(safe_rows):
+            return {"synced": 0, "error": "embedding response cardinality mismatch"}
+        if not _upsert_verbatim_points(
+            transport,
+            _verbatim_points(safe_rows, embeddings),
+        ):
+            return {"synced": 0, "error": "Qdrant upsert failed"}
+        _mark_verbatim_synced(conn, safe_rows)
+        result = {"synced": len(safe_rows)}
+        if excluded:
+            result["excluded_sensitive"] = excluded
+        return result

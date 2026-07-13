@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import logging
 import os
@@ -19,8 +19,24 @@ from memorymaster.core.policy import select_revalidation_candidates
 from memorymaster.recall.context_optimizer import ContextResult, pack_context
 from memorymaster.core.config import get_config
 from memorymaster.recall.retrieval import VectorSearchHook, _tier_bonus, rank_claim_rows
-from memorymaster.core.security import is_sensitive_claim, resolve_allow_sensitive_access, sanitize_claim_input
-from memorymaster.core.intake_policy import IntakeRejected, evaluate_intake
+from memorymaster.core.security import (
+    is_sensitive_claim,
+    normalize_sensitivity_findings,
+    resolve_allow_sensitive_access,
+    sanitize_claim_input,
+    sanitize_persisted_text,
+    validate_persisted_metadata,
+)
+from memorymaster.core.intake_policy import (
+    IntakePolicyConfig,
+    IntakeRejected,
+    evaluate_intake,
+)
+from memorymaster.stores.claim_identity import (
+    normalize_claim_identity,
+    normalize_claim_visibility,
+    normalize_source_agent,
+)
 from memorymaster.stores.store_factory import create_store
 from memorymaster.stores._storage_shared import ConcurrentModificationError
 import contextlib
@@ -358,16 +374,35 @@ class MemoryService:
         policy_config: Mapping[str, object] | None = None,
         tenant_id: str | None = None,
         read_only: bool = False,
+        require_tenant: bool = False,
+        principal: str | None = None,
+        allowed_scopes: Iterable[str] | None = None,
     ) -> None:
         # read_only (P1 WAL-discipline, spec §2.2): SQLite store opens
         # mode=ro + query_only connections; _record_accesses spools its
         # access/feedback signal instead of writing. Used by the per-prompt
         # recall hook under MEMORYMASTER_WAL_DISCIPLINE=1.
-        self.store = create_store(db_target, read_only=read_only)
+        self.tenant_id = (tenant_id or "").strip() or None
+        self.require_tenant = bool(require_tenant)
+        self.principal = (principal or "").strip() or None
+        self.allowed_scopes = frozenset(
+            scope.strip()
+            for scope in (allowed_scopes or ())
+            if scope and scope.strip()
+        )
+        if self.require_tenant:
+            self._require_bound_authority()
+        self.store = create_store(
+            db_target,
+            read_only=read_only,
+            tenant_id=self.tenant_id,
+            require_tenant=self.require_tenant,
+            principal=self.principal,
+            allowed_scopes=self.allowed_scopes,
+        )
         self.workspace_root = Path(workspace_root) if workspace_root else Path.cwd()
         self._embedding_provider: EmbeddingProvider | None = None
         self.policy_config = policy_config
-        self.tenant_id = (tenant_id or "").strip() or None
         # Rollup telemetry (additive, default-safe): when set by a surface,
         # recall events are attributed to this agent / session for the usage
         # rollup. Default None keeps recall behaviour byte-identical.
@@ -435,6 +470,10 @@ class MemoryService:
             logger.warning("Qdrant post-cycle sync: %d claims failed", failed)
 
     def init_db(self) -> None:
+        if getattr(self, "require_tenant", False):
+            raise PermissionError(
+                "Team runtime services cannot initialize or migrate database schema."
+            )
         self.store.init_db()
 
     def _revive_archived_dedup_match(self, claim: Claim, source_agent: str | None) -> Claim:
@@ -450,6 +489,10 @@ class MemoryService:
         Non-archived matches pass through untouched (dedup unchanged).
         """
         if claim.status != "archived":
+            return claim
+        owner = normalize_source_agent(claim.source_agent)
+        actor = normalize_source_agent(source_agent)
+        if owner is not None and owner != actor:
             return claim
         try:
             revived = self.store.apply_status_transition(
@@ -491,9 +534,53 @@ class MemoryService:
         require_source_agent: bool = False,
         intake_batch_id: str | None = None,
         intake_batch_max: int | None = None,
+        _pre_sanitization_findings: list[str] | None = None,
     ) -> Claim:
         if not text.strip():
             raise ValueError("Claim text cannot be empty.")
+        if not citations:
+            citations = [CitationInput(source="mcp-session", locator=scope or "project")]
+        sanitized = sanitize_claim_input(
+            text=text.strip(),
+            object_value=object_value,
+            citations=citations,
+            subject=subject,
+            predicate=predicate,
+            idempotency_key=idempotency_key,
+            claim_type=claim_type,
+            scope=scope,
+            volatility=volatility,
+            source_agent=source_agent,
+            visibility=visibility,
+            holder=holder,
+            confidence=confidence,
+            event_time=event_time,
+            valid_from=valid_from,
+            valid_until=valid_until,
+            intake_batch_id=intake_batch_id,
+        )
+        redaction_findings = normalize_sensitivity_findings(
+            [*sanitized.findings, *(_pre_sanitization_findings or [])]
+        )
+        if not sanitized.citations:
+            raise ValueError("At least one citation is required.")
+        text = sanitized.text
+        object_value = sanitized.object_value
+        subject = sanitized.subject
+        predicate = sanitized.predicate
+        citations = sanitized.citations
+        visibility, source_agent = self._prepare_ingest_identity(
+            scope,
+            visibility,
+            source_agent,
+            require_source_agent=require_source_agent,
+        )
+        validate_persisted_metadata(
+            {
+                "effective_source_agent": source_agent,
+                "tenant_id": self.tenant_id,
+            }
+        )
         # Bitemporal write-time guard: reject malformed ISO-8601 or an inverted
         # validity interval at the boundary, before any dedup/sanitize work, so
         # a durable-but-invisible row (valid_until < valid_from) never reaches
@@ -514,8 +601,6 @@ class MemoryService:
             _vu = _parse_iso_strict("valid_until", valid_until)
             if _vu is not None and _vu <= datetime.now(timezone.utc):
                 valid_from = valid_until
-        if not citations:
-            citations = [CitationInput(source="mcp-session", locator=scope or "project")]
         # Normalize claim_type to lowercase so routing hints like "DECISION"
         # from the classify hook don't create a separate type from "decision".
         if claim_type:
@@ -523,7 +608,13 @@ class MemoryService:
         # Dedup by idempotency key
         normalized_idempotency_key = (idempotency_key or "").strip() or None
         if normalized_idempotency_key is not None and hasattr(self.store, "get_claim_by_idempotency_key"):
-            existing_claim = self.store.get_claim_by_idempotency_key(normalized_idempotency_key)
+            existing_claim = self.store.get_claim_by_idempotency_key(
+                normalized_idempotency_key,
+                tenant_id=self.tenant_id,
+                scope=scope,
+                visibility=visibility,
+                source_agent=source_agent,
+            )
             if existing_claim is not None:
                 observability.bump_claim_ingested(source_agent)
                 return self._revive_archived_dedup_match(existing_claim, source_agent)
@@ -534,26 +625,19 @@ class MemoryService:
         hash_input = f"{text.strip().lower()}|{scope}|{_tenant}"
         content_hash = "hash-" + hashlib.sha256(hash_input.encode()).hexdigest()[:16]
         if hasattr(self.store, "get_claim_by_idempotency_key"):
-            existing_by_hash = self.store.get_claim_by_idempotency_key(content_hash)
+            existing_by_hash = self.store.get_claim_by_idempotency_key(
+                content_hash,
+                tenant_id=self.tenant_id,
+                scope=scope,
+                visibility=visibility,
+                source_agent=source_agent,
+            )
             if existing_by_hash is not None:
                 observability.bump_claim_ingested(source_agent)
                 return self._revive_archived_dedup_match(existing_by_hash, source_agent)
         # Set content hash as idempotency key if none provided
         if normalized_idempotency_key is None:
             normalized_idempotency_key = content_hash
-        sanitized = sanitize_claim_input(
-            text=text.strip(),
-            object_value=object_value,
-            citations=citations,
-            subject=subject,
-            predicate=predicate,
-        )
-        if not sanitized.citations:
-            raise ValueError("At least one citation is required.")
-        # Use the sanitized subject/predicate everywhere downstream so a secret
-        # placed in those fields is redacted at rest, not just at display time.
-        subject = sanitized.subject
-        predicate = sanitized.predicate
         # Intake policy (P3) — runs AFTER the sacred sensitivity filter above and
         # BEFORE create_claim. Additive admission control: may reject more or
         # default-tag attribution, never weakens the filter or flips a prior
@@ -591,6 +675,17 @@ class MemoryService:
         new_source_agent = decision.mutated_fields.get("source_agent")
         if isinstance(new_source_agent, str):
             source_agent = new_source_agent
+        visibility, source_agent = normalize_claim_identity(
+            visibility,
+            source_agent,
+            allow_sensitive=not getattr(self, "require_tenant", False),
+        )
+        validate_persisted_metadata(
+            {
+                "effective_source_agent": source_agent,
+                "tenant_id": self.tenant_id,
+            }
+        )
         # Resolve subject → canonical entity (GBrain-inspired entity registry)
         # and mine text for pattern-based entities (#127 Wave 3).
         entity_id = 0
@@ -652,6 +747,7 @@ class MemoryService:
             source_agent=source_agent,
             visibility=visibility,
             holder=holder,
+            _pre_sanitization_findings=redaction_findings,
         )
 
         # Set entity_id on the claim (best-effort, don't fail ingest)
@@ -665,14 +761,8 @@ class MemoryService:
                     _conn.commit()
             except Exception:
                 pass
-        if sanitized.is_sensitive:
-            observability.bump_claim_filtered_findings(sanitized.findings)
-            self.store.record_event(
-                claim_id=claim.id,
-                event_type="policy_decision",
-                details="sensitive_redaction_applied",
-                payload={"findings": sanitized.findings},
-            )
+        if redaction_findings:
+            observability.bump_claim_filtered_findings(redaction_findings)
             if sanitized.encrypted_payload:
                 self.store.record_event(
                     claim_id=claim.id,
@@ -967,6 +1057,85 @@ class MemoryService:
             deduped.append(scope)
         return deduped
 
+    def _require_bound_authority(self) -> tuple[str, frozenset[str]]:
+        if self.tenant_id is None:
+            raise PermissionError("Team service authority requires a tenant context.")
+        if self.principal is None:
+            raise PermissionError("Team service authority requires an authenticated principal.")
+        if not self.allowed_scopes:
+            raise PermissionError("Team service authority requires explicit allowed scopes.")
+        if any("*" in scope for scope in self.allowed_scopes):
+            raise PermissionError("Team service authority cannot contain wildcard scopes.")
+        return self.principal, self.allowed_scopes
+
+    def _effective_scope_allowlist(
+        self,
+        scope_allowlist: list[str] | None,
+    ) -> list[str] | None:
+        normalized = self._normalize_scope_allowlist(scope_allowlist)
+        if not getattr(self, "require_tenant", False):
+            return normalized
+        _, allowed = self._require_bound_authority()
+        if normalized is None:
+            return sorted(allowed)
+        unauthorized = set(normalized) - allowed
+        if unauthorized:
+            raise PermissionError("Requested scope allowlist exceeds bound service authority.")
+        return normalized
+
+    def _effective_requesting_agent(self, requesting_agent: str | None) -> str | None:
+        if not getattr(self, "require_tenant", False):
+            return requesting_agent
+        principal, _ = self._require_bound_authority()
+        requested = (requesting_agent or "").strip() or None
+        if requested is not None and requested != principal:
+            raise PermissionError("requesting_agent cannot substitute the bound principal.")
+        return principal
+
+    def _effective_ingest_source(
+        self,
+        scope: str,
+        source_agent: str | None,
+    ) -> str | None:
+        if not getattr(self, "require_tenant", False):
+            return source_agent
+        principal, allowed = self._require_bound_authority()
+        if scope not in allowed:
+            raise PermissionError("Claim scope exceeds bound service authority.")
+        requested = (source_agent or "").strip() or None
+        if requested is not None and requested != principal:
+            raise PermissionError("source_agent cannot substitute the bound principal.")
+        return principal
+
+    def _prepare_ingest_identity(
+        self,
+        scope: str,
+        visibility: str | None,
+        source_agent: str | None,
+        *,
+        require_source_agent: bool,
+    ) -> tuple[str, str | None]:
+        source = self._effective_ingest_source(scope, source_agent)
+        normalized_visibility = normalize_claim_visibility(visibility)
+        if normalize_source_agent(source) is None:
+            config = IntakePolicyConfig.from_env()
+            strict_external = (
+                config.require_source_agent == "strict" and require_source_agent
+            )
+            if strict_external:
+                raise IntakeRejected(
+                    "source_agent is required for explicit ingest calls.",
+                    rule="source_agent",
+                    reason="missing_source_agent",
+                )
+            if config.require_source_agent != "off" and not strict_external:
+                source = config.default_source_agent or "unknown"
+        return normalize_claim_identity(
+            normalized_visibility,
+            source,
+            allow_sensitive=not getattr(self, "require_tenant", False),
+        )
+
     @staticmethod
     def _annotation_for_claim(claim: Claim) -> dict[str, object]:
         return {
@@ -1067,6 +1236,8 @@ class MemoryService:
         if limit <= 0:
             return []
 
+        requesting_agent = self._effective_requesting_agent(requesting_agent)
+
         # RBAC check
         if requesting_agent:
             from memorymaster.core.access_control import require_permission
@@ -1079,7 +1250,7 @@ class MemoryService:
         )
 
         statuses = self._build_query_statuses(include_stale, include_conflicted, include_candidates)
-        normalized_scopes = self._normalize_scope_allowlist(scope_allowlist)
+        normalized_scopes = self._effective_scope_allowlist(scope_allowlist)
         # Intent-aware ranking (plan 1.3): retrieval_profile="auto" derives the
         # weight profile from the query's intent (explicit query_type if given,
         # else rule-based classification). Opt-in only — any other value (incl.
@@ -1408,20 +1579,21 @@ class MemoryService:
 
         from memorymaster.core import spool
 
+        safe_query, _ = sanitize_persisted_text(query_text or "")
         query_hash = (
-            hashlib.sha1(query_text.encode("utf-8")).hexdigest()[:12]
-            if query_text
+            hashlib.sha256(safe_query.encode("utf-8")).hexdigest()[:12]
+            if safe_query
             else None
         )
         with contextlib.suppress(Exception):
             spool.append(
                 db_path, "access", {"claim_ids": claim_ids, "query_hash": query_hash}
             )
-            if query_text:
+            if safe_query:
                 spool.append(
                     db_path,
                     "feedback",
-                    {"claim_ids": claim_ids, "query_text": query_text},
+                    {"claim_ids": claim_ids, "query_text": safe_query},
                 )
 
     def recompute_tiers(self) -> dict[str, int]:
@@ -1740,7 +1912,11 @@ class MemoryService:
         *,
         allow_sensitive: bool = False,
         holder: str | None = None,
+        scope_allowlist: list[str] | None = None,
+        requesting_agent: str | None = None,
     ) -> list[Claim]:
+        requesting_agent = self._effective_requesting_agent(requesting_agent)
+        scope_allowlist = self._effective_scope_allowlist(scope_allowlist)
         include_sensitive = self._allow_sensitive(
             allow_sensitive=allow_sensitive,
             context="service.list_claims",
@@ -1751,9 +1927,11 @@ class MemoryService:
             limit=limit,
             include_archived=include_archived,
             include_citations=True,
+            scope_allowlist=scope_allowlist,
             tenant_id=self.tenant_id,
             holder=holder,
         )
+        claims = _filter_agent_visibility(claims, requesting_agent)
         if not include_sensitive:
             claims = [claim for claim in claims if not is_sensitive_claim(claim)]
         return claims
@@ -2089,8 +2267,19 @@ class MemoryService:
         underlying BFS visited-set. If ``claim_links`` is missing/empty the
         result is simply empty (logged, no crash).
         """
+        requesting_agent = self._effective_requesting_agent(requesting_agent)
+        scope_allowlist = self._effective_scope_allowlist(scope_allowlist)
+        identity_scope = (
+            scope_allowlist[0]
+            if scope_allowlist is not None and len(scope_allowlist) == 1
+            else None
+        )
         try:
-            start_id = self.store.resolve_claim_id(claim_id)
+            start_id = self.store.resolve_claim_id(
+                claim_id,
+                tenant_id=self.tenant_id,
+                scope=identity_scope,
+            )
         except ValueError:
             logger.info("query_claim_paths: unknown claim_id %r", claim_id)
             return []
@@ -2181,7 +2370,7 @@ class MemoryService:
         searches everything.
         """
         normalized_current_scope = (current_scope or "").strip() or None
-        normalized_scope_allowlist = self._normalize_scope_allowlist(scope_allowlist)
+        normalized_scope_allowlist = self._effective_scope_allowlist(scope_allowlist)
         query_limit = max(limit * 10, 100) if limit > 0 else limit
         rows = self.query_rows(
             query_text=query_text,

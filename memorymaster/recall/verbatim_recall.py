@@ -39,6 +39,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from memorymaster.recall.recall_tokenizer import _candidate_tokens
+from memorymaster.recall.verbatim_store import _verbatim_row_has_sensitive_field
 
 logger = logging.getLogger(__name__)
 
@@ -153,10 +154,9 @@ def recall_verbatim(
         Raw user prompt. Tokenized internally — caller does NOT need to
         pre-process.
     scope:
-        Optional scope filter (matches ``verbatim_memories.scope`` with a
-        ``LIKE scope%`` prefix, consistent with the existing
-        ``verbatim_store._search_fts`` contract). Pass ``None`` to search
-        across all scopes.
+        Optional scope filter. Concrete scopes match exactly; the root
+        ``project`` scope also includes ``project:*`` descendants. Pass
+        ``None`` to search across all scopes.
     db_path:
         Path to the memorymaster DB. Opened read-only.
     limit:
@@ -175,6 +175,7 @@ def recall_verbatim(
     if not query or not query.strip():
         return []
     limit = max(1, min(limit, 20))
+    fetch_limit = max(limit * 5, limit + 20)
     match_expr = _build_match_expr(query)
     if not match_expr:
         return []
@@ -193,26 +194,27 @@ def recall_verbatim(
         if scope:
             rows = conn.execute(
                 """
-                SELECT v.id, v.session_id, v.role, v.content, v.scope, rank AS score
+                SELECT v.*, rank AS score
                   FROM verbatim_fts f
                   JOIN verbatim_memories v ON v.id = f.rowid
-                 WHERE verbatim_fts MATCH ? AND v.scope LIKE ?
+                 WHERE verbatim_fts MATCH ?
+                   AND (v.scope = ? OR (? = 'project' AND v.scope LIKE 'project:%'))
                  ORDER BY rank
                  LIMIT ?
                 """,
-                (match_expr, f"{scope}%", limit),
+                (match_expr, scope, scope, fetch_limit),
             ).fetchall()
         else:
             rows = conn.execute(
                 """
-                SELECT v.id, v.session_id, v.role, v.content, v.scope, rank AS score
+                SELECT v.*, rank AS score
                   FROM verbatim_fts f
                   JOIN verbatim_memories v ON v.id = f.rowid
                  WHERE verbatim_fts MATCH ?
                  ORDER BY rank
                  LIMIT ?
                 """,
-                (match_expr, limit),
+                (match_expr, fetch_limit),
             ).fetchall()
     except sqlite3.Error as exc:
         logger.debug("verbatim_recall: query failed: %s", exc)
@@ -222,6 +224,8 @@ def recall_verbatim(
 
     out: list[VerbatimHit] = []
     for r in rows:
+        if _verbatim_row_has_sensitive_field(r):
+            continue
         raw_score = r["score"] if r["score"] is not None else 0.0
         # FTS5 returns negative numbers where smaller == better match.
         # Flip sign so bigger == better (ranker convention).
@@ -238,6 +242,8 @@ def recall_verbatim(
                 role=str(r["role"] or ""),
             )
         )
+        if len(out) >= limit:
+            break
     return out
 
 

@@ -1,8 +1,9 @@
 """Qdrant vector store backend for MemoryMaster.
 
-Uses Qdrant at a network-accessible endpoint as a search index alongside
-the primary SQLite/Postgres store.  Embeddings come from Ollama
-(qwen3-embedding:8b, 4096-dim) via HTTP.
+Uses Qdrant at a network-accessible endpoint as a maintenance index alongside
+the primary SQLite/Postgres store. Embeddings come from Ollama
+(qwen3-embedding:8b, 4096-dim) via HTTP. Direct reads are quarantined until a
+governed planner can rehydrate candidate IDs from the authoritative store.
 
 Environment variables / constructor params:
     QDRANT_URL          – default http://localhost:6333
@@ -22,6 +23,8 @@ from typing import Any
 import httpx
 
 from memorymaster.core.models import Claim
+from memorymaster.core.security import scan_persisted_value
+from memorymaster.recall.qdrant_transport import QdrantTransportConfig
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,24 @@ EMBEDDING_DIMS = 4096
 OLLAMA_TIMEOUT = 120.0
 MAX_RETRIES = 2
 RETRY_BASE_DELAY = 0.5
+
+
+def _create_http_clients(
+    transport: QdrantTransportConfig,
+) -> tuple[httpx.Client, httpx.Client]:
+    try:
+        qdrant_client = httpx.Client(timeout=30.0, **transport.httpx_kwargs())
+    except Exception:
+        raise RuntimeError("Qdrant client initialization failed") from None
+    try:
+        ollama_client = httpx.Client(timeout=30.0)
+    except Exception:
+        try:
+            qdrant_client.close()
+        except Exception:
+            pass
+        raise RuntimeError("Ollama client initialization failed") from None
+    return qdrant_client, ollama_client
 
 
 class QdrantBackend:
@@ -49,7 +70,9 @@ class QdrantBackend:
         self.ollama_url = (ollama_url or os.environ.get("OLLAMA_URL") or DEFAULT_OLLAMA_URL).rstrip("/")
         self.collection = collection or os.environ.get("QDRANT_COLLECTION") or DEFAULT_COLLECTION
         self.embed_model = embed_model or os.environ.get("OLLAMA_EMBED_MODEL") or DEFAULT_EMBED_MODEL
-        self._client = httpx.Client(timeout=30.0)
+        transport = QdrantTransportConfig.from_env()
+        transport.validate_url(self.qdrant_url)
+        self._qdrant_client, self._ollama_client = _create_http_clients(transport)
 
     # ------------------------------------------------------------------
     # Collection management
@@ -57,19 +80,22 @@ class QdrantBackend:
 
     def ensure_collection(self) -> None:
         """Create the Qdrant collection if it does not exist."""
-        url = f"{self.qdrant_url}/collections/{self.collection}"
-        resp = self._client.get(url)
-        if resp.status_code == 200:
-            logger.debug("Qdrant collection '%s' already exists", self.collection)
-            return
-        body = {
-            "vectors": {
-                "size": EMBEDDING_DIMS,
-                "distance": "Cosine",
+        try:
+            url = f"{self.qdrant_url}/collections/{self.collection}"
+            resp = self._qdrant_client.get(url)
+            if resp.status_code == 200:
+                logger.debug("Qdrant collection '%s' already exists", self.collection)
+                return
+            body = {
+                "vectors": {
+                    "size": EMBEDDING_DIMS,
+                    "distance": "Cosine",
+                }
             }
-        }
-        resp = self._client.put(url, json=body)
-        resp.raise_for_status()
+            resp = self._qdrant_client.put(url, json=body)
+            resp.raise_for_status()
+        except Exception:
+            raise RuntimeError("Qdrant collection request failed") from None
         logger.info("Created Qdrant collection '%s' (%d dims, Cosine)", self.collection, EMBEDDING_DIMS)
 
     # ------------------------------------------------------------------
@@ -80,7 +106,7 @@ class QdrantBackend:
         """Get a 4096-dim embedding from Ollama with retry on transient failures."""
         for attempt in range(1 + MAX_RETRIES):
             try:
-                resp = self._client.post(
+                resp = self._ollama_client.post(
                     f"{self.ollama_url}/api/embed",
                     json={"model": self.embed_model, "input": [text]},
                     timeout=OLLAMA_TIMEOUT,
@@ -96,18 +122,39 @@ class QdrantBackend:
                     EMBEDDING_DIMS,
                 )
                 return None  # dim mismatch is not retryable
-            except Exception as exc:
+            except Exception:
                 if attempt < MAX_RETRIES:
                     delay = RETRY_BASE_DELAY * (2 ** attempt)
-                    logger.info("Ollama embed attempt %d failed (%s), retrying in %.1fs", attempt + 1, exc, delay)
+                    logger.info(
+                        "Ollama embed attempt %d failed; retrying in %.1fs",
+                        attempt + 1,
+                        delay,
+                    )
                     time.sleep(delay)
                 else:
-                    logger.warning("Ollama embed failed after %d attempts: %s", 1 + MAX_RETRIES, exc)
+                    logger.warning(
+                        "Ollama embed failed after %d attempts",
+                        1 + MAX_RETRIES,
+                    )
         return None
 
     # ------------------------------------------------------------------
     # Claim → Qdrant payload helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _claim_representation(claim: Claim) -> dict[str, Any]:
+        return {
+            "text": claim.text,
+            "subject": claim.subject,
+            "predicate": claim.predicate,
+            "object_value": claim.object_value,
+            "claim_type": claim.claim_type,
+            "scope": claim.scope,
+            "citations": [
+                {"source": item.source, "locator": item.locator, "excerpt": item.excerpt} for item in claim.citations
+            ],
+        }
 
     @staticmethod
     def _claim_text(claim: Claim) -> str:
@@ -148,6 +195,10 @@ class QdrantBackend:
 
     def upsert_claim(self, claim: Claim, source: str = "memorymaster") -> bool:
         """Embed and upsert a single claim.  Returns True on success."""
+        findings = scan_persisted_value(self._claim_representation(claim))
+        if findings:
+            logger.warning("Qdrant upsert rejected sensitive claim %d (%s)", claim.id, ",".join(findings))
+            return False
         vec = self._embed(self._claim_text(claim))
         if vec is None:
             return False
@@ -163,19 +214,28 @@ class QdrantBackend:
         }
         for attempt in range(1 + MAX_RETRIES):
             try:
-                resp = self._client.put(
+                resp = self._qdrant_client.put(
                     f"{self.qdrant_url}/collections/{self.collection}/points",
                     json=body,
                 )
                 resp.raise_for_status()
                 return True
-            except Exception as exc:
+            except Exception:
                 if attempt < MAX_RETRIES:
                     delay = RETRY_BASE_DELAY * (2 ** attempt)
-                    logger.info("Qdrant upsert attempt %d for claim %d failed (%s), retrying in %.1fs", attempt + 1, claim.id, exc, delay)
+                    logger.info(
+                        "Qdrant upsert attempt %d for claim %d failed; retrying in %.1fs",
+                        attempt + 1,
+                        claim.id,
+                        delay,
+                    )
                     time.sleep(delay)
                 else:
-                    logger.warning("Qdrant upsert failed for claim %d after %d attempts: %s", claim.id, 1 + MAX_RETRIES, exc)
+                    logger.warning(
+                        "Qdrant upsert failed for claim %d after %d attempts",
+                        claim.id,
+                        1 + MAX_RETRIES,
+                    )
         return False
 
     def delete_claim(self, claim_id: int) -> bool:
@@ -183,14 +243,14 @@ class QdrantBackend:
         point_id = self._point_id(claim_id)
         body = {"points": [point_id]}
         try:
-            resp = self._client.post(
+            resp = self._qdrant_client.post(
                 f"{self.qdrant_url}/collections/{self.collection}/points/delete",
                 json=body,
             )
             resp.raise_for_status()
             return True
-        except Exception as exc:
-            logger.warning("Qdrant delete failed for claim %d: %s", claim_id, exc)
+        except Exception:
+            logger.warning("Qdrant delete failed for claim %d", claim_id)
             return False
 
     def count_points(self) -> int | None:
@@ -200,14 +260,14 @@ class QdrantBackend:
         metric (P1 spec §2.7).
         """
         try:
-            resp = self._client.post(
+            resp = self._qdrant_client.post(
                 f"{self.qdrant_url}/collections/{self.collection}/points/count",
                 json={"exact": True},
             )
             resp.raise_for_status()
             return int((resp.json().get("result") or {}).get("count", 0))
-        except Exception as exc:
-            logger.warning("Qdrant count failed: %s", exc)
+        except Exception:
+            logger.warning("Qdrant count failed")
             return None
 
     def list_point_claim_ids(self, *, batch_size: int = 1000) -> list[int] | None:
@@ -228,7 +288,7 @@ class QdrantBackend:
                 }
                 if offset is not None:
                     body["offset"] = offset
-                resp = self._client.post(
+                resp = self._qdrant_client.post(
                     f"{self.qdrant_url}/collections/{self.collection}/points/scroll",
                     json=body,
                 )
@@ -241,8 +301,8 @@ class QdrantBackend:
                 offset = result.get("next_page_offset")
                 if offset is None:
                     return ids
-        except Exception as exc:
-            logger.warning("Qdrant scroll failed: %s", exc)
+        except Exception:
+            logger.warning("Qdrant scroll failed")
             return None
 
     def search(
@@ -253,49 +313,11 @@ class QdrantBackend:
         min_confidence: float = 0.0,
         states: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Semantic search.  Returns list of {claim_id, score, payload}."""
-        vec = self._embed(query_text)
-        if vec is None:
-            return []
-
-        filters: dict[str, Any] = {"must": []}
-        if states:
-            filters["must"].append({
-                "key": "state",
-                "match": {"any": states},
-            })
-        if min_confidence > 0:
-            filters["must"].append({
-                "key": "confidence",
-                "range": {"gte": min_confidence},
-            })
-
-        body: dict[str, Any] = {
-            "vector": vec,
-            "limit": limit,
-            "with_payload": True,
-        }
-        if filters["must"]:
-            body["filter"] = filters
-
-        try:
-            resp = self._client.post(
-                f"{self.qdrant_url}/collections/{self.collection}/points/search",
-                json=body,
-            )
-            resp.raise_for_status()
-            results = resp.json().get("result", [])
-            return [
-                {
-                    "claim_id": hit["payload"].get("claim_id"),
-                    "score": hit["score"],
-                    "payload": hit["payload"],
-                }
-                for hit in results
-            ]
-        except Exception as exc:
-            logger.warning("Qdrant search failed: %s", exc)
-            return []
+        """Reject raw payload reads until the governed planner rehydrates IDs."""
+        del query_text, limit, min_confidence, states
+        raise PermissionError(
+            "Qdrant retrieval is quarantined pending authoritative policy rehydration."
+        )
 
     def _batch_upsert(self, points: list[dict[str, Any]]) -> bool:
         """Upsert a batch of points to Qdrant in a single request."""
@@ -304,19 +326,26 @@ class QdrantBackend:
         body = {"points": points}
         for attempt in range(1 + MAX_RETRIES):
             try:
-                resp = self._client.put(
+                resp = self._qdrant_client.put(
                     f"{self.qdrant_url}/collections/{self.collection}/points",
                     json=body,
                 )
                 resp.raise_for_status()
                 return True
-            except Exception as exc:
+            except Exception:
                 if attempt < MAX_RETRIES:
                     delay = RETRY_BASE_DELAY * (2 ** attempt)
-                    logger.info("Qdrant batch upsert attempt %d failed (%s), retrying in %.1fs", attempt + 1, exc, delay)
+                    logger.info(
+                        "Qdrant batch upsert attempt %d failed; retrying in %.1fs",
+                        attempt + 1,
+                        delay,
+                    )
                     time.sleep(delay)
                 else:
-                    logger.warning("Qdrant batch upsert failed after %d attempts: %s", 1 + MAX_RETRIES, exc)
+                    logger.warning(
+                        "Qdrant batch upsert failed after %d attempts",
+                        1 + MAX_RETRIES,
+                    )
         return False
 
     def sync_all(self, store, *, batch_size: int = 50) -> dict[str, int]:
@@ -346,6 +375,11 @@ class QdrantBackend:
 
             batch: list[dict[str, Any]] = []
             for _idx, claim in enumerate(claims):
+                findings = scan_persisted_value(self._claim_representation(claim))
+                if findings:
+                    stats["skipped"] += 1
+                    logger.warning("Qdrant sync skipped sensitive claim %d (%s)", claim.id, ",".join(findings))
+                    continue
                 vec = self._embed(self._claim_text(claim))
                 if vec is None:
                     stats["errors"] += 1
@@ -376,4 +410,6 @@ class QdrantBackend:
         return stats
 
     def close(self) -> None:
-        self._client.close()
+        self._qdrant_client.close()
+        if self._ollama_client is not self._qdrant_client:
+            self._ollama_client.close()

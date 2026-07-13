@@ -758,7 +758,18 @@ def _handle_observe(args: argparse.Namespace, service, parser: argparse.Argument
 
 
 def _handle_merge_db(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.stores.store_factory import is_postgres_dsn
+
+    if is_postgres_dsn(str(effective_db)):
+        msg = "merge-db is unavailable for Postgres tenant/team runtimes"
+        if args.json_output:
+            print(_json_error(msg))
+        else:
+            print(f"error: {msg}")
+        return 2
+
     from memorymaster.bridges.db_merge import merge_databases
+
     t0 = time.perf_counter()
     result = merge_databases(str(effective_db), args.source)
     elapsed_ms = (time.perf_counter() - t0) * 1000

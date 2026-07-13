@@ -162,6 +162,17 @@ def _handle_snapshot_commands(args: argparse.Namespace, service, parser: argpars
 
 def _handle_qdrant_commands(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str = "") -> int:
     """Handle qdrant-sync and qdrant-search subcommands."""
+    if args.command == "qdrant-search":
+        message = (
+            "qdrant-search is temporarily disabled by the R1.3 retrieval "
+            "quarantine; use authoritative query instead"
+        )
+        if args.json_output:
+            print(_json_error(message))
+        else:
+            print(f"error: {message}")
+        return 2
+
     from memorymaster.recall.qdrant_backend import QdrantBackend
 
     qdrant_url = args.qdrant_url or os.environ.get("QDRANT_URL") or ""
@@ -179,20 +190,7 @@ def _handle_qdrant_commands(args: argparse.Namespace, service, parser: argparse.
             print(f"Qdrant sync: {result['synced']}/{result['total']} synced, {result['errors']} errors ({elapsed_ms:.0f}ms)")
         return 0
 
-    # qdrant-search
-    states = [s.strip() for s in args.states.split(",") if s.strip()] or None
-    results = backend.search(args.text, limit=args.limit, min_confidence=args.min_confidence, states=states)
-    elapsed_ms = (time.perf_counter() - t0) * 1000
-    if args.json_output:
-        print(_json_envelope({"results": results, "count": len(results)}, query_ms=elapsed_ms))
-    else:
-        if not results:
-            print("No results found.")
-        for hit in results:
-            _pl = hit.get("payload", {})
-            print(f"[{hit.get('claim_id', '?')}] score={hit.get('score', 0.0):.3f} "
-                  f"state={_pl.get('state', '?')} conf={_pl.get('confidence', 0.0):.2f} {_pl.get('claim_text', '')[:100]}")
-    return 0
+    raise AssertionError(f"Unhandled Qdrant command: {args.command}")
 
 
 def _handle_link_commands(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str = "") -> int:
@@ -945,18 +943,32 @@ def _handle_query(args: argparse.Namespace, service, parser: argparse.ArgumentPa
                 print_claim(c)
             print(f"rows={len(claims)}")
         return 0
+    requested_retrieval_mode = args.retrieval_mode
+    effective_retrieval_mode = requested_retrieval_mode
+    classified_retrieval_mode: str | None = None
+    containment_reason: str | None = None
+    query_type: str | None = None
     if getattr(args, "auto_classify", False):
         from memorymaster.recall.query_classifier import classify_query, recommended_retrieval_mode
-        qtype = classify_query(args.text)
-        retrieval_mode = recommended_retrieval_mode(qtype)
-        print(f"query classified as: {qtype} → using {retrieval_mode} mode")
-        args.retrieval_mode = retrieval_mode
+        query_type = classify_query(args.text)
+        classified_retrieval_mode = recommended_retrieval_mode(query_type)
+        effective_retrieval_mode = classified_retrieval_mode
+        if classified_retrieval_mode == "qdrant":
+            effective_retrieval_mode = "legacy"
+            containment_reason = (
+                "qdrant retrieval is quarantined pending the governed retrieval planner"
+            )
+        if not args.json_output:
+            notice = f"query classified as: {query_type} → using {effective_retrieval_mode} mode"
+            if containment_reason is not None:
+                notice += " (qdrant recommendation quarantined)"
+            print(notice)
     t0 = time.perf_counter()
     rows_data = service.query_rows(
         query_text=args.text, limit=args.limit,
         include_stale=not args.exclude_stale, include_conflicted=not args.exclude_conflicted,
         include_candidates=getattr(args, "include_candidates", False),
-        retrieval_mode=args.retrieval_mode, allow_sensitive=args.allow_sensitive,
+        retrieval_mode=effective_retrieval_mode, allow_sensitive=args.allow_sensitive,
         retrieval_profile=getattr(args, "profile", None),
         scope_allowlist=parse_scope_allowlist(args.scope_allowlist),
     )
@@ -965,7 +977,22 @@ def _handle_query(args: argparse.Namespace, service, parser: argparse.ArgumentPa
         json_rows = [{"claim": _claim_to_dict(row["claim"]),
             **{k: float(row.get(k, 0.0)) for k in _SCORE_KEYS},
             "annotation": row.get("annotation", {})} for row in rows_data]
-        print(_json_envelope(json_rows, total=len(json_rows), query_ms=elapsed_ms))
+        extra_meta = None
+        if query_type is not None:
+            extra_meta = {
+                "query_type": query_type,
+                "requested_retrieval_mode": requested_retrieval_mode,
+                "classified_retrieval_mode": classified_retrieval_mode,
+                "retrieval_mode": effective_retrieval_mode,
+            }
+            if containment_reason is not None:
+                extra_meta["containment_reason"] = containment_reason
+        print(_json_envelope(
+            json_rows,
+            total=len(json_rows),
+            query_ms=elapsed_ms,
+            extra_meta=extra_meta,
+        ))
     else:
         for row in rows_data:
             print_claim(row["claim"])

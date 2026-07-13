@@ -32,6 +32,13 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from memorymaster.core.models import CitationInput
+from memorymaster.core.security import (
+    sanitize_claim_input,
+    sanitize_persisted_text,
+    validate_persisted_metadata,
+)
+
 ENV_SPOOL_DIR = "MEMORYMASTER_SPOOL_DIR"
 ENV_WAL_DISCIPLINE = "MEMORYMASTER_WAL_DISCIPLINE"
 
@@ -40,6 +47,125 @@ KNOWN_OPS = ("access", "feedback", "ingest", "verbatim", "dream")
 
 DRAINING_SUFFIX = ".draining"
 QUARANTINE_DIRNAME = "quarantine"
+
+_INGEST_PAYLOAD_FIELDS = frozenset(
+    {
+        "text", "citations", "claim_type", "subject", "predicate",
+        "object_value", "scope", "volatility", "confidence", "event_time",
+        "valid_from", "valid_until", "source_agent", "visibility", "holder",
+        "intake_batch_id", "intake_batch_max",
+    }
+)
+_VERBATIM_PAYLOAD_FIELDS = frozenset(
+    {"session_id", "role", "content", "scope", "source_agent", "timestamp"}
+)
+_ACCESS_PAYLOAD_FIELDS = frozenset({"claim_ids", "query_hash"})
+_FEEDBACK_PAYLOAD_FIELDS = frozenset({"claim_ids", "query_text"})
+
+
+def _reject_unknown_fields(payload: dict[str, object], allowed: frozenset[str]) -> None:
+    if any(key not in allowed for key in payload):
+        raise ValueError("Spool payload contains unsupported fields.")
+
+
+def _citation_inputs(value: object) -> list[CitationInput]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("Spool citations must be a list.")
+    citations: list[CitationInput] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError("Spool citation entries must be objects.")
+        source = item.get("source", "")
+        locator = item.get("locator")
+        excerpt = item.get("excerpt")
+        if not isinstance(source, str):
+            raise ValueError("Spool citation source must be a string.")
+        if locator is not None and not isinstance(locator, str):
+            raise ValueError("Spool citation locator must be a string.")
+        if excerpt is not None and not isinstance(excerpt, str):
+            raise ValueError("Spool citation excerpt must be a string.")
+        citations.append(CitationInput(source, locator, excerpt))
+    return citations
+
+
+def _sanitize_ingest_payload(
+    payload: dict[str, object],
+    idempotency_key: str | None,
+) -> dict[str, object]:
+    _reject_unknown_fields(payload, _INGEST_PAYLOAD_FIELDS)
+    text = payload.get("text", "")
+    if not isinstance(text, str):
+        raise ValueError("Spool claim text must be a string.")
+    citations = _citation_inputs(payload.get("citations"))
+    sanitized = sanitize_claim_input(
+        text=text,
+        object_value=payload.get("object_value"),
+        citations=citations,
+        subject=payload.get("subject"),
+        predicate=payload.get("predicate"),
+        idempotency_key=idempotency_key,
+        claim_type=payload.get("claim_type"),
+        scope=payload.get("scope"),
+        volatility=payload.get("volatility"),
+        source_agent=payload.get("source_agent"),
+        visibility=payload.get("visibility"),
+        holder=payload.get("holder"),
+        confidence=payload.get("confidence"),
+        event_time=payload.get("event_time"),
+        valid_from=payload.get("valid_from"),
+        valid_until=payload.get("valid_until"),
+        intake_batch_id=payload.get("intake_batch_id"),
+    )
+    validate_persisted_metadata({"intake_batch_max": payload.get("intake_batch_max")})
+    safe = {key: value for key, value in payload.items() if key not in {
+        "text", "subject", "predicate", "object_value", "citations"
+    }}
+    safe.update({"text": sanitized.text, "citations": [
+        {key: value for key, value in {
+            "source": cite.source, "locator": cite.locator, "excerpt": cite.excerpt
+        }.items() if value is not None}
+        for cite in sanitized.citations
+    ]})
+    for key, value in {
+        "subject": sanitized.subject,
+        "predicate": sanitized.predicate,
+        "object_value": sanitized.object_value,
+    }.items():
+        if key in payload:
+            safe[key] = value
+    if sanitized.findings:
+        safe["_sanitization"] = {"findings": sanitized.findings}
+    return safe
+
+
+def _sanitize_feedback_payload(payload: dict[str, object]) -> dict[str, object]:
+    _reject_unknown_fields(payload, _FEEDBACK_PAYLOAD_FIELDS)
+    query = payload.get("query_text", "")
+    if not isinstance(query, str):
+        raise ValueError("Spool feedback query_text must be a string.")
+    validate_persisted_metadata({"claim_ids": payload.get("claim_ids")})
+    safe_query, findings = sanitize_persisted_text(query)
+    safe = {"claim_ids": list(payload.get("claim_ids") or []), "query_text": safe_query}
+    if findings:
+        safe["_sanitization"] = {"findings": findings}
+    return safe
+
+
+def _sanitize_spool_payload(
+    op: str,
+    payload: dict[str, object],
+    idempotency_key: str | None,
+) -> dict[str, object]:
+    if op in {"ingest", "dream"}:
+        return _sanitize_ingest_payload(payload, idempotency_key)
+    if op == "feedback":
+        return _sanitize_feedback_payload(payload)
+    allowed = _VERBATIM_PAYLOAD_FIELDS if op == "verbatim" else _ACCESS_PAYLOAD_FIELDS
+    _reject_unknown_fields(payload, allowed)
+    validate_persisted_metadata({f"{op}_payload": payload})
+    return dict(payload)
 
 
 def wal_discipline_enabled() -> bool:
@@ -117,7 +243,11 @@ def append(
     """
     if op not in KNOWN_OPS:
         raise ValueError(f"unknown spool op: {op!r} (known: {KNOWN_OPS})")
-    envelope = make_envelope(op, payload, idempotency_key=idempotency_key, ts=ts)
+    validate_persisted_metadata(
+        {"spool_op": op, "spool_idempotency_key": idempotency_key, "spool_ts": ts}
+    )
+    safe_payload = _sanitize_spool_payload(op, payload, idempotency_key)
+    envelope = make_envelope(op, safe_payload, idempotency_key=idempotency_key, ts=ts)
     line = json.dumps(envelope, ensure_ascii=True, separators=(",", ":"))
     spool_dir = spool_dir_for(db_path)
     spool_dir.mkdir(parents=True, exist_ok=True)
@@ -166,9 +296,12 @@ def read_lines(path: Path) -> list[str]:
 def quarantine_line(db_path: str | Path, raw_line: str, reason: str) -> Path:
     """Preserve an unreplayable line under ``quarantine/`` — never drop it.
 
-    Wrapped with the reason + timestamp so the operator can audit and
-    hand-replay after a fix; the raw line is kept byte-for-byte.
+    Wrapped with a sanitized reason, timestamp, original length, and digest of
+    the safe surrogate. Credential-shaped source bytes are never duplicated.
     """
+    safe_raw, raw_findings = sanitize_persisted_text(raw_line)
+    safe_reason, reason_findings = sanitize_persisted_text(reason)
+    findings = sorted(set(raw_findings + reason_findings))
     qdir = quarantine_dir_for(db_path)
     qdir.mkdir(parents=True, exist_ok=True)
     day = datetime.now(timezone.utc).strftime("%Y%m%d")
@@ -176,8 +309,11 @@ def quarantine_line(db_path: str | Path, raw_line: str, reason: str) -> Path:
     record = json.dumps(
         {
             "quarantined_at": datetime.now(timezone.utc).isoformat(),
-            "reason": reason,
-            "raw": raw_line,
+            "reason": safe_reason,
+            "raw": safe_raw,
+            "findings": findings,
+            "raw_length": len(raw_line),
+            "sanitized_sha256": hashlib.sha256(safe_raw.encode("utf-8")).hexdigest(),
         },
         ensure_ascii=True,
         separators=(",", ":"),

@@ -16,7 +16,6 @@ import logging
 from typing import Any
 
 from memorymaster.stores._storage_shared import ConcurrentModificationError
-from memorymaster.core.lifecycle import transition_claim
 from memorymaster.core.llm_provider import call_llm
 from memorymaster.core.models import Claim
 
@@ -81,6 +80,53 @@ def _cite_summary(claim: Claim) -> str:
     return "; ".join(f"{c.source}{f':{c.locator}' if c.locator else ''}" for c in claim.citations[:3])
 
 
+def _lost_race_result(
+    winner: Claim,
+    loser: Claim,
+    replacement_id,
+) -> dict[str, Any]:
+    return {
+        "resolved": False,
+        "reason": "lost_race",
+        "winner_id": winner.id,
+        "loser_id": loser.id,
+        "current_replacement_id": replacement_id,
+    }
+
+
+def _apply_conflict_resolution(
+    store,
+    winner: Claim,
+    loser: Claim,
+    reason: str,
+) -> dict[str, Any]:
+    try:
+        store.mark_superseded(
+            loser.id,
+            winner.id,
+            f"llm_conflict_resolution: {reason}",
+        )
+        updated = store.get_claim(loser.id, include_citations=False)
+        replacement_id = getattr(updated, "replaced_by_claim_id", None)
+        if replacement_id != winner.id:
+            return _lost_race_result(winner, loser, replacement_id)
+        return {
+            "resolved": True,
+            "winner_id": winner.id,
+            "loser_id": loser.id,
+            "reason": reason,
+        }
+    except ConcurrentModificationError as exc:
+        current = store.get_claim(loser.id, include_citations=False)
+        if current is not None and current.status == "superseded":
+            return _lost_race_result(winner, loser, current.replaced_by_claim_id)
+        logger.warning("Failed to resolve conflict %d vs %d: %s", winner.id, loser.id, exc)
+        return {"resolved": False, "reason": str(exc)}
+    except Exception as exc:
+        logger.warning("Failed to resolve conflict %d vs %d: %s", winner.id, loser.id, exc)
+        return {"resolved": False, "reason": str(exc)}
+
+
 def resolve_conflict_pair(
     store,
     claim_a: Claim,
@@ -113,48 +159,7 @@ def resolve_conflict_pair(
 
     winner = claim_a if winner_letter == "A" else claim_b
     loser = claim_b if winner_letter == "A" else claim_a
-
-    try:
-        updated = transition_claim(
-            store,
-            claim_id=loser.id,
-            to_status="superseded",
-            reason=f"llm_conflict_resolution: {reason}",
-            event_type="validator",
-            replaced_by_claim_id=winner.id,
-        )
-        current_replacement_id = getattr(updated, "replaced_by_claim_id", None)
-        if current_replacement_id != winner.id:
-            return {
-                "resolved": False,
-                "reason": "lost_race",
-                "winner_id": winner.id,
-                "loser_id": loser.id,
-                "current_replacement_id": current_replacement_id,
-            }
-        if hasattr(store, "set_supersedes"):
-            store.set_supersedes(winner.id, loser.id)
-        return {
-            "resolved": True,
-            "winner_id": winner.id,
-            "loser_id": loser.id,
-            "reason": reason,
-        }
-    except ConcurrentModificationError as exc:
-        current = store.get_claim(loser.id, include_citations=False)
-        if current is not None and current.status == "superseded":
-            return {
-                "resolved": False,
-                "reason": "lost_race",
-                "winner_id": winner.id,
-                "loser_id": loser.id,
-                "current_replacement_id": current.replaced_by_claim_id,
-            }
-        logger.warning("Failed to resolve conflict %d vs %d: %s", claim_a.id, claim_b.id, exc)
-        return {"resolved": False, "reason": str(exc)}
-    except Exception as exc:
-        logger.warning("Failed to resolve conflict %d vs %d: %s", claim_a.id, claim_b.id, exc)
-        return {"resolved": False, "reason": str(exc)}
+    return _apply_conflict_resolution(store, winner, loser, reason)
 
 
 def _resolve_group_pairs(store, claims: list[Claim], limit: int) -> tuple[int, int, int]:

@@ -1,15 +1,18 @@
 """Qdrant vector-search fallback for :mod:`memorymaster.recall.context_hook`.
 
-Activated only when:
+Compatibility helpers are retained for a governed R2.1 reintegration, but
+R1.3 quarantines retrieval unconditionally. ``is_fallback_enabled()`` returns
+``False`` and ``search()`` raises before loading a model or client.
+
+Historically activated only when:
 
 1.  ``MEMORYMASTER_RECALL_VECTOR_FALLBACK`` env var is truthy (``1``/``true``/...).
 2.  ``MEMORYMASTER_QDRANT_URL`` is set.
 3.  The primary FTS5 + entity-fanout stages returned fewer candidates than
     the threshold (default: 3).
 
-When any of those conditions is false, or when Qdrant / sentence-transformers
-is unreachable, the caller silently skips the fallback — default recall
-behaviour is unchanged.
+The historical gates are no longer activation controls during quarantine.
+Recall always uses authoritative primary-store rows.
 
 Design notes
 ------------
@@ -20,10 +23,10 @@ Design notes
 * Uses the same deterministic UUID-v5 point id as
   :mod:`scripts.index_claims_to_qdrant` so searches stay in sync with the
   index script.
-* Caches the embedder and Qdrant client as module-level singletons across
-  calls to amortise model-load cost (~2-3s cold, <5ms warm).
-* Never throws across module boundary: every public helper returns safe
-  defaults on failure and logs at WARNING.
+* Retains lazy model/client helpers for compatibility, but public read search
+  never calls them during quarantine.
+* Read search fails closed with ``PermissionError`` during quarantine; sync
+  and deterministic point-id helpers remain available.
 """
 from __future__ import annotations
 
@@ -33,6 +36,8 @@ import threading
 import uuid
 from dataclasses import dataclass
 from typing import Any
+
+from memorymaster.recall.qdrant_transport import QdrantTransportConfig
 
 logger = logging.getLogger(__name__)
 
@@ -72,12 +77,8 @@ def _truthy(raw: str | None) -> bool:
 
 
 def is_fallback_enabled() -> bool:
-    """Gate: env opt-in + Qdrant URL configured."""
-    if not _truthy(os.environ.get("MEMORYMASTER_RECALL_VECTOR_FALLBACK")):
-        return False
-    if not os.environ.get("MEMORYMASTER_QDRANT_URL", "").strip():
-        return False
-    return True
+    """Remain fail-closed until R2.1 provides authoritative policy filtering."""
+    return False
 
 
 def fallback_threshold() -> int:
@@ -190,6 +191,8 @@ def _get_client():
         if _client_failed:
             return None
         try:
+            transport = QdrantTransportConfig.from_env()
+            transport.validate_url(url)
             from qdrant_client import QdrantClient
         except ImportError:
             logger.warning(
@@ -198,16 +201,21 @@ def _get_client():
             )
             _client_failed = True
             return None
-        except Exception as exc:
-            logger.warning("vector fallback disabled: import error: %s", exc)
+        except Exception:
+            logger.warning(
+                "vector fallback disabled: invalid Qdrant transport configuration."
+            )
             _client_failed = True
             return None
         try:
-            _client = QdrantClient(url=url, timeout=5.0)
-        except Exception as exc:
+            _client = QdrantClient(
+                url=url,
+                timeout=5.0,
+                **transport.qdrant_client_kwargs(),
+            )
+        except Exception:
             logger.warning(
-                "vector fallback disabled: could not create client for %s: %s",
-                url, exc,
+                "vector fallback disabled: could not create Qdrant client."
             )
             _client_failed = True
             return None
@@ -229,77 +237,8 @@ def reset_singletons_for_tests() -> None:
 
 
 def search(query_text: str, *, collection: str | None = None) -> list[VectorHit]:
-    """Return up to ``MEMORYMASTER_RECALL_VECTOR_LIMIT`` hits ranked by Qdrant
-    cosine similarity, filtered by ``MEMORYMASTER_RECALL_VECTOR_SCORE_THRESHOLD``.
-
-    Never raises: logs a warning and returns an empty list on any failure.
-    """
-    if not query_text or not query_text.strip():
-        return []
-    embedder = _get_embedder()
-    if embedder is None:
-        return []
-    client = _get_client()
-    if client is None:
-        return []
-    coll = (
-        collection
-        or os.environ.get("MEMORYMASTER_QDRANT_COLLECTION")
-        or DEFAULT_COLLECTION
+    """Reject direct vector reads until governed candidate rehydration exists."""
+    del query_text, collection
+    raise PermissionError(
+        "Qdrant recall fallback is quarantined pending authoritative policy rehydration."
     )
-    try:
-        vec = embedder.encode(
-            query_text, normalize_embeddings=True, show_progress_bar=False
-        )
-        vec_list = vec.tolist() if hasattr(vec, "tolist") else list(vec)
-    except Exception as exc:
-        logger.warning("vector fallback: embed failed: %s", exc)
-        return []
-
-    threshold = score_threshold()
-    limit = search_limit()
-    try:
-        # qdrant-client >=1.10 deprecated `search` in favour of `query_points`.
-        # Keep a fallback for older clients so installs pinned to 1.7-1.9 still work.
-        if hasattr(client, "query_points"):
-            resp = client.query_points(
-                collection_name=coll,
-                query=vec_list,
-                limit=limit,
-                score_threshold=threshold,
-                with_payload=True,
-            )
-            raw_hits = getattr(resp, "points", None) or resp
-        else:
-            raw_hits = client.search(  # type: ignore[attr-defined]
-                collection_name=coll,
-                query_vector=vec_list,
-                limit=limit,
-                score_threshold=threshold,
-                with_payload=True,
-            )
-    except Exception as exc:
-        logger.warning(
-            "vector fallback: qdrant search on %r failed: %s", coll, exc,
-        )
-        return []
-
-    hits: list[VectorHit] = []
-    for h in raw_hits:
-        payload = getattr(h, "payload", None) or {}
-        raw_id = payload.get("id")
-        try:
-            claim_id = int(raw_id)
-        except (TypeError, ValueError):
-            continue
-        hits.append(
-            VectorHit(
-                claim_id=claim_id,
-                score=float(getattr(h, "score", 0.0) or 0.0),
-                scope=str(payload.get("scope") or ""),
-                subject=str(payload.get("subject") or ""),
-                status=str(payload.get("status") or ""),
-                confidence=float(payload.get("confidence") or 0.0),
-            )
-        )
-    return hits

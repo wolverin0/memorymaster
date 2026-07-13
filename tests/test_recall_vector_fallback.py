@@ -1,16 +1,9 @@
-"""Tests for the Qdrant vector-search recall fallback.
+"""Prompt-recall quarantine contracts for the legacy Qdrant fallbacks.
 
-Covers:
-  1. Fallback is inert without MEMORYMASTER_RECALL_VECTOR_FALLBACK=1.
-  2. Fallback activates only when ``len(rows) < threshold`` (default 3).
-  3. Graceful degradation when Qdrant client raises (import error, network,
-     missing collection, etc).
-  4. When W_VECTOR=0, ranking is bit-identical to pre-fallback (rows may
-     be added but contribute zero score).
-  5. Env-override knobs (threshold, score_threshold, limit) parse correctly.
-
-Uses an in-memory SQLite DB with a handful of synthetic claims and mocks
-out the sentence-transformers embedder + qdrant_client.QdrantClient.
+During R1.3 containment, prompt recall must use authoritative lexical rows
+only. Neither the opt-in vector fallback nor the raw-payload Qdrant fast path
+may run, even when their legacy environment gates are enabled. Pure helper
+contracts remain covered for the later governed R2.1 reintegration.
 """
 from __future__ import annotations
 
@@ -120,6 +113,21 @@ class _FakeClient:
         return _FakeQueryResponse(self._hits)
 
 
+class _FakeRawBackend:
+    def __init__(self, hits: list[dict]) -> None:
+        self._hits = hits
+        self.calls = 0
+        self.closed = False
+
+    def search(self, query: str, *, limit: int = 5) -> list[dict]:
+        del query
+        self.calls += 1
+        return self._hits[:limit]
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def _install_mocks(monkeypatch, hits, *, fail_mode=None,
                    embedder_fail=False):
     fake_client = _FakeClient(hits, fail_mode=fail_mode)
@@ -135,6 +143,14 @@ def _install_mocks(monkeypatch, hits, *, fail_mode=None,
     monkeypatch.setattr(qdrant_recall_fallback, "_get_embedder", _get_embedder)
     monkeypatch.setattr(qdrant_recall_fallback, "_get_client", _get_client)
     return fake_client
+
+
+def _install_raw_backend(monkeypatch, hits):
+    from memorymaster.recall import qdrant_backend
+
+    fake_backend = _FakeRawBackend(hits)
+    monkeypatch.setattr(qdrant_backend, "QdrantBackend", lambda: fake_backend)
+    return fake_backend
 
 
 # ---------------------------------------------------------------------------
@@ -158,105 +174,87 @@ def test_fallback_inert_without_env(service, monkeypatch):
     assert "vector_fallback" not in out
 
 
-def test_fallback_triggers_when_rows_under_threshold(service, monkeypatch):
-    """With env enabled and <3 primary rows, fallback adds rows."""
+@pytest.mark.parametrize("skip_qdrant", [False, True])
+def test_prompt_recall_never_invokes_vector_fallback_when_env_enabled(
+    service, monkeypatch, skip_qdrant
+):
+    """Containment is unconditional across both legacy skip-qdrant modes."""
+    svc, _seeded = service
+    monkeypatch.setenv("MEMORYMASTER_RECALL_VECTOR_FALLBACK", "1")
+    monkeypatch.setenv("MEMORYMASTER_QDRANT_URL", "http://mocked.local:6333")
+    fake_client = _install_mocks(monkeypatch, [])
+    fake_backend = _install_raw_backend(
+        monkeypatch,
+        [{"payload": {"claim_id": 999_999, "claim_text": "raw orphan"}}],
+    )
+
+    out = context_hook.recall(
+        "zzzzz-noword-noword-noword",
+        db_path=svc._test_db_path,
+        skip_qdrant=skip_qdrant,
+    )
+
+    assert fake_client.calls == 0
+    assert fake_backend.calls == 0
+    assert out == ""
+
+
+def test_prompt_recall_never_renders_orphan_raw_claim_text(service, monkeypatch):
+    """A Qdrant payload cannot become prompt context without a primary row."""
+    svc, _seeded = service
+    monkeypatch.setenv("MEMORYMASTER_RECALL_VECTOR_FALLBACK", "1")
+    monkeypatch.setenv("MEMORYMASTER_QDRANT_URL", "http://mocked.local:6333")
+    _install_mocks(monkeypatch, [])
+    orphan_text = "ORPHAN-RAW-CLAIM-TEXT-MUST-NOT-ESCAPE"
+    fake_backend = _install_raw_backend(
+        monkeypatch,
+        [{"payload": {"claim_id": 999_999, "claim_text": orphan_text}}],
+    )
+
+    out = context_hook.recall(
+        "zzzzz-noword-noword-noword",
+        db_path=svc._test_db_path,
+        skip_qdrant=False,
+    )
+
+    assert orphan_text not in out
+    assert fake_backend.calls == 0
+    assert out == ""
+
+
+@pytest.mark.parametrize("skip_qdrant", [False, True])
+def test_prompt_recall_keeps_authoritative_lexical_results_during_quarantine(
+    service, monkeypatch, skip_qdrant
+):
+    """Containment removes vector candidates without degrading lexical recall."""
     svc, seeded = service
     monkeypatch.setenv("MEMORYMASTER_RECALL_VECTOR_FALLBACK", "1")
     monkeypatch.setenv("MEMORYMASTER_QDRANT_URL", "http://mocked.local:6333")
-    monkeypatch.setenv("MEMORYMASTER_RECALL_W_VECTOR", "0.2")
+    monkeypatch.setenv("MEMORYMASTER_RECALL_W_VECTOR", "1.0")
 
-    hit = _FakeHit(score=0.9, payload={"id": seeded[1], "scope": "test",
-                                         "subject": "session continuation",
-                                         "status": "confirmed",
-                                         "confidence": 0.7})
+    hit = _FakeHit(
+        score=0.95,
+        payload={
+            "id": seeded[1],
+            "scope": "test",
+            "subject": "session continuation",
+            "status": "confirmed",
+            "confidence": 0.7,
+        },
+    )
     fake_client = _install_mocks(monkeypatch, [hit])
+    fake_backend = _install_raw_backend(monkeypatch, [])
 
-    # Use a prompt that FTS5 won't match — guarantees <3 primary candidates.
-    out = context_hook.recall("zzzzz-noword-noword-noword",
-                               db_path=svc._test_db_path, skip_qdrant=True)
-    assert fake_client.calls == 1, "fallback should have queried qdrant"
-    assert "session based on recency" in out or "Claude CLI" in out
+    out = context_hook.recall(
+        "tokenizer stoplist",
+        db_path=svc._test_db_path,
+        skip_qdrant=skip_qdrant,
+    )
 
-
-def test_fallback_skipped_when_rows_ge_threshold(service, monkeypatch):
-    """When FTS5 already returns >= MIN_CANDIDATES rows, no qdrant search."""
-    svc, _seeded = service
-    monkeypatch.setenv("MEMORYMASTER_RECALL_VECTOR_FALLBACK", "1")
-    monkeypatch.setenv("MEMORYMASTER_QDRANT_URL", "http://mocked.local:6333")
-    # Force threshold=1 so the seeded claims will always exceed it.
-    monkeypatch.setenv("MEMORYMASTER_RECALL_VECTOR_MIN_CANDIDATES", "1")
-
-    hit = _FakeHit(score=0.9, payload={"id": 99999, "scope": "test",
-                                         "subject": "unrelated",
-                                         "status": "confirmed",
-                                         "confidence": 0.7})
-    fake_client = _install_mocks(monkeypatch, [hit])
-
-    # A prompt we know matches FTS5 (seeded "tokenizer stoplist audit").
-    out = context_hook.recall("tokenizer stoplist",
-                               db_path=svc._test_db_path, skip_qdrant=True)
+    assert "The recall tokenizer drops" in out
+    assert "Claude CLI --continue" not in out
     assert fake_client.calls == 0
-    assert "stopwords" in out
-
-
-def test_graceful_degradation_on_qdrant_failure(service, monkeypatch):
-    """Qdrant unreachable → fallback swallows, recall still returns rows."""
-    svc, _seeded = service
-    monkeypatch.setenv("MEMORYMASTER_RECALL_VECTOR_FALLBACK", "1")
-    monkeypatch.setenv("MEMORYMASTER_QDRANT_URL", "http://mocked.local:6333")
-
-    fake_client = _install_mocks(monkeypatch, [], fail_mode="query")
-    # Prompt that still matches at least one seeded claim so we can assert non-empty.
-    out = context_hook.recall("tokenizer",
-                               db_path=svc._test_db_path, skip_qdrant=True)
-    # Client was called, but threw — no crash, output is whatever FTS5 produced.
-    assert fake_client.calls == 1
-    assert "stopwords" in out
-
-
-def test_graceful_degradation_on_embedder_failure(service, monkeypatch):
-    """Sentence-transformers import error → fallback silently skips."""
-    svc, _seeded = service
-    monkeypatch.setenv("MEMORYMASTER_RECALL_VECTOR_FALLBACK", "1")
-    monkeypatch.setenv("MEMORYMASTER_QDRANT_URL", "http://mocked.local:6333")
-
-    fake_client = _install_mocks(monkeypatch, [], embedder_fail=True)
-    out = context_hook.recall("tokenizer",
-                               db_path=svc._test_db_path, skip_qdrant=True)
-    assert fake_client.calls == 0
-    assert "stopwords" in out
-
-
-def test_w_vector_zero_is_additive_but_score_neutral(service, monkeypatch):
-    """With W_VECTOR=0, fallback may append rows, but they contribute 0
-    score — ranking of pre-existing rows must be bit-identical.
-    """
-    svc, seeded = service
-    monkeypatch.setenv("MEMORYMASTER_RECALL_VECTOR_FALLBACK", "1")
-    monkeypatch.setenv("MEMORYMASTER_QDRANT_URL", "http://mocked.local:6333")
-    # Explicitly keep W_VECTOR=0 (the shipped default) — leave var unset.
-
-    hit = _FakeHit(score=0.95, payload={"id": seeded[1], "scope": "test",
-                                          "subject": "session continuation",
-                                          "status": "confirmed",
-                                          "confidence": 0.7})
-    _install_mocks(monkeypatch, [hit])
-
-    # Compare: same prompt with fallback OFF vs ON (at W_VECTOR=0).
-    out_on = context_hook.recall("zzzzz-noword-noword-noword",
-                                  db_path=svc._test_db_path, skip_qdrant=True)
-    monkeypatch.delenv("MEMORYMASTER_RECALL_VECTOR_FALLBACK")
-    qdrant_recall_fallback.reset_singletons_for_tests()
-    out_off = context_hook.recall("zzzzz-noword-noword-noword",
-                                   db_path=svc._test_db_path, skip_qdrant=True)
-    # Vector hit appears ONLY in the ON variant.
-    if out_off:
-        # Every line in `out_off` must also appear in `out_on` (identical order
-        # at the front — fallback rows go at the tail because they have score 0).
-        off_lines = out_off.strip().splitlines()
-        on_lines = out_on.strip().splitlines()
-        head = on_lines[: len(off_lines)]
-        assert head == off_lines, "W_VECTOR=0 must preserve existing ordering"
+    assert fake_backend.calls == 0
 
 
 def test_env_knob_parsing(monkeypatch):
@@ -278,11 +276,11 @@ def test_env_knob_parsing(monkeypatch):
     assert qdrant_recall_fallback.search_limit() == qdrant_recall_fallback.DEFAULT_LIMIT
 
 
-def test_is_fallback_enabled_requires_both_vars(monkeypatch):
+def test_is_fallback_enabled_stays_false_during_quarantine(monkeypatch):
     monkeypatch.setenv("MEMORYMASTER_RECALL_VECTOR_FALLBACK", "1")
     assert qdrant_recall_fallback.is_fallback_enabled() is False  # no URL
     monkeypatch.setenv("MEMORYMASTER_QDRANT_URL", "http://x.y:6333")
-    assert qdrant_recall_fallback.is_fallback_enabled() is True
+    assert qdrant_recall_fallback.is_fallback_enabled() is False
     monkeypatch.setenv("MEMORYMASTER_RECALL_VECTOR_FALLBACK", "0")
     assert qdrant_recall_fallback.is_fallback_enabled() is False
 

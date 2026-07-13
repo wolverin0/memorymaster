@@ -7,6 +7,10 @@ EXCEPTION
 END
 $$;
 
+-- Tenant row-security policy is intentionally versioned in migration 0008.
+-- Several protected tables are themselves created by migrations, so applying
+-- the complete policy set here would run before those relations exist.
+
 CREATE TABLE IF NOT EXISTS claims (
     id BIGSERIAL PRIMARY KEY,
     text TEXT NOT NULL,
@@ -49,6 +53,9 @@ ALTER TABLE claims
 ALTER TABLE claims
     ADD COLUMN IF NOT EXISTS wiki_article TEXT;
 
+ALTER TABLE claims
+    ADD COLUMN IF NOT EXISTS tenant_id TEXT;
+
 -- Parity with SQLite schema.sql / dataclass defaults (postgres-parity audit).
 -- Forward-migrate these columns on pre-existing Postgres DBs created before
 -- the parity fix, BEFORE the 0004 query_cache trigger references valid_from/
@@ -65,45 +72,59 @@ ALTER TABLE claims ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'pu
 -- belief. NULL = holder-agnostic (default, byte-identical to pre-holder rows).
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS holder TEXT;
 
-CREATE OR REPLACE FUNCTION memorymaster_claims_confirmed_tuple_guard()
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'ck_claims_identity_visibility_owner'
+          AND conrelid = 'claims'::regclass
+    ) THEN
+        ALTER TABLE claims ADD CONSTRAINT ck_claims_identity_visibility_owner
+            CHECK (
+                visibility IN ('public', 'private', 'sensitive')
+                AND NULLIF(BTRIM(source_agent), '') IS NOT NULL
+            );
+    END IF;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION public.memorymaster_claim_supersession_guard()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
+DECLARE
+    reference_id BIGINT;
 BEGIN
-    IF NEW.status = 'confirmed'
-       AND NEW.subject IS NOT NULL
-       AND NEW.predicate IS NOT NULL
-       AND EXISTS (
-           SELECT 1
-           FROM claims c
-           WHERE c.status = 'confirmed'
-             AND c.subject = NEW.subject
-             AND c.predicate = NEW.predicate
-             AND c.scope = NEW.scope
-             AND (TG_OP = 'INSERT' OR c.id <> NEW.id)
-       ) THEN
-        RAISE EXCEPTION 'only one confirmed claim is allowed per (subject,predicate,scope)'
-            USING ERRCODE = '23505';
-    END IF;
+    FOREACH reference_id IN ARRAY ARRAY[
+        NEW.supersedes_claim_id,
+        NEW.replaced_by_claim_id
+    ] LOOP
+        IF reference_id IS NOT NULL AND (
+            reference_id = NEW.id
+            OR NOT EXISTS (
+                SELECT 1
+                FROM public.claims AS referenced
+                WHERE referenced.id = reference_id
+                  AND referenced.tenant_id IS NOT DISTINCT FROM NEW.tenant_id
+                  AND referenced.scope = NEW.scope
+                  AND referenced.visibility IS NOT DISTINCT FROM NEW.visibility
+                  AND referenced.source_agent IS NOT DISTINCT FROM NEW.source_agent
+            )
+        ) THEN
+            RAISE EXCEPTION 'supersession reference is outside the authorized boundary'
+                USING ERRCODE = '42501';
+        END IF;
+    END LOOP;
     RETURN NEW;
 END;
 $$;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_trigger
-        WHERE tgname = 'trg_claims_confirmed_tuple_guard'
-          AND tgrelid = 'claims'::regclass
-    ) THEN
-        CREATE TRIGGER trg_claims_confirmed_tuple_guard
-        BEFORE INSERT OR UPDATE OF status, subject, predicate, scope ON claims
-        FOR EACH ROW
-        EXECUTE FUNCTION memorymaster_claims_confirmed_tuple_guard();
-    END IF;
-END
-$$;
+DROP TRIGGER IF EXISTS trg_claims_supersession_boundary ON claims;
+CREATE TRIGGER trg_claims_supersession_boundary
+BEFORE INSERT OR UPDATE OF tenant_id, scope, visibility, source_agent,
+    supersedes_claim_id, replaced_by_claim_id ON claims
+FOR EACH ROW
+EXECUTE FUNCTION public.memorymaster_claim_supersession_guard();
 
 CREATE TABLE IF NOT EXISTS citations (
     id BIGSERIAL PRIMARY KEY,
@@ -122,7 +143,14 @@ CREATE TABLE IF NOT EXISTS events (
     to_status TEXT,
     details TEXT,
     payload_json JSONB,
-    created_at TIMESTAMPTZ NOT NULL
+    created_at TIMESTAMPTZ NOT NULL,
+    prev_event_hash TEXT,
+    event_hash TEXT,
+    hash_algo TEXT,
+    tenant_id TEXT,
+    tenant_prev_event_hash TEXT,
+    tenant_event_hash TEXT,
+    tenant_hash_algo TEXT
 );
 
 CREATE OR REPLACE FUNCTION memorymaster_events_append_only_guard()
@@ -166,15 +194,47 @@ BEGIN
 END
 $$;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id);
+CREATE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_public_human_id_unique
+    ON claims(COALESCE(tenant_id, ''), scope, human_id)
+    WHERE visibility = 'public' AND human_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_nonpublic_principal_human_id_unique
+    ON claims(COALESCE(tenant_id, ''), scope, visibility, source_agent, human_id)
+    WHERE visibility <> 'public' AND source_agent IS NOT NULL
+      AND human_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_claims_tenant_id ON claims(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status);
 CREATE INDEX IF NOT EXISTS idx_claims_updated_at ON claims(updated_at);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_idempotency_key ON claims(idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_claims_idempotency_key ON claims(idempotency_key);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_public_idempotency_key_unique
+    ON claims(COALESCE(tenant_id, ''), scope, idempotency_key)
+    WHERE visibility = 'public' AND idempotency_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_nonpublic_principal_idempotency_key_unique
+    ON claims(COALESCE(tenant_id, ''), scope, visibility, source_agent, idempotency_key)
+    WHERE visibility <> 'public' AND source_agent IS NOT NULL
+      AND idempotency_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_public_confirmed_tuple_unique
+    ON claims(COALESCE(tenant_id, ''), subject, predicate, scope)
+    WHERE visibility = 'public' AND status = 'confirmed'
+      AND subject IS NOT NULL
+      AND predicate IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_nonpublic_principal_confirmed_tuple_unique
+    ON claims(COALESCE(tenant_id, ''), visibility, source_agent, subject, predicate, scope)
+    WHERE visibility <> 'public' AND source_agent IS NOT NULL
+      AND status = 'confirmed'
+      AND subject IS NOT NULL
+      AND predicate IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_claims_tuple ON claims(subject, predicate, scope);
 CREATE INDEX IF NOT EXISTS idx_claims_replaced_by ON claims(replaced_by_claim_id);
 CREATE INDEX IF NOT EXISTS idx_citations_claim_id ON citations(claim_id);
 CREATE INDEX IF NOT EXISTS idx_events_claim_id ON events(claim_id);
+CREATE INDEX IF NOT EXISTS idx_events_tenant_id ON events(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_events_tenant_hash
+    ON events(tenant_id, tenant_event_hash);
+CREATE INDEX IF NOT EXISTS idx_events_tenant_head
+    ON events(tenant_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_events_tenant_algo_head
+    ON events(tenant_id, hash_algo, id DESC);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
 
 CREATE TABLE IF NOT EXISTS external_sources (

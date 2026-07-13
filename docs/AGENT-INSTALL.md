@@ -4,6 +4,11 @@ Copy the appropriate block below and paste it as a prompt to your coding agent.
 The agent will run the installer, read the machine-readable result, and report
 what was wired, what was reused (brownfield), and what degraded.
 
+R1.3 safety note: Qdrant is an optional maintenance index. Installing its
+extra or starting Docker does not enable claim, context-fallback, or verbatim
+payload retrieval. Local-trusted Qdrant claim requests use lexical fallback;
+team semantic MCP requests are denied. Sync/reconcile remain available.
+
 ---
 
 ## Claude Code variant
@@ -28,8 +33,8 @@ Install MemoryMaster in this environment. Follow these steps exactly.
      installer printed — paste them verbatim so I can see the plan.
    - applied: what was actually wired (hooks, mcp_claude, cron, full_stack, etc.).
    - degraded: true/false. If true, explain the reason from the JSON
-     (typically: Docker not found → SQLite-only mode, vector recall + local LLM
-     auto-ingest are off).
+     (typically: Docker not found → SQLite-only mode, Qdrant index maintenance
+     + local LLM auto-ingest are off).
    - verify.status: PASS, PARTIAL, or FAIL and the detail string.
 
 3. Run the verify round-trip to confirm hooks and DB are functional:
@@ -116,9 +121,9 @@ Notes for you (the agent):
 - The MCP server command registered is the same non-deprecated path:
   python -m memorymaster.surfaces.mcp_server
 - If degraded is true (Docker absent / services unreachable) the install still
-  succeeded (exit 0). SQLite-only mode is fully functional; vector recall and
-  local LLM auto-ingest are simply off until Docker or QDRANT_URL/OLLAMA_URL
-  are available.
+  succeeded (exit 0). SQLite-only mode is fully functional; Qdrant index
+  maintenance and local LLM auto-ingest are off. Starting Qdrant later does not
+  lift the R1.3 payload-retrieval quarantine.
 - Claude Code hooks (UserPromptSubmit, Stop, SessionStart, PreCompact) are NOT
   registered for Codex — those are Claude Code-specific. The session-end script
   above is the Codex equivalent for distilled ingest.
@@ -136,8 +141,8 @@ Notes for you (the agent):
 | `--api-key KEY` | API key for the chosen provider |
 | `--model MODEL` | LLM model id |
 | `--project-root PATH` | Directory where `memorymaster.db` lives |
-| `--full-stack` | Bring up Qdrant + Ollama via Docker Compose (default when omitted) |
-| `--no-full-stack` | Skip the vector + local-LLM stack |
+| `--full-stack` | Bring up the Qdrant maintenance index + Ollama via Docker Compose (default when omitted) |
+| `--no-full-stack` | Skip the Qdrant-index + local-LLM stack |
 | `--no-cron` | Skip steward cron setup |
 | `--no-obsidian-skills` | Skip Obsidian skills install |
 | `--codex` | Force Codex MCP + instructions wiring (auto-detected otherwise) |
@@ -151,9 +156,10 @@ Notes for you (the agent):
 If Docker is absent and Qdrant/Ollama are not already reachable at
 `QDRANT_URL`/`OLLAMA_URL`, the installer continues in SQLite-only mode:
 
-> Running in SQLite-only mode. Vector recall + local LLM auto-ingest are OFF.
-> To enable them: install Docker and re-run with `--full-stack`, or point
-> QDRANT_URL / OLLAMA_URL at existing services.
+> Running in SQLite-only mode. Qdrant index maintenance + local LLM auto-ingest are OFF.
+> Retrieval remains available through authoritative SQLite ranking. To enable index
+> maintenance or local LLMs, use `--full-stack` or QDRANT_URL / OLLAMA_URL.
 
 The exit code is still 0. Core claim storage, recall hooks, and MCP tools
-remain fully functional.
+remain fully functional. Qdrant payload retrieval remains quarantined even when
+the optional service is available.

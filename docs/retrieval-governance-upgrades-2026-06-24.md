@@ -1,5 +1,11 @@
 # Retrieval & Governance Upgrades — implementation plan (2026-06-24)
 
+> **Current R1.3 status (2026-07-11):** references below to a Qdrant
+> "vector-on" case are historical experiment context, not an available read
+> path. Claim/context-fallback/verbatim payload retrieval is quarantined;
+> sync/reconcile/count-ID maintenance remains. R2.1 must use Qdrant IDs only and
+> rehydrate authorized SQLite/Postgres rows before any payload reaches ranking.
+
 **Source:** the 2026-06-24 re-survey (`artifacts/steal-from-others-2026-06-24.md`, `CREDITS.md`, claim `mm-e460`).
 **Goal:** land the prioritized steal candidates as measured, tested changes — retrieval quality first, then governance/correctness fixes, then new tools, then positioning.
 

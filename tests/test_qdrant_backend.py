@@ -75,22 +75,25 @@ class TestEmbedFailure:
 
     def test_upsert_returns_false_on_embed_failure(self):
         backend = QdrantBackend(qdrant_url="http://localhost:1", ollama_url="http://localhost:2")
-        backend._client = MagicMock()
+        backend._ollama_client = MagicMock()
         # Simulate embed failure
-        backend._client.post.side_effect = Exception("connection refused")
+        backend._ollama_client.post.side_effect = Exception("connection refused")
         claim = _fake_claim()
         assert backend.upsert_claim(claim) is False
 
-    def test_search_returns_empty_on_embed_failure(self):
+    def test_search_is_quarantined_before_embed_failure(self):
         backend = QdrantBackend(qdrant_url="http://localhost:1", ollama_url="http://localhost:2")
-        backend._client = MagicMock()
-        backend._client.post.side_effect = Exception("connection refused")
-        assert backend.search("test query") == []
+        backend._qdrant_client = MagicMock()
+        backend._ollama_client = MagicMock()
+        with pytest.raises(PermissionError, match="quarantined"):
+            backend.search("test query")
+        backend._qdrant_client.post.assert_not_called()
+        backend._ollama_client.post.assert_not_called()
 
     def test_delete_returns_false_on_failure(self):
         backend = QdrantBackend(qdrant_url="http://localhost:1", ollama_url="http://localhost:2")
-        backend._client = MagicMock()
-        backend._client.post.side_effect = Exception("connection refused")
+        backend._qdrant_client = MagicMock()
+        backend._qdrant_client.post.side_effect = Exception("connection refused")
         assert backend.delete_claim(1) is False
 
 
@@ -99,7 +102,7 @@ class TestEmbedSuccess:
 
     def _make_backend(self):
         backend = QdrantBackend(qdrant_url="http://localhost:1", ollama_url="http://localhost:2")
-        backend._client = MagicMock()
+        backend._ollama_client = MagicMock()
         return backend
 
     def _mock_embed_response(self, client_mock, dims=EMBEDDING_DIMS):
@@ -112,14 +115,14 @@ class TestEmbedSuccess:
 
     def test_embed_returns_vector(self):
         backend = self._make_backend()
-        self._mock_embed_response(backend._client)
+        self._mock_embed_response(backend._ollama_client)
         vec = backend._embed("test text")
         assert vec is not None
         assert len(vec) == EMBEDDING_DIMS
 
     def test_embed_wrong_dims_returns_none(self):
         backend = self._make_backend()
-        self._mock_embed_response(backend._client, dims=768)  # wrong dims
+        self._mock_embed_response(backend._ollama_client, dims=768)  # wrong dims
         vec = backend._embed("test text")
         assert vec is None
 
@@ -129,7 +132,7 @@ class TestEmbedSuccess:
         resp.status_code = 200
         resp.raise_for_status = MagicMock()
         resp.json.return_value = {"embeddings": []}
-        backend._client.post.return_value = resp
+        backend._ollama_client.post.return_value = resp
         vec = backend._embed("test text")
         assert vec is None
 
@@ -139,8 +142,8 @@ class TestUpsertSuccess:
 
     def _make_backend_with_embed(self):
         backend = QdrantBackend(qdrant_url="http://localhost:1", ollama_url="http://localhost:2")
-        backend._client = MagicMock()
-        # First post = embed, second put = qdrant upsert
+        backend._qdrant_client = MagicMock()
+        backend._ollama_client = MagicMock()
         embed_resp = MagicMock()
         embed_resp.status_code = 200
         embed_resp.raise_for_status = MagicMock()
@@ -150,8 +153,8 @@ class TestUpsertSuccess:
         upsert_resp.status_code = 200
         upsert_resp.raise_for_status = MagicMock()
 
-        backend._client.post.return_value = embed_resp
-        backend._client.put.return_value = upsert_resp
+        backend._ollama_client.post.return_value = embed_resp
+        backend._qdrant_client.put.return_value = upsert_resp
         return backend
 
     def test_upsert_returns_true(self):
@@ -163,13 +166,13 @@ class TestUpsertSuccess:
         backend = self._make_backend_with_embed()
         claim = _fake_claim()
         backend.upsert_claim(claim)
-        backend._client.put.assert_called_once()
-        url = backend._client.put.call_args[0][0]
+        backend._qdrant_client.put.assert_called_once()
+        url = backend._qdrant_client.put.call_args[0][0]
         assert "/collections/agent-memories/points" in url
 
     def test_upsert_qdrant_failure_returns_false(self):
         backend = self._make_backend_with_embed()
-        backend._client.put.side_effect = Exception("qdrant down")
+        backend._qdrant_client.put.side_effect = Exception("qdrant down")
         claim = _fake_claim()
         assert backend.upsert_claim(claim) is False
 
@@ -177,29 +180,30 @@ class TestUpsertSuccess:
 class TestDeleteSuccess:
     def test_delete_returns_true(self):
         backend = QdrantBackend(qdrant_url="http://localhost:1", ollama_url="http://localhost:2")
-        backend._client = MagicMock()
+        backend._qdrant_client = MagicMock()
         resp = MagicMock()
         resp.status_code = 200
         resp.raise_for_status = MagicMock()
-        backend._client.post.return_value = resp
+        backend._qdrant_client.post.return_value = resp
         assert backend.delete_claim(1) is True
 
     def test_delete_calls_correct_url(self):
         backend = QdrantBackend(qdrant_url="http://localhost:1", ollama_url="http://localhost:2")
-        backend._client = MagicMock()
+        backend._qdrant_client = MagicMock()
         resp = MagicMock()
         resp.status_code = 200
         resp.raise_for_status = MagicMock()
-        backend._client.post.return_value = resp
+        backend._qdrant_client.post.return_value = resp
         backend.delete_claim(42)
-        url = backend._client.post.call_args[0][0]
+        url = backend._qdrant_client.post.call_args[0][0]
         assert "/points/delete" in url
 
 
 class TestSearchSuccess:
     def _make_backend_with_search(self, results=None):
         backend = QdrantBackend(qdrant_url="http://localhost:1", ollama_url="http://localhost:2")
-        backend._client = MagicMock()
+        backend._qdrant_client = MagicMock()
+        backend._ollama_client = MagicMock()
 
         embed_resp = MagicMock()
         embed_resp.status_code = 200
@@ -211,85 +215,91 @@ class TestSearchSuccess:
         search_resp.raise_for_status = MagicMock()
         search_resp.json.return_value = {"result": results or []}
 
-        # post is used for both embed and search
-        backend._client.post.side_effect = [embed_resp, search_resp]
+        backend._ollama_client.post.return_value = embed_resp
+        backend._qdrant_client.post.return_value = search_resp
         return backend
 
-    def test_search_returns_results(self):
+    def test_search_does_not_return_raw_results_during_quarantine(self):
         hits = [{"payload": {"claim_id": 1}, "score": 0.95}]
         backend = self._make_backend_with_search(hits)
-        results = backend.search("test query")
-        assert len(results) == 1
-        assert results[0]["claim_id"] == 1
-        assert results[0]["score"] == 0.95
+        with pytest.raises(PermissionError, match="quarantined"):
+            backend.search("test query")
+        backend._qdrant_client.post.assert_not_called()
+        backend._ollama_client.post.assert_not_called()
 
-    def test_search_empty_results(self):
+    def test_search_empty_results_still_reports_quarantine(self):
         backend = self._make_backend_with_search([])
-        assert backend.search("nothing") == []
+        with pytest.raises(PermissionError, match="quarantined"):
+            backend.search("nothing")
 
-    def test_search_with_filters(self):
+    def test_search_with_filters_remains_quarantined(self):
         backend = self._make_backend_with_search([])
-        backend.search("test", states=["confirmed"], min_confidence=0.5)
-        # Second post call is the search — check the body has filters
-        search_call = backend._client.post.call_args_list[1]
-        body = search_call[1]["json"]
-        assert "filter" in body
+        with pytest.raises(PermissionError, match="quarantined"):
+            backend.search("test", states=["confirmed"], min_confidence=0.5)
+        backend._qdrant_client.post.assert_not_called()
+        backend._ollama_client.post.assert_not_called()
 
-    def test_search_qdrant_failure_returns_empty(self):
+    def test_search_qdrant_failure_is_never_reached(self):
         backend = QdrantBackend(qdrant_url="http://localhost:1", ollama_url="http://localhost:2")
-        backend._client = MagicMock()
+        backend._qdrant_client = MagicMock()
+        backend._ollama_client = MagicMock()
         embed_resp = MagicMock()
         embed_resp.status_code = 200
         embed_resp.raise_for_status = MagicMock()
         embed_resp.json.return_value = {"embeddings": [[0.1] * EMBEDDING_DIMS]}
-        backend._client.post.side_effect = [embed_resp, Exception("qdrant down")]
-        assert backend.search("test") == []
+        backend._ollama_client.post.return_value = embed_resp
+        backend._qdrant_client.post.side_effect = Exception("qdrant down")
+        with pytest.raises(PermissionError, match="quarantined"):
+            backend.search("test")
+        backend._qdrant_client.post.assert_not_called()
+        backend._ollama_client.post.assert_not_called()
 
 
 class TestEnsureCollection:
     def test_existing_collection_skips_create(self):
         backend = QdrantBackend(qdrant_url="http://localhost:1", ollama_url="http://localhost:2")
-        backend._client = MagicMock()
+        backend._qdrant_client = MagicMock()
         resp = MagicMock()
         resp.status_code = 200
-        backend._client.get.return_value = resp
+        backend._qdrant_client.get.return_value = resp
         backend.ensure_collection()
-        backend._client.put.assert_not_called()
+        backend._qdrant_client.put.assert_not_called()
 
     def test_missing_collection_creates(self):
         backend = QdrantBackend(qdrant_url="http://localhost:1", ollama_url="http://localhost:2")
-        backend._client = MagicMock()
+        backend._qdrant_client = MagicMock()
         get_resp = MagicMock()
         get_resp.status_code = 404
-        backend._client.get.return_value = get_resp
+        backend._qdrant_client.get.return_value = get_resp
         put_resp = MagicMock()
         put_resp.status_code = 200
         put_resp.raise_for_status = MagicMock()
-        backend._client.put.return_value = put_resp
+        backend._qdrant_client.put.return_value = put_resp
         backend.ensure_collection()
-        backend._client.put.assert_called_once()
+        backend._qdrant_client.put.assert_called_once()
 
 
 class TestSyncAll:
     def test_sync_all_counts(self):
         backend = QdrantBackend(qdrant_url="http://localhost:1", ollama_url="http://localhost:2")
-        backend._client = MagicMock()
+        backend._qdrant_client = MagicMock()
+        backend._ollama_client = MagicMock()
         # Mock ensure_collection
         get_resp = MagicMock()
         get_resp.status_code = 200
-        backend._client.get.return_value = get_resp
+        backend._qdrant_client.get.return_value = get_resp
 
         # Mock embed + upsert
         embed_resp = MagicMock()
         embed_resp.status_code = 200
         embed_resp.raise_for_status = MagicMock()
         embed_resp.json.return_value = {"embeddings": [[0.1] * EMBEDDING_DIMS]}
-        backend._client.post.return_value = embed_resp
+        backend._ollama_client.post.return_value = embed_resp
 
         upsert_resp = MagicMock()
         upsert_resp.status_code = 200
         upsert_resp.raise_for_status = MagicMock()
-        backend._client.put.return_value = upsert_resp
+        backend._qdrant_client.put.return_value = upsert_resp
 
         # Mock store
         store = MagicMock()
@@ -305,9 +315,11 @@ class TestSyncAll:
 class TestClose:
     def test_close_calls_client_close(self):
         backend = QdrantBackend(qdrant_url="http://localhost:1", ollama_url="http://localhost:2")
-        backend._client = MagicMock()
+        backend._qdrant_client = MagicMock()
+        backend._ollama_client = MagicMock()
         backend.close()
-        backend._client.close.assert_called_once()
+        backend._qdrant_client.close.assert_called_once()
+        backend._ollama_client.close.assert_called_once()
 
 
 class TestServiceQdrantIntegration:

@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from memorymaster.recall.qdrant_transport import QdrantTransportConfig
+
 
 # ---------------------------------------------------------------------------
 # DTO
@@ -53,6 +55,10 @@ class Detected:
 _PROBE_TIMEOUT = 5  # seconds
 
 
+class _QdrantProbeUrl(str):
+    """String-compatible marker that scopes Qdrant transport credentials."""
+
+
 def _run(args: list[str]) -> Optional[str]:
     """Run a subprocess (shell=False, timeout<=5s).
 
@@ -76,7 +82,13 @@ def _run(args: list[str]) -> Optional[str]:
 def _http_get(url: str) -> Optional[bytes]:
     """HTTP GET with timeout. Returns body bytes on 2xx, None otherwise."""
     try:
-        req = urllib.request.urlopen(url, timeout=_PROBE_TIMEOUT)  # noqa: S310
+        target: str | urllib.request.Request = url
+        if isinstance(url, _QdrantProbeUrl):
+            transport = QdrantTransportConfig.from_env()
+            target = transport.request(str(url), method="GET")
+            req = transport.open(target, timeout=_PROBE_TIMEOUT)
+        else:
+            req = urllib.request.urlopen(target, timeout=_PROBE_TIMEOUT)  # noqa: S310
         return req.read()
     except Exception:  # noqa: BLE001
         return None
@@ -127,7 +139,7 @@ def _probe_ollama() -> tuple[bool, tuple[str, ...]]:
 def _probe_qdrant() -> bool:
     qdrant_url = os.environ.get("QDRANT_URL", "http://localhost:6333")
     healthz_url = qdrant_url.rstrip("/") + "/healthz"
-    return _http_get(healthz_url) is not None
+    return _http_get(_QdrantProbeUrl(healthz_url)) is not None
 
 
 def _probe_obsidian_vault(cwd: Path) -> Optional[str]:
@@ -303,7 +315,8 @@ def format_plan(d: Detected, *, want_full_stack: bool) -> list[str]:
                 _line(
                     _STEP_CANT,
                     "Qdrant — Docker Compose not found; running in SQLite-only mode. "
-                    "Install Docker or point QDRANT_URL at an existing service to enable vector recall.",
+                    "Install Docker or point QDRANT_URL at an existing service for Qdrant "
+                    "index maintenance; retrieval remains quarantined.",
                 )
             )
 
