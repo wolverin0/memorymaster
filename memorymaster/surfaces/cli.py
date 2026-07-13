@@ -174,13 +174,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     transcribe_evidence = sub.add_parser("transcribe-source-item", help="Run transcription on a source_item via the chosen provider; stores transcript as evidence_item")
     transcribe_evidence.add_argument("--source-item-id", type=int, required=True, help="source_items.id")
-    transcribe_evidence.add_argument("--provider", choices=["mock", "openai"], default="mock",
-                                      help="'openai' uses Whisper API via OPENAI_API_KEY + OPENAI_BASE_URL.")
+    transcribe_evidence.add_argument(
+        "--provider",
+        choices=["mock", "openai"],
+        required=True,
+        help="Required. 'openai' uses Whisper via OPENAI_API_KEY; 'mock' needs explicit test/dev opt-in.",
+    )
 
     ocr_evidence = sub.add_parser("ocr-source-item", help="Run OCR on a source_item via the chosen provider; stores OCR text as evidence_item")
     ocr_evidence.add_argument("--source-item-id", type=int, required=True, help="source_items.id")
-    ocr_evidence.add_argument("--provider", choices=["mock", "tesseract"], default="mock",
-                              help="'tesseract' requires pytesseract package + system tesseract binary.")
+    ocr_evidence.add_argument(
+        "--provider",
+        choices=["mock", "tesseract"],
+        required=True,
+        help="Required. 'tesseract' needs pytesseract + binary; 'mock' needs explicit test/dev opt-in.",
+    )
 
     export_actions = sub.add_parser("export-actions", help="Export approved Atlas action proposals")
     export_actions.add_argument("--output", required=True, help="Output JSON path")

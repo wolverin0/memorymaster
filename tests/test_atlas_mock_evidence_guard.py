@@ -17,10 +17,6 @@ def _run_cli_allowing_required_provider(argv: list[str]) -> int:
         return int(exc.code or 0)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="MM-DEMO-01: media CLI defaults persist fabricated 0.99-confidence evidence",
-)
 @pytest.mark.parametrize(
     ("command", "item_type", "evidence_type"),
     [

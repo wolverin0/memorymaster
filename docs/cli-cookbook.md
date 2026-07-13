@@ -482,15 +482,17 @@ python -m memorymaster --db memorymaster.db record-media-retry-outcome --retry-i
 **Purpose**: Transcribe a source item through the selected provider.
 **Example**:
 ```
-python -m memorymaster --db memorymaster.db transcribe-source-item --source-item-id 1 --provider mock
+python -m memorymaster --db memorymaster.db transcribe-source-item --source-item-id 1 --provider openai
 ```
 
 ### ocr-source-item
 **Purpose**: Run OCR on a source item through the selected provider.
 **Example**:
 ```
-python -m memorymaster --db memorymaster.db ocr-source-item --source-item-id 1 --provider mock
+python -m memorymaster --db memorymaster.db ocr-source-item --source-item-id 1 --provider tesseract
 ```
+
+Mock providers require both `MEMORYMASTER_MEDIA_MODE=test` (or `development`) and `MEMORYMASTER_ALLOW_SYNTHETIC_MEDIA=1`. They never feed governed claims, actions, citations, or exports.
 
 ### export-actions
 **Purpose**: Export approved Atlas action proposals.

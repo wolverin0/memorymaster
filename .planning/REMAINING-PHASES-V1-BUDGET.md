@@ -241,5 +241,24 @@ P2-E implementation and focused gate completed on 2026-07-13 from P2-D commit
 - Atomic package commit: the conventional `fix: bound quiet capture and
   retention` commit containing this scheduler evidence.
 
-The next separately authorized package is P2-F. Do not begin fake-evidence
-default removal from the P2-E goal.
+P2-F implementation and focused gate completed on 2026-07-13 from P2-E commit
+`a1d54773fa5e540ad90b6617e02c983ddbfe3d32`:
+
+- Production media commands now require an explicit, configuration-ready real
+  provider. The Atlas contract records the breaking fail-closed change as
+  version `2.0.0`; processing/configuration failures return non-zero status.
+- Mock, synthetic, placeholder, fake, and fixture providers require both an
+  explicit test/development mode and `MEMORYMASTER_ALLOW_SYNTHETIC_MEDIA=1`.
+  Synthetic evidence is excluded before deterministic claims, LLM prompts,
+  action proposals, citations, and approved-action export.
+- Media idempotency is provider-specific, so historical mock evidence cannot
+  block later real enrichment. Imported `wacli` evidence remains eligible.
+- Focused P2-F gate: 111 passed in 23.30s. Changed-file Ruff and
+  `git diff --check` passed; the independent policy/contract invariant probe
+  confirmed production fail-closed behavior, explicit test opt-in, required
+  providers, and preservation of legitimate imported evidence.
+- No paid or production provider was called and no live/external data or
+  configuration was mutated.
+
+The next separately authorized package is P2-Z Phase 2 convergence. Do not
+begin it from the P2-F goal.

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from memorymaster.bridges.evidence_policy import synthetic_media_configuration_error
 from memorymaster.core.models import EvidenceItem
 
 
@@ -115,19 +116,31 @@ def _process_media(
     if source_item is None:
         raise ValueError(f"Source item {source_item_row_id} does not exist.")
 
+    configuration_error = synthetic_media_configuration_error(provider_name)
+    if configuration_error:
+        return _media_failure_outcome(
+            service,
+            source_item_id=source_item.id,
+            evidence_type=evidence_type,
+            provider=provider_name,
+            media_path="",
+            error=configuration_error,
+        )
+
     existing = service.list_evidence_items(
         source_item_id=source_item.id,
         evidence_type=evidence_type,
-        limit=1,
+        limit=100,
     )
-    if existing:
-        return MediaProcessOutcome(source_item_id=source_item.id, evidence=existing[0], created=False)
+    matching = [item for item in existing if _same_provider(item.provider, provider_name)]
+    if matching:
+        return MediaProcessOutcome(source_item_id=source_item.id, evidence=matching[0], created=False)
 
     media_path = _extract_media_path(source_item.payload_json)
     try:
         result = processor(media_path)
     except Exception as exc:
-        _record_media_failure(
+        return _media_failure_outcome(
             service,
             source_item_id=source_item.id,
             evidence_type=evidence_type,
@@ -135,11 +148,19 @@ def _process_media(
             media_path=media_path,
             error=str(exc),
         )
-        return MediaProcessOutcome(
+
+    result_error = synthetic_media_configuration_error(result.provider)
+    if result_error or not _same_provider(result.provider, provider_name):
+        error = result_error or (
+            f"Media provider identity mismatch: configured '{provider_name}', returned '{result.provider}'."
+        )
+        return _media_failure_outcome(
+            service,
             source_item_id=source_item.id,
-            evidence=None,
-            created=False,
-            error=str(exc),
+            evidence_type=evidence_type,
+            provider=provider_name,
+            media_path=media_path,
+            error=error,
         )
 
     evidence = service.add_evidence_item(
@@ -152,6 +173,35 @@ def _process_media(
         payload_json=result.payload_json,
     )
     return MediaProcessOutcome(source_item_id=source_item.id, evidence=evidence, created=True)
+
+
+def _same_provider(left: str | None, right: str | None) -> bool:
+    return (left or "").strip().lower() == (right or "").strip().lower()
+
+
+def _media_failure_outcome(
+    service,
+    *,
+    source_item_id: int,
+    evidence_type: str,
+    provider: str,
+    media_path: str,
+    error: str,
+) -> MediaProcessOutcome:
+    _record_media_failure(
+        service,
+        source_item_id=source_item_id,
+        evidence_type=evidence_type,
+        provider=provider,
+        media_path=media_path,
+        error=error,
+    )
+    return MediaProcessOutcome(
+        source_item_id=source_item_id,
+        evidence=None,
+        created=False,
+        error=error,
+    )
 
 
 def _extract_media_path(payload_json: str | None) -> str:

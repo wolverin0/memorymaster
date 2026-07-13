@@ -585,7 +585,7 @@ def _handle_transcribe_source_item(
                   f"len={len(outcome.evidence.text or '')}")
         else:
             print(f"transcription failed via {provider.provider_name}: {outcome.error}")
-    return 0
+    return 0 if outcome.evidence else 2
 
 
 def _handle_ocr_source_item(
@@ -623,7 +623,7 @@ def _handle_ocr_source_item(
                   f"len={len(outcome.evidence.text or '')}")
         else:
             print(f"ocr failed via {provider.provider_name}: {outcome.error}")
-    return 0
+    return 0 if outcome.evidence else 2
 
 
 def _handle_enqueue_media_retry(
