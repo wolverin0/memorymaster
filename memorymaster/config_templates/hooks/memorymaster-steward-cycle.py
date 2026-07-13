@@ -45,20 +45,10 @@ except Exception as e:
 
 # Auto-archive: stale claims never accessed, older than 14 days
 try:
-    from datetime import datetime, timedelta
+    from memorymaster.govern.jobs import scheduled_archive
 
-    # Uniform pragma envelope (WAL + busy_timeout=15000) — a raw connect here
-    # had busy_timeout=0 and could lose the UPDATE to a write race (spec F8).
-    from memorymaster.stores._storage_shared import open_conn
-    cutoff = (datetime.now() - timedelta(days=14)).isoformat()
-    conn = open_conn(DB_PATH)
-    conn.execute("""
-        UPDATE claims SET status = 'archived', archived_at = datetime('now')
-        WHERE status = 'stale' AND access_count = 0 AND created_at < ?
-    """, (cutoff,))
-    archived = conn.total_changes
-    conn.commit()
-    conn.close()
+    archive_result = scheduled_archive.run(svc, older_than_days=14)
+    archived = archive_result["archived"]
     if archived:
         print(f"[MemoryMaster] auto-archived {archived} stale unused claims")
 except Exception as e:

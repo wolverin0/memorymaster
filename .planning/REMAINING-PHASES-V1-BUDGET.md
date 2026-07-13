@@ -188,6 +188,19 @@ P2-B implementation and focused gate completed on 2026-07-13:
 - Disposable authenticated/TLS Qdrant runtime parity is `BLOCKED-EXTERNAL` in
   `external-actions-required.md`.
 
-The agent routing gate is the only prerequisite package before P2-C. After it
-is validated and atomically committed, start P2-C only in a separate goal; do
-not combine lifecycle/read-only recall changes with P2-B or routing changes.
+P2-C implementation and focused gate completed on 2026-07-13 from routing-gate
+commit `038779f`:
+
+- Scheduled stale/unused archival now enters the canonical lifecycle transition
+  authority, preserving optimistic version checks, transition events, status
+  timestamps, query-cache invalidation, and replayable Qdrant deletion.
+- MCP/context-hook recall opens SQLite query-only, suppresses detail-level and
+  token-fanout duplicate retrieval, and emits one sanitized `recall` envelope
+  per successful top-level recall while retaining legacy spool replay support.
+- Focused P2-C gate: 40 passed in 6.03s; changed-file Ruff and
+  `git diff --check` passed.
+- Atomic package commit: the conventional `fix: enforce lifecycle authority and
+  read-only recall` commit containing this scheduler evidence.
+
+The next separately authorized package is P2-D. Do not combine entity-schema
+convergence with P2-C or begin it from this goal.

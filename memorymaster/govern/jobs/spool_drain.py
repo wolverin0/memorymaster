@@ -145,6 +145,12 @@ def _replay_feedback(db_path: str | Path, envelope: dict[str, object]) -> None:
     tracker.record_retrieval(claim_ids, str(payload.get("query_text") or ""))
 
 
+def _replay_recall(store, db_path: str | Path, envelope: dict[str, object]) -> None:
+    _replay_access(store, envelope)
+    if str(envelope["payload"].get("query_text") or ""):
+        _replay_feedback(db_path, envelope)
+
+
 def _validate(envelope: object) -> str | None:
     """Reason string when an envelope must be quarantined, else None."""
     if not isinstance(envelope, dict):
@@ -212,6 +218,8 @@ def run(
                     _replay_verbatim(db_path, envelope)
                 elif op == "access":
                     _replay_access(store, envelope)
+                elif op == "recall":
+                    _replay_recall(store, db_path, envelope)
                 else:  # "feedback" — _validate pinned op to KNOWN_OPS
                     _replay_feedback(db_path, envelope)
             except Exception as exc:

@@ -335,7 +335,7 @@ def _bind_telemetry_session(
         pass
 
 
-def _service(db: str, workspace: str) -> MemoryService:
+def _service(db: str, workspace: str, *, read_only: bool = False) -> MemoryService:
     db_path = _resolve_db(db)
     workspace_path = _resolve_workspace(workspace)
     context = current_request_context()
@@ -348,10 +348,16 @@ def _service(db: str, workspace: str) -> MemoryService:
         require_tenant=context is not None and context.mode is AuthMode.TEAM,
         principal=principal,
         allowed_scopes=context.allowed_scopes if context is not None else frozenset(),
+        read_only=read_only,
     )
-    _bind_telemetry_session(svc, db_path, principal, tenant_id)
+    if not read_only:
+        _bind_telemetry_session(svc, db_path, principal, tenant_id)
     svc.source_agent = principal
     return svc
+
+
+def _read_service(db: str, workspace: str) -> MemoryService:
+    return _service(db, workspace, read_only=True)
 
 
 def _usage_rollup(db: str) -> dict[str, Any]:
@@ -1188,7 +1194,7 @@ if FastMCP is not None:
             retrieval_mode = classified_retrieval_mode
 
         from memorymaster.recall.planner import RetrievalRequest
-        svc = _service(db, workspace)
+        svc = _read_service(db, workspace)
         retrieval = svc.retrieve(RetrievalRequest(
             query_text=query,
             limit=limit,
@@ -1244,13 +1250,6 @@ if FastMCP is not None:
             if classified_retrieval_mode is not None:
                 response["classified_retrieval_mode"] = classified_retrieval_mode
 
-        # Log to vault chronicle
-        try:
-            from memorymaster.knowledge.vault_log import log_query
-            log_query(query, len(claims))
-        except Exception:
-            pass
-
         return response
 
     @mcp.tool()
@@ -1288,7 +1287,7 @@ if FastMCP is not None:
         known claim_id can't leak cross-scope or sensitive claim text via graph
         traversal (audit: claim-paths-scope-gate).
         """
-        svc = _service(db, workspace)
+        svc = _read_service(db, workspace)
         normalized_scopes = _effective_scope_allowlist(scope_allowlist, workspace)
         allow_sensitive = resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
@@ -1338,7 +1337,7 @@ if FastMCP is not None:
             allow_sensitive=allow_sensitive,
             context="mcp.recall_analysis",
         )
-        svc = _service(db, workspace)
+        svc = _read_service(db, workspace)
         analysis = svc.recall_analysis(
             query_text=query,
             limit=limit,
@@ -1387,7 +1386,7 @@ if FastMCP is not None:
             allow_sensitive=allow_sensitive,
             context="mcp.query_for_context",
         )
-        svc = _service(db, workspace)
+        svc = _read_service(db, workspace)
         result = svc.query_for_context(
             query=query,
             token_budget=token_budget,
@@ -1413,19 +1412,7 @@ if FastMCP is not None:
         if detail_level != "standard":
             # Attach filtered claim list as a convenience for callers who want
             # structured data alongside the formatted output block.
-            from memorymaster.recall.planner import RetrievalRequest
-            retrieval = svc.retrieve(RetrievalRequest(
-                query_text=query,
-                limit=limit,
-                trust_mode=trust_mode,
-                retrieval_mode=retrieval_mode,
-                include_stale=include_stale,
-                include_conflicted=include_conflicted,
-                include_candidates=include_candidates,
-                allow_sensitive=allow_sensitive,
-                scope_allowlist=tuple(_effective_scope_allowlist(scope_allowlist, workspace)),
-            ))
-            rows_data = list(retrieval.rows)
+            rows_data = list(result.rows)
             if detail_level == "full":
                 filtered_claims = []
                 for row in rows_data:
@@ -1489,7 +1476,7 @@ if FastMCP is not None:
             allow_sensitive=allow_sensitive,
             context="mcp.volunteer_context",
         )
-        svc = _service(db, workspace)
+        svc = _read_service(db, workspace)
         effective_allowlist = _effective_scope_allowlist(scope_allowlist, workspace)
         from memorymaster.recall.planner import RetrievalRequest
         retrieval = svc.retrieve(RetrievalRequest(
@@ -1699,7 +1686,7 @@ if FastMCP is not None:
             allow_sensitive=allow_sensitive,
             context="mcp.list_claims",
         )
-        svc = _service(db, workspace)
+        svc = _read_service(db, workspace)
         claims = svc.list_claims(
             status=_empty_to_none(status),
             limit=limit,
@@ -1782,7 +1769,7 @@ if FastMCP is not None:
             allow_sensitive=allow_sensitive,
             context="mcp.query_rules",
         )
-        svc = _service(db, workspace)
+        svc = _read_service(db, workspace)
         rules = svc.query_rules(query, limit=limit, allow_sensitive=allow_sensitive)
         return {"ok": True, "rows": len(rules), "rules": rules}
 
@@ -1808,7 +1795,7 @@ if FastMCP is not None:
         )
         from memorymaster.knowledge.rule_export import collect_rules
 
-        svc = _service(db, workspace)
+        svc = _read_service(db, workspace)
         rows = collect_rules(
             svc,
             min_confidence=min_confidence,
@@ -1878,7 +1865,7 @@ if FastMCP is not None:
         limit: int = 100,
     ) -> dict[str, Any]:
         """List events by optional claim_id and event_type."""
-        svc = _service(db, workspace)
+        svc = _read_service(db, workspace)
         events = svc.list_events(
             claim_id=claim_id,
             limit=limit,
@@ -1995,7 +1982,7 @@ if FastMCP is not None:
         """List steward proposals for human override workflow."""
         from memorymaster.govern.steward import list_steward_proposals as _list_steward_proposals
 
-        svc = _service(db, workspace)
+        svc = _read_service(db, workspace)
         rows = _list_steward_proposals(
             svc,
             limit=limit,
@@ -2116,7 +2103,7 @@ if FastMCP is not None:
         if request.top_n <= 0:
             return _structured_error("top_n must be positive.", "VALIDATION_ERROR", "top_n")
 
-        svc = _service(request.db, request.workspace)
+        svc = _read_service(request.db, request.workspace)
         result = svc.query_meta_decisions(
             query=request.query,
             claim_types=request.claim_types,
@@ -2139,7 +2126,7 @@ if FastMCP is not None:
         this tool searches every claim regardless of scope, enabling cross-project
         memory retrieval. Returns claims sorted by relevance.
         """
-        svc = _service(db, workspace)
+        svc = _read_service(db, workspace)
         effective_scope = (current_scope or "").strip() or _project_scope(workspace)
         rows_data = svc.federated_query(
             query_text=query,

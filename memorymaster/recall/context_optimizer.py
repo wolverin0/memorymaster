@@ -34,6 +34,7 @@ class ContextResult:
     tokens_used: int
     token_budget: int
     format: str
+    rows: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -392,4 +393,5 @@ def pack_context(
         tokens_used=total_tokens,
         token_budget=token_budget,
         format=output_format,
+        rows=tuple(ranked_rows),
     )

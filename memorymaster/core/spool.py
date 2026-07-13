@@ -6,7 +6,7 @@ the multi-GB SQLite DB per event; the steward drains them through the normal
 service paths (``jobs/spool_drain.py``). This file format is the only "wire
 protocol" in the P1 design:
 
-    {"v": 1, "op": "access"|"feedback"|"ingest"|"verbatim"|"dream",
+    {"v": 1, "op": "recall"|"access"|"feedback"|"ingest"|"verbatim"|"dream",
      "ts": <iso8601>, "idempotency_key": <str|null>, "payload": {...}}
 
 Layout (spec §2.2):
@@ -43,7 +43,7 @@ ENV_SPOOL_DIR = "MEMORYMASTER_SPOOL_DIR"
 ENV_WAL_DISCIPLINE = "MEMORYMASTER_WAL_DISCIPLINE"
 
 SPOOL_VERSION = 1
-KNOWN_OPS = ("access", "feedback", "ingest", "verbatim", "dream")
+KNOWN_OPS = ("recall", "access", "feedback", "ingest", "verbatim", "dream")
 
 DRAINING_SUFFIX = ".draining"
 QUARANTINE_DIRNAME = "quarantine"
@@ -61,6 +61,7 @@ _VERBATIM_PAYLOAD_FIELDS = frozenset(
 )
 _ACCESS_PAYLOAD_FIELDS = frozenset({"claim_ids", "query_hash"})
 _FEEDBACK_PAYLOAD_FIELDS = frozenset({"claim_ids", "query_text"})
+_RECALL_PAYLOAD_FIELDS = frozenset({"claim_ids", "query_hash", "query_text"})
 
 
 def _reject_unknown_fields(payload: dict[str, object], allowed: frozenset[str]) -> None:
@@ -153,6 +154,25 @@ def _sanitize_feedback_payload(payload: dict[str, object]) -> dict[str, object]:
     return safe
 
 
+def _sanitize_recall_payload(payload: dict[str, object]) -> dict[str, object]:
+    _reject_unknown_fields(payload, _RECALL_PAYLOAD_FIELDS)
+    query = payload.get("query_text", "")
+    if not isinstance(query, str):
+        raise ValueError("Spool recall query_text must be a string.")
+    validate_persisted_metadata(
+        {"claim_ids": payload.get("claim_ids"), "query_hash": payload.get("query_hash")}
+    )
+    safe_query, findings = sanitize_persisted_text(query)
+    safe = {
+        "claim_ids": list(payload.get("claim_ids") or []),
+        "query_hash": payload.get("query_hash"),
+        "query_text": safe_query,
+    }
+    if findings:
+        safe["_sanitization"] = {"findings": findings}
+    return safe
+
+
 def _sanitize_spool_payload(
     op: str,
     payload: dict[str, object],
@@ -162,6 +182,8 @@ def _sanitize_spool_payload(
         return _sanitize_ingest_payload(payload, idempotency_key)
     if op == "feedback":
         return _sanitize_feedback_payload(payload)
+    if op == "recall":
+        return _sanitize_recall_payload(payload)
     allowed = _VERBATIM_PAYLOAD_FIELDS if op == "verbatim" else _ACCESS_PAYLOAD_FIELDS
     _reject_unknown_fields(payload, allowed)
     validate_persisted_metadata({f"{op}_payload": payload})

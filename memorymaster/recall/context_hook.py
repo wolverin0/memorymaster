@@ -1231,7 +1231,7 @@ def query_for_task(
     from memorymaster.core.service import MemoryService
 
     db = db_path or os.environ.get("MEMORYMASTER_DEFAULT_DB") or "memorymaster.db"
-    svc = MemoryService(db_target=db, workspace_root=Path.cwd())
+    svc = MemoryService(db_target=db, workspace_root=Path.cwd(), read_only=True)
 
     scope_filter = [project_scope] if project_scope else None
     # Historical name retained: this now selects primary-store legacy vs
@@ -1295,17 +1295,9 @@ def _recall_impl(
     """
     MemoryService = _memory_service_cls
     db = db_path or os.environ.get("MEMORYMASTER_DEFAULT_DB") or "memorymaster.db"
-    if _wal_discipline_enabled():
-        # P1 WAL-discipline (spec §2.2): the per-prompt recall hook must
-        # never take a write lock on the shared multi-GB DB. The RO store
-        # hands out mode=ro + query_only connections (side lookups follow
-        # automatically through the store) and _record_accesses spools its
-        # access/feedback signal for the steward drain instead of UPDATEing
-        # inline — no tiering/decay/quality signal is lost (the F9 fix).
-        svc = MemoryService(db_target=db, workspace_root=Path.cwd(), read_only=True)
-    else:
-        # Flag off = the untouched legacy RW path, bit-for-bit.
-        svc = MemoryService(db_target=db, workspace_root=Path.cwd())
+    # Recall is always query-only. Access/feedback signals are emitted once,
+    # after top-level ranking and budget selection, through the RO spool path.
+    svc = MemoryService(db_target=db, workspace_root=Path.cwd(), read_only=True)
 
     # Pre-extract salient tokens before hitting FTS5. Passing the full
     # prompt verbatim AND-joins every token in FTS5 and rejects nearly all
@@ -1356,6 +1348,7 @@ def _recall_impl(
                     retrieval_mode="legacy",
                     include_candidates=True,
                     scope_allowlist=None,
+                    record_accesses=False,
                 )
                 for row in batch:
                     claim = row.get("claim")
@@ -1375,6 +1368,7 @@ def _recall_impl(
                 retrieval_mode="legacy",
                 include_candidates=True,
                 scope_allowlist=None,
+                record_accesses=False,
             )
             for row in rows:
                 claim = row.get("claim")
@@ -2014,6 +2008,7 @@ def _recall_impl(
 
     # Build output — top claims within budget
     lines = ["# Memory Context", ""]
+    rendered_rows: list[dict] = []
     tokens_used = 0
     chars_per_token = 4
     for row in ranked:
@@ -2034,11 +2029,15 @@ def _recall_impl(
         if tokens_used + chunk_tokens > budget:
             break
         lines.append(chunk)
+        rendered_rows.append(row)
         tokens_used += chunk_tokens
         if _rendered_ids is not None:
             cid = getattr(claim, "id", None)
             if isinstance(cid, int):
                 _rendered_ids.append(cid)
+
+    if rendered_rows:
+        svc._record_accesses(rendered_rows, query_text=query)
 
     # Close the rank_and_build timer right before we emit output so the
     # measurement covers _relevance/RRF + the budget-trimming loop.

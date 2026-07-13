@@ -1311,7 +1311,7 @@ class MemoryService:
             statuses.append("candidate")
         return statuses
 
-    def _query_legacy_mode(self, query_text: str, limit: int, statuses: list[str], normalized_scopes: list[str] | None, include_sensitive: bool, requesting_agent: str | None) -> list[dict[str, Any]]:
+    def _query_legacy_mode(self, query_text: str, limit: int, statuses: list[str], normalized_scopes: list[str] | None, include_sensitive: bool, requesting_agent: str | None, record_accesses: bool = True) -> list[dict[str, Any]]:
         """Query using legacy retrieval mode."""
         legacy = self._legacy_candidates(
             query_text, limit, statuses, normalized_scopes
@@ -1341,7 +1341,8 @@ class MemoryService:
             }
             for row in ranked_rows
         ]
-        self._record_accesses(results, query_text=query_text)
+        if record_accesses:
+            self._record_accesses(results, query_text=query_text)
         return results
 
     def _legacy_candidates(
@@ -1386,6 +1387,7 @@ class MemoryService:
         enrich_with_entities: bool = False,
         requesting_agent: str | None = None,
         query_type: str | None = None,
+        record_accesses: bool = True,
     ) -> list[dict[str, Any]]:
         if limit <= 0:
             return []
@@ -1421,7 +1423,15 @@ class MemoryService:
             retrieval_mode = "hybrid"
 
         if retrieval_mode == "legacy":
-            return self._query_legacy_mode(query_text, limit, statuses, normalized_scopes, include_sensitive, requesting_agent)
+            return self._query_legacy_mode(
+                query_text,
+                limit,
+                statuses,
+                normalized_scopes,
+                include_sensitive,
+                requesting_agent,
+                record_accesses,
+            )
 
         use_llm_rerank = _llm_rerank_enabled()
 
@@ -1430,7 +1440,7 @@ class MemoryService:
         # the corpus generation (bumped by claim-write triggers) is unchanged.
         cache_path = None
         cache_key = None
-        if query_cache.cache_enabled():
+        if query_cache.cache_enabled() and not getattr(self.store, "read_only", False):
             cache_path = query_cache.sqlite_db_path(self.store)
             if cache_path:
                 cache_key = query_cache.make_cache_key(query_text, {
@@ -1454,7 +1464,8 @@ class MemoryService:
                             if getattr(r["claim"], "visibility", "public") == "public"
                             or getattr(r["claim"], "source_agent", None) == requesting_agent
                         ]
-                    self._record_accesses(rows, query_text=query_text)
+                    if record_accesses:
+                        self._record_accesses(rows, query_text=query_text)
                     return rows
         # Capture the corpus generation BEFORE reading candidates so the cache
         # entry is tagged with the generation it was actually computed against,
@@ -1524,7 +1535,8 @@ class MemoryService:
             from memorymaster.recall.llm_rerank import rerank_with_llm
 
             results = rerank_with_llm(query_text, results, top_k=limit)
-        self._record_accesses(results, query_text=query_text)
+        if record_accesses:
+            self._record_accesses(results, query_text=query_text)
         if enrich_with_entities:
             results = self._enrich_with_entity_graph(results, query_text, limit)
         if cache_path and cache_key:
@@ -1720,8 +1732,8 @@ class MemoryService:
     def _spool_accesses(self, claim_ids: list[int], query_text: str) -> None:
         """RO-store branch of _record_accesses: spool, don't write.
 
-        Appends ``access`` (+ ``feedback`` when there is a query) envelopes
-        to the JSONL spool (spool.py); jobs/spool_drain replays them through
+        Appends one aggregated ``recall`` envelope to the JSONL spool
+        (spool.py); jobs/spool_drain replays it through
         the exact same sinks the RW path uses (record_accesses_batch,
         FeedbackTracker.record_retrieval). Best-effort like the RW path —
         a spool I/O failure must never break recall.
@@ -1741,14 +1753,14 @@ class MemoryService:
         )
         with contextlib.suppress(Exception):
             spool.append(
-                db_path, "access", {"claim_ids": claim_ids, "query_hash": query_hash}
+                db_path,
+                "recall",
+                {
+                    "claim_ids": list(dict.fromkeys(claim_ids)),
+                    "query_hash": query_hash,
+                    "query_text": safe_query,
+                },
             )
-            if safe_query:
-                spool.append(
-                    db_path,
-                    "feedback",
-                    {"claim_ids": claim_ids, "query_text": safe_query},
-                )
 
     def recompute_tiers(self) -> dict[str, int]:
         """Recompute tier assignments for all non-archived claims."""

@@ -567,10 +567,11 @@ def test_ro_access_spool_hashes_sanitized_query_not_sensitive_input(
         for path in spool.spool_dir_for(db_path).glob("*.jsonl")
         for line in path.read_text(encoding="utf-8").splitlines()
     ]
-    by_op = {envelope["op"]: envelope for envelope in envelopes}
     expected_hash = hashlib.sha256(safe_query.encode("utf-8")).hexdigest()[:12]
-    assert by_op["access"]["payload"]["query_hash"] == expected_hash
-    assert by_op["feedback"]["payload"]["query_text"] == safe_query
+    assert len(envelopes) == 1
+    assert envelopes[0]["op"] == "recall"
+    assert envelopes[0]["payload"]["query_hash"] == expected_hash
+    assert envelopes[0]["payload"]["query_text"] == safe_query
 
 
 def test_spooled_ingest_preserves_holder_and_records_boundary_findings_once(
