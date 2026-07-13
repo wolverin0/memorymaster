@@ -11,6 +11,7 @@ import memorymaster.recall.qdrant_backend as qdrant_backend
 import memorymaster.recall.query_classifier as query_classifier
 import memorymaster.surfaces.mcp_server as mcp_server
 from memorymaster.core.models import CitationInput
+from memorymaster.core.lifecycle import transition_claim
 from memorymaster.core.service import MemoryService
 from memorymaster.surfaces.cli import main
 
@@ -38,6 +39,13 @@ def _seed_lexical_claim(tmp_path, text: str) -> tuple[str, str, int]:
         [CitationInput(source="test://retrieval-quarantine")],
         scope="project:allowed",
         source_agent="seed",
+    )
+    transition_claim(
+        service.store,
+        claim.id,
+        "confirmed",
+        reason="trusted retrieval fixture",
+        event_type="validator",
     )
     return db, str(workspace), claim.id
 

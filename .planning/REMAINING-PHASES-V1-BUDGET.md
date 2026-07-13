@@ -142,5 +142,21 @@ P2-A implementation and focused gate completed on 2026-07-12:
 - Focused gate: 141 passed, 1 expected xfail; FTS/planner regression slice:
   32 passed; changed-file Ruff and `git diff --check` passed.
 
-Next package is P2-B. Start it only in a separate goal/package; do not combine
-governed Qdrant reintegration with P2-A.
+P2-B implementation and focused gate completed on 2026-07-13:
+
+- Qdrant exposes bounded ID/hash/score candidates only; stored payloads no
+  longer duplicate claim text or provenance.
+- Primary-store rehydration rejects orphan, archived, sensitive, wrong-scope,
+  wrong-tenant, private, provisional, stale-hash, and malformed candidates.
+- Exact reconciliation detects equal-count ID/hash drift, and failed immediate
+  writes enter a bounded metadata-only replay outbox.
+- Semantic reads remain default-off behind
+  `MEMORYMASTER_QDRANT_GOVERNED_READS`; team semantic reads remain denied.
+- Focused fake-backed gate: 91 passed; explicit Qdrant ML gate: 38 passed;
+  focused new-code coverage recorded 92% for the outbox and 85% for the planner;
+  changed-file Ruff and `git diff --check` passed.
+- Disposable authenticated/TLS Qdrant runtime parity is `BLOCKED-EXTERNAL` in
+  `external-actions-required.md`.
+
+Next package is P2-C. Start it only in a separate goal/package; do not combine
+lifecycle/read-only recall changes with P2-B.

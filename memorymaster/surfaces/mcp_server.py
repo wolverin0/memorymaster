@@ -1179,6 +1179,7 @@ if FastMCP is not None:
             context="mcp.query_memory",
         )
 
+        requested_retrieval_mode = retrieval_mode
         classified_retrieval_mode: str | None = None
         query_type: str | None = None
         if auto_classify and retrieval_mode == "legacy":
@@ -1200,6 +1201,11 @@ if FastMCP is not None:
             scope_allowlist=tuple(_effective_scope_allowlist(scope_allowlist, workspace)),
             requesting_agent=_team_request_principal(),
             query_type=query_type,
+            qdrant_candidate_reads=(
+                retrieval_mode == "qdrant"
+                and os.environ.get("MEMORYMASTER_QDRANT_GOVERNED_READS", "").strip().lower()
+                in {"1", "true", "yes", "on"}
+            ),
         ))
         rows_data = list(retrieval.rows)
         # For "full" detail level, re-fetch each claim with citations inline.
@@ -1228,7 +1234,7 @@ if FastMCP is not None:
             "claims": [_apply_detail_level(_claim_to_dict(c), detail_level) for c in claims],
             "rows_data": serialized_rows,
             "trust_mode": retrieval.plan.trust_mode,
-            "requested_retrieval_mode": retrieval.plan.requested_mode,
+            "requested_retrieval_mode": requested_retrieval_mode,
             "retrieval_mode": retrieval.plan.effective_mode,
         }
         if query_type is not None:

@@ -20,6 +20,7 @@ from memorymaster.recall.context_optimizer import ContextResult, pack_context
 from memorymaster.core.config import get_config
 from memorymaster.recall.retrieval import VectorSearchHook, _tier_bonus, rank_claim_rows
 from memorymaster.recall.planner import (
+    RetrievalPlan,
     RetrievalRequest,
     RetrievalResult,
     build_retrieval_plan,
@@ -443,16 +444,32 @@ class MemoryService:
             return None
 
     def _qdrant_sync(self, claim: Claim) -> None:
-        """Fire-and-forget upsert to Qdrant after a claim state change."""
+        """Attempt a vector write and durably enqueue failures for replay."""
         if self.qdrant is None:
             return
+        operation = "delete" if claim.status == "archived" else "upsert"
         try:
-            if claim.status == "archived":
+            completed = (
                 self.qdrant.delete_claim(claim.id)
-            else:
-                self.qdrant.upsert_claim(claim)
+                if operation == "delete"
+                else self.qdrant.upsert_claim(claim)
+            )
+            if completed:
+                return
         except Exception as exc:
             logger.warning("Qdrant sync failed for claim %d: %s", claim.id, exc)
+        try:
+            from memorymaster.recall import qdrant_outbox
+            from memorymaster.recall.qdrant_backend import claim_content_hash
+
+            content_hash = claim_content_hash(claim) if operation == "upsert" else None
+            db_path = getattr(self.store, "db_path", None)
+            if db_path is not None and not qdrant_outbox.enqueue(
+                db_path, operation, claim.id, content_hash
+            ):
+                logger.error("Qdrant outbox rejected operation for claim %d", claim.id)
+        except Exception as exc:
+            logger.error("Qdrant outbox unavailable for claim %d: %s", claim.id, exc)
 
     def _qdrant_post_cycle_sync(self) -> None:
         """After a lifecycle cycle, push recently-changed claims to Qdrant."""
@@ -1021,6 +1038,8 @@ class MemoryService:
     ) -> RetrievalResult:
         """Execute one immutable governed retrieval plan."""
         plan = build_retrieval_plan(request)
+        if plan.effective_mode == "qdrant":
+            return RetrievalResult(plan=plan, rows=tuple(self._query_qdrant_mode(plan)))
         statuses = set(plan.statuses)
         rows = self.query_rows(
             query_text=plan.search_text,
@@ -1037,6 +1056,85 @@ class MemoryService:
             query_type=plan.query_type,
         )
         return RetrievalResult(plan=plan, rows=tuple(rows))
+
+    def _query_qdrant_mode(self, plan: RetrievalPlan) -> list[dict[str, Any]]:
+        """Rehydrate untrusted vector IDs and reapply authoritative policy."""
+        if self.qdrant is None:
+            return []
+        requesting_agent = self._effective_requesting_agent(plan.requesting_agent)
+        if requesting_agent:
+            from memorymaster.core.access_control import require_permission
+
+            require_permission(requesting_agent, "query")
+        self._allow_sensitive(
+            allow_sensitive=plan.allow_sensitive,
+            context="service.query_qdrant",
+            deny_mode="filter",
+        )
+        scopes = self._effective_scope_allowlist(
+            list(plan.scope_allowlist) if plan.scope_allowlist else None
+        )
+        overfetch = min(max(plan.limit * 4, 20), 200)
+        try:
+            candidates = self.qdrant.search_candidates(plan.query_text, limit=overfetch)
+        except Exception:
+            logger.warning("Governed Qdrant candidate search failed")
+            return []
+
+        rows: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for candidate in candidates:
+            claim = self._authoritative_qdrant_claim(
+                candidate, plan, scopes, requesting_agent
+            )
+            if claim is None or claim.id in seen:
+                continue
+            seen.add(claim.id)
+            rows.append({
+                "claim": claim,
+                "status": claim.status,
+                "annotation": self._annotation_for_claim(claim),
+                "score": candidate.score,
+                "lexical_score": 0.0,
+                "freshness_score": 0.0,
+                "confidence_score": claim.confidence,
+                "vector_score": candidate.score,
+                "breakdown": {"vector": candidate.score},
+            })
+            if len(rows) == plan.limit:
+                break
+        self._record_accesses(rows, query_text=plan.query_text)
+        return rows
+
+    def _authoritative_qdrant_claim(
+        self,
+        candidate: object,
+        plan: RetrievalPlan,
+        scopes: list[str] | None,
+        requesting_agent: str | None,
+    ) -> Claim | None:
+        """Resolve one validated vector reference against primary truth."""
+        from memorymaster.recall.qdrant_backend import (
+            QdrantCandidate,
+            claim_content_hash,
+        )
+
+        if not isinstance(candidate, QdrantCandidate):
+            return None
+        claim = self.store.get_claim(candidate.claim_id, include_citations=True)
+        if claim is None or claim.status not in plan.statuses:
+            return None
+        if self.tenant_id is not None and claim.tenant_id != self.tenant_id:
+            return None
+        if scopes is not None and claim.scope not in scopes:
+            return None
+        if is_sensitive_claim(claim):
+            return None
+        if not _filter_agent_visibility([claim], requesting_agent):
+            return None
+        if claim_content_hash(claim) != candidate.content_hash:
+            return None
+        return claim
 
     def query_rules(
         self,

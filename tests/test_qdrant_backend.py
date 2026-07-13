@@ -54,10 +54,7 @@ class TestClaimPayload:
         claim = _fake_claim()
         payload = QdrantBackend._claim_payload(claim, source="test")
         assert payload["claim_id"] == 1
-        assert payload["state"] == "confirmed"
-        assert payload["confidence"] == 0.85
-        assert payload["source"] == "test"
-        assert payload["workspace"] == "main"
+        assert set(payload) == {"claim_id", "content_hash"}
 
     def test_point_id_is_deterministic(self):
         id1 = QdrantBackend._point_id(42)

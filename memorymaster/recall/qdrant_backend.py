@@ -15,9 +15,14 @@ Environment variables / constructor params:
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
+import math
 import os
+import re
 import time
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -36,6 +41,40 @@ EMBEDDING_DIMS = 4096
 OLLAMA_TIMEOUT = 120.0
 MAX_RETRIES = 2
 RETRY_BASE_DELAY = 0.5
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
+
+
+@dataclass(frozen=True, slots=True)
+class QdrantCandidate:
+    """Untrusted vector match reduced to the only fields recall may consume."""
+
+    claim_id: int
+    content_hash: str
+    score: float
+
+
+def claim_content_hash(claim: Claim) -> str:
+    """Stable digest of the authoritative fields represented by one vector."""
+    representation = {
+        "text": claim.text,
+        "subject": claim.subject,
+        "predicate": claim.predicate,
+        "object_value": claim.object_value,
+        "claim_type": claim.claim_type,
+        "holder": claim.holder,
+        "scope": claim.scope,
+        "status": claim.status,
+        "tenant_id": claim.tenant_id,
+        "visibility": claim.visibility,
+        "source_agent": claim.source_agent,
+    }
+    encoded = json.dumps(
+        representation,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _create_http_clients(
@@ -171,17 +210,10 @@ class QdrantBackend:
 
     @staticmethod
     def _claim_payload(claim: Claim, source: str = "memorymaster") -> dict[str, Any]:
+        del source
         return {
             "claim_id": claim.id,
-            "subject": claim.subject or "",
-            "predicate": claim.predicate or "",
-            "object": claim.object_value or "",
-            "claim_text": claim.text,
-            "state": claim.status,
-            "confidence": claim.confidence,
-            "source": source,
-            "created_at": claim.created_at,
-            "workspace": "main",
+            "content_hash": claim_content_hash(claim),
         }
 
     @staticmethod
@@ -304,6 +336,93 @@ class QdrantBackend:
         except Exception:
             logger.warning("Qdrant scroll failed")
             return None
+
+    def list_point_refs(self, *, batch_size: int = 1000) -> list[QdrantCandidate] | None:
+        """Scroll validated claim ID/hash pairs for exact reconciliation."""
+        refs: list[QdrantCandidate] = []
+        offset: Any = None
+        try:
+            while True:
+                body: dict[str, Any] = {
+                    "limit": batch_size,
+                    "with_payload": ["claim_id", "content_hash"],
+                    "with_vector": False,
+                }
+                if offset is not None:
+                    body["offset"] = offset
+                resp = self._qdrant_client.post(
+                    f"{self.qdrant_url}/collections/{self.collection}/points/scroll",
+                    json=body,
+                )
+                resp.raise_for_status()
+                result = resp.json().get("result") or {}
+                for point in result.get("points", []):
+                    candidate = self._candidate_from_point(point, default_score=0.0)
+                    if candidate is not None:
+                        refs.append(candidate)
+                offset = result.get("next_page_offset")
+                if offset is None:
+                    return refs
+        except Exception:
+            logger.warning("Qdrant reference scroll failed")
+            return None
+
+    @staticmethod
+    def _candidate_from_point(
+        point: object,
+        *,
+        default_score: float | None = None,
+    ) -> QdrantCandidate | None:
+        if not isinstance(point, dict):
+            return None
+        payload = point.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        claim_id = payload.get("claim_id")
+        content_hash = payload.get("content_hash")
+        score = point.get("score", default_score)
+        if isinstance(claim_id, bool) or not isinstance(claim_id, int) or claim_id <= 0:
+            return None
+        if not isinstance(content_hash, str) or _SHA256_RE.fullmatch(content_hash) is None:
+            return None
+        if isinstance(score, bool) or not isinstance(score, (int, float)):
+            return None
+        numeric_score = float(score)
+        if not math.isfinite(numeric_score):
+            return None
+        return QdrantCandidate(claim_id, content_hash, numeric_score)
+
+    def search_candidates(self, query_text: str, *, limit: int) -> list[QdrantCandidate]:
+        """Return validated ID/hash candidates; never return raw payload data."""
+        if limit <= 0 or limit > 1000:
+            raise ValueError("Qdrant candidate limit must be between 1 and 1000.")
+        vector = self._embed(query_text)
+        if vector is None:
+            return []
+        body = {
+            "query": vector,
+            "limit": limit,
+            "with_payload": ["claim_id", "content_hash"],
+            "with_vector": False,
+        }
+        try:
+            resp = self._qdrant_client.post(
+                f"{self.qdrant_url}/collections/{self.collection}/points/query",
+                json=body,
+            )
+            resp.raise_for_status()
+            result = resp.json().get("result") or {}
+            points = result.get("points", []) if isinstance(result, dict) else result
+            if not isinstance(points, list):
+                return []
+            return [
+                candidate
+                for point in points
+                if (candidate := self._candidate_from_point(point)) is not None
+            ]
+        except Exception:
+            logger.warning("Qdrant candidate search failed")
+            return []
 
     def search(
         self,

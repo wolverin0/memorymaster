@@ -36,6 +36,7 @@ class RetrievalRequest:
     requesting_agent: str | None = None
     query_type: str | None = None
     retrieval_profile: str | None = None
+    qdrant_candidate_reads: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +114,7 @@ def build_retrieval_plan(request: RetrievalRequest) -> RetrievalPlan:
 
     effective_mode = request.retrieval_mode
     containment_reason = None
-    if request.retrieval_mode == "qdrant":
+    if request.retrieval_mode == "qdrant" and not request.qdrant_candidate_reads:
         effective_mode = "legacy"
         containment_reason = (
             "qdrant retrieval is quarantined pending governed ID rehydration"
