@@ -104,7 +104,10 @@ def test_exploratory_mode_is_explicit_and_annotated(tmp_path, monkeypatch):
         trust_mode="exploratory",
     )
 
-    rows = {row["claim"]["id"]: row for row in result["rows_data"]}
+    rows = {
+        result["claims"][row["claim_index"]]["id"]: row
+        for row in result["rows_data"]
+    }
     assert claim_id in rows
     assert rows[claim_id]["annotation"]["active"] is False
     assert rows[claim_id]["annotation"]["status"] == "candidate"

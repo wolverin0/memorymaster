@@ -2123,6 +2123,40 @@ class MemoryService:
             claims = [claim for claim in claims if not is_sensitive_claim(claim)]
         return claims
 
+    def list_claims_page(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 50,
+        cursor: str = "",
+        include_archived: bool = False,
+        allow_sensitive: bool = False,
+        holder: str | None = None,
+        scope_allowlist: list[str] | None = None,
+        requesting_agent: str | None = None,
+    ) -> tuple[list[Claim], str]:
+        requesting_agent = self._effective_requesting_agent(requesting_agent)
+        scope_allowlist = self._effective_scope_allowlist(scope_allowlist)
+        include_sensitive = self._allow_sensitive(
+            allow_sensitive=allow_sensitive,
+            context="service.list_claims_page",
+            deny_mode="filter",
+        )
+        claims, next_cursor = self.store.list_claims_page(
+            status=status,
+            limit=limit,
+            cursor=cursor,
+            include_archived=include_archived,
+            include_citations=True,
+            scope_allowlist=scope_allowlist,
+            tenant_id=self.tenant_id,
+            holder=holder,
+        )
+        claims = _filter_agent_visibility(claims, requesting_agent)
+        if not include_sensitive:
+            claims = [claim for claim in claims if not is_sensitive_claim(claim)]
+        return claims, next_cursor
+
     def redact_claim_payload(
         self,
         claim_id: int,
@@ -2163,6 +2197,21 @@ class MemoryService:
             claim_id=claim_id,
             limit=limit,
             event_type=event_type,
+        )
+
+    def list_events_page(
+        self,
+        *,
+        claim_id: int | None = None,
+        limit: int = 100,
+        event_type: str | None = None,
+        cursor: str = "",
+    ) -> tuple[list[Event], str]:
+        return self.store.list_events_page(
+            claim_id=claim_id,
+            limit=limit,
+            event_type=event_type,
+            cursor=cursor,
         )
 
     def upsert_external_source(

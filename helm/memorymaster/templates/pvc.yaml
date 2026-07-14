@@ -1,4 +1,8 @@
 {{- if .Values.persistence.enabled }}
+{{- $requiredMi := add .Values.retentionCapacity.verbatimMaxMi .Values.retentionCapacity.databaseMaxMi .Values.retentionCapacity.artifactsMaxMi .Values.retentionCapacity.walAndBackupHeadroomMi .Values.retentionCapacity.operatorHeadroomMi }}
+{{- if lt (int .Values.persistence.sizeMi) (int $requiredMi) }}
+{{- fail (printf "persistence.sizeMi=%v is below the retention envelope of %vMi" .Values.persistence.sizeMi $requiredMi) }}
+{{- end }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -8,7 +12,7 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: {{ .Values.persistence.size }}
+      storage: {{ .Values.persistence.sizeMi }}Mi
   {{- if .Values.persistence.storageClass }}
   storageClassName: {{ .Values.persistence.storageClass }}
   {{- end }}

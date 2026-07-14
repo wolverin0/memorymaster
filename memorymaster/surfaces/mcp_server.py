@@ -241,7 +241,7 @@ def _check_ingest_rate_limit(
     """
     limit = _ingest_rate_limit_per_min()
     if limit == 0:
-        return None
+        return _check_durable_ingest_quota(source_agent, cost)
 
     timestamp = _monotonic() if now is None else now
     key = _empty_to_none(source_agent) or _ANONYMOUS_SOURCE_AGENT
@@ -275,6 +275,31 @@ def _check_ingest_rate_limit(
         _INGEST_RATE_BUCKETS[key] = (agent_tokens - cost, timestamp)
         _INGEST_RATE_BUCKETS[_GLOBAL_RATE_AGENT] = (global_tokens - cost, timestamp)
         _evict_rate_buckets()
+    return _check_durable_ingest_quota(source_agent, cost)
+
+
+def _check_durable_ingest_quota(
+    source_agent: str, cost: float
+) -> dict[str, Any] | None:
+    from memorymaster.core.usage_ledger import UsageQuotaExceeded, reserve_configured
+
+    actor = _empty_to_none(source_agent) or _ANONYMOUS_SOURCE_AGENT
+    try:
+        reserve_configured(
+            operation="ingest",
+            provider="mcp",
+            actor=actor,
+            units=max(1, int(cost)),
+        )
+    except UsageQuotaExceeded as exc:
+        return _structured_error(
+            "durable MCP ingest quota exhausted",
+            "RATE_LIMITED",
+            "source_agent",
+            source_agent=actor,
+            partition=exc.partition,
+            limit_per_window=exc.limit,
+        )
     return None
 
 
@@ -387,6 +412,15 @@ def _usage_rollup(db: str) -> dict[str, Any]:
 def _empty_to_none(value: str) -> str | None:
     v = value.strip()
     return v if v else None
+
+
+def _bounded_limit(value: int, *, maximum: int) -> int:
+    """Clamp caller-controlled result sizes to a finite positive range."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 1
+    return min(maximum, max(1, parsed))
 
 
 def _parse_sources_json(sources_json: str) -> list[CitationInput]:
@@ -1101,6 +1135,7 @@ if FastMCP is not None:
     def classify_query(query: str) -> dict[str, Any]:
         """Classify a query and report its recommended and effective modes."""
         from memorymaster.recall.query_classifier import classify_query as _classify, recommended_retrieval_mode
+
         qtype = _classify(query)
         recommended_mode = recommended_retrieval_mode(qtype)
         effective_mode = "legacy" if recommended_mode == "qdrant" else recommended_mode
@@ -1180,6 +1215,7 @@ if FastMCP is not None:
         """
         from memorymaster.recall.query_classifier import classify_query as _classify, recommended_retrieval_mode
 
+        limit = _bounded_limit(limit, maximum=100)
         resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
             context="mcp.query_memory",
@@ -1219,11 +1255,15 @@ if FastMCP is not None:
             rows_data = _enrich_claims_with_citations(svc, rows_data)
 
         claims = [row["claim"] for row in rows_data]
+        serialized_claims = [
+            _apply_detail_level(_claim_to_dict(claim), detail_level)
+            for claim in claims
+        ]
         serialized_rows: list[dict[str, Any]] = []
-        for row in rows_data:
+        for index, row in enumerate(rows_data):
             serialized_rows.append(
                 {
-                    "claim": _apply_detail_level(_claim_to_dict(row["claim"]), detail_level),
+                    "claim_index": index,
                     "status": row.get("status"),
                     "annotation": row.get("annotation", {}),
                     "score": row.get("score", 0.0),
@@ -1237,8 +1277,9 @@ if FastMCP is not None:
         response: dict[str, Any] = {
             "ok": True,
             "rows": len(claims),
-            "claims": [_apply_detail_level(_claim_to_dict(c), detail_level) for c in claims],
+            "claims": serialized_claims,
             "rows_data": serialized_rows,
+            "response_contract": "memorymaster.retrieval.v2",
             "trust_mode": retrieval.plan.trust_mode,
             "requested_retrieval_mode": requested_retrieval_mode,
             "retrieval_mode": retrieval.plan.effective_mode,
@@ -1382,6 +1423,8 @@ if FastMCP is not None:
           - "standard" (default): full claim dict
           - "full": full claim dict with citations inlined
         """
+        limit = _bounded_limit(limit, maximum=250)
+        token_budget = _bounded_limit(token_budget, maximum=32_000)
         resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
             context="mcp.query_for_context",
@@ -1471,6 +1514,9 @@ if FastMCP is not None:
           - "full": full claim dict with citations inlined
         """
         from memorymaster.recall.context_optimizer import pack_context
+
+        limit = _bounded_limit(limit, maximum=250)
+        token_budget = _bounded_limit(token_budget, maximum=32_000)
 
         resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
@@ -1680,6 +1726,7 @@ if FastMCP is not None:
         include_archived: bool = False,
         allow_sensitive: bool = False,
         holder: str = "",
+        cursor: str = "",
     ) -> dict[str, Any]:
         """List claims by optional status and/or belief holder (takes-vs-facts)."""
         resolve_allow_sensitive_access(
@@ -1687,16 +1734,23 @@ if FastMCP is not None:
             context="mcp.list_claims",
         )
         svc = _read_service(db, workspace)
-        claims = svc.list_claims(
+        limit = _bounded_limit(limit, maximum=250)
+        claims, next_cursor = svc.list_claims_page(
             status=_empty_to_none(status),
             limit=limit,
+            cursor=cursor,
             include_archived=include_archived,
             allow_sensitive=allow_sensitive,
             holder=_empty_to_none(holder),
             scope_allowlist=_effective_scope_allowlist("", workspace),
             requesting_agent=_team_request_principal(),
         )
-        return {"ok": True, "rows": len(claims), "claims": [_claim_to_dict(c) for c in claims]}
+        return {
+            "ok": True,
+            "rows": len(claims),
+            "claims": [_claim_to_dict(c) for c in claims],
+            "next_cursor": next_cursor or None,
+        }
 
     @mcp.tool()
     def ingest_rule(
@@ -1765,6 +1819,7 @@ if FastMCP is not None:
         hybrid retriever. Use this when you want only behavioural rules, not
         descriptive fact claims.
         """
+        limit = _bounded_limit(limit, maximum=100)
         resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
             context="mcp.query_rules",
@@ -1789,6 +1844,7 @@ if FastMCP is not None:
         out unless ``allow_sensitive`` is granted by policy, so this never leaks
         another agent's secret rules.
         """
+        limit = _bounded_limit(limit, maximum=1000)
         resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
             context="mcp.rules_export",
@@ -1863,15 +1919,23 @@ if FastMCP is not None:
         claim_id: int | None = None,
         event_type: str = "",
         limit: int = 100,
+        cursor: str = "",
     ) -> dict[str, Any]:
         """List events by optional claim_id and event_type."""
         svc = _read_service(db, workspace)
-        events = svc.list_events(
+        limit = _bounded_limit(limit, maximum=500)
+        events, next_cursor = svc.list_events_page(
             claim_id=claim_id,
             limit=limit,
             event_type=_empty_to_none(event_type),
+            cursor=cursor,
         )
-        return {"ok": True, "rows": len(events), "events": [asdict(e) for e in events]}
+        return {
+            "ok": True,
+            "rows": len(events),
+            "events": [asdict(e) for e in events],
+            "next_cursor": next_cursor or None,
+        }
 
     @mcp.tool()
     def search_verbatim(
@@ -1889,6 +1953,7 @@ if FastMCP is not None:
         verbatim search finds exact conversation fragments.
         """
         from memorymaster.recall.verbatim_store import search_verbatim as _search
+        limit = _bounded_limit(limit, maximum=100)
         requested_mode = str(mode).strip().lower()
         effective_mode = "fts" if requested_mode in {"vector", "hybrid"} else requested_mode
         results = _search(
@@ -1982,6 +2047,7 @@ if FastMCP is not None:
         """List steward proposals for human override workflow."""
         from memorymaster.govern.steward import list_steward_proposals as _list_steward_proposals
 
+        limit = _bounded_limit(limit, maximum=500)
         svc = _read_service(db, workspace)
         rows = _list_steward_proposals(
             svc,
@@ -2063,6 +2129,8 @@ if FastMCP is not None:
         """
         from memorymaster.knowledge.entity_graph import EntityGraph, EntityGraphNotReady
 
+        limit = _bounded_limit(limit, maximum=250)
+        hops = _bounded_limit(hops, maximum=5)
         _read_service(db, workspace)
         graph = EntityGraph(_resolve_db(db), read_only=True)
         names = [n.strip() for n in entity_names.split(",") if n.strip()]
@@ -2138,6 +2206,7 @@ if FastMCP is not None:
         this tool searches every claim regardless of scope, enabling cross-project
         memory retrieval. Returns claims sorted by relevance.
         """
+        limit = _bounded_limit(limit, maximum=100)
         svc = _read_service(db, workspace)
         effective_scope = (current_scope or "").strip() or _project_scope(workspace)
         rows_data = svc.federated_query(
@@ -2147,9 +2216,10 @@ if FastMCP is not None:
             scope_allowlist=_parse_scope_allowlist(scope_allowlist),
         )
         claims = [row["claim"] for row in rows_data]
+        serialized_claims = [_claim_to_dict(claim) for claim in claims]
         serialized_rows: list[dict[str, Any]] = [
             {
-                "claim": _claim_to_dict(row["claim"]),
+                "claim_index": index,
                 "status": row.get("status"),
                 "annotation": row.get("annotation", {}),
                 "score": row.get("score", 0.0),
@@ -2158,13 +2228,14 @@ if FastMCP is not None:
                 "confidence_score": row.get("confidence_score", 0.0),
                 "vector_score": row.get("vector_score", 0.0),
             }
-            for row in rows_data
+            for index, row in enumerate(rows_data)
         ]
         return {
             "ok": True,
             "rows": len(claims),
-            "claims": [_claim_to_dict(c) for c in claims],
+            "claims": serialized_claims,
             "rows_data": serialized_rows,
+            "response_contract": "memorymaster.retrieval.v2",
         }
 
 

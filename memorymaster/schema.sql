@@ -209,6 +209,10 @@ CREATE INDEX IF NOT EXISTS idx_events_tenant_head
 CREATE INDEX IF NOT EXISTS idx_events_tenant_algo_head
     ON events(tenant_id, hash_algo, id DESC);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
+CREATE INDEX IF NOT EXISTS idx_events_type_created_id
+    ON events(event_type, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_events_type_details_created
+    ON events(event_type, details, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_embeddings_updated_at ON claim_embeddings(updated_at);
 CREATE INDEX IF NOT EXISTS idx_claims_human_id ON claims(human_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_public_human_id_unique

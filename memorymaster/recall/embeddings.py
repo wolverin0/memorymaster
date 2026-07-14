@@ -71,7 +71,13 @@ class EmbeddingProvider:
         if self._transformer is None:
             self._transformer = _load_gemini_client()
         gemini_model = self.model.split(":", 1)[1]
+        usage = None
         try:
+            from memorymaster.core.usage_ledger import reserve_configured
+
+            usage = reserve_configured(
+                operation="embedding", provider="gemini", actor="account"
+            )
             result = self._transformer.models.embed_content(
                 model=gemini_model,
                 contents=text,
@@ -90,6 +96,9 @@ class EmbeddingProvider:
             self.dims = 1536
             self.degraded = True
             return hash_embed(text, dims=self.dims)
+        finally:
+            if usage is not None:
+                usage[0].finish(usage[1], outcome="attempted")
         vec = result.embeddings[0].values
         self.dims = len(vec)
         return normalize(list(vec))
@@ -98,7 +107,16 @@ class EmbeddingProvider:
         if self._transformer is None:
             self._transformer = _load_gemini_client()
         gemini_model = self.model.split(":", 1)[1]
+        usage = None
         try:
+            from memorymaster.core.usage_ledger import reserve_configured
+
+            usage = reserve_configured(
+                operation="embedding",
+                provider="gemini",
+                actor="account",
+                units=len(texts),
+            )
             result = self._transformer.models.embed_content(
                 model=gemini_model,
                 contents=texts,
@@ -112,6 +130,9 @@ class EmbeddingProvider:
             self.dims = 1536
             self.degraded = True
             return [hash_embed(text, dims=self.dims) for text in texts]
+        finally:
+            if usage is not None:
+                usage[0].finish(usage[1], outcome="attempted")
         vectors = [normalize(list(item.values)) for item in result.embeddings]
         if len(vectors) != len(texts):
             raise ValueError("embedding provider returned an incomplete batch")

@@ -131,6 +131,24 @@ def test_helm_requires_digest_and_existing_qdrant_secrets():
     assert 'fail "qdrant.url must use HTTPS"' in deployment
 
 
+def test_helm_storage_is_coupled_to_finite_retention_envelope():
+    values = _read("helm/memorymaster/values.yaml")
+    pvc = _read("helm/memorymaster/templates/pvc.yaml")
+
+    assert "size: 1Gi" not in values
+    for key in (
+        "verbatimMaxMi",
+        "databaseMaxMi",
+        "artifactsMaxMi",
+        "walAndBackupHeadroomMi",
+        "operatorHeadroomMi",
+    ):
+        assert key in values
+        assert key in pvc
+    assert "retention envelope" in pvc
+    assert "persistence.sizeMi" in pvc
+
+
 def test_postgres_smoke_requires_operator_supplied_dsn():
     script = _read("scripts/smoke_postgres.ps1")
 

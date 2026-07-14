@@ -310,5 +310,35 @@ R3.1 embedding and reconciliation efficiency completed on 2026-07-13:
   `BLOCKED-EXTERNAL`; no production semantic profile was enabled.
 - Atomic package commit: the conventional R3.1 commit containing this evidence.
 
-The next package is R3.2 query and storage efficiency. The active roadmap goal
-authorizes continuing without a new goal.
+R3.2 query and storage efficiency completed on 2026-07-13:
+
+- Immutable migration 0015 and both baseline schemas add event-type/time and
+  event-type/details/time indexes. SQLite EXPLAIN selects the ordered index;
+  disposable Postgres runtime evidence remains part of the existing external
+  backend gate.
+- Recall corpus/alias statistics are generation-keyed instead of cached forever.
+  MCP result limits are finite, list claims/events expose opaque keyset cursors,
+  and retrieval v2 rows reference the separately serialized claim array rather
+  than duplicating full claim payloads.
+- A shared WAL-backed usage ledger provides atomic global/provider/actor
+  reservations across LLM primary/fallback calls, Gemini embeddings, MCP
+  ingest/checkpoint, and explicitly configured core intake quotas. Unlimited
+  defaults remain backward compatible.
+- The init fast-path stamp now covers legacy ensure-helper source. Helm PVC
+  capacity is validated against the finite verbatim/database/artifact/WAL,
+  backup, and operator-headroom envelope instead of a fixed 1Gi request.
+- RED evidence: the initial focused contract failed collection on the missing
+  limit helper and the durable-ledger contract failed on the missing module.
+  The first package boundary then found five migration-runner failures because
+  migration 0015 assumed a pre-existing events table. The bounded correction
+  makes the migration a no-op on schema-less runner fixtures.
+- Focused boundary: 265 passed, 45 skipped, 2 expected xfails, 5 failed; exact
+  correction: 21 passed. Supporting focused slices: 132 durable quota/provider/
+  intake/embedding tests passed; 82 tokenizer/MCP/fast-path tests passed.
+  Changed-file Ruff and `git diff --check` passed. Helm CLI was unavailable, so
+  chart validation is static at this package boundary and will be retried at
+  Phase 3 convergence.
+- Atomic package commit: the conventional R3.2 commit containing this evidence.
+
+The next package is R3.3 setup-profile truth. The active roadmap goal authorizes
+continuing without a new goal.

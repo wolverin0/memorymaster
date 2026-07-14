@@ -12,8 +12,17 @@ service:
 
 persistence:
   enabled: true
-  size: 1Gi
+  # PVC capacity is validated against the finite retention envelope below.
+  # Raise sizeMi when increasing any retained-data budget.
+  sizeMi: 2048
   storageClass: ""
+
+retentionCapacity:
+  verbatimMaxMi: 512
+  databaseMaxMi: 512
+  artifactsMaxMi: 256
+  walAndBackupHeadroomMi: 512
+  operatorHeadroomMi: 256
 
 env:
   MEMORYMASTER_DEFAULT_DB: /data/memorymaster.db

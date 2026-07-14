@@ -236,6 +236,10 @@ CREATE INDEX IF NOT EXISTS idx_events_tenant_head
 CREATE INDEX IF NOT EXISTS idx_events_tenant_algo_head
     ON events(tenant_id, hash_algo, id DESC);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
+CREATE INDEX IF NOT EXISTS idx_events_type_created_id
+    ON events(event_type, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_events_type_details_created
+    ON events(event_type, details, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS external_sources (
     id BIGSERIAL PRIMARY KEY,

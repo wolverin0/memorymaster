@@ -47,6 +47,7 @@ from memorymaster.stores._storage_shared import (
     compute_tenant_event_hash,
     generate_top_level_human_id,
 )
+from memorymaster.stores._storage_pagination import _decode_cursor, _encode_cursor
 from memorymaster.stores.claim_identity import (
     normalize_claim_identity,
     require_unambiguous_identity_row,
@@ -2090,6 +2091,117 @@ class PostgresStore(SQLiteStore):
             cur.execute(sql, params)
             rows = cur.fetchall()
         return [self._row_to_event(row) for row in rows]
+
+    def list_claims_page(
+        self,
+        *,
+        limit: int,
+        cursor: str = "",
+        status: str | None = None,
+        include_archived: bool = False,
+        include_citations: bool = False,
+        scope_allowlist: list[str] | None = None,
+        tenant_id: str | None = None,
+        holder: str | None = None,
+    ):
+        clauses: list[str] = []
+        params: list[object] = []
+        effective_tenant = tenant_id if tenant_id is not None else self.tenant_id
+        if effective_tenant is not None:
+            clauses.append("tenant_id IS NOT DISTINCT FROM %s")
+            params.append(effective_tenant)
+        if holder and holder.strip():
+            clauses.append("holder = %s")
+            params.append(holder.strip())
+        if status is not None:
+            clauses.append("status = %s")
+            params.append(status)
+        elif not include_archived:
+            clauses.append("status <> 'archived'")
+        if scope_allowlist:
+            scopes = [scope.strip() for scope in scope_allowlist if scope.strip()]
+            if scopes:
+                clauses.append(f"scope IN ({','.join('%s' for _ in scopes)})")
+                params.extend(scopes)
+        after = _decode_cursor(cursor, 4)
+        if after:
+            pinned, confidence, updated_at, claim_id = after
+            clauses.append(
+                "(pinned < %s OR (pinned = %s AND confidence < %s) OR "
+                "(pinned = %s AND confidence = %s AND updated_at < %s) OR "
+                "(pinned = %s AND confidence = %s AND updated_at = %s AND id < %s))"
+            )
+            params.extend(
+                [pinned, pinned, confidence, pinned, confidence, updated_at,
+                 pinned, confidence, updated_at, claim_id]
+            )
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, int(limit)) + 1)
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT * FROM claims {where_sql} "
+                "ORDER BY pinned DESC, confidence DESC, updated_at DESC, id DESC LIMIT %s",
+                params,
+            )
+            rows = cur.fetchall()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        claims = [self._row_to_claim(row) for row in rows]
+        if include_citations:
+            for claim in claims:
+                claim.citations = self.list_citations(claim.id)
+        next_cursor = ""
+        if has_more and rows:
+            row = rows[-1]
+            updated = row["updated_at"]
+            next_cursor = _encode_cursor(
+                [bool(row["pinned"]), float(row["confidence"]),
+                 updated.isoformat() if hasattr(updated, "isoformat") else str(updated), int(row["id"])]
+            )
+        return claims, next_cursor
+
+    def list_events_page(
+        self,
+        *,
+        limit: int,
+        cursor: str = "",
+        claim_id: int | None = None,
+        event_type: str | None = None,
+    ):
+        clauses: list[str] = []
+        params: list[object] = []
+        if self.tenant_id is not None:
+            clauses.append("tenant_id IS NOT DISTINCT FROM %s")
+            params.append(self._tenant_for_operation())
+        if claim_id is not None:
+            clauses.append("claim_id = %s")
+            params.append(claim_id)
+        if event_type is not None:
+            clauses.append("event_type = %s")
+            params.append(event_type)
+        after = _decode_cursor(cursor, 2)
+        if after:
+            clauses.append("(created_at < %s OR (created_at = %s AND id < %s))")
+            params.extend([after[0], after[0], after[1]])
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, int(limit)) + 1)
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT * FROM events {where_sql} "
+                "ORDER BY created_at DESC, id DESC LIMIT %s",
+                params,
+            )
+            rows = cur.fetchall()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        events = [self._row_to_event(row) for row in rows]
+        next_cursor = ""
+        if has_more and rows:
+            created = rows[-1]["created_at"]
+            next_cursor = _encode_cursor(
+                [created.isoformat() if hasattr(created, "isoformat") else str(created), int(rows[-1]["id"])]
+            )
+        return events, next_cursor
 
     def count_citations(self, claim_id: int) -> int:
         with self.connect() as conn, conn.cursor() as cur:
