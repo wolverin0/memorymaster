@@ -489,3 +489,28 @@ Phase 3 convergence completed on 2026-07-14:
 
 The next package is R4.1 extension boundaries. The active roadmap goal
 authorizes continuing without a new goal.
+
+R4.1 core and companion extension boundaries completed on 2026-07-14:
+
+- Claims, lifecycle, citations, policy, recall, stewardship, stores, and
+  telemetry remain in the authoritative core. Wiki/Obsidian, Dream/OpenClaw,
+  Atlas/media/actions, local search, and specialized integrations are explicit
+  companion namespaces composed by surface handlers.
+- Import-boundary acceptance pins prevent core, governance, recall, and store
+  modules from importing optional Wiki/vault or bridge modules. Importing
+  `MemoryService` no longer installs a Wiki side effect; importing the Wiki
+  companion explicitly retains lifecycle autopromotion.
+- Stewardship consumes Wiki similarity through the narrow read-only
+  `WikiSimilarityCorpus` protocol. Existing local-search, transcription, and
+  OCR provider protocols remain the supported integration seams.
+- The deprecated generic plugin registry and root compatibility shim were
+  removed after their documented one-minor window. GitNexus found zero
+  production consumers; the only direct consumer was its deleted test suite.
+  No arbitrary validator/retrieval/ingestion entry-point boundary was added.
+- RED boundary evidence initially failed three of four tests. The focused
+  companion/provider/autopromotion gate then passed 87 tests. Changed-file
+  Ruff, syntax compilation, and `git diff --check` passed.
+- Atomic package commit: the conventional R4.1 commit containing this evidence.
+
+The next package is R4.2 gradual orchestration decomposition. The active
+roadmap goal authorizes continuing without a new goal.

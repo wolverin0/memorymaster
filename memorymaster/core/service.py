@@ -8,7 +8,7 @@ from typing import Any, Iterable
 import logging
 import os
 
-from memorymaster.core import lifecycle, observability
+from memorymaster.core import observability
 from memorymaster.core import llm_budget
 from memorymaster.govern import candidate_dedupe
 from memorymaster.recall import query_cache
@@ -48,24 +48,6 @@ from memorymaster.stores._storage_shared import ConcurrentModificationError
 import contextlib
 
 logger = logging.getLogger(__name__)
-
-
-def _wiki_autopromote_adapter(claim_id: int, db_path: str | None = None) -> None:
-    """Lazy adapter for lifecycle's wiki autopromote hook.
-
-    P2 phase0 cycle cut: lifecycle (core) must never import wiki_engine
-    (knowledge), so service wiring registers this callback instead. The import
-    stays inside the function so wiki_engine is only loaded when the
-    autopromote threshold actually fires (same laziness as the old
-    lifecycle-internal import).
-    """
-    from memorymaster.knowledge.wiki_engine import absorb_single_claim
-
-    absorb_single_claim(claim_id, db_path=db_path)
-
-
-if lifecycle.on_claim_confirmed is None:
-    lifecycle.on_claim_confirmed = _wiki_autopromote_adapter
 
 RetrievalWeights = tuple[float, float, float, float]
 

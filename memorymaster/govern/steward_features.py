@@ -24,10 +24,13 @@ from __future__ import annotations
 import re
 import sqlite3
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
-if TYPE_CHECKING:
-    from memorymaster.knowledge.wiki_similarity import WikiCorpus
+
+class WikiSimilarityCorpus(Protocol):
+    """Narrow optional-extension seam consumed by core stewardship."""
+
+    def similarity_for_claim(self, claim: dict[str, Any]) -> float: ...
 
 FEATURE_VERSION = "v3"
 
@@ -271,7 +274,7 @@ def extract_features(
     claim: Any,
     conn: sqlite3.Connection,
     *,
-    wiki_corpus: WikiCorpus | None = None,
+    wiki_corpus: WikiSimilarityCorpus | None = None,
 ) -> dict[str, float]:
     """Return the v3 feature dict for a single claim. ``claim`` may be a dict,
     ``sqlite3.Row``, or dataclass with standard Claim fields (``id``,
@@ -315,8 +318,7 @@ def extract_features(
     has_entity = 1.0 if c.get("entity_id") else 0.0
 
     if wiki_corpus is not None:
-        from memorymaster.knowledge.wiki_similarity import compute_wiki_similarity
-        wiki_sim = compute_wiki_similarity(c, wiki_corpus)
+        wiki_sim = wiki_corpus.similarity_for_claim(c)
     else:
         wiki_sim = 0.0
 

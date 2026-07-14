@@ -37,6 +37,36 @@ External surfaces
   Obsidian vault, dashboard, Qdrant, LLM providers, Auto Dream, Atlas adapters
 ```
 
+## Core and companion extension boundary
+
+The authoritative memory system lives in `memorymaster.core`, `memorymaster.stores`,
+`memorymaster.recall`, and `memorymaster.govern`: claims, lifecycle, citations,
+policy, retrieval, conflict/stewardship, and telemetry remain usable without
+loading optional integrations.
+
+Optional product integrations are built-in companion namespaces composed only
+at explicit surfaces:
+
+| Companion | Owned namespace | Composition roots |
+|---|---|---|
+| Wiki and Obsidian | `memorymaster.knowledge.wiki_*`, `memorymaster.knowledge.vault_*` | CLI/MCP handlers, wiki jobs and opt-in hooks |
+| Dream and OpenClaw | `memorymaster.bridges.dream_bridge`, `db_merge`, `delta_sync`, `qmd_bridge` | CLI/integration handlers |
+| Atlas, media and actions | `memorymaster.bridges.atlas_*`, `media_*`, `action_*`, `connectors` | CLI/MCP integration handlers |
+| Local search | `memorymaster.bridges.local_search` | CLI/MCP tools |
+| Specialized bridges | remaining `memorymaster.bridges.*` modules | explicit integration handlers |
+
+Dependency direction is one-way: companions may consume core contracts, while
+core modules must not import companion modules. Optional behavior is installed
+by importing its companion; for example, importing `wiki_engine` registers the
+wiki lifecycle adapter, while importing `MemoryService` alone does not.
+
+The supported extension seams are narrow typed provider protocols
+(`LocalSearchProvider`, `TranscriptionProvider`, `OcrProvider`) plus the
+read-only `WikiSimilarityCorpus` stewardship protocol. The former generic
+`memorymaster.plugins` callback registry had no production consumers and was
+removed in R4.1 after its deprecation window. Arbitrary validator, retrieval,
+or ingestion callbacks are not a supported security boundary.
+
 ## Data Flow
 
 **Ingest path**
@@ -211,7 +241,6 @@ this track's requested inventory.
 | `memorymaster/models.py` | Domain model dataclasses and validation helpers. | `fe4dbc2 feat(atlas): Atlas Inbox V1 contract (v1.0.0 → v1.5.1, 7 commits) (#27)` |
 | `memorymaster/operator.py` | Operator loop support for reviewing and applying queued memory work. | `886bec4 fix: green CI + v3.2.0 release prep + repo cleanup` |
 | `memorymaster/operator_queue.py` | WAL-backed durable queue for pending operator turns. | `761eabc refactor: extract migration helpers to reduce migrate_from_json complexity (11→8)` |
-| `memorymaster/plugins.py` | Entry-point plugin registry for validators, probes, retrieval hooks, and exporters. | `8c4f302 feat: plugin system + cross-agent scope isolation with RBAC` |
 | `memorymaster/policy.py` | Policy-mode configuration and cadence override helpers. | `0dff74a feat(policy): MEMORYMASTER_POLICY_MODE env-var opt-in for cadence` |
 | `memorymaster/postgres_store.py` | Postgres storage backend with parity methods for the service layer. | `e337c07 chore(storage): audit SQLite/Postgres parity, add 3 missing pg methods (#35)` |
 | `memorymaster/qdrant_backend.py` | Qdrant maintenance-index backend; payload search fails closed while upsert/sync/reconcile count/ID operations remain available. | `7b049c5 chore: prepare for open-source release — scrub private data, add docs` |
