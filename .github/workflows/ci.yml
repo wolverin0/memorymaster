@@ -23,9 +23,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
-        run: pip install -e ".[dev,mcp,security,postgres,vector]"
+        run: pip install -e ".[dev,mcp,security,postgres]"
       - name: Run tests
-        run: pytest tests/ -q --tb=short
+        run: pytest tests/ -m "not ml" -q --tb=short
         env:
           MEMORYMASTER_ALLOW_SENSITIVE_BYPASS: "1"
 

@@ -468,6 +468,12 @@ def test_indexer_collection_error_redacts_qdrant_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     indexer = _load_indexer_without_rewrapping_pytest_stdout(monkeypatch)
+    models = ModuleType("qdrant_client.models")
+    models.PointStruct = lambda **kwargs: kwargs  # type: ignore[attr-defined]
+    qdrant_client = ModuleType("qdrant_client")
+    qdrant_client.models = models  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "qdrant_client", qdrant_client)
+    monkeypatch.setitem(sys.modules, "qdrant_client.models", models)
 
     class _Embedder:
         def get_sentence_embedding_dimension(self) -> int:
