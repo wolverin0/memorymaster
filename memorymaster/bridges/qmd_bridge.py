@@ -24,6 +24,7 @@ import logging
 from typing import Any
 
 from memorymaster.core.models import CitationInput
+from memorymaster.core.security import scan_persisted_value
 
 logger = logging.getLogger(__name__)
 
@@ -75,18 +76,38 @@ def qmd_to_claims(qmd_entries: list[dict[str, Any]], source: str = "qmd-import")
     return results
 
 
+def _claim_representation(claim: Any) -> dict[str, Any]:
+    return {
+        "text": getattr(claim, "text", ""),
+        "subject": getattr(claim, "subject", None),
+        "predicate": getattr(claim, "predicate", None),
+        "object_value": getattr(claim, "object_value", None),
+        "claim_type": getattr(claim, "claim_type", None),
+        "scope": getattr(claim, "scope", None),
+        "citations": [
+            {"source": item.source, "locator": item.locator, "excerpt": item.excerpt}
+            for item in (getattr(claim, "citations", None) or [])
+        ],
+    }
+
+
 def claims_to_qmd(claims: list) -> list[dict[str, Any]]:
-    """Convert memorymaster claims to QMD format for export to OpenClaw."""
+    """Convert non-sensitive memorymaster claims to QMD format for export."""
     results = []
     for claim in claims:
+        findings = scan_persisted_value(_claim_representation(claim))
+        if findings:
+            logger.warning("QMD export skipped sensitive claim %s (%s)", getattr(claim, "id", "?"), ",".join(findings))
+            continue
         scope = getattr(claim, "scope", "project")
         base_scope = scope.split(":")[0] if ":" in scope else scope
-
-        results.append({
-            "type": getattr(claim, "claim_type", "fact") or "fact",
-            "tier": SCOPE_TO_TIER.get(base_scope, "working"),
-            "text": claim.text,
-        })
+        results.append(
+            {
+                "type": getattr(claim, "claim_type", "fact") or "fact",
+                "tier": SCOPE_TO_TIER.get(base_scope, "working"),
+                "text": claim.text,
+            }
+        )
     return results
 
 
@@ -133,4 +154,4 @@ def export_qmd_file(service, file_path: str, status: str = "confirmed") -> dict[
         for entry in qmd_entries:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-    return {"exported": len(qmd_entries), "file": file_path}
+    return {"exported": len(qmd_entries), "skipped": len(claims) - len(qmd_entries), "file": file_path}

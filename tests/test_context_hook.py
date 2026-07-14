@@ -76,6 +76,12 @@ class TestRecall:
         mock_claim = MagicMock()
         mock_claim.text = "working on memorymaster project"
         mock_claim.id = 1
+        mock_claim.status = "confirmed"
+        mock_claim.scope = "project"
+        mock_claim.visibility = "public"
+        mock_claim.object_value = None
+        mock_claim.subject = None
+        mock_claim.predicate = None
         mock_service.query_rows.return_value = [
             {"claim": mock_claim, "lexical_score": 0.8, "confidence_score": 0.9},
         ]
@@ -105,6 +111,12 @@ class TestRecall:
 
         mock_claim = MagicMock()
         mock_claim.text = "a" * 200
+        mock_claim.status = "confirmed"
+        mock_claim.scope = "project"
+        mock_claim.visibility = "public"
+        mock_claim.object_value = None
+        mock_claim.subject = None
+        mock_claim.predicate = None
         mock_service.query_rows.return_value = [
             {"claim": mock_claim, "lexical_score": 0.5, "confidence_score": 0.5},
         ]
@@ -121,6 +133,12 @@ class TestRecall:
 
         mock_claim = MagicMock()
         mock_claim.text = "claim with \u00f1 and \u00e9 characters"
+        mock_claim.status = "confirmed"
+        mock_claim.scope = "project"
+        mock_claim.visibility = "public"
+        mock_claim.object_value = None
+        mock_claim.subject = None
+        mock_claim.predicate = None
         mock_service.query_rows.return_value = [
             {"claim": mock_claim, "lexical_score": 0.5, "confidence_score": 0.5},
         ]

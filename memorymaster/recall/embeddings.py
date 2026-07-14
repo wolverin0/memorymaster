@@ -46,6 +46,20 @@ class EmbeddingProvider:
             return self._gemini_embed(text)
         return self._semantic_embed(text)
 
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Embed a bounded candidate batch with one provider operation."""
+        if not texts:
+            return []
+        if self.model.startswith("hash"):
+            return [hash_embed(text, dims=self.dims) for text in texts]
+        if self.model.startswith("gemini:"):
+            return self._gemini_embed_batch(texts)
+        if self._transformer is None:
+            self._transformer = _load_transformer(self.model)
+        embeddings = self._transformer.encode(texts, normalize_embeddings=True)
+        self.dims = len(embeddings[0])
+        return [embedding.tolist() for embedding in embeddings]
+
     def _semantic_embed(self, text: str) -> list[float]:
         if self._transformer is None:
             self._transformer = _load_transformer(self.model)
@@ -57,7 +71,13 @@ class EmbeddingProvider:
         if self._transformer is None:
             self._transformer = _load_gemini_client()
         gemini_model = self.model.split(":", 1)[1]
+        usage = None
         try:
+            from memorymaster.core.usage_ledger import reserve_configured
+
+            usage = reserve_configured(
+                operation="embedding", provider="gemini", actor="account"
+            )
             result = self._transformer.models.embed_content(
                 model=gemini_model,
                 contents=text,
@@ -76,9 +96,48 @@ class EmbeddingProvider:
             self.dims = 1536
             self.degraded = True
             return hash_embed(text, dims=self.dims)
+        finally:
+            if usage is not None:
+                usage[0].finish(usage[1], outcome="attempted")
         vec = result.embeddings[0].values
         self.dims = len(vec)
         return normalize(list(vec))
+
+    def _gemini_embed_batch(self, texts: list[str]) -> list[list[float]]:
+        if self._transformer is None:
+            self._transformer = _load_gemini_client()
+        gemini_model = self.model.split(":", 1)[1]
+        usage = None
+        try:
+            from memorymaster.core.usage_ledger import reserve_configured
+
+            usage = reserve_configured(
+                operation="embedding",
+                provider="gemini",
+                actor="account",
+                units=len(texts),
+            )
+            result = self._transformer.models.embed_content(
+                model=gemini_model,
+                contents=texts,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Gemini batch embedding failed (%s); falling back to hash-v1",
+                exc,
+            )
+            self.model = "hash-v1"
+            self.dims = 1536
+            self.degraded = True
+            return [hash_embed(text, dims=self.dims) for text in texts]
+        finally:
+            if usage is not None:
+                usage[0].finish(usage[1], outcome="attempted")
+        vectors = [normalize(list(item.values)) for item in result.embeddings]
+        if len(vectors) != len(texts):
+            raise ValueError("embedding provider returned an incomplete batch")
+        self.dims = len(vectors[0])
+        return vectors
 
 
 def create_semantic_provider(model: str = "all-MiniLM-L6-v2") -> EmbeddingProvider:
@@ -215,3 +274,8 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b, strict=True))
     # vectors are normalized, but clamp for numeric safety.
     return max(-1.0, min(1.0, dot))
+
+
+def embedding_content_hash(text: str) -> str:
+    """Stable fingerprint of the exact authoritative text embedded."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()

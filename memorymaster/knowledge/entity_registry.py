@@ -148,46 +148,18 @@ def _variant_key(raw: str) -> str:
 
 
 def ensure_entity_schema(conn: sqlite3.Connection) -> None:
-    """Create entity tables if they don't exist. Idempotent.
+    """Apply the immutable migration chain that owns the entity schema."""
+    baseline = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='claims'"
+    ).fetchone()
+    if baseline is None:
+        raise RuntimeError(
+            "MemoryMaster baseline schema is missing; run `memorymaster init-db` "
+            "instead of initializing the entity graph independently."
+        )
+    from memorymaster.stores.migrations import MigrationRunner
 
-    The UNIQUE constraint on ``entity_aliases`` is on
-    ``(entity_id, variant_key)`` — NOT on ``alias``. The normalized ``alias``
-    column is shared across variants of the same entity (by design) so
-    multiple original_forms (e.g. "Qdrant", "qdrant", "QDRANT",
-    "qdrant-cloud") can coexist as distinct rows pointing to the same
-    ``entity_id``. Lookup still uses ``alias`` (the heavily-normalized
-    form) because that's the key that collapses case/separator variation.
-
-    NOTE: this schema is applied to *new* DBs only. Existing DBs created
-    with the old UNIQUE(alias) constraint require an explicit one-shot
-    migration — see :func:`migrate_entity_aliases_schema`.
-    """
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS entities (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            canonical_name TEXT NOT NULL UNIQUE,
-            entity_type TEXT NOT NULL DEFAULT 'unknown',
-            scope TEXT NOT NULL DEFAULT 'global',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS entity_aliases (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            entity_id INTEGER NOT NULL,
-            alias TEXT NOT NULL,
-            variant_key TEXT NOT NULL DEFAULT '',
-            original_form TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            UNIQUE(entity_id, variant_key),
-            FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_entity_aliases_alias
-            ON entity_aliases(alias);
-        CREATE INDEX IF NOT EXISTS idx_entity_aliases_entity_id
-            ON entity_aliases(entity_id);
-    """)
+    MigrationRunner(conn, backend="sqlite").apply_pending()
 
 
 def _utc_now() -> str:

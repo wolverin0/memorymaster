@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from memorymaster.bridges.evidence_policy import is_governed_evidence_eligible
+
 
 @dataclass(frozen=True)
 class ActionExportResult:
@@ -36,6 +38,23 @@ def export_approved_actions(
         destination=destination,
         limit=limit,
     )
+    needed_evidence_ids = {
+        proposal.evidence_item_id
+        for proposal in proposals
+        if proposal.evidence_item_id is not None
+    }
+    evidence_by_id = {}
+    if needed_evidence_ids:
+        evidence_by_id = {
+            evidence.id: evidence
+            for evidence in service.list_evidence_items(limit=max(needed_evidence_ids))
+            if evidence.id in needed_evidence_ids
+        }
+    proposals = [
+        proposal
+        for proposal in proposals
+        if _proposal_evidence_is_eligible(proposal, evidence_by_id)
+    ]
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tasks = [_proposal_to_super_productivity_bridge_task(proposal) for proposal in proposals]
@@ -64,6 +83,13 @@ def export_approved_actions(
         exported=len(exported_ids),
         proposal_ids=exported_ids,
     )
+
+
+def _proposal_evidence_is_eligible(proposal, evidence_by_id: dict[int, Any]) -> bool:
+    if proposal.evidence_item_id is None:
+        return True
+    evidence = evidence_by_id.get(proposal.evidence_item_id)
+    return evidence is not None and is_governed_evidence_eligible(evidence)
 
 
 def _proposal_to_super_productivity_bridge_task(proposal) -> dict[str, Any]:

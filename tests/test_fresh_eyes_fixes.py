@@ -166,7 +166,12 @@ def test_volunteer_default_gate_actually_gates(tmp_path):
                  confidence=0.3, source_agent="t")
     ingest_claim(text="volunteerfixtoken strong fact", db=db, workspace=ws,
                  confidence=0.9, source_agent="t")
-    res = volunteer_context(query="volunteerfixtoken", db=db, workspace=ws)
+    res = volunteer_context(
+        query="volunteerfixtoken",
+        db=db,
+        workspace=ws,
+        trust_mode="exploratory",
+    )
     assert res["ok"] is True
     assert res["min_confidence"] >= 0.5, "default gate is open again — tool adds nothing"
     included_texts = json.dumps(res.get("claims", [])) + str(res.get("output", ""))

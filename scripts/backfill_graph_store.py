@@ -149,7 +149,11 @@ def run_backfill(
     store = None
     if not dry_run:
         try:
-            store = open_graph_store(graph_path, allow_networkx=allow_networkx)
+            store = open_graph_store(
+                graph_path,
+                allow_networkx=allow_networkx,
+                initialize=True,
+            )
         except GraphStoreUnavailable as exc:
             logger.error(
                 "graph_store unavailable: %s — pass --allow-networkx for "

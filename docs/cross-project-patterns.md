@@ -50,6 +50,13 @@ Important current-behavior caveat: these MCP query tools do not categorically ga
 
 `query_memory` is the default project recall tool. Its MCP signature includes `workspace`, `limit`, `retrieval_mode`, `include_stale`, `include_conflicted`, `include_candidates`, `allow_sensitive`, `scope_allowlist`, and `detail_level` (`memorymaster/mcp_server.py:592-606`).
 
+During R1.3, `retrieval_mode="qdrant"` is not a separate authorization path.
+Local-trusted calls report the requested/effective modes and use authoritative
+lexical retrieval; auto-classified Qdrant recommendations do the same. Team MCP
+denies semantic retrieval before dispatch. Local `hybrid` ranking is
+Qdrant-independent and ranks only primary-store rows that already passed the
+normal lifecycle, scope, visibility, and sensitivity gates.
+
 Default scope filter:
 
 - Blank `scope_allowlist` expands to the derived current project scope plus `global` (`memorymaster/mcp_server.py:274-289`).
@@ -127,16 +134,15 @@ How to narrow:
 
 ## Cross-Tenant Safety
 
-The storage and service layers have tenant filtering support when a `MemoryService` is constructed with a tenant id: the service stores `self.tenant_id` (`memorymaster/service.py:85-98`), and storage filters `tenant_id` when it is provided (`memorymaster/_storage_read.py:158-160`, `memorymaster/postgres_store.py:524-526`).
+Team mode derives an immutable request context at the MCP boundary and binds its principal, tenant, workspace, and exact allowed scopes into `MemoryService`. PostgreSQL application connections require that authority and bind it transaction-locally; missing or expanded authority fails closed. Local-trusted mode remains an explicit single-agent profile and is not a tenant-security boundary.
 
-Current MCP behavior does not pass a tenant id into `MemoryService`. The MCP `_service` factory constructs `MemoryService(db_target=..., workspace_root=...)` without a `tenant_id` argument (`memorymaster/mcp_server.py:171-172`). Therefore, the three MCP federation tools documented here rely on scope filtering and sensitive filtering, not tenant isolation, unless a future wrapper or configuration path injects `tenant_id`.
+### Current Containment and Remaining Gaps
 
-### Known Gaps
-
-1. `query_memory(retrieval_mode="qdrant")` bypasses the normal scope, archived, sensitive, and tenant filters. The MCP wrapper returns early for qdrant mode (`memorymaster/mcp_server.py:635-641`); `_qdrant_query` calls `backend.search(query, limit=limit)` without scope or tenant filters (`memorymaster/mcp_server.py:292-300`), then rehydrates hits with direct `store.get_claim` (`memorymaster/mcp_server.py:304-329`). SQLite and PostgreSQL `get_claim` fetch by id only (`memorymaster/_storage_read.py:43-60`, `memorymaster/postgres_store.py:481-490`).
-2. MCP tenant isolation is not wired. The service supports `tenant_id` (`memorymaster/service.py:85-98`) and storage enforces it when provided (`memorymaster/_storage_read.py:158-160`, `memorymaster/postgres_store.py:524-526`), but `_service` never passes one (`memorymaster/mcp_server.py:171-172`).
-3. `visibility="sensitive"` is not itself a default gate for these MCP tools. The active sensitive predicate inspects payload text (`memorymaster/security.py:356-363`), and visibility filtering is only conditional on `requesting_agent` (`memorymaster/service.py:470-472`), which the `query_memory` MCP wrapper does not pass (`memorymaster/mcp_server.py:643-653`).
-4. `query_meta_decisions` cannot be widened to non-project scopes from the MCP surface. The service explicitly discards non-`project:` scopes (`memorymaster/service.py:804-810`) and the MCP signature has no scope parameter (`memorymaster/mcp_server.py:1182-1199`).
+1. R1.3 quarantines claim retrieval from Qdrant. Explicit or auto-classified local-trusted MCP requests use authoritative lexical retrieval and report containment metadata; the direct backend/API entrypoint rejects; and CLI `qdrant-search` exits with code 2 before backend construction.
+2. Prompt-context Qdrant fallback is disconnected. Verbatim `vector`/`hybrid` requests use FTS5 and never return indexed payload text. Team MCP denies semantic retrieval, including local hybrid, before tool dispatch.
+3. `qdrant-sync`, upserts, drift reconciliation, and orphan cleanup remain available for index maintenance, but indexed payloads are never treated as retrieval truth. Governed Qdrant retrieval stays blocked until R2.1 can accept IDs as untrusted candidates, rehydrate authoritative SQLite/Postgres rows, and apply the shared tenant/scope/visibility/lifecycle/sensitivity planner.
+4. Local-trusted mode intentionally lacks team tenancy. Do not expose that profile as a shared service.
+5. `query_meta_decisions` remains project-scope-only by design; its MCP signature does not widen to arbitrary non-project scopes.
 
 ## Examples
 
@@ -192,6 +198,6 @@ Explicit all-scope search:
 
 ## Follow-Up Track Candidates
 
-- Add tenant injection to the MCP `_service` factory or tool request model before treating MCP federation as tenant-isolated (`memorymaster/mcp_server.py:171-172`, `memorymaster/service.py:85-98`).
-- Add scope, tenant, archived-status, and sensitive filters to `_qdrant_query` or route qdrant hits through `query_rows`-equivalent authorization (`memorymaster/mcp_server.py:292-329`, `memorymaster/mcp_server.py:635-641`).
-- Decide whether `visibility="sensitive"` should be enforced as a first-class query gate alongside content-sensitive detection (`memorymaster/security.py:356-363`, `memorymaster/service.py:470-472`).
+- R2.1: make Qdrant return opaque claim IDs only, then rehydrate canonical rows through the same SQLite/Postgres planner used by lexical retrieval. Reject missing, archived, cross-tenant, out-of-scope, unauthorized-visibility, and sensitive rows before ranking.
+- Prove the rehydration contract against both stores, including stale index entries, deleted/orphan IDs, conflicting Qdrant payload fields, and mixed-tenant/scope candidates. Do not remove R1.3 containment before those tests and external authenticated/TLS Qdrant verification pass.
+- Evaluate team semantic MCP separately after the shared planner exists. It remains denied rather than inheriting local-trusted behavior.

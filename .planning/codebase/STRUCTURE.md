@@ -1,4 +1,10 @@
-# STRUCTURE.md — Directory Structure (v3.28.0)
+# STRUCTURE.md — Directory Structure (R4.1 boundary refresh)
+
+The authoritative core is split across `memorymaster/core`, `stores`, `recall`,
+and `govern`. Optional integrations live in the built-in companion namespaces
+`memorymaster/bridges` and the `memorymaster/knowledge/wiki_*` / `vault_*`
+modules. `memorymaster/surfaces` is the composition root. Core-to-companion
+imports are forbidden and pinned by `tests/test_extension_boundaries.py`.
 
 ```
 G:/_OneDrive/OneDrive/Desktop/Py Apps/memorymaster/
@@ -39,7 +45,7 @@ G:/_OneDrive/OneDrive/Desktop/Py Apps/memorymaster/
 │   ├── atlas_contract.py / atlas_claim_extractor.py / action_extractor.py / action_exporters.py
 │   ├── media_processing.py / media_providers.py / connectors/whatsapp.py  # Atlas Inbox evidence
 │   ├── transcript_miner.py / turn_schema.py / session_tracker.py  # Transcript -> claims pipeline
-│   ├── operator.py / operator_queue.py / scheduler.py / webhook.py / plugins.py / retry.py
+│   ├── operator.py / operator_queue.py / scheduler.py / webhook.py / retry.py
 │   ├── scope_utils.py / config.py / policy.py / federated_graphify.py / qmd_bridge.py
 │   ├── setup_hooks.py / config_templates/  # Installer + hook/MD templates for Claude/Codex
 │   └── skill_evolver.py / auto_extractor.py / candidate_dedupe.py / review.py
@@ -65,3 +71,6 @@ Notes
 - Storage and CLI were deliberately split into `_storage_*` / `cli_handlers_*` modules to keep
   every file under 800 LOC.
 - Migration 0005 does not exist; runner.py tolerates gaps and verifies checksums (drift detection).
+- The retired generic plugin registry is not a supported extension surface.
+  Optional integrations use the typed provider protocols and companion package
+  boundaries documented in `docs/architecture.md`.

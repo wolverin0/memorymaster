@@ -83,6 +83,10 @@ def _row(cid: int, text: str) -> dict:
     claim.subject = None
     claim.wiki_article = None
     claim.status = "confirmed"
+    claim.scope = "project"
+    claim.visibility = "public"
+    claim.object_value = None
+    claim.predicate = None
     return {"claim": claim, "lexical_score": 0.5, "confidence_score": 0.5}
 
 

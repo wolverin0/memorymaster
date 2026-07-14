@@ -72,9 +72,12 @@ class _FakeService:
     def query_rows(self, **_: object) -> list[dict]:
         return list(self._rows)
 
+    def _record_accesses(self, *_args, **_kwargs) -> None:
+        return None
+
 
 def _patch_service(monkeypatch: pytest.MonkeyPatch, rows: list[dict]) -> None:
-    def _fake_ctor(db_target: str, workspace_root: Path):  # noqa: ARG001
+    def _fake_ctor(db_target: str, workspace_root: Path, **_kwargs):  # noqa: ARG001
         return _FakeService(rows)
 
     monkeypatch.setattr("memorymaster.core.service.MemoryService", _fake_ctor)
@@ -154,7 +157,7 @@ def _three_row_fixture() -> list[dict]:
     cross_scope_strong = _claim(
         1,
         "recall pipeline tuning notes from another project",
-        scope="project:other",
+        scope="global",
     )
     current_scope_weaker = _claim(
         2,
@@ -164,7 +167,7 @@ def _three_row_fixture() -> list[dict]:
     cross_scope_distractor = _claim(
         3,
         "recall subsystem background reading",
-        scope="project:yetanother",
+        scope="project",
     )
     return [
         {"claim": cross_scope_strong, "lexical_score": 0.95,
@@ -219,7 +222,7 @@ def test_boost_half_promotes_current_scope_claim(
     # Pick weaker/stronger rows whose ratio fits under 1.5x so boost
     # genuinely flips the ordering (0.45 * 1.5 = 0.675 > 0.60).
     rows = [
-        {"claim": _claim(1, "recall pipeline elsewhere", scope="project:other"),
+        {"claim": _claim(1, "recall pipeline elsewhere", scope="global"),
          "lexical_score": 0.60, "freshness_score": 0.0,
          "confidence_score": 0.5, "vector_score": 0.0},
         {"claim": _claim(2, "recall path runs", scope="project:memorymaster"),
@@ -269,7 +272,7 @@ def test_boost_zero_point_one_yields_required_score_margin(
     monkeypatch.setenv("MEMORYMASTER_LEXICAL_BM25", "0")
 
     current_scope_claim = _claim(1, "alpha", scope="project:memorymaster")
-    cross_scope_claim = _claim(2, "alpha", scope="project:other")
+    cross_scope_claim = _claim(2, "alpha", scope="global")
     rows = [
         {"claim": current_scope_claim, "lexical_score": 1.0,
          "freshness_score": 0.0, "confidence_score": 0.5, "vector_score": 0.0},
@@ -288,7 +291,7 @@ def test_boost_zero_point_one_yields_required_score_margin(
     # current-scope claim is listed first in the rendered output.
     out = recall("alpha", db_path=str(tmp_path / "nope.db"), skip_qdrant=True)
     lines = [ln for ln in out.splitlines() if ln.startswith("- ")]
-    assert lines, f"no claims returned: {out!r}"
+    assert len(lines) == 2, f"expected both governed scopes: {out!r}"
     # Both claims have the same text ("alpha") so we can't distinguish by
     # line content alone — assert the count is 2 and the current-scope
     # claim comes first by checking that the _relevance-driven rank

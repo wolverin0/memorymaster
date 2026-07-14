@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timedelta, timezone
 from html import escape
-import importlib.metadata
 import json
 import os
 import subprocess
@@ -21,9 +20,25 @@ from urllib.parse import parse_qs, urlparse
 
 from memorymaster.surfaces import dashboard_auth
 from memorymaster.core.config import get_config
-from memorymaster.govern.review import build_review_queue, queue_to_dicts
-from memorymaster.core.security import is_sensitive_claim
+from memorymaster.govern.review import build_review_queue
 from memorymaster.core.service import MemoryService
+from memorymaster.recall.qdrant_transport import QdrantTransportConfig
+from memorymaster.surfaces.dashboard_commands import (
+    apply_triage_action,
+    control_operator,
+    update_action_proposal_status,
+)
+from memorymaster.surfaces.dashboard_read_models import (
+    action_proposals_payload,
+    audit_payload,
+    claims_payload,
+    conflicts_payload,
+    events_payload,
+    mobile_review_queue_payload,
+    namespaces_payload,
+    review_queue_payload,
+    triage_flags,
+)
 import contextlib
 
 
@@ -570,15 +585,10 @@ def _extract_claims_from_rows(rows_data: Any) -> tuple[list[Any], dict[int, dict
     return claims, scored_by_claim_id
 
 
-def _package_version() -> str | None:
-    try:
-        return importlib.metadata.version("memorymaster")
-    except importlib.metadata.PackageNotFoundError:
-        try:
-            from memorymaster import __version__
-        except Exception:
-            return None
-        return str(__version__)
+def _package_version() -> str:
+    from memorymaster import __version__
+
+    return __version__
 
 
 def _check_dashboard_db(service: Any) -> dict[str, Any]:
@@ -595,27 +605,30 @@ def _check_dashboard_db(service: Any) -> dict[str, Any]:
 
 
 def _qdrant_request_headers() -> dict[str, str]:
-    api_key = os.environ.get("QDRANT_API_KEY")
-    return {"api-key": api_key} if api_key else {}
+    return QdrantTransportConfig.from_env().headers()
 
 
 def _check_qdrant(qdrant_url: str | None) -> dict[str, Any]:
     if not qdrant_url:
         return {"status": "skipped", "reason": "QDRANT_URL not set"}
+    try:
+        transport = QdrantTransportConfig.from_env()
+        transport.validate_url(qdrant_url)
+    except (OSError, RuntimeError, ValueError):
+        return {"status": "fail", "error": "invalid Qdrant transport configuration"}
     base_url = qdrant_url.rstrip("/")
-    headers = _qdrant_request_headers()
     last_error = ""
     for path in ("/healthz", "/collections"):
-        request = urllib.request.Request(f"{base_url}{path}", headers=headers, method="GET")
+        request = transport.request(f"{base_url}{path}", method="GET")
         try:
-            with urllib.request.urlopen(request, timeout=0.5) as response:
+            with transport.open(request, timeout=0.5) as response:
                 if 200 <= int(response.status) < 300:
                     return {"status": "ok", "endpoint": path}
                 last_error = f"HTTP {response.status} from {path}"
         except urllib.error.HTTPError as exc:
             last_error = f"HTTP {exc.code} from {path}"
-        except Exception as exc:
-            last_error = str(exc)
+        except Exception:
+            last_error = f"Qdrant request failed for {path}"
     return {"status": "fail", "error": last_error or "Qdrant probe failed"}
 
 
@@ -907,7 +920,7 @@ main{max-width:1400px;margin:0 auto;padding:20px}
 .header{display:flex;align-items:center;gap:16px;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid #1e293b}
 .header h1{margin:0;font-size:1.5rem;color:#f8fafc;letter-spacing:-0.02em}
 .header .logo{width:36px;height:36px;background:linear-gradient(135deg,#3b82f6,#8b5cf6);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:bold;color:#fff}
-.header .subtitle{color:#64748b;font-size:.85rem;margin-top:2px}
+.header .subtitle{color:#94a3b8;font-size:.85rem;margin-top:2px}
 .header .version{margin-left:auto;background:#1e293b;color:#94a3b8;padding:4px 10px;border-radius:20px;font-size:.75rem;font-family:ui-monospace,monospace}
 .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
 section{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:16px;transition:border-color .2s;min-width:0}
@@ -916,9 +929,12 @@ section:hover{border-color:#475569}
 .section-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
 .section-head .icon{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px}
 .section-head h2{margin:0;font-size:.95rem;color:#f1f5f9;font-weight:600}
-.section-head .desc{color:#64748b;font-size:.78rem;margin-top:1px}
-.muted{color:#64748b;font-size:.85rem}
-.empty{color:#475569;font-style:italic;padding:12px;text-align:center}
+.section-head .desc{color:#94a3b8;font-size:.78rem;margin-top:1px}
+.muted{color:#94a3b8;font-size:.85rem}
+.empty{color:#94a3b8;font-style:italic;padding:12px;text-align:center}
+.error-state{color:#fecaca;background:#450a0a;border:1px solid #dc2626;padding:10px;border-radius:6px}
+.pending{opacity:.65}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.85rem}
 .scroll{max-height:300px;overflow:auto;border:1px solid #334155;border-radius:8px}
 table{width:100%;border-collapse:collapse;font-size:.85rem;table-layout:fixed}
@@ -929,6 +945,7 @@ td{color:#cbd5e1}
 tr:hover td{background:rgba(59,130,246,.06)}
 button{border:1px solid #475569;background:#1e293b;color:#e2e8f0;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:.8rem;transition:all .15s}
 button:hover{background:#334155;border-color:#64748b}
+button:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}
 .primary{background:#3b82f6;color:#fff;border-color:#2563eb}
 .primary:hover{background:#2563eb}
 .danger{background:#ef4444;color:#fff;border-color:#dc2626}
@@ -936,7 +953,7 @@ button:hover{background:#334155;border-color:#64748b}
 pre.stream{margin:0;max-height:220px;overflow:auto;background:#020617;color:#22d3ee;padding:12px;border-radius:8px;font-size:.8rem;line-height:1.5;border:1px solid #0e7490}
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
 .toolbar input,.toolbar select{padding:6px 10px;border:1px solid #475569;border-radius:8px;background:#0f172a;color:#e2e8f0;font-size:.82rem}
-.toolbar input::placeholder{color:#475569}
+.toolbar input::placeholder{color:#94a3b8}
 .toolbar input:focus,.toolbar select:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.2)}
 .badge{display:inline-block;border-radius:12px;padding:2px 8px;font-size:.72rem;font-weight:500;letter-spacing:.02em}
 .badge-candidate{background:#1e3a5f;color:#60a5fa;border:1px solid #2563eb}
@@ -944,14 +961,15 @@ pre.stream{margin:0;max-height:220px;overflow:auto;background:#020617;color:#22d
 .badge-stale{background:#451a03;color:#fb923c;border:1px solid #d97706}
 .badge-conflicted{background:#450a0a;color:#f87171;border:1px solid #dc2626}
 .badge-superseded{background:#312e81;color:#a78bfa;border:1px solid #7c3aed}
-.badge-archived{background:#1e293b;color:#64748b;border:1px solid #475569}
+.badge-archived{background:#1e293b;color:#94a3b8;border:1px solid #475569}
+span[style="color:#64748b"]{color:#94a3b8!important}
 .card{border:1px solid #334155;border-radius:8px;margin:8px 0;background:#1e293b}
 .card-head{padding:8px 10px;border-bottom:1px solid #2d3a4e;background:rgba(15,23,42,.4);border-radius:8px 8px 0 0}
 .card-row{padding:8px 10px;border-bottom:1px solid #273348}
 .stat-row{display:flex;gap:16px;flex-wrap:wrap;padding:8px 0}
 .stat-item{display:flex;flex-direction:column;gap:2px}
 .stat-item .stat-value{font-size:1.1rem;font-weight:600;color:#f8fafc;font-family:ui-monospace,monospace}
-.stat-item .stat-label{font-size:.7rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em}
+.stat-item .stat-label{font-size:.7rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em}
 .icon-blue{background:rgba(59,130,246,.15);color:#60a5fa}
 .icon-green{background:rgba(34,197,94,.15);color:#4ade80}
 .icon-amber{background:rgba(245,158,11,.15);color:#fbbf24}
@@ -964,17 +982,19 @@ pre.stream{margin:0;max-height:220px;overflow:auto;background:#020617;color:#22d
 .icon-indigo{background:rgba(99,102,241,.15);color:#818cf8}
 .icon-lime{background:rgba(132,204,22,.15);color:#a3e635}
 input[type="text"],input:not([type]){background:#0f172a;border:1px solid #475569;color:#e2e8f0;border-radius:8px;padding:6px 10px}
+.conflict-compare{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}
+@media(max-width:800px){.grid,.conflict-compare{grid-template-columns:1fr}main{padding:12px}.toolbar{align-items:stretch}.toolbar input,.toolbar select,.toolbar button{width:100%!important}.scroll{max-height:420px}}
 </style></head><body><main>
 <div class="header">
 <div class="logo">M</div>
 <div><h1>MemoryMaster</h1><div class="subtitle">AI Agent Memory Management Dashboard</div></div>
-<span class="version">v1.0.0</span>
+<span class="version">v__MEMORYMASTER_VERSION__</span>
 </div>
 <div class="grid">
 <section>
 <div class="section-head"><div class="icon icon-green">&#9654;</div><div><h2>Operator</h2><div class="desc">Start or stop the memory operator process</div></div></div>
-<div class="toolbar"><input id="op-inbox" value="artifacts/operator/operator_inbox.jsonl" style="flex:1"> <button id="op-start" class="primary">&#9654; Start</button> <button id="op-stop" class="danger">&#9632; Stop</button></div>
-<div id="op-status" class="muted" style="margin-top:6px">Checking status...</div>
+<div class="toolbar"><input id="op-inbox" aria-label="Operator inbox JSONL path" value="artifacts/operator/operator_inbox.jsonl" style="flex:1"> <button id="op-start" class="primary">&#9654; Start</button> <button id="op-stop" class="danger">&#9632; Stop</button></div>
+<div id="op-status" class="muted" role="status" aria-live="polite" style="margin-top:6px">Checking status...</div>
 </section>
 <section>
 <div class="section-head"><div class="icon icon-cyan">&#128200;</div><div><h2>System Health</h2><div class="desc">Operator metrics, latency, event counters</div></div></div>
@@ -994,23 +1014,24 @@ input[type="text"],input:not([type]){background:#0f172a;border:1px solid #475569
 </section>
 <section>
 <div class="section-head"><div class="icon icon-purple">&#128337;</div><div><h2>Timeline</h2><div class="desc">Event feed — transitions, validations, policy decisions</div></div></div>
-<div class="toolbar"><input id="timeline-search" placeholder="Filter events..."> <select id="timeline-event-filter"><option value="">All types</option><option value="transition">Transitions</option><option value="validator">Validators</option><option value="deterministic_validator">Deterministic</option><option value="policy_decision">Policy</option><option value="audit">Audit</option></select> <select id="timeline-group"><option value="claim">Group by claim</option><option value="event_type">Group by type</option></select></div><div id="timeline-meta" class="muted"></div><div id="timeline-list" class="scroll"><div class="empty">No events recorded yet</div></div>
+<div class="toolbar"><input id="timeline-search" aria-label="Filter timeline events" placeholder="Filter events..."> <select id="timeline-event-filter" aria-label="Timeline event type"><option value="">All types</option><option value="transition">Transitions</option><option value="validator">Validators</option><option value="deterministic_validator">Deterministic</option><option value="policy_decision">Policy</option><option value="audit">Audit</option></select> <select id="timeline-group" aria-label="Timeline grouping"><option value="claim">Group by claim</option><option value="event_type">Group by type</option></select></div><div id="timeline-meta" class="muted" role="status" aria-live="polite"></div><div id="timeline-list" class="scroll"><div class="empty">No events recorded yet</div></div>
 </section>
 <section>
 <div class="section-head"><div class="icon icon-red">&#9888;</div><div><h2>Conflicts</h2><div class="desc">Claims that contradict each other — side-by-side comparison</div></div></div>
-<div class="toolbar"><input id="conflicts-search" placeholder="Search conflicts..."> <label class="muted" style="display:flex;align-items:center;gap:4px"><input id="conflicts-include-stale" type="checkbox"> Include stale</label> <button id="conflicts-refresh">Refresh</button></div><div id="conflicts-meta" class="muted"></div><div id="conflicts-cards" class="scroll"><div class="empty">No conflicts detected</div></div>
+<div class="toolbar"><input id="conflicts-search" aria-label="Search conflicts" placeholder="Search conflicts..."> <label class="muted" style="display:flex;align-items:center;gap:4px"><input id="conflicts-include-stale" aria-label="Include stale conflicts" type="checkbox"> Include stale</label> <button id="conflicts-refresh">Refresh</button></div><div id="conflicts-meta" class="muted" role="status" aria-live="polite"></div><div id="conflicts-cards" class="scroll"><div class="empty">No conflicts detected</div></div>
 </section>
 <section class="wide">
 <div class="section-head"><div class="icon icon-amber">&#128221;</div><div><h2>Review Queue</h2><div class="desc">Stale or flagged claims that need human review</div></div></div>
+<div id="review-status" class="muted" role="status" aria-live="polite"></div>
 <div class="scroll"><table><thead><tr><th>Claim</th><th>Status</th><th>Reason</th><th>Priority</th><th>Actions</th></tr></thead><tbody id="stale-body"><tr><td colspan="5" class="empty">Nothing to review</td></tr></tbody></table></div>
 </section>
 <section class="wide">
 <div class="section-head"><div class="icon icon-teal">&#128269;</div><div><h2>Search</h2><div class="desc">Query claims using hybrid retrieval (lexical + vector + freshness)</div></div></div>
-<div class="toolbar"><input id="retrieval-query" placeholder="What are you looking for?" style="flex:1"> <select id="retrieval-mode"><option value="hybrid">Hybrid</option><option value="legacy">Legacy</option></select> <input id="retrieval-scope" placeholder="Scopes (optional)" style="width:140px"> <button id="retrieval-run" class="primary">&#128269; Search</button></div><div id="retrieval-meta" class="muted"></div><div class="scroll"><table><thead><tr><th>ID</th><th>Subject / Predicate / Value</th><th>Status</th><th>Annotation</th><th>Score</th><th>Breakdown</th></tr></thead><tbody id="retrieval-body"><tr><td colspan="6" class="empty">Enter a query and click Search</td></tr></tbody></table></div>
+<div class="toolbar"><input id="retrieval-query" aria-label="Memory search query" placeholder="What are you looking for?" style="flex:1"> <select id="retrieval-mode" aria-label="Memory search mode"><option value="hybrid">Hybrid</option><option value="legacy">Legacy</option></select> <input id="retrieval-scope" aria-label="Memory search scopes" placeholder="Scopes (optional)" style="width:140px"> <button id="retrieval-run" class="primary">&#128269; Search</button></div><div id="retrieval-meta" class="muted" role="status" aria-live="polite"></div><div class="scroll"><table><thead><tr><th>ID</th><th>Subject / Predicate / Value</th><th>Status</th><th>Annotation</th><th>Score</th><th>Breakdown</th></tr></thead><tbody id="retrieval-body"><tr><td colspan="6" class="empty">Enter a query and click Search</td></tr></tbody></table></div>
 </section>
 <section class="wide">
 <div class="section-head"><div class="icon icon-teal">&#128300;</div><div><h2>Recall Analysis</h2><div class="desc">Explain WHY each claim ranked where it did — per-stage score attribution + active retrieval weights (read-only)</div></div></div>
-<div class="toolbar"><input id="recall-query" placeholder="Query to analyze ranking..." style="flex:1"> <select id="recall-mode"><option value="hybrid">Hybrid</option><option value="legacy">Legacy</option></select> <input id="recall-scope" placeholder="Scopes (optional)" style="width:140px"> <button id="recall-run" class="primary">&#128300; Analyze</button></div><div id="recall-meta" class="muted"></div><div id="recall-weights" class="muted" style="font-size:.8rem;margin:4px 0"></div><div class="scroll"><table><thead><tr><th>ID</th><th>Text</th><th>Status</th><th>Tier</th><th>Score</th><th>Lex / Conf / Fresh / Vec</th></tr></thead><tbody id="recall-body"><tr><td colspan="6" class="empty">Enter a query and click Analyze</td></tr></tbody></table></div>
+<div class="toolbar"><input id="recall-query" aria-label="Recall analysis query" placeholder="Query to analyze ranking..." style="flex:1"> <select id="recall-mode" aria-label="Recall analysis mode"><option value="hybrid">Hybrid</option><option value="legacy">Legacy</option></select> <input id="recall-scope" aria-label="Recall analysis scopes" placeholder="Scopes (optional)" style="width:140px"> <button id="recall-run" class="primary">&#128300; Analyze</button></div><div id="recall-meta" class="muted" role="status" aria-live="polite"></div><div id="recall-weights" class="muted" style="font-size:.8rem;margin:4px 0"></div><div class="scroll"><table><thead><tr><th>ID</th><th>Text</th><th>Status</th><th>Tier</th><th>Score</th><th>Lex / Conf / Fresh / Vec</th></tr></thead><tbody id="recall-body"><tr><td colspan="6" class="empty">Enter a query and click Analyze</td></tr></tbody></table></div>
 </section>
 <section>
 <div class="section-head"><div class="icon icon-slate">&#128274;</div><div><h2>Audit Log</h2><div class="desc">Security and governance audit trail</div></div></div>
@@ -1038,6 +1059,12 @@ const esc=(v)=>String(v==null?'':v).replaceAll('&','&amp;').replaceAll('<','&lt;
 const statusBadge=(s)=>{const v=String(s||'unknown').toLowerCase();const cls=({candidate:'badge-candidate',stale:'badge-stale',conflicted:'badge-conflicted',confirmed:'badge-confirmed',archived:'badge-archived',superseded:'badge-superseded'})[v]||'';return '<span class="badge '+cls+'">'+esc(v)+'</span>';};
 const f3=(v)=>typeof v==='number'?v.toFixed(3):'-';
 const tuple=(c)=>'<span class="mono">'+esc(c.subject||'-')+' / '+esc(c.predicate||'-')+' / '+esc(c.object_value||c.text||'-')+'</span>';
+const citationList=(c)=>{const rows=Array.isArray(c&&c.citations)?c.citations:[];return rows.length?'<ul>'+rows.map(x=>'<li><span class="mono">'+esc(x.source||'source')+'</span> '+esc(x.locator||'')+(x.excerpt?(' &#8212; '+esc(x.excerpt)):'')+'</li>').join('')+'</ul>':'<div class="muted">No citations recorded</div>';};
+const governanceEvidence=(c)=>c?'<details><summary>Evidence &amp; lineage</summary><div><strong>Citations</strong>'+citationList(c)+'<a href="/claim/'+encodeURIComponent(c.id)+'/lineage" target="_blank" rel="noopener">Inspect claim lineage</a></div></details>':'';
+const proposalEvidence=(p)=>{if(!p)return '';const reasons=Array.isArray(p.reasons)?p.reasons:[];const rationale=reasons.length?'<ul>'+reasons.map(r=>'<li><span class="mono">'+esc(r.code||'reason')+'</span>: '+esc(r.message||r.details||r.rationale||'-')+'</li>').join('')+'</ul>':'<div class="muted">No rationale recorded</div>';const transition=p.proposed_status?('status becomes '+esc(p.proposed_status)):('decision '+esc(p.proposal_decision||'review'));const replacement=p.replaced_by_claim_id?(' and is replaced by claim #'+esc(p.replaced_by_claim_id)):'';return '<details open><summary>Steward proposal</summary><div><strong>Rationale</strong>'+rationale+'<div><strong>Proposed consequence:</strong> '+transition+replacement+'</div></div></details>';};
+const actionConsequences=(hasProposal)=>'<details><summary>Action consequences</summary><div class="muted">Pin keeps the claim prominent. Reviewed and Suppress remove it from this queue.'+(hasProposal?' Approve applies the displayed steward proposal when valid; Reject records a governance decision without applying it.':' No steward proposal is pending, so approval controls are unavailable.')+'</div></details>';
+const reviewStatus=(message,isError=false)=>{const box=document.getElementById('review-status');box.textContent=message||'';box.className=isError?'error-state':'muted';};
+function showPanelFailure(id,label,error,colspan=0){const node=document.getElementById(id);if(!node)return;const message='Could not load '+label+': '+String((error&&error.message)||error||'unknown error');const retry='<button type="button" onclick="location.reload()">Retry</button>';node.innerHTML=colspan?'<tr><td colspan="'+esc(colspan)+'"><div class="error-state" role="alert">'+esc(message)+' '+retry+'</div></td></tr>':'<div class="error-state" role="alert">'+esc(message)+' '+retry+'</div>';}
 async function jget(p){const r=await fetch(p);const d=await r.json();if(!r.ok||d.ok===false)throw new Error((d&&d.error)||('HTTP '+r.status));return d;}
 async function jpost(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});const d=await r.json();if(!r.ok||d.ok===false)throw new Error((d&&d.error)||('HTTP '+r.status));return d;}
 const timelineState={rows:[],search:'',eventType:'',group:'claim'};
@@ -1045,13 +1072,13 @@ const conflictState={rows:[],search:''};
 const topMap=(obj,limit)=>Object.entries(obj||{}).sort((a,b)=>Number(b[1]||0)-Number(a[1]||0)).slice(0,limit);
 const actor=(e)=>{const p=e&&typeof e.payload==='object'?e.payload:null;const src=p&&p.source?String(p.source).trim():'';if(src)return src;if(String(e.event_type||'')==='policy_decision')return 'policy';if(String(e.event_type||'')==='validator'||String(e.event_type||'')==='deterministic_validator')return 'validator';return 'system';};
 const countPills=(obj,limit)=>{const rows=topMap(obj,limit);return rows.length?rows.map(([k,v])=>'<span class="mono">'+esc(k)+'='+esc(v)+'</span>').join(' | '):'<span class="empty" style="display:inline;padding:0">none</span>';};
-function fillClaims(d){const rows=Array.isArray(d.claims)?d.claims:[];const b=document.getElementById('claims-body');if(!rows.length){b.innerHTML='<tr><td colspan="6" class="empty">No claims ingested yet</td></tr>';return;}b.innerHTML=rows.map(c=>'<tr><td class="mono">'+esc(c.id)+'</td><td>'+statusBadge(c.status)+'</td><td class="wrap">'+tuple(c)+'</td><td class="mono">'+esc(f3(c.confidence))+'</td><td class="mono">'+esc((c.citations||[]).length)+'</td><td class="mono">'+esc(c.updated_at||'-')+'</td></tr>').join('');}
+function fillClaims(d){const rows=Array.isArray(d.claims)?d.claims:[];const b=document.getElementById('claims-body');if(!rows.length){b.innerHTML='<tr><td colspan="6" class="empty">No claims ingested yet</td></tr>';return;}b.innerHTML=rows.map(c=>'<tr><td class="mono"><a href="/claim/'+encodeURIComponent(c.id)+'/lineage" target="_blank" rel="noopener">'+esc(c.id)+'</a></td><td>'+statusBadge(c.status)+'</td><td class="wrap">'+tuple(c)+governanceEvidence(c)+'</td><td class="mono">'+esc(f3(c.confidence))+'</td><td class="mono">'+esc((c.citations||[]).length)+'</td><td class="mono">'+esc(c.updated_at||'-')+'</td></tr>').join('');}
 function renderTimeline(){const h=document.getElementById('timeline-list');const meta=document.getElementById('timeline-meta');const icon=(t)=>({ingest:'&#128229;',extractor:'&#128268;',validator:'&#9989;',deterministic_validator:'&#128170;',transition:'&#128260;',policy_decision:'&#9878;',audit:'&#128274;',compaction_run:'&#128465;',supersession:'&#128260;',confidence:'&#128200;'})[String(t||'')]||'&#128312;';const q=String(timelineState.search||'').toLowerCase().trim();const eventType=String(timelineState.eventType||'').trim();const rows=timelineState.rows.filter(e=>{if(eventType&&String(e.event_type||'')!==eventType)return false;if(!q)return true;const hay=[e.event_type,e.details,e.from_status,e.to_status,e.claim_id,actor(e),e.created_at].map(v=>String(v||'').toLowerCase()).join(' ');return hay.includes(q);});meta.textContent=rows.length+' of '+timelineState.rows.length+' events';if(!rows.length){h.innerHTML='<div class="empty">No matching events</div>';return;}const byDay={};rows.forEach(e=>{const day=String(e.created_at||'').slice(0,10)||'unknown';if(!byDay[day])byDay[day]=[];byDay[day].push(e);});h.innerHTML=Object.keys(byDay).sort().reverse().map(day=>{const buckets={};byDay[day].forEach(e=>{const key=(timelineState.group==='event_type')?('event:'+String(e.event_type||'event')):(e.claim_id?('claim:'+String(e.claim_id)):('event:'+String(e.event_type||'event')));if(!buckets[key])buckets[key]=[];buckets[key].push(e);});const bucketHtml=Object.keys(buckets).sort().map(key=>{const evs=buckets[key];return '<div class="card"><div class="card-head"><span class="mono">'+esc(key)+'</span> <span class="muted">('+esc(evs.length)+' events)</span></div>'+evs.map(e=>{const a=actor(e);return '<div class="card-row"><div class="mono muted" style="font-size:.75rem">'+esc(e.created_at||'-')+'</div><div>'+icon(e.event_type)+' <strong>'+esc(e.event_type||'event')+'</strong> '+statusBadge(e.to_status||e.event_type)+' <span class="muted">by '+esc(a)+'</span> '+(e.claim_id?('<span class="muted">&#183; claim #'+esc(e.claim_id)+'</span>'):'')+'</div>'+(e.from_status&&e.to_status?'<div class="muted" style="font-size:.8rem">'+esc(e.from_status)+' &#8594; '+esc(e.to_status)+'</div>':'')+(e.details?('<div class="muted" style="font-size:.8rem">'+esc(e.details)+'</div>'):'')+'</div>';}).join('')+'</div>';}).join('');return '<div><div style="position:sticky;top:0;background:#0f172a;padding:6px 10px;border-bottom:1px solid #334155;z-index:1"><strong style="color:#f8fafc">'+esc(day)+'</strong> <span class="muted">('+esc(byDay[day].length)+' events)</span></div>'+bucketHtml+'</div>';}).join('');}
 function fillTimeline(d){timelineState.rows=Array.isArray(d.timeline)?d.timeline:[];renderTimeline();}
-function renderConflicts(){const h=document.getElementById('conflicts-cards');const meta=document.getElementById('conflicts-meta');const q=String(conflictState.search||'').toLowerCase().trim();const rows=conflictState.rows.filter(g=>{if(!q)return true;const claims=Array.isArray(g.claims)?g.claims:[];const claimText=claims.map(c=>[c.id,c.status,c.subject,c.predicate,c.object_value,c.text].join(' ')).join(' ').toLowerCase();return ([g.subject,g.predicate,g.scope].join(' ').toLowerCase()+' '+claimText).includes(q);});meta.textContent=rows.length+' of '+conflictState.rows.length+' conflict groups';h.innerHTML=rows.map(g=>{const cs=Array.isArray(g.claims)?g.claims:[];const n=cs[0]||null;const o=cs.length>1?cs[1]:null;const nv=n?(n.object_value||n.text||'-'):'-';const ov=o?(o.object_value||o.text||'-'):'-';const nc=n?Number(n.confidence||0):null;const oc=o?Number(o.confidence||0):null;const nz=n?((n.citations||[]).length):0;const oz=o?((o.citations||[]).length):0;const confDelta=(nc!=null&&oc!=null)?(nc-oc):null;const citeDelta=(n&&o)?(nz-oz):null;const valueChanged=(String(nv)!==String(ov));const delta=(v)=>v==null?'-':((v>=0?'+':'')+Number(v).toFixed(3));const cDelta=(v)=>v==null?'-':((v>=0?'+':'')+String(v));const row=(label,a,b,chg)=>'<tr><td>'+esc(label)+'</td><td class="mono">'+esc(a)+'</td><td class="mono">'+esc(b)+'</td><td class="mono">'+esc(chg)+'</td></tr>';const statusCounts={};cs.forEach(c=>{const k=String(c.status||'unknown');statusCounts[k]=(statusCounts[k]||0)+1;});return '<div style="padding:10px;border-bottom:1px solid #334155"><div class="mono" style="color:#f8fafc"><strong>'+esc(g.subject||'-')+' / '+esc(g.predicate||'-')+'</strong></div><div class="muted">'+esc(cs.length)+' claims &#183; scope: '+esc(g.scope||'project')+' &#183; '+countPills(statusCounts,4)+'</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><div style="border:1px solid #334155;border-radius:8px;padding:8px;background:#0f172a"><div><strong style="color:#4ade80">Newer</strong> '+(n?statusBadge(n.status):'')+' <span class="mono muted">#'+esc(n?n.id:'-')+'</span></div><div class="mono" style="color:#f8fafc;margin:4px 0">'+esc(nv)+'</div><div class="muted" style="font-size:.78rem">confidence: '+esc(nc==null?'-':nc.toFixed(3))+' &#183; citations: '+esc(nz)+'</div></div><div style="border:1px solid #334155;border-radius:8px;padding:8px;background:#0f172a"><div><strong style="color:#f87171">Older</strong> '+(o?statusBadge(o.status):'')+' <span class="mono muted">#'+esc(o?o.id:'-')+'</span></div><div class="mono" style="color:#f8fafc;margin:4px 0">'+esc(ov)+'</div><div class="muted" style="font-size:.78rem">confidence: '+esc(oc==null?'-':oc.toFixed(3))+' &#183; citations: '+esc(oz)+'</div></div></div><div style="margin-top:8px"><table><thead><tr><th>Field</th><th>Newer</th><th>Older</th><th>Delta</th></tr></thead><tbody>'+row('value',nv,ov,valueChanged?'CHANGED':'same')+row('confidence',nc==null?'-':nc.toFixed(3),oc==null?'-':oc.toFixed(3),delta(confDelta))+row('citations',String(nz),String(oz),cDelta(citeDelta))+row('updated_at',n&&n.updated_at?n.updated_at:'-',o&&o.updated_at?o.updated_at:'-',(n&&o&&String(n.updated_at)!==String(o.updated_at))?'changed':'same')+'</tbody></table></div></div>';}).join('')||'<div class="empty">No conflicts detected</div>';}
+function renderConflicts(){const h=document.getElementById('conflicts-cards');const meta=document.getElementById('conflicts-meta');const q=String(conflictState.search||'').toLowerCase().trim();const rows=conflictState.rows.filter(g=>{if(!q)return true;const claims=Array.isArray(g.claims)?g.claims:[];const claimText=claims.map(c=>[c.id,c.status,c.subject,c.predicate,c.object_value,c.text].join(' ')).join(' ').toLowerCase();return ([g.subject,g.predicate,g.scope].join(' ').toLowerCase()+' '+claimText).includes(q);});meta.textContent=rows.length+' of '+conflictState.rows.length+' conflict groups';h.innerHTML=rows.map(g=>{const cs=Array.isArray(g.claims)?g.claims:[];const n=cs[0]||null;const o=cs.length>1?cs[1]:null;const nv=n?(n.object_value||n.text||'-'):'-';const ov=o?(o.object_value||o.text||'-'):'-';const nc=n?Number(n.confidence||0):null;const oc=o?Number(o.confidence||0):null;const nz=n?((n.citations||[]).length):0;const oz=o?((o.citations||[]).length):0;const confDelta=(nc!=null&&oc!=null)?(nc-oc):null;const citeDelta=(n&&o)?(nz-oz):null;const valueChanged=(String(nv)!==String(ov));const delta=(v)=>v==null?'-':((v>=0?'+':'')+Number(v).toFixed(3));const cDelta=(v)=>v==null?'-':((v>=0?'+':'')+String(v));const row=(label,a,b,chg)=>'<tr><td>'+esc(label)+'</td><td class="mono">'+esc(a)+'</td><td class="mono">'+esc(b)+'</td><td class="mono">'+esc(chg)+'</td></tr>';const statusCounts={};cs.forEach(c=>{const k=String(c.status||'unknown');statusCounts[k]=(statusCounts[k]||0)+1;});const card=(label,c,value,confidence,cites,color)=>'<div style="border:1px solid #334155;border-radius:8px;padding:8px;background:#0f172a"><div><strong style="color:'+color+'">'+label+'</strong> '+(c?statusBadge(c.status):'')+' <span class="mono muted">#'+esc(c?c.id:'-')+'</span></div><div class="mono" style="color:#f8fafc;margin:4px 0">'+esc(value)+'</div><div class="muted" style="font-size:.78rem">confidence: '+esc(confidence==null?'-':confidence.toFixed(3))+' &#183; citations: '+esc(cites)+'</div>'+governanceEvidence(c)+'</div>';return '<div style="padding:10px;border-bottom:1px solid #334155"><div class="mono" style="color:#f8fafc"><strong>'+esc(g.subject||'-')+' / '+esc(g.predicate||'-')+'</strong></div><div class="muted">'+esc(cs.length)+' claims &#183; scope: '+esc(g.scope||'project')+' &#183; '+countPills(statusCounts,4)+'</div><div class="conflict-compare">'+card('Newer',n,nv,nc,nz,'#4ade80')+card('Older',o,ov,oc,oz,'#f87171')+'</div><div style="margin-top:8px"><table><thead><tr><th>Field</th><th>Newer</th><th>Older</th><th>Delta</th></tr></thead><tbody>'+row('value',nv,ov,valueChanged?'CHANGED':'same')+row('confidence',nc==null?'-':nc.toFixed(3),oc==null?'-':oc.toFixed(3),delta(confDelta))+row('citations',String(nz),String(oz),cDelta(citeDelta))+row('updated_at',n&&n.updated_at?n.updated_at:'-',o&&o.updated_at?o.updated_at:'-',(n&&o&&String(n.updated_at)!==String(o.updated_at))?'changed':'same')+'</tbody></table></div></div>';}).join('')||'<div class="empty">No conflicts detected</div>';}
 function fillConflicts(d){conflictState.rows=Array.isArray(d.groups)?d.groups:[];renderConflicts();}
 async function refreshConflicts(){const includeStale=document.getElementById('conflicts-include-stale').checked?'1':'0';fillConflicts(await jget('/api/conflicts?limit=20&include_stale='+includeStale));}
-function fillQueue(d){const rows=Array.isArray(d.items)?d.items:[];const b=document.getElementById('stale-body');if(!rows.length){b.innerHTML='<tr><td colspan="5" class="empty">Nothing to review</td></tr>';return;}b.innerHTML=rows.map(i=>'<tr data-claim-id="'+esc(i.claim_id)+'"><td class="mono">'+esc(i.claim_id)+'</td><td>'+statusBadge(i.status)+'</td><td>'+esc(i.reason||'-')+'</td><td class="mono">'+esc(f3(i.priority))+'</td><td style="display:flex;gap:4px;flex-wrap:wrap"><button data-action="pin">&#128204; Pin</button> <button data-action="mark_reviewed">&#9989; Reviewed</button> <button data-action="suppress">&#128683; Suppress</button> <button data-action="approve_proposal" class="primary">&#9989; Approve</button> <button data-action="reject_proposal" class="danger">&#10060; Reject</button></td></tr>').join('');}
+function fillQueue(d){const rows=Array.isArray(d.items)?d.items:[];const b=document.getElementById('stale-body');if(!rows.length){b.innerHTML='<tr><td colspan="5" class="empty">Nothing to review</td></tr>';return;}b.innerHTML=rows.map(i=>{const p=i.proposal||null;const proposalId=p?Number(p.proposal_event_id||0):0;const proposalActions=proposalId>0?'<button data-action="approve_proposal" data-proposal-event-id="'+esc(proposalId)+'" class="primary" aria-label="Approve proposal for claim '+esc(i.claim_id)+'">&#9989; Approve</button> <button data-action="reject_proposal" data-proposal-event-id="'+esc(proposalId)+'" class="danger" aria-label="Reject proposal for claim '+esc(i.claim_id)+'">&#10060; Reject</button>':'';return '<tr data-claim-id="'+esc(i.claim_id)+'"><td class="mono"><a href="/claim/'+encodeURIComponent(i.claim_id)+'/lineage" target="_blank" rel="noopener">'+esc(i.claim_id)+'</a></td><td>'+statusBadge(i.status)+'</td><td class="wrap">'+esc(i.reason||'-')+proposalEvidence(p)+'</td><td class="mono">'+esc(f3(i.priority))+'</td><td style="display:flex;gap:4px;flex-wrap:wrap"><button data-action="pin" aria-label="Pin claim '+esc(i.claim_id)+'">&#128204; Pin</button> <button data-action="mark_reviewed" aria-label="Mark claim '+esc(i.claim_id)+' reviewed">&#9989; Reviewed</button> <button data-action="suppress" aria-label="Suppress claim '+esc(i.claim_id)+'">&#128683; Suppress</button> '+proposalActions+actionConsequences(Boolean(p))+'</td></tr>';}).join('');}
 function fillRetr(d){const rows=Array.isArray(d.rows_data)?d.rows_data:[];const b=document.getElementById('retrieval-body');const meta=document.getElementById('retrieval-meta');const scopes=Array.isArray(d.scope_allowlist)?d.scope_allowlist:[];const scopeText=scopes.length?scopes.join(', '):'all';meta.textContent='Mode: '+(d.mode||'-')+' &#183; Scopes: '+scopeText+' &#183; '+rows.length+' results';b.innerHTML=rows.map(r=>{const c=r.claim||{};const s=r.status||c.status||'unknown';const ann=(r.annotation||'-');return '<tr><td class="mono">'+esc(c.id)+'</td><td>'+tuple(c)+'</td><td>'+statusBadge(s)+'</td><td>'+esc(ann)+'</td><td class="mono">'+esc(f3(r.score))+'</td><td class="mono" style="font-size:.75rem">'+esc(f3(r.lexical_score))+' / '+esc(f3(r.confidence_score))+' / '+esc(f3(r.freshness_score))+' / '+esc(f3(r.vector_score))+'</td></tr>';}).join('')||'<tr><td colspan="6" class="empty">No results found</td></tr>';}
 function fillRecallAnalysis(d){const rows=Array.isArray(d.results)?d.results:[];const meta=document.getElementById('recall-meta');const wbox=document.getElementById('recall-weights');meta.textContent='Mode: '+(d.mode||'-')+(d.profile?(' &#183; Profile: '+d.profile):'')+' &#183; '+rows.length+' results';const w=(d.weights&&d.weights.retrieval_weights)||null;wbox.innerHTML=w?('Active weights &#8212; lexical: '+esc(f3(w.lexical))+' &#183; confidence: '+esc(f3(w.confidence))+' &#183; freshness: '+esc(f3(w.freshness))+' &#183; vector: '+esc(f3(w.vector))):'';const b=document.getElementById('recall-body');b.innerHTML=rows.map(r=>{const id=r.human_id||r.claim_id;const pin=r.pinned?' &#128204;':'';return '<tr><td class="mono">'+esc(id)+pin+'</td><td class="wrap">'+esc(r.text||'-')+'</td><td>'+statusBadge(r.status)+'</td><td class="mono">'+esc(r.tier||'working')+'</td><td class="mono">'+esc(f3(r.score))+'</td><td class="mono" style="font-size:.75rem">'+esc(f3(r.lexical_score))+' / '+esc(f3(r.confidence_score))+' / '+esc(f3(r.freshness_score))+' / '+esc(f3(r.vector_score))+'</td></tr>';}).join('')||'<tr><td colspan="6" class="empty">No results found</td></tr>';}
 function fillAudit(d){const rows=Array.isArray(d.events)?d.events:[];document.getElementById('audit-body').innerHTML=rows.map(e=>'<tr><td class="mono" style="font-size:.75rem">'+esc(e.created_at||'-')+'</td><td>'+esc(e.event_type||'-')+'</td><td class="mono">'+esc(e.claim_id||'-')+'</td><td>'+esc(e.details||'-')+'</td></tr>').join('')||'<tr><td colspan="4" class="empty">No audit events</td></tr>';}
@@ -1064,7 +1091,7 @@ function fillOp(d){document.getElementById('op-status').innerHTML=d.running?'<sp
 function fillIntegrity(d){const x=d.integrity||{};const box=document.getElementById('integrity-box');if(x.available===false){box.innerHTML='<div class="empty">'+esc(x.reason||'unavailable')+'</div>';return;}const sp=x.spool||{};const qd=x.qdrant||{};const lc=x.last_cycle||null;const fmtB=(v)=>v==null?'-':(v>=1048576?(v/1048576).toFixed(1)+' MB':String(v)+' B');const nv=(v)=>v==null?'-':String(v);box.innerHTML='<div style="padding:10px"><div class="stat-row"><div class="stat-item"><span class="stat-value">'+esc(fmtB(x.wal_bytes))+'</span><span class="stat-label">WAL size</span></div><div class="stat-item"><span class="stat-value">'+esc(nv(sp.depth_lines))+'</span><span class="stat-label">Spool lines</span></div><div class="stat-item"><span class="stat-value">'+esc(nv(qd.drift))+'</span><span class="stat-label">Qdrant drift</span></div><div class="stat-item"><span class="stat-value">'+esc(nv(x.busy_errors))+'</span><span class="stat-label">Busy errors</span></div><div class="stat-item"><span class="stat-value">'+(x.promotions_frozen?'<span style="color:#f87171">FROZEN</span>':'<span style="color:#4ade80">ok</span>')+'</span><span class="stat-label">Promotions</span></div></div>'+(lc?'<div class="muted" style="margin-top:6px;padding-top:6px;border-top:1px solid #334155">Last cycle '+esc(nv(lc.at))+' &#183; quick_check='+esc(lc.quick_check_ok==null?'throttled':lc.quick_check_ok)+' &#183; fk_orphans='+esc(nv(lc.fk_orphans))+' &#183; drained='+esc(nv(lc.spool_drained))+' &#183; lag='+esc(nv(lc.spool_lag_seconds))+'s</div>':'<div class="muted" style="margin-top:6px">No cycle metrics recorded yet</div>')+'</div>';}
 async function refreshQueue(){fillQueue(await jget('/api/review-queue?limit=30&exclude_reviewed=1&exclude_suppressed=1'));}
 async function refreshObs(){fillObs(await jget('/api/observability?log_limit=1500&event_limit=600&queue_limit=250'));}
-document.getElementById('stale-body').addEventListener('click',async(ev)=>{const t=ev.target;if(!t||t.tagName!=='BUTTON')return;const r=t.closest('tr');if(!r)return;const id=Number(r.getAttribute('data-claim-id'));const a=String(t.getAttribute('data-action')||'');r.remove();await jpost('/api/triage/action',{claim_id:id,action:a});await refreshQueue();});
+document.getElementById('stale-body').addEventListener('click',async(ev)=>{const t=ev.target;if(!t||t.tagName!=='BUTTON'||!t.hasAttribute('data-action'))return;const r=t.closest('tr');if(!r)return;const id=Number(r.getAttribute('data-claim-id'));const a=String(t.getAttribute('data-action')||'');const proposalId=Number(t.getAttribute('data-proposal-event-id')||0);const body={claim_id:id,action:a};if(a==='approve_proposal'||a==='reject_proposal')body.proposal_event_id=proposalId;const original=t.innerHTML;r.setAttribute('data-pending','true');r.classList.add('pending');t.disabled=true;reviewStatus('Applying '+a+' to claim '+id+'...');try{await jpost('/api/triage/action',body);r.remove();reviewStatus('Action '+a+' completed for claim '+id+'.');await refreshQueue();}catch(error){r.removeAttribute('data-pending');r.classList.remove('pending');t.disabled=false;t.innerHTML='Retry';t.title=String((error&&error.message)||error||'Action failed');reviewStatus('Action failed for claim '+id+'. Retry is available.',true);t.addEventListener('blur',()=>{t.innerHTML=original;},{once:true});}});
 document.getElementById('op-start').addEventListener('click',async()=>{await jpost('/api/operator/control',{action:'start',inbox_jsonl:document.getElementById('op-inbox').value});fillOp(await jget('/api/operator/status'));});
 document.getElementById('op-stop').addEventListener('click',async()=>{await jpost('/api/operator/control',{action:'stop'});fillOp(await jget('/api/operator/status'));});
 document.getElementById('retrieval-run').addEventListener('click',async()=>{const query=document.getElementById('retrieval-query').value||'';const mode=document.getElementById('retrieval-mode').value||'hybrid';const scopeRaw=document.getElementById('retrieval-scope').value||'';const url='/api/retrieval?query='+encodeURIComponent(query)+'&mode='+encodeURIComponent(mode)+'&scope_allowlist='+encodeURIComponent(scopeRaw)+'&limit=10';fillRetr(await jget(url));});
@@ -1075,9 +1102,10 @@ document.getElementById('timeline-group').addEventListener('change',(ev)=>{timel
 document.getElementById('conflicts-search').addEventListener('input',(ev)=>{conflictState.search=String((ev&&ev.target&&ev.target.value)||'');renderConflicts();});
 document.getElementById('conflicts-include-stale').addEventListener('change',refreshConflicts);
 document.getElementById('conflicts-refresh').addEventListener('click',refreshConflicts);
-jget('/api/claims?limit=50').then(fillClaims).catch(()=>{});jget('/api/timeline?limit=40').then(fillTimeline).catch(()=>{});refreshConflicts().catch(()=>{});refreshQueue().catch(()=>{});jget('/api/audit?limit=40').then(fillAudit).catch(()=>{});jget('/api/namespaces?limit=200').then(fillNs).catch(()=>{});jget('/api/provenance').then(fillProvenance).catch(()=>{});jget('/api/session-stats?limit=2000').then(fillStats).catch(()=>{});jget('/metrics/validation-latency').then(fillValidationLatency).catch(()=>{});jget('/api/integrity').then(fillIntegrity).catch(()=>{});jget('/api/operator/status').then(fillOp).catch(()=>{});refreshObs().catch(()=>{});
+jget('/api/claims?limit=50').then(fillClaims).catch(e=>showPanelFailure('claims-body','claims',e,6));jget('/api/timeline?limit=40').then(fillTimeline).catch(e=>showPanelFailure('timeline-list','timeline',e));refreshConflicts().catch(e=>showPanelFailure('conflicts-cards','conflicts',e));refreshQueue().catch(e=>showPanelFailure('stale-body','review queue',e,5));jget('/api/audit?limit=40').then(fillAudit).catch(e=>showPanelFailure('audit-body','audit log',e,4));jget('/api/namespaces?limit=200').then(fillNs).catch(e=>showPanelFailure('namespaces-box','namespaces',e));jget('/api/provenance').then(fillProvenance).catch(e=>showPanelFailure('provenance-body','provenance',e,8));jget('/api/session-stats?limit=2000').then(fillStats).catch(e=>showPanelFailure('session-stats','session statistics',e));jget('/metrics/validation-latency').then(fillValidationLatency).catch(e=>showPanelFailure('validation-latency','validation latency',e));jget('/api/integrity').then(fillIntegrity).catch(e=>showPanelFailure('integrity-box','integrity',e));jget('/api/operator/status').then(fillOp).catch(e=>showPanelFailure('op-status','operator status',e));refreshObs().catch(e=>showPanelFailure('obs-box','observability',e));
 const sb=document.getElementById('stream');const es=new EventSource('/api/operator/stream?last=20'); const append=(t)=>{const ex=sb.textContent.trim();sb.textContent=(ex&&ex!=='Waiting for operator to start...'?ex+'\\n':'')+t;}; ['message','stream_start','state_loaded','state_error','state_saved','json_error','turn_processed','reconcile_run','stream_exit'].forEach(n=>es.addEventListener(n,(ev)=>append(ev.data))); es.onerror=()=>append('[stream reconnecting]');
 </script></main></body></html>"""
+        html = html.replace("__MEMORYMASTER_VERSION__", escape(_package_version()))
         body = html.encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1087,19 +1115,7 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
         self.wfile.write(body)
 
     def _triage_flags(self, limit: int) -> dict[int, dict[str, bool]]:
-        flags: dict[int, dict[str, bool]] = {}
-        for event in reversed(self._server.service.list_events(limit=limit, event_type="audit")):
-            if event.claim_id is None:
-                continue
-            ref = flags.setdefault(int(event.claim_id), {"reviewed": False, "suppressed": False})
-            details = str(event.details or "")
-            if details == "triage_mark_reviewed":
-                ref["reviewed"] = True
-            if details == "triage_suppress":
-                ref["suppressed"] = True
-            if details == "triage_unsuppress":
-                ref["suppressed"] = False
-        return flags
+        return triage_flags(self._server.service, limit)
 
     def _handle_claims(self, query_string: str) -> None:
         query = parse_qs(query_string)
@@ -1107,10 +1123,11 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
         include_archived = _parse_bool(_first_query_value(query, "include_archived"), default=False)
         allow_sensitive = _parse_bool(_first_query_value(query, "allow_sensitive"), default=False)
         status = _first_query_value(query, "status")
-        claims = self._server.service.list_claims(status=status, limit=limit, include_archived=include_archived)
-        if not allow_sensitive:
-            claims = [claim for claim in claims if not is_sensitive_claim(claim)]
-        self._write_json({"ok": True, "rows": len(claims), "claims": [_claim_to_dict(c) for c in claims]})
+        self._write_json(claims_payload(
+            self._server.service, status=status, limit=limit,
+            include_archived=include_archived, allow_sensitive=allow_sensitive,
+            serialize=_claim_to_dict,
+        ))
 
     def _handle_events(self, query_string: str) -> None:
         query = parse_qs(query_string)
@@ -1120,39 +1137,28 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
         claim_id = int(claim_id_raw) if claim_id_raw is not None else None
         if claim_id is not None and claim_id <= 0:
             raise ValueError("claim_id must be positive")
-        events = self._server.service.list_events(claim_id=claim_id, limit=limit, event_type=event_type)
-        self._write_json({"ok": True, "rows": len(events), "events": [_event_to_dict(e) for e in events]})
+        self._write_json(events_payload(
+            self._server.service, limit=limit, claim_id=claim_id,
+            event_type=event_type, serialize=_event_to_dict,
+        ))
 
     def _handle_timeline(self, query_string: str) -> None:
         query = parse_qs(query_string)
         limit = _parse_int(_first_query_value(query, "limit"), default=100, minimum=1, maximum=2000)
         event_type = _first_query_value(query, "event_type")
-        events = self._server.service.list_events(limit=limit, event_type=event_type)
-        self._write_json({"ok": True, "rows": len(events), "timeline": [_event_to_dict(e) for e in events]})
+        self._write_json(events_payload(
+            self._server.service, limit=limit, claim_id=None,
+            event_type=event_type, serialize=_event_to_dict, output_key="timeline",
+        ))
 
     def _handle_conflicts(self, query_string: str) -> None:
         query = parse_qs(query_string)
         limit = _parse_int(_first_query_value(query, "limit"), default=50, minimum=1, maximum=500)
         include_stale = _parse_bool(_first_query_value(query, "include_stale"), default=False)
-        conflicted = self._server.service.list_claims(status="conflicted", limit=limit, include_archived=False)
-        if not conflicted:
-            self._write_json({"ok": True, "rows": 0, "groups": []})
-            return
-        statuses = ["confirmed", "conflicted"] + (["stale"] if include_stale else [])
-        active = self._server.service.store.list_claims(limit=max(limit * 12, 200), status_in=statuses, include_archived=False, include_citations=True)
-        grouped: dict[tuple[str, str, str], list[Any]] = {}
-        for claim in conflicted:
-            grouped.setdefault((str(claim.subject or ""), str(claim.predicate or ""), str(claim.scope or "project")), [])
-        for claim in active:
-            key = (str(claim.subject or ""), str(claim.predicate or ""), str(claim.scope or "project"))
-            if key in grouped:
-                grouped[key].append(claim)
-        groups_payload: list[dict[str, Any]] = []
-        for key, claims in grouped.items():
-            claims_sorted = sorted(claims, key=lambda c: (str(c.updated_at), int(c.id)), reverse=True)
-            groups_payload.append({"subject": key[0], "predicate": key[1], "scope": key[2], "claims": [_claim_to_dict(c) for c in claims_sorted]})
-        groups_payload.sort(key=lambda g: (g["subject"], g["predicate"], g["scope"]))
-        self._write_json({"ok": True, "rows": len(groups_payload), "groups": groups_payload})
+        self._write_json(conflicts_payload(
+            self._server.service, limit=limit, include_stale=include_stale,
+            serialize=_claim_to_dict,
+        ))
 
     def _handle_review_queue(self, query_string: str) -> None:
         query = parse_qs(query_string)
@@ -1162,88 +1168,29 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
         allow_sensitive = _parse_bool(_first_query_value(query, "allow_sensitive"), default=False)
         exclude_reviewed = _parse_bool(_first_query_value(query, "exclude_reviewed"), default=False)
         exclude_suppressed = _parse_bool(_first_query_value(query, "exclude_suppressed"), default=False)
-        items = build_review_queue(
-            self._server.service,
-            limit=limit,
-            include_stale=include_stale,
-            include_conflicted=include_conflicted,
-            include_sensitive=allow_sensitive,
-        )
-        flags = self._triage_flags(max(limit * 20, 200))
-        queue = queue_to_dicts(items)
-        out: list[dict[str, Any]] = []
-        for item in queue:
-            claim_id = int(item["claim_id"])
-            triage = flags.get(claim_id, {"reviewed": False, "suppressed": False})
-            item["reviewed"] = bool(triage["reviewed"])
-            item["suppressed"] = bool(triage["suppressed"])
-            if exclude_reviewed and bool(item["reviewed"]):
-                continue
-            if exclude_suppressed and bool(item["suppressed"]):
-                continue
-            out.append(item)
-        self._write_json({"ok": True, "rows": len(out), "items": out})
+        self._write_json(review_queue_payload(
+            self._server.service, limit=limit, include_stale=include_stale,
+            include_conflicted=include_conflicted, allow_sensitive=allow_sensitive,
+            exclude_reviewed=exclude_reviewed, exclude_suppressed=exclude_suppressed,
+        ))
 
     def _handle_mobile_review_queue(self, query_string: str) -> None:
         query = parse_qs(query_string)
         limit = _parse_review_queue_limit(_first_query_value(query, "n"))
         scope = _first_query_value(query, "scope")
         cursor = _parse_review_queue_cursor(_first_query_value(query, "cursor"))
-
-        clauses = ["archived_at IS NULL"]
-        params: list[Any] = []
-        if scope is not None:
-            clauses.append("scope = ?")
-            params.append(scope)
-        if cursor is not None:
-            clauses.append("id > ?")
-            params.append(cursor)
-        where_sql = "WHERE " + " AND ".join(clauses)
-        sql = f"""
-            SELECT id, text, created_at, scope, claim_type, confidence
-            FROM claims
-            {where_sql}
-            ORDER BY created_at ASC, id ASC
-            LIMIT ?
-        """
-        params.append(limit + 1)
-
-        with self._server.service.store.connect() as conn:
-            rows = conn.execute(sql, params).fetchall()
-
-        page_rows = rows[:limit]
-        now = datetime.now(timezone.utc)
-        queue = [
-            {
-                "id": int(row["id"]),
-                "text_preview": str(row["text"] or "")[:200],
-                "age_days": _claim_age_days(str(row["created_at"]), now),
-                "scope": row["scope"],
-                "type": row["claim_type"],
-                "score": float(row["confidence"]),
-            }
-            for row in page_rows
-        ]
-        next_cursor = int(page_rows[-1]["id"]) if len(rows) > limit and page_rows else None
-        self._write_json({"queue": queue, "cursor": next_cursor})
+        self._write_json(mobile_review_queue_payload(
+            self._server.service, limit=limit, scope=scope, cursor=cursor,
+        ))
 
     def _handle_action_proposals(self, query_string: str) -> None:
         query = parse_qs(query_string)
         limit = _parse_int(_first_query_value(query, "limit"), default=100, minimum=1, maximum=500)
         status = _first_query_value(query, "status")
         destination = _first_query_value(query, "destination")
-        proposals = self._server.service.list_action_proposals(
-            status=status,
-            destination=destination,
-            limit=limit,
-        )
-        self._write_json(
-            {
-                "ok": True,
-                "rows": len(proposals),
-                "proposals": [asdict(proposal) for proposal in proposals],
-            }
-        )
+        self._write_json(action_proposals_payload(
+            self._server.service, status=status, destination=destination, limit=limit,
+        ))
 
     def _handle_atlas_version(self, query_string: str) -> None:
         from memorymaster.bridges.atlas_contract import atlas_contract_payload
@@ -1252,17 +1199,7 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
         self._write_json({"ok": True, **payload})
 
     def _handle_action_proposal_status(self, payload: dict[str, Any]) -> None:
-        proposal_id = int(payload.get("proposal_id") or 0)
-        status = str(payload.get("status") or "").strip().lower()
-        external_ref = payload.get("external_ref")
-        if proposal_id <= 0:
-            raise ValueError("proposal_id must be positive")
-        proposal = self._server.service.update_action_proposal_status(
-            proposal_id,
-            status=status,
-            external_ref=str(external_ref) if external_ref not in (None, "") else None,
-        )
-        self._write_json({"ok": True, "proposal": asdict(proposal)})
+        self._write_json(update_action_proposal_status(self._server.service, payload))
 
     def _handle_retrieval(self, query_string: str) -> None:
         params = _parse_retrieval_query_params(query_string)
@@ -1330,47 +1267,12 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
     def _handle_audit(self, query_string: str) -> None:
         query = parse_qs(query_string)
         limit = _parse_int(_first_query_value(query, "limit"), default=50, minimum=1, maximum=1000)
-        rows: list[dict[str, Any]] = []
-        for event_type in ("audit", "policy_decision"):
-            events = self._server.service.list_events(limit=limit, event_type=event_type)
-            rows.extend(_event_to_dict(event) for event in events)
-        rows.sort(key=lambda e: (str(e.get("created_at", "")), int(e.get("id", 0))), reverse=True)
-        self._write_json({"ok": True, "rows": min(limit, len(rows)), "events": rows[:limit]})
+        self._write_json(audit_payload(self._server.service, limit=limit, serialize=_event_to_dict))
 
     def _handle_namespaces(self, query_string: str) -> None:
         query = parse_qs(query_string)
         limit = _parse_int(_first_query_value(query, "limit"), default=200, minimum=1, maximum=5000)
-        claims = self._server.service.list_claims(limit=limit, include_archived=False)
-        buckets: dict[str, list[Any]] = {"facts": [], "decisions": [], "workflows": [], "project_overview": []}
-        for claim in claims:
-            text = str(claim.text or "").lower()
-            claim_type = str(claim.claim_type or "").lower()
-            predicate = str(claim.predicate or "").lower()
-            is_decision = ("decision" in claim_type) or (predicate in {"decision", "policy"}) or ("decid" in text)
-            is_workflow = any(k in claim_type for k in {"workflow", "runbook", "process"}) or predicate in {"workflow", "runbook", "command", "step"}
-            if is_decision:
-                buckets["decisions"].append(claim)
-            elif is_workflow:
-                buckets["workflows"].append(claim)
-            else:
-                buckets["facts"].append(claim)
-            buckets["project_overview"].append(claim)
-
-        def _samples(rows: list[Any]) -> list[dict[str, Any]]:
-            return [{"id": int(c.id), "subject": c.subject, "predicate": c.predicate, "object_value": c.object_value, "status": c.status} for c in rows[:5]]
-
-        self._write_json(
-            {
-                "ok": True,
-                "rows": len(claims),
-                "namespaces": {
-                    "facts": {"count": len(buckets["facts"]), "samples": _samples(buckets["facts"])},
-                    "decisions": {"count": len(buckets["decisions"]), "samples": _samples(buckets["decisions"])},
-                    "workflows": {"count": len(buckets["workflows"]), "samples": _samples(buckets["workflows"])},
-                    "project_overview": {"count": len(buckets["project_overview"]), "samples": _samples(buckets["project_overview"])},
-                },
-            }
-        )
+        self._write_json(namespaces_payload(self._server.service, limit=limit))
 
     def _handle_provenance(self, query_string: str) -> None:
         """Per-agent provenance: ingest counts + status mix by source_agent.
@@ -1516,43 +1418,12 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
         self._write_json(_validation_latency_metric(self._server.service))
 
     def _handle_triage_action(self, payload: dict[str, Any]) -> None:
-        action = str(payload.get("action") or "").strip().lower()
-        claim_id = int(payload.get("claim_id", 0))
-        if claim_id <= 0:
-            raise ValueError("claim_id must be positive")
-        if action not in {"pin", "unpin", "mark_reviewed", "suppress", "unsuppress", "approve_proposal", "reject_proposal"}:
-            raise ValueError("unsupported action")
-        if action == "pin":
-            self._write_json({"ok": True, "action": action, "claim": _claim_to_dict(self._server.service.pin(claim_id, pin=True))})
-            return
-        if action == "unpin":
-            self._write_json({"ok": True, "action": action, "claim": _claim_to_dict(self._server.service.pin(claim_id, pin=False))})
-            return
-        if action in {"approve_proposal", "reject_proposal"}:
-            from memorymaster.govern.steward import resolve_steward_proposal
-
-            resolved = resolve_steward_proposal(
-                self._server.service,
-                action=("approve" if action == "approve_proposal" else "reject"),
-                claim_id=claim_id,
-                apply_on_approve=True,
-            )
-            self._write_json({"ok": True, "action": action, "result": resolved})
-            return
-        detail_map = {"mark_reviewed": "triage_mark_reviewed", "suppress": "triage_suppress", "unsuppress": "triage_unsuppress"}
-        self._server.service.store.record_event(claim_id=claim_id, event_type="audit", details=detail_map[action], payload={"source": "dashboard"})
-        self._write_json({"ok": True, "action": action, "claim_id": claim_id})
+        self._write_json(apply_triage_action(
+            self._server.service, payload, serialize_claim=_claim_to_dict,
+        ))
 
     def _handle_operator_control(self, payload: dict[str, Any]) -> None:
-        action = str(payload.get("action") or "").strip().lower()
-        if action == "start":
-            inbox_jsonl = str(payload.get("inbox_jsonl") or "artifacts/operator/operator_inbox.jsonl")
-            self._write_json({"ok": True, **self._server.start_operator(inbox_jsonl)})
-            return
-        if action == "stop":
-            self._write_json({"ok": True, **self._server.stop_operator()})
-            return
-        raise ValueError("action must be start or stop")
+        self._write_json(control_operator(self._server, payload))
 
     def _send_sse_event(self, record: dict[str, Any]) -> bool:
         """Send a server-sent event record. Returns False if connection is closed."""

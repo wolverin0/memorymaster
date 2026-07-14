@@ -50,7 +50,15 @@ class _Store:
     def list_claims(self, **kwargs):
         return self.claims[: kwargs.get("limit", len(self.claims))]
 
-    def vector_scores(self, query: str, claims: list[Claim], provider: EmbeddingProvider):
+    def vector_scores(
+        self,
+        query: str,
+        claims: list[Claim],
+        provider: EmbeddingProvider,
+        *,
+        query_vector: list[float] | None = None,
+    ):
+        del query, provider, query_vector
         if not self._vector_scores:
             return {}
         return {claim.id: self._vector_scores.get(claim.id, 0.0) for claim in claims}

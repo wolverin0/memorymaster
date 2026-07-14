@@ -329,6 +329,33 @@ def evaluate_intake(
     quota = cfg.quota_per_agent_per_window
     if quota and quota > 0 and effective_agent not in cfg.quota_exempt_agents:
         wkey = _window_key(cfg.quota_window, moment)
+        from memorymaster.core.usage_ledger import (
+            UsageQuotaExceeded,
+            reserve_intake_configured,
+        )
+
+        try:
+            durable = reserve_intake_configured(
+                actor=effective_agent,
+                units=1,
+                actor_limit=quota,
+                window_key=wkey,
+            )
+        except UsageQuotaExceeded:
+            if intake_batch_id:
+                with _STATE_LOCK:
+                    if intake_batch_id in _BATCH_COUNTS:
+                        _BATCH_COUNTS[intake_batch_id] = max(
+                            0, _BATCH_COUNTS[intake_batch_id] - 1
+                        )
+            raise IntakeRejected(
+                f"source_agent '{effective_agent}' exceeded its durable quota "
+                f"of {quota} claims per {cfg.quota_window}.",
+                rule="quota",
+                reason="quota_exceeded",
+            ) from None
+        if durable:
+            return IntakeDecision(accept=True, mutated_fields=mutated)
         with _STATE_LOCK:
             current_window, count = _QUOTA_COUNTS.get(effective_agent, (wkey, 0))
             if current_window != wkey:

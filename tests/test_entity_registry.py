@@ -12,6 +12,7 @@ import sqlite3
 
 import pytest
 
+from memorymaster.stores._storage_schema import load_schema_sql
 from memorymaster.knowledge.entity_registry import (
     _has_legacy_alias_unique,
     _variant_key,
@@ -86,15 +87,17 @@ class TestVariantKey:
 def _fresh_db() -> sqlite3.Connection:
     """New in-memory DB with the claims + entity tables wired up."""
     conn = sqlite3.connect(":memory:")
-    conn.execute("""
-        CREATE TABLE claims (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            subject TEXT,
-            entity_id INTEGER
-        )
-    """)
+    conn.executescript(load_schema_sql())
     ensure_entity_schema(conn)
     return conn
+
+
+def _insert_claim(conn: sqlite3.Connection, subject: str) -> None:
+    conn.execute(
+        "INSERT INTO claims (text, subject, scope, status, created_at, updated_at) "
+        "VALUES ('entity registry test', ?, 'project:test', 'candidate', 't', 't')",
+        (subject,),
+    )
 
 
 class TestResolveOrCreate:
@@ -201,7 +204,7 @@ class TestFourSubjectsIntegration:
             "qdrant-cloud",
         ]
         for s in subjects:
-            conn.execute("INSERT INTO claims (subject) VALUES (?)", (s,))
+            _insert_claim(conn, s)
 
         ids = [resolve_or_create(conn, s) for s in subjects]
         # First three (case variants of "qdrant") → same entity.
@@ -248,13 +251,7 @@ class TestFourSubjectsIntegration:
 def _legacy_schema_db() -> sqlite3.Connection:
     """Simulate a pre-fix DB: UNIQUE on alias, no variant_key column."""
     conn = sqlite3.connect(":memory:")
-    conn.execute("""
-        CREATE TABLE claims (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            subject TEXT,
-            entity_id INTEGER
-        )
-    """)
+    conn.executescript(load_schema_sql())
     conn.executescript("""
         CREATE TABLE entities (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -338,7 +335,7 @@ class TestBackfill:
             "Qdrant", "qdrant", "QDRANT", " qdrant",
         ]
         for s in test_subjects:
-            conn.execute("INSERT INTO claims (subject) VALUES (?)", (s,))
+            _insert_claim(conn, s)
 
         out = backfill_entities_normalized(conn, migrate_schema=False)
         assert out["total_entities"] == 5, out
@@ -348,7 +345,7 @@ class TestBackfill:
         legacy = _legacy_schema_db()
         # Old-schema DB with 3 claims but only 1 alias (the bug).
         for s in ["Paperclip", "paperclip", "PAPERCLIP"]:
-            legacy.execute("INSERT INTO claims (subject) VALUES (?)", (s,))
+            _insert_claim(legacy, s)
         legacy.execute(
             "INSERT INTO entities (canonical_name, entity_type, scope, "
             "created_at, updated_at) VALUES ('Paperclip', 'unknown', 'global', 't', 't')"
@@ -359,7 +356,10 @@ class TestBackfill:
         )
 
         out = backfill_entities_normalized(legacy, migrate_schema=True)
-        assert out["schema_migration"]["migrated"] is True
+        assert out["schema_migration"] == {
+            "migrated": False,
+            "reason": "schema_already_current",
+        }
         # After backfill we should have 1 entity and 3 aliases.
         assert out["total_entities"] == 1
         assert out["total_aliases"] == 3

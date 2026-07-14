@@ -7,11 +7,16 @@ Lifecycle-managed claims with citations, conflict detection, steward governance,
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Tests](https://img.shields.io/badge/tests-3200%2B-green.svg)]()
-[![MCP Tools](https://img.shields.io/badge/MCP%20tools-36-purple.svg)]()
+[![Release truth](https://img.shields.io/badge/release%20truth-generated-purple.svg)](docs/generated/release-truth.md)
 [![CLI Commands](https://img.shields.io/badge/CLI%20commands-106-orange.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memorymaster.svg)](https://pypi.org/project/memorymaster/)
 
 MemoryMaster prevents the #1 problem with agent memory: **drift, stale assumptions, and unsafe disclosure**. It gives Claude Code, Codex, and any MCP-compatible agent persistent, verifiable memory with a full claim lifecycle, citation tracking, conflict detection, and human-in-the-loop governance.
+
+> **Product posture:** MemoryMaster is primarily a personal/local application.
+> The default profile uses one SQLite database and a private stdio MCP process.
+> Postgres/team operation is a deferred optional capability, and Qdrant is an
+> optional semantic index—not a dependency or source of truth.
 
 ### How it's different
 
@@ -32,8 +37,8 @@ If you want an agent that recalls more, any vector store works. If you want an a
 
 ## Architecture
 
-MemoryMaster is layered around MCP/CLI entry points, the `MemoryService` facade, SQLite/Postgres
-storage, optional Qdrant vector search, scheduled jobs, and an **optional** Obsidian wiki/vault
+MemoryMaster is layered around MCP/CLI entry points, the `MemoryService` facade, authoritative
+SQLite storage, an optional deferred Postgres/team backend, an optional Qdrant index, scheduled jobs, and an **optional** Obsidian wiki/vault
 layer (opt-in, off by default — see below). The canonical ingest path is:
 
 ```text
@@ -43,8 +48,15 @@ MCP/CLI -> sensitivity filter -> MemoryService.ingest -> store write -> FTS5 ind
 The query path is:
 
 ```text
-query_memory -> MemoryService.query -> storage reads + optional Qdrant candidates -> ranked context
+query_memory -> MemoryService.query -> authorized SQLite rows -> lexical/local-hybrid ranking -> context
 ```
+
+Qdrant candidate retrieval is disabled by default. When a user deliberately
+enables the governed semantic profile, Qdrant may return only candidate IDs,
+content hashes, and scores. Every candidate is rehydrated from the authoritative
+store and rechecked for lifecycle, tenant, scope, visibility, sensitivity, and
+exact content hash. The semantic profile remains unproven for production until
+the separately documented authenticated/TLS gate passes.
 
 See [docs/architecture.md](docs/architecture.md) for the current module map, data-flow details,
 recent PR status, and sensitivity-filter invariants.
@@ -53,7 +65,7 @@ recent PR status, and sensitivity-filter invariants.
 
 - **6-state lifecycle**: `candidate` → `confirmed` → `stale` → `superseded` → `conflicted` → `archived`
 - **Citation tracking** with provenance for every claim
-- **Hybrid retrieval**: vector (sentence-transformers / Gemini) + FTS5 + freshness + confidence
+- **Hybrid retrieval**: authoritative SQLite claim rows ranked with FTS5, local/primary-store embedding signals, freshness, and confidence; governed Qdrant candidates are explicit and optional
 - **Context optimizer**: `query_for_context(budget=4000)` returns auto-curated memory that fits your token budget
 - **Entity graph** with typed relationships and alias resolution
 - **Rule-shaped claims** (new in v3.21.0): prescriptive `when <trigger>, do <action> because <rationale>` claims (`ingest_rule` / `query_rules`) — the shape an agent needs to actually change behaviour next time, not just recall a fact
@@ -77,7 +89,7 @@ recent PR status, and sensitivity-filter invariants.
 - **Hebbian/Ebbinghaus entity edges** (new in v4.2.0, opt-in `MEMORYMASTER_HEBBIAN_DECAY`): usage strengthens, time decays entity-graph edge weights.
 - **Proactive + tool-triggered recall** (new in v4.2.0): a `volunteer_context` MCP tool (confidence-gated, zero-LLM) and an opt-in PreToolUse hook (`MEMORYMASTER_PRETOOLUSE_RECALL`) that injects memory as `additionalContext` on Grep/Glob.
 - **Belief `holder`** (new in v4.2.0): nullable per-claim `holder` for multi-holder beliefs (take/fact/bet/hunch reuse `claim_type`); SQLite+Postgres, ranking-neutral by default.
-- **Dual backend**: SQLite (zero-config) and Postgres (full feature parity with pgvector)
+- **SQLite-first backend**: SQLite for the primary personal/local product; PostgreSQL team support is retained but deferred until a real multi-user use case and its external evidence exist
 - **Dream Bridge** for bidirectional sync with Claude Code's Auto Dream
 - **Hook stack**: recall, classify, validate-wiki, session-start, auto-ingest, precompact (settings.json) + steward-cycle (cron/schtasks) + opt-in `--pretooluse` grep/glob recall-inject
 
@@ -112,7 +124,7 @@ Reproduce: `python tests/bench_longmemeval.py --retrieval-only`. Full methodolog
 
 **Optional (nice to have)**
 
-- **Docker** for Qdrant — vector retrieval. SQLite FTS5 is the default and works out of the box; add Qdrant when you want semantic recall on top of keyword search.
+- **Docker** only if you deliberately want local Ollama or the optional governed Qdrant semantic profile. SQLite remains authoritative and requires neither Docker nor Qdrant.
 
 ## 30-second quickstart
 
@@ -125,7 +137,7 @@ pip install "memorymaster[mcp,security,qdrant,embeddings]"
 **2. Let your agent do the rest**
 
 Paste the contents of [`docs/AGENT-INSTALL.md`](docs/AGENT-INSTALL.md) into Claude Code or Codex. The agent will:
-- run `memorymaster-setup --yes --full-stack --json` (detects your environment, wires hooks + MCP, starts Qdrant + Ollama if Docker is present, or falls back to SQLite-only mode gracefully)
+- run `memorymaster-setup --yes --profile minimal --no-full-stack --json` (wires the SQLite database and private MCP without starting Postgres, Qdrant, or Ollama)
 - report what was wired, what was reused (brownfield), and what degraded
 - run `memorymaster-setup --verify-only` and show the round-trip result
 
@@ -170,14 +182,23 @@ For zero-cost offline use, install [Ollama](https://ollama.com), `ollama pull ll
       "command": "memorymaster-mcp",
       "env": {
         "MEMORYMASTER_DEFAULT_DB": "/path/to/memorymaster.db",
-        "MEMORYMASTER_WORKSPACE": "/path/to/your/project"
+        "MEMORYMASTER_WORKSPACE": "/path/to/your/project",
+        "MEMORYMASTER_MCP_AUTH_MODE": "local-trusted"
       }
     }
   }
 }
 ```
 
-30 MCP tools spanning setup/lifecycle, ingest, query/retrieval, listing, knowledge graph, and governance: `init_db`, `ingest_claim`, `ingest_rule`, `query_rules`, `rules_export`, `run_cycle`, `run_steward`, `classify_query`, `query_memory`, `query_for_context`, `query_for_task`, `query_claim_paths`, `query_meta_decisions`, `federated_query`, `recall_analysis`, `read_active_tasks`, `list_claims`, `redact_claim_payload`, `pin_claim`, `compact_memory`, `list_events`, `search_verbatim`, `open_dashboard`, `list_steward_proposals`, `resolve_steward_proposal`, `extract_entities`, `entity_stats`, `find_related_claims`, `quality_scores`, `recompute_tiers`.
+MCP authorization mode is mandatory. Use `local-trusted` only with SQLite in a
+private stdio process controlled by one OS user. PostgreSQL application runtime
+is team-only and requires an operator-configured principal, tenant, non-owner
+application DSN, workspace, and explicit scope allowlist. Schema initialization
+uses a distinct migrator DSN/role; never give that role to the MCP runtime.
+Unverified host-wide and maintenance tools fail closed. Existing brownfield MCP
+entries must add the mode or be regenerated with setup `--force`.
+
+MemoryMaster exposes setup/lifecycle, ingest, query/retrieval, listing, knowledge-graph, and governance tools. The [generated release truth](docs/generated/release-truth.md) is the authoritative inventory and count.
 
 See [`docs/MCP-TOOLS.md`](docs/MCP-TOOLS.md) for the grouped reference (one line per tool), and [`.mcp.json.example`](.mcp.json.example) for the full config template.
 
@@ -185,16 +206,46 @@ See [`docs/MCP-TOOLS.md`](docs/MCP-TOOLS.md) for the grouped reference (one line
 
 | Backend | Install | Use case |
 |---------|---------|----------|
-| **SQLite** | Built-in | Local development, single-agent, zero-config |
-| **Postgres** | `pip install "memorymaster[postgres]"` | Team deployment, multi-agent, pgvector search |
+| **SQLite** | Built-in | **Primary profile:** personal/local, private, zero-config |
+| **Postgres 16.x** | `pip install "memorymaster[postgres]"` | **Deferred:** future authenticated team deployment with isolated app/migrator roles |
+
+Postgres is not required for normal MemoryMaster use and is not currently a
+release target. The detailed contract below is retained so the dormant profile
+fails closed and can be revisited safely if a genuine shared-service use case
+appears.
+
+PostgreSQL v0011 enables and forces row-level security. Reads are tenant/scope
+bounded and expose public claims or the principal's own private claims; writes
+are owner-only, require a nonblank `source_agent` on every team claim, and are
+limited to public/private rows. Migration v0012 makes public claim identities
+tenant + exact-scope local; non-public idempotency keys, human IDs, and
+confirmed tuples additionally include exact visibility and principal. A
+tenant-derived hash-only function preserves the event chain across private
+principals/scopes without exposing payloads. The application role must read and
+append events but cannot update any event column or delete events. Unscoped
+human-ID/idempotency-key reads fail when an identifier is ambiguous across
+scopes. The supersession guard denies self- and cross-tenant/scope/visibility/
+principal links; the canonical lifecycle locks both claims and commits reciprocal
+pointers plus one event atomically. Startup rejects drift in exact policy,
+function, trigger, privilege, and identity-index catalogs. Brownfield
+owner/duplicate/unsafe-supersession repair requires a reviewed external
+maintenance action. Team action proposals and raw merge/sync paths remain disabled.
+See [INSTALLATION.md](INSTALLATION.md#postgresql-team-runtime-security-boundary)
+and [deployment profiles](docs/deployment_profiles.md) before enabling this
+backend. Real PostgreSQL verification requires two distinct DSNs targeting a
+disposable database; repository tests do not constitute a production proof.
 
 ## Docker Compose
 
-Run the full stack (MemoryMaster + Qdrant + Ollama) with one command:
+For an explicit experimental semantic profile, run the optional Qdrant index
+and Ollama stack with:
 
 ```bash
 docker compose up -d
 ```
+
+Starting Qdrant alone does not enable governed retrieval. The minimal local
+profile should not start this stack.
 
 See [INSTALLATION.md](INSTALLATION.md) for Kubernetes / Helm.
 
@@ -222,7 +273,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
 |----------|-------------|
 | [docs/README.md](docs/README.md) | Documentation index — where to find each living doc |
 | [docs/handbook.md](docs/handbook.md) | Full operator handbook — hooks, dashboard, steward, dream bridge, troubleshooting, one-prompt install |
-| [docs/MCP-TOOLS.md](docs/MCP-TOOLS.md) | Reference for all 30 MCP tools, grouped by purpose |
+| [docs/MCP-TOOLS.md](docs/MCP-TOOLS.md) | MCP usage guide; generated inventory and counts are linked from the document |
 | [docs/INTEGRATING.md](docs/INTEGRATING.md) | Integration guide for embedding MemoryMaster in your agent |
 | [INSTALLATION.md](INSTALLATION.md) | Setup guide: pip, Docker, Helm, MCP config |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Dev setup, testing, PR workflow |

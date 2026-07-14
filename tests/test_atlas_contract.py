@@ -538,7 +538,6 @@ def _seed_with_proposal(tmp_path: Path) -> tuple[Path, int, int]:
     main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
     from memorymaster.core.service import MemoryService
     svc = MemoryService(db, workspace_root=tmp_path)
-    items = svc.store.connect()
     with svc.store.connect() as conn:
         rows = conn.execute("SELECT id FROM source_items LIMIT 1").fetchall()
         source_item_id = int(rows[0]["id"])
@@ -878,7 +877,9 @@ def test_init_db_migrates_stale_atlas_db_without_sensitivity_column(tmp_path: Pa
 # ---------------------------------------------------------------------------
 
 
-def test_provider_factory_returns_mock() -> None:
+def test_provider_factory_returns_mock(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEMORYMASTER_MEDIA_MODE", "test")
+    monkeypatch.setenv("MEMORYMASTER_ALLOW_SYNTHETIC_MEDIA", "1")
     from memorymaster.bridges.media_providers import get_ocr_provider, get_transcription_provider
     assert get_transcription_provider("mock").provider_name == "mock-transcription"
     assert get_ocr_provider("mock").provider_name == "mock-ocr"
@@ -914,14 +915,19 @@ def test_tesseract_class_lazy_imports() -> None:
     assert provider.provider_name == "tesseract"
 
 
-def test_transcribe_source_item_mock_envelope(tmp_path: Path, capsys) -> None:
+def test_transcribe_source_item_mock_envelope(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEMORYMASTER_MEDIA_MODE", "test")
+    monkeypatch.setenv("MEMORYMASTER_ALLOW_SYNTHETIC_MEDIA", "1")
     fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
     db = tmp_path / "atlas.db"
     main(["--db", str(db), "init-db"])
     main(["--db", str(db), "import-whatsapp", "--input", str(fixture)])
     from memorymaster.core.service import MemoryService
     svc = MemoryService(db, workspace_root=tmp_path)
-    audio_item = next((i for i in svc.list_evidence_items() if i.evidence_type == "message_text"), None)
     # Find the audio source_item
     with svc.store.connect() as conn:
         rows = conn.execute("SELECT id FROM source_items WHERE item_type='audio' LIMIT 1").fetchall()
@@ -940,7 +946,13 @@ def test_transcribe_source_item_mock_envelope(tmp_path: Path, capsys) -> None:
     assert env["data"]["evidence"]["evidence_type"] == "transcript"
 
 
-def test_ocr_source_item_mock_envelope(tmp_path: Path, capsys) -> None:
+def test_ocr_source_item_mock_envelope(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEMORYMASTER_MEDIA_MODE", "test")
+    monkeypatch.setenv("MEMORYMASTER_ALLOW_SYNTHETIC_MEDIA", "1")
     fixture = _FIXTURE_DIR / "whatsapp_wacli_basic.json"
     db = tmp_path / "atlas.db"
     main(["--db", str(db), "init-db"])

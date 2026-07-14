@@ -17,25 +17,21 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from pathlib import Path
 
 from memorymaster.knowledge.entity_registry import (
-    ensure_entity_schema,
     resolve_or_create,
 )
+from memorymaster.stores.storage import SQLiteStore
 
 _FLAG = "MEMORYMASTER_ENTITY_FUZZY_RESOLVE"
 
 
-def _fresh_db() -> sqlite3.Connection:
-    """In-memory DB with the claims + entity tables wired up (mirrors the
-    fixture in test_entity_registry.py)."""
-    conn = sqlite3.connect(":memory:")
-    conn.execute(
-        "CREATE TABLE claims (id INTEGER PRIMARY KEY AUTOINCREMENT, "
-        "subject TEXT, entity_id INTEGER)"
-    )
-    ensure_entity_schema(conn)
-    return conn
+def _fresh_db(tmp_path: Path) -> sqlite3.Connection:
+    """Canonical initialized DB with the migrated entity registry."""
+    store = SQLiteStore(tmp_path / "guarded-fuzzy.db")
+    store.init_db()
+    return store.connect()
 
 
 def _entity_count(conn: sqlite3.Connection) -> int:
@@ -47,14 +43,14 @@ def _entity_count(conn: sqlite3.Connection) -> int:
 # --------------------------------------------------------------------------- #
 
 
-def test_off_by_default_near_match_creates_two_entities(monkeypatch):
+def test_off_by_default_near_match_creates_two_entities(tmp_path, monkeypatch):
     """WHY: the feature is recall-altering, so absent the env flag a near-miss
     subject MUST still become its own entity. If this regresses, every shipped
     DB silently starts merging entities on upgrade — unacceptable for a
     released package.
     """
     monkeypatch.delenv(_FLAG, raising=False)
-    conn = _fresh_db()
+    conn = _fresh_db(tmp_path)
     id1 = resolve_or_create(conn, "MemoryMaster")
     id2 = resolve_or_create(conn, "memory-master")  # near, but distinct norm form
     assert id1 > 0 and id2 > 0
@@ -67,13 +63,13 @@ def test_off_by_default_near_match_creates_two_entities(monkeypatch):
 # --------------------------------------------------------------------------- #
 
 
-def test_unambiguous_fuzzy_match_returns_existing_entity(monkeypatch):
+def test_unambiguous_fuzzy_match_returns_existing_entity(tmp_path, monkeypatch):
     """WHY: a single high-confidence candidate is exactly when fuzzy matching
     adds value — "memory master" should collapse onto the existing
     "MemoryMaster" entity instead of spawning a duplicate.
     """
     monkeypatch.setenv(_FLAG, "1")
-    conn = _fresh_db()
+    conn = _fresh_db(tmp_path)
     canonical = resolve_or_create(conn, "MemoryMaster")
     assert canonical > 0
     before = _entity_count(conn)
@@ -83,13 +79,13 @@ def test_unambiguous_fuzzy_match_returns_existing_entity(monkeypatch):
     assert _entity_count(conn) == before, "no new entity should be created"
 
 
-def test_unambiguous_match_records_new_alias_for_fast_path(monkeypatch):
+def test_unambiguous_match_records_new_alias_for_fast_path(tmp_path, monkeypatch):
     """WHY: once a fuzzy match is accepted, the surface form should be recorded
     as an alias so the NEXT lookup is an exact hit (cheap) — and so the
     registry's alias graph reflects reality.
     """
     monkeypatch.setenv(_FLAG, "1")
-    conn = _fresh_db()
+    conn = _fresh_db(tmp_path)
     canonical = resolve_or_create(conn, "MemoryMaster")
     resolve_or_create(conn, "memory master")
 
@@ -106,7 +102,7 @@ def test_unambiguous_match_records_new_alias_for_fast_path(monkeypatch):
 # --------------------------------------------------------------------------- #
 
 
-def test_ambiguous_match_refuses_and_creates_nothing(monkeypatch):
+def test_ambiguous_match_refuses_and_creates_nothing(tmp_path, monkeypatch):
     """WHY: this is the whole reason the resolver is 'guarded'. When a subject
     is roughly equidistant from two existing entities, picking either one is a
     hallucinated merge. The guard must REFUSE: return 0 AND leave the DB
@@ -116,7 +112,7 @@ def test_ambiguous_match_refuses_and_creates_nothing(monkeypatch):
     both above the accept threshold and within the ambiguity margin — and
     matches NEITHER exactly, so it genuinely exercises the fuzzy tie path.
     """
-    conn = _fresh_db()
+    conn = _fresh_db(tmp_path)
     # Seed the two confusable entities with fuzzy OFF so they stay distinct
     # (turning it on first would itself collapse them — which is the bug we're
     # guarding against, just on the setup side).
@@ -144,13 +140,13 @@ def test_ambiguous_match_refuses_and_creates_nothing(monkeypatch):
 # --------------------------------------------------------------------------- #
 
 
-def test_below_threshold_creates_new_entity(monkeypatch):
+def test_below_threshold_creates_new_entity(tmp_path, monkeypatch):
     """WHY: a guard that refuses too eagerly is as broken as one that merges
     too eagerly. A subject with no real similarity to anything must still get
     its own entity — the fuzzy path only intercepts CONFIDENT matches.
     """
     monkeypatch.setenv(_FLAG, "1")
-    conn = _fresh_db()
+    conn = _fresh_db(tmp_path)
     resolve_or_create(conn, "Qdrant")
     resolve_or_create(conn, "SQLite")
     before = _entity_count(conn)
@@ -165,35 +161,28 @@ def test_below_threshold_creates_new_entity(monkeypatch):
 # --------------------------------------------------------------------------- #
 
 
-def test_fanout_unaffected_by_flag(monkeypatch):
+def test_fanout_unaffected_by_flag(tmp_path, monkeypatch):
     """WHY: the fuzzy flag lives in the registry, but the recall fanout
     (``_entity_fanout_claim_ids``) resolves entities by EXACT alias only. The
     flag must not change fanout output — recall stays bit-identical whether or
     not an operator has opted into fuzzy *ingest* resolution.
     """
     from memorymaster.recall.context_hook import _entity_fanout_claim_ids
+    from memorymaster.core.lifecycle import transition_claim
+    from memorymaster.core.models import CitationInput
+    from memorymaster.core.service import MemoryService
 
     # Build a DB with an entity + linked claim that the fanout can resolve.
-    conn = _fresh_db()
-    # claims table here needs the columns the fanout SQL reads.
-    conn.execute("DROP TABLE claims")
-    conn.execute(
-        "CREATE TABLE claims (id INTEGER PRIMARY KEY AUTOINCREMENT, "
-        "text TEXT, status TEXT DEFAULT 'confirmed', visibility TEXT DEFAULT 'public', "
-        "updated_at TEXT DEFAULT '2026-01-01', entity_id INTEGER)"
+    service = MemoryService(tmp_path / "fanout.db")
+    service.init_db()
+    claim = service.ingest(
+        "about context_hook.py",
+        [CitationInput(source="test://fanout")],
+        subject="context_hook.py",
+        scope="project",
     )
-    eid = resolve_or_create(conn, "context_hook.py")
-    conn.execute(
-        "INSERT INTO claims (text, entity_id) VALUES ('about context_hook.py', ?)",
-        (eid,),
-    )
-    conn.commit()
-
-    class _Store:
-        def connect(self):
-            return conn
-
-    store = _Store()
+    transition_claim(service.store, claim.id, "confirmed", "test fixture")
+    store = service.store
     prompt = "fix context_hook.py now"
 
     monkeypatch.delenv(_FLAG, raising=False)
@@ -219,14 +208,8 @@ def test_concurrent_resolve_creates_single_entity(tmp_path, monkeypatch):
     """
     monkeypatch.setenv(_FLAG, "1")
     db = tmp_path / "concurrent.sqlite"
-    # Seed schema once.
-    with sqlite3.connect(db) as seed:
-        seed.execute(
-            "CREATE TABLE claims (id INTEGER PRIMARY KEY AUTOINCREMENT, "
-            "subject TEXT, entity_id INTEGER)"
-        )
-        ensure_entity_schema(seed)
-        seed.commit()
+    # Seed the full immutable migration chain once.
+    SQLiteStore(db).init_db()
 
     barrier = threading.Barrier(10)
     errors: list[Exception] = []

@@ -19,6 +19,7 @@ from memorymaster.core.retry import connect_with_retry
 
 HUMAN_ID_PREFIX = "mm"
 EVENT_HASH_ALGO = "sha256-v1"
+TENANT_EVENT_HASH_ALGO = "sha256-tenant-v2"
 
 SQLITE_EVENTS_APPEND_ONLY_TRIGGERS = (
     "trg_events_append_only_update",
@@ -28,6 +29,24 @@ SQLITE_CONFIRMED_TUPLE_GUARD_TRIGGERS = (
     "trg_claims_confirmed_tuple_guard_insert",
     "trg_claims_confirmed_tuple_guard_update",
 )
+
+
+def compute_tenant_event_hash(
+    *,
+    tenant_id: str,
+    event_hash: str,
+    tenant_prev_event_hash: str | None,
+) -> str:
+    """Commit one global event hash into a tenant-partitioned hash chain."""
+    material = "\x1f".join(
+        (
+            TENANT_EVENT_HASH_ALGO,
+            tenant_id,
+            event_hash,
+            tenant_prev_event_hash or "",
+        )
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 def generate_human_id_hash(text: str) -> str:

@@ -95,7 +95,7 @@ def _ingest_insights_impl(
             continue
 
         idempotency_key = _idempotency_key(insight)
-        if _claim_exists(service, idempotency_key):
+        if _claim_exists(service, idempotency_key, scope=scope):
             result["skipped"] += 1
             continue
 
@@ -263,9 +263,22 @@ def _citations_for(insight: _DaydreamInsight) -> list[CitationInput]:
     ]
 
 
-def _claim_exists(service: MemoryService, idempotency_key: str) -> bool:
+def _claim_exists(
+    service: MemoryService,
+    idempotency_key: str,
+    *,
+    scope: str,
+) -> bool:
     getter = getattr(service.store, "get_claim_by_idempotency_key", None)
-    return bool(getter and getter(idempotency_key, include_citations=False))
+    return bool(
+        getter
+        and getter(
+            idempotency_key,
+            include_citations=False,
+            tenant_id=service.tenant_id,
+            scope=scope,
+        )
+    )
 
 
 def _idempotency_key(insight: _DaydreamInsight) -> str:

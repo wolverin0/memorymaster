@@ -33,7 +33,7 @@ memorymaster — OR a better integration if your runtime supports it.
 | Local on Windows | `G:\_OneDrive\OneDrive\Desktop\Py Apps\memorymaster\memorymaster.db` |
 | Python package | `pip install "memorymaster[mcp,qdrant,security]"` (Python 3.10+) |
 | CLI | `python -m memorymaster --help` (or `memorymaster --help` if installed as script) |
-| MCP server | FastMCP stdio: `python -m memorymaster.mcp_server` — 21 tools (query, ingest, run_cycle, etc.) |
+| MCP server | FastMCP stdio: `python -m memorymaster.mcp_server`; see `docs/generated/release-truth.md` for the generated inventory |
 | Dashboard (HTTP) | `python -m memorymaster --db <DB> run-dashboard --port 8765` |
 | Webhook | Outbound only — fires `MEMORYMASTER_WEBHOOK_URL` on claim events |
 
@@ -44,7 +44,7 @@ memorymaster — OR a better integration if your runtime supports it.
 - **v3.20.0-S1** — versioned migrations framework (`memorymaster/migrations/`, `MigrationRunner`, `schema_versions` table, drift detection)
 
 Full env-var reference in `CHANGELOG.md`. ROADMAP and remaining backlog in
-`docs/ROADMAP.md` + `docs/archive/v320-backlog.md`.
+`ROADMAP.md` at the repository root. Files under `docs/archive/` are historical evidence only.
 
 ---
 

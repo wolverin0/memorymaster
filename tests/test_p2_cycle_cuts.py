@@ -4,8 +4,8 @@ Cut 1: llm_provider must never import llm_steward. KeyRotator's real home is
        memorymaster.core.key_rotator (RoundRobinKeyRotator); llm_steward only
        re-exports it for backward compatibility.
 Cut 2: lifecycle must never import wiki_engine. The wiki autopromote trigger
-       is inverted into lifecycle.on_claim_confirmed, registered by wiring
-       modules (service.py, wiki_engine.py).
+       is inverted into lifecycle.on_claim_confirmed and registered only when
+       the optional wiki companion is explicitly imported.
 Cut 3: llm_steward must never import store_factory. Auto-validation accepts an
        injected store; the default resolves via jobs.deterministic.open_store.
 

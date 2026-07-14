@@ -27,7 +27,12 @@ def service(tmp_path: Path) -> MemoryService:
     return svc
 
 
-def test_mock_transcription_creates_transcript_evidence(service: MemoryService) -> None:
+def test_mock_transcription_creates_transcript_evidence(
+    service: MemoryService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEMORYMASTER_MEDIA_MODE", "test")
+    monkeypatch.setenv("MEMORYMASTER_ALLOW_SYNTHETIC_MEDIA", "1")
     source = service.upsert_external_source(source_type="whatsapp", display_name="primary")
     item = service.upsert_source_item(
         source_id=source.id,
@@ -49,7 +54,12 @@ def test_mock_transcription_creates_transcript_evidence(service: MemoryService) 
     assert second.evidence.id == first.evidence.id
 
 
-def test_mock_ocr_creates_ocr_evidence(service: MemoryService) -> None:
+def test_mock_ocr_creates_ocr_evidence(
+    service: MemoryService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEMORYMASTER_MEDIA_MODE", "test")
+    monkeypatch.setenv("MEMORYMASTER_ALLOW_SYNTHETIC_MEDIA", "1")
     source = service.upsert_external_source(source_type="whatsapp", display_name="primary")
     item = service.upsert_source_item(
         source_id=source.id,
