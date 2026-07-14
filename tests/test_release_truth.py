@@ -7,7 +7,6 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import tomllib
 
 import memorymaster
 from memorymaster.surfaces.dashboard import DashboardRequestHandler
@@ -115,6 +114,7 @@ def test_ci_blocks_on_generated_release_truth_drift() -> None:
 
 
 def test_dev_extra_installs_supply_chain_contract_runtime() -> None:
-    with (ROOT / "pyproject.toml").open("rb") as handle:
-        project = tomllib.load(handle)["project"]
-    assert any(item.startswith("pip-audit>=") for item in project["optional-dependencies"]["dev"])
+    source = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r"^dev\s*=\s*\[(.*?)\]", source, re.MULTILINE | re.DOTALL)
+    assert match is not None
+    assert '"pip-audit>=' in match.group(1)
