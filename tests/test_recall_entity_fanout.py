@@ -346,10 +346,13 @@ class _FakeSvcWithStore:
     def query_rows(self, **_: object) -> list[dict]:
         return list(self._rows)
 
+    def _record_accesses(self, *_args, **_kwargs) -> None:
+        return None
+
 
 def _patch_svc(monkeypatch: pytest.MonkeyPatch, svc: _FakeSvcWithStore,
                 fts_tokens: str) -> None:
-    def _fake_ctor(db_target, workspace_root):  # noqa: ARG001
+    def _fake_ctor(db_target, workspace_root, **_kwargs):  # noqa: ARG001
         return svc
     monkeypatch.setattr("memorymaster.core.service.MemoryService", _fake_ctor)
     monkeypatch.setattr(

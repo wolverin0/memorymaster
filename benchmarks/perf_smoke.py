@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from memorymaster.models import CitationInput
+from memorymaster.recall.embeddings import EmbeddingProvider
 from memorymaster.service import MemoryService
 
 DEFAULT_INGEST_P95_MAX = 0.060
@@ -156,6 +157,10 @@ def run_perf_smoke(*, claims: int, queries: int, cycles: int, workspace_root: Pa
         db_path_str,
         workspace_root=Path(normalize_fs_path(workspace_root)),
     )
+    # Keep the core CI SLO independent of whichever optional ML/provider extras
+    # happen to be installed on the runner. Semantic quality/performance is
+    # covered by its dedicated ML gate; this smoke measures storage/retrieval.
+    service.embedding_provider = EmbeddingProvider(model="hash-v1", dims=1536)
     try:
         service.init_db()
 

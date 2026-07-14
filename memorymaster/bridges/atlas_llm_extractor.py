@@ -25,6 +25,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from memorymaster.bridges.atlas_claim_extractor import AtlasClaimExtractionResult
+from memorymaster.bridges.evidence_policy import is_governed_evidence_eligible
 from memorymaster.core.llm_provider import call_llm, parse_json_response
 from memorymaster.core.models import CitationInput, Claim, EvidenceItem, SourceItem
 
@@ -172,6 +173,8 @@ def extract_atlas_claims_llm(
 
     for evidence in evidence_items:
         scanned += 1
+        if not is_governed_evidence_eligible(evidence):
+            continue
         source_item = service.get_source_item_by_id(evidence.source_item_id)
         typed_claims = _extract_for_evidence(evidence, source_item, model=model)
         if typed_claims is None:

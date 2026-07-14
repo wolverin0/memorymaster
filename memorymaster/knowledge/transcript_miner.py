@@ -127,7 +127,14 @@ def mine_transcript(
         idem_key = f"transcript-{text_hash}"
 
         existing = conn.execute(
-            "SELECT id FROM claims WHERE idempotency_key = ?", (idem_key,)
+            """
+            SELECT id FROM claims
+            WHERE idempotency_key = ?
+              AND visibility = 'public'
+              AND tenant_id IS NULL
+              AND scope = ?
+            """,
+            (idem_key, scope),
         ).fetchone()
         if existing:
             stats["duplicates"] += 1

@@ -1,6 +1,8 @@
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
+from functools import wraps
 import hashlib
 import http.client
+import inspect
 import json
 import logging
 import os
@@ -11,6 +13,14 @@ from typing import Any, TypeVar
 from urllib.parse import urlparse
 
 from memorymaster.core import observability
+from memorymaster.core.access_control import (
+    AuthMode,
+    RequestContext,
+    authorize_context_action,
+    bind_request_context,
+    current_request_context,
+    resolve_request_context,
+)
 from memorymaster.surfaces import mcp_path_policy
 from pydantic import BaseModel, ValidationError
 
@@ -231,7 +241,7 @@ def _check_ingest_rate_limit(
     """
     limit = _ingest_rate_limit_per_min()
     if limit == 0:
-        return None
+        return _check_durable_ingest_quota(source_agent, cost)
 
     timestamp = _monotonic() if now is None else now
     key = _empty_to_none(source_agent) or _ANONYMOUS_SOURCE_AGENT
@@ -265,6 +275,31 @@ def _check_ingest_rate_limit(
         _INGEST_RATE_BUCKETS[key] = (agent_tokens - cost, timestamp)
         _INGEST_RATE_BUCKETS[_GLOBAL_RATE_AGENT] = (global_tokens - cost, timestamp)
         _evict_rate_buckets()
+    return _check_durable_ingest_quota(source_agent, cost)
+
+
+def _check_durable_ingest_quota(
+    source_agent: str, cost: float
+) -> dict[str, Any] | None:
+    from memorymaster.core.usage_ledger import UsageQuotaExceeded, reserve_configured
+
+    actor = _empty_to_none(source_agent) or _ANONYMOUS_SOURCE_AGENT
+    try:
+        reserve_configured(
+            operation="ingest",
+            provider="mcp",
+            actor=actor,
+            units=max(1, int(cost)),
+        )
+    except UsageQuotaExceeded as exc:
+        return _structured_error(
+            "durable MCP ingest quota exhausted",
+            "RATE_LIMITED",
+            "source_agent",
+            source_agent=actor,
+            partition=exc.partition,
+            limit_per_window=exc.limit,
+        )
     return None
 
 
@@ -296,33 +331,58 @@ def _resolve_workspace(workspace: str) -> str:
 # start_session or bound MemoryService.session_id, so get_usage_rollup's
 # session half always returned []. The MCP server is long-lived per client,
 # so one session per DB per process is the honest granularity.
-_TELEMETRY_SESSION_IDS: dict[str, int] = {}
+_TELEMETRY_SESSION_IDS: dict[tuple[str, str, str], int] = {}
 
 
-def _bind_telemetry_session(svc: MemoryService, db_path: str) -> None:
+def _bind_telemetry_session(
+    svc: MemoryService,
+    db_path: str,
+    principal: str = "mcp-session",
+    tenant_id: str | None = None,
+) -> None:
     """Best-effort: bind a usage-telemetry session to *svc*.
 
     Telemetry must never break a tool call — every failure is swallowed and
     the service simply stays unbound (counters still work via source_agent).
     """
     try:
-        sid = _TELEMETRY_SESSION_IDS.get(db_path)
+        session_key = (db_path, principal, tenant_id or "")
+        sid = _TELEMETRY_SESSION_IDS.get(session_key)
         if sid is None:
             from memorymaster.surfaces.session_tracker import SessionTracker
 
-            sid = SessionTracker(db_path).start_session("mcp-session")
-            _TELEMETRY_SESSION_IDS[db_path] = sid
+            sid = SessionTracker(db_path).start_session(principal)
+            _TELEMETRY_SESSION_IDS[session_key] = sid
         svc.session_id = sid
         if not getattr(svc, "source_agent", None):
-            svc.source_agent = "mcp-session"
+            svc.source_agent = principal
     except Exception:
         pass
 
 
-def _service(db: str, workspace: str) -> MemoryService:
-    svc = MemoryService(db_target=_resolve_db(db), workspace_root=Path(_resolve_workspace(workspace)))
-    _bind_telemetry_session(svc, _resolve_db(db))
+def _service(db: str, workspace: str, *, read_only: bool = False) -> MemoryService:
+    db_path = _resolve_db(db)
+    workspace_path = _resolve_workspace(workspace)
+    context = current_request_context()
+    principal = context.principal if context is not None else "mcp-session"
+    tenant_id = context.tenant_id if context is not None else None
+    svc = MemoryService(
+        db_target=db_path,
+        workspace_root=Path(workspace_path),
+        tenant_id=tenant_id,
+        require_tenant=context is not None and context.mode is AuthMode.TEAM,
+        principal=principal,
+        allowed_scopes=context.allowed_scopes if context is not None else frozenset(),
+        read_only=read_only,
+    )
+    if not read_only:
+        _bind_telemetry_session(svc, db_path, principal, tenant_id)
+    svc.source_agent = principal
     return svc
+
+
+def _read_service(db: str, workspace: str) -> MemoryService:
+    return _service(db, workspace, read_only=True)
 
 
 def _usage_rollup(db: str) -> dict[str, Any]:
@@ -352,6 +412,15 @@ def _usage_rollup(db: str) -> dict[str, Any]:
 def _empty_to_none(value: str) -> str | None:
     v = value.strip()
     return v if v else None
+
+
+def _bounded_limit(value: int, *, maximum: int) -> int:
+    """Clamp caller-controlled result sizes to a finite positive range."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 1
+    return min(maximum, max(1, parsed))
 
 
 def _parse_sources_json(sources_json: str) -> list[CitationInput]:
@@ -429,19 +498,27 @@ def _project_scope(workspace: str) -> str:
 
 def _effective_ingest_scope(scope: str, workspace: str) -> str:
     raw = (scope or "").strip()
-    if not raw or raw == "project":
-        return _project_scope(workspace)
-    return raw
+    effective = _project_scope(workspace) if not raw or raw == "project" else raw
+    context = current_request_context()
+    if context is not None and context.mode is AuthMode.TEAM and effective not in context.allowed_scopes:
+        raise PermissionError("Requested claim scope is outside the authenticated scope grant.")
+    return effective
 
 
 def _effective_scope_allowlist(raw: str, workspace: str) -> list[str] | None:
     parsed = _parse_scope_allowlist(raw)
-    if parsed:
+    context = current_request_context()
+    if context is not None and context.mode is AuthMode.TEAM:
+        requested = parsed or list(context.allowed_scopes)
+        scopes = [scope for scope in requested if scope in context.allowed_scopes]
+        if not scopes:
+            raise PermissionError("Requested scopes do not intersect the authenticated scope grant.")
+    elif parsed:
         return parsed
-    scopes = [_project_scope(workspace), "global"]
-    if _ENV_QUERY_INCLUDE_LEGACY_PROJECT:
-        scopes.append("project")
-    # Keep order and dedupe.
+    else:
+        scopes = [_project_scope(workspace), "global"]
+        if _ENV_QUERY_INCLUDE_LEGACY_PROJECT:
+            scopes.append("project")
     seen: set[str] = set()
     deduped: list[str] = []
     for value in scopes:
@@ -453,65 +530,12 @@ def _effective_scope_allowlist(raw: str, workspace: str) -> list[str] | None:
 
 
 def _qdrant_query(query: str, db: str, workspace: str, limit: int) -> dict[str, Any]:
-    """Fast semantic search via Qdrant+Ollama (no local model load)."""
-    try:
-        from memorymaster.recall.qdrant_backend import QdrantBackend
-    except ImportError:
-        return {"ok": False, "error": "qdrant mode requires httpx. Install with: pip install 'memorymaster[qdrant]'"}
-    backend = QdrantBackend()
-    results = backend.search(query, limit=limit)
-    backend.close()
-    if not results:
-        return {"ok": True, "rows": 0, "claims": [], "rows_data": []}
-
-    # Enrich with full claim data from the DB
-    svc = _service(db, workspace)
-    enriched_rows: list[dict[str, Any]] = []
-    enriched_claims: list[dict[str, Any]] = []
-    for hit in results:
-        cid = hit.get("claim_id")
-        if cid is None:
-            continue
-        claim = svc.store.get_claim(int(cid), include_citations=True)
-        if claim is None:
-            # Claim may have been archived since last sync — return Qdrant payload
-            enriched_rows.append({
-                "claim": hit.get("payload", {}),
-                "status": hit.get("payload", {}).get("state", "unknown"),
-                "annotation": {},
-                "score": hit.get("score", 0.0),
-                "lexical_score": 0.0,
-                "freshness_score": 0.0,
-                "confidence_score": hit.get("payload", {}).get("confidence", 0.0),
-                "vector_score": hit.get("score", 0.0),
-            })
-            enriched_claims.append(hit.get("payload", {}))
-            continue
-        claim_dict = _claim_to_dict(claim)
-        enriched_claims.append(claim_dict)
-        enriched_rows.append({
-            "claim": claim_dict,
-            "status": claim.status,
-            "annotation": {
-                "status": claim.status,
-                "active": claim.status == "confirmed",
-                "stale": claim.status == "stale",
-                "conflicted": claim.status == "conflicted",
-                "pinned": bool(claim.pinned),
-            },
-            "score": hit.get("score", 0.0),
-            "lexical_score": 0.0,
-            "freshness_score": 0.0,
-            "confidence_score": claim.confidence,
-            "vector_score": hit.get("score", 0.0),
-        })
-    return {
-        "ok": True,
-        "rows": len(enriched_claims),
-        "claims": enriched_claims,
-        "rows_data": enriched_rows,
-        "retrieval_mode": "qdrant",
-    }
+    """Reject the legacy raw-Qdrant retrieval entrypoint during quarantine."""
+    del query, db, workspace, limit
+    raise PermissionError(
+        "Direct Qdrant retrieval is quarantined until the governed retrieval "
+        "planner can enforce authoritative policy rehydration."
+    )
 
 
 def _checkpoint_batch(
@@ -586,8 +610,169 @@ def _checkpoint_batch(
     }
 
 
+@dataclass(frozen=True, slots=True)
+class McpToolPolicy:
+    action: str
+    team_enabled: bool = False
+
+
+MCP_TOOL_POLICIES: dict[str, McpToolPolicy] = {
+    "archive_by_source": McpToolPolicy("compact"),
+    "checkpoint": McpToolPolicy("ingest"),
+    "classify_query": McpToolPolicy("query", team_enabled=True),
+    "compact_memory": McpToolPolicy("compact"),
+    "entity_stats": McpToolPolicy("configure"),
+    "extract_entities": McpToolPolicy("ingest"),
+    "federated_query": McpToolPolicy("query"),
+    "find_related_claims": McpToolPolicy("configure"),
+    "get_usage_rollup": McpToolPolicy("query"),
+    "ingest_claim": McpToolPolicy("ingest", team_enabled=True),
+    "ingest_rule": McpToolPolicy("ingest"),
+    "init_db": McpToolPolicy("configure"),
+    "list_claims": McpToolPolicy("query", team_enabled=True),
+    "list_events": McpToolPolicy("query"),
+    "list_steward_proposals": McpToolPolicy("query"),
+    "local_search": McpToolPolicy("query"),
+    "open_dashboard": McpToolPolicy("query"),
+    "pin_claim": McpToolPolicy("steward"),
+    "quality_scores": McpToolPolicy("steward"),
+    "query_claim_paths": McpToolPolicy("query"),
+    "query_for_context": McpToolPolicy("query"),
+    "query_for_task": McpToolPolicy("query"),
+    "query_memory": McpToolPolicy("query", team_enabled=True),
+    "query_meta_decisions": McpToolPolicy("query"),
+    "query_rules": McpToolPolicy("query"),
+    "read_active_tasks": McpToolPolicy("query"),
+    "recall_analysis": McpToolPolicy("query"),
+    "recompute_tiers": McpToolPolicy("steward"),
+    "redact_claim_payload": McpToolPolicy("delete"),
+    "resolve_project": McpToolPolicy("ingest"),
+    "resolve_steward_proposal": McpToolPolicy("steward"),
+    "rules_export": McpToolPolicy("export"),
+    "run_cycle": McpToolPolicy("steward"),
+    "run_steward": McpToolPolicy("steward"),
+    "search_verbatim": McpToolPolicy("export"),
+    "volunteer_context": McpToolPolicy("query"),
+}
+
+
+def _same_configured_location(left: str, right: str) -> bool:
+    if "://" in left or "://" in right:
+        return left == right
+    return Path(left).resolve() == Path(right).resolve()
+
+
+def _team_default_scope(context: RequestContext) -> str:
+    workspace_scope = _project_scope(context.workspace)
+    if workspace_scope in context.allowed_scopes:
+        return workspace_scope
+    project_scopes = [scope for scope in context.allowed_scopes if scope.startswith("project:")]
+    if len(project_scopes) == 1:
+        return project_scopes[0]
+    raise PermissionError("Authenticated workspace has no unambiguous project scope.")
+
+
+def _team_request_principal() -> str | None:
+    context = current_request_context()
+    if context is None or context.mode is not AuthMode.TEAM:
+        return None
+    return context.principal
+
+
+def _normalize_team_arguments(
+    bound: inspect.BoundArguments,
+    context: RequestContext,
+    tool_name: str,
+) -> None:
+    if "db" in bound.arguments:
+        requested_db = str(bound.arguments["db"] or "")
+        if requested_db not in {"", _DEFAULT_DB} and not _same_configured_location(requested_db, context.db_target):
+            raise PermissionError("Caller-selected database is outside the authenticated context.")
+        bound.arguments["db"] = context.db_target
+    if "workspace" in bound.arguments:
+        requested_workspace = str(bound.arguments["workspace"] or "")
+        if requested_workspace not in {"", _DEFAULT_WORKSPACE} and not _same_configured_location(
+            requested_workspace,
+            context.workspace,
+        ):
+            raise PermissionError("Caller-selected workspace is outside the authenticated context.")
+        bound.arguments["workspace"] = context.workspace
+    default_scope = _team_default_scope(context)
+    for field in ("scope", "current_scope", "project_scope"):
+        if field not in bound.arguments:
+            continue
+        requested_scope = str(bound.arguments[field] or "").strip()
+        effective_scope = default_scope if requested_scope in {"", "project"} else requested_scope
+        if effective_scope not in context.allowed_scopes:
+            raise PermissionError("Caller-selected scope is outside the authenticated context.")
+        bound.arguments[field] = effective_scope
+    if "scope_allowlist" in bound.arguments:
+        requested_scopes = _parse_scope_allowlist(str(bound.arguments["scope_allowlist"] or ""))
+        if requested_scopes and any(scope not in context.allowed_scopes for scope in requested_scopes):
+            raise PermissionError("Caller scope allowlist exceeds authenticated scopes.")
+        narrowed = list(requested_scopes) if requested_scopes else sorted(context.allowed_scopes)
+        if not narrowed:
+            raise PermissionError("Caller scope allowlist does not intersect authenticated scopes.")
+        bound.arguments["scope_allowlist"] = ",".join(narrowed)
+    for field in ("source_agent", "actor"):
+        if field in bound.arguments:
+            bound.arguments[field] = context.principal
+    if tool_name == "query_memory" and (
+        str(bound.arguments.get("retrieval_mode", "legacy")) != "legacy"
+        or bool(bound.arguments.get("auto_classify", False))
+    ):
+        raise PermissionError("Semantic MCP retrieval remains disabled in team mode pending planner containment.")
+
+
+def _authorized_tool_callable(func: Any, policy: McpToolPolicy) -> Any:
+    call_signature = inspect.signature(func)
+
+    @wraps(func)
+    def guarded(*args: Any, **kwargs: Any) -> Any:
+        bound = call_signature.bind_partial(*args, **kwargs)
+        bound.apply_defaults()
+        context = resolve_request_context(
+            db_target=str(bound.arguments.get("db", "") or ""),
+            workspace=str(bound.arguments.get("workspace", "") or ""),
+        )
+        authorize_context_action(context, policy.action)
+        if context.mode is AuthMode.TEAM:
+            _normalize_team_arguments(bound, context, func.__name__)
+        if context.mode is AuthMode.TEAM and not policy.team_enabled:
+            raise PermissionError(
+                f"MCP tool '{func.__name__}' is disabled in team mode until its scope contract is verified."
+            )
+        if bool(bound.arguments.get("allow_sensitive", False)) and not context.allow_sensitive:
+            raise PermissionError("Authenticated MCP context does not allow sensitive-data access.")
+        with bind_request_context(context):
+            return func(*bound.args, **bound.kwargs)
+
+    setattr(guarded, "__mcp_action__", policy.action)
+    setattr(guarded, "__mcp_team_enabled__", policy.team_enabled)
+    return guarded
+
+
 if FastMCP is not None:
-    mcp = FastMCP("memorymaster")
+    class AuthorizedFastMCP(FastMCP):
+        """FastMCP registration that cannot omit authorization metadata."""
+
+        def tool(self, *args: Any, **kwargs: Any) -> Any:
+            register = super().tool(*args, **kwargs)
+
+            def decorator(func: Any) -> Any:
+                policy = MCP_TOOL_POLICIES.get(func.__name__)
+                if policy is None:
+                    raise RuntimeError(f"MCP tool '{func.__name__}' has no authorization policy.")
+                return register(_authorized_tool_callable(func, policy))
+
+            return decorator
+
+else:  # pragma: no cover - import fallback when MCP dependency is unavailable
+    AuthorizedFastMCP = None  # type: ignore[misc,assignment]
+
+
+if FastMCP is not None:
+    mcp = AuthorizedFastMCP("memorymaster")
 
     @mcp.tool()
     def init_db(
@@ -948,10 +1133,22 @@ if FastMCP is not None:
 
     @mcp.tool()
     def classify_query(query: str) -> dict[str, Any]:
-        """Classify a query and recommend the best retrieval mode."""
+        """Classify a query and report its recommended and effective modes."""
         from memorymaster.recall.query_classifier import classify_query as _classify, recommended_retrieval_mode
+
         qtype = _classify(query)
-        return {"query_type": qtype, "recommended_mode": recommended_retrieval_mode(qtype)}
+        recommended_mode = recommended_retrieval_mode(qtype)
+        effective_mode = "legacy" if recommended_mode == "qdrant" else recommended_mode
+        result = {
+            "query_type": qtype,
+            "recommended_mode": recommended_mode,
+            "effective_mode": effective_mode,
+        }
+        if recommended_mode == "qdrant":
+            result["containment_reason"] = (
+                "qdrant retrieval is quarantined pending the governed retrieval planner"
+            )
+        return result
 
     def _apply_detail_level(claim_dict: dict[str, Any], detail_level: str) -> dict[str, Any]:
         """Filter claim dict fields based on requested detail level.
@@ -992,19 +1189,20 @@ if FastMCP is not None:
         workspace: str = ".",
         limit: int = 20,
         retrieval_mode: str = "legacy",
+        trust_mode: str = "trusted",
         auto_classify: bool = False,
-        include_stale: bool = True,
-        include_conflicted: bool = True,
-        include_candidates: bool = True,
+        include_stale: bool | None = None,
+        include_conflicted: bool | None = None,
+        include_candidates: bool | None = None,
         allow_sensitive: bool = False,
         scope_allowlist: str = "",
         detail_level: str = "standard",
     ) -> dict[str, Any]:
-        """Query memory for relevant claims. Includes candidates by default for MCP use.
+        """Query governed memory; trusted mode returns confirmed claims only.
 
         retrieval_mode options:
           - "legacy" (default, fastest ~0.1s): SQL text search
-          - "qdrant" (fast ~0.5s): semantic search via Qdrant+Ollama, requires QDRANT_URL
+          - "qdrant": temporarily quarantined; falls back to authoritative lexical search
           - "hybrid" (slow ~8s): local sentence-transformers vector + lexical ranking
 
         auto_classify: when True and retrieval_mode is "legacy", classify the query
@@ -1017,46 +1215,55 @@ if FastMCP is not None:
         """
         from memorymaster.recall.query_classifier import classify_query as _classify, recommended_retrieval_mode
 
+        limit = _bounded_limit(limit, maximum=100)
         resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
             context="mcp.query_memory",
         )
 
+        requested_retrieval_mode = retrieval_mode
+        classified_retrieval_mode: str | None = None
         query_type: str | None = None
         if auto_classify and retrieval_mode == "legacy":
             query_type = _classify(query)
-            retrieval_mode = recommended_retrieval_mode(query_type)
+            classified_retrieval_mode = recommended_retrieval_mode(query_type)
+            retrieval_mode = classified_retrieval_mode
 
-        # Qdrant retrieval mode: fast semantic search via network Qdrant+Ollama
-        if retrieval_mode == "qdrant":
-            result = _qdrant_query(query, db, workspace, limit)
-            if query_type is not None:
-                result["query_type"] = query_type
-            if detail_level != "standard":
-                result["claims"] = [_apply_detail_level(c, detail_level) for c in result.get("claims", [])]
-            return result
-
-        svc = _service(db, workspace)
-        rows_data = svc.query_rows(
+        from memorymaster.recall.planner import RetrievalRequest
+        svc = _read_service(db, workspace)
+        retrieval = svc.retrieve(RetrievalRequest(
             query_text=query,
             limit=limit,
+            trust_mode=trust_mode,
             retrieval_mode=retrieval_mode,
             include_stale=include_stale,
             include_conflicted=include_conflicted,
             include_candidates=include_candidates,
             allow_sensitive=allow_sensitive,
-            scope_allowlist=_effective_scope_allowlist(scope_allowlist, workspace),
-        )
+            scope_allowlist=tuple(_effective_scope_allowlist(scope_allowlist, workspace)),
+            requesting_agent=_team_request_principal(),
+            query_type=query_type,
+            qdrant_candidate_reads=(
+                retrieval_mode == "qdrant"
+                and os.environ.get("MEMORYMASTER_QDRANT_GOVERNED_READS", "").strip().lower()
+                in {"1", "true", "yes", "on"}
+            ),
+        ))
+        rows_data = list(retrieval.rows)
         # For "full" detail level, re-fetch each claim with citations inline.
         if detail_level == "full":
             rows_data = _enrich_claims_with_citations(svc, rows_data)
 
         claims = [row["claim"] for row in rows_data]
+        serialized_claims = [
+            _apply_detail_level(_claim_to_dict(claim), detail_level)
+            for claim in claims
+        ]
         serialized_rows: list[dict[str, Any]] = []
-        for row in rows_data:
+        for index, row in enumerate(rows_data):
             serialized_rows.append(
                 {
-                    "claim": _apply_detail_level(_claim_to_dict(row["claim"]), detail_level),
+                    "claim_index": index,
                     "status": row.get("status"),
                     "annotation": row.get("annotation", {}),
                     "score": row.get("score", 0.0),
@@ -1070,18 +1277,19 @@ if FastMCP is not None:
         response: dict[str, Any] = {
             "ok": True,
             "rows": len(claims),
-            "claims": [_apply_detail_level(_claim_to_dict(c), detail_level) for c in claims],
+            "claims": serialized_claims,
             "rows_data": serialized_rows,
+            "response_contract": "memorymaster.retrieval.v2",
+            "trust_mode": retrieval.plan.trust_mode,
+            "requested_retrieval_mode": requested_retrieval_mode,
+            "retrieval_mode": retrieval.plan.effective_mode,
         }
         if query_type is not None:
             response["query_type"] = query_type
-
-        # Log to vault chronicle
-        try:
-            from memorymaster.knowledge.vault_log import log_query
-            log_query(query, len(claims))
-        except Exception:
-            pass
+        if retrieval.plan.containment_reason is not None:
+            response["containment_reason"] = retrieval.plan.containment_reason
+            if classified_retrieval_mode is not None:
+                response["classified_retrieval_mode"] = classified_retrieval_mode
 
         return response
 
@@ -1120,7 +1328,7 @@ if FastMCP is not None:
         known claim_id can't leak cross-scope or sensitive claim text via graph
         traversal (audit: claim-paths-scope-gate).
         """
-        svc = _service(db, workspace)
+        svc = _read_service(db, workspace)
         normalized_scopes = _effective_scope_allowlist(scope_allowlist, workspace)
         allow_sensitive = resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
@@ -1170,7 +1378,7 @@ if FastMCP is not None:
             allow_sensitive=allow_sensitive,
             context="mcp.recall_analysis",
         )
-        svc = _service(db, workspace)
+        svc = _read_service(db, workspace)
         analysis = svc.recall_analysis(
             query_text=query,
             limit=limit,
@@ -1193,9 +1401,10 @@ if FastMCP is not None:
         output_format: str = "text",
         limit: int = 100,
         retrieval_mode: str = "legacy",
-        include_stale: bool = True,
-        include_conflicted: bool = True,
-        include_candidates: bool = True,
+        trust_mode: str = "trusted",
+        include_stale: bool | None = None,
+        include_conflicted: bool | None = None,
+        include_candidates: bool | None = None,
         allow_sensitive: bool = False,
         scope_allowlist: str = "",
         detail_level: str = "standard",
@@ -1214,11 +1423,13 @@ if FastMCP is not None:
           - "standard" (default): full claim dict
           - "full": full claim dict with citations inlined
         """
+        limit = _bounded_limit(limit, maximum=250)
+        token_budget = _bounded_limit(token_budget, maximum=32_000)
         resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
             context="mcp.query_for_context",
         )
-        svc = _service(db, workspace)
+        svc = _read_service(db, workspace)
         result = svc.query_for_context(
             query=query,
             token_budget=token_budget,
@@ -1228,6 +1439,7 @@ if FastMCP is not None:
             include_conflicted=include_conflicted,
             include_candidates=include_candidates,
             retrieval_mode=retrieval_mode,
+            trust_mode=trust_mode,
             allow_sensitive=allow_sensitive,
             scope_allowlist=_effective_scope_allowlist(scope_allowlist, workspace),
         )
@@ -1243,16 +1455,7 @@ if FastMCP is not None:
         if detail_level != "standard":
             # Attach filtered claim list as a convenience for callers who want
             # structured data alongside the formatted output block.
-            rows_data = svc.query_rows(
-                query_text=query,
-                limit=limit,
-                retrieval_mode=retrieval_mode,
-                include_stale=include_stale,
-                include_conflicted=include_conflicted,
-                include_candidates=include_candidates,
-                allow_sensitive=allow_sensitive,
-                scope_allowlist=_effective_scope_allowlist(scope_allowlist, workspace),
-            )
+            rows_data = list(result.rows)
             if detail_level == "full":
                 filtered_claims = []
                 for row in rows_data:
@@ -1280,9 +1483,10 @@ if FastMCP is not None:
         output_format: str = "text",
         limit: int = 100,
         retrieval_mode: str = "legacy",
-        include_stale: bool = True,
-        include_conflicted: bool = True,
-        include_candidates: bool = True,
+        trust_mode: str = "trusted",
+        include_stale: bool | None = None,
+        include_conflicted: bool | None = None,
+        include_candidates: bool | None = None,
         allow_sensitive: bool = False,
         scope_allowlist: str = "",
         detail_level: str = "standard",
@@ -1311,22 +1515,28 @@ if FastMCP is not None:
         """
         from memorymaster.recall.context_optimizer import pack_context
 
+        limit = _bounded_limit(limit, maximum=250)
+        token_budget = _bounded_limit(token_budget, maximum=32_000)
+
         resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
             context="mcp.volunteer_context",
         )
-        svc = _service(db, workspace)
+        svc = _read_service(db, workspace)
         effective_allowlist = _effective_scope_allowlist(scope_allowlist, workspace)
-        rows = svc.query_rows(
+        from memorymaster.recall.planner import RetrievalRequest
+        retrieval = svc.retrieve(RetrievalRequest(
             query_text=query,
             limit=limit,
+            trust_mode=trust_mode,
             retrieval_mode=retrieval_mode,
             include_stale=include_stale,
             include_conflicted=include_conflicted,
             include_candidates=include_candidates,
             allow_sensitive=allow_sensitive,
-            scope_allowlist=effective_allowlist,
-        )
+            scope_allowlist=tuple(effective_allowlist),
+        ))
+        rows = list(retrieval.rows)
         # Confidence gate — pure post-filter on the already-ranked, already
         # sensitivity-filtered rows. >= so min_confidence=0.0 keeps everything
         # (additive, no recall change vs query_for_context when the gate is open).
@@ -1516,21 +1726,31 @@ if FastMCP is not None:
         include_archived: bool = False,
         allow_sensitive: bool = False,
         holder: str = "",
+        cursor: str = "",
     ) -> dict[str, Any]:
         """List claims by optional status and/or belief holder (takes-vs-facts)."""
         resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
             context="mcp.list_claims",
         )
-        svc = _service(db, workspace)
-        claims = svc.list_claims(
+        svc = _read_service(db, workspace)
+        limit = _bounded_limit(limit, maximum=250)
+        claims, next_cursor = svc.list_claims_page(
             status=_empty_to_none(status),
             limit=limit,
+            cursor=cursor,
             include_archived=include_archived,
             allow_sensitive=allow_sensitive,
             holder=_empty_to_none(holder),
+            scope_allowlist=_effective_scope_allowlist("", workspace),
+            requesting_agent=_team_request_principal(),
         )
-        return {"ok": True, "rows": len(claims), "claims": [_claim_to_dict(c) for c in claims]}
+        return {
+            "ok": True,
+            "rows": len(claims),
+            "claims": [_claim_to_dict(c) for c in claims],
+            "next_cursor": next_cursor or None,
+        }
 
     @mcp.tool()
     def ingest_rule(
@@ -1599,11 +1819,12 @@ if FastMCP is not None:
         hybrid retriever. Use this when you want only behavioural rules, not
         descriptive fact claims.
         """
+        limit = _bounded_limit(limit, maximum=100)
         resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
             context="mcp.query_rules",
         )
-        svc = _service(db, workspace)
+        svc = _read_service(db, workspace)
         rules = svc.query_rules(query, limit=limit, allow_sensitive=allow_sensitive)
         return {"ok": True, "rows": len(rules), "rules": rules}
 
@@ -1623,13 +1844,14 @@ if FastMCP is not None:
         out unless ``allow_sensitive`` is granted by policy, so this never leaks
         another agent's secret rules.
         """
+        limit = _bounded_limit(limit, maximum=1000)
         resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
             context="mcp.rules_export",
         )
         from memorymaster.knowledge.rule_export import collect_rules
 
-        svc = _service(db, workspace)
+        svc = _read_service(db, workspace)
         rows = collect_rules(
             svc,
             min_confidence=min_confidence,
@@ -1697,15 +1919,23 @@ if FastMCP is not None:
         claim_id: int | None = None,
         event_type: str = "",
         limit: int = 100,
+        cursor: str = "",
     ) -> dict[str, Any]:
         """List events by optional claim_id and event_type."""
-        svc = _service(db, workspace)
-        events = svc.list_events(
+        svc = _read_service(db, workspace)
+        limit = _bounded_limit(limit, maximum=500)
+        events, next_cursor = svc.list_events_page(
             claim_id=claim_id,
             limit=limit,
             event_type=_empty_to_none(event_type),
+            cursor=cursor,
         )
-        return {"ok": True, "rows": len(events), "events": [asdict(e) for e in events]}
+        return {
+            "ok": True,
+            "rows": len(events),
+            "events": [asdict(e) for e in events],
+            "next_cursor": next_cursor or None,
+        }
 
     @mcp.tool()
     def search_verbatim(
@@ -1717,13 +1947,28 @@ if FastMCP is not None:
     ) -> dict[str, Any]:
         """Search raw conversation memories (verbatim, unsummarized).
 
-        mode: "fts" (keyword), "vector" (Qdrant semantic), "hybrid" (both)
+        ``vector`` and ``hybrid`` temporarily use authoritative FTS because
+        direct Qdrant payload retrieval is quarantined pending rehydration.
         Use this when query_memory (claims) doesn't find what you need —
         verbatim search finds exact conversation fragments.
         """
         from memorymaster.recall.verbatim_store import search_verbatim as _search
-        results = _search(_resolve_db(db), query, scope=scope or None, limit=limit, mode=mode)
-        return {"ok": True, "rows": len(results), "results": results}
+        limit = _bounded_limit(limit, maximum=100)
+        requested_mode = str(mode).strip().lower()
+        effective_mode = "fts" if requested_mode in {"vector", "hybrid"} else requested_mode
+        results = _search(
+            _resolve_db(db), query, scope=scope or None, limit=limit, mode=effective_mode
+        )
+        response = {"ok": True, "rows": len(results), "results": results}
+        if effective_mode != requested_mode:
+            response.update({
+                "requested_mode": requested_mode,
+                "mode": effective_mode,
+                "containment_reason": (
+                    "verbatim qdrant retrieval is quarantined pending authoritative rehydration"
+                ),
+            })
+        return response
 
     @mcp.tool()
     def get_usage_rollup(
@@ -1802,7 +2047,8 @@ if FastMCP is not None:
         """List steward proposals for human override workflow."""
         from memorymaster.govern.steward import list_steward_proposals as _list_steward_proposals
 
-        svc = _service(db, workspace)
+        limit = _bounded_limit(limit, maximum=500)
+        svc = _read_service(db, workspace)
         rows = _list_steward_proposals(
             svc,
             limit=limit,
@@ -1840,7 +2086,7 @@ if FastMCP is not None:
         workspace: str = ".",
     ) -> dict[str, Any]:
         """Extract entities from a claim's text and link them to the knowledge graph."""
-        from memorymaster.knowledge.entity_graph import EntityGraph
+        from memorymaster.knowledge.entity_graph import EntityGraph, EntityGraphNotReady
         svc = _service(db, workspace)
         if not text:
             claim = svc.store.get_claim(claim_id, include_citations=False)
@@ -1848,24 +2094,32 @@ if FastMCP is not None:
                 return {"ok": False, "error": f"Claim {claim_id} not found"}
             text = claim.text
         eg = EntityGraph(_resolve_db(db))
-        eg.ensure_tables()
-        names = eg.extract_and_link(claim_id, text)
+        try:
+            names = eg.extract_and_link(claim_id, text)
+        except EntityGraphNotReady as exc:
+            return _structured_error(str(exc), "ENTITY_GRAPH_NOT_READY")
         return {"ok": True, "entities": names, "count": len(names)}
 
     @mcp.tool()
     def entity_stats(
         db: str = "memorymaster.db",
+        workspace: str = ".",
     ) -> dict[str, Any]:
         """Get entity knowledge graph statistics."""
-        from memorymaster.knowledge.entity_graph import EntityGraph
-        eg = EntityGraph(_resolve_db(db))
-        eg.ensure_tables()
-        return {"ok": True, **eg.get_stats()}
+        from memorymaster.knowledge.entity_graph import EntityGraph, EntityGraphNotReady
+
+        _read_service(db, workspace)
+        graph = EntityGraph(_resolve_db(db), read_only=True)
+        try:
+            return {"ok": True, **graph.get_stats()}
+        except EntityGraphNotReady as exc:
+            return _structured_error(str(exc), "ENTITY_GRAPH_NOT_READY")
 
     @mcp.tool()
     def find_related_claims(
         entity_names: str,
         db: str = "memorymaster.db",
+        workspace: str = ".",
         hops: int = 2,
         limit: int = 50,
     ) -> dict[str, Any]:
@@ -1873,11 +2127,17 @@ if FastMCP is not None:
 
         entity_names: comma-separated entity names to search from.
         """
-        from memorymaster.knowledge.entity_graph import EntityGraph
-        eg = EntityGraph(_resolve_db(db))
-        eg.ensure_tables()
+        from memorymaster.knowledge.entity_graph import EntityGraph, EntityGraphNotReady
+
+        limit = _bounded_limit(limit, maximum=250)
+        hops = _bounded_limit(hops, maximum=5)
+        _read_service(db, workspace)
+        graph = EntityGraph(_resolve_db(db), read_only=True)
         names = [n.strip() for n in entity_names.split(",") if n.strip()]
-        claim_ids = eg.find_related_claims(names, hops=hops, limit=limit)
+        try:
+            claim_ids = graph.find_related_claims(names, hops=hops, limit=limit)
+        except EntityGraphNotReady as exc:
+            return _structured_error(str(exc), "ENTITY_GRAPH_NOT_READY")
         return {"ok": True, "claim_ids": claim_ids, "count": len(claim_ids)}
 
     @mcp.tool()
@@ -1923,7 +2183,7 @@ if FastMCP is not None:
         if request.top_n <= 0:
             return _structured_error("top_n must be positive.", "VALIDATION_ERROR", "top_n")
 
-        svc = _service(request.db, request.workspace)
+        svc = _read_service(request.db, request.workspace)
         result = svc.query_meta_decisions(
             query=request.query,
             claim_types=request.claim_types,
@@ -1946,7 +2206,8 @@ if FastMCP is not None:
         this tool searches every claim regardless of scope, enabling cross-project
         memory retrieval. Returns claims sorted by relevance.
         """
-        svc = _service(db, workspace)
+        limit = _bounded_limit(limit, maximum=100)
+        svc = _read_service(db, workspace)
         effective_scope = (current_scope or "").strip() or _project_scope(workspace)
         rows_data = svc.federated_query(
             query_text=query,
@@ -1955,9 +2216,10 @@ if FastMCP is not None:
             scope_allowlist=_parse_scope_allowlist(scope_allowlist),
         )
         claims = [row["claim"] for row in rows_data]
+        serialized_claims = [_claim_to_dict(claim) for claim in claims]
         serialized_rows: list[dict[str, Any]] = [
             {
-                "claim": _claim_to_dict(row["claim"]),
+                "claim_index": index,
                 "status": row.get("status"),
                 "annotation": row.get("annotation", {}),
                 "score": row.get("score", 0.0),
@@ -1966,13 +2228,14 @@ if FastMCP is not None:
                 "confidence_score": row.get("confidence_score", 0.0),
                 "vector_score": row.get("vector_score", 0.0),
             }
-            for row in rows_data
+            for index, row in enumerate(rows_data)
         ]
         return {
             "ok": True,
             "rows": len(claims),
-            "claims": [_claim_to_dict(c) for c in claims],
+            "claims": serialized_claims,
             "rows_data": serialized_rows,
+            "response_contract": "memorymaster.retrieval.v2",
         }
 
 

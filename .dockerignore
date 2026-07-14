@@ -1,0 +1,7 @@
+# Deny the entire build context, then allow only Dockerfile COPY inputs.
+**
+!Dockerfile
+!pyproject.toml
+!README.md
+!memorymaster/
+!memorymaster/**

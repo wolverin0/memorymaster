@@ -12,8 +12,6 @@ without a Postgres stay green while CI exercises both.
 """
 from __future__ import annotations
 
-import pytest
-
 from memorymaster.core.models import CitationInput
 
 
@@ -111,11 +109,13 @@ def test_parity_idempotency_key(parametrize_backends):
         "parity idem first",
         [CitationInput(source="s", locator="l")],
         idempotency_key="parity-idem-1",
+        source_agent=getattr(svc, "principal", None),
     )
     c2 = svc.store.create_claim(
         "parity idem second different text",
         [CitationInput(source="s", locator="l")],
         idempotency_key="parity-idem-1",
+        source_agent=getattr(svc, "principal", None),
     )
     assert c1.id == c2.id, f"{backend}: idempotency_key did not dedup"
 

@@ -34,7 +34,7 @@ def kuzu_store(tmp_path: Path):
     """Fresh Kuzu DB. Skips when Kuzu is missing on the platform."""
     try:
         store = GraphStore(tmp_path / "g.kuzu")
-        store.open()
+        store.initialize()
     except GraphStoreUnavailable:
         pytest.skip("Kuzu unavailable on this platform")
     yield store

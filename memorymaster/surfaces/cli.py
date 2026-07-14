@@ -174,13 +174,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     transcribe_evidence = sub.add_parser("transcribe-source-item", help="Run transcription on a source_item via the chosen provider; stores transcript as evidence_item")
     transcribe_evidence.add_argument("--source-item-id", type=int, required=True, help="source_items.id")
-    transcribe_evidence.add_argument("--provider", choices=["mock", "openai"], default="mock",
-                                      help="'openai' uses Whisper API via OPENAI_API_KEY + OPENAI_BASE_URL.")
+    transcribe_evidence.add_argument(
+        "--provider",
+        choices=["mock", "openai"],
+        required=True,
+        help="Required. 'openai' uses Whisper via OPENAI_API_KEY; 'mock' needs explicit test/dev opt-in.",
+    )
 
     ocr_evidence = sub.add_parser("ocr-source-item", help="Run OCR on a source_item via the chosen provider; stores OCR text as evidence_item")
     ocr_evidence.add_argument("--source-item-id", type=int, required=True, help="source_items.id")
-    ocr_evidence.add_argument("--provider", choices=["mock", "tesseract"], default="mock",
-                              help="'tesseract' requires pytesseract package + system tesseract binary.")
+    ocr_evidence.add_argument(
+        "--provider",
+        choices=["mock", "tesseract"],
+        required=True,
+        help="Required. 'tesseract' needs pytesseract + binary; 'mock' needs explicit test/dev opt-in.",
+    )
 
     export_actions = sub.add_parser("export-actions", help="Export approved Atlas action proposals")
     export_actions.add_argument("--output", required=True, help="Output JSON path")
@@ -467,7 +475,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("drain-spool", help="Replay spooled JSONL write envelopes through the normal service paths (P1 spec §2.4); sensitivity filter + idempotent dedup apply")
 
-    qdrant_search = sub.add_parser("qdrant-search", help="Semantic search via Qdrant vector store")
+    qdrant_search = sub.add_parser(
+        "qdrant-search",
+        help="Temporarily disabled: Qdrant retrieval is quarantined pending R2.1",
+        description=(
+            "Temporarily disabled: Qdrant retrieval is quarantined pending "
+            "authoritative policy rehydration in R2.1."
+        ),
+    )
     qdrant_search.add_argument("text", help="Query text for semantic search")
     qdrant_search.add_argument("--limit", type=int, default=5, help="Max results (default: 5)")
     qdrant_search.add_argument("--min-confidence", type=float, default=0.0, help="Minimum confidence filter")
@@ -675,7 +690,14 @@ def main(argv: list[str] | None = None) -> int:
     effective_db = _resolve_db_path(args)
 
     # Commands that don't need MemoryService run first; service is lazy-created once for all others.
-    _NO_SERVICE_COMMANDS = {"stealth-status", "export-metrics", "wiki-freshness", "mcp-usage-report", "export-delta"}
+    _NO_SERVICE_COMMANDS = {
+        "stealth-status",
+        "export-metrics",
+        "wiki-freshness",
+        "mcp-usage-report",
+        "export-delta",
+        "qdrant-search",
+    }
 
     try:
         handler = COMMAND_HANDLERS.get(args.command)

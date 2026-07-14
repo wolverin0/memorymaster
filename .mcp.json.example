@@ -6,6 +6,7 @@
       "env": {
         "MEMORYMASTER_DEFAULT_DB": "/path/to/memorymaster.db",
         "MEMORYMASTER_WORKSPACE": "/path/to/your/project",
+        "MEMORYMASTER_MCP_AUTH_MODE": "local-trusted",
         "QDRANT_URL": "http://localhost:6333",
         "OLLAMA_URL": "http://localhost:11434"
       }

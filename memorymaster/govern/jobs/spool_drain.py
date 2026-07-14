@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from memorymaster.core import spool
+from memorymaster.core.security import normalize_sensitivity_findings
 from memorymaster.govern.jobs.integrity import _record
 from memorymaster.core.models import CitationInput
 
@@ -56,9 +57,20 @@ _INGEST_FIELDS = (
     "valid_until",
     "source_agent",
     "visibility",
+    "holder",
     "intake_batch_id",
     "intake_batch_max",
 )
+
+
+def _boundary_findings(payload: dict[str, object]) -> list[str]:
+    """Return validated, finding-name-only metadata from the spool gateway."""
+    sidecar = payload.get("_sanitization")
+    if sidecar is None:
+        return []
+    if not isinstance(sidecar, dict) or not isinstance(sidecar.get("findings"), list):
+        raise ValueError("Invalid spool sanitization metadata.")
+    return normalize_sensitivity_findings(sidecar["findings"])
 
 
 def _parse_ts(raw: object) -> datetime | None:
@@ -74,6 +86,7 @@ def _parse_ts(raw: object) -> datetime | None:
 def _replay_ingest(svc, envelope: dict[str, object]) -> None:
     """Replay an ingest/dream line through svc.ingest — filter + dedup apply."""
     payload = envelope["payload"]
+    boundary_findings = _boundary_findings(payload)
     kwargs = {k: payload[k] for k in _INGEST_FIELDS if payload.get(k) is not None}
     if envelope.get("op") == "dream":
         kwargs.setdefault("source_agent", "dream-bridge")
@@ -91,6 +104,7 @@ def _replay_ingest(svc, envelope: dict[str, object]) -> None:
         str(payload.get("text") or ""),
         citations,
         idempotency_key=str(idempotency_key) if idempotency_key else None,
+        _pre_sanitization_findings=boundary_findings,
         **kwargs,
     )
 
@@ -129,6 +143,12 @@ def _replay_feedback(db_path: str | Path, envelope: dict[str, object]) -> None:
         return
     tracker = FeedbackTracker(str(db_path))
     tracker.record_retrieval(claim_ids, str(payload.get("query_text") or ""))
+
+
+def _replay_recall(store, db_path: str | Path, envelope: dict[str, object]) -> None:
+    _replay_access(store, envelope)
+    if str(envelope["payload"].get("query_text") or ""):
+        _replay_feedback(db_path, envelope)
 
 
 def _validate(envelope: object) -> str | None:
@@ -198,6 +218,8 @@ def run(
                     _replay_verbatim(db_path, envelope)
                 elif op == "access":
                     _replay_access(store, envelope)
+                elif op == "recall":
+                    _replay_recall(store, db_path, envelope)
                 else:  # "feedback" — _validate pinned op to KNOWN_OPS
                     _replay_feedback(db_path, envelope)
             except Exception as exc:

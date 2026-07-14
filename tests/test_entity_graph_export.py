@@ -5,54 +5,52 @@ import sqlite3
 import xml.etree.ElementTree as ET
 
 from memorymaster.surfaces.cli import main
-from memorymaster.knowledge.entity_graph import EntityGraph
+from memorymaster.core.service import MemoryService
 from memorymaster.govern.jobs.entity_graph_export import export_entity_graph
 
 
 def _init_db(path) -> None:
-    EntityGraph(str(path)).ensure_tables()
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            """
-            CREATE TABLE claims (
-                id INTEGER PRIMARY KEY,
-                text TEXT NOT NULL,
-                scope TEXT NOT NULL
-            )
-            """
-        )
+    MemoryService(path, workspace_root=path.parent).init_db()
 
 
 def _seed_five_entity_graph(path) -> None:
     now = datetime.now(timezone.utc).isoformat()
     entities = [
-        ("alice", "Alice", "person", '["A. Example"]'),
-        ("bob", "Bob", "person", "[]"),
-        ("acme", "Acme", "org", "[]"),
-        ("qdrant", "Qdrant", "product", "[]"),
-        ("memorymaster", "MemoryMaster", "project", "[]"),
+        (1, "Alice", "person"),
+        (2, "Bob", "person"),
+        (3, "Acme", "org"),
+        (4, "Qdrant", "product"),
+        (5, "MemoryMaster", "project"),
     ]
     edges = [
-        ("alice", "acme", "works_at", 1.0, 1),
-        ("bob", "acme", "works_at", 1.0, 1),
-        ("memorymaster", "qdrant", "uses", 2.5, 2),
-        ("memorymaster", "acme", "depends_on", 1.2, 2),
+        (1, 3, "works_at", 1.0, 1),
+        (2, 3, "works_at", 1.0, 1),
+        (5, 4, "uses", 2.5, 2),
+        (5, 3, "depends_on", 1.2, 2),
     ]
     with sqlite3.connect(path) as conn:
         conn.executemany(
             """
-            INSERT INTO claims (id, text, scope)
-            VALUES (?, ?, ?)
+            INSERT INTO claims (id, text, scope, status, created_at, updated_at)
+            VALUES (?, ?, ?, 'confirmed', ?, ?)
             """,
             [
-                (1, "people at acme", "project:foo"),
-                (2, "memorymaster uses qdrant", "project:foo"),
-                (3, "other scope", "project:bar"),
+                (1, "people at acme", "project:foo", now, now),
+                (2, "memorymaster uses qdrant", "project:foo", now, now),
+                (3, "other scope", "project:bar", now, now),
             ],
         )
         conn.executemany(
-            "INSERT INTO entities (id, name, type, aliases, created_at) VALUES (?, ?, ?, ?, ?)",
-            [(entity_id, name, entity_type, aliases, now) for entity_id, name, entity_type, aliases in entities],
+            "INSERT INTO entities "
+            "(id, canonical_name, entity_type, scope, created_at, updated_at) "
+            "VALUES (?, ?, ?, 'global', ?, ?)",
+            [(entity_id, name, entity_type, now, now) for entity_id, name, entity_type in entities],
+        )
+        conn.execute(
+            "INSERT INTO entity_aliases "
+            "(entity_id, alias, variant_key, original_form, created_at) "
+            "VALUES (1, 'a-example', 'A. Example', 'A. Example', ?)",
+            (now,),
         )
         conn.executemany(
             """
@@ -63,7 +61,7 @@ def _seed_five_entity_graph(path) -> None:
         )
         conn.executemany(
             "INSERT INTO claim_entity_links (claim_id, entity_id) VALUES (?, ?)",
-            [(1, "alice"), (1, "bob"), (1, "acme"), (2, "memorymaster"), (2, "qdrant")],
+            [(1, 1), (1, 2), (1, 3), (2, 5), (2, 4)],
         )
 
 
@@ -107,7 +105,7 @@ def test_export_five_entity_graph_dot_with_scope(tmp_path):
 
     assert result.nodes == 5
     assert result.edges == 4
-    assert '"memorymaster" -> "qdrant"' in text
+    assert '"5" -> "4"' in text
     assert 'label="uses"' in text
     assert 'aliases="A. Example"' in text
 
@@ -126,7 +124,7 @@ def test_export_five_entity_graph_graphml_with_scope(tmp_path):
     assert result.edges == 4
     assert len(root.findall(".//g:node", ns)) == 5
     assert len(root.findall(".//g:edge", ns)) == 4
-    assert root.find(".//g:edge[@source='memorymaster'][@target='qdrant']", ns) is not None
+    assert root.find(".//g:edge[@source='5'][@target='4']", ns) is not None
 
 
 def test_entity_graph_export_cli_writes_dot(tmp_path):

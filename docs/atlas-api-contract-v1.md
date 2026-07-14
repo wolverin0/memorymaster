@@ -79,8 +79,8 @@ Non-Atlas subcommands (the rest of MemoryMaster) emit the same envelope **withou
 | `process-media-retry-queue` | `--limit <int>` (def 25) | `{attempted, expired, recovered, failed, pending_remaining, rows:[MediaRetryItem]}` | `attempted` |
 | `record-media-retry-outcome` | `--retry-id <int>` (req), `--status {pending,retrying,expired,done,failed}` (req), `--media-path` (required for `done`), `--last-http-status`, `--last-error`, `--next-attempt-time` | `MediaRetryItem` | `1` |
 | `list-media-retries` | `--status`, `--source-item-id`, `--limit` (def 100) | `list[MediaRetryItem]` | `len(data)` |
-| `transcribe-source-item` | `--source-item-id <int>` (req), `--provider {mock,openai}` (def `mock`) | `{source_item_id, created, evidence, error, provider}` | `1 if evidence else 0` |
-| `ocr-source-item` | `--source-item-id <int>` (req), `--provider {mock,tesseract}` (def `mock`) | same shape | same |
+| `transcribe-source-item` | `--source-item-id <int>` (req), `--provider {mock,openai}` (req) | `{source_item_id, created, evidence, error, provider}` | `1 if evidence else 0` |
+| `ocr-source-item` | `--source-item-id <int>` (req), `--provider {mock,tesseract}` (req) | same shape | same |
 | `export-actions` | `--output <path>` (req), `--destination` (def `super-productivity`), `--limit` (def 100), `--dry-run` | `{destination, output_path, exported, proposal_ids:[int]}` | `exported` |
 | `atlas-version` | (none) | `{atlas_contract_version, atlas_contract_name, subcommands, endpoints, breaking_changes_since}` | `1` |
 
@@ -103,14 +103,14 @@ LifeAgent should treat these as authoritative backend labels and use them to fil
 
 ### Real provider adapters (v1.5.0)
 
-`memorymaster/media_providers.py` ships two real adapters behind the existing `TranscriptionProvider` / `OcrProvider` `Protocol`s. Mock providers remain the default.
+`memorymaster/media_providers.py` ships two real adapters behind the existing `TranscriptionProvider` / `OcrProvider` `Protocol`s. Production has no synthetic fallback: callers select a ready real provider explicitly.
 
 | Adapter | Class | Optional dependency | Env vars |
 |---|---|---|---|
 | OpenAI Whisper transcription | `OpenAIWhisperTranscriptionProvider` | None (stdlib only — urllib + manual multipart) | `OPENAI_API_KEY` (required at call time), `OPENAI_BASE_URL` (default `https://api.openai.com/v1`) |
 | Tesseract OCR | `TesseractOcrProvider` | `pytesseract` Python package + system `tesseract` binary | None |
 
-**Lazy validation:** importing the module never fails. Optional dependencies are checked only when `.transcribe(path)` / `.extract(path)` is called. Missing deps raise `RuntimeError` with a helpful install message — `_process_media` catches it and records a `media_process_failed` event so the source_item is preserved.
+**Readiness:** importing the module remains safe. The CLI factory checks credentials and dependencies before processing; direct provider calls retain actionable runtime checks. Missing configuration never produces placeholder evidence.
 
 **Factory:**
 
@@ -119,6 +119,8 @@ from memorymaster.media_providers import get_transcription_provider, get_ocr_pro
 provider = get_transcription_provider("openai")    # or "mock"
 provider = get_ocr_provider("tesseract")            # or "mock"
 ```
+
+Mocks are test/development-only and require both `MEMORYMASTER_MEDIA_MODE=test` (or `development`) and `MEMORYMASTER_ALLOW_SYNTHETIC_MEDIA=1`. Synthetic evidence is excluded from claim extraction, LLM prompts, action proposals, citations, and action export.
 
 **CLI:**
 
@@ -132,7 +134,7 @@ python -m memorymaster --db /data/atlas-inbox.db --json ocr-source-item \
   --source-item-id 99 --provider tesseract
 ```
 
-Both CLIs run the existing `process_transcription` / `process_ocr` pipeline — failures are recorded as `media_process` events with `details="media_process_failed"`, never raised. Re-running on a source_item that already has the corresponding evidence type returns `created=false` and the existing evidence row.
+Both CLIs run the existing `process_transcription` / `process_ocr` pipeline. Failures are recorded as `media_process` events with `details="media_process_failed"` and return a non-zero exit code. Idempotency is provider-specific, so an old mock row cannot block later real enrichment.
 
 ### Media retry queue (v1.4.0)
 

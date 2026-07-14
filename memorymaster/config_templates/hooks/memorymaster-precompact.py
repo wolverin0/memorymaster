@@ -21,11 +21,14 @@ import time
 from datetime import datetime
 
 STATE_DIR = os.path.join(os.path.expanduser("~"), ".memorymaster", "hook_state")
-os.makedirs(STATE_DIR, exist_ok=True)
 MARKER_TTL_SECONDS = 24 * 3600  # re-warn if marker older than 24h
 
 
 def main():
+    maximum_capture = os.environ.get("MEMORYMASTER_PRECOMPACT_BLOCKING", "").strip().lower()
+    if maximum_capture in ("", "0", "false", "no", "off"):
+        return
+    os.makedirs(STATE_DIR, exist_ok=True)
     try:
         data = json.loads(sys.stdin.read() or "{}")
     except Exception:

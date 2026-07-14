@@ -119,3 +119,34 @@ def build_review_queue(
 
 def queue_to_dicts(items: list[ReviewItem]) -> list[dict[str, object]]:
     return [asdict(item) for item in items]
+
+
+def build_candidate_backlog_plan(
+    service,
+    *,
+    daily_capacity: int = 688,
+    batch_size: int = 100,
+    scan_limit: int = 25_000,
+) -> dict[str, object]:
+    """Return a bounded, read-only candidate review plan."""
+    if daily_capacity <= 0 or batch_size <= 0 or scan_limit <= 0:
+        raise ValueError("daily_capacity, batch_size, and scan_limit must be positive")
+    claims = service.list_claims(
+        status="candidate",
+        include_archived=False,
+        limit=scan_limit,
+        allow_sensitive=False,
+    )
+    count = len(claims)
+    return {
+        "dry_run": True,
+        "candidate_count": count,
+        "scan_limit": scan_limit,
+        "truncated": count >= scan_limit,
+        "daily_capacity": daily_capacity,
+        "batch_size": batch_size,
+        "review_batches": math.ceil(count / batch_size),
+        "minimum_days": math.ceil(count / daily_capacity),
+        "automatic_transitions": 0,
+        "candidate_ids": [int(claim.id) for claim in claims[:batch_size]],
+    }

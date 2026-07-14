@@ -697,8 +697,21 @@ def call_llm(prompt: str, text: str) -> str:
     # of silently overspending. When no scope is active, this is a no-op
     # — preserves backwards-compat for callers outside run_cycle/wiki/daydream.
     llm_budget.check_before_call(primary_name)
+    from memorymaster.core.usage_ledger import UsageQuotaExceeded, reserve_configured
 
-    primary_response = primary_fn(prompt, text)
+    try:
+        primary_usage = reserve_configured(
+            operation="llm", provider=primary_name, actor="account"
+        )
+    except UsageQuotaExceeded as exc:
+        raise llm_budget.LLMBudgetExceeded(
+            "durable_daily_exhausted", primary_name
+        ) from exc
+    try:
+        primary_response = primary_fn(prompt, text)
+    finally:
+        if primary_usage is not None:
+            primary_usage[0].finish(primary_usage[1], outcome="attempted")
     llm_budget.record_call(
         primary_name,
         tokens=llm_budget.estimate_tokens(prompt, text, primary_response),
@@ -731,6 +744,14 @@ def call_llm(prompt: str, text: str) -> str:
 
     # Budget gate for the fallback provider too.
     llm_budget.check_before_call(fallback_name)
+    try:
+        fallback_usage = reserve_configured(
+            operation="llm", provider=fallback_name, actor="account"
+        )
+    except UsageQuotaExceeded as exc:
+        raise llm_budget.LLMBudgetExceeded(
+            "durable_daily_exhausted", fallback_name
+        ) from exc
 
     # Override MEMORYMASTER_LLM_MODEL to the fallback model for the duration of
     # the call WITHOUT mutating os.environ — a ContextVar override keeps the swap
@@ -751,6 +772,8 @@ def call_llm(prompt: str, text: str) -> str:
         )
     finally:
         _ENV_OVERRIDES.reset(token)
+        if fallback_usage is not None:
+            fallback_usage[0].finish(fallback_usage[1], outcome="attempted")
 
     if fallback_response and not _looks_like_quota_error(fallback_response):
         return fallback_response

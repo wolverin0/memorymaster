@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from memorymaster.core import spool
+from memorymaster.core.lifecycle import transition_claim
 from memorymaster.stores._storage_shared import open_conn
 from memorymaster.govern.jobs import spool_drain
 from memorymaster.core.models import CitationInput
@@ -56,7 +57,11 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "The WAL checkpoint discipline truncates the log every cycle",
         "Recall hooks read claims through a read-only connection",
     ):
-        svc.ingest(text, [CitationInput(source="session://chat", locator="turn-1")])
+        claim = svc.ingest(
+            text,
+            [CitationInput(source="session://chat", locator="turn-1")],
+        )
+        transition_claim(svc.store, claim.id, "confirmed", "trusted recall fixture")
     return path
 
 
@@ -144,11 +149,11 @@ def test_ro_recall_spools_access_signal_instead_of_writing(db: Path) -> None:
     assert _access_counts(db) == before  # zero DB writes from RO recall
 
     envelopes = _spool_envelopes(db)
-    by_op = {e["op"]: e for e in envelopes}
-    assert set(by_op) == {"access", "feedback"}
-    assert by_op["access"]["payload"]["claim_ids"]
-    assert by_op["access"]["payload"]["query_hash"]
-    assert by_op["feedback"]["payload"]["query_text"] == QUERY
+    assert len(envelopes) == 1
+    assert envelopes[0]["op"] == "recall"
+    assert envelopes[0]["payload"]["claim_ids"]
+    assert envelopes[0]["payload"]["query_hash"]
+    assert envelopes[0]["payload"]["query_text"] == QUERY
 
 
 def test_drained_access_signal_feeds_tiering_end_to_end(db: Path) -> None:
@@ -173,7 +178,7 @@ def test_drained_access_signal_feeds_tiering_end_to_end(db: Path) -> None:
 
     drained = spool_drain.run(rw)
     assert drained["quarantined"] == 0
-    assert drained["by_op"]["access"] == 6
+    assert drained["by_op"]["recall"] == 6
 
     counts = _access_counts(db)
     assert max(counts) == 6  # every spooled access reached the DB rows
@@ -185,17 +190,17 @@ def test_drained_access_signal_feeds_tiering_end_to_end(db: Path) -> None:
     assert tier_rows and all(r[0] == "core" for r in tier_rows)
 
 
-def test_flag_off_keeps_legacy_direct_write_path(db: Path) -> None:
-    """REQUIREMENT (governance: flag default OFF, legacy path intact): with
-    the flag unset, recall records accesses directly in the DB and the spool
-    stays empty — the v3.27 behavior is the untouched else-branch."""
+def test_recall_entrypoint_is_read_only_by_default(db: Path) -> None:
+    """Top-level recall always avoids DB writes and emits one spool line."""
     from memorymaster.recall.context_hook import recall
 
     before = _access_counts(db)
     rendered = recall(QUERY, db_path=str(db), skip_qdrant=True)
     assert rendered  # fixture claims match — the path actually ran
-    assert sum(_access_counts(db)) > sum(before)  # direct UPDATE happened
-    assert spool.pending_depth(db) == {"files": 0, "lines": 0}
+    assert _access_counts(db) == before
+    envelopes = _spool_envelopes(db)
+    assert len(envelopes) == 1
+    assert envelopes[0]["op"] == "recall"
 
 
 def test_recall_entrypoint_goes_read_only_under_flag(
@@ -213,7 +218,7 @@ def test_recall_entrypoint_goes_read_only_under_flag(
     assert rendered  # same fixture claims — RO recall still answers
     assert _access_counts(db) == before  # no per-prompt write lock taken
     ops = [e["op"] for e in _spool_envelopes(db)]
-    assert "access" in ops and "feedback" in ops
+    assert ops == ["recall"]
 
 
 class _FakeEmbedProvider:

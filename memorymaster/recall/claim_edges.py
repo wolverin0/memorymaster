@@ -67,6 +67,95 @@ def ensure_claim_edges_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _identity_context(
+    conn: sqlite3.Connection,
+    claim_id: int,
+) -> tuple[str | None, bool, str | None, str, str | None] | None:
+    columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(claims)")}
+    required = {"tenant_id", "visibility", "source_agent"}
+    if not required.issubset(columns):
+        return None
+    has_scope = "scope" in columns
+    scope_sql = "scope" if has_scope else "NULL AS scope"
+    row = conn.execute(
+        f"SELECT tenant_id, {scope_sql}, visibility, source_agent "
+        "FROM claims WHERE id = ?",
+        (claim_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return row[0], has_scope, row[1], str(row[2] or "public"), row[3]
+
+
+def _identity_predicate(
+    context: tuple[str | None, bool, str | None, str, str | None] | None,
+) -> tuple[str, tuple[object, ...]]:
+    if context is None:
+        return "1 = 1", ()
+    tenant_id, has_scope, scope, visibility, source_agent = context
+    scope_sql = " AND scope IS ?" if has_scope else ""
+    scope_params: tuple[object, ...] = (scope,) if has_scope else ()
+    if visibility == "public":
+        return (
+            f"tenant_id IS ?{scope_sql} AND visibility = 'public'",
+            (tenant_id, *scope_params),
+        )
+    return (
+        f"tenant_id IS ?{scope_sql} AND visibility = ? AND source_agent IS ?",
+        (tenant_id, *scope_params, visibility, source_agent),
+    )
+
+
+def _numeric_reference_edges(
+    conn: sqlite3.Connection,
+    src_claim_id: int,
+    src_text: str,
+    identity_sql: str,
+    identity_params: tuple[object, ...],
+    seen_dst: set[int],
+) -> list[tuple[int, int, str]]:
+    edges: list[tuple[int, int, str]] = []
+    for match in _CLAIM_NUM_RE.finditer(src_text):
+        try:
+            dst = int(match.group(1))
+        except ValueError:
+            continue
+        if dst == src_claim_id or dst in seen_dst:
+            continue
+        row = conn.execute(
+            f"SELECT 1 FROM claims WHERE id = ? AND {identity_sql} LIMIT 1",
+            (dst, *identity_params),
+        ).fetchone()
+        if row is not None:
+            seen_dst.add(dst)
+            edges.append((src_claim_id, dst, MENTION_KIND))
+    return edges
+
+
+def _human_reference_edges(
+    conn: sqlite3.Connection,
+    src_claim_id: int,
+    src_text: str,
+    identity_sql: str,
+    identity_params: tuple[object, ...],
+    seen_dst: set[int],
+) -> list[tuple[int, int, str]]:
+    edges: list[tuple[int, int, str]] = []
+    for match in _CLAIM_MM_RE.finditer(src_text):
+        row = conn.execute(
+            f"SELECT id FROM claims WHERE LOWER(human_id) = ? "
+            f"AND {identity_sql} LIMIT 1",
+            (match.group(1).lower(), *identity_params),
+        ).fetchone()
+        if row is None:
+            continue
+        dst = int(row[0])
+        if dst != src_claim_id and dst not in seen_dst:
+            seen_dst.add(dst)
+            edges.append((src_claim_id, dst, MENTION_KIND))
+    return edges
+
+
 def extract_edges_for_claim(
     conn: sqlite3.Connection, src_claim_id: int, src_text: str
 ) -> list[tuple[int, int, str]]:
@@ -78,41 +167,17 @@ def extract_edges_for_claim(
     """
     if not src_text:
         return []
-    edges: list[tuple[int, int, str]] = []
     seen_dst: set[int] = set()
-
-    # Numeric refs: claim 12345
-    for m in _CLAIM_NUM_RE.finditer(src_text):
-        try:
-            dst = int(m.group(1))
-        except ValueError:
-            continue
-        if dst == src_claim_id or dst in seen_dst:
-            continue
-        row = conn.execute(
-            "SELECT 1 FROM claims WHERE id = ? LIMIT 1", (dst,)
-        ).fetchone()
-        if row is None:
-            continue
-        seen_dst.add(dst)
-        edges.append((src_claim_id, dst, MENTION_KIND))
-
-    # Human-id refs: mm-1a2b
-    for m in _CLAIM_MM_RE.finditer(src_text):
-        human = m.group(1).lower()
-        row = conn.execute(
-            "SELECT id FROM claims WHERE LOWER(human_id) = ? LIMIT 1",
-            (human,),
-        ).fetchone()
-        if row is None:
-            continue
-        dst = int(row[0])
-        if dst == src_claim_id or dst in seen_dst:
-            continue
-        seen_dst.add(dst)
-        edges.append((src_claim_id, dst, MENTION_KIND))
-
-    return edges
+    identity_sql, identity_params = _identity_predicate(
+        _identity_context(conn, src_claim_id)
+    )
+    numeric = _numeric_reference_edges(
+        conn, src_claim_id, src_text, identity_sql, identity_params, seen_dst
+    )
+    human = _human_reference_edges(
+        conn, src_claim_id, src_text, identity_sql, identity_params, seen_dst
+    )
+    return numeric + human
 
 
 def rebuild_edges(

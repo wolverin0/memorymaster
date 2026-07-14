@@ -179,8 +179,10 @@ def _stem(tok: str) -> str | None:
 _NON_CANONICAL_STATUSES = ("archived", "superseded")
 
 
-@lru_cache(maxsize=8)
-def _corpus_stats(db_path: str) -> tuple[int, dict[str, int]]:
+@lru_cache(maxsize=16)
+def _corpus_stats(
+    db_path: str, generation: int | None = None
+) -> tuple[int, dict[str, int]]:
     """Return (total_docs, {token: doc_frequency}) for IDF. Read-only.
 
     Only canonical claims (everything except ``archived``/``superseded``)
@@ -222,8 +224,8 @@ def _corpus_stats(db_path: str) -> tuple[int, dict[str, int]]:
         conn.close()
 
 
-@lru_cache(maxsize=8)
-def _alias_set(db_path: str) -> frozenset[str]:
+@lru_cache(maxsize=16)
+def _alias_set(db_path: str, generation: int | None = None) -> frozenset[str]:
     """Return lowercased entity aliases. Empty if table missing."""
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -279,8 +281,11 @@ def extract_query_tokens(raw_prompt: str, db_path: str, max_tokens: int = 6) -> 
     if not tokens:
         return ""
 
-    total_docs, df = _corpus_stats(db_path)
-    aliases = _alias_set(db_path)
+    from memorymaster.recall.query_cache import read_generation
+
+    generation = read_generation(db_path)
+    total_docs, df = _corpus_stats(db_path, generation)
+    aliases = _alias_set(db_path, generation)
 
     # Resolve each unique token to the best-matching corpus form (stem
     # or synonym fallback). Preserve first-seen order.

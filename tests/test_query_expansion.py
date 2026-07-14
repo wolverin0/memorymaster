@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 import pytest
 
 from memorymaster.knowledge.entity_registry import (
-    ensure_entity_schema,
     resolve_or_create,
 )
 from memorymaster.recall.query_expansion import (
@@ -24,6 +23,7 @@ from memorymaster.recall.query_expansion import (
     MAX_TOTAL_ALIASES,
     expand_query,
 )
+from memorymaster.stores.storage import SQLiteStore
 
 
 # --------------------------------------------------------------------------- #
@@ -53,10 +53,10 @@ def _seed_entity(
 
 
 @pytest.fixture()
-def entity_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    ensure_entity_schema(conn)
+def entity_db(tmp_path) -> sqlite3.Connection:
+    store = SQLiteStore(tmp_path / "query-expansion.db")
+    store.init_db()
+    conn = store.connect()
     yield conn
     conn.close()
 

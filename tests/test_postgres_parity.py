@@ -1,13 +1,11 @@
 """Postgres parity tests.
 
-These tests validate that PostgresStore matches SQLiteStore behaviour.
-When MEMORYMASTER_TEST_POSTGRES_DSN is set they run against a real database;
-otherwise they are skipped.
+These tests validate that PostgresStore matches SQLiteStore behaviour. They run
+only under the same explicit two-role disposable contract as the RLS suite.
 """
 from __future__ import annotations
 
 import json
-import os
 
 import pytest
 
@@ -15,35 +13,10 @@ from memorymaster.core.models import CLAIM_LINK_TYPES, CitationInput, ClaimLink
 from memorymaster.core.service import MemoryService
 
 
-def _pg_dsn() -> str | None:
-    return os.getenv("MEMORYMASTER_TEST_POSTGRES_DSN")
-
-
 def _make_pg_service() -> MemoryService:
-    dsn = _pg_dsn()
-    if not dsn:
-        pytest.skip("MEMORYMASTER_TEST_POSTGRES_DSN is not set")
-    service = MemoryService(dsn, workspace_root=".")
-    service.init_db()
-    _cleanup_tables(service)
-    return service
+    from conftest import _fresh_postgres_service
 
-
-def _cleanup_tables(service: MemoryService) -> None:
-    """Best-effort cleanup for deterministic runs."""
-    with service.store.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT to_regclass('public.claim_links') AS tbl")
-            links_tbl = cur.fetchone()
-            if links_tbl and links_tbl["tbl"] is not None:
-                cur.execute("DELETE FROM claim_links")
-            cur.execute("DELETE FROM citations")
-            cur.execute("SELECT to_regclass('public.claim_embeddings') AS tbl")
-            emb_tbl = cur.fetchone()
-            if emb_tbl and emb_tbl["tbl"] is not None:
-                cur.execute("DELETE FROM claim_embeddings")
-            cur.execute("DELETE FROM events")
-            cur.execute("DELETE FROM claims")
+    return _fresh_postgres_service()
 
 
 def _ingest(service: MemoryService, text: str, **kwargs) -> int:
@@ -77,11 +50,13 @@ class TestPostgresCoreParityCRUD:
             "Claim A",
             [CitationInput(source="s", locator="l")],
             idempotency_key="key-1",
+            source_agent=svc.principal,
         )
         c2 = svc.store.create_claim(
             "Claim B different text",
             [CitationInput(source="s", locator="l")],
             idempotency_key="key-1",
+            source_agent=svc.principal,
         )
         assert c1.id == c2.id
 
@@ -91,6 +66,7 @@ class TestPostgresCoreParityCRUD:
             "Idem claim",
             [CitationInput(source="s")],
             idempotency_key="idem-pg-1",
+            source_agent=svc.principal,
         )
         found = svc.store.get_claim_by_idempotency_key("idem-pg-1")
         assert found is not None
@@ -481,13 +457,7 @@ class TestPostgresRecomputeTiersParity:
 
 @pytest.mark.postgres
 def test_postgres_smoke_parity():
-    dsn = _pg_dsn()
-    if not dsn:
-        pytest.skip("MEMORYMASTER_TEST_POSTGRES_DSN is not set")
-
-    service = MemoryService(dsn, workspace_root=".")
-    service.init_db()
-    _cleanup_tables(service)
+    service = _make_pg_service()
 
     service.ingest(
         text="Server IP is 10.0.0.1",
@@ -518,18 +488,13 @@ def test_postgres_smoke_parity():
 
 @pytest.mark.postgres
 def test_postgres_init_db_idempotent():
-    dsn = _pg_dsn()
-    if not dsn:
-        pytest.skip("MEMORYMASTER_TEST_POSTGRES_DSN is not set")
+    from conftest import _require_disposable_postgres_runtime
+    from memorymaster.stores.postgres_store import PostgresStore
 
-    service = MemoryService(dsn, workspace_root=".")
-    service.init_db()
-    # Second init should not fail
-    service.init_db()
-
-    cid = _ingest(service, "Idempotent init claim")
-    claim = service.store.get_claim(cid)
-    assert claim is not None
+    config = _require_disposable_postgres_runtime()
+    store = PostgresStore(config.admin_dsn)
+    store.init_db()
+    store.init_db()
 
 
 # ---------------------------------------------------------------------------

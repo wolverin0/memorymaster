@@ -13,7 +13,7 @@ from typing import Any, Literal
 from memorymaster.core import observability
 from memorymaster.core import llm_budget
 from memorymaster.core.lifecycle import transition_claim
-from memorymaster.core.security import is_sensitive_claim
+from memorymaster.core.security import is_sensitive_claim, sanitize_persisted_json
 from memorymaster.core.service import MemoryService
 import contextlib
 
@@ -1219,8 +1219,13 @@ def _run_cycle(
 
 
 def _write_artifact(path: Path, payload: dict[str, Any]) -> None:
+    sanitized, findings = sanitize_persisted_json(payload)
+    if not isinstance(sanitized, dict):
+        raise TypeError("steward artifact payload must remain a mapping")
+    if findings:
+        sanitized = {**sanitized, "artifact_sensitivity": {"action": "redacted", "findings": findings}}
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    path.write_text(json.dumps(sanitized, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def _parse_payload_json(raw: str | None) -> dict[str, Any]:

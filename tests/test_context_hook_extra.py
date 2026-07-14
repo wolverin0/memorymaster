@@ -423,26 +423,29 @@ def test_observe_llm_ingests_extracted_claims(monkeypatch, tmp_path):
 
 
 def _seed(tmp_path):
+    from memorymaster.core.lifecycle import transition_claim
     from memorymaster.core.models import CitationInput
     from memorymaster.core.service import MemoryService
 
     db = tmp_path / "seeded.db"
     svc = MemoryService(db_target=str(db), workspace_root=tmp_path)
     svc.init_db()
-    svc.ingest(
+    first = svc.ingest(
         text="The user prefers PostgreSQL for production databases.",
         citations=[CitationInput(source="test")],
         claim_type="preference",
-        scope="project:test",
+        scope="project",
         confidence=0.9,
     )
-    svc.ingest(
+    second = svc.ingest(
         text="The team decided to use Qdrant for vector search backends.",
         citations=[CitationInput(source="test")],
         claim_type="decision",
-        scope="project:test",
+        scope="project",
         confidence=0.8,
     )
+    transition_claim(svc.store, first.id, "confirmed", "trusted recall fixture")
+    transition_claim(svc.store, second.id, "confirmed", "trusted recall fixture")
     return str(db)
 
 

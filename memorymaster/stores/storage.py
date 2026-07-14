@@ -8,6 +8,7 @@ import sqlite3
 from pathlib import Path
 
 from memorymaster.stores._storage_lifecycle import _LifecycleMixin
+from memorymaster.stores._storage_pagination import _PaginationMixin
 from memorymaster.stores._storage_read import _ReadMixin
 from memorymaster.stores._storage_schema import _SchemaMixin
 # Re-export shared helpers for backward compat with external imports.
@@ -52,6 +53,13 @@ def initdb_fastpath_enabled() -> bool:
     return raw not in ("0", "false", "False", "no", "off", "")
 
 
+def _legacy_schema_source() -> bytes:
+    """Return legacy ensure-helper source included in the fast-path stamp."""
+    from memorymaster.stores import _storage_schema
+
+    return Path(_storage_schema.__file__).read_bytes()
+
+
 def schema_stamp() -> int:
     """31-bit fingerprint of the full schema lineage, for ``PRAGMA user_version``.
 
@@ -66,13 +74,22 @@ def schema_stamp() -> int:
     from memorymaster.stores.migrations import discover_migrations
 
     h = hashlib.sha256(load_schema_sql().encode("utf-8"))
+    h.update(b"\x00legacy-schema-helpers\x00")
+    h.update(_legacy_schema_source())
     for m in discover_migrations():
         h.update(f"\x00{m.version}:{m.checksum()}".encode("utf-8"))
     stamp = int.from_bytes(h.digest()[:4], "big") & 0x7FFFFFFF
     return stamp or 1
 
 
-class SQLiteStore(_SchemaMixin, _ReadMixin, _WriteClaimsMixin, _LifecycleMixin, _SourceItemsMixin):
+class SQLiteStore(
+    _SchemaMixin,
+    _ReadMixin,
+    _WriteClaimsMixin,
+    _LifecycleMixin,
+    _SourceItemsMixin,
+    _PaginationMixin,
+):
     def __init__(self, db_path: str | Path, *, read_only: bool = False) -> None:
         self.db_path = str(db_path)
         # P1 WAL-discipline (spec §2.2): an RO store hands out mode=ro +
@@ -156,13 +173,6 @@ class SQLiteStore(_SchemaMixin, _ReadMixin, _WriteClaimsMixin, _LifecycleMixin, 
             self._ensure_version_column(conn)
             self._ensure_embeddings_schema(conn)
             self._ensure_atlas_source_schema(conn)
-            # Entity registry (GBrain-inspired canonical entities + alias resolution)
-            from memorymaster.knowledge.entity_registry import ensure_entity_schema
-            ensure_entity_schema(conn)
-            try:
-                conn.execute("ALTER TABLE claims ADD COLUMN entity_id INTEGER")
-            except sqlite3.OperationalError:
-                pass  # already exists
             conn.commit()
 
         # v3.20.0-S1: apply versioned migrations after the legacy init flow.

@@ -52,6 +52,25 @@ Everything below is **opt-in or additive** — the default recall/ranking path i
 
 ---
 
+### R1.3 Qdrant retrieval containment
+
+Qdrant is currently a maintenance index, not a claim or verbatim payload
+authority. Local-trusted claim requests that explicitly or automatically select
+Qdrant report the containment and use lexical retrieval from SQLite/Postgres.
+The prompt recall hook never invokes its retained Qdrant fallback, and verbatim
+vector/hybrid requests use FTS5. Direct backend/API search and CLI
+`qdrant-search` fail closed; team MCP denies semantic modes entirely.
+`qdrant-sync`, automatic upserts, `qdrant-reconcile`, count/ID drift checks, and
+orphan cleanup remain available.
+
+The ordinary local `hybrid` mode is distinct: it ranks already-authorized
+primary-store claim rows with lexical and optional local/primary-store embedding
+signals. R2.1 may restore Qdrant payload retrieval only as untrusted ID
+candidates followed by authoritative SQLite/Postgres rehydration and the shared
+tenant/scope/visibility/lifecycle/sensitivity planner.
+
+---
+
 ## End-to-end flow
 
 ```
@@ -100,7 +119,7 @@ YOU SEND A MESSAGE
 | **SessionStart hook** | Queries the DB for recent claims, last cycle summary (ingest/validate/decay/supersession counts), pending candidates, and most-recently-updated wiki articles. Scope auto-derived from cwd. | Session startup / resume |
 | **Auto-ingest hook** | LLM extracts learnings from transcript | Every time Claude stops |
 | **PreCompact hook** | Forces save to MemoryMaster before Claude Code compacts context (permanent context loss prevention) | Before context compaction |
-| **MCP server** (global) | 22 tools for query/ingest/steward | Always available |
+| **MCP server** (global) | Generated query/ingest/steward tool set | Always available |
 | **CLAUDE.md / AGENTS.md append** | Instructions for Claude / Codex to use MemoryMaster | Read at session start |
 | **Steward cron** | Validates, decays, compacts claims | Every 6 hours |
 | **Obsidian skills** | Read/write/search vault via CLI | On demand |
@@ -405,12 +424,12 @@ MemoryMaster is the memory layer; this stack covers the rest. The Intelligence-F
 | Priority | Tool | What it adds | How to install |
 |----------|------|--------------|----------------|
 | 1 | **graphify** | Pre-computed architecture map (god nodes, communities, surprising connections) in `graphify-out/GRAPH_REPORT.md` | `npm install -g graphify` → `graphify claude install` → `graphify hook install` → `graphify analyze` |
-| 2 | **memorymaster** | 22 MCP tools, 7 hooks, wiki, steward | `memorymaster-setup` |
+| 2 | **memorymaster** | Generated MCP tool set, hooks, wiki, steward | `memorymaster-setup` |
 | 3 | **GitNexus** | Symbol-level impact analysis | `npx gitnexus analyze` |
 | 4 | **Serena** | LSP-powered symbol-level read/edit | Global MCP config, see [oraios/serena](https://github.com/oraios/serena) |
 | 5 | **context7** | Live library docs | First-party Claude Code MCP, no install |
 | opt | **Obsidian CLI** | Vault-aware search from terminal | `npm install -g obsidian-cli` |
-| opt | **Qdrant** | External vector search | `docker run -p 6333:6333 qdrant/qdrant` |
+| opt | **Qdrant** | External maintenance index; upsert/sync/reconcile only while R1.3 payload-retrieval quarantine is active | `docker run -p 6333:6333 qdrant/qdrant` |
 
 ## Verify install + troubleshooting
 

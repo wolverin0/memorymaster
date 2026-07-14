@@ -2,23 +2,53 @@ replicaCount: 1
 
 image:
   repository: memorymaster
-  tag: latest
+  # Required at render time. Supply the release image digest as sha256:<hex>.
+  digest: ""
   pullPolicy: IfNotPresent
 
 service:
+  # Supported HTTP deployment profiles. Stdio MCP is intentionally not exposed
+  # through a Kubernetes Service; run memorymaster-mcp from an agent process.
+  profile: dashboard
   type: ClusterIP
   port: 8765
+  dashboardTokenSecret:
+    name: ""
+    key: viewer-token
+  mcpHttpTokenSecret:
+    name: ""
+    key: bearer-token
 
 persistence:
   enabled: true
-  size: 1Gi
+  # PVC capacity is validated against the finite retention envelope below.
+  # Raise sizeMi when increasing any retained-data budget.
+  sizeMi: 2048
   storageClass: ""
+
+retentionCapacity:
+  verbatimMaxMi: 512
+  databaseMaxMi: 512
+  artifactsMaxMi: 256
+  walAndBackupHeadroomMi: 512
+  operatorHeadroomMi: 256
 
 env:
   MEMORYMASTER_DEFAULT_DB: /data/memorymaster.db
   MEMORYMASTER_WORKSPACE: /data
-  QDRANT_URL: http://qdrant:6333
   OLLAMA_URL: http://ollama:11434
+
+qdrant:
+  url: https://qdrant:6333
+  apiKeySecret:
+    # Required: name of an existing Secret. The chart never creates the key.
+    name: ""
+    key: api-key
+  caSecret:
+    # Optional: name of an existing Secret containing the trusted CA file.
+    name: ""
+    key: ca.crt
+    mountPath: /etc/memorymaster/qdrant-ca
 
 resources:
   limits:

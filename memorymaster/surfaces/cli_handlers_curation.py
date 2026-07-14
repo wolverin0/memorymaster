@@ -492,7 +492,6 @@ def _handle_extract_entities(args: argparse.Namespace, service, parser: argparse
     from memorymaster.knowledge.entity_graph import EntityGraph
     t0 = time.perf_counter()
     eg = EntityGraph(str(effective_db))
-    eg.ensure_tables()
     claims = service.store.find_by_status(args.status, limit=args.limit, include_citations=False)
     total_entities = 0
     for claim in claims:
@@ -512,11 +511,10 @@ def _handle_extract_entities(args: argparse.Namespace, service, parser: argparse
 
 def _handle_entity_stats(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.knowledge.entity_graph import EntityGraph
-    eg = EntityGraph(str(effective_db))
-    eg.ensure_tables()
+    eg = EntityGraph(str(effective_db), read_only=True)
     stats = eg.get_stats()
     if args.json_output:
-        print(_json_envelope(stats))
+        print(_json_envelope(stats, query_ms=0.0))
     else:
         print(f"Entities: {stats['entities']}, Edges: {stats['edges']}, Claim links: {stats['claim_links']}")
         for t, c in stats.get('by_type', {}).items():
@@ -758,7 +756,18 @@ def _handle_observe(args: argparse.Namespace, service, parser: argparse.Argument
 
 
 def _handle_merge_db(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.stores.store_factory import is_postgres_dsn
+
+    if is_postgres_dsn(str(effective_db)):
+        msg = "merge-db is unavailable for Postgres tenant/team runtimes"
+        if args.json_output:
+            print(_json_error(msg))
+        else:
+            print(f"error: {msg}")
+        return 2
+
     from memorymaster.bridges.db_merge import merge_databases
+
     t0 = time.perf_counter()
     result = merge_databases(str(effective_db), args.source)
     elapsed_ms = (time.perf_counter() - t0) * 1000

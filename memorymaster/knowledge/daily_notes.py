@@ -17,14 +17,40 @@ Usage:
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
+from memorymaster.core.security import sanitize_persisted_text
 from memorymaster.stores._storage_shared import connect_ro
 
 logger = logging.getLogger(__name__)
+
+_REDACTION_MARKER_RE = re.compile(r"\[REDACTED:[^\]]+\]", re.IGNORECASE)
+
+
+def _validated_date(value: str | None) -> str:
+    if value is None:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("date must use YYYY-MM-DD") from exc
+    if parsed.strftime("%Y-%m-%d") != value:
+        raise ValueError("date must use YYYY-MM-DD")
+    return value
+
+
+def _safe_text(value: object) -> str:
+    safe, _ = sanitize_persisted_text(str(value or ""))
+    return safe
+
+
+def _topic_words(value: object, *, min_length: int) -> list[str]:
+    safe = _REDACTION_MARKER_RE.sub(" ", _safe_text(value))
+    return [word.lower() for word in safe.split() if len(word) > min_length]
 
 
 def generate_daily_note(db_path: str, date: str | None = None) -> dict:
@@ -33,8 +59,7 @@ def generate_daily_note(db_path: str, date: str | None = None) -> dict:
     Summarizes: what was queried, what was ingested, what topics recurred.
     Returns dict with the note content and metadata.
     """
-    if date is None:
-        date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date = _validated_date(date)
 
     # Report is read-only; per-table queries below stay defensively wrapped.
     conn = connect_ro(db_path)
@@ -47,7 +72,7 @@ def generate_daily_note(db_path: str, date: str | None = None) -> dict:
                 "SELECT query_text, COUNT(*) as cnt FROM usage_feedback WHERE timestamp LIKE ? GROUP BY query_text ORDER BY cnt DESC LIMIT 10",
                 (f"{date}%",),
             ).fetchall()
-            queries = [(r["query_text"], r["cnt"]) for r in rows]
+            queries = [(_safe_text(r["query_text"]), r["cnt"]) for r in rows]
         except sqlite3.OperationalError:
             pass
 
@@ -58,7 +83,15 @@ def generate_daily_note(db_path: str, date: str | None = None) -> dict:
                 "SELECT id, text, claim_type, scope FROM claims WHERE created_at LIKE ? ORDER BY id DESC LIMIT 15",
                 (f"{date}%",),
             ).fetchall()
-            ingested = [{"id": r["id"], "text": r["text"][:100], "type": r["claim_type"], "scope": r["scope"]} for r in rows]
+            ingested = [
+                {
+                    "id": r["id"],
+                    "text": _safe_text(r["text"])[:100],
+                    "type": _safe_text(r["claim_type"]),
+                    "scope": r["scope"],
+                }
+                for r in rows
+            ]
         except sqlite3.OperationalError:
             pass
 
@@ -72,13 +105,19 @@ def generate_daily_note(db_path: str, date: str | None = None) -> dict:
             for r in rows:
                 claim = conn.execute("SELECT text FROM claims WHERE id = ?", (r["claim_id"],)).fetchone()
                 if claim:
-                    accessed.append({"id": r["claim_id"], "text": claim["text"][:80], "access_count": r["cnt"]})
+                    accessed.append(
+                        {
+                            "id": r["claim_id"],
+                            "text": _safe_text(claim["text"])[:80],
+                            "access_count": r["cnt"],
+                        }
+                    )
         except sqlite3.OperationalError:
             pass
 
         # Extract topics (most common words in queries)
         all_query_text = " ".join(q for q, _ in queries)
-        words = [w.lower() for w in all_query_text.split() if len(w) > 3]
+        words = _topic_words(all_query_text, min_length=3)
         topic_counts = Counter(words)
         topics = [w for w, c in topic_counts.most_common(5) if c > 1]
 
@@ -143,8 +182,7 @@ def find_ghost_notes(db_path: str, min_references: int = 3) -> list[dict]:
         # Count word frequency across queries
         word_freq: Counter = Counter()
         for r in rows:
-            words = set(r["query_text"].lower().split())
-            meaningful = [w for w in words if len(w) > 4]
+            meaningful = set(_topic_words(r["query_text"], min_length=4))
             word_freq.update(meaningful)
 
         # Find words that appear in many queries

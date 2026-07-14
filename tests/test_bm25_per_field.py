@@ -55,6 +55,11 @@ def _make_claim(cid: int, subject: str, text: str) -> MagicMock:
     claim.subject = subject
     claim.text = text
     # ``recall`` attribute-probes several fields; default them to sane values.
+    claim.status = "confirmed"
+    claim.scope = "project"
+    claim.visibility = "public"
+    claim.object_value = None
+    claim.predicate = None
     claim.confidence_score = 0.0
     return claim
 

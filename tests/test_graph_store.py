@@ -33,7 +33,7 @@ def kuzu_store(tmp_path: Path):
     """Fresh Kuzu DB in a tempdir, auto-closed after the test."""
     try:
         store = GraphStore(tmp_path / "g.kuzu")
-        store.open()
+        store.initialize()
     except GraphStoreUnavailable:
         pytest.skip("Kuzu unavailable on this platform")
     yield store
@@ -67,6 +67,12 @@ def cognee_edges() -> list[GraphEdge]:
 # public API
 # ----------------------------------------------------------------------
 class TestGraphStoreKuzu:
+    def test_open_requires_explicit_initialization(self, tmp_path):
+        store = GraphStore(tmp_path / "missing.kuzu")
+        with pytest.raises(GraphStoreUnavailable, match="not initialized"):
+            store.open()
+        assert not store.path.exists()
+
     def test_ingest_edges_idempotent(self, kuzu_store, cognee_edges):
         first = kuzu_store.ingest_edges(cognee_edges)
         assert first == len(cognee_edges)
