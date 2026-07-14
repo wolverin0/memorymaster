@@ -597,3 +597,42 @@ R4.4 generated release and documentation truth completed:
 The next boundary is Phase 4 convergence and the final local release-candidate
 evidence package. The active roadmap goal authorizes continuing without a new
 goal.
+
+Phase 4 convergence completed on 2026-07-14:
+
+- The independent same-scope review found one reproducible High governance
+  race: the dashboard displayed one steward proposal but submitted only its
+  claim ID, allowing a newer proposal to be resolved at click time. Two
+  adversarial tests were witnessed RED. The single bounded correction now
+  binds approve/reject to the exact displayed positive `proposal_event_id` and
+  fails closed for missing, malformed, or stale IDs. The correction boundary
+  passed 54 tests, including headless Chromium governance/mobile/error cases;
+  the final independent strict-ID re-review passed 18 focused dashboard tests.
+- The once-per-phase full non-ML gate passed 4,053 tests with 70 skips, 95
+  deselections, one expected xfail, and two warnings in 919.40s. The isolated
+  required ML gate passed 95 tests with 4,126 deselections and one warning in
+  18.45s. Project Ruff, changed-file Ruff, Python compilation, inline
+  JavaScript parsing, generated-truth drift, and `git diff --check` passed.
+- Generated truth converged at 4,221 tests, 36 MCP tools, 106 main CLI
+  commands, five operations commands, and eight console entrypoints.
+- The local 4.4.1 wheel and sdist built and hash-verified. An isolated venv
+  imported MemoryMaster from its own `site-packages` and passed main CLI and
+  MCP entrypoint smoke. Compose rendered with required fail-closed inputs. A
+  current local image initialized a fresh disposable DB, returned health `ok`
+  and readiness `ready`, reported runtime 4.4.1, and started the MCP entrypoint.
+- The latest audit has zero new findings and no unresolved reproducible
+  Critical/High regression introduced by Phase 4. The canonical ledger is 25
+  resolved and eight validly `BLOCKED-EXTERNAL`; release-oriented ordering is
+  recorded in the Phase 4 delta directory.
+- The local RC is ready for review but is not approved for production or
+  external publication. Authenticated/TLS Qdrant, two-role Postgres,
+  credential/history/dependency/image scans, immutable-image Kubernetes,
+  off-device/Postgres recovery, legal/privacy decisions, and actual tag/PyPI
+  evidence remain external.
+- Final artifacts are under
+  `.planning/audits/2026-07-14-phase4-budget-delta/`: audit delta, local RC
+  readiness, prioritized blockers, rollback plan, PR/release draft, and a
+  ready-to-paste external release approval request.
+- Atomic convergence commit: the conventional Phase 4 convergence commit
+  containing this evidence. No push, merge, tag, publication, deployment, or
+  live/external data mutation occurred.

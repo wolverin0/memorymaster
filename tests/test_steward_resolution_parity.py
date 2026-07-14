@@ -177,13 +177,18 @@ def test_proposal_resolution_dashboard_parity() -> None:
     proposals = list_steward_proposals(service, limit=20, include_resolved=False)
     assert proposals
     target_claim_id = int(proposals[0]["claim_id"])
+    proposal_event_id = int(proposals[0]["proposal_event_id"])
 
     operator_log = workspace / "operator_events.jsonl"
     operator_log.write_text("", encoding="utf-8")
     with _running_server(service, operator_log) as base_url:
         status, payload = _post_json(
             f"{base_url}/api/triage/action",
-            {"claim_id": target_claim_id, "action": "approve_proposal"},
+            {
+                "claim_id": target_claim_id,
+                "proposal_event_id": proposal_event_id,
+                "action": "approve_proposal",
+            },
         )
         assert status == 200
         assert payload["ok"] is True

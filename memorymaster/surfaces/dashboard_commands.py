@@ -37,7 +37,10 @@ def apply_triage_action(
         claim = service.pin(claim_id, pin=action == "pin")
         return {"ok": True, "action": action, "claim": serialize_claim(claim)}
     if action in {"approve_proposal", "reject_proposal"}:
-        return _resolve_proposal(service, action, claim_id)
+        proposal_event_id = payload.get("proposal_event_id")
+        if type(proposal_event_id) is not int or proposal_event_id <= 0:
+            raise ValueError("proposal_event_id must be positive for proposal actions")
+        return _resolve_proposal(service, action, proposal_event_id)
     details = {"mark_reviewed": "triage_mark_reviewed", "suppress": "triage_suppress", "unsuppress": "triage_unsuppress"}
     service.store.record_event(
         claim_id=claim_id, event_type="audit", details=details[action], payload={"source": "dashboard"}
@@ -45,13 +48,13 @@ def apply_triage_action(
     return {"ok": True, "action": action, "claim_id": claim_id}
 
 
-def _resolve_proposal(service: Any, action: str, claim_id: int) -> dict[str, Any]:
+def _resolve_proposal(service: Any, action: str, proposal_event_id: int) -> dict[str, Any]:
     from memorymaster.govern.steward import resolve_steward_proposal
 
     result = resolve_steward_proposal(
         service,
         action="approve" if action == "approve_proposal" else "reject",
-        claim_id=claim_id,
+        proposal_event_id=proposal_event_id,
         apply_on_approve=True,
     )
     return {"ok": True, "action": action, "result": result}

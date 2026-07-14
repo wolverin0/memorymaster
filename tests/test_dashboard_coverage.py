@@ -374,7 +374,7 @@ def test_triage_action_can_approve_steward_proposal(monkeypatch: Any, tmp_path: 
 
     def fake_resolve_steward_proposal(service: FakeService, **kwargs: Any) -> dict[str, Any]:
         calls.append({"service": service, **kwargs})
-        return {"claim_id": kwargs["claim_id"], "applied": True}
+        return {"proposal_event_id": kwargs["proposal_event_id"], "applied": True}
 
     monkeypatch.setattr(
         "memorymaster.govern.steward.resolve_steward_proposal",
@@ -386,10 +386,10 @@ def test_triage_action_can_approve_steward_proposal(monkeypatch: Any, tmp_path: 
         payload = post_json(
             base_url,
             "/api/triage/action",
-            {"claim_id": 2, "action": "approve_proposal"},
+            {"claim_id": 2, "proposal_event_id": 12, "action": "approve_proposal"},
         )
 
     assert payload["ok"] is True
     assert payload["action"] == "approve_proposal"
-    assert payload["result"] == {"claim_id": 2, "applied": True}
-    assert calls == [{"service": service, "action": "approve", "claim_id": 2, "apply_on_approve": True}]
+    assert payload["result"] == {"proposal_event_id": 12, "applied": True}
+    assert calls == [{"service": service, "action": "approve", "proposal_event_id": 12, "apply_on_approve": True}]

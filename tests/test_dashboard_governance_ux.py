@@ -8,7 +8,7 @@ import json
 
 import pytest
 from memorymaster.surfaces.dashboard import DashboardRequestHandler
-from memorymaster.surfaces import dashboard_read_models
+from memorymaster.surfaces import dashboard_commands, dashboard_read_models
 
 
 def _dashboard_html() -> str:
@@ -61,6 +61,12 @@ def test_controls_live_regions_and_mobile_layout_are_accessible() -> None:
     assert 'role="status"' in html
 
 
+def test_archived_and_stopped_text_meet_the_normal_text_contrast_token() -> None:
+    html = _dashboard_html()
+    assert ".badge-archived{background:#1e293b;color:#94a3b8" in html
+    assert 'span[style="color:#64748b"]{color:#94a3b8!important}' in html
+
+
 def test_governance_evidence_and_consequences_are_directly_inspectable() -> None:
     html = _dashboard_html()
     assert "Evidence &amp; lineage" in html
@@ -69,7 +75,7 @@ def test_governance_evidence_and_consequences_are_directly_inspectable() -> None
     assert "Action consequences" in html
     assert 'class="conflict-compare"' in html
     assert "proposalEvidence(p)" in html
-    assert "const proposalActions=p?" in html
+    assert "const proposalActions=proposalId>0?" in html
 
 
 def test_review_queue_exposes_only_the_latest_pending_proposal(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -109,10 +115,41 @@ def test_review_queue_exposes_only_the_latest_pending_proposal(monkeypatch: pyte
     assert payload["items"][0]["proposal"]["reasons"][0]["message"] == "Retention elapsed"
 
 
+def test_proposal_action_resolves_the_exact_displayed_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_resolve(_service: object, **kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        return {"resolved": True, "proposal_event_id": kwargs.get("proposal_event_id")}
+
+    monkeypatch.setattr("memorymaster.govern.steward.resolve_steward_proposal", fake_resolve)
+    result = dashboard_commands.apply_triage_action(
+        object(),
+        {"claim_id": 7, "proposal_event_id": 9, "action": "approve_proposal"},
+        serialize_claim=lambda claim: claim,
+    )
+
+    assert result["result"]["proposal_event_id"] == 9
+    assert calls == [{"action": "approve", "proposal_event_id": 9, "apply_on_approve": True}]
+    with pytest.raises(ValueError, match="proposal_event_id must be positive"):
+        dashboard_commands.apply_triage_action(
+            object(),
+            {"claim_id": 7, "action": "approve_proposal"},
+            serialize_claim=lambda claim: claim,
+        )
+    for malformed_id in (True, 9.7, "9"):
+        with pytest.raises(ValueError, match="proposal_event_id must be positive"):
+            dashboard_commands.apply_triage_action(
+                object(),
+                {"claim_id": 7, "proposal_event_id": malformed_id, "action": "approve_proposal"},
+                serialize_claim=lambda claim: claim,
+            )
+
+
 def test_browser_preserves_failed_review_action_and_distinguishes_load_error() -> None:
     sync_api = pytest.importorskip("playwright.sync_api")
     html = _dashboard_html()
-    state = {"action_calls": 0, "resolved": False}
+    state = {"action_calls": 0, "resolved": False, "proposal_event_id": None}
     conflict = {
         "id": 4,
         "status": "conflicted",
@@ -157,6 +194,7 @@ def test_browser_preserves_failed_review_action_and_distinguishes_load_error() -
             return
         if path.startswith("/api/triage/action"):
             state["action_calls"] += 1
+            state["proposal_event_id"] = request.post_data_json.get("proposal_event_id")
             if state["action_calls"] == 1:
                 route.fulfill(status=409, content_type="application/json", body='{"ok":false,"error":"rejected"}')
             else:
@@ -172,6 +210,7 @@ def test_browser_preserves_failed_review_action_and_distinguishes_load_error() -
         page.goto("http://dashboard.test/")
         page.get_by_role("button", name="Approve proposal for claim 7").click()
         page.get_by_text("Action failed for claim 7").wait_for()
+        assert state["proposal_event_id"] == 9
         assert page.locator('tr[data-claim-id="7"]').count() == 1
         assert page.get_by_role("button", name="Approve proposal for claim 7").text_content() == "Retry"
         assert "Could not load claims" in page.locator("#claims-body").inner_text()
