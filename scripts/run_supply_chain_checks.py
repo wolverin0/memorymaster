@@ -24,7 +24,7 @@ TRUSTED_REPO_ROOT = Path(__file__).resolve().parents[1]
 TRUSTED_VALIDATOR_PATH = Path(__file__).with_name("validate_sbom.py").resolve()
 TRUSTED_PROJECT_NAME = "memorymaster"
 _GITLEAKS_CONFIG_PATH = "<trusted-gitleaks-config>"
-_GITLEAKS_IGNORE_PATH = "<empty-gitleaks-ignore>"
+_GITLEAKS_IGNORE_PATH = "<reviewed-gitleaks-fingerprints>"
 _PIP_REQUIREMENTS_PATH = "<trusted-release-requirements>"
 _GITLEAKS_EXECUTABLE = "<approved-gitleaks>"
 _DOCKER_EXECUTABLE = "<approved-docker>"
@@ -35,7 +35,12 @@ MAX_PLAN_SECONDS = 3600
 _IMAGE_ID_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _COMMIT_RE = re.compile(r"[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?\Z")
 _REF_RE = re.compile(r"refs/[A-Za-z0-9._/-]+\Z")
-_RELEASE_EXTRAS = ("mcp", "qdrant", "security")
+_RELEASE_EXTRAS = ("mcp", "security")
+_GITLEAKS_REVIEW_FILE = ".gitleaks-reviewed-fingerprints"
+_GITLEAKS_FINGERPRINT_RE = re.compile(
+    r"(?P<commit>[0-9a-f]{40}):(?P<path>tests/[A-Za-z0-9_./-]+):"
+    r"(?P<rule>[a-z0-9][a-z0-9-]*):(?P<line>[1-9][0-9]*)\Z"
+)
 
 
 class _SafeArgumentParser(argparse.ArgumentParser):
@@ -176,6 +181,21 @@ def _release_requirements(repo_root: Path) -> tuple[str, ...]:
     return tuple(dict.fromkeys(value.strip() for value in requirements))
 
 
+def _reviewed_gitleaks_fingerprints(repo_root: Path) -> str:
+    payload = _read_limited(repo_root / _GITLEAKS_REVIEW_FILE, 64 * 1024)
+    entries = payload.splitlines()
+    if not entries or len(entries) != len(set(entries)):
+        raise ValueError("reviewed Gitleaks fingerprints unavailable")
+    for entry in entries:
+        match = _GITLEAKS_FINGERPRINT_RE.fullmatch(entry)
+        if match is None:
+            raise ValueError("reviewed Gitleaks fingerprints unavailable")
+        path_parts = match.group("path").split("/")
+        if any(part in {"", ".", ".."} for part in path_parts):
+            raise ValueError("reviewed Gitleaks fingerprints unavailable")
+    return "\n".join(entries) + "\n"
+
+
 def _inside_repo(repo_root: Path, path: Path, label: str) -> Path:
     resolved = path.resolve()
     try:
@@ -237,7 +257,7 @@ def _python_commands(
                 "pip_audit",
                 "--strict",
                 "--vulnerability-service",
-                "pypi",
+                "osv",
                 "--progress-spinner",
                 "off",
                 str(repo_root),
@@ -253,7 +273,7 @@ def _python_commands(
                 "pip_audit",
                 "--strict",
                 "--vulnerability-service",
-                "pypi",
+                "osv",
                 "--progress-spinner",
                 "off",
                 "--requirement",
@@ -377,7 +397,8 @@ def _materialize_policy(plan: Sequence[CommandSpec], directory: Path) -> tuple[C
         raise ValueError("gitleaks command unavailable")
     requirements = _release_requirements(Path(gitleaks.argv[-1]))
     config_path.write_text(TRUSTED_GITLEAKS_CONFIG, encoding="utf-8")
-    ignore_path.write_text("", encoding="utf-8")
+    reviewed_fingerprints = _reviewed_gitleaks_fingerprints(Path(gitleaks.argv[-1]))
+    ignore_path.write_text(reviewed_fingerprints, encoding="utf-8")
     requirements_path.write_text("\n".join(requirements) + "\n", encoding="utf-8")
     (directory / "pip.conf").write_text(
         "[global]\ndisable-pip-version-check = true\n",

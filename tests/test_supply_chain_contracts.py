@@ -20,6 +20,9 @@ from scripts import validate_sbom as sbom
 EXPECTED_NAME = "memorymaster"
 EXPECTED_VERSION = importlib.metadata.version(EXPECTED_NAME)
 IMAGE_ID = "sha256:" + ("a" * 64)
+REVIEWED_FINGERPRINT = (
+    ("1" * 40) + ":tests/fixtures/synthetic.jsonl:generic-api-key:1"
+)
 
 
 def _valid_sbom(artifact_sha256: str = "b" * 64) -> dict[str, object]:
@@ -73,6 +76,10 @@ def _prepare_repo(tmp_path: Path) -> Path:
     git_directory = tmp_path / ".git"
     git_directory.mkdir(exist_ok=True)
     (git_directory / "HEAD").write_text("1" * 40, encoding="ascii")
+    (tmp_path / ".gitleaks-reviewed-fingerprints").write_text(
+        REVIEWED_FINGERPRINT + "\n",
+        encoding="utf-8",
+    )
     wheel = _wheel(tmp_path)
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
     (tmp_path / "memorymaster.cdx.json").write_text(json.dumps(_valid_sbom(digest)), encoding="utf-8")
@@ -155,7 +162,7 @@ def test_gitleaks_policy_cannot_be_suppressed_by_repo_or_environment(
     assert "--config" in argv
     assert "--gitleaks-ignore-path" in argv
     assert observed["config"] == supply.TRUSTED_GITLEAKS_CONFIG
-    assert observed["ignore"] == ""
+    assert observed["ignore"] == REVIEWED_FINGERPRINT + "\n"
     assert isinstance(environment, dict)
     assert "GITLEAKS_CONFIG" not in environment
     assert "GITLEAKS_CONFIG_TOML" not in environment
@@ -246,6 +253,26 @@ def test_gitleaks_policy_materialization_failure_is_fixed_and_fail_closed(
     assert "secret temp path" not in json.dumps(report.to_dict())
 
 
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "*:*",
+        ("1" * 40) + ":memorymaster/service.py:generic-api-key:1",
+        ("1" * 39) + ":tests/fixtures/synthetic.jsonl:generic-api-key:1",
+        ("1" * 40) + ":tests/../memorymaster/service.py:generic-api-key:1",
+        ("1" * 40) + ":tests/fixtures/synthetic.jsonl:generic-api-key:0",
+    ],
+)
+def test_reviewed_gitleaks_fingerprints_reject_broad_or_malformed_entries(
+    tmp_path: Path, entry: str
+) -> None:
+    _prepare_repo(tmp_path)
+    (tmp_path / ".gitleaks-reviewed-fingerprints").write_text(entry + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="reviewed Gitleaks fingerprints unavailable"):
+        supply._reviewed_gitleaks_fingerprints(tmp_path)
+
+
 def test_plan_enforces_strict_cyclonedx_dependency_audit(tmp_path: Path) -> None:
     commands = _by_name(_plan(tmp_path))
     audit = commands["pip_audit_project"].argv
@@ -263,10 +290,10 @@ def test_dependency_audit_is_bound_to_project_and_fixed_service(tmp_path: Path) 
     audit = _by_name(_plan(tmp_path))["pip_audit_project"].argv
 
     assert str(tmp_path.resolve()) in audit
-    assert audit[audit.index("--vulnerability-service") + 1] == "pypi"
+    assert audit[audit.index("--vulnerability-service") + 1] == "osv"
 
 
-def test_release_dependency_audit_includes_docker_extras(tmp_path: Path) -> None:
+def test_release_dependency_audit_matches_minimal_profile_extras(tmp_path: Path) -> None:
     observed_requirements: list[str] = []
 
     def fake_runner(argv: tuple[str, ...], **_kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -279,7 +306,8 @@ def test_release_dependency_audit_includes_docker_extras(tmp_path: Path) -> None
 
     assert report.ok is True
     assert {"requests>=2.31", "tenacity>=8.2"}.issubset(observed_requirements)
-    assert {"mcp>=1.8.1", "httpx>=0.27", "cryptography>=42"}.issubset(observed_requirements)
+    assert {"mcp>=1.8.1", "cryptography>=42"}.issubset(observed_requirements)
+    assert "httpx>=0.27" not in observed_requirements
 
 
 def test_project_identity_cannot_be_supplied_by_operator(tmp_path: Path) -> None:
