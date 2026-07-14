@@ -18,6 +18,7 @@ def test_postgres_compose_requires_secret_interpolation():
 
     assert match is not None
     assert "${" in match.group(1) and ":?" in match.group(1)
+    assert "${MEMORYMASTER_POSTGRES_PASSWORD:?}" in match.group(1)
 
 
 def test_postgres_compose_is_loopback_only_with_authenticated_healthcheck():

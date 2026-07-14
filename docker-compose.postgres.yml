@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: memorymaster
       POSTGRES_USER: mm
-      POSTGRES_PASSWORD: "${MEMORYMASTER_POSTGRES_PASSWORD:?Set MEMORYMASTER_POSTGRES_PASSWORD before rendering Compose}"
+      POSTGRES_PASSWORD: "${MEMORYMASTER_POSTGRES_PASSWORD:?}"
     ports:
       - "127.0.0.1:6543:5432"
     healthcheck:
