@@ -22,10 +22,9 @@ from __future__ import annotations
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
-from memorymaster.stores._storage_shared import open_conn
+from memorymaster.stores._storage_shared import connect_ro, open_conn
 
 logger = logging.getLogger(__name__)
 
@@ -213,9 +212,7 @@ def cleanup(
 
 
 def _read_retention_rows(db_path: str, scan_limit: int) -> tuple[bool, list[dict[str, Any]], bool]:
-    uri = f"file:{Path(db_path).resolve().as_posix()}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True)
-    conn.row_factory = sqlite3.Row
+    conn = connect_ro(db_path)
     try:
         if not _verbatim_present(conn):
             return False, [], False

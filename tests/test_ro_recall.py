@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from memorymaster.core import spool
+from memorymaster.core.lifecycle import transition_claim
 from memorymaster.stores._storage_shared import open_conn
 from memorymaster.govern.jobs import spool_drain
 from memorymaster.core.models import CitationInput
@@ -56,7 +57,11 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "The WAL checkpoint discipline truncates the log every cycle",
         "Recall hooks read claims through a read-only connection",
     ):
-        svc.ingest(text, [CitationInput(source="session://chat", locator="turn-1")])
+        claim = svc.ingest(
+            text,
+            [CitationInput(source="session://chat", locator="turn-1")],
+        )
+        transition_claim(svc.store, claim.id, "confirmed", "trusted recall fixture")
     return path
 
 

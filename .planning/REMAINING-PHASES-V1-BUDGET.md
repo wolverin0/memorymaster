@@ -260,5 +260,31 @@ P2-F implementation and focused gate completed on 2026-07-13 from P2-E commit
 - No paid or production provider was called and no live/external data or
   configuration was mutated.
 
-The next separately authorized package is P2-Z Phase 2 convergence. Do not
-begin it from the P2-F goal.
+P2-Z Phase 2 convergence completed on 2026-07-13:
+
+- The convergence review found and witnessed a High prompt-recall bypass:
+  downstream graph/entity/two-pass streams returned allowed, candidate,
+  foreign-scope, and private claims together. One immutable trusted planner
+  policy now filters both initial lexical results and every optional stream.
+- Capture-ledger and verbatim retention readers now use the canonical SQLite
+  connection helpers. P2-C/P2-D compatibility fixtures were converged without
+  restoring lazy DDL, candidate trust, invalid entity foreign keys, or
+  read-path writes.
+- Targeted matrix: 226 passed, 2 failed; exact correction: 3 passed. The single
+  full non-ML completion produced 3,964 passed, 28 failed, 10 errors, 70
+  skipped, 95 deselected, and 3 xfailed in 915.59s. The bounded correction
+  matrix produced 287 passed/12 failed, its remaining cluster 71 passed/1
+  failed, and the final exact scope correction passed 2 tests. This is
+  compositional evidence; no second full-suite pass is claimed.
+- Final boundary: 4,171 tests collected; required Qdrant ML slice 34 passed;
+  project/changed-file Ruff and `git diff --check` passed.
+- Disposable two-role Postgres and authenticated/TLS Qdrant were unavailable;
+  no DSNs, safe opt-in, Qdrant URL, API key, or CA were configured. Their
+  existing `BLOCKED-EXTERNAL` entries remain authoritative.
+- Audit delta: `.planning/audits/2026-07-13-phase2-budget-delta/audit-delta.md`.
+  Draft PR: `.planning/audits/2026-07-13-phase2-budget-delta/pr-draft.md`.
+- Atomic package commit: the conventional Phase 2 convergence commit
+  containing this scheduler evidence.
+
+The next package is R3.1 embedding and reconciliation efficiency. The active
+roadmap goal authorizes continuing without a new goal.

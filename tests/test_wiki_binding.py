@@ -123,7 +123,7 @@ def test_recall_appends_wiki_pointer(tmp_path: Path, monkeypatch: pytest.MonkeyP
         subject="qdrant",
         predicate="runs_on",
         object_value="vm",
-        scope="project:test",
+        scope="project",
         volatility="medium",
         status="confirmed",
         confidence=0.9,
@@ -141,7 +141,10 @@ def test_recall_appends_wiki_pointer(tmp_path: Path, monkeypatch: pytest.MonkeyP
         def query_rows(self, **_: object) -> list[dict]:
             return [{"claim": sample, "lexical_score": 1.0, "confidence_score": 0.9}]
 
-    def _fake_ctor(db_target: str, workspace_root: Path):  # noqa: ARG001
+        def _record_accesses(self, *_args, **_kwargs) -> None:
+            return None
+
+    def _fake_ctor(db_target: str, workspace_root: Path, **_kwargs):  # noqa: ARG001
         return _FakeService()
 
     monkeypatch.setattr("memorymaster.core.service.MemoryService", _fake_ctor)

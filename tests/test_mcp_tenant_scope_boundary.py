@@ -6,6 +6,7 @@ import pytest
 
 import memorymaster.core.access_control as access_control
 import memorymaster.surfaces.mcp_server as mcp_server
+from memorymaster.core.lifecycle import transition_claim
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
 
@@ -36,6 +37,12 @@ def team_claims(tmp_path, monkeypatch):
         scope="project:alpha",
         source_agent="seed",
     )
+    for service, claim in (
+        (alpha, alpha_claim),
+        (alpha, beta_scope_claim),
+        (beta_tenant, beta_tenant_claim),
+    ):
+        transition_claim(service.store, claim.id, "confirmed", "trusted MCP fixture")
 
     access_control._agent_roles.clear()
     monkeypatch.setattr(access_control, "_loaded", True)

@@ -37,7 +37,7 @@ def _claim(cid: int, text: str, *, subject: str | None = None,
         subject=subject,
         predicate=None,
         object_value=None,
-        scope="project:test",
+        scope="project",
         volatility="medium",
         status="confirmed",
         confidence=confidence,
@@ -93,9 +93,12 @@ class _FakeService:
     def query_rows(self, **_: object) -> list[dict]:
         return list(self._rows)
 
+    def _record_accesses(self, *_args, **_kwargs) -> None:
+        return None
+
 
 def _patch_service(monkeypatch: pytest.MonkeyPatch, rows: list[dict]) -> None:
-    def _fake_ctor(db_target: str, workspace_root: Path):  # noqa: ARG001
+    def _fake_ctor(db_target: str, workspace_root: Path, **_kwargs):  # noqa: ARG001
         return _FakeService(rows)
 
     monkeypatch.setattr("memorymaster.core.service.MemoryService", _fake_ctor)

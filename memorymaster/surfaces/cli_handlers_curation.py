@@ -514,7 +514,7 @@ def _handle_entity_stats(args: argparse.Namespace, service, parser: argparse.Arg
     eg = EntityGraph(str(effective_db), read_only=True)
     stats = eg.get_stats()
     if args.json_output:
-        print(_json_envelope(stats))
+        print(_json_envelope(stats, query_ms=0.0))
     else:
         print(f"Entities: {stats['entities']}, Edges: {stats['edges']}, Claim links: {stats['claim_links']}")
         for t, c in stats.get('by_type', {}).items():

@@ -1150,6 +1150,61 @@ def recall(
         _emit_recall_latency(phase_ms, total_start)
 
 
+def _prompt_recall_plan(query_text: str, *, limit: int):
+    """Build the immutable trusted policy shared by every prompt stream."""
+    from memorymaster.recall.planner import RetrievalRequest, build_retrieval_plan
+
+    scopes = [_current_scope(), "global"]
+    include_legacy = os.environ.get(
+        "MEMORYMASTER_QUERY_INCLUDE_LEGACY_PROJECT", "1"
+    ).strip().lower() not in {"0", "false", "no"}
+    if include_legacy:
+        scopes.append("project")
+    return build_retrieval_plan(
+        RetrievalRequest(
+            query_text=query_text,
+            limit=limit,
+            trust_mode="trusted",
+            retrieval_mode="legacy",
+            scope_allowlist=tuple(dict.fromkeys(scopes)),
+        )
+    )
+
+
+def _prompt_claim_allowed(claim, plan) -> bool:
+    """Fail closed for claims introduced by any prompt-recall stream."""
+    from memorymaster.core.security import is_sensitive_claim
+
+    if claim is None or getattr(claim, "status", "") not in set(plan.statuses):
+        return False
+    scopes = plan.scope_allowlist
+    if scopes is not None and (getattr(claim, "scope", "") or "").strip() not in scopes:
+        return False
+    visibility = (getattr(claim, "visibility", "public") or "public").strip().lower()
+    return visibility == "public" and not is_sensitive_claim(claim)
+
+
+def _filter_prompt_rows(rows: list[dict], plan) -> list[dict]:
+    return [row for row in rows if _prompt_claim_allowed(row.get("claim"), plan)]
+
+
+def _governed_prompt_rows(svc, query_text: str, *, limit: int) -> list[dict]:
+    """Run prompt-hook lexical recall through the immutable trusted planner."""
+    plan = _prompt_recall_plan(query_text, limit=limit)
+    statuses = set(plan.statuses)
+    rows = svc.query_rows(
+        query_text=plan.search_text,
+        limit=plan.limit,
+        retrieval_mode=plan.effective_mode,
+        include_stale="stale" in statuses,
+        include_conflicted="conflicted" in statuses,
+        include_candidates="candidate" in statuses,
+        scope_allowlist=list(plan.scope_allowlist or ()),
+        record_accesses=False,
+    )
+    return _filter_prompt_rows(rows, plan)
+
+
 def query_for_task(
     task_description: str,
     project_scope: str,
@@ -1298,6 +1353,7 @@ def _recall_impl(
     # Recall is always query-only. Access/feedback signals are emitted once,
     # after top-level ranking and budget selection, through the RO spool path.
     svc = MemoryService(db_target=db, workspace_root=Path.cwd(), read_only=True)
+    prompt_plan = _prompt_recall_plan(query, limit=100)
 
     # Pre-extract salient tokens before hitting FTS5. Passing the full
     # prompt verbatim AND-joins every token in FTS5 and rejects nearly all
@@ -1342,14 +1398,7 @@ def _recall_impl(
             # Fan out: top token first (highest IDF), then widen by OR.
             per_token_limit = max(3, 8 // max(1, len(token_list))) * _lr_overfetch
             for tok in token_list:
-                batch = svc.query_rows(
-                    query_text=tok,
-                    limit=per_token_limit,
-                    retrieval_mode="legacy",
-                    include_candidates=True,
-                    scope_allowlist=None,
-                    record_accesses=False,
-                )
+                batch = _governed_prompt_rows(svc, tok, limit=per_token_limit)
                 for row in batch:
                     claim = row.get("claim")
                     cid = getattr(claim, "id", None)
@@ -1362,14 +1411,7 @@ def _recall_impl(
 
         if not rows:
             # Fallback to raw prompt — preserves the old behaviour.
-            rows = svc.query_rows(
-                query_text=query,
-                limit=_fts_cap,
-                retrieval_mode="legacy",
-                include_candidates=True,
-                scope_allowlist=None,
-                record_accesses=False,
-            )
+            rows = _governed_prompt_rows(svc, query, limit=_fts_cap)
             for row in rows:
                 claim = row.get("claim")
                 cid = getattr(claim, "id", None)
@@ -1657,6 +1699,10 @@ def _recall_impl(
             except Exception as exc:  # noqa: BLE001 — defensive (claim 11907)
                 logger.debug("graph stream skipped: %s", exc)
 
+    # Every optional stream is untrusted candidate discovery. Apply the same
+    # trusted status/scope/visibility/sensitivity policy after all streams so
+    # graph, entity, two-pass, closets, and verbatim cannot bypass P2-A.
+    rows = _filter_prompt_rows(rows, prompt_plan)
     if not rows:
         return ""
 

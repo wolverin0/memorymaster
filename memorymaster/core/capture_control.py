@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from memorymaster.stores._storage_shared import open_conn
+
 
 DEFAULT_GLOBAL_DAILY_CALLS = 200
 DEFAULT_PROVIDER_DAILY_CALLS = 100
@@ -107,11 +109,7 @@ class CaptureLedger:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=15)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=15000")
-        return conn
+        return open_conn(self.db_path, busy_ms=15_000)
 
     @staticmethod
     def _hash(value: str) -> str:

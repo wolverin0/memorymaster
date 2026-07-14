@@ -88,11 +88,12 @@ Phase 0 must replace qualitative capacity goals with recorded numeric gates in t
 - [x] R1.4 — complete sensitivity/write gateway and legacy inventory (repository complete; live cleanup/Qdrant inventory blocked externally)
 - [x] R1.5 — secure deployment and supply-chain defaults (repository complete; rotation, advisory/image/runtime evidence blocked externally)
 - [x] Phase 1 targeted budget audit delta (V3 scope; Phases 2-4 remain open)
-- [ ] R2.1 — unified RetrievalPlanner and governed Qdrant reintegration
-- [ ] R2.2 — lifecycle authority and read-only recall
-- [ ] R2.3 — unified entity model
-- [ ] R2.4 — quiet capture, budgets, retention, and backlog control
-- [ ] R2.5 — remove fake evidence defaults
+- [x] R2.1 — unified RetrievalPlanner and governed Qdrant reintegration
+- [x] R2.2 — lifecycle authority and read-only recall
+- [x] R2.3 — unified entity model
+- [x] R2.4 — quiet capture, budgets, retention, and backlog control (repository scope; legal review and account-wide cost convergence continue in R3)
+- [x] R2.5 — remove fake evidence defaults
+- [x] Phase 2 targeted convergence and audit delta
 - [ ] R3.1 — embedding and reconciliation efficiency
 - [ ] R3.2 — query and storage efficiency
 - [ ] R3.3 — truthful setup profiles
