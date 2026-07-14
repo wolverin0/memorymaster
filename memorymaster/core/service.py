@@ -1488,9 +1488,7 @@ class MemoryService:
         candidates = _filter_agent_visibility(candidates, requesting_agent)
         semantic = False
         if vector_hook is None and hasattr(self.store, "vector_scores"):
-            def _vector_hook(text, claims):
-                return self.store.vector_scores(text, claims, self.embedding_provider)
-            vector_hook = _vector_hook
+            query_vector = None
             semantic = self.embedding_provider.is_semantic
             if semantic:
                 # The Gemini->hash downgrade is lazy: is_semantic only reflects a
@@ -1499,8 +1497,18 @@ class MemoryService:
                 # degraded) so a degraded provider is not reported as semantic — which
                 # would apply retrieval's lenient vector-only filter to non-semantic
                 # hash vectors. (audit: embeddings TOCTOU)
-                self.embedding_provider.embed(query_text)
+                query_vector = self.embedding_provider.embed(query_text)
                 semantic = self.embedding_provider.is_semantic
+            def _vector_hook(text, claims):
+                if query_vector is None:
+                    return self.store.vector_scores(text, claims, self.embedding_provider)
+                return self.store.vector_scores(
+                    text,
+                    claims,
+                    self.embedding_provider,
+                    query_vector=query_vector,
+                )
+            vector_hook = _vector_hook
         rank_limit = len(candidates) if profile_weights is not None else (max(limit, 50) if use_llm_rerank else limit)
         final_rank_limit = max(limit, 50) if use_llm_rerank else limit
         ranked_rows = rank_claim_rows(

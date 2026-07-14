@@ -301,12 +301,15 @@ class TestSyncAll:
         # Mock store
         store = MagicMock()
         claims = [_fake_claim(id=i) for i in range(3)]
-        store.find_by_status.return_value = claims
+        store.tenant_id = None
+        store.get_qdrant_sync_cursor.return_value = 0
+        store.list_qdrant_sync_page.side_effect = [claims, []]
 
         result = backend.sync_all(store)
-        assert result["total"] == 12  # 3 claims * 4 statuses
-        assert result["synced"] == 12
+        assert result["total"] == 3
+        assert result["synced"] == 3
         assert result["errors"] == 0
+        assert store.set_qdrant_sync_cursor.call_count == 2
 
 
 class TestClose:

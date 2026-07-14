@@ -98,6 +98,7 @@ class _SchemaMixin:
             CREATE TABLE IF NOT EXISTS claim_embeddings (
                 claim_id INTEGER PRIMARY KEY,
                 model TEXT NOT NULL,
+                content_hash TEXT NOT NULL DEFAULT '',
                 embedding_json TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE CASCADE

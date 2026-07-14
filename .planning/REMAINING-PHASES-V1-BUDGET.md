@@ -286,5 +286,29 @@ P2-Z Phase 2 convergence completed on 2026-07-13:
 - Atomic package commit: the conventional Phase 2 convergence commit
   containing this scheduler evidence.
 
-The next package is R3.1 embedding and reconciliation efficiency. The active
-roadmap goal authorizes continuing without a new goal.
+R3.1 embedding and reconciliation efficiency completed on 2026-07-13:
+
+- Immutable migration 0014 and both baseline schemas persist the exact
+  embedding-content hash plus an authority-scoped durable Qdrant sync cursor.
+- SQLite/Postgres embedding caches refresh only missing, model-changed, or
+  content-changed claims. Candidate refresh uses the provider batch surface;
+  a warm retrieval performs one query embed and zero candidate embeds/writes.
+- The semantic downgrade probe is reused as the query vector, preserving the
+  post-probe safety check without embedding the query twice.
+- Qdrant full synchronization now keyset-pages every authoritative eligible
+  claim, checkpoints only completed pages, replays the last incomplete page,
+  and resets its cursor only after full convergence. The former per-status
+  10,000-row truncation is removed.
+- RED evidence: the initial efficiency/cursor contract failed 6 tests; the
+  service probe separately demonstrated 2 query embeddings instead of 1.
+- Focused correction evidence: embedding/read-only slice 42 passed; Qdrant
+  sync/reconciliation slice 43 passed with one existing Pydantic warning;
+  migration/semantic-downgrade slice 15 passed. Changed-file Ruff and
+  `git diff --check` passed. The first combined invocation hit its 244-second
+  execution ceiling without a result and is recorded as a timeout, not a pass.
+- Authenticated/TLS Qdrant and disposable Postgres runtime parity remain
+  `BLOCKED-EXTERNAL`; no production semantic profile was enabled.
+- Atomic package commit: the conventional R3.1 commit containing this evidence.
+
+The next package is R3.2 query and storage efficiency. The active roadmap goal
+authorizes continuing without a new goal.

@@ -6,7 +6,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from memorymaster.core.lifecycle import can_transition
-from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity
+from memorymaster.recall.embeddings import (
+    EmbeddingProvider,
+    cosine_similarity,
+    embedding_content_hash,
+)
 from memorymaster.core.models import (
     ActionProposal,
     CLAIM_LINK_TYPES,
@@ -171,6 +175,7 @@ class PostgresStore(SQLiteStore):
         )
         self._psycopg: Any = None
         self._vector_table_available: bool | None = None
+        self._vector_storage_kind: str | None = None
 
     def _require_team_authority(self) -> tuple[str, str, tuple[str, ...]]:
         if self.tenant_id is None:
@@ -3013,21 +3018,28 @@ class PostgresStore(SQLiteStore):
             )
 
     def _has_vector_table(self) -> bool:
-        if self._vector_table_available is not None:
-            return self._vector_table_available
+        return self._embedding_storage_kind() == "vector"
+
+    def _embedding_storage_kind(self) -> str:
+        if self._vector_storage_kind is not None:
+            return self._vector_storage_kind
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                    SELECT EXISTS (
-                      SELECT 1
-                      FROM information_schema.tables
-                      WHERE table_schema = 'public' AND table_name = 'claim_embeddings'
-                    ) AS ok
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'claim_embeddings'
+                      AND column_name IN ('embedding', 'embedding_json')
                     """
             )
-            row = cur.fetchone()
-        self._vector_table_available = bool(row["ok"]) if row is not None else False
-        return self._vector_table_available
+            rows = cur.fetchall()
+        columns = {str(row["column_name"]) for row in rows}
+        self._vector_storage_kind = (
+            "vector" if "embedding" in columns else "json" if "embedding_json" in columns else "missing"
+        )
+        self._vector_table_available = self._vector_storage_kind == "vector"
+        return self._vector_storage_kind
 
     @staticmethod
     def _vector_literal(vec: list[float]) -> str:
@@ -3036,31 +3048,77 @@ class PostgresStore(SQLiteStore):
     def upsert_embeddings(self, claims: list[Claim], provider: EmbeddingProvider) -> int:
         if not claims:
             return 0
-        if not self._has_vector_table():
+        storage_kind = self._embedding_storage_kind()
+        if storage_kind == "missing":
             return 0
-        now = utc_now()
-        rows: list[tuple[object, ...]] = []
-        for claim in claims:
-            text = " ".join(
-                part
-                for part in [claim.text, claim.normalized_text or "", claim.subject or "", claim.object_value or ""]
-                if part
-            )
-            emb = provider.embed(text)
-            rows.append((claim.id, provider.model, self._vector_literal(emb), now))
-
+        texts = {claim.id: self._embedding_text(claim) for claim in claims}
+        hashes = {
+            claim_id: embedding_content_hash(text)
+            for claim_id, text in texts.items()
+        }
+        ids = list(texts)
         with self.connect() as conn, conn.cursor() as cur:
-            cur.executemany(
-                """
-                    INSERT INTO claim_embeddings (claim_id, model, embedding, updated_at)
-                    VALUES (%s, %s, %s::vector, %s)
-                    ON CONFLICT (claim_id) DO UPDATE SET
-                      model = EXCLUDED.model,
-                      embedding = EXCLUDED.embedding,
-                      updated_at = EXCLUDED.updated_at
-                    """,
-                rows,
+            cur.execute(
+                "SELECT claim_id, model, content_hash FROM claim_embeddings "
+                "WHERE claim_id = ANY(%s)",
+                (ids,),
             )
+            cached = {
+                int(row["claim_id"]): (str(row["model"]), str(row["content_hash"]))
+                for row in cur.fetchall()
+            }
+        stale = [
+            claim
+            for claim in claims
+            if cached.get(claim.id) != (provider.model, hashes[claim.id])
+        ]
+        if not stale:
+            return 0
+        requested_model = provider.model
+        batch = getattr(provider, "embed_batch", None)
+        embeddings = (
+            batch([texts[claim.id] for claim in stale])
+            if callable(batch)
+            else [provider.embed(texts[claim.id]) for claim in stale]
+        )
+        if provider.model != requested_model:
+            stale = list(claims)
+            embeddings = (
+                batch([texts[claim.id] for claim in stale])
+                if callable(batch)
+                else [provider.embed(texts[claim.id]) for claim in stale]
+            )
+        if len(embeddings) != len(stale):
+            raise ValueError("embedding provider returned an incomplete batch")
+        now = utc_now()
+        if storage_kind == "vector":
+            rows = [
+                (claim.id, provider.model, hashes[claim.id], self._vector_literal(embedding), now)
+                for claim, embedding in zip(stale, embeddings, strict=True)
+            ]
+            sql = """
+                INSERT INTO claim_embeddings
+                    (claim_id, model, content_hash, embedding, updated_at)
+                VALUES (%s, %s, %s, %s::vector, %s)
+                ON CONFLICT (claim_id) DO UPDATE SET
+                  model = EXCLUDED.model, content_hash = EXCLUDED.content_hash,
+                  embedding = EXCLUDED.embedding, updated_at = EXCLUDED.updated_at
+            """
+        else:
+            rows = [
+                (claim.id, provider.model, hashes[claim.id], json.dumps(embedding), now)
+                for claim, embedding in zip(stale, embeddings, strict=True)
+            ]
+            sql = """
+                INSERT INTO claim_embeddings
+                    (claim_id, model, content_hash, embedding_json, updated_at)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (claim_id) DO UPDATE SET
+                  model = EXCLUDED.model, content_hash = EXCLUDED.content_hash,
+                  embedding_json = EXCLUDED.embedding_json, updated_at = EXCLUDED.updated_at
+            """
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.executemany(sql, rows)
         return len(rows)
 
     def vector_scores(
@@ -3068,15 +3126,45 @@ class PostgresStore(SQLiteStore):
         query_text: str,
         claims: list[Claim],
         provider: EmbeddingProvider,
+        *,
+        query_vector: list[float] | None = None,
     ) -> dict[int, float]:
         if not claims:
             return {}
-        if not self._has_vector_table():
-            return self._vector_scores_fallback(query_text, claims, provider)
-
+        storage_kind = self._embedding_storage_kind()
+        if storage_kind == "missing":
+            return self._vector_scores_fallback(
+                query_text, claims, provider, query_vector=query_vector
+            )
         self.upsert_embeddings(claims, provider)
-        query_vec = self._vector_literal(provider.embed(query_text))
+        raw_query_vec = query_vector if query_vector is not None else provider.embed(query_text)
         ids = [c.id for c in claims]
+        if storage_kind == "json":
+            with self.connect() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT claim_id, embedding_json FROM claim_embeddings "
+                    "WHERE claim_id = ANY(%s) AND model = %s",
+                    (ids, provider.model),
+                )
+                rows = cur.fetchall()
+            return {
+                int(row["claim_id"]): max(
+                    0.0,
+                    min(
+                        1.0,
+                        (
+                            cosine_similarity(
+                                raw_query_vec,
+                                json.loads(str(row["embedding_json"])),
+                            )
+                            + 1.0
+                        )
+                        / 2.0,
+                    ),
+                )
+                for row in rows
+            }
+        query_vec = self._vector_literal(raw_query_vec)
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """
@@ -3098,19 +3186,66 @@ class PostgresStore(SQLiteStore):
         query_text: str,
         claims: list[Claim],
         provider: EmbeddingProvider,
+        *,
+        query_vector: list[float] | None = None,
     ) -> dict[int, float]:
-        query_vec = provider.embed(query_text)
+        query_vec = query_vector if query_vector is not None else provider.embed(query_text)
         out: dict[int, float] = {}
-        for claim in claims:
-            text = " ".join(
-                part
-                for part in [claim.text, claim.normalized_text or "", claim.subject or "", claim.object_value or ""]
-                if part
-            )
-            emb = provider.embed(text)
+        batch = getattr(provider, "embed_batch", None)
+        texts = [self._embedding_text(claim) for claim in claims]
+        embeddings = batch(texts) if callable(batch) else [provider.embed(text) for text in texts]
+        for claim, emb in zip(claims, embeddings, strict=True):
             sim = cosine_similarity(query_vec, emb)
             out[claim.id] = max(0.0, min(1.0, (sim + 1.0) / 2.0))
         return out
+
+    def list_qdrant_sync_page(self, *, after_id: int, limit: int) -> list[Claim]:
+        if after_id < 0 or limit <= 0:
+            raise ValueError("after_id must be nonnegative and limit must be positive")
+        tenant_id = self._tenant_for_operation()
+        statuses = ("confirmed", "stale", "candidate", "conflicted")
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM claims
+                WHERE id > %s AND tenant_id = %s AND status = ANY(%s)
+                ORDER BY id ASC LIMIT %s
+                """,
+                (after_id, tenant_id, list(statuses), limit),
+            )
+            rows = cur.fetchall()
+        return [self._row_to_claim(row) for row in rows]
+
+    def get_qdrant_sync_cursor(self, stream_key: str) -> int:
+        if not stream_key or len(stream_key) > 512:
+            raise ValueError("invalid Qdrant sync stream key")
+        tenant_id = self._tenant_for_operation()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT last_claim_id FROM qdrant_sync_state "
+                "WHERE stream_key = %s AND tenant_id = %s",
+                (stream_key, tenant_id),
+            )
+            row = cur.fetchone()
+        return int(row["last_claim_id"]) if row is not None else 0
+
+    def set_qdrant_sync_cursor(self, stream_key: str, last_claim_id: int) -> None:
+        if not stream_key or len(stream_key) > 512 or last_claim_id < 0:
+            raise ValueError("invalid Qdrant sync cursor")
+        tenant_id = self._tenant_for_operation()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO qdrant_sync_state
+                    (stream_key, tenant_id, last_claim_id, updated_at)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (stream_key) DO UPDATE SET
+                  tenant_id = EXCLUDED.tenant_id,
+                  last_claim_id = EXCLUDED.last_claim_id,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (stream_key, tenant_id, last_claim_id, utc_now()),
+            )
 
     @staticmethod
     def _as_iso(value: object) -> str | None:

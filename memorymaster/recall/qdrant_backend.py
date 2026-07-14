@@ -468,32 +468,28 @@ class QdrantBackend:
         return False
 
     def sync_all(self, store, *, batch_size: int = 50) -> dict[str, int]:
-        """Bulk-push all active claims from the store to Qdrant.
-
-        Uses batch upsert for much better throughput than one-by-one.
-
-        Parameters
-        ----------
-        store : SQLiteStore | PostgresStore
-            The primary data store.
-        batch_size : int
-            Points per Qdrant upsert request (default 50).
-
-        Returns
-        -------
-        dict with keys: total, synced, skipped, errors
-        """
+        """Replayably keyset-page every eligible authoritative claim."""
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
         self.ensure_collection()
         stats = {"total": 0, "synced": 0, "skipped": 0, "errors": 0}
+        authority = str(getattr(store, "tenant_id", None) or "local")
+        stream_key = f"{self.collection}:{self.embed_model}:{authority}"
+        cursor = store.get_qdrant_sync_cursor(stream_key)
+        if isinstance(cursor, bool) or not isinstance(cursor, int) or cursor < 0:
+            raise TypeError("Qdrant sync cursor store returned an invalid cursor")
 
-        for status in ("confirmed", "stale", "candidate", "conflicted"):
-            claims = store.find_by_status(status, limit=10_000, include_citations=False)
+        while True:
+            claims = store.list_qdrant_sync_page(after_id=cursor, limit=batch_size)
+            if not isinstance(claims, list):
+                raise TypeError("Qdrant sync store returned an invalid page")
+            if not claims:
+                store.set_qdrant_sync_cursor(stream_key, 0)
+                break
             stats["total"] += len(claims)
-            if claims:
-                logger.info("Syncing %d %s claims to Qdrant...", len(claims), status)
-
-            batch: list[dict[str, Any]] = []
-            for _idx, claim in enumerate(claims):
+            points: list[dict[str, Any]] = []
+            page_errors = 0
+            for claim in claims:
                 findings = scan_persisted_value(self._claim_representation(claim))
                 if findings:
                     stats["skipped"] += 1
@@ -502,25 +498,22 @@ class QdrantBackend:
                 vec = self._embed(self._claim_text(claim))
                 if vec is None:
                     stats["errors"] += 1
+                    page_errors += 1
                     continue
-                batch.append({
+                points.append({
                     "id": self._point_id(claim.id),
                     "vector": vec,
                     "payload": self._claim_payload(claim),
                 })
-                if len(batch) >= batch_size:
-                    if self._batch_upsert(batch):
-                        stats["synced"] += len(batch)
-                    else:
-                        stats["errors"] += len(batch)
-                    batch = []
-
-            # Flush remaining
-            if batch:
-                if self._batch_upsert(batch):
-                    stats["synced"] += len(batch)
-                else:
-                    stats["errors"] += len(batch)
+            if points and self._batch_upsert(points):
+                stats["synced"] += len(points)
+            elif points:
+                stats["errors"] += len(points)
+                page_errors += len(points)
+            if page_errors:
+                break
+            cursor = claims[-1].id
+            store.set_qdrant_sync_cursor(stream_key, cursor)
 
         logger.info(
             "Qdrant sync_all complete: %d total, %d synced, %d errors",

@@ -375,6 +375,7 @@ BEGIN
             CREATE TABLE IF NOT EXISTS claim_embeddings (
                 claim_id BIGINT PRIMARY KEY REFERENCES claims(id) ON DELETE CASCADE,
                 model TEXT NOT NULL,
+                content_hash TEXT NOT NULL DEFAULT '''',
                 embedding VECTOR(1536) NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL
             )
@@ -388,6 +389,7 @@ BEGIN
             CREATE TABLE IF NOT EXISTS claim_embeddings (
                 claim_id BIGINT PRIMARY KEY REFERENCES claims(id) ON DELETE CASCADE,
                 model TEXT NOT NULL,
+                content_hash TEXT NOT NULL DEFAULT '''',
                 embedding_json TEXT NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL
             )
@@ -397,3 +399,10 @@ END
 $$;
 
 CREATE INDEX IF NOT EXISTS idx_embeddings_updated_at ON claim_embeddings(updated_at);
+
+CREATE TABLE IF NOT EXISTS qdrant_sync_state (
+    stream_key TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    last_claim_id BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL
+);

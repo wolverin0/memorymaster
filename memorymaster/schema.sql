@@ -98,9 +98,17 @@ END;
 CREATE TABLE IF NOT EXISTS claim_embeddings (
     claim_id INTEGER PRIMARY KEY,
     model TEXT NOT NULL,
+    content_hash TEXT NOT NULL DEFAULT '',
     embedding_json TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS qdrant_sync_state (
+    stream_key TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT '',
+    last_claim_id INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS external_sources (

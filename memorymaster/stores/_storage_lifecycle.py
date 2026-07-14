@@ -13,7 +13,11 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from memorymaster.core.lifecycle import can_transition
-from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity
+from memorymaster.recall.embeddings import (
+    EmbeddingProvider,
+    cosine_similarity,
+    embedding_content_hash,
+)
 from memorymaster.core.models import (
     CLAIM_LINK_TYPES,
     CLAIM_STATUSES,
@@ -563,53 +567,65 @@ class _LifecycleMixin:
     def upsert_embeddings(self, claims: list[Claim], provider: EmbeddingProvider) -> int:
         if not claims:
             return 0
+        texts = {claim.id: self._embedding_text(claim) for claim in claims}
+        hashes = {
+            claim_id: embedding_content_hash(text)
+            for claim_id, text in texts.items()
+        }
+        claim_ids = list(texts)
+        placeholders = ",".join("?" for _ in claim_ids)
+        with self.connect() as conn:
+            cached = {
+                int(row["claim_id"]): (str(row["model"]), str(row["content_hash"]))
+                for row in conn.execute(
+                    f"SELECT claim_id, model, content_hash FROM claim_embeddings "
+                    f"WHERE claim_id IN ({placeholders})",
+                    claim_ids,
+                ).fetchall()
+            }
+        stale = [
+            claim
+            for claim in claims
+            if cached.get(claim.id) != (provider.model, hashes[claim.id])
+        ]
+        if not stale:
+            return 0
+        requested_model = provider.model
+        batch = getattr(provider, "embed_batch", None)
+        embeddings = (
+            batch([texts[claim.id] for claim in stale])
+            if callable(batch)
+            else [provider.embed(texts[claim.id]) for claim in stale]
+        )
+        if len(embeddings) != len(stale):
+            raise ValueError("embedding provider returned an incomplete batch")
+        if provider.model != requested_model:
+            stale = list(claims)
+            embeddings = (
+                batch([texts[claim.id] for claim in stale])
+                if callable(batch)
+                else [provider.embed(texts[claim.id]) for claim in stale]
+            )
         now = utc_now()
-        rows = []
-        for claim in claims:
-            embedding = provider.embed(self._embedding_text(claim))
-            rows.append((claim.id, provider.model, json.dumps(embedding), now))
-
-        try:
-            with self.connect() as conn:
-                conn.executemany(
-                    """
-                    INSERT INTO claim_embeddings (claim_id, model, embedding_json, updated_at)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(claim_id) DO UPDATE SET
-                        model = excluded.model,
-                        embedding_json = excluded.embedding_json,
-                        updated_at = excluded.updated_at
-                    """,
-                    rows,
-                )
-                conn.commit()
-        except sqlite3.OperationalError as exc:
-            if "no such table" in str(exc).lower():
-                logger.warning("claim_embeddings table missing, recreating: %s", exc)
-                try:
-                    # Create the table and ensure it's committed before retrying
-                    with self.connect() as create_conn:
-                        self._ensure_embeddings_schema(create_conn)
-                        create_conn.commit()
-                    # Retry the insert
-                    with self.connect() as conn:
-                        conn.executemany(
-                            """
-                            INSERT INTO claim_embeddings (claim_id, model, embedding_json, updated_at)
-                            VALUES (?, ?, ?, ?)
-                            ON CONFLICT(claim_id) DO UPDATE SET
-                                model = excluded.model,
-                                embedding_json = excluded.embedding_json,
-                                updated_at = excluded.updated_at
-                            """,
-                            rows,
-                        )
-                        conn.commit()
-                except Exception as retry_exc:
-                    logger.error("Failed to recreate claim_embeddings: %s", retry_exc)
-                    return 0
-            else:
-                raise
+        rows = [
+            (claim.id, provider.model, hashes[claim.id], json.dumps(embedding), now)
+            for claim, embedding in zip(stale, embeddings, strict=True)
+        ]
+        with self.connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO claim_embeddings
+                    (claim_id, model, content_hash, embedding_json, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(claim_id) DO UPDATE SET
+                    model = excluded.model,
+                    content_hash = excluded.content_hash,
+                    embedding_json = excluded.embedding_json,
+                    updated_at = excluded.updated_at
+                """,
+                rows,
+            )
+            conn.commit()
         return len(rows)
 
 
@@ -618,6 +634,8 @@ class _LifecycleMixin:
         query_text: str,
         claims: list[Claim],
         provider: EmbeddingProvider,
+        *,
+        query_vector: list[float] | None = None,
     ) -> dict[int, float]:
         if not claims:
             return {}
@@ -632,26 +650,78 @@ class _LifecycleMixin:
         read_only = bool(getattr(self, "read_only", False))
         if not read_only:
             self.upsert_embeddings(claims, provider)
-        query_vec = provider.embed(query_text)
+        query_vec = query_vector if query_vector is not None else provider.embed(query_text)
         claim_ids = [c.id for c in claims]
         placeholders = ",".join("?" for _ in claim_ids)
         with self.connect() as conn:
             rows = conn.execute(
-                f"SELECT claim_id, embedding_json FROM claim_embeddings WHERE claim_id IN ({placeholders})",
+                f"SELECT claim_id, model, content_hash, embedding_json "
+                f"FROM claim_embeddings WHERE claim_id IN ({placeholders})",
                 claim_ids,
             ).fetchall()
         scores: dict[int, float] = {}
+        claims_by_id = {claim.id: claim for claim in claims}
         for row in rows:
+            claim_id = int(row["claim_id"])
+            claim = claims_by_id[claim_id]
+            expected_hash = embedding_content_hash(self._embedding_text(claim))
+            if str(row["model"]) != provider.model or str(row["content_hash"]) != expected_hash:
+                continue
             emb = json.loads(str(row["embedding_json"]))
             sim = cosine_similarity(query_vec, emb)
-            scores[int(row["claim_id"])] = max(0.0, min(1.0, (sim + 1.0) / 2.0))
+            scores[claim_id] = max(0.0, min(1.0, (sim + 1.0) / 2.0))
         if read_only:
-            for claim in claims:
-                if claim.id in scores:
-                    continue
-                sim = cosine_similarity(query_vec, provider.embed(self._embedding_text(claim)))
+            missing = [claim for claim in claims if claim.id not in scores]
+            batch = getattr(provider, "embed_batch", None)
+            embeddings = (
+                batch([self._embedding_text(claim) for claim in missing])
+                if callable(batch)
+                else [provider.embed(self._embedding_text(claim)) for claim in missing]
+            )
+            for claim, embedding in zip(missing, embeddings, strict=True):
+                sim = cosine_similarity(query_vec, embedding)
                 scores[claim.id] = max(0.0, min(1.0, (sim + 1.0) / 2.0))
         return scores
+
+    def list_qdrant_sync_page(self, *, after_id: int, limit: int) -> list[Claim]:
+        """Return one authoritative keyset page for vector maintenance."""
+        if after_id < 0 or limit <= 0:
+            raise ValueError("after_id must be nonnegative and limit must be positive")
+        statuses = ("confirmed", "stale", "candidate", "conflicted")
+        placeholders = ",".join("?" for _ in statuses)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM claims WHERE id > ? AND status IN ({placeholders}) "
+                "ORDER BY id ASC LIMIT ?",
+                (after_id, *statuses, limit),
+            ).fetchall()
+        return [self._row_to_claim(row) for row in rows]
+
+    def get_qdrant_sync_cursor(self, stream_key: str) -> int:
+        if not stream_key or len(stream_key) > 512:
+            raise ValueError("invalid Qdrant sync stream key")
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT last_claim_id FROM qdrant_sync_state WHERE stream_key = ?",
+                (stream_key,),
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def set_qdrant_sync_cursor(self, stream_key: str, last_claim_id: int) -> None:
+        if not stream_key or len(stream_key) > 512 or last_claim_id < 0:
+            raise ValueError("invalid Qdrant sync cursor")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO qdrant_sync_state (stream_key, last_claim_id, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(stream_key) DO UPDATE SET
+                    last_claim_id = excluded.last_claim_id,
+                    updated_at = excluded.updated_at
+                """,
+                (stream_key, last_claim_id, utc_now()),
+            )
+            conn.commit()
 
 
     def record_access(self, claim_id: int) -> None:
