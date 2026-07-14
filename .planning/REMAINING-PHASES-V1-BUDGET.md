@@ -545,3 +545,26 @@ R4.2 gradual orchestration decomposition completed on 2026-07-14:
 
 The next package is R4.3 governance UX and accessibility. The active roadmap
 goal authorizes continuing without a new goal.
+
+R4.3 governance UX and accessibility completed:
+
+- Review mutations now enter an explicit pending/disabled state, retain their
+  row after a rejected POST, expose an actionable Retry state, and remove the
+  row only after server success. Panel fetch failures render visible alert and
+  retry content instead of masquerading as empty panels.
+- The review read model attaches the latest unresolved steward proposal by
+  claim. The UI exposes its rationale, proposed transition/replacement, and
+  consequences, and renders approve/reject only when a proposal is actionable.
+- Claim and conflict views link to lineage and expose citations. Contrast was
+  raised for muted, placeholder, empty, and stat-label text; controls and live
+  regions are labelled; keyboard focus is visible; dashboard and conflict
+  comparisons stack at the mobile breakpoint.
+- Four adversarial/static acceptance checks were witnessed RED before the fix.
+  The focused package gate passed 57 tests. Headless Chromium at 375x812 proved
+  rejected-POST retention/retry, successful retry removal, visible panel-error
+  separation, and one-column conflict layout. Inline JavaScript parsing,
+  changed-file Ruff, syntax compilation, and `git diff --check` passed.
+- Atomic package commit: the conventional R4.3 commit containing this evidence.
+
+The next package is R4.4 generated release and documentation truth. The active
+roadmap goal authorizes continuing without a new goal.

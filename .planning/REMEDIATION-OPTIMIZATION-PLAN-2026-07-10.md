@@ -101,7 +101,7 @@ Phase 0 must replace qualitative capacity goals with recorded numeric gates in t
 - [ ] R3.5 — recovery, observability, audit, and privacy operations
 - [x] R4.1 — core/extension boundaries
 - [x] R4.2 — decompose oversized orchestration points
-- [ ] R4.3 — governance UX and accessibility
+- [x] R4.3 — governance UX and accessibility
 - [ ] R4.4 — generated release/documentation truth
 - [ ] Final audit delta and convergence evidence
 

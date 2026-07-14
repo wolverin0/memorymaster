@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from memorymaster.core.security import is_sensitive_claim
 from memorymaster.govern.review import build_review_queue, queue_to_dicts
+from memorymaster.govern.steward import list_steward_proposals
 
 
 Serializer = Callable[[Any], dict[str, Any]]
@@ -115,7 +116,22 @@ def review_queue_payload(
     )
     flags = triage_flags(service, max(limit * 20, 200))
     out = _apply_triage_filters(queue_to_dicts(items), flags, exclude_reviewed, exclude_suppressed)
+    proposals = _pending_proposals_by_claim(service, limit)
+    out = [{**item, "proposal": proposals.get(int(item["claim_id"]))} for item in out]
     return {"ok": True, "rows": len(out), "items": out}
+
+
+def _pending_proposals_by_claim(service: Any, limit: int) -> dict[int, dict[str, Any]]:
+    proposals = list_steward_proposals(service, limit=max(limit, 1), include_resolved=False)
+    latest: dict[int, dict[str, Any]] = {}
+    for proposal in proposals:
+        claim_id = proposal.get("claim_id")
+        if not isinstance(claim_id, int):
+            continue
+        current = latest.get(claim_id)
+        if current is None or int(proposal["proposal_event_id"]) > int(current["proposal_event_id"]):
+            latest[claim_id] = proposal
+    return latest
 
 
 def _apply_triage_filters(
