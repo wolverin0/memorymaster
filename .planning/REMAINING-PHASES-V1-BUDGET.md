@@ -372,3 +372,40 @@ R3.3 truthful setup profiles completed on 2026-07-13:
 
 The next package is R3.4 service entrypoints and readiness contracts. The
 active roadmap goal authorizes continuing without a new goal.
+
+R3.4 service entrypoints and readiness completed on 2026-07-13:
+
+- Stdio MCP remains the private agent-process entrypoint. A distinct
+  `memorymaster-mcp-http` entrypoint uses the official stateless streamable-HTTP
+  transport, requires a startup bearer token, validates allowed Host patterns,
+  leaves only `/healthz` and `/readyz` unauthenticated, and reports DB
+  connectivity failures as readiness 503 responses. The MCP dependency floor
+  now matches the streamable-HTTP API used by the installed wheel.
+- Docker defaults to the authenticated dashboard HTTP profile instead of
+  publishing a stdio process. Compose exposes only loopback port 8765, selects
+  dashboard or MCP HTTP explicitly, uses real readiness, and bounds CPU/memory
+  for MemoryMaster, Qdrant, and Ollama. Helm rejects stdio/unknown service
+  profiles, sources dashboard/MCP tokens from existing Secrets, and defines
+  liveness, readiness, immutable image, storage, and resource contracts.
+- CI now performs stdio initialize/tools-list, builds the image, runs dashboard
+  readiness, runs authenticated MCP HTTP initialize/tools-list, and renders
+  both Helm profiles. The protocol smoke uses the official MCP client rather
+  than treating an open port as proof.
+- RED evidence: eight deployment/auth/readiness tests initially failed. Focused
+  deployment/dashboard/setup/supply-chain boundary: 97 passed with one existing
+  Pydantic deprecation warning. Changed-file Ruff and `git diff --check` pass
+  after the one unused-import correction.
+- Runtime evidence: local stdio handshake passed; a disposable local HTTP MCP
+  returned readiness 200 and completed initialize/tools-list; the built
+  `memorymaster:r34-local` image returned dashboard readiness 200 and MCP HTTP
+  readiness 200 with a successful bearer-authenticated handshake. Compose
+  rendered successfully with synthetic required inputs. Temporary containers
+  and the named test volume were removed.
+- Helm CLI and a disposable Kubernetes target were unavailable. The existing
+  MM-OPS-02 external runtime row remains `BLOCKED-EXTERNAL`; no Helm runtime
+  pass is claimed. Approved Qdrant/Ollama images, TLS runtime, and image scans
+  also remain external.
+- Atomic package commit: the conventional R3.4 commit containing this evidence.
+
+The next package is R3.5 recovery, observability, and privacy. The active
+roadmap goal authorizes continuing without a new goal.

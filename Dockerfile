@@ -34,5 +34,7 @@ VOLUME /data
 # Expose dashboard port
 EXPOSE 8765
 
-# Default command: run MCP server
-CMD ["memorymaster-mcp"]
+# The image defaults to the HTTP dashboard. The stdio and authenticated HTTP
+# MCP services remain explicit alternatives: memorymaster-mcp and
+# memorymaster-mcp-http.
+CMD ["memorymaster-dashboard", "--host", "0.0.0.0", "--port", "8765", "--db", "/data/memorymaster.db", "--workspace", "/data"]

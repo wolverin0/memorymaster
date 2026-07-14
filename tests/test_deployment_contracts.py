@@ -5,9 +5,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -59,10 +56,6 @@ def test_auxiliary_compose_requires_authenticated_qdrant():
     assert "--ca-certificate=/qdrant/tls/ca.pem" in compose
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="R3.4: container publishes HTTP but launches stdio MCP with a CLI-only healthcheck",
-)
 def test_container_entrypoint_and_healthcheck_share_an_http_contract():
     dockerfile = _read("Dockerfile")
     compose = _read("docker-compose.yml")
@@ -72,10 +65,6 @@ def test_container_entrypoint_and_healthcheck_share_an_http_contract():
     assert '"--version"' not in compose
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="R3.4: Helm deployment has no liveness/readiness probes",
-)
 def test_helm_deployment_defines_health_and_readiness_probes():
     deployment = _read("helm/memorymaster/templates/deployment.yaml")
 
@@ -83,6 +72,43 @@ def test_helm_deployment_defines_health_and_readiness_probes():
     assert "readinessProbe:" in deployment
     assert "/healthz" in deployment
     assert "/readyz" in deployment
+
+
+def test_compose_http_service_is_private_and_resource_bounded():
+    compose = _read("docker-compose.yml")
+
+    assert '"127.0.0.1:8765:8765"' in compose
+    assert "MEMORYMASTER_SERVICE_ENTRYPOINT" in compose
+    assert "MEMORYMASTER_MCP_HTTP_TOKEN" in compose
+    assert "MEMORYMASTER_DASHBOARD_TOKEN_VIEWER" in compose
+    assert "cpus:" in compose
+    assert "mem_limit:" in compose
+
+
+def test_helm_selects_an_explicit_authenticated_http_profile():
+    values = _read("helm/memorymaster/values.yaml")
+    deployment = _read("helm/memorymaster/templates/deployment.yaml")
+
+    assert "profile: dashboard" in values
+    assert "memorymaster-dashboard" in deployment
+    assert "memorymaster-mcp-http" in deployment
+    assert "dashboardTokenSecret" in values
+    assert "mcpHttpTokenSecret" in values
+    assert "MEMORYMASTER_MCP_HTTP_TOKEN" in deployment
+    assert "MEMORYMASTER_DASHBOARD_TOKEN_VIEWER" in deployment
+
+
+def test_ci_builds_and_smokes_http_profiles_and_mcp_handshakes():
+    workflow = _read(".github/workflows/ci.yml")
+
+    assert "deployment-smoke:" in workflow
+    assert "docker build" in workflow
+    assert "memorymaster-dashboard" in workflow
+    assert "memorymaster-mcp-http" in workflow
+    assert "smoke_mcp_transport.py --transport stdio" in workflow
+    assert "smoke_mcp_transport.py --transport http" in workflow
+    assert "helm lint" in workflow
+    assert workflow.count("helm template") >= 2
 
 
 def test_deployment_images_reject_latest_tags():

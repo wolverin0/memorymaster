@@ -7,8 +7,17 @@ image:
   pullPolicy: IfNotPresent
 
 service:
+  # Supported HTTP deployment profiles. Stdio MCP is intentionally not exposed
+  # through a Kubernetes Service; run memorymaster-mcp from an agent process.
+  profile: dashboard
   type: ClusterIP
   port: 8765
+  dashboardTokenSecret:
+    name: ""
+    key: viewer-token
+  mcpHttpTokenSecret:
+    name: ""
+    key: bearer-token
 
 persistence:
   enabled: true

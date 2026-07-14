@@ -63,7 +63,7 @@ def _prepare_repo(tmp_path: Path) -> Path:
             f'[project]\nname = "{EXPECTED_NAME}"\nversion = "{EXPECTED_VERSION}"\n'
             'dependencies = ["requests>=2.31", "tenacity>=8.2"]\n'
             "[project.optional-dependencies]\n"
-            'mcp = ["mcp>=1.2"]\n'
+            'mcp = ["mcp>=1.8.1"]\n'
             'qdrant = ["httpx>=0.27"]\n'
             'security = ["cryptography>=42"]\n'
         ),
@@ -278,7 +278,7 @@ def test_release_dependency_audit_includes_docker_extras(tmp_path: Path) -> None
 
     assert report.ok is True
     assert {"requests>=2.31", "tenacity>=8.2"}.issubset(observed_requirements)
-    assert {"mcp>=1.2", "httpx>=0.27", "cryptography>=42"}.issubset(observed_requirements)
+    assert {"mcp>=1.8.1", "httpx>=0.27", "cryptography>=42"}.issubset(observed_requirements)
 
 
 def test_project_identity_cannot_be_supplied_by_operator(tmp_path: Path) -> None:

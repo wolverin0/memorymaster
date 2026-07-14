@@ -4,8 +4,18 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: memorymaster
+    command:
+      - "${MEMORYMASTER_SERVICE_ENTRYPOINT:-memorymaster-dashboard}"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8765"
+      - --db
+      - /data/memorymaster.db
+      - --workspace
+      - /data
     ports:
-      - "8765:8765"
+      - "127.0.0.1:8765:8765"
     volumes:
       - ./data:/data
       - type: bind
@@ -15,6 +25,9 @@ services:
     environment:
       MEMORYMASTER_DEFAULT_DB: /data/memorymaster.db
       MEMORYMASTER_WORKSPACE: /data
+      MEMORYMASTER_DASHBOARD_TOKEN_VIEWER: "${MEMORYMASTER_DASHBOARD_TOKEN_VIEWER:-}"
+      MEMORYMASTER_MCP_HTTP_TOKEN: "${MEMORYMASTER_MCP_HTTP_TOKEN:-}"
+      MEMORYMASTER_MCP_HTTP_ALLOWED_HOSTS: "127.0.0.1:*,localhost:*"
       QDRANT_URL: https://qdrant:6333
       QDRANT_API_KEY: "${QDRANT_API_KEY:?Set QDRANT_API_KEY before rendering Compose}"
       QDRANT_CA_CERT: /run/secrets/qdrant-ca.pem
@@ -25,8 +38,10 @@ services:
       ollama:
         condition: service_started
     restart: unless-stopped
+    cpus: "0.50"
+    mem_limit: 512m
     healthcheck:
-      test: ["CMD", "memorymaster", "--version"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/readyz', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -58,6 +73,8 @@ services:
         target: /qdrant/tls/ca.pem
         read_only: true
     restart: unless-stopped
+    cpus: "1.00"
+    mem_limit: 1g
     healthcheck:
       test:
         - CMD-SHELL
@@ -78,6 +95,8 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
+    cpus: "2.00"
+    mem_limit: 4g
 
 volumes:
   qdrant_data:

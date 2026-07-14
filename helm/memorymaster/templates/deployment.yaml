@@ -15,6 +15,14 @@
 {{- fail "qdrant.url must use HTTPS" -}}
 {{- end -}}
 {{- $qdrantApiKeySecret := required "qdrant.apiKeySecret.name is required" .Values.qdrant.apiKeySecret.name -}}
+{{- if not (has .Values.service.profile (list "dashboard" "mcp-http")) -}}
+{{- fail "service.profile must be dashboard or mcp-http; stdio MCP cannot be published as HTTP" -}}
+{{- end -}}
+{{- if eq .Values.service.profile "dashboard" -}}
+{{- $_ := required "service.dashboardTokenSecret.name is required for the dashboard profile" .Values.service.dashboardTokenSecret.name -}}
+{{- else -}}
+{{- $_ := required "service.mcpHttpTokenSecret.name is required for the mcp-http profile" .Values.service.mcpHttpTokenSecret.name -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -33,6 +41,21 @@ spec:
         - name: memorymaster
           image: "{{ .Values.image.repository }}@{{ $imageDigest }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            {{- if eq .Values.service.profile "dashboard" }}
+            - memorymaster-dashboard
+            {{- else }}
+            - memorymaster-mcp-http
+            {{- end }}
+          args:
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8765"
+            - --db
+            - /data/memorymaster.db
+            - --workspace
+            - /data
           ports:
             - containerPort: 8765
           env:
@@ -47,6 +70,21 @@ spec:
                 secretKeyRef:
                   name: {{ $qdrantApiKeySecret | quote }}
                   key: {{ .Values.qdrant.apiKeySecret.key | quote }}
+            {{- if eq .Values.service.profile "dashboard" }}
+            - name: MEMORYMASTER_DASHBOARD_TOKEN_VIEWER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.service.dashboardTokenSecret.name | quote }}
+                  key: {{ .Values.service.dashboardTokenSecret.key | quote }}
+            {{- else }}
+            - name: MEMORYMASTER_MCP_HTTP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.service.mcpHttpTokenSecret.name | quote }}
+                  key: {{ .Values.service.mcpHttpTokenSecret.key | quote }}
+            - name: MEMORYMASTER_MCP_HTTP_ALLOWED_HOSTS
+              value: {{ printf "%s-memorymaster:*,127.0.0.1:*,localhost:*" .Release.Name | quote }}
+            {{- end }}
             {{- if .Values.qdrant.caSecret.name }}
             - name: QDRANT_CA_CERT
               value: {{ printf "%s/ca.crt" .Values.qdrant.caSecret.mountPath | quote }}
@@ -61,6 +99,18 @@ spec:
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8765
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8765
+            initialDelaySeconds: 5
+            periodSeconds: 10
       volumes:
         - name: data
           {{- if .Values.persistence.enabled }}
