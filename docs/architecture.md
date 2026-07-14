@@ -67,6 +67,23 @@ read-only `WikiSimilarityCorpus` stewardship protocol. The former generic
 removed in R4.1 after its deprecation window. Arbitrary validator, retrieval,
 or ingestion callbacks are not a supported security boundary.
 
+### Gradual orchestration decomposition
+
+`MemoryService` remains the supported facade. Its Atlas/media/action persistence
+API is implemented by `core.services.IntegrationService`, preserving instance
+method signatures through inheritance while removing integration ownership from
+the 2,617-line orchestration class. The first enforced ratchet caps
+`core/service.py` at 2,450 lines; the R4.2 result is 2,205 lines. Telemetry and
+lifecycle are the next extraction pair, followed by stewardship and ingestion;
+policy-dense retrieval is last.
+
+Dashboard HTTP handlers own transport only. Read-model construction lives in
+`surfaces/dashboard_read_models.py`, while mutation application lives in
+`surfaces/dashboard_commands.py`. Non-growth tests cap `dashboard.py` at 1,550
+lines and `DashboardRequestHandler` at 720 lines; R4.2 results are 1,381 and 691.
+Compatibility-shim ownership and the dated v5 removal gate are documented in
+`docs/compatibility.md`.
+
 ## Data Flow
 
 **Ingest path**

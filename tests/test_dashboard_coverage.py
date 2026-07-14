@@ -301,8 +301,14 @@ def test_review_queue_route_adds_triage_flags(monkeypatch: Any, tmp_path: Path) 
         assert len(items) == 1
         return [{"claim_id": 2, "status": "stale", "reason": "needs review", "priority": 0.9}]
 
-    monkeypatch.setattr("memorymaster.surfaces.dashboard.build_review_queue", fake_build_review_queue)
-    monkeypatch.setattr("memorymaster.surfaces.dashboard.queue_to_dicts", fake_queue_to_dicts)
+    monkeypatch.setattr(
+        "memorymaster.surfaces.dashboard_read_models.build_review_queue",
+        fake_build_review_queue,
+    )
+    monkeypatch.setattr(
+        "memorymaster.surfaces.dashboard_read_models.queue_to_dicts",
+        fake_queue_to_dicts,
+    )
 
     with running_dashboard(tmp_path, FakeService()) as (base_url, _host, _port, _log_path):
         payload = get_json(base_url, "/api/review-queue?include_conflicted=0&limit=5")

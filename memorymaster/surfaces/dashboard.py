@@ -21,10 +21,25 @@ from urllib.parse import parse_qs, urlparse
 
 from memorymaster.surfaces import dashboard_auth
 from memorymaster.core.config import get_config
-from memorymaster.govern.review import build_review_queue, queue_to_dicts
-from memorymaster.core.security import is_sensitive_claim
+from memorymaster.govern.review import build_review_queue
 from memorymaster.core.service import MemoryService
 from memorymaster.recall.qdrant_transport import QdrantTransportConfig
+from memorymaster.surfaces.dashboard_commands import (
+    apply_triage_action,
+    control_operator,
+    update_action_proposal_status,
+)
+from memorymaster.surfaces.dashboard_read_models import (
+    action_proposals_payload,
+    audit_payload,
+    claims_payload,
+    conflicts_payload,
+    events_payload,
+    mobile_review_queue_payload,
+    namespaces_payload,
+    review_queue_payload,
+    triage_flags,
+)
 import contextlib
 
 
@@ -1091,19 +1106,7 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
         self.wfile.write(body)
 
     def _triage_flags(self, limit: int) -> dict[int, dict[str, bool]]:
-        flags: dict[int, dict[str, bool]] = {}
-        for event in reversed(self._server.service.list_events(limit=limit, event_type="audit")):
-            if event.claim_id is None:
-                continue
-            ref = flags.setdefault(int(event.claim_id), {"reviewed": False, "suppressed": False})
-            details = str(event.details or "")
-            if details == "triage_mark_reviewed":
-                ref["reviewed"] = True
-            if details == "triage_suppress":
-                ref["suppressed"] = True
-            if details == "triage_unsuppress":
-                ref["suppressed"] = False
-        return flags
+        return triage_flags(self._server.service, limit)
 
     def _handle_claims(self, query_string: str) -> None:
         query = parse_qs(query_string)
@@ -1111,10 +1114,11 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
         include_archived = _parse_bool(_first_query_value(query, "include_archived"), default=False)
         allow_sensitive = _parse_bool(_first_query_value(query, "allow_sensitive"), default=False)
         status = _first_query_value(query, "status")
-        claims = self._server.service.list_claims(status=status, limit=limit, include_archived=include_archived)
-        if not allow_sensitive:
-            claims = [claim for claim in claims if not is_sensitive_claim(claim)]
-        self._write_json({"ok": True, "rows": len(claims), "claims": [_claim_to_dict(c) for c in claims]})
+        self._write_json(claims_payload(
+            self._server.service, status=status, limit=limit,
+            include_archived=include_archived, allow_sensitive=allow_sensitive,
+            serialize=_claim_to_dict,
+        ))
 
     def _handle_events(self, query_string: str) -> None:
         query = parse_qs(query_string)
@@ -1124,39 +1128,28 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
         claim_id = int(claim_id_raw) if claim_id_raw is not None else None
         if claim_id is not None and claim_id <= 0:
             raise ValueError("claim_id must be positive")
-        events = self._server.service.list_events(claim_id=claim_id, limit=limit, event_type=event_type)
-        self._write_json({"ok": True, "rows": len(events), "events": [_event_to_dict(e) for e in events]})
+        self._write_json(events_payload(
+            self._server.service, limit=limit, claim_id=claim_id,
+            event_type=event_type, serialize=_event_to_dict,
+        ))
 
     def _handle_timeline(self, query_string: str) -> None:
         query = parse_qs(query_string)
         limit = _parse_int(_first_query_value(query, "limit"), default=100, minimum=1, maximum=2000)
         event_type = _first_query_value(query, "event_type")
-        events = self._server.service.list_events(limit=limit, event_type=event_type)
-        self._write_json({"ok": True, "rows": len(events), "timeline": [_event_to_dict(e) for e in events]})
+        self._write_json(events_payload(
+            self._server.service, limit=limit, claim_id=None,
+            event_type=event_type, serialize=_event_to_dict, output_key="timeline",
+        ))
 
     def _handle_conflicts(self, query_string: str) -> None:
         query = parse_qs(query_string)
         limit = _parse_int(_first_query_value(query, "limit"), default=50, minimum=1, maximum=500)
         include_stale = _parse_bool(_first_query_value(query, "include_stale"), default=False)
-        conflicted = self._server.service.list_claims(status="conflicted", limit=limit, include_archived=False)
-        if not conflicted:
-            self._write_json({"ok": True, "rows": 0, "groups": []})
-            return
-        statuses = ["confirmed", "conflicted"] + (["stale"] if include_stale else [])
-        active = self._server.service.store.list_claims(limit=max(limit * 12, 200), status_in=statuses, include_archived=False, include_citations=True)
-        grouped: dict[tuple[str, str, str], list[Any]] = {}
-        for claim in conflicted:
-            grouped.setdefault((str(claim.subject or ""), str(claim.predicate or ""), str(claim.scope or "project")), [])
-        for claim in active:
-            key = (str(claim.subject or ""), str(claim.predicate or ""), str(claim.scope or "project"))
-            if key in grouped:
-                grouped[key].append(claim)
-        groups_payload: list[dict[str, Any]] = []
-        for key, claims in grouped.items():
-            claims_sorted = sorted(claims, key=lambda c: (str(c.updated_at), int(c.id)), reverse=True)
-            groups_payload.append({"subject": key[0], "predicate": key[1], "scope": key[2], "claims": [_claim_to_dict(c) for c in claims_sorted]})
-        groups_payload.sort(key=lambda g: (g["subject"], g["predicate"], g["scope"]))
-        self._write_json({"ok": True, "rows": len(groups_payload), "groups": groups_payload})
+        self._write_json(conflicts_payload(
+            self._server.service, limit=limit, include_stale=include_stale,
+            serialize=_claim_to_dict,
+        ))
 
     def _handle_review_queue(self, query_string: str) -> None:
         query = parse_qs(query_string)
@@ -1166,88 +1159,29 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
         allow_sensitive = _parse_bool(_first_query_value(query, "allow_sensitive"), default=False)
         exclude_reviewed = _parse_bool(_first_query_value(query, "exclude_reviewed"), default=False)
         exclude_suppressed = _parse_bool(_first_query_value(query, "exclude_suppressed"), default=False)
-        items = build_review_queue(
-            self._server.service,
-            limit=limit,
-            include_stale=include_stale,
-            include_conflicted=include_conflicted,
-            include_sensitive=allow_sensitive,
-        )
-        flags = self._triage_flags(max(limit * 20, 200))
-        queue = queue_to_dicts(items)
-        out: list[dict[str, Any]] = []
-        for item in queue:
-            claim_id = int(item["claim_id"])
-            triage = flags.get(claim_id, {"reviewed": False, "suppressed": False})
-            item["reviewed"] = bool(triage["reviewed"])
-            item["suppressed"] = bool(triage["suppressed"])
-            if exclude_reviewed and bool(item["reviewed"]):
-                continue
-            if exclude_suppressed and bool(item["suppressed"]):
-                continue
-            out.append(item)
-        self._write_json({"ok": True, "rows": len(out), "items": out})
+        self._write_json(review_queue_payload(
+            self._server.service, limit=limit, include_stale=include_stale,
+            include_conflicted=include_conflicted, allow_sensitive=allow_sensitive,
+            exclude_reviewed=exclude_reviewed, exclude_suppressed=exclude_suppressed,
+        ))
 
     def _handle_mobile_review_queue(self, query_string: str) -> None:
         query = parse_qs(query_string)
         limit = _parse_review_queue_limit(_first_query_value(query, "n"))
         scope = _first_query_value(query, "scope")
         cursor = _parse_review_queue_cursor(_first_query_value(query, "cursor"))
-
-        clauses = ["archived_at IS NULL"]
-        params: list[Any] = []
-        if scope is not None:
-            clauses.append("scope = ?")
-            params.append(scope)
-        if cursor is not None:
-            clauses.append("id > ?")
-            params.append(cursor)
-        where_sql = "WHERE " + " AND ".join(clauses)
-        sql = f"""
-            SELECT id, text, created_at, scope, claim_type, confidence
-            FROM claims
-            {where_sql}
-            ORDER BY created_at ASC, id ASC
-            LIMIT ?
-        """
-        params.append(limit + 1)
-
-        with self._server.service.store.connect() as conn:
-            rows = conn.execute(sql, params).fetchall()
-
-        page_rows = rows[:limit]
-        now = datetime.now(timezone.utc)
-        queue = [
-            {
-                "id": int(row["id"]),
-                "text_preview": str(row["text"] or "")[:200],
-                "age_days": _claim_age_days(str(row["created_at"]), now),
-                "scope": row["scope"],
-                "type": row["claim_type"],
-                "score": float(row["confidence"]),
-            }
-            for row in page_rows
-        ]
-        next_cursor = int(page_rows[-1]["id"]) if len(rows) > limit and page_rows else None
-        self._write_json({"queue": queue, "cursor": next_cursor})
+        self._write_json(mobile_review_queue_payload(
+            self._server.service, limit=limit, scope=scope, cursor=cursor,
+        ))
 
     def _handle_action_proposals(self, query_string: str) -> None:
         query = parse_qs(query_string)
         limit = _parse_int(_first_query_value(query, "limit"), default=100, minimum=1, maximum=500)
         status = _first_query_value(query, "status")
         destination = _first_query_value(query, "destination")
-        proposals = self._server.service.list_action_proposals(
-            status=status,
-            destination=destination,
-            limit=limit,
-        )
-        self._write_json(
-            {
-                "ok": True,
-                "rows": len(proposals),
-                "proposals": [asdict(proposal) for proposal in proposals],
-            }
-        )
+        self._write_json(action_proposals_payload(
+            self._server.service, status=status, destination=destination, limit=limit,
+        ))
 
     def _handle_atlas_version(self, query_string: str) -> None:
         from memorymaster.bridges.atlas_contract import atlas_contract_payload
@@ -1256,17 +1190,7 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
         self._write_json({"ok": True, **payload})
 
     def _handle_action_proposal_status(self, payload: dict[str, Any]) -> None:
-        proposal_id = int(payload.get("proposal_id") or 0)
-        status = str(payload.get("status") or "").strip().lower()
-        external_ref = payload.get("external_ref")
-        if proposal_id <= 0:
-            raise ValueError("proposal_id must be positive")
-        proposal = self._server.service.update_action_proposal_status(
-            proposal_id,
-            status=status,
-            external_ref=str(external_ref) if external_ref not in (None, "") else None,
-        )
-        self._write_json({"ok": True, "proposal": asdict(proposal)})
+        self._write_json(update_action_proposal_status(self._server.service, payload))
 
     def _handle_retrieval(self, query_string: str) -> None:
         params = _parse_retrieval_query_params(query_string)
@@ -1334,47 +1258,12 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
     def _handle_audit(self, query_string: str) -> None:
         query = parse_qs(query_string)
         limit = _parse_int(_first_query_value(query, "limit"), default=50, minimum=1, maximum=1000)
-        rows: list[dict[str, Any]] = []
-        for event_type in ("audit", "policy_decision"):
-            events = self._server.service.list_events(limit=limit, event_type=event_type)
-            rows.extend(_event_to_dict(event) for event in events)
-        rows.sort(key=lambda e: (str(e.get("created_at", "")), int(e.get("id", 0))), reverse=True)
-        self._write_json({"ok": True, "rows": min(limit, len(rows)), "events": rows[:limit]})
+        self._write_json(audit_payload(self._server.service, limit=limit, serialize=_event_to_dict))
 
     def _handle_namespaces(self, query_string: str) -> None:
         query = parse_qs(query_string)
         limit = _parse_int(_first_query_value(query, "limit"), default=200, minimum=1, maximum=5000)
-        claims = self._server.service.list_claims(limit=limit, include_archived=False)
-        buckets: dict[str, list[Any]] = {"facts": [], "decisions": [], "workflows": [], "project_overview": []}
-        for claim in claims:
-            text = str(claim.text or "").lower()
-            claim_type = str(claim.claim_type or "").lower()
-            predicate = str(claim.predicate or "").lower()
-            is_decision = ("decision" in claim_type) or (predicate in {"decision", "policy"}) or ("decid" in text)
-            is_workflow = any(k in claim_type for k in {"workflow", "runbook", "process"}) or predicate in {"workflow", "runbook", "command", "step"}
-            if is_decision:
-                buckets["decisions"].append(claim)
-            elif is_workflow:
-                buckets["workflows"].append(claim)
-            else:
-                buckets["facts"].append(claim)
-            buckets["project_overview"].append(claim)
-
-        def _samples(rows: list[Any]) -> list[dict[str, Any]]:
-            return [{"id": int(c.id), "subject": c.subject, "predicate": c.predicate, "object_value": c.object_value, "status": c.status} for c in rows[:5]]
-
-        self._write_json(
-            {
-                "ok": True,
-                "rows": len(claims),
-                "namespaces": {
-                    "facts": {"count": len(buckets["facts"]), "samples": _samples(buckets["facts"])},
-                    "decisions": {"count": len(buckets["decisions"]), "samples": _samples(buckets["decisions"])},
-                    "workflows": {"count": len(buckets["workflows"]), "samples": _samples(buckets["workflows"])},
-                    "project_overview": {"count": len(buckets["project_overview"]), "samples": _samples(buckets["project_overview"])},
-                },
-            }
-        )
+        self._write_json(namespaces_payload(self._server.service, limit=limit))
 
     def _handle_provenance(self, query_string: str) -> None:
         """Per-agent provenance: ingest counts + status mix by source_agent.
@@ -1520,43 +1409,12 @@ const sb=document.getElementById('stream');const es=new EventSource('/api/operat
         self._write_json(_validation_latency_metric(self._server.service))
 
     def _handle_triage_action(self, payload: dict[str, Any]) -> None:
-        action = str(payload.get("action") or "").strip().lower()
-        claim_id = int(payload.get("claim_id", 0))
-        if claim_id <= 0:
-            raise ValueError("claim_id must be positive")
-        if action not in {"pin", "unpin", "mark_reviewed", "suppress", "unsuppress", "approve_proposal", "reject_proposal"}:
-            raise ValueError("unsupported action")
-        if action == "pin":
-            self._write_json({"ok": True, "action": action, "claim": _claim_to_dict(self._server.service.pin(claim_id, pin=True))})
-            return
-        if action == "unpin":
-            self._write_json({"ok": True, "action": action, "claim": _claim_to_dict(self._server.service.pin(claim_id, pin=False))})
-            return
-        if action in {"approve_proposal", "reject_proposal"}:
-            from memorymaster.govern.steward import resolve_steward_proposal
-
-            resolved = resolve_steward_proposal(
-                self._server.service,
-                action=("approve" if action == "approve_proposal" else "reject"),
-                claim_id=claim_id,
-                apply_on_approve=True,
-            )
-            self._write_json({"ok": True, "action": action, "result": resolved})
-            return
-        detail_map = {"mark_reviewed": "triage_mark_reviewed", "suppress": "triage_suppress", "unsuppress": "triage_unsuppress"}
-        self._server.service.store.record_event(claim_id=claim_id, event_type="audit", details=detail_map[action], payload={"source": "dashboard"})
-        self._write_json({"ok": True, "action": action, "claim_id": claim_id})
+        self._write_json(apply_triage_action(
+            self._server.service, payload, serialize_claim=_claim_to_dict,
+        ))
 
     def _handle_operator_control(self, payload: dict[str, Any]) -> None:
-        action = str(payload.get("action") or "").strip().lower()
-        if action == "start":
-            inbox_jsonl = str(payload.get("inbox_jsonl") or "artifacts/operator/operator_inbox.jsonl")
-            self._write_json({"ok": True, **self._server.start_operator(inbox_jsonl)})
-            return
-        if action == "stop":
-            self._write_json({"ok": True, **self._server.stop_operator()})
-            return
-        raise ValueError("action must be start or stop")
+        self._write_json(control_operator(self._server, payload))
 
     def _send_sse_event(self, record: dict[str, Any]) -> bool:
         """Send a server-sent event record. Returns False if connection is closed."""

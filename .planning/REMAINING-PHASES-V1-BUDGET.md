@@ -514,3 +514,34 @@ R4.1 core and companion extension boundaries completed on 2026-07-14:
 
 The next package is R4.2 gradual orchestration decomposition. The active
 roadmap goal authorizes continuing without a new goal.
+
+R4.2 gradual orchestration decomposition completed on 2026-07-14:
+
+- The public `MemoryService` facade now inherits the real store-backed
+  `IntegrationService` implementation for external sources, Atlas/media
+  evidence, retry leases, and action proposals. Exact public signatures are
+  preserved; ingest, retrieval, cycle, and initialization bodies were not
+  changed.
+- The manually HIGH facade boundary was limited to the new base class. The
+  `get_action_proposal_by_idempotency_key` symbol was left in the facade after
+  GitNexus reported a self-referential CRITICAL graph result; its behavior was
+  not changed.
+- Dashboard claim/event/conflict/review/mobile/action/audit/namespace read
+  models now live outside the HTTP handler. Action-status, triage, and operator
+  mutations now use explicit command functions; handlers parse, invoke, and
+  serialize.
+- Ratcheting tests cap `service.py` at 2,450 lines, `dashboard.py` at 1,550,
+  `DashboardRequestHandler` at 720, extracted modules at 800, and extracted
+  functions at 50. Actual results are 2,205, 1,381, and 691 respectively.
+- `docs/compatibility.md` freezes the root-shim inventory, retains it through
+  4.5.x, and requires the dated 2026-09-30/v5 major removal gate plus consumer
+  evidence. Telemetry/lifecycle, stewardship/ingestion, and retrieval remain
+  prioritized gradual ratchets; no placeholder services were added.
+- RED architecture evidence initially failed three of four checks. The focused
+  package boundary produced 137 passes and one stale monkeypatch-path failure;
+  the exact correction plus architecture checks passed five tests. Changed-file
+  Ruff, syntax compilation, and `git diff --check` passed.
+- Atomic package commit: the conventional R4.2 commit containing this evidence.
+
+The next package is R4.3 governance UX and accessibility. The active roadmap
+goal authorizes continuing without a new goal.
