@@ -1,18 +1,26 @@
 # Prioritized Remaining-Blocker Ledger
 
-This is a release-oriented view. `external-actions-required.md` remains the
-canonical owner/evidence ledger.
+This is a release-oriented view for the primary personal/local SQLite profile.
+`external-actions-required.md` remains the canonical owner/evidence ledger.
 
-| Priority | Finding(s) | Blocking evidence/action |
+## Blocks publishing the minimal package
+
+| Priority | Finding(s) | Required evidence/action |
 |---|---|---|
-| P0 | MM-OPS-01, MM-OPS-04 | Rotate/classify historical credentials and Gitleaks findings; complete strict dependency and exact release-image scans |
-| P0 | MM-SEC-01 | Disposable two-role Postgres RLS/parity proof and approved brownfield inventory/repair evidence |
-| P0 | MM-SEC-02 | Disposable authenticated/TLS Qdrant governed retrieval, reconciliation, outbox, sync, and delete proof |
-| P0 | MM-SEC-03 | Authorized aggregate legacy-store inventory completion, including Qdrant; separately approve any cleanup/redaction |
-| P1 | MM-OPS-02, MM-OPS-03 | Approved immutable images, disposable Kubernetes/Helm proof, then explicit tag/PyPI workflow approval |
-| P1 | MM-OPS-05 | Approved off-device encrypted destination plus SQLite/Postgres restore drill |
-| P1 | MM-PRIV-01, MM-PRIV-02 | Product/legal consent, processor, retention, attribution, export/erase disposition, and backend dry-run decisions |
+| P0 | MM-OPS-04 | Classify the unsuppressed history findings and complete a strict dependency audit for the exact minimal release extras |
+| P0 | MM-OPS-03 | Execute the tag-triggered verified-artifact workflow only after explicit approval; publish the exact promoted bytes |
+| P1 | MM-SEC-03, MM-DATA-01 | Before migrating or remediating the user's active SQLite DB, approve and verify a backup plus read-only inventory; not a package-publication gate |
 | P2 | MM-CAP-01 | Address or monitor host-storage capacity without deleting product data |
+
+## Deferred optional-profile evidence
+
+| Profile | Findings | Deferred evidence |
+|---|---|---|
+| Team/Postgres | MM-SEC-01, MM-OPS-01 | Two-role RLS/parity, brownfield inventory, credential/network, and Postgres recovery proof |
+| Semantic/Qdrant | MM-SEC-02 | Authenticated/TLS governed candidate, reconciliation, outbox, sync, and delete proof |
+| Hosted/container | MM-OPS-02, MM-OPS-04 image scan | Approved immutable images, scans, Kubernetes/Helm runtime and network-policy proof |
+| Organization/privacy | MM-PRIV-01, MM-PRIV-02 | Organizational consent, processor, retention, export/erase, and backend-disposition decisions |
+| Extended recovery | MM-OPS-05 | Approved off-device destination and PostgreSQL restore drill |
 
 No blocker above authorizes a mutation. Each external owner must approve the
 specific action and retain the evidence requested by the canonical ledger.

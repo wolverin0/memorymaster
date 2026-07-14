@@ -2,6 +2,17 @@
 
 This document defines practical deployment profiles for MemoryMaster with reliability/operability defaults.
 
+## Product Posture
+
+Profile A is the primary product: one person, one local SQLite database, and a
+private stdio MCP process. Profiles B and C are deferred design options, not
+current release targets. Their presence documents fail-closed boundaries; it
+does not imply that users should provision Postgres, containers, or shared
+infrastructure.
+
+Qdrant is a separate optional semantic enhancement and is not part of Profile
+A unless the user explicitly selects and verifies that profile.
+
 ## Secure Container Inputs
 
 Container configuration fails closed when required deployment inputs are
@@ -58,9 +69,9 @@ python scripts/eval_memorymaster.py --strict
 python benchmarks/perf_smoke.py
 ```
 
-## Profile B: Small Team Server (Postgres)
+## Deferred Profile B: Small Team Server (Postgres)
 
-Use when:
+Revisit only when:
 - 2-10 engineers
 - one shared service host
 - moderate throughput
@@ -81,9 +92,9 @@ Baseline controls:
 - periodic reconciliation report:
   - `service.store.reconcile_integrity(fix=False)` in scheduled job
 
-## Profile C: Cloud Managed DB (Postgres)
+## Deferred Profile C: Cloud Managed DB (Postgres)
 
-Use when:
+Revisit only when:
 - production workloads
 - multi-service/multi-agent concurrency
 - stricter recovery and audit requirements

@@ -24,8 +24,9 @@ stateful accessible governance UX, and generated release truth.
 
 ## Release caveat
 
-This PR is a local release candidate, not production authorization. The
-external Postgres, Qdrant, credential/history/dependency/image scan,
-Kubernetes, recovery, privacy/legal, and publication gates remain listed in
-`external-actions-required.md`. No push, tag, publication, deployment, or live
-data mutation was performed by the remediation goal.
+This PR targets the personal/local SQLite minimal profile. History,
+minimal-extra dependency, verified-artifact, and publication evidence still
+gate an external package release. Postgres/team, Qdrant/semantic,
+Kubernetes/Helm, and organization/privacy evidence is deferred and blocks only
+claims about those optional profiles. No push, tag, publication, deployment,
+or live-data mutation was performed by the remediation goal.

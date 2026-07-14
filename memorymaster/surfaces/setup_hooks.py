@@ -856,7 +856,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         dest="full_stack",
         action="store_true",
         default=None,
-        help="bring up Qdrant + Ollama (default)",
+        help="bring up optional Qdrant + Ollama (semantic/full-lab profiles only)",
     )
     p.add_argument(
         "--no-full-stack",

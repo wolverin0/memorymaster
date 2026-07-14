@@ -5,6 +5,20 @@ for the canonical finding remains `IN-PROGRESS`. The finding itself becomes
 blocked only after all unblocked repository work closes. No row authorizes a
 live mutation by itself.
 
+## Applicability to the primary product
+
+The primary product is the personal/local SQLite minimal profile. Postgres/team,
+Qdrant/semantic, Docker/Kubernetes/Helm, and hosted multi-user evidence is
+deferred optional-profile work. Those rows remain `BLOCKED-EXTERNAL` so the
+project cannot accidentally claim those profiles are ready, but they do not
+block an accurately scoped local SQLite package release.
+
+For the minimal release, prioritize repository/history classification, the
+strict dependency audit for the selected minimal extras, verified package
+artifacts, and the tag/publication proof. Live-data backup or remediation rows
+apply only before the corresponding operation against the user's active local
+database; they never authorize that operation.
+
 | Finding | Owner/system | Required action | Evidence needed to unblock | Review date | Status |
 |---|---|---|---|---|---|
 | MM-OPS-01 | Operator / any Postgres deployment | Rotate the historical `mm_pw` credential and recreate deployments that used it. Keep database ports private. | Rotation record plus network probe showing the port is not externally reachable | 2026-07-31 | BLOCKED-EXTERNAL |

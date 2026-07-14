@@ -13,6 +13,11 @@ Lifecycle-managed claims with citations, conflict detection, steward governance,
 
 MemoryMaster prevents the #1 problem with agent memory: **drift, stale assumptions, and unsafe disclosure**. It gives Claude Code, Codex, and any MCP-compatible agent persistent, verifiable memory with a full claim lifecycle, citation tracking, conflict detection, and human-in-the-loop governance.
 
+> **Product posture:** MemoryMaster is primarily a personal/local application.
+> The default profile uses one SQLite database and a private stdio MCP process.
+> Postgres/team operation is a deferred optional capability, and Qdrant is an
+> optional semantic index—not a dependency or source of truth.
+
 ### How it's different
 
 Agent-memory systems (mem0, Letta/MemGPT, Zep, cognee) have largely converged on strong **retrieval** — hybrid search, temporal and graph reasoning, ontologies. MemoryMaster competes on a different axis: **governance**. The wedge is **curation over accumulation** — every memory is a lifecycle-managed *claim* (status, citations, decay, conflict arbitration), not an opaque embedding that lingers until overwritten. Tellingly, the market moved the other way: mem0's 2026 model is explicitly *add-only with no conflict resolution* — the opposite of a steward.
@@ -32,8 +37,8 @@ If you want an agent that recalls more, any vector store works. If you want an a
 
 ## Architecture
 
-MemoryMaster is layered around MCP/CLI entry points, the `MemoryService` facade, SQLite/Postgres
-storage, an optional Qdrant index, scheduled jobs, and an **optional** Obsidian wiki/vault
+MemoryMaster is layered around MCP/CLI entry points, the `MemoryService` facade, authoritative
+SQLite storage, an optional deferred Postgres/team backend, an optional Qdrant index, scheduled jobs, and an **optional** Obsidian wiki/vault
 layer (opt-in, off by default — see below). The canonical ingest path is:
 
 ```text
@@ -43,18 +48,15 @@ MCP/CLI -> sensitivity filter -> MemoryService.ingest -> store write -> FTS5 ind
 The query path is:
 
 ```text
-query_memory -> MemoryService.query -> authorized SQLite/Postgres rows -> lexical/local-hybrid ranking -> context
+query_memory -> MemoryService.query -> authorized SQLite rows -> lexical/local-hybrid ranking -> context
 ```
 
-R1.3 quarantines every Qdrant-backed claim or verbatim payload retrieval path.
-In local-trusted mode, a requested Qdrant claim search falls back to
-authoritative lexical retrieval; direct Qdrant search adapters deny the
-request; prompt-context vector fallback is disconnected; and verbatim
-`vector`/`hybrid` requests fall back to FTS5. Team MCP rejects semantic
-retrieval entirely. Qdrant upsert, `qdrant-sync`, and `qdrant-reconcile`
-remain available for index maintenance, including count/ID drift reads. R2.1
-may re-enable payload retrieval only as ID candidates that are rehydrated and
-policy-filtered through SQLite/Postgres.
+Qdrant candidate retrieval is disabled by default. When a user deliberately
+enables the governed semantic profile, Qdrant may return only candidate IDs,
+content hashes, and scores. Every candidate is rehydrated from the authoritative
+store and rechecked for lifecycle, tenant, scope, visibility, sensitivity, and
+exact content hash. The semantic profile remains unproven for production until
+the separately documented authenticated/TLS gate passes.
 
 See [docs/architecture.md](docs/architecture.md) for the current module map, data-flow details,
 recent PR status, and sensitivity-filter invariants.
@@ -63,7 +65,7 @@ recent PR status, and sensitivity-filter invariants.
 
 - **6-state lifecycle**: `candidate` → `confirmed` → `stale` → `superseded` → `conflicted` → `archived`
 - **Citation tracking** with provenance for every claim
-- **Hybrid retrieval**: authoritative claim rows ranked with FTS5, local/primary-store embedding signals, freshness, and confidence; it does not read Qdrant while R1.3 containment is active
+- **Hybrid retrieval**: authoritative SQLite claim rows ranked with FTS5, local/primary-store embedding signals, freshness, and confidence; governed Qdrant candidates are explicit and optional
 - **Context optimizer**: `query_for_context(budget=4000)` returns auto-curated memory that fits your token budget
 - **Entity graph** with typed relationships and alias resolution
 - **Rule-shaped claims** (new in v3.21.0): prescriptive `when <trigger>, do <action> because <rationale>` claims (`ingest_rule` / `query_rules`) — the shape an agent needs to actually change behaviour next time, not just recall a fact
@@ -87,7 +89,7 @@ recent PR status, and sensitivity-filter invariants.
 - **Hebbian/Ebbinghaus entity edges** (new in v4.2.0, opt-in `MEMORYMASTER_HEBBIAN_DECAY`): usage strengthens, time decays entity-graph edge weights.
 - **Proactive + tool-triggered recall** (new in v4.2.0): a `volunteer_context` MCP tool (confidence-gated, zero-LLM) and an opt-in PreToolUse hook (`MEMORYMASTER_PRETOOLUSE_RECALL`) that injects memory as `additionalContext` on Grep/Glob.
 - **Belief `holder`** (new in v4.2.0): nullable per-claim `holder` for multi-holder beliefs (take/fact/bet/hunch reuse `claim_type`); SQLite+Postgres, ranking-neutral by default.
-- **Dual backend**: SQLite for local-trusted/single-agent use; PostgreSQL for authenticated team runtime with tenant, principal, and explicit-scope isolation
+- **SQLite-first backend**: SQLite for the primary personal/local product; PostgreSQL team support is retained but deferred until a real multi-user use case and its external evidence exist
 - **Dream Bridge** for bidirectional sync with Claude Code's Auto Dream
 - **Hook stack**: recall, classify, validate-wiki, session-start, auto-ingest, precompact (settings.json) + steward-cycle (cron/schtasks) + opt-in `--pretooluse` grep/glob recall-inject
 
@@ -122,7 +124,7 @@ Reproduce: `python tests/bench_longmemeval.py --retrieval-only`. Full methodolog
 
 **Optional (nice to have)**
 
-- **Docker** for Qdrant index maintenance and Ollama-backed jobs. SQLite/Postgres remain authoritative. Claim, prompt-context, and verbatim retrieval from Qdrant are temporarily quarantined until the governed R2.1 planner can enforce lifecycle, tenant, scope, visibility, and sensitivity policy; sync/reconcile remain available.
+- **Docker** only if you deliberately want local Ollama or the optional governed Qdrant semantic profile. SQLite remains authoritative and requires neither Docker nor Qdrant.
 
 ## 30-second quickstart
 
@@ -135,7 +137,7 @@ pip install "memorymaster[mcp,security,qdrant,embeddings]"
 **2. Let your agent do the rest**
 
 Paste the contents of [`docs/AGENT-INSTALL.md`](docs/AGENT-INSTALL.md) into Claude Code or Codex. The agent will:
-- run `memorymaster-setup --yes --full-stack --json` (detects your environment, wires hooks + MCP, starts Qdrant + Ollama if Docker is present, or falls back to SQLite-only mode gracefully)
+- run `memorymaster-setup --yes --profile minimal --no-full-stack --json` (wires the SQLite database and private MCP without starting Postgres, Qdrant, or Ollama)
 - report what was wired, what was reused (brownfield), and what degraded
 - run `memorymaster-setup --verify-only` and show the round-trip result
 
@@ -204,8 +206,13 @@ See [`docs/MCP-TOOLS.md`](docs/MCP-TOOLS.md) for the grouped reference (one line
 
 | Backend | Install | Use case |
 |---------|---------|----------|
-| **SQLite** | Built-in | Local-trusted development, single-agent, zero-config |
-| **Postgres 16.x** | `pip install "memorymaster[postgres]"` | Authenticated team deployment with isolated app/migrator roles |
+| **SQLite** | Built-in | **Primary profile:** personal/local, private, zero-config |
+| **Postgres 16.x** | `pip install "memorymaster[postgres]"` | **Deferred:** future authenticated team deployment with isolated app/migrator roles |
+
+Postgres is not required for normal MemoryMaster use and is not currently a
+release target. The detailed contract below is retained so the dormant profile
+fails closed and can be revisited safely if a genuine shared-service use case
+appears.
 
 PostgreSQL v0011 enables and forces row-level security. Reads are tenant/scope
 bounded and expose public claims or the principal's own private claims; writes
@@ -230,13 +237,15 @@ disposable database; repository tests do not constitute a production proof.
 
 ## Docker Compose
 
-Run MemoryMaster with the optional Qdrant maintenance index and Ollama with one command:
+For an explicit experimental semantic profile, run the optional Qdrant index
+and Ollama stack with:
 
 ```bash
 docker compose up -d
 ```
 
-Starting Qdrant does not re-enable Qdrant retrieval during R1.3 containment.
+Starting Qdrant alone does not enable governed retrieval. The minimal local
+profile should not start this stack.
 
 See [INSTALLATION.md](INSTALLATION.md) for Kubernetes / Helm.
 

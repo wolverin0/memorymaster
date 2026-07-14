@@ -19,7 +19,7 @@ pip install memorymaster
 # MCP server for Claude Code / Codex
 pip install "memorymaster[mcp]"
 
-# Postgres backend
+# Deferred Postgres/team backend
 pip install "memorymaster[postgres]"
 
 # Vector embeddings (sentence-transformers)
@@ -28,13 +28,13 @@ pip install "memorymaster[embeddings]"
 # Gemini embeddings / LLM
 pip install "memorymaster[gemini]"
 
-# Qdrant maintenance-index client (payload retrieval is quarantined in R1.3)
+# Optional governed Qdrant semantic client
 pip install "memorymaster[qdrant]"
 
 # Fernet encryption for sensitive payloads
 pip install "memorymaster[security]"
 
-# Everything
+# All optional/deferred integrations (not recommended for normal local use)
 pip install "memorymaster[mcp,postgres,embeddings,gemini,qdrant,security]"
 
 # Development (matches CI — required extras for the full test suite)
@@ -60,7 +60,7 @@ Claude Code (hooks, MCP server, steward cron) and optionally Codex.
 into Claude Code or Codex):
 
 ```bash
-memorymaster-setup --yes --full-stack --json
+memorymaster-setup --yes --profile minimal --no-full-stack --json
 ```
 
 **Manual / interactive:**
@@ -77,12 +77,13 @@ a 3-line shim that calls the same `memorymaster.surfaces.setup_hooks:main` funct
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-y` / `--yes` | off | Non-interactive; accept all defaults (no `input()` prompts) |
+| `--profile {minimal,semantic,team,full-lab}` | `minimal` | Select the setup contract to verify |
 | `--db PATH` | `<project-root>/memorymaster.db` | Path to the SQLite database |
 | `--provider {google,openai,anthropic,ollama}` | prompted | LLM provider for the auto-ingest Stop hook |
 | `--api-key KEY` | prompted | API key for the chosen provider |
 | `--model MODEL` | provider default | LLM model id |
 | `--project-root PATH` | cwd | Directory where `memorymaster.db` lives |
-| `--full-stack` | on | Bring up the Qdrant maintenance index + Ollama via Docker Compose |
+| `--full-stack` | off for `minimal`/`team`; on for `semantic`/`full-lab` | Bring up optional Qdrant + Ollama |
 | `--no-full-stack` | off | Skip the Qdrant-index + local-LLM stack |
 | `--no-cron` | off | Skip steward cron setup |
 | `--no-obsidian-skills` | off | Skip Obsidian skills install |
@@ -101,10 +102,12 @@ a 3-line shim that calls the same `memorymaster.surfaces.setup_hooks:main` funct
 - Optionally installs the steward cron (Linux/macOS) or Task Scheduler job (Windows).
 - Runs a sentinel round-trip verify at the end (`--verify-only` to run this step alone).
 
-#### No-Docker degraded mode
+#### Optional semantic services
 
-If Docker is absent and Qdrant/Ollama are not already running, the installer
-continues without them and prints:
+The primary minimal profile does not require Docker, Qdrant, or Ollama and
+their absence is not degraded operation. If an explicitly selected semantic or
+full-lab profile cannot reach them, the installer continues with authoritative
+SQLite retrieval and prints:
 
 ```
 Running in SQLite-only mode. Qdrant index maintenance + local LLM auto-ingest are OFF.
@@ -112,15 +115,14 @@ Running in SQLite-only mode. Qdrant index maintenance + local LLM auto-ingest ar
   maintenance or local LLMs, use --full-stack or QDRANT_URL / OLLAMA_URL.
 ```
 
-Setup exits 0. Core hooks, MCP, and SQLite-based recall all work normally in
-degraded mode. Installing or starting Qdrant enables only index maintenance
-during R1.3; it does not re-enable claim, context-fallback, or verbatim payload
-retrieval.
+Core hooks, MCP, and SQLite-based recall continue to work. Governed Qdrant
+candidate reads require an explicit gate and always rehydrate/filter through
+the authoritative store.
 
 ## Docker Compose
 
-The included `docker-compose.yml` runs MemoryMaster plus the optional Qdrant
-maintenance index and Ollama. Qdrant payload retrieval remains quarantined.
+The included `docker-compose.yml` is for an explicitly selected semantic or
+hosted experiment. It is not part of the personal/local minimal installation.
 
 ```bash
 # Clone the repo

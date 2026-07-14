@@ -2,12 +2,15 @@
 
 ## Decision
 
-**LOCAL RC READY; PRODUCTION/EXTERNAL RELEASE BLOCKED.**
+**PERSONAL/LOCAL SQLITE RC READY; EXTERNAL PUBLICATION STILL GATED.**
 
-The branch is locally releasable at each atomic package checkpoint and passes
-the Phase 4 convergence boundary. It must not be pushed, tagged, published, or
-deployed until the prioritized external blockers are resolved or explicitly
-accepted by their authorized owners.
+The branch passes the Phase 4 convergence boundary for the primary minimal
+profile: personal/local SQLite plus private stdio MCP. It must not be pushed,
+tagged, or published until the minimal package's history, dependency, artifact,
+and publication gates are resolved or explicitly accepted.
+
+Postgres/team, Qdrant/semantic, and Kubernetes/Helm evidence is deferred. It
+blocks claims about those optional profiles, not the scoped SQLite-local RC.
 
 ## Candidate identity
 
@@ -39,4 +42,5 @@ bytes only after approval.
 ## Not proven locally
 
 See `remaining-blockers.md` and the canonical
-`external-actions-required.md`. These gaps prevent a production-ready claim.
+`external-actions-required.md`. The first section gates publishing the minimal
+package; the deferred section gates only optional profiles.
