@@ -212,6 +212,8 @@ class _SchemaMixin:
                 last_http_status INTEGER,
                 last_error TEXT,
                 next_attempt_time TEXT,
+                lease_owner TEXT,
+                lease_expires_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (source_item_id) REFERENCES source_items(id) ON DELETE CASCADE,
@@ -227,6 +229,12 @@ class _SchemaMixin:
         for table in ("source_items", "evidence_items"):
             try:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN sensitivity TEXT")
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+        for column in ("lease_owner TEXT", "lease_expires_at TEXT"):
+            try:
+                conn.execute(f"ALTER TABLE media_retry_queue ADD COLUMN {column}")
             except sqlite3.OperationalError as exc:
                 if "duplicate column name" not in str(exc).lower():
                     raise
@@ -250,6 +258,7 @@ class _SchemaMixin:
             CREATE INDEX IF NOT EXISTS idx_evidence_items_sensitivity ON evidence_items(sensitivity);
             CREATE INDEX IF NOT EXISTS idx_media_retry_status ON media_retry_queue(status);
             CREATE INDEX IF NOT EXISTS idx_media_retry_next_attempt ON media_retry_queue(next_attempt_time);
+            CREATE INDEX IF NOT EXISTS idx_media_retry_lease_expiry ON media_retry_queue(status, lease_expires_at);
             CREATE INDEX IF NOT EXISTS idx_media_retry_source_item ON media_retry_queue(source_item_id);
             """
         )

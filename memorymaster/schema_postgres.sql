@@ -349,6 +349,8 @@ CREATE TABLE IF NOT EXISTS media_retry_queue (
     last_http_status INTEGER,
     last_error TEXT,
     next_attempt_time TIMESTAMPTZ,
+    lease_owner TEXT,
+    lease_expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
     UNIQUE (source_item_id, media_key)
@@ -356,6 +358,7 @@ CREATE TABLE IF NOT EXISTS media_retry_queue (
 
 CREATE INDEX IF NOT EXISTS idx_media_retry_status ON media_retry_queue(status);
 CREATE INDEX IF NOT EXISTS idx_media_retry_next_attempt ON media_retry_queue(next_attempt_time);
+CREATE INDEX IF NOT EXISTS idx_media_retry_lease_expiry ON media_retry_queue(status, lease_expires_at);
 CREATE INDEX IF NOT EXISTS idx_media_retry_source_item ON media_retry_queue(source_item_id);
 
 CREATE TABLE IF NOT EXISTS claim_links (

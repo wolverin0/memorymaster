@@ -409,3 +409,37 @@ R3.4 service entrypoints and readiness completed on 2026-07-13:
 
 The next package is R3.5 recovery, observability, and privacy. The active
 roadmap goal authorizes continuing without a new goal.
+
+R3.5 recovery, observability, privacy planning, and lease recovery completed
+on 2026-07-13:
+
+- Media retries now use bounded owner/expiry leases on SQLite and Postgres.
+  Expired work is atomically returned to pending with an audit event; concurrent
+  claimers cannot receive the same row. Immutable migration 0016 and both
+  baseline schemas carry the lease contract.
+- `memorymaster-ops` creates authenticated encrypted SQLite online backups,
+  records plaintext/ciphertext checksums and RPO/RTO metadata, and restores only
+  into a disposable drill target with integrity and foreign-key validation.
+  PostgreSQL and real off-device recovery remain explicit external evidence.
+- Operational health evaluates backup age, retry backlog, SQLite integrity,
+  WAL/disk pressure, provider failures, and optional telemetry readiness. It can
+  persist one aggregate audit envelope with an owner and runbook instead of
+  leaving the evidence process-local.
+- Privacy planning is read-only and principal/scope/tenant selective. It
+  inventories authoritative rows, citations/events, verbatim, artifacts,
+  caches, backups, and vector/backend copies; ambiguous tenants and unavailable
+  Qdrant/Postgres attribution fail closed. No erase/export/retention mutation is
+  implemented or implied.
+- RED lease evidence initially failed three tests on the absent lease API; the
+  recovery/privacy/operations modules initially failed collection while absent.
+  The focused package gate produced 257 passed, 40 skipped, and two failures in
+  legacy Postgres test doubles. The bounded correction passed the exact two
+  regressions plus recovery/CLI coverage (7 passed). Changed-file Ruff and
+  `git diff --check` passed.
+- MM-REL-03 and the repository portion of MM-OBS-01 are resolved. MM-OPS-05,
+  MM-PRIV-01, and MM-PRIV-02 retain explicit external evidence requirements;
+  no live data, backup, provider, or external system was mutated.
+- Atomic package commit: the conventional R3.5 commit containing this evidence.
+
+The next boundary is Phase 3 convergence. The active roadmap goal authorizes
+continuing without a new goal.

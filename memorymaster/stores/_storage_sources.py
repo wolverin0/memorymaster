@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from memorymaster.stores._storage_shared import utc_now
@@ -93,7 +94,7 @@ _ACTION_FIELDS = (
 )
 _RETRY_FIELDS = (
     "media_key", "chat_id", "media_type", "media_path", "media_url", "status", "last_error",
-    "next_attempt_time", "created_at", "updated_at",
+    "next_attempt_time", "lease_owner", "lease_expires_at", "created_at", "updated_at",
 )
 
 
@@ -726,7 +727,13 @@ class _SourceItemsMixin:
             conn.commit()
         return self._row_to_media_retry(row)
 
-    def claim_pending_media_retries(self, limit: int = 25) -> list[MediaRetryItem]:
+    def claim_pending_media_retries(
+        self,
+        limit: int = 25,
+        *,
+        lease_owner: str = "media-worker",
+        lease_seconds: int = 300,
+    ) -> list[MediaRetryItem]:
         """Atomically claim up to N pending rows whose next_attempt_time is past.
 
         Transitions claimed rows from 'pending' to 'retrying' and increments
@@ -734,7 +741,15 @@ class _SourceItemsMixin:
         """
         if limit <= 0:
             return []
+        owner = (lease_owner or "").strip()
+        if not owner:
+            raise ValueError("lease_owner must not be blank.")
+        validate_persisted_metadata({"lease_owner": owner})
+        duration = max(1, min(int(lease_seconds), 3600))
         now = utc_now()
+        lease_expires_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=duration)
+        ).replace(microsecond=0).isoformat()
         with self.connect() as conn:
             # BEGIN IMMEDIATE takes the write lock up front so the SELECT and
             # the claiming UPDATE are one atomic read-modify-write. Without it,
@@ -746,6 +761,38 @@ class _SourceItemsMixin:
             # second guard: a row already moved out of 'pending' is never
             # re-claimed even if a stale id slips through.
             conn.execute("BEGIN IMMEDIATE")
+            expired_rows = conn.execute(
+                """SELECT * FROM media_retry_queue
+                   WHERE status = 'retrying'
+                     AND lease_expires_at IS NOT NULL
+                     AND lease_expires_at <= ?
+                   ORDER BY id ASC""",
+                (now,),
+            ).fetchall()
+            expired_ids = [
+                int(row["id"])
+                for row in expired_rows
+                if _atlas_row_is_safe(row, _RETRY_FIELDS)
+            ]
+            for retry_id in expired_ids:
+                conn.execute(
+                    """UPDATE media_retry_queue
+                       SET status = 'pending', lease_owner = NULL,
+                           lease_expires_at = NULL, updated_at = ?
+                       WHERE id = ? AND status = 'retrying'
+                         AND lease_expires_at <= ?""",
+                    (now, retry_id, now),
+                )
+                self._insert_event_row(
+                    conn,
+                    claim_id=None,
+                    event_type="media_process",
+                    from_status="retrying",
+                    to_status="pending",
+                    details="media_retry_lease_expired",
+                    payload_json=json.dumps({"retry_id": retry_id}, sort_keys=True),
+                    created_at=now,
+                )
             ids: list[int] = []
             cursor_id = 0
             page_size = min(max(limit, 25), 250)
@@ -775,11 +822,13 @@ class _SourceItemsMixin:
                 UPDATE media_retry_queue
                 SET status = 'retrying',
                     attempt_count = attempt_count + 1,
+                    lease_owner = ?,
+                    lease_expires_at = ?,
                     updated_at = ?
                 WHERE status = 'pending'
                   AND id IN ({placeholders})
                 """,
-                [now, *ids],
+                [owner, lease_expires_at, now, *ids],
             )
             for retry_id in ids:
                 self._insert_event_row(
@@ -845,6 +894,7 @@ class _SourceItemsMixin:
             new_http = last_http_status if last_http_status is not None else current["last_http_status"]
             new_err = last_error if last_error is not None else current["last_error"]
             new_next = next_attempt_time if next_attempt_time is not None else current["next_attempt_time"]
+            clear_lease = status != "retrying"
             conn.execute(
                 """
                 UPDATE media_retry_queue
@@ -853,10 +903,22 @@ class _SourceItemsMixin:
                     last_http_status = ?,
                     last_error = ?,
                     next_attempt_time = ?,
+                    lease_owner = ?,
+                    lease_expires_at = ?,
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (status, new_path, new_http, new_err, new_next, now, retry_id),
+                (
+                    status,
+                    new_path,
+                    new_http,
+                    new_err,
+                    new_next,
+                    None if clear_lease else current["lease_owner"],
+                    None if clear_lease else current["lease_expires_at"],
+                    now,
+                    retry_id,
+                ),
             )
             self._insert_event_row(
                 conn,
@@ -953,6 +1015,8 @@ class _SourceItemsMixin:
             last_http_status=int(row["last_http_status"]) if row["last_http_status"] is not None else None,
             last_error=row["last_error"],
             next_attempt_time=row["next_attempt_time"],
+            lease_owner=row["lease_owner"],
+            lease_expires_at=row["lease_expires_at"],
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
         )

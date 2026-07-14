@@ -264,6 +264,8 @@ CREATE TABLE IF NOT EXISTS media_retry_queue (
     last_http_status INTEGER,
     last_error TEXT,
     next_attempt_time TEXT,
+    lease_owner TEXT,
+    lease_expires_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (source_item_id) REFERENCES source_items(id) ON DELETE CASCADE,
@@ -272,4 +274,5 @@ CREATE TABLE IF NOT EXISTS media_retry_queue (
 
 CREATE INDEX IF NOT EXISTS idx_media_retry_status ON media_retry_queue(status);
 CREATE INDEX IF NOT EXISTS idx_media_retry_next_attempt ON media_retry_queue(next_attempt_time);
+CREATE INDEX IF NOT EXISTS idx_media_retry_lease_expiry ON media_retry_queue(status, lease_expires_at);
 CREATE INDEX IF NOT EXISTS idx_media_retry_source_item ON media_retry_queue(source_item_id);

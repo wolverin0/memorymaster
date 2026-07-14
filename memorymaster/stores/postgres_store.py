@@ -4374,6 +4374,8 @@ class PostgresStore(SQLiteStore):
             last_http_status=int(row["last_http_status"]) if row.get("last_http_status") is not None else None,
             last_error=cls._as_text(row.get("last_error")),
             next_attempt_time=cls._as_iso(row.get("next_attempt_time")),
+            lease_owner=cls._as_text(row.get("lease_owner")),
+            lease_expires_at=cls._as_iso(row.get("lease_expires_at")),
             created_at=cls._as_iso(row["created_at"]) or "",
             updated_at=cls._as_iso(row["updated_at"]) or "",
         )
@@ -4454,12 +4456,54 @@ class PostgresStore(SQLiteStore):
             )
         return self._row_to_media_retry(row)
 
-    def claim_pending_media_retries(self, limit: int = 25) -> list[MediaRetryItem]:
+    def claim_pending_media_retries(
+        self,
+        limit: int = 25,
+        *,
+        lease_owner: str = "media-worker",
+        lease_seconds: int = 300,
+    ) -> list[MediaRetryItem]:
         self._deny_unsupported_team_surface("claim_pending_media_retries")
         if limit <= 0:
             return []
+        owner = (lease_owner or "").strip()
+        if not owner:
+            raise ValueError("lease_owner must not be blank.")
+        validate_persisted_metadata({"lease_owner": owner})
+        duration = max(1, min(int(lease_seconds), 3600))
         now = utc_now()
+        lease_expires_at = now + timedelta(seconds=duration)
         with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT * FROM media_retry_queue
+                   WHERE status = 'retrying'
+                     AND lease_expires_at IS NOT NULL
+                     AND lease_expires_at <= %s
+                   ORDER BY id ASC FOR UPDATE SKIP LOCKED""",
+                (now,),
+            )
+            for expired in cur.fetchall():
+                if not _atlas_row_is_safe(expired, _RETRY_FIELDS):
+                    continue
+                retry_id = int(expired["id"])
+                cur.execute(
+                    """UPDATE media_retry_queue
+                       SET status = 'pending', lease_owner = NULL,
+                           lease_expires_at = NULL, updated_at = %s
+                       WHERE id = %s AND status = 'retrying'
+                         AND lease_expires_at <= %s""",
+                    (now, retry_id, now),
+                )
+                self._insert_event_row(
+                    conn,
+                    claim_id=None,
+                    event_type="media_process",
+                    from_status="retrying",
+                    to_status="pending",
+                    details="media_retry_lease_expired",
+                    payload={"retry_id": retry_id},
+                    created_at=now,
+                )
             safe_ids: list[int] = []
             cursor_id = 0
             page_size = min(max(limit, 25), 250)
@@ -4489,11 +4533,13 @@ class PostgresStore(SQLiteStore):
                 UPDATE media_retry_queue
                 SET status = 'retrying',
                     attempt_count = attempt_count + 1,
+                    lease_owner = %s,
+                    lease_expires_at = %s,
                     updated_at = %s
                 WHERE status = 'pending' AND id IN ({placeholders})
                 RETURNING *
                 """,
-                (now, *safe_ids),
+                (owner, lease_expires_at, now, *safe_ids),
             )
             rows = cur.fetchall()
             by_id = {int(row["id"]): row for row in rows}
@@ -4542,6 +4588,7 @@ class PostgresStore(SQLiteStore):
             new_http = last_http_status if last_http_status is not None else current["last_http_status"]
             new_err = last_error if last_error is not None else current["last_error"]
             new_next = next_attempt_time if next_attempt_time is not None else current["next_attempt_time"]
+            clear_lease = status != "retrying"
             cur.execute(
                 """
                 UPDATE media_retry_queue
@@ -4550,11 +4597,23 @@ class PostgresStore(SQLiteStore):
                     last_http_status = %s,
                     last_error = %s,
                     next_attempt_time = %s,
+                    lease_owner = %s,
+                    lease_expires_at = %s,
                     updated_at = %s
                 WHERE id = %s
                 RETURNING *
                 """,
-                (status, new_path, new_http, new_err, new_next, now, retry_id),
+                (
+                    status,
+                    new_path,
+                    new_http,
+                    new_err,
+                    new_next,
+                    None if clear_lease else current["lease_owner"],
+                    None if clear_lease else current["lease_expires_at"],
+                    now,
+                    retry_id,
+                ),
             )
             row = cur.fetchone()
             self._insert_event_row(

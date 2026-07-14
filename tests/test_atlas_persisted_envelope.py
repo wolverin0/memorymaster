@@ -648,7 +648,7 @@ def test_postgres_lists_count_safe_rows_after_unsafe_prefix(
     ]
     retry_base = {**common, "source_item_id": 1, "chat_id": None, "media_type": None, "media_path": None,
                   "media_url": None, "status": "failed", "attempt_count": 0, "last_http_status": None,
-                  "next_attempt_time": None}
+                  "next_attempt_time": None, "lease_owner": None, "lease_expires_at": None}
     retries = [{**retry_base, "id": index + 1, "media_key": f"unsafe-{index}", "last_error": ENCODED,
                 "updated_at": "2026-01-03T00:00:00Z"} for index in range(251)] + [
         {**retry_base, "id": index + 252, "media_key": f"safe-{index}", "last_error": None,
@@ -722,16 +722,24 @@ class _ClaimCursor:
     def execute(self, sql: str, params: tuple[Any, ...]) -> None:
         self.executed.append((sql, params))
         if sql.lstrip().startswith("SELECT"):
+            if "status = 'retrying'" in sql:
+                self.result = []
+                return
             cursor_id = int(params[0])
             self.result = [row for row in self.rows if int(row["id"]) > cursor_id][
                 : int(params[-1])
             ]
             return
-        safe_ids = set(params[1:])
+        safe_ids = set(params[3:])
         self.result = []
         for row in self.rows:
             if row["id"] in safe_ids:
-                row.update(status="retrying", attempt_count=row["attempt_count"] + 1)
+                row.update(
+                    status="retrying",
+                    attempt_count=row["attempt_count"] + 1,
+                    lease_owner=params[0],
+                    lease_expires_at=params[1],
+                )
                 self.result.append(dict(row))
 
     def fetchall(self) -> list[dict[str, Any]]:
@@ -757,7 +765,8 @@ def test_postgres_claim_filters_before_update_and_event(monkeypatch: pytest.Monk
         "id": 252, "source_item_id": 1, "media_key": "safe", "chat_id": None,
         "media_type": None, "media_path": None, "media_url": None, "status": "pending",
         "attempt_count": 0, "last_http_status": None, "last_error": None,
-        "next_attempt_time": None, "created_at": "2026-01-01T00:00:00Z",
+        "next_attempt_time": None, "lease_owner": None, "lease_expires_at": None,
+        "created_at": "2026-01-01T00:00:00Z",
         "updated_at": "2026-01-01T00:00:00Z",
     }
     unsafe_rows = [
@@ -776,7 +785,7 @@ def test_postgres_claim_filters_before_update_and_event(monkeypatch: pytest.Monk
     assert [row.id for row in claimed] == [252]
     assert all(row["status"] == "pending" and row["attempt_count"] == 0 for row in unsafe_rows)
     update_params = cursor.executed[-1][1]
-    assert update_params[1:] == (252,)
+    assert update_params[3:] == (252,)
     assert [event["payload"]["retry_id"] for event in events] == [252]
     assert "FOR UPDATE SKIP LOCKED" in cursor.executed[0][0]
 

@@ -2314,8 +2314,18 @@ class MemoryService:
             next_attempt_time=next_attempt_time,
         )
 
-    def claim_pending_media_retries(self, limit: int = 25) -> list[MediaRetryItem]:
-        return self.store.claim_pending_media_retries(limit=limit)
+    def claim_pending_media_retries(
+        self,
+        limit: int = 25,
+        *,
+        lease_owner: str = "media-worker",
+        lease_seconds: int = 300,
+    ) -> list[MediaRetryItem]:
+        return self.store.claim_pending_media_retries(
+            limit=limit,
+            lease_owner=lease_owner,
+            lease_seconds=lease_seconds,
+        )
 
     def record_media_retry_outcome(
         self,
