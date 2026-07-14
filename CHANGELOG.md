@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.5.0] - 2026-07-14
+
+MemoryMaster 4.5 makes the personal/local SQLite profile the explicit production
+default and completes the governed-core remediation roadmap. Qdrant remains an
+optional semantic accelerator; Postgres/team operation is documented as deferred
+work rather than implied readiness.
+
+### Added
+
+- Governed retrieval planning with authoritative rehydration, scope/sensitivity
+  enforcement, exact content-hash reconciliation, and replayable vector outbox.
+- Canonical lifecycle transitions for scheduled archival, read-only recall,
+  bounded capture budgets/cursors/retention, and dry-run backlog controls.
+- Explicit setup profiles, recovery operations, authenticated service
+  boundaries, operational telemetry, and a stateful accessible governance
+  dashboard.
+- Generated release truth and a verify-once publication path that promotes the
+  exact downloaded wheel/sdist without rebuilding.
+
+### Security
+
+- Hardened claim envelopes, MCP principal/tenant propagation, Postgres isolation,
+  auxiliary persistence, Qdrant transport, and media-evidence provenance.
+- Full-history Gitleaks review is frozen to 40 exact synthetic test-fixture
+  fingerprints; a fresh 830-commit scan has zero unreviewed findings.
+- The minimal `mcp,security` dependency profile passes a strict OSV audit with
+  zero known vulnerabilities across 36 installed dependencies.
+
+### Changed
+
+- Default installation and documentation now target the serverless SQLite +
+  stdio MCP profile. Semantic, team, and full-lab profiles require explicit
+  selection and readiness evidence.
+- Large orchestration surfaces are split behind ratcheted architecture budgets;
+  compatibility shims remain supported through 4.5.x.
+
 ## [4.4.1] - 2026-07-06
 
 ### Added
