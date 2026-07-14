@@ -37,4 +37,5 @@ ba07072ecd75e3c7b807b2a10131825c935e325b:tests/test_security_patterns.py:github-
 ba07072ecd75e3c7b807b2a10131825c935e325b:tests/test_security_patterns.py:github-pat:69
 ce4fd3c2f6f0009d5662f7bb236d0c48300b5549:tests/test_security_patterns.py:generic-api-key:168
 ce4fd3c2f6f0009d5662f7bb236d0c48300b5549:tests/test_security_patterns.py:generic-api-key:173
+d0490e9000a0b5e5914e3b9ba2ab2f203cb16724:tests/test_bridge_persistence_sensitivity.py:generic-api-key:577
 dd5b0d8e207e8167e748a8b0b98899b83abb4bf2:tests/test_spool.py:generic-api-key:187
