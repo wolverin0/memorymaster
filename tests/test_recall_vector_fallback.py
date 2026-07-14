@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import pytest
 
 from memorymaster.recall import context_hook, qdrant_recall_fallback
+from memorymaster.core.lifecycle import transition_claim
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
 
@@ -228,6 +229,8 @@ def test_prompt_recall_keeps_authoritative_lexical_results_during_quarantine(
 ):
     """Containment removes vector candidates without degrading lexical recall."""
     svc, seeded = service
+    monkeypatch.setenv("MEMORYMASTER_SCOPE_DEFAULT", "test")
+    transition_claim(svc.store, seeded[0], "confirmed", "trusted recall fixture")
     monkeypatch.setenv("MEMORYMASTER_RECALL_VECTOR_FALLBACK", "1")
     monkeypatch.setenv("MEMORYMASTER_QDRANT_URL", "http://mocked.local:6333")
     monkeypatch.setenv("MEMORYMASTER_RECALL_W_VECTOR", "1.0")

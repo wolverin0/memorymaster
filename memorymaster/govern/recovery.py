@@ -6,12 +6,12 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
-import sqlite3
 import tempfile
 import time
 from typing import Any
 
 from memorymaster.stores import snapshot
+from memorymaster.stores._storage_shared import connect_ro
 
 
 def _utc_now() -> str:
@@ -52,7 +52,7 @@ def _decrypt(encryption_key: str, payload: bytes) -> bytes:
 
 
 def _sqlite_checks(db_path: Path) -> tuple[str, int]:
-    connection = sqlite3.connect(str(db_path))
+    connection = connect_ro(db_path)
     try:
         integrity = str(connection.execute("PRAGMA integrity_check").fetchone()[0])
         fk_rows = connection.execute("PRAGMA foreign_key_check").fetchall()

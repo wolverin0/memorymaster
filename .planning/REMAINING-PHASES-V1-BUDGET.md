@@ -443,3 +443,49 @@ on 2026-07-13:
 
 The next boundary is Phase 3 convergence. The active roadmap goal authorizes
 continuing without a new goal.
+
+Phase 3 convergence completed on 2026-07-14:
+
+- Collection discovered 4,218 tests. The single full non-ML invocation
+  completed with 4,042 passed, 70 skipped, 95 deselected, one expected xfail,
+  and ten failures in 942.30s. Nine failures were stale trusted-recall/vector
+  test doubles and one was R3.5's direct SQLite open; the one bounded correction
+  batch passed the exact combined scope (19 tests). No second full-suite pass is
+  claimed.
+- The Phase 3 targeted matrix passed 193 tests with 40 marker deselections.
+  Project Ruff and `git diff --check` passed. The isolated ML gate produced 93
+  passed and two stale candidate/scope fixture failures; canonical confirmation
+  and explicit in-scope setup passed the exact two tests. This is compositional
+  ML evidence, not a rerun claim.
+- The initial three-attempt quick SLO gate exposed an environment-dependent
+  benchmark: optional sentence-transformers reduced query throughput to
+  1.36-1.46 ops/s even though CI installs no ML extra. The core smoke now pins
+  deterministic hash embeddings while the dedicated ML gate owns semantic
+  evidence. The corrected gate passed in 6.734s: ingest 52.77 ops/s, query
+  20.65 ops/s, query p95 0.0547s, zero misses.
+- A clean wheel built and installed into an isolated venv. Minimal setup passed
+  after an isolated Codex client root was present; semantic, team, and full-lab
+  returned the expected nonzero BLOCKED status without external services.
+- Disposable SQLite encrypted backup/restore passed authentication, checksums,
+  integrity, zero foreign-key violations, and RTO (0.046s versus 1,800s). The
+  operational health result was OK. The tenant-aware privacy plan was dry-run,
+  incomplete by design for Qdrant, and reported zero mutations.
+- The freshly built `memorymaster:phase3-local` image
+  (`sha256:42fa9252110d8b5458c1bf099bb6f9b158b49013622efce06cc88af661b8d146`)
+  returned dashboard and MCP HTTP readiness 200; stdio and authenticated HTTP
+  initialize/tools-list handshakes passed. Compose rendered with synthetic
+  secrets/digests. Test containers and volumes were removed.
+- Helm/disposable Kubernetes, approved immutable release images, authenticated
+  TLS Qdrant, disposable two-role Postgres, off-device recovery, and an
+  organization telemetry backend remain `BLOCKED-EXTERNAL`. No pass is claimed
+  for them.
+- Same-scope audit found no new unresolved reproducible Critical/High branch
+  regression. Scheduled repository findings are resolved; MM-OPS-04,
+  MM-OPS-05, MM-PRIV-01, and MM-PRIV-02 remain explicit external blockers.
+- Audit delta: `.planning/audits/2026-07-14-phase3-budget-delta/audit-delta.md`.
+  Draft PR: `.planning/audits/2026-07-14-phase3-budget-delta/pr-draft.md`.
+- Atomic convergence commit: the conventional Phase 3 convergence commit
+  containing this evidence.
+
+The next package is R4.1 extension boundaries. The active roadmap goal
+authorizes continuing without a new goal.
