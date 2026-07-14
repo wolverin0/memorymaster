@@ -64,18 +64,18 @@ jobs:
         run: |
           python scripts/generate_release_truth.py --check
           pytest tests/test_qrels_regression.py tests/test_release_truth.py tests/test_supply_chain_contracts.py tests/test_setup_profiles.py -q --tb=short
-      - name: Run strict retrieval evaluation
-        run: python scripts/eval_memorymaster.py --strict
       - name: Clean-wheel import, version, CLI, and MCP smoke
         run: |
           EXPECTED_VERSION=$(python -c "import re; print(re.search(r'^version\\s*=\\s*\"([^\"]+)\"', open('pyproject.toml').read(), re.M).group(1))")
           WHEEL=$(find "$PWD/dist" -maxdepth 1 -name '*.whl' -print -quit)
-          python -m venv /tmp/memorymaster-release
-          /tmp/memorymaster-release/bin/python -m pip install "$WHEEL"
+          python -m venv /tmp/memorymaster-minimal
+          /tmp/memorymaster-minimal/bin/python -m pip install "$WHEEL"
           cd /tmp
-          /tmp/memorymaster-release/bin/python -c "import importlib.metadata, memorymaster; assert memorymaster.__version__ == importlib.metadata.version('memorymaster') == '$EXPECTED_VERSION'"
-          /tmp/memorymaster-release/bin/memorymaster --help >/dev/null
-          /tmp/memorymaster-release/bin/memorymaster-mcp --help >/dev/null
+          /tmp/memorymaster-minimal/bin/python -c "import importlib.metadata, memorymaster; assert memorymaster.__version__ == importlib.metadata.version('memorymaster') == '$EXPECTED_VERSION'"
+          /tmp/memorymaster-minimal/bin/memorymaster --help >/dev/null
+          python -m venv /tmp/memorymaster-mcp
+          /tmp/memorymaster-mcp/bin/python -m pip install "${WHEEL}[mcp,security]"
+          /tmp/memorymaster-mcp/bin/memorymaster-mcp --help >/dev/null
       - name: Promote the verified files without rebuilding
         run: |
           mkdir verified-dist

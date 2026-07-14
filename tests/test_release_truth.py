@@ -80,6 +80,29 @@ def test_publish_requires_the_verified_downloaded_artifact() -> None:
     assert workflow.count("name: verified-dist") == 2
     assert "tests/test_qrels_regression.py" in workflow
     assert "tests/test_release_truth.py" in workflow
+    assert "scripts/eval_memorymaster.py" not in workflow
+    assert "/tmp/memorymaster-minimal" in workflow
+    assert "/tmp/memorymaster-mcp" in workflow
+    assert '"${WHEEL}[mcp,security]"' in workflow
+
+
+def test_minimal_cli_import_does_not_require_optional_qdrant_client() -> None:
+    code = r'''
+import importlib.abc
+import sys
+
+class BlockHttpx(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "httpx" or fullname.startswith("httpx."):
+            raise ModuleNotFoundError("blocked optional dependency")
+        return None
+
+sys.meta_path.insert(0, BlockHttpx())
+from memorymaster.surfaces.cli import build_parser
+build_parser()
+'''
+    result = subprocess.run([sys.executable, "-c", code], cwd=ROOT, check=False)
+    assert result.returncode == 0
 
 
 def test_ci_blocks_on_generated_release_truth_drift() -> None:

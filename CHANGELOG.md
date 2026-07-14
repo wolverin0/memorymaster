@@ -41,6 +41,12 @@ work rather than implied readiness.
 - Large orchestration surfaces are split behind ratcheted architecture budgets;
   compatibility shims remain supported through 4.5.x.
 
+### Fixed
+
+- Minimal wheel installs no longer import the optional Qdrant HTTP client while
+  starting the core CLI. Release verification now tests minimal and MCP-extra
+  wheels separately and does not reference scrubbed private benchmark fixtures.
+
 ## [4.4.1] - 2026-07-06
 
 ### Added

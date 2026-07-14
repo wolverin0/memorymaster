@@ -25,7 +25,10 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-import httpx
+try:
+    import httpx
+except ModuleNotFoundError:  # Optional semantic-profile dependency.
+    httpx = None  # type: ignore[assignment]
 
 from memorymaster.core.models import Claim
 from memorymaster.core.security import scan_persisted_value
@@ -79,7 +82,9 @@ def claim_content_hash(claim: Claim) -> str:
 
 def _create_http_clients(
     transport: QdrantTransportConfig,
-) -> tuple[httpx.Client, httpx.Client]:
+) -> tuple[Any, Any]:
+    if httpx is None:
+        raise RuntimeError("Qdrant support requires `pip install memorymaster[qdrant]`")
     try:
         qdrant_client = httpx.Client(timeout=30.0, **transport.httpx_kwargs())
     except Exception:
