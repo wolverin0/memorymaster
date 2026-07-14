@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timedelta, timezone
 from html import escape
-import importlib.metadata
 import json
 import os
 import subprocess
@@ -586,15 +585,10 @@ def _extract_claims_from_rows(rows_data: Any) -> tuple[list[Any], dict[int, dict
     return claims, scored_by_claim_id
 
 
-def _package_version() -> str | None:
-    try:
-        return importlib.metadata.version("memorymaster")
-    except importlib.metadata.PackageNotFoundError:
-        try:
-            from memorymaster import __version__
-        except Exception:
-            return None
-        return str(__version__)
+def _package_version() -> str:
+    from memorymaster import __version__
+
+    return __version__
 
 
 def _check_dashboard_db(service: Any) -> dict[str, Any]:
@@ -993,7 +987,7 @@ input[type="text"],input:not([type]){background:#0f172a;border:1px solid #475569
 <div class="header">
 <div class="logo">M</div>
 <div><h1>MemoryMaster</h1><div class="subtitle">AI Agent Memory Management Dashboard</div></div>
-<span class="version">v1.0.0</span>
+<span class="version">v__MEMORYMASTER_VERSION__</span>
 </div>
 <div class="grid">
 <section>
@@ -1110,6 +1104,7 @@ document.getElementById('conflicts-refresh').addEventListener('click',refreshCon
 jget('/api/claims?limit=50').then(fillClaims).catch(e=>showPanelFailure('claims-body','claims',e,6));jget('/api/timeline?limit=40').then(fillTimeline).catch(e=>showPanelFailure('timeline-list','timeline',e));refreshConflicts().catch(e=>showPanelFailure('conflicts-cards','conflicts',e));refreshQueue().catch(e=>showPanelFailure('stale-body','review queue',e,5));jget('/api/audit?limit=40').then(fillAudit).catch(e=>showPanelFailure('audit-body','audit log',e,4));jget('/api/namespaces?limit=200').then(fillNs).catch(e=>showPanelFailure('namespaces-box','namespaces',e));jget('/api/provenance').then(fillProvenance).catch(e=>showPanelFailure('provenance-body','provenance',e,8));jget('/api/session-stats?limit=2000').then(fillStats).catch(e=>showPanelFailure('session-stats','session statistics',e));jget('/metrics/validation-latency').then(fillValidationLatency).catch(e=>showPanelFailure('validation-latency','validation latency',e));jget('/api/integrity').then(fillIntegrity).catch(e=>showPanelFailure('integrity-box','integrity',e));jget('/api/operator/status').then(fillOp).catch(e=>showPanelFailure('op-status','operator status',e));refreshObs().catch(e=>showPanelFailure('obs-box','observability',e));
 const sb=document.getElementById('stream');const es=new EventSource('/api/operator/stream?last=20'); const append=(t)=>{const ex=sb.textContent.trim();sb.textContent=(ex&&ex!=='Waiting for operator to start...'?ex+'\\n':'')+t;}; ['message','stream_start','state_loaded','state_error','state_saved','json_error','turn_processed','reconcile_run','stream_exit'].forEach(n=>es.addEventListener(n,(ev)=>append(ev.data))); es.onerror=()=>append('[stream reconnecting]');
 </script></main></body></html>"""
+        html = html.replace("__MEMORYMASTER_VERSION__", escape(_package_version()))
         body = html.encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")

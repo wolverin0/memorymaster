@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import io
+import importlib.metadata
 import subprocess
 import sys
 import tempfile
@@ -17,7 +18,7 @@ from scripts import validate_sbom as sbom
 
 
 EXPECTED_NAME = "memorymaster"
-EXPECTED_VERSION = "4.4.1"
+EXPECTED_VERSION = importlib.metadata.version(EXPECTED_NAME)
 IMAGE_ID = "sha256:" + ("a" * 64)
 
 
@@ -47,11 +48,11 @@ def _valid_sbom(artifact_sha256: str = "b" * 64) -> dict[str, object]:
 
 
 def _wheel(tmp_path: Path) -> Path:
-    path = tmp_path / "memorymaster-4.4.1-py3-none-any.whl"
+    path = tmp_path / f"memorymaster-{EXPECTED_VERSION}-py3-none-any.whl"
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(
-            "memorymaster-4.4.1.dist-info/METADATA",
-            "Metadata-Version: 2.1\nName: memorymaster\nVersion: 4.4.1\n",
+            f"memorymaster-{EXPECTED_VERSION}.dist-info/METADATA",
+            f"Metadata-Version: 2.1\nName: memorymaster\nVersion: {EXPECTED_VERSION}\n",
         )
         archive.writestr("memorymaster/__init__.py", "")
     return path

@@ -24,9 +24,10 @@ mutable image tags, and invalid or mismatched SBOMs all fail the gate.
 This mode performs no scanner, network, registry, Docker, or artifact read:
 
 ```powershell
+$Version = python -c "import importlib.metadata as m; print(m.version('memorymaster'))"
 python scripts/run_supply_chain_checks.py `
-  --release-artifact artifacts/memorymaster-4.4.1-py3-none-any.whl `
-  --sbom artifacts/memorymaster-4.4.1.cdx.json `
+  --release-artifact artifacts/memorymaster-$Version-py3-none-any.whl `
+  --sbom artifacts/memorymaster-$Version.cdx.json `
   --local-image sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa `
   --command-plan
 ```
@@ -52,9 +53,10 @@ $imageId = docker image inspect --format '{{.Id}}' memorymaster:phase1
 Run the gate from the same checkout that owns the runner:
 
 ```powershell
+$Version = python -c "import importlib.metadata as m; print(m.version('memorymaster'))"
 python scripts/run_supply_chain_checks.py `
-  --release-artifact artifacts/memorymaster-4.4.1-py3-none-any.whl `
-  --sbom artifacts/memorymaster-4.4.1.cdx.json `
+  --release-artifact artifacts/memorymaster-$Version-py3-none-any.whl `
+  --sbom artifacts/memorymaster-$Version.cdx.json `
   --local-image $imageId
 ```
 

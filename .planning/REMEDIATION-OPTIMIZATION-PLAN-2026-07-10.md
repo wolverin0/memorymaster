@@ -94,15 +94,15 @@ Phase 0 must replace qualitative capacity goals with recorded numeric gates in t
 - [x] R2.4 — quiet capture, budgets, retention, and backlog control (repository scope; legal review and account-wide cost convergence continue in R3)
 - [x] R2.5 — remove fake evidence defaults
 - [x] Phase 2 targeted convergence and audit delta
-- [ ] R3.1 — embedding and reconciliation efficiency
-- [ ] R3.2 — query and storage efficiency
-- [ ] R3.3 — truthful setup profiles
-- [ ] R3.4 — service entrypoints and deployment health
-- [ ] R3.5 — recovery, observability, audit, and privacy operations
+- [x] R3.1 — embedding and reconciliation efficiency
+- [x] R3.2 — query and storage efficiency
+- [x] R3.3 — truthful setup profiles
+- [x] R3.4 — service entrypoints and deployment health
+- [x] R3.5 — recovery, observability, audit, and privacy operations
 - [x] R4.1 — core/extension boundaries
 - [x] R4.2 — decompose oversized orchestration points
 - [x] R4.3 — governance UX and accessibility
-- [ ] R4.4 — generated release/documentation truth
+- [x] R4.4 — generated release/documentation truth
 - [ ] Final audit delta and convergence evidence
 
 ### Phase 0 — Freeze evidence and build the red test matrix

@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-MemoryMaster exposes **30 MCP tools** over a FastMCP stdio server (`memorymaster-mcp`).
+MemoryMaster exposes a generated set of MCP tools over a FastMCP stdio server (`memorymaster-mcp`). The [generated release truth](generated/release-truth.md) is authoritative for the current inventory and count; the descriptions below are a usage guide.
 This reference is generated from the tool docstrings in
 [`memorymaster/surfaces/mcp_server.py`](../memorymaster/surfaces/mcp_server.py) — one line per
 tool, grouped by purpose. For the MCP server config block see the

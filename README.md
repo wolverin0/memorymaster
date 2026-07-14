@@ -7,7 +7,7 @@ Lifecycle-managed claims with citations, conflict detection, steward governance,
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Tests](https://img.shields.io/badge/tests-3200%2B-green.svg)]()
-[![MCP Tools](https://img.shields.io/badge/MCP%20tools-36-purple.svg)]()
+[![Release truth](https://img.shields.io/badge/release%20truth-generated-purple.svg)](docs/generated/release-truth.md)
 [![CLI Commands](https://img.shields.io/badge/CLI%20commands-106-orange.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memorymaster.svg)](https://pypi.org/project/memorymaster/)
 
@@ -196,7 +196,7 @@ uses a distinct migrator DSN/role; never give that role to the MCP runtime.
 Unverified host-wide and maintenance tools fail closed. Existing brownfield MCP
 entries must add the mode or be regenerated with setup `--force`.
 
-30 MCP tools spanning setup/lifecycle, ingest, query/retrieval, listing, knowledge graph, and governance: `init_db`, `ingest_claim`, `ingest_rule`, `query_rules`, `rules_export`, `run_cycle`, `run_steward`, `classify_query`, `query_memory`, `query_for_context`, `query_for_task`, `query_claim_paths`, `query_meta_decisions`, `federated_query`, `recall_analysis`, `read_active_tasks`, `list_claims`, `redact_claim_payload`, `pin_claim`, `compact_memory`, `list_events`, `search_verbatim`, `open_dashboard`, `list_steward_proposals`, `resolve_steward_proposal`, `extract_entities`, `entity_stats`, `find_related_claims`, `quality_scores`, `recompute_tiers`.
+MemoryMaster exposes setup/lifecycle, ingest, query/retrieval, listing, knowledge-graph, and governance tools. The [generated release truth](docs/generated/release-truth.md) is the authoritative inventory and count.
 
 See [`docs/MCP-TOOLS.md`](docs/MCP-TOOLS.md) for the grouped reference (one line per tool), and [`.mcp.json.example`](.mcp.json.example) for the full config template.
 
@@ -264,7 +264,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
 |----------|-------------|
 | [docs/README.md](docs/README.md) | Documentation index — where to find each living doc |
 | [docs/handbook.md](docs/handbook.md) | Full operator handbook — hooks, dashboard, steward, dream bridge, troubleshooting, one-prompt install |
-| [docs/MCP-TOOLS.md](docs/MCP-TOOLS.md) | Reference for all 30 MCP tools, grouped by purpose |
+| [docs/MCP-TOOLS.md](docs/MCP-TOOLS.md) | MCP usage guide; generated inventory and counts are linked from the document |
 | [docs/INTEGRATING.md](docs/INTEGRATING.md) | Integration guide for embedding MemoryMaster in your agent |
 | [INSTALLATION.md](INSTALLATION.md) | Setup guide: pip, Docker, Helm, MCP config |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Dev setup, testing, PR workflow |

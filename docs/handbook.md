@@ -119,7 +119,7 @@ YOU SEND A MESSAGE
 | **SessionStart hook** | Queries the DB for recent claims, last cycle summary (ingest/validate/decay/supersession counts), pending candidates, and most-recently-updated wiki articles. Scope auto-derived from cwd. | Session startup / resume |
 | **Auto-ingest hook** | LLM extracts learnings from transcript | Every time Claude stops |
 | **PreCompact hook** | Forces save to MemoryMaster before Claude Code compacts context (permanent context loss prevention) | Before context compaction |
-| **MCP server** (global) | 22 tools for query/ingest/steward | Always available |
+| **MCP server** (global) | Generated query/ingest/steward tool set | Always available |
 | **CLAUDE.md / AGENTS.md append** | Instructions for Claude / Codex to use MemoryMaster | Read at session start |
 | **Steward cron** | Validates, decays, compacts claims | Every 6 hours |
 | **Obsidian skills** | Read/write/search vault via CLI | On demand |
@@ -424,7 +424,7 @@ MemoryMaster is the memory layer; this stack covers the rest. The Intelligence-F
 | Priority | Tool | What it adds | How to install |
 |----------|------|--------------|----------------|
 | 1 | **graphify** | Pre-computed architecture map (god nodes, communities, surprising connections) in `graphify-out/GRAPH_REPORT.md` | `npm install -g graphify` → `graphify claude install` → `graphify hook install` → `graphify analyze` |
-| 2 | **memorymaster** | 22 MCP tools, 7 hooks, wiki, steward | `memorymaster-setup` |
+| 2 | **memorymaster** | Generated MCP tool set, hooks, wiki, steward | `memorymaster-setup` |
 | 3 | **GitNexus** | Symbol-level impact analysis | `npx gitnexus analyze` |
 | 4 | **Serena** | LSP-powered symbol-level read/edit | Global MCP config, see [oraios/serena](https://github.com/oraios/serena) |
 | 5 | **context7** | Live library docs | First-party Claude Code MCP, no install |

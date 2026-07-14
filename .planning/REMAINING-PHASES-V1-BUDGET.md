@@ -568,3 +568,32 @@ R4.3 governance UX and accessibility completed:
 
 The next package is R4.4 generated release and documentation truth. The active
 roadmap goal authorizes continuing without a new goal.
+
+R4.4 generated release and documentation truth completed:
+
+- `pyproject.toml` is the sole package-version value. Runtime `__version__`,
+  dashboard health, dashboard HTML, supply-chain fixtures, and release docs now
+  derive installed metadata rather than repeating release literals.
+- Deterministic generated truth records 36 MCP tools, 106 main CLI commands,
+  five operations commands, eight console entrypoints, 4,219 collected tests,
+  and the executable setup feature/profile matrix. CI blocks when either the
+  generated Markdown or JSON drifts.
+- Root `ROADMAP.md` is the only active roadmap and uses exactly Now, Next,
+  Later, and Not planned. The three formerly active-looking roadmap names are
+  short historical pointers; public docs point at the canonical roadmap and
+  generated MCP inventory instead of repeating stale counts.
+- `_probe_mm_installed` imports `find_spec` explicitly. A fresh subprocess
+  removes the parent `importlib.util` attribute and still proves the probe.
+- The tag workflow builds one candidate, records hashes, downloads and verifies
+  it, blocks on generated truth, stable qrels, strict evaluation,
+  release/supply-chain tests, and clean-wheel entrypoint smoke, then publishes
+  only the promoted verified bytes. Manual dispatch cannot publish. Actual
+  GitHub/PyPI execution is `BLOCKED-EXTERNAL`; no push or publication occurred.
+- Six adversarial contracts were witnessed RED before implementation. The
+  focused R4.4 gate passed 152 tests; workflow YAML parsing, generated-truth
+  check, changed-file Ruff, syntax compilation, and `git diff --check` passed.
+- Atomic package commit: the conventional R4.4 commit containing this evidence.
+
+The next boundary is Phase 4 convergence and the final local release-candidate
+evidence package. The active roadmap goal authorizes continuing without a new
+goal.

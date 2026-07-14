@@ -165,9 +165,9 @@ def _probe_codex(home: Path) -> bool:
 
 def _probe_mm_installed() -> bool:
     try:
-        import importlib
+        from importlib.util import find_spec
 
-        spec = importlib.util.find_spec("memorymaster")
+        spec = find_spec("memorymaster")
         return spec is not None
     except Exception:  # noqa: BLE001
         return False
