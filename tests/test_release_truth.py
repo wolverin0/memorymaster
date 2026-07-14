@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tomllib
 
 import memorymaster
 from memorymaster.surfaces.dashboard import DashboardRequestHandler
@@ -84,6 +85,7 @@ def test_publish_requires_the_verified_downloaded_artifact() -> None:
     assert "/tmp/memorymaster-minimal" in workflow
     assert "/tmp/memorymaster-mcp" in workflow
     assert '"${WHEEL}[mcp,security]"' in workflow
+    assert 'pip install -e ".[dev,mcp,security,postgres]"' in workflow
 
 
 def test_minimal_cli_import_does_not_require_optional_qdrant_client() -> None:
@@ -108,3 +110,11 @@ build_parser()
 def test_ci_blocks_on_generated_release_truth_drift() -> None:
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "generate_release_truth.py --check" in workflow
+    assert 'pip install -e ".[dev,mcp,security,postgres]"' in workflow
+    assert 'pip install -e ".[dev,mcp,postgres]"' in workflow
+
+
+def test_dev_extra_installs_supply_chain_contract_runtime() -> None:
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        project = tomllib.load(handle)["project"]
+    assert any(item.startswith("pip-audit>=") for item in project["optional-dependencies"]["dev"])

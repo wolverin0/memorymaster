@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
-        run: pip install -e ".[dev,mcp,security]"
+        run: pip install -e ".[dev,mcp,security,postgres]"
       - name: Run tests
         run: pytest tests/ -q --tb=short
         env:
@@ -65,7 +65,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install release-truth dependencies
-        run: pip install -e ".[dev,mcp]"
+        run: pip install -e ".[dev,mcp,postgres]"
       - name: Check generated release truth
         run: python scripts/generate_release_truth.py --check
 

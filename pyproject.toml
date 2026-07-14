@@ -44,7 +44,7 @@ vector = ["sentence-transformers>=3.0", "qdrant-client>=1.9"]
 # "single-file SQLite + optional Qdrant" story. Gated at runtime by
 # MEMORYMASTER_RECALL_GRAPH=1; off by default.
 graph = ["kuzu>=0.4"]
-dev = ["pytest>=8.2", "pytest-cov>=6.0", "pytest-timeout>=2.3"]
+dev = ["pytest>=8.2", "pytest-cov>=6.0", "pytest-timeout>=2.3", "pip-audit>=2.10"]
 # Streamable HTTP and its ASGI app landed in the 1.8 line. Stdio remains the
 # default transport; the higher floor makes the explicit HTTP entrypoint real.
 mcp = ["mcp>=1.8.1"]

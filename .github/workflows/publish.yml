@@ -59,7 +59,7 @@ jobs:
       - name: Verify immutable hashes
         run: cd dist && sha256sum --check SHA256SUMS
       - name: Install release verification dependencies
-        run: python -m pip install --upgrade pip && pip install -e ".[dev,mcp,security]"
+        run: python -m pip install --upgrade pip && pip install -e ".[dev,mcp,security,postgres]"
       - name: Block on generated release truth and stable retrieval
         run: |
           python scripts/generate_release_truth.py --check
