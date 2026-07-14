@@ -94,31 +94,34 @@ def test_neighbor_ids_walks_claim_entity_links_on_real_store(tmp_path):
     table no schema ever created, via a ``store._conn`` attribute real
     stores don't have, so the stream silently returned [] even when the
     operator enabled it."""
+    from memorymaster.core.models import CitationInput
+    from memorymaster.knowledge.entity_registry import resolve_or_create
     from memorymaster.stores.storage import SQLiteStore
 
     db = str(tmp_path / "two_pass.db")
     store = SQLiteStore(db)
     store.init_db()
+    first = store.create_claim(text="Redis seed", citations=[CitationInput(source="test")])
+    second = store.create_claim(text="Redis neighbor", citations=[CitationInput(source="test")])
+    third = store.create_claim(text="Postgres other", citations=[CitationInput(source="test")])
     with store.connect() as conn:
         # Same DDL as EntityGraph.ensure_tables (entity_graph.py). Created
         # directly because ensure_tables' full script aborts when the claims
         # DB already holds the registry-style ``entities`` table — the
         # junction is what the walker contract depends on.
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS claim_entity_links ("
-            " claim_id INTEGER NOT NULL,"
-            " entity_id TEXT NOT NULL,"
-            " PRIMARY KEY (claim_id, entity_id))"
-        )
+        redis_id = resolve_or_create(conn, "Redis")
+        postgres_id = resolve_or_create(conn, "Postgres")
         conn.executemany(
             "INSERT INTO claim_entity_links (claim_id, entity_id) VALUES (?, ?)",
-            [(1, "ent-redis"), (2, "ent-redis"), (3, "ent-postgres")],
+            [(first.id, redis_id), (second.id, redis_id), (third.id, postgres_id)],
         )
         conn.commit()
 
     # Claim 2 shares ent-redis with seed claim 1; claim 3 shares nothing.
-    out = context_hook._two_pass_neighbor_ids(store, [1], {1})
-    assert out == [2]
+    out = context_hook._two_pass_neighbor_ids(store, [first.id], {first.id})
+    assert out == [second.id]
 
     # Excluded/seen IDs are never reintroduced.
-    assert context_hook._two_pass_neighbor_ids(store, [1], {1, 2}) == []
+    assert context_hook._two_pass_neighbor_ids(
+        store, [first.id], {first.id, second.id}
+    ) == []

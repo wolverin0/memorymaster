@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, time, timedelta
 from typing import Any
 
+from memorymaster.bridges.evidence_policy import is_governed_evidence_eligible
 from memorymaster.core.models import ActionProposal, EvidenceItem, SourceItem
 
 
@@ -84,6 +85,8 @@ def propose_actions_from_evidence(
 
     for evidence in evidence_items:
         scanned += 1
+        if not is_governed_evidence_eligible(evidence):
+            continue
         source_item = service.get_source_item_by_id(evidence.source_item_id)
         draft = _draft_from_evidence(evidence, source_item)
         if draft is None:
@@ -103,6 +106,7 @@ def propose_actions_from_evidence(
             payload_json={
                 "extractor": "atlas-rule-v1",
                 "evidence_type": evidence.evidence_type,
+                "evidence_provider": evidence.provider,
                 "source_item_external_id": source_item.source_item_id if source_item else None,
             },
             idempotency_key=idempotency_key,

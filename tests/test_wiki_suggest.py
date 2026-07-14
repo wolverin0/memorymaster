@@ -5,56 +5,61 @@ import sqlite3
 from pathlib import Path
 
 from memorymaster.surfaces.cli import main
-from memorymaster.knowledge.entity_graph import EntityGraph
+import pytest
+
+from memorymaster.core.service import MemoryService
+from memorymaster.knowledge.entity_graph import EntityGraphNotReady
 from memorymaster.knowledge.wiki_suggest import suggest_wikilinks
 
 
 def _seed_graph(db_path: Path) -> None:
-    graph = EntityGraph(str(db_path))
-    graph.ensure_tables()
+    MemoryService(db_path, workspace_root=db_path.parent).init_db()
     conn = sqlite3.connect(db_path)
     try:
-        conn.execute(
-            """
-            CREATE TABLE claims (
-                id INTEGER PRIMARY KEY,
-                status TEXT NOT NULL,
-                wiki_article TEXT
-            )
-            """
+        now = "2026-01-01T00:00:00Z"
+        conn.executemany(
+            "INSERT INTO entities "
+            "(id, canonical_name, entity_type, scope, created_at, updated_at) "
+            "VALUES (?, ?, ?, 'global', ?, ?)",
+            [
+                (1, "claim", "concept", now, now),
+                (2, "status", "concept", now, now),
+                (3, "qdrant", "product", now, now),
+            ],
         )
         conn.executemany(
-            "INSERT INTO entities (id, name, type, aliases, created_at) VALUES (?, ?, ?, ?, ?)",
-            [
-                ("e-claim", "claim", "concept", '["claims"]', "2026-01-01T00:00:00Z"),
-                ("e-status", "status", "concept", "[]", "2026-01-01T00:00:00Z"),
-                ("e-qdrant", "qdrant", "product", "[]", "2026-01-01T00:00:00Z"),
-            ],
+            "INSERT INTO entity_aliases "
+            "(entity_id, alias, variant_key, original_form, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [(1, "claim", "claim", "claim", now), (1, "claims", "claims", "claims", now),
+             (2, "status", "status", "status", now), (3, "qdrant", "qdrant", "qdrant", now)],
         )
         conn.executemany(
             "INSERT INTO entity_edges (source_id, target_id, relation, claim_id, created_at) VALUES (?, ?, ?, ?, ?)",
             [
-                ("e-claim", "e-status", "related_to", 1, "2026-01-01T00:00:00Z"),
-                ("e-status", "e-qdrant", "related_to", 2, "2026-01-01T00:00:00Z"),
+                (1, 2, "related_to", 1, now),
+                (2, 3, "related_to", 2, now),
             ],
         )
         conn.executemany(
-            "INSERT INTO claims (id, status, wiki_article) VALUES (?, ?, ?)",
+            "INSERT INTO claims "
+            "(id, text, scope, status, wiki_article, created_at, updated_at) "
+            "VALUES (?, 'wiki graph claim', 'project:test', ?, ?, ?, ?)",
             [
-                (1, "confirmed", "claims-lifecycle"),
-                (2, "confirmed", "status-governance"),
-                (3, "confirmed", "qdrant-sync"),
-                (4, "confirmed", "missing-article"),
+                (1, "confirmed", "claims-lifecycle", now, now),
+                (2, "confirmed", "status-governance", now, now),
+                (3, "confirmed", "qdrant-sync", now, now),
+                (4, "confirmed", "missing-article", now, now),
             ],
         )
         conn.executemany(
             "INSERT INTO claim_entity_links (claim_id, entity_id) VALUES (?, ?)",
             [
-                (1, "e-claim"),
-                (1, "e-status"),
-                (2, "e-status"),
-                (3, "e-qdrant"),
-                (4, "e-claim"),
+                (1, 1),
+                (1, 2),
+                (2, 2),
+                (3, 3),
+                (4, 1),
             ],
         )
         conn.commit()
@@ -117,8 +122,9 @@ def test_wiki_suggest_links_cli_prints_json_list(tmp_path: Path, capsys) -> None
     assert payload[0]["slug"] == "claims-lifecycle"
 
 
-def test_suggest_wikilinks_returns_empty_for_missing_graph(tmp_path: Path) -> None:
+def test_suggest_wikilinks_reports_missing_graph(tmp_path: Path) -> None:
     wiki_root = tmp_path / "wiki"
     _seed_wiki(wiki_root)
 
-    assert suggest_wikilinks(tmp_path / "empty.db", "claim status", wiki_root=wiki_root) == []
+    with pytest.raises(EntityGraphNotReady, match="init-db"):
+        suggest_wikilinks(tmp_path / "empty.db", "claim status", wiki_root=wiki_root)

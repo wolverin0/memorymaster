@@ -1,10 +1,9 @@
 """Real provider adapters for Atlas Inbox media processing.
 
 These plug into the existing ``TranscriptionProvider`` / ``OcrProvider``
-``Protocol``s in ``memorymaster.bridges.media_processing``. They are **opt-in** —
-``MockTranscriptionProvider`` / ``MockOcrProvider`` remain the defaults.
-LifeAgent (or any consumer) imports these classes and passes the instance
-into ``process_transcription`` / ``process_ocr``.
+``Protocol``s in ``memorymaster.bridges.media_processing``. Production callers
+must explicitly select a ready real provider. Mock providers require
+conspicuous test/development configuration and are never governed evidence.
 
 Failure handling: each adapter raises ``RuntimeError`` on failure. The
 existing ``_process_media`` helper in ``media_processing`` catches the
@@ -22,16 +21,19 @@ Optional dependencies:
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
 import mimetypes
 import os
+import shutil
 import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any
 
+from memorymaster.bridges.evidence_policy import synthetic_media_configuration_error
 from memorymaster.bridges.media_processing import EvidenceResult
 
 logger = logging.getLogger(__name__)
@@ -223,12 +225,20 @@ _OCR_PROVIDERS: dict[str, Any] = {}
 
 
 def get_transcription_provider(name: str) -> Any:
-    """Return a transcription provider instance by name. Mock + openai supported."""
+    """Return an explicitly selected, configuration-ready provider."""
     name = name.strip().lower()
     if name in ("mock", "mock-transcription"):
+        error = synthetic_media_configuration_error("mock-transcription")
+        if error:
+            raise ValueError(error)
         from memorymaster.bridges.media_processing import MockTranscriptionProvider
         return MockTranscriptionProvider()
     if name in ("openai", "openai-whisper", "whisper"):
+        if not os.environ.get("OPENAI_API_KEY", "").strip():
+            raise ValueError(
+                "OpenAI transcription is not ready: configure OPENAI_API_KEY "
+                "before selecting provider 'openai'."
+            )
         return OpenAIWhisperTranscriptionProvider()
     raise ValueError(
         f"Unknown transcription provider '{name}'. Supported: mock, openai."
@@ -236,12 +246,20 @@ def get_transcription_provider(name: str) -> Any:
 
 
 def get_ocr_provider(name: str) -> Any:
-    """Return an OCR provider instance by name. Mock + tesseract supported."""
+    """Return an explicitly selected, configuration-ready provider."""
     name = name.strip().lower()
     if name in ("mock", "mock-ocr"):
+        error = synthetic_media_configuration_error("mock-ocr")
+        if error:
+            raise ValueError(error)
         from memorymaster.bridges.media_processing import MockOcrProvider
         return MockOcrProvider()
     if name in ("tesseract", "tesseract-ocr", "local"):
+        if importlib.util.find_spec("pytesseract") is None or shutil.which("tesseract") is None:
+            raise ValueError(
+                "Tesseract OCR is not ready: install the 'pytesseract' package "
+                "and a 'tesseract' binary on PATH."
+            )
         return TesseractOcrProvider()
     raise ValueError(
         f"Unknown OCR provider '{name}'. Supported: mock, tesseract."

@@ -208,6 +208,34 @@ def test_mark_superseded_double_supersede_is_refused(tmp_path: Path) -> None:
     assert reloaded_old.replaced_by_claim_id == first_new.id, "original link preserved"
 
 
+def test_mark_superseded_rejects_archived_claim(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    archived = store.create_claim("archived truth", [_cite("archived")])
+    replacement = store.create_claim("replacement", [_cite("replacement")])
+    transition_claim(store, archived.id, "archived", "fixture archival")
+
+    with pytest.raises(ValueError, match="Invalid transition"):
+        store.mark_superseded(archived.id, replacement.id, "invalid replacement")
+
+    reloaded = store.get_claim(archived.id, include_citations=False)
+    assert reloaded.status == "archived"
+    assert reloaded.replaced_by_claim_id is None
+
+
+def test_set_supersedes_compatibility_path_is_atomic(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    old = store.create_claim("compatibility old", [_cite("compat-old")])
+    new = store.create_claim("compatibility new", [_cite("compat-new")])
+
+    store.set_supersedes(new.id, old.id)
+
+    reloaded_old = store.get_claim(old.id, include_citations=False)
+    reloaded_new = store.get_claim(new.id, include_citations=False)
+    assert reloaded_old.status == "superseded"
+    assert reloaded_old.replaced_by_claim_id == new.id
+    assert reloaded_new.supersedes_claim_id == old.id
+
+
 # ---------------------------------------------------------------------------
 # record_event
 # ---------------------------------------------------------------------------

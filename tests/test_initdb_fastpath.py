@@ -167,6 +167,18 @@ def test_schema_change_without_manual_bump_is_caught(
     assert _user_version(db) == schema_stamp() != old_stamp
 
 
+def test_legacy_schema_helper_change_changes_stamp(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fast-path fingerprints include legacy ensure-helper source bytes."""
+    old_stamp = schema_stamp()
+    real_source = storage_mod._legacy_schema_source
+    monkeypatch.setattr(
+        storage_mod,
+        "_legacy_schema_source",
+        lambda: real_source() + b"\n# simulated ensure helper edit\n",
+    )
+    assert schema_stamp() != old_stamp
+
+
 def test_new_migration_changes_stamp_and_forces_full_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, counters: dict[str, int]
 ) -> None:

@@ -7,10 +7,18 @@ This is a mixin class for memorymaster.stores.storage.SQLiteStore. Methods expec
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from memorymaster.stores._storage_shared import utc_now
+from memorymaster.core.security import (
+    sanitize_persisted_json,
+    sanitize_persisted_text,
+    scan_persisted_value,
+    validate_persisted_metadata,
+)
 from memorymaster.core.models import (
     ATLAS_SENSITIVITY_LEVELS,
     MEDIA_RETRY_STATUSES,
@@ -38,10 +46,56 @@ def _normalize_sensitivity(value: str | None) -> str | None:
 def _json_or_none(value: dict[str, Any] | str | None) -> str | None:
     if value is None:
         return None
+    parsed: object = value
     if isinstance(value, str):
         stripped = value.strip()
-        return stripped or None
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        if not stripped:
+            return None
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            parsed = stripped
+    sanitized, _ = sanitize_persisted_json(parsed)
+    if isinstance(sanitized, str):
+        return sanitized
+    return json.dumps(sanitized, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _safe_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    sanitized, findings = sanitize_persisted_text(text)
+    token_findings = any(
+        scan_persisted_value(token)
+        for token in re.split(r"[^A-Za-z0-9_+=/-]+|[/\\]", text)
+        if token
+    )
+    return "[REDACTED:encoded_secret]" if token_findings and not findings else sanitized
+
+
+def _atlas_row_is_safe(row: Any, fields: tuple[str, ...]) -> bool:
+    return not any(scan_persisted_value(row[field]) for field in fields if row[field] is not None)
+
+
+_SOURCE_FIELDS = (
+    "source_item_id", "item_type", "chat_id", "sender_id", "sender_name", "occurred_at",
+    "text", "payload_json", "content_hash", "sensitivity", "created_at", "updated_at",
+)
+_EXTERNAL_SOURCE_FIELDS = (
+    "source_type", "display_name", "config_json", "created_at", "updated_at",
+)
+_EVIDENCE_FIELDS = (
+    "evidence_type", "text", "media_path", "provider", "payload_json", "sensitivity", "created_at",
+)
+_ACTION_FIELDS = (
+    "proposal_type", "title", "description", "suggested_due_at", "destination", "status",
+    "payload_json", "external_ref", "exported_at", "idempotency_key", "created_at", "updated_at",
+)
+_RETRY_FIELDS = (
+    "media_key", "chat_id", "media_type", "media_path", "media_url", "status", "last_error",
+    "next_attempt_time", "lease_owner", "lease_expires_at", "created_at", "updated_at",
+)
 
 
 def _bounded_confidence(confidence: float | None) -> float | None:
@@ -74,6 +128,7 @@ class _SourceItemsMixin:
         display_name: str,
         config_json: dict[str, Any] | str | None = None,
     ) -> ExternalSource:
+        validate_persisted_metadata({"source_type": source_type, "display_name": display_name})
         normalized_source_type = source_type.strip().lower()
         normalized_display_name = display_name.strip()
         if not normalized_source_type:
@@ -84,6 +139,12 @@ class _SourceItemsMixin:
         now = utc_now()
         payload = _json_or_none(config_json)
         with self.connect() as conn:
+            existing = conn.execute(
+                "SELECT * FROM external_sources WHERE source_type = ? AND display_name = ?",
+                (normalized_source_type, normalized_display_name),
+            ).fetchone()
+            if existing is not None and not _atlas_row_is_safe(existing, _EXTERNAL_SOURCE_FIELDS):
+                raise ValueError("Existing external source contains unsafe persisted data.")
             conn.execute(
                 """
                 INSERT INTO external_sources (source_type, display_name, config_json, created_at, updated_at)
@@ -98,9 +159,11 @@ class _SourceItemsMixin:
                 "SELECT * FROM external_sources WHERE source_type = ? AND display_name = ?",
                 (normalized_source_type, normalized_display_name),
             ).fetchone()
+            if row is None:
+                raise RuntimeError("Failed to upsert external source.")
+            if not _atlas_row_is_safe(row, _EXTERNAL_SOURCE_FIELDS):
+                raise ValueError("External source contains unsafe persisted data.")
             conn.commit()
-        if row is None:
-            raise RuntimeError("Failed to upsert external source.")
         return self._row_to_external_source(row)
 
     def upsert_source_item(
@@ -118,6 +181,7 @@ class _SourceItemsMixin:
         content_hash: str | None = None,
         sensitivity: str | None = None,
     ) -> SourceItem:
+        validate_persisted_metadata({"source_item_id": source_item_id, "item_type": item_type, "content_hash": content_hash, "occurred_at": occurred_at})
         normalized_source_item_id = source_item_id.strip()
         normalized_item_type = item_type.strip().lower()
         if source_id <= 0:
@@ -127,14 +191,17 @@ class _SourceItemsMixin:
         if not normalized_item_type:
             raise ValueError("item_type must be non-empty.")
         normalized_sensitivity = _normalize_sensitivity(sensitivity)
+        chat_id, sender_id, sender_name, text = map(_safe_text, (chat_id, sender_id, sender_name, text))
 
         now = utc_now()
         payload = _json_or_none(payload_json)
         with self.connect() as conn:
             existing = conn.execute(
-                "SELECT id FROM source_items WHERE source_id = ? AND source_item_id = ?",
+                "SELECT * FROM source_items WHERE source_id = ? AND source_item_id = ?",
                 (source_id, normalized_source_item_id),
             ).fetchone()
+            if existing is not None and not _atlas_row_is_safe(existing, _SOURCE_FIELDS):
+                raise ValueError("Existing source item contains unsafe persisted data.")
             # Preserve existing sensitivity on re-import unless caller passed one
             preserve_sensitivity_clause = (
                 "sensitivity = excluded.sensitivity"
@@ -198,9 +265,11 @@ class _SourceItemsMixin:
                     ),
                     created_at=now,
                 )
+            if row is None:
+                raise RuntimeError("Failed to upsert source item.")
+            if not _atlas_row_is_safe(row, _SOURCE_FIELDS):
+                raise ValueError("Source item contains unsafe persisted data.")
             conn.commit()
-        if row is None:
-            raise RuntimeError("Failed to upsert source item.")
         return self._row_to_source_item(row)
 
     def get_source_item(self, *, source_id: int, source_item_id: str) -> SourceItem | None:
@@ -214,14 +283,14 @@ class _SourceItemsMixin:
                 "SELECT * FROM source_items WHERE source_id = ? AND source_item_id = ?",
                 (source_id, normalized_source_item_id),
             ).fetchone()
-        return self._row_to_source_item(row) if row is not None else None
+        return self._row_to_source_item(row) if row is not None and _atlas_row_is_safe(row, _SOURCE_FIELDS) else None
 
     def get_source_item_by_id(self, source_item_row_id: int) -> SourceItem | None:
         if source_item_row_id <= 0:
             raise ValueError("source_item_row_id must be positive.")
         with self.connect() as conn:
             row = conn.execute("SELECT * FROM source_items WHERE id = ?", (source_item_row_id,)).fetchone()
-        return self._row_to_source_item(row) if row is not None else None
+        return self._row_to_source_item(row) if row is not None and _atlas_row_is_safe(row, _SOURCE_FIELDS) else None
 
     def add_evidence_item(
         self,
@@ -235,12 +304,14 @@ class _SourceItemsMixin:
         payload_json: dict[str, Any] | str | None = None,
         sensitivity: str | None = None,
     ) -> EvidenceItem:
+        validate_persisted_metadata({"evidence_type": evidence_type})
         normalized_evidence_type = evidence_type.strip().lower()
         if source_item_id <= 0:
             raise ValueError("source_item_id must be positive.")
         if not normalized_evidence_type:
             raise ValueError("evidence_type must be non-empty.")
         normalized_sensitivity = _normalize_sensitivity(sensitivity)
+        text, media_path, provider = map(_safe_text, (text, media_path, provider))
 
         now = utc_now()
         payload = _json_or_none(payload_json)
@@ -297,14 +368,32 @@ class _SourceItemsMixin:
         if evidence_type:
             clauses.append("evidence_type = ?")
             params.append(evidence_type.strip().lower())
-        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        params.append(limit)
+        if limit <= 0:
+            return []
+        page_size = min(max(limit, 25), 250)
+        results: list[EvidenceItem] = []
+        cursor: tuple[object, int] | None = None
         with self.connect() as conn:
-            rows = conn.execute(
-                f"SELECT * FROM evidence_items {where_sql} ORDER BY created_at ASC, id ASC LIMIT ?",
-                params,
-            ).fetchall()
-        return [self._row_to_evidence_item(row) for row in rows]
+            while len(results) < limit:
+                page_clauses = list(clauses)
+                page_params = list(params)
+                if cursor is not None:
+                    page_clauses.append("(created_at > ? OR (created_at = ? AND id > ?))")
+                    page_params.extend((cursor[0], cursor[0], cursor[1]))
+                where_sql = f"WHERE {' AND '.join(page_clauses)}" if page_clauses else ""
+                rows = conn.execute(
+                    f"SELECT * FROM evidence_items {where_sql} ORDER BY created_at ASC, id ASC LIMIT ?",
+                    [*page_params, page_size],
+                ).fetchall()
+                if not rows:
+                    break
+                for row in rows:
+                    if _atlas_row_is_safe(row, _EVIDENCE_FIELDS):
+                        results.append(self._row_to_evidence_item(row))
+                        if len(results) == limit:
+                            break
+                cursor = (rows[-1]["created_at"], int(rows[-1]["id"]))
+        return results
 
     def create_action_proposal(
         self,
@@ -321,10 +410,13 @@ class _SourceItemsMixin:
         payload_json: dict[str, Any] | str | None = None,
         idempotency_key: str | None = None,
     ) -> ActionProposal:
+        validate_persisted_metadata({"proposal_type": proposal_type, "destination": destination, "idempotency_key": idempotency_key, "suggested_due_at": suggested_due_at})
         normalized_type = proposal_type.strip().lower()
         normalized_title = title.strip()
         normalized_destination = destination.strip() or "manual"
         normalized_idempotency_key = (idempotency_key or "").strip() or None
+        normalized_title = _safe_text(normalized_title) or "[REDACTED]"
+        description = _safe_text(description)
         if not normalized_type:
             raise ValueError("proposal_type must be non-empty.")
         if not normalized_title:
@@ -397,7 +489,7 @@ class _SourceItemsMixin:
                 "SELECT * FROM action_proposals WHERE idempotency_key = ?",
                 (normalized,),
             ).fetchone()
-        return self._row_to_action_proposal(row) if row is not None else None
+        return self._row_to_action_proposal(row) if row is not None and _atlas_row_is_safe(row, _ACTION_FIELDS) else None
 
     def update_action_proposal_status(
         self,
@@ -413,13 +505,17 @@ class _SourceItemsMixin:
             raise ValueError("proposal_id must be positive.")
         if normalized_status not in {"candidate", "approved", "rejected", "exported", "failed"}:
             raise ValueError("status must be one of: candidate, approved, rejected, exported, failed.")
+        validate_persisted_metadata({"exported_at": exported_at})
 
         now = utc_now()
         payload = _json_or_none(payload_json)
+        external_ref = _safe_text(external_ref)
         with self.connect() as conn:
             current = conn.execute("SELECT * FROM action_proposals WHERE id = ?", (proposal_id,)).fetchone()
             if current is None:
                 raise ValueError(f"Action proposal {proposal_id} does not exist.")
+            if not _atlas_row_is_safe(current, _ACTION_FIELDS):
+                raise ValueError(f"Action proposal {proposal_id} contains unsafe persisted data.")
             final_exported_at = exported_at if exported_at is not None else current["exported_at"]
             if normalized_status == "exported" and final_exported_at is None:
                 final_exported_at = now
@@ -470,6 +566,8 @@ class _SourceItemsMixin:
             row = conn.execute("SELECT * FROM source_items WHERE id = ?", (source_item_row_id,)).fetchone()
             if row is None:
                 raise ValueError(f"Source item {source_item_row_id} does not exist.")
+            if not _atlas_row_is_safe(row, _SOURCE_FIELDS):
+                raise ValueError(f"Source item {source_item_row_id} contains unsafe persisted data.")
             current = row["sensitivity"] if "sensitivity" in row.keys() else None
             if current == normalized:
                 return self._row_to_source_item(row)
@@ -507,6 +605,8 @@ class _SourceItemsMixin:
             row = conn.execute("SELECT * FROM evidence_items WHERE id = ?", (evidence_item_row_id,)).fetchone()
             if row is None:
                 raise ValueError(f"Evidence item {evidence_item_row_id} does not exist.")
+            if not _atlas_row_is_safe(row, _EVIDENCE_FIELDS):
+                raise ValueError(f"Evidence item {evidence_item_row_id} contains unsafe persisted data.")
             current = row["sensitivity"] if "sensitivity" in row.keys() else None
             if current == normalized:
                 return self._row_to_evidence_item(row)
@@ -561,6 +661,8 @@ class _SourceItemsMixin:
         if source_item_id <= 0:
             raise ValueError("source_item_id must be positive.")
         normalized_key = (media_key or "").strip()
+        validate_persisted_metadata({"media_key": normalized_key, "status": status, "next_attempt_time": next_attempt_time})
+        chat_id, media_type, media_path, media_url = map(_safe_text, (chat_id, media_type, media_path, media_url))
         if not normalized_key:
             raise ValueError("media_key must be non-empty.")
         if status not in MEDIA_RETRY_STATUSES:
@@ -574,6 +676,8 @@ class _SourceItemsMixin:
                 (source_item_id, normalized_key),
             ).fetchone()
             if existing is not None:
+                if not _atlas_row_is_safe(existing, _RETRY_FIELDS):
+                    raise ValueError("Existing media retry contains unsafe persisted data.")
                 # Update metadata only (do NOT clobber attempt_count/status).
                 conn.execute(
                     """
@@ -623,7 +727,13 @@ class _SourceItemsMixin:
             conn.commit()
         return self._row_to_media_retry(row)
 
-    def claim_pending_media_retries(self, limit: int = 25) -> list[MediaRetryItem]:
+    def claim_pending_media_retries(
+        self,
+        limit: int = 25,
+        *,
+        lease_owner: str = "media-worker",
+        lease_seconds: int = 300,
+    ) -> list[MediaRetryItem]:
         """Atomically claim up to N pending rows whose next_attempt_time is past.
 
         Transitions claimed rows from 'pending' to 'retrying' and increments
@@ -631,7 +741,15 @@ class _SourceItemsMixin:
         """
         if limit <= 0:
             return []
+        owner = (lease_owner or "").strip()
+        if not owner:
+            raise ValueError("lease_owner must not be blank.")
+        validate_persisted_metadata({"lease_owner": owner})
+        duration = max(1, min(int(lease_seconds), 3600))
         now = utc_now()
+        lease_expires_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=duration)
+        ).replace(microsecond=0).isoformat()
         with self.connect() as conn:
             # BEGIN IMMEDIATE takes the write lock up front so the SELECT and
             # the claiming UPDATE are one atomic read-modify-write. Without it,
@@ -643,17 +761,58 @@ class _SourceItemsMixin:
             # second guard: a row already moved out of 'pending' is never
             # re-claimed even if a stale id slips through.
             conn.execute("BEGIN IMMEDIATE")
-            rows = conn.execute(
-                """
-                SELECT id FROM media_retry_queue
-                WHERE status = 'pending'
-                  AND (next_attempt_time IS NULL OR next_attempt_time <= ?)
-                ORDER BY id ASC
-                LIMIT ?
-                """,
-                (now, limit),
+            expired_rows = conn.execute(
+                """SELECT * FROM media_retry_queue
+                   WHERE status = 'retrying'
+                     AND lease_expires_at IS NOT NULL
+                     AND lease_expires_at <= ?
+                   ORDER BY id ASC""",
+                (now,),
             ).fetchall()
-            ids = [int(r["id"]) for r in rows]
+            expired_ids = [
+                int(row["id"])
+                for row in expired_rows
+                if _atlas_row_is_safe(row, _RETRY_FIELDS)
+            ]
+            for retry_id in expired_ids:
+                conn.execute(
+                    """UPDATE media_retry_queue
+                       SET status = 'pending', lease_owner = NULL,
+                           lease_expires_at = NULL, updated_at = ?
+                       WHERE id = ? AND status = 'retrying'
+                         AND lease_expires_at <= ?""",
+                    (now, retry_id, now),
+                )
+                self._insert_event_row(
+                    conn,
+                    claim_id=None,
+                    event_type="media_process",
+                    from_status="retrying",
+                    to_status="pending",
+                    details="media_retry_lease_expired",
+                    payload_json=json.dumps({"retry_id": retry_id}, sort_keys=True),
+                    created_at=now,
+                )
+            ids: list[int] = []
+            cursor_id = 0
+            page_size = min(max(limit, 25), 250)
+            while len(ids) < limit:
+                rows = conn.execute(
+                    """SELECT * FROM media_retry_queue
+                       WHERE status = 'pending' AND id > ?
+                         AND (next_attempt_time IS NULL OR next_attempt_time <= ?)
+                       ORDER BY id ASC LIMIT ?""",
+                    (cursor_id, now, page_size),
+                ).fetchall()
+                if not rows:
+                    break
+                ids.extend(
+                    int(row["id"])
+                    for row in rows
+                    if _atlas_row_is_safe(row, _RETRY_FIELDS)
+                )
+                ids = ids[:limit]
+                cursor_id = int(rows[-1]["id"])
             if not ids:
                 conn.commit()
                 return []
@@ -663,11 +822,13 @@ class _SourceItemsMixin:
                 UPDATE media_retry_queue
                 SET status = 'retrying',
                     attempt_count = attempt_count + 1,
+                    lease_owner = ?,
+                    lease_expires_at = ?,
                     updated_at = ?
                 WHERE status = 'pending'
                   AND id IN ({placeholders})
                 """,
-                [now, *ids],
+                [owner, lease_expires_at, now, *ids],
             )
             for retry_id in ids:
                 self._insert_event_row(
@@ -718,6 +879,8 @@ class _SourceItemsMixin:
             )
         if status == "done" and not media_path:
             raise ValueError("media_path is required when status='done'.")
+        media_path, last_error = map(_safe_text, (media_path, last_error))
+        validate_persisted_metadata({"next_attempt_time": next_attempt_time, "status": status})
         now = utc_now()
         with self.connect() as conn:
             current = conn.execute(
@@ -725,10 +888,13 @@ class _SourceItemsMixin:
             ).fetchone()
             if current is None:
                 raise ValueError(f"media_retry_queue row {retry_id} does not exist.")
+            if not _atlas_row_is_safe(current, _RETRY_FIELDS):
+                raise ValueError(f"media_retry_queue row {retry_id} contains unsafe persisted data.")
             new_path = media_path if media_path is not None else current["media_path"]
             new_http = last_http_status if last_http_status is not None else current["last_http_status"]
             new_err = last_error if last_error is not None else current["last_error"]
             new_next = next_attempt_time if next_attempt_time is not None else current["next_attempt_time"]
+            clear_lease = status != "retrying"
             conn.execute(
                 """
                 UPDATE media_retry_queue
@@ -737,10 +903,22 @@ class _SourceItemsMixin:
                     last_http_status = ?,
                     last_error = ?,
                     next_attempt_time = ?,
+                    lease_owner = ?,
+                    lease_expires_at = ?,
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (status, new_path, new_http, new_err, new_next, now, retry_id),
+                (
+                    status,
+                    new_path,
+                    new_http,
+                    new_err,
+                    new_next,
+                    None if clear_lease else current["lease_owner"],
+                    None if clear_lease else current["lease_expires_at"],
+                    now,
+                    retry_id,
+                ),
             )
             self._insert_event_row(
                 conn,
@@ -784,14 +962,32 @@ class _SourceItemsMixin:
                 raise ValueError("source_item_id must be positive.")
             clauses.append("source_item_id = ?")
             params.append(source_item_id)
-        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        params.append(limit)
+        if limit <= 0:
+            return []
+        page_size = min(max(limit, 25), 250)
+        results: list[MediaRetryItem] = []
+        cursor: tuple[object, int] | None = None
         with self.connect() as conn:
-            rows = conn.execute(
-                f"SELECT * FROM media_retry_queue {where_sql} ORDER BY updated_at DESC, id DESC LIMIT ?",
-                params,
-            ).fetchall()
-        return [self._row_to_media_retry(r) for r in rows]
+            while len(results) < limit:
+                page_clauses = list(clauses)
+                page_params = list(params)
+                if cursor is not None:
+                    page_clauses.append("(updated_at < ? OR (updated_at = ? AND id < ?))")
+                    page_params.extend((cursor[0], cursor[0], cursor[1]))
+                where_sql = f"WHERE {' AND '.join(page_clauses)}" if page_clauses else ""
+                rows = conn.execute(
+                    f"SELECT * FROM media_retry_queue {where_sql} ORDER BY updated_at DESC, id DESC LIMIT ?",
+                    [*page_params, page_size],
+                ).fetchall()
+                if not rows:
+                    break
+                for row in rows:
+                    if _atlas_row_is_safe(row, _RETRY_FIELDS):
+                        results.append(self._row_to_media_retry(row))
+                        if len(results) == limit:
+                            break
+                cursor = (rows[-1]["updated_at"], int(rows[-1]["id"]))
+        return results
 
     def media_retry_status_counts(self) -> dict[str, int]:
         """Return {status: count} aggregated across the queue."""
@@ -819,6 +1015,8 @@ class _SourceItemsMixin:
             last_http_status=int(row["last_http_status"]) if row["last_http_status"] is not None else None,
             last_error=row["last_error"],
             next_attempt_time=row["next_attempt_time"],
+            lease_owner=row["lease_owner"],
+            lease_expires_at=row["lease_expires_at"],
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
         )
@@ -845,8 +1043,11 @@ class _SourceItemsMixin:
             raise ValueError("proposal_id must be positive.")
         if title is None and description is None and suggested_due_at is None and confidence is None and payload_json is None:
             raise ValueError("at least one field must be provided to update.")
+        validate_persisted_metadata({"suggested_due_at": suggested_due_at})
 
         normalized_title = title.strip() if title is not None else None
+        normalized_title = _safe_text(normalized_title)
+        description = _safe_text(description)
         if normalized_title is not None and not normalized_title:
             raise ValueError("title cannot be blank when provided.")
         bounded = _bounded_confidence(confidence) if confidence is not None else None
@@ -857,6 +1058,8 @@ class _SourceItemsMixin:
             current = conn.execute("SELECT * FROM action_proposals WHERE id = ?", (proposal_id,)).fetchone()
             if current is None:
                 raise ValueError(f"Action proposal {proposal_id} does not exist.")
+            if not _atlas_row_is_safe(current, _ACTION_FIELDS):
+                raise ValueError(f"Action proposal {proposal_id} contains unsafe persisted data.")
 
             updates: list[str] = []
             params: list[object] = []
@@ -928,14 +1131,32 @@ class _SourceItemsMixin:
         if destination:
             clauses.append("destination = ?")
             params.append(destination.strip())
-        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        params.append(limit)
+        if limit <= 0:
+            return []
+        page_size = min(max(limit, 25), 250)
+        results: list[ActionProposal] = []
+        cursor: tuple[object, int] | None = None
         with self.connect() as conn:
-            rows = conn.execute(
-                f"SELECT * FROM action_proposals {where_sql} ORDER BY updated_at DESC, id DESC LIMIT ?",
-                params,
-            ).fetchall()
-        return [self._row_to_action_proposal(row) for row in rows]
+            while len(results) < limit:
+                page_clauses = list(clauses)
+                page_params = list(params)
+                if cursor is not None:
+                    page_clauses.append("(updated_at < ? OR (updated_at = ? AND id < ?))")
+                    page_params.extend((cursor[0], cursor[0], cursor[1]))
+                where_sql = f"WHERE {' AND '.join(page_clauses)}" if page_clauses else ""
+                rows = conn.execute(
+                    f"SELECT * FROM action_proposals {where_sql} ORDER BY updated_at DESC, id DESC LIMIT ?",
+                    [*page_params, page_size],
+                ).fetchall()
+                if not rows:
+                    break
+                for row in rows:
+                    if _atlas_row_is_safe(row, _ACTION_FIELDS):
+                        results.append(self._row_to_action_proposal(row))
+                        if len(results) == limit:
+                            break
+                cursor = (rows[-1]["updated_at"], int(rows[-1]["id"]))
+        return results
 
     @staticmethod
     def _row_to_external_source(row: sqlite3.Row) -> ExternalSource:

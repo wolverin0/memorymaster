@@ -72,7 +72,16 @@ def _resolve_claim_id(service: MemoryService, raw: str | int) -> int:
     try:
         return int(text)
     except ValueError:
-        return service.store.resolve_claim_id(text)
+        identity_context: dict[str, object] = {
+            "tenant_id": service.tenant_id,
+            "visibility": "public",
+        }
+        allowed_scopes = getattr(service, "allowed_scopes", None)
+        if allowed_scopes and len(allowed_scopes) == 1:
+            identity_context["scope"] = next(iter(allowed_scopes))
+        else:
+            identity_context["scope"] = None
+        return service.store.resolve_claim_id(text, **identity_context)
 
 
 def _add_cycle_policy_args(p: argparse.ArgumentParser, policy_default: str = "legacy") -> None:

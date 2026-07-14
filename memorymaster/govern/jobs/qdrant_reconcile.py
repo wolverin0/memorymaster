@@ -33,6 +33,9 @@ from pathlib import Path
 
 from memorymaster.stores._storage_shared import connect_ro
 from memorymaster.govern.jobs.integrity import _due, _record
+from memorymaster.core.security import is_sensitive_claim
+from memorymaster.recall import qdrant_outbox
+from memorymaster.recall.qdrant_backend import claim_content_hash
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +109,30 @@ def _delete_orphan_points(store, qdrant, db_path: str | Path | None) -> int:
     return deleted
 
 
+def _exact_reconcile(store, qdrant, db_path: str | Path | None) -> dict[str, int]:
+    """Converge point IDs and content hashes without trusting vector payloads."""
+    if not hasattr(qdrant, "list_point_refs"):
+        return {"checked": 0, "upserted": 0, "deleted": 0}
+    refs = qdrant.list_point_refs()
+    if refs is None:
+        return {"checked": 0, "upserted": 0, "deleted": 0}
+    point_ids: set[int] = set()
+    upserted = 0
+    deleted = 0
+    for ref in refs:
+        point_ids.add(ref.claim_id)
+        claim = store.get_claim(ref.claim_id, include_citations=True)
+        if claim is None or claim.status == "archived" or is_sensitive_claim(claim):
+            deleted += int(bool(qdrant.delete_claim(ref.claim_id)))
+        elif claim_content_hash(claim) != ref.content_hash:
+            upserted += int(bool(qdrant.upsert_claim(claim)))
+    for claim_id in _live_claim_ids(store, db_path) - point_ids:
+        claim = store.get_claim(claim_id, include_citations=True)
+        if claim is not None and not is_sensitive_claim(claim):
+            upserted += int(bool(qdrant.upsert_claim(claim)))
+    return {"checked": len(refs), "upserted": upserted, "deleted": deleted}
+
+
 def run(
     store,
     qdrant,
@@ -150,11 +177,29 @@ def run(
         "upserted": 0,
         "deleted": 0,
     }
+    try:
+        exact = _exact_reconcile(store, qdrant, db_path)
+    except Exception:
+        logger.warning("qdrant exact reconciliation failed")
+        exact = {"checked": 0, "upserted": 0, "deleted": 0}
+    result["exact_reconcile"] = exact
+    result["upserted"] = exact["upserted"]
+    result["deleted"] = exact["deleted"]
+    if db_path is not None:
+        try:
+            result["outbox"] = qdrant_outbox.replay(
+                db_path, store, qdrant, max_operations=500
+            )
+        except Exception:
+            logger.warning("qdrant outbox replay failed")
+            result["outbox"] = {"attempted": 0, "completed": 0, "remaining": -1}
     if full or drift > limit:
-        result["deleted"] = _delete_orphan_points(store, qdrant, db_path)
+        result["deleted"] = int(result["deleted"]) + _delete_orphan_points(
+            store, qdrant, db_path
+        )
         stats = qdrant.sync_all(store)
         result["synced"] = True
-        result["upserted"] = int(stats.get("synced", 0))
+        result["upserted"] = int(result["upserted"]) + int(stats.get("synced", 0))
         result["sync_stats"] = dict(stats)
         logger.info(
             "qdrant reconcile: drift=%d threshold=%d full=%s — sync_all ran: %s",

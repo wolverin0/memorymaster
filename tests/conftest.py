@@ -1,12 +1,123 @@
 from __future__ import annotations
 
 import os
+import secrets
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
+from typing import Any
+from uuid import uuid4
 
 import pytest
 
 
 _CASE_ROOT = Path(".tmp_cases")
+_POSTGRES_ADMIN_DSN_ENV = "MEMORYMASTER_TEST_POSTGRES_DSN"
+_POSTGRES_APP_DSN_ENV = "MEMORYMASTER_TEST_POSTGRES_APP_DSN"
+_POSTGRES_DISPOSABLE_ENV = "MEMORYMASTER_TEST_POSTGRES_RLS_DISPOSABLE"
+_LIVE_POSTGRES_DSN_ENVS = ("DATABASE_URL", "POSTGRES_DSN", "MEMORYMASTER_POSTGRES_DSN")
+
+
+@dataclass(frozen=True)
+class _DisposablePostgresRuntime:
+    admin_dsn: str
+    app_dsn: str
+
+
+def _same_secret(left: str, right: str) -> bool:
+    return bool(left and right) and secrets.compare_digest(left, right)
+
+
+def _require_disposable_postgres_runtime() -> _DisposablePostgresRuntime:
+    admin_dsn = os.getenv(_POSTGRES_ADMIN_DSN_ENV, "").strip()
+    app_dsn = os.getenv(_POSTGRES_APP_DSN_ENV, "").strip()
+    opted_in = os.getenv(_POSTGRES_DISPOSABLE_ENV, "").strip() == "1"
+    if not admin_dsn or not app_dsn or not opted_in:
+        pytest.skip(
+            "BLOCKED-EXTERNAL: Postgres parity requires distinct admin/app DSNs "
+            f"and {_POSTGRES_DISPOSABLE_ENV}=1"
+        )
+    if _same_secret(admin_dsn, app_dsn):
+        pytest.fail("Postgres parity requires distinct admin and app DSNs.")
+    for env_name in _LIVE_POSTGRES_DSN_ENVS:
+        live_dsn = os.getenv(env_name, "").strip()
+        if _same_secret(admin_dsn, live_dsn) or _same_secret(app_dsn, live_dsn):
+            pytest.fail(f"Refusing to reuse {env_name} for disposable Postgres tests.")
+    return _DisposablePostgresRuntime(admin_dsn=admin_dsn, app_dsn=app_dsn)
+
+
+def _database_identity(psycopg: Any, dsn: str) -> tuple[object, ...]:
+    with psycopg.connect(dsn, connect_timeout=5) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT current_database(), current_user, rolsuper, rolbypassrls,
+                   rolreplication, rolcreaterole, rolcreatedb
+            FROM pg_roles WHERE rolname = current_user
+            """
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise RuntimeError("Postgres connection identity could not be verified.")
+    return tuple(row)
+
+
+def _validate_disposable_postgres_roles(
+    admin_identity: tuple[object, ...],
+    app_identity: tuple[object, ...],
+) -> None:
+    if str(admin_identity[0]) != str(app_identity[0]):
+        pytest.fail("Admin and app DSNs must target the same disposable database.")
+    if str(admin_identity[1]) == str(app_identity[1]):
+        pytest.fail("Admin and app DSNs must authenticate as distinct roles.")
+    if not bool(admin_identity[2]) and not bool(admin_identity[3]):
+        pytest.fail("The Postgres migrator must be SUPERUSER or BYPASSRLS.")
+    if any(bool(value) for value in app_identity[2:]):
+        pytest.fail("The Postgres app role has a forbidden role attribute.")
+
+
+def _grant_disposable_event_contract(psycopg: Any, admin_dsn: str, app_role: str) -> None:
+    from psycopg import sql
+
+    role = sql.Identifier(app_role)
+    with psycopg.connect(admin_dsn) as conn, conn.cursor() as cur:
+        cur.execute(sql.SQL("GRANT SELECT, INSERT ON TABLE public.events TO {}").format(role))
+        cur.execute(
+            sql.SQL(
+                "REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER "
+                "ON TABLE public.events FROM {}"
+            ).format(role)
+        )
+        cur.execute(
+            sql.SQL(
+                "GRANT EXECUTE ON FUNCTION public.memorymaster_event_chain_head() TO {}"
+            ).format(role)
+        )
+
+
+@lru_cache(maxsize=4)
+def _initialize_disposable_postgres(admin_dsn: str, app_dsn: str) -> None:
+    try:
+        import psycopg
+    except ImportError:
+        pytest.skip("BLOCKED-EXTERNAL: psycopg is required for Postgres parity tests")
+
+    try:
+        admin_identity = _database_identity(psycopg, admin_dsn)
+        app_identity = _database_identity(psycopg, app_dsn)
+    except psycopg.OperationalError:
+        pytest.skip("BLOCKED-EXTERNAL: configured Postgres test DSNs are unreachable")
+    _validate_disposable_postgres_roles(admin_identity, app_identity)
+
+    from memorymaster.stores.postgres_store import PostgresStore
+
+    PostgresStore(admin_dsn).init_db()
+    _grant_disposable_event_contract(psycopg, admin_dsn, str(app_identity[1]))
+
+
+@pytest.fixture(autouse=True)
+def _explicit_local_mcp_auth(monkeypatch) -> None:
+    """Make legacy MCP test calls exercise the named local-trusted profile."""
+    monkeypatch.setenv("MEMORYMASTER_MCP_AUTH_MODE", "local-trusted")
 
 
 # ---------------------------------------------------------------------------
@@ -16,12 +127,8 @@ _CASE_ROOT = Path(".tmp_cases")
 # `parametrize_backends` yields a fresh MemoryService on each backend so the
 # SAME test body runs against both SQLite and Postgres and must produce the
 # same observable result. SQLite always runs (file-based, no server). Postgres
-# runs only when MEMORYMASTER_TEST_POSTGRES_DSN is set; otherwise that
-# parametrization is skipped so dev machines without a Postgres stay green.
-
-def _pg_dsn() -> str | None:
-    return os.getenv("MEMORYMASTER_TEST_POSTGRES_DSN")
-
+# runs only with distinct admin/app DSNs plus explicit disposable opt-in;
+# otherwise that parametrization is skipped so offline dev machines stay green.
 
 def _fresh_sqlite_service(tmp_path):
     from memorymaster.core.service import MemoryService
@@ -35,24 +142,17 @@ def _fresh_sqlite_service(tmp_path):
 def _fresh_postgres_service():
     from memorymaster.core.service import MemoryService
 
-    dsn = _pg_dsn()
-    if not dsn:
-        pytest.skip("MEMORYMASTER_TEST_POSTGRES_DSN is not set")
-    svc = MemoryService(dsn, workspace_root=".")
-    svc.init_db()
-    # Deterministic start: clear claims/citations/events (+ optional tables).
-    with svc.store.connect() as conn:
-        with conn.cursor() as cur:
-            for tbl in ("claim_links", "claim_embeddings"):
-                cur.execute("SELECT to_regclass(%s) AS t", (f"public.{tbl}",))
-                row = cur.fetchone()
-                present = (row["t"] if isinstance(row, dict) else row[0]) is not None
-                if present:
-                    cur.execute(f"DELETE FROM {tbl}")
-            cur.execute("DELETE FROM citations")
-            cur.execute("DELETE FROM events")
-            cur.execute("DELETE FROM claims")
-    return svc
+    config = _require_disposable_postgres_runtime()
+    _initialize_disposable_postgres(config.admin_dsn, config.app_dsn)
+    run_id = uuid4().hex
+    return MemoryService(
+        config.app_dsn,
+        workspace_root=".",
+        tenant_id=f"parity-{run_id}",
+        require_tenant=True,
+        principal="parity-test",
+        allowed_scopes=("project",),
+    )
 
 
 @pytest.fixture(

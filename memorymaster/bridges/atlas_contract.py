@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from typing import Any
 
-ATLAS_CONTRACT_VERSION = "1.5.1"
+ATLAS_CONTRACT_VERSION = "2.0.0"
 """Semver string for the Atlas API/CLI contract.
 
 LifeAgent and any other consumer MUST refuse to start if the major component
@@ -214,10 +214,10 @@ ATLAS_SUBCOMMANDS: list[dict[str, Any]] = [
     },
     {
         "name": "transcribe-source-item",
-        "description": "Run transcription on a source_item via the chosen provider; stores transcript as an evidence_item. Mock is default. Real provider 'openai' uses Whisper API via OPENAI_API_KEY + OPENAI_BASE_URL.",
+        "description": "Run transcription using an explicitly selected provider. Production requires ready OpenAI configuration; mock requires conspicuous test/development opt-in.",
         "inputs": {
             "--source-item-id": {"type": "int", "required": True},
-            "--provider": {"type": "str", "required": False, "default": "mock", "allowed": ["mock", "openai"]},
+            "--provider": {"type": "str", "required": True, "allowed": ["mock", "openai"]},
         },
         "data_keys": ["source_item_id", "created", "evidence", "error", "provider"],
         "meta_total": "1 if evidence else 0",
@@ -225,10 +225,10 @@ ATLAS_SUBCOMMANDS: list[dict[str, Any]] = [
     },
     {
         "name": "ocr-source-item",
-        "description": "Run OCR on a source_item via the chosen provider; stores OCR text as an evidence_item. Mock is default. Real provider 'tesseract' requires the pytesseract Python package AND a system 'tesseract' binary on PATH.",
+        "description": "Run OCR using an explicitly selected provider. Production requires ready Tesseract configuration; mock requires conspicuous test/development opt-in.",
         "inputs": {
             "--source-item-id": {"type": "int", "required": True},
-            "--provider": {"type": "str", "required": False, "default": "mock", "allowed": ["mock", "tesseract"]},
+            "--provider": {"type": "str", "required": True, "allowed": ["mock", "tesseract"]},
         },
         "data_keys": ["source_item_id", "created", "evidence", "error", "provider"],
         "meta_total": "1 if evidence else 0",
@@ -331,7 +331,13 @@ ATLAS_ENDPOINTS: list[dict[str, Any]] = [
 ]
 
 
-BREAKING_CHANGES_SINCE: list[dict[str, str]] = []
+BREAKING_CHANGES_SINCE: list[dict[str, str]] = [
+    {
+        "version": "2.0.0",
+        "summary": "Media commands require an explicit, ready provider; mock media is restricted to opted-in test/development modes.",
+        "date": "2026-07-13",
+    },
+]
 """History of breaking changes. Each entry: {"version": "X.Y.Z", "summary": "...", "date": "YYYY-MM-DD"}.
 
 Empty in 1.0.0 — the contract was born here. Future major bumps must append.

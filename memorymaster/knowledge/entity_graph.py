@@ -18,10 +18,10 @@ import os
 import sqlite3
 import urllib.error
 import urllib.request
-import uuid
 from datetime import datetime, timezone
 
-from memorymaster.stores._storage_shared import open_conn
+from memorymaster.knowledge.entity_registry import add_alias, resolve_or_create
+from memorymaster.stores._storage_shared import connect_ro, open_conn
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,10 @@ QUERY_ENTITY_PROMPT = (
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_MODEL = "deepseek-coder-v2:16b"
+
+
+class EntityGraphNotReady(RuntimeError):
+    """Raised when the versioned relational graph schema is unavailable."""
 
 
 def _llm_chat(prompt: str, system: str = "", model: str = "", base_url: str = "") -> str:
@@ -96,94 +100,85 @@ def _parse_json(raw: str) -> dict:
 class EntityGraph:
     """Entity extraction and graph storage in SQLite."""
 
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, *, read_only: bool = False) -> None:
         self.db_path = db_path
-        # Schema is created once per instance: bulk ingest calls extract_and_link
-        # once per claim, and re-issuing the full executescript DDL + commit on
-        # every claim is pure churn. Flag flips True after the first ensure.
+        self.read_only = bool(read_only)
         self._schema_ready = False
 
     def _connect(self) -> sqlite3.Connection:
-        return open_conn(self.db_path)
+        if self.db_path.startswith(("postgres://", "postgresql://")):
+            raise EntityGraphNotReady(
+                "Postgres entity extraction is not enabled; the canonical schema "
+                "is migration-ready but the runtime adapter remains SQLite-only."
+            )
+        return connect_ro(self.db_path) if self.read_only else open_conn(self.db_path)
+
+    def assert_ready(self, conn: sqlite3.Connection | None = None) -> None:
+        """Validate the migrated schema without creating or altering objects."""
+        if self._schema_ready:
+            return
+        own_conn = conn is None
+        try:
+            conn = conn or self._connect()
+            tables = {
+                row["name"]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND "
+                    "name IN ('entities','entity_aliases','entity_edges','claim_entity_links')"
+                )
+            }
+            columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(entities)")
+            }
+            if tables != {
+                "entities",
+                "entity_aliases",
+                "entity_edges",
+                "claim_entity_links",
+            } or not {"id", "canonical_name", "entity_type", "scope"} <= columns:
+                raise EntityGraphNotReady(
+                    "Entity graph schema is not ready; run `memorymaster init-db` "
+                    "with a schema-administration connection."
+                )
+            self._schema_ready = True
+        except sqlite3.OperationalError as exc:
+            raise EntityGraphNotReady(
+                "Entity graph schema is not ready; run `memorymaster init-db` "
+                "with a schema-administration connection."
+            ) from exc
+        finally:
+            if own_conn and conn is not None:
+                conn.close()
 
     def ensure_tables(self, conn: sqlite3.Connection | None = None) -> None:
-        """Create entity tables if they don't exist. Idempotent - safe to call multiple times.
-
-        Guarded by ``self._schema_ready`` so the executescript DDL + commit runs
-        at most once per instance. Pass an open ``conn`` to reuse a caller's
-        connection (avoids opening a second one during extract_and_link).
-        """
+        """Compatibility admin entrypoint backed only by immutable migrations."""
         if self._schema_ready:
             return
         own_conn = conn is None
         conn = conn or self._connect()
         try:
-            conn.executescript("""
-                CREATE TABLE IF NOT EXISTS entities (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    type TEXT NOT NULL DEFAULT 'concept',
-                    aliases TEXT NOT NULL DEFAULT '[]',
-                    created_at TEXT NOT NULL
-                );
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_name
-                    ON entities(name COLLATE NOCASE);
-                CREATE TABLE IF NOT EXISTS entity_edges (
-                    source_id TEXT NOT NULL,
-                    target_id TEXT NOT NULL,
-                    relation TEXT NOT NULL DEFAULT 'related_to',
-                    weight REAL NOT NULL DEFAULT 1.0,
-                    claim_id INTEGER,
-                    created_at TEXT NOT NULL,
-                    last_reinforced_at TEXT,
-                    PRIMARY KEY (source_id, target_id, relation)
-                );
-                CREATE TABLE IF NOT EXISTS claim_entity_links (
-                    claim_id INTEGER NOT NULL,
-                    entity_id TEXT NOT NULL,
-                    PRIMARY KEY (claim_id, entity_id)
-                );
-                CREATE INDEX IF NOT EXISTS idx_cel_entity
-                    ON claim_entity_links(entity_id);
-            """)
-            self._migrate_edge_columns(conn)
-            conn.commit()
-            self._schema_ready = True
-        except sqlite3.OperationalError as exc:
-            logger.warning("ensure_tables already called (idempotent): %s", exc)
-            conn.rollback()
+            from memorymaster.knowledge.entity_registry import ensure_entity_schema
+
+            ensure_entity_schema(conn)
+            self.assert_ready(conn)
         finally:
             if own_conn:
                 conn.close()
 
-    @staticmethod
-    def _migrate_edge_columns(conn: sqlite3.Connection) -> None:
-        """Add Hebbian/Ebbinghaus columns to a pre-existing entity_edges table.
-
-        The CREATE TABLE above only fires for fresh DBs; a DB created before the
-        ``last_reinforced_at`` column existed keeps its old schema. ``ALTER TABLE
-        ADD COLUMN`` is the additive, default-safe path — guarded so re-running
-        on an already-migrated DB is a silent no-op (no "duplicate column" raise).
-        """
-        try:
-            cols = {row[1] for row in conn.execute("PRAGMA table_info(entity_edges)").fetchall()}
-        except sqlite3.OperationalError:
-            return
-        if "last_reinforced_at" not in cols:
-            conn.execute("ALTER TABLE entity_edges ADD COLUMN last_reinforced_at TEXT")
-
-    def _process_entities(self, data: dict, conn) -> tuple[dict[str, str], list[str]]:
+    def _process_entities(self, data: dict, conn) -> tuple[dict[str, int], list[str]]:
         """Process extracted entities and return (name->id mapping, original names)."""
         entity_names = []
-        entity_id_map: dict[str, str] = {}
+        entity_id_map: dict[str, int] = {}
 
         for ent in data.get("entities", []):
             name = (ent.get("name") or "").strip()
             if not name or len(name) < 2:
                 continue
             ent_type = ent.get("type", "concept")
-            aliases = ent.get("aliases", [])
+            aliases = [str(alias) for alias in ent.get("aliases", []) if alias]
             ent_id = self._upsert_entity(conn, name, ent_type, aliases)
+            if ent_id <= 0:
+                continue
             entity_id_map[name.lower()] = ent_id
             entity_names.append(name)
             for alias in aliases:
@@ -204,16 +199,9 @@ class EntityGraph:
         if not text:
             return []
 
-        # One connection for the whole call: ensure schema (once per instance,
-        # guarded), read known entities, and write — instead of opening/pragma'ing
-        # a fresh connection per helper on every claim during bulk ingest.
         conn = self._connect()
         try:
-            try:
-                self.ensure_tables(conn)
-            except sqlite3.OperationalError as exc:
-                logger.error("Failed to ensure entity tables for claim %d: %s", claim_id, exc)
-                return []
+            self.assert_ready(conn)
 
             known = self._get_known_entity_names(limit=30, conn=conn)
             context = f"\nKnown entities: {', '.join(known)}" if known else ""
@@ -244,27 +232,22 @@ class EntityGraph:
         return entity_names
 
     def find_related_claims(self, entity_names: list[str], hops: int = 2, limit: int = 50) -> list[int]:
-        """Graph BFS: find claim IDs related to entities.
-
-        Returns empty list for non-existent entities or if tables don't exist.
-        """
+        """Graph BFS: find claim IDs related to canonical names or aliases."""
         if not entity_names:
             return []
 
         conn = self._connect()
         try:
-            # Check if tables exist before querying
-            try:
-                conn.execute("SELECT 1 FROM entities LIMIT 1")
-            except sqlite3.OperationalError:
-                logger.debug("Entity tables don't exist yet, returning empty list")
-                return []
-
+            self.assert_ready(conn)
             placeholders = ",".join("?" * len(entity_names))
             names_lower = [n.lower() for n in entity_names]
             seed_rows = conn.execute(
-                f"SELECT id FROM entities WHERE LOWER(name) IN ({placeholders})",
-                names_lower,
+                f"""SELECT DISTINCT e.id
+                    FROM entities e
+                    LEFT JOIN entity_aliases a ON a.entity_id = e.id
+                    WHERE LOWER(e.canonical_name) IN ({placeholders})
+                       OR LOWER(a.original_form) IN ({placeholders})""",
+                names_lower + names_lower,
             ).fetchall()
             if not seed_rows:
                 return []
@@ -304,61 +287,40 @@ class EntityGraph:
                 seed_ids + [hops, hops, limit],
             ).fetchall()
             return [r["claim_id"] for r in rows]
-        except sqlite3.OperationalError as exc:
-            logger.warning("find_related_claims failed: %s", exc)
-            return []
         finally:
             conn.close()
 
     def get_stats(self) -> dict:
         conn = self._connect()
         try:
+            self.assert_ready(conn)
             entities = conn.execute("SELECT COUNT(*) as c FROM entities").fetchone()["c"]
             edges = conn.execute("SELECT COUNT(*) as c FROM entity_edges").fetchone()["c"]
             links = conn.execute("SELECT COUNT(*) as c FROM claim_entity_links").fetchone()["c"]
             types = {
-                r["type"]: r["cnt"]
-                for r in conn.execute("SELECT type, COUNT(*) as cnt FROM entities GROUP BY type").fetchall()
+                r["entity_type"]: r["cnt"]
+                for r in conn.execute(
+                    "SELECT entity_type, COUNT(*) as cnt FROM entities GROUP BY entity_type"
+                ).fetchall()
             }
             return {"entities": entities, "edges": edges, "claim_links": links, "by_type": types}
         finally:
             conn.close()
 
-    def _upsert_entity(self, conn, name: str, ent_type: str, aliases: list[str]) -> str:
-        existing = conn.execute(
-            "SELECT id, aliases FROM entities WHERE LOWER(name) = LOWER(?)", (name,)
-        ).fetchone()
-        if existing:
-            return self._merge_entity_aliases(conn, existing, aliases)
-        ent_id = str(uuid.uuid4())
-        # INSERT OR IGNORE + re-select: a concurrent writer can insert a
-        # case-insensitively-equal name between the SELECT above and this INSERT.
-        # The NOCASE unique index would raise IntegrityError on a plain INSERT and
-        # abort extract_and_link; OR IGNORE makes the loser a no-op, after which we
-        # re-select the winning row and merge our aliases into it.
-        cur = conn.execute(
-            "INSERT OR IGNORE INTO entities (id, name, type, aliases, created_at) VALUES (?, ?, ?, ?, ?)",
-            (ent_id, name, ent_type, json.dumps(aliases), datetime.now(timezone.utc).isoformat()),
+    def _upsert_entity(self, conn, name: str, ent_type: str, aliases: list[str]) -> int:
+        entity_id = resolve_or_create(
+            conn,
+            name,
+            entity_type=ent_type or "concept",
+            scope="global",
         )
-        if cur.rowcount:
-            return ent_id
-        winner = conn.execute(
-            "SELECT id, aliases FROM entities WHERE LOWER(name) = LOWER(?)", (name,)
-        ).fetchone()
-        if winner is None:
-            return ent_id  # defensive: row vanished; treat our id as authoritative
-        return self._merge_entity_aliases(conn, winner, aliases)
+        if entity_id <= 0:
+            return 0
+        for alias in aliases:
+            add_alias(conn, entity_id, alias)
+        return entity_id
 
-    @staticmethod
-    def _merge_entity_aliases(conn, row, aliases: list[str]) -> str:
-        """Merge new aliases into an existing entity row; return its id."""
-        current = json.loads(row["aliases"])
-        merged = list(set(current + aliases))
-        if merged != current:
-            conn.execute("UPDATE entities SET aliases = ? WHERE id = ?", (json.dumps(merged), row["id"]))
-        return row["id"]
-
-    def _upsert_edge(self, conn, source_id: str, target_id: str, relation: str, claim_id: int) -> None:
+    def _upsert_edge(self, conn, source_id: int, target_id: int, relation: str, claim_id: int) -> None:
         # Hebbian potentiation: every co-occurrence strengthens the edge
         # (weight += 0.1) and stamps last_reinforced_at = NOW. The timestamp is
         # what the Ebbinghaus decay job reads to compute elapsed-days; without it
@@ -379,8 +341,12 @@ class EntityGraph:
         own_conn = conn is None
         conn = conn or self._connect()
         try:
-            rows = conn.execute("SELECT name FROM entities ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
-            return [r["name"] for r in rows]
+            self.assert_ready(conn)
+            rows = conn.execute(
+                "SELECT canonical_name FROM entities ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [r["canonical_name"] for r in rows]
         finally:
             if own_conn:
                 conn.close()

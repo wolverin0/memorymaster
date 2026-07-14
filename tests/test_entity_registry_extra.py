@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from memorymaster.stores._storage_schema import load_schema_sql
 from memorymaster.knowledge.entity_registry import (
     add_alias,
     backfill_entities,
@@ -35,17 +36,30 @@ from memorymaster.knowledge.entity_registry import (
 def _fresh_db() -> sqlite3.Connection:
     """In-memory DB with claims + entity tables, mirroring the live schema."""
     conn = sqlite3.connect(":memory:")
-    conn.execute(
-        """
-        CREATE TABLE claims (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            subject TEXT,
-            entity_id INTEGER
-        )
-        """
-    )
+    conn.executescript(load_schema_sql())
     ensure_entity_schema(conn)
     return conn
+
+
+def _insert_claim(
+    conn: sqlite3.Connection,
+    subject: str,
+    entity_id: int | None = None,
+) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(claims)")}
+    if "entity_id" in columns:
+        conn.execute(
+            "INSERT INTO claims "
+            "(text, subject, entity_id, scope, status, created_at, updated_at) "
+            "VALUES ('entity registry test', ?, ?, 'project:test', 'candidate', 't', 't')",
+            (subject, entity_id),
+        )
+    else:
+        conn.execute(
+            "INSERT INTO claims (text, subject, scope, status, created_at, updated_at) "
+            "VALUES ('entity registry test', ?, 'project:test', 'candidate', 't', 't')",
+            (subject,),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -111,8 +125,8 @@ def test_merge_moves_aliases_and_claims_with_counts():
     assert keep != merge
 
     # Two claims reference the merged entity.
-    conn.execute("INSERT INTO claims (subject, entity_id) VALUES ('a', ?)", (merge,))
-    conn.execute("INSERT INTO claims (subject, entity_id) VALUES ('b', ?)", (merge,))
+    _insert_claim(conn, "a", merge)
+    _insert_claim(conn, "b", merge)
 
     out = merge_entities(conn, keep, merge)
 
@@ -178,8 +192,8 @@ def test_list_entities_orders_by_claim_count_and_counts_aliases():
     add_alias(conn, busy, "Busy-alt")
     quiet = resolve_or_create(conn, "Quiet")
     # Give 'busy' two claims, 'quiet' none.
-    conn.execute("INSERT INTO claims (subject, entity_id) VALUES ('x', ?)", (busy,))
-    conn.execute("INSERT INTO claims (subject, entity_id) VALUES ('y', ?)", (busy,))
+    _insert_claim(conn, "x", busy)
+    _insert_claim(conn, "y", busy)
 
     rows = list_entities(conn)
     assert [r["name"] for r in rows] == ["Busy", "Quiet"]  # busy first
@@ -231,11 +245,9 @@ def test_backfill_entities_resolves_all_subjects():
     canonical entity so the claims graph isn't fragmented."""
     conn = sqlite3.connect(":memory:")
     # Claims table WITHOUT entity_id — backfill must ALTER it in.
-    conn.execute(
-        "CREATE TABLE claims (id INTEGER PRIMARY KEY AUTOINCREMENT, subject TEXT)"
-    )
+    conn.executescript(load_schema_sql())
     for s in ["Qdrant", "qdrant", "Postgres"]:
-        conn.execute("INSERT INTO claims (subject) VALUES (?)", (s,))
+        _insert_claim(conn, s)
 
     out = backfill_entities(conn)
 
@@ -261,10 +273,8 @@ def test_backfill_entities_is_safe_to_rerun():
     """Running backfill twice must not double-create entities or crash on the
     already-present entity_id column (the ALTER is guarded)."""
     conn = sqlite3.connect(":memory:")
-    conn.execute(
-        "CREATE TABLE claims (id INTEGER PRIMARY KEY AUTOINCREMENT, subject TEXT)"
-    )
-    conn.execute("INSERT INTO claims (subject) VALUES ('Qdrant')")
+    conn.executescript(load_schema_sql())
+    _insert_claim(conn, "Qdrant")
     backfill_entities(conn)
     out2 = backfill_entities(conn)  # second pass: nothing left to resolve
     assert out2["subjects_processed"] == 0

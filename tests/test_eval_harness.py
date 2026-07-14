@@ -102,18 +102,21 @@ def seeded_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
     test wall time and are fully deterministic given identical inputs."""
     tmp = tmp_path_factory.mktemp("eval_harness_db")
     db = tmp / "test.db"
+    from memorymaster.core.lifecycle import transition_claim
+
     svc = MemoryService(db_target=str(db), workspace_root=tmp)
     svc.init_db()
     for text, subject in _SEED_CLAIMS:
-        svc.ingest(
+        claim = svc.ingest(
             text=text,
             citations=[CitationInput(source="test-harness")],
             subject=subject,
             claim_type="fact",
-            scope="project:memorymaster",
+            scope="project",
             confidence=0.7,
             source_agent="test",
         )
+        transition_claim(svc.store, claim.id, "confirmed", "trusted eval fixture")
     return db
 
 

@@ -35,6 +35,8 @@ REPO = Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from memorymaster.recall.qdrant_transport import QdrantTransportConfig  # noqa: E402
+
 # Ensure UTF-8 stdout on Windows so we can print claim text safely.
 if hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
@@ -135,6 +137,8 @@ def _load_embedder(model_name: str):
 
 
 def _load_qdrant(url: str):
+    transport = QdrantTransportConfig.from_env()
+    transport.validate_url(url)
     try:
         from qdrant_client import QdrantClient
     except ImportError as exc:
@@ -145,7 +149,14 @@ def _load_qdrant(url: str):
             "    pip install qdrant-client"
         ) from exc
     logger.info("Connecting to Qdrant at %s", url)
-    return QdrantClient(url=url, timeout=30.0)
+    try:
+        return QdrantClient(
+            url=url,
+            timeout=30.0,
+            **transport.qdrant_client_kwargs(),
+        )
+    except Exception:
+        raise SystemExit("Could not create the Qdrant client") from None
 
 
 def _ensure_collection(client, collection: str, dims: int) -> None:
@@ -188,7 +199,10 @@ def index_claims(
     embedder = _load_embedder(embed_model)
     dims = int(embedder.get_sentence_embedding_dimension())
     client = _load_qdrant(qdrant_url)
-    _ensure_collection(client, collection, dims)
+    try:
+        _ensure_collection(client, collection, dims)
+    except Exception:
+        raise SystemExit("Could not prepare the Qdrant collection") from None
 
     total = _count_claims(db_path)
     if limit is not None:
@@ -227,8 +241,8 @@ def index_claims(
         try:
             _upsert_batch(client, collection, points)
             stats["indexed"] += len(points)
-        except Exception as exc:
-            logger.warning("qdrant upsert of %d points failed: %s", len(points), exc)
+        except Exception:
+            logger.warning("qdrant upsert of %d points failed", len(points))
             stats["errors"] += len(points)
         done += len(points)
         texts = []

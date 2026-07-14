@@ -1,16 +1,15 @@
-"""Stop hook: Block-based memory capture (MemPalace-inspired).
+"""Optional maximum-capture Stop hook; quiet and non-blocking by default.
 
-Every SAVE_INTERVAL human messages, BLOCK Claude from stopping and force a save.
-Uses decision:block + reason as system message. Claude saves to MemoryMaster,
-then next Stop fires with stop_hook_active=true → passes through.
-
-Also runs Gemini extraction as fallback for non-block turns.
+When explicitly enabled, checkpoint blocking can pause every SAVE_INTERVAL.
+Verbatim, per-stop distillation, and correction mining are separately opt-in;
+each enabled data path consumes only appended transcript lines.
 """
 import json
 import os
 import sys
 import re
 import hashlib
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -21,7 +20,21 @@ SAVE_INTERVAL = 15  # Block every N human messages
 
 sys.path.insert(0, PROJECT_ROOT)
 
-os.makedirs(STATE_DIR, exist_ok=True)
+def _enabled(name):
+    return os.environ.get(name, "").strip().lower() not in ("", "0", "false", "no", "off")
+
+
+def _approve():
+    sys.stdout.write(json.dumps({"decision": "approve"}))
+
+
+def _temporary_chunk(text):
+    handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".jsonl", delete=False)
+    try:
+        handle.write(text)
+        return handle.name
+    finally:
+        handle.close()
 
 
 def _spool_enabled() -> bool:
@@ -261,22 +274,88 @@ def _run_rule_extraction(transcript_path, cwd):
         pass
 
 
+def _run_incremental_llm(ledger, transcript_path, session_id, cwd, provider, operation, runner):
+    chunk = ledger.read_increment(transcript_path, f"{session_id}:{operation}")
+    if not chunk.text:
+        return
+    reservation = ledger.reserve_llm(provider, session_id, operation)
+    if reservation is None:
+        return
+    temp_path = ""
+    try:
+        temp_path = _temporary_chunk(chunk.text)
+        runner(temp_path, cwd)
+        ledger.finish_llm(
+            reservation,
+            input_bytes=len(chunk.text.encode("utf-8")),
+            output_bytes=0,
+            outcome="ok",
+        )
+        ledger.commit_cursor(chunk)
+    except Exception:
+        ledger.finish_llm(reservation, input_bytes=0, output_bytes=0, outcome="error")
+    finally:
+        if temp_path:
+            Path(temp_path).unlink(missing_ok=True)
+
+
+def _run_incremental_verbatim(ledger, transcript_path, session_id, scope):
+    chunk = ledger.read_increment(transcript_path, f"{session_id}:stop-verbatim")
+    if not chunk.text:
+        return
+    if os.path.exists(DB_PATH):
+        from memorymaster.govern.verbatim_cleanup import plan_retention
+
+        if not plan_retention(DB_PATH).get("within_bounds", True):
+            return
+    if _spool_enabled():
+        from memorymaster.recall.verbatim_store import spool_transcript_text
+
+        spool_transcript_text(
+            DB_PATH, chunk.text, session_id=session_id, scope=scope, source_agent="stop-hook"
+        )
+    else:
+        from memorymaster.recall.verbatim_store import store_transcript_text
+
+        store_transcript_text(
+            DB_PATH, chunk.text, session_id=session_id, scope=scope, source_agent="stop-hook"
+        )
+    ledger.commit_cursor(chunk)
+
+
 def main():
     try:
         data = json.loads(sys.stdin.read() or "{}")
     except Exception:
         data = {}
 
-    session_id = data.get("session_id", "unknown")
+    session_id = str(data.get("session_id", "unknown"))
     # Sanitize session_id
     session_id = re.sub(r"[^a-zA-Z0-9_-]", "", session_id) or "unknown"
     transcript_path = data.get("transcript_path", "")
     cwd = data.get("cwd", os.getcwd())
     stop_hook_active = data.get("stop_hook_active", False)
+    blocking = _enabled("MEMORYMASTER_STOP_BLOCKING")
+    verbatim = _enabled("MEMORYMASTER_STOP_CAPTURE_VERBATIM")
+    extract = _enabled("MEMORYMASTER_STOP_EXTRACT")
+    rule_mining = _enabled("MEMORYMASTER_STOP_RULE_MINING")
 
     # If already in a save cycle, let through (prevents infinite loop)
     if stop_hook_active in (True, "True", "true"):
-        sys.stdout.write(json.dumps({"decision": "approve"}))
+        _approve()
+        return
+
+    if not any((blocking, verbatim, extract, rule_mining)):
+        _approve()
+        return
+
+    os.makedirs(STATE_DIR, exist_ok=True)
+    try:
+        from memorymaster.core.capture_control import CaptureLedger, capture_state_path
+
+        ledger = CaptureLedger(capture_state_path())
+    except Exception:
+        _approve()
         return
 
     # Count human messages
@@ -289,7 +368,7 @@ def main():
         f.write(f"[{datetime.now().strftime('%H:%M:%S')}] {session_id}: {exchange_count} exchanges, {since_last} since last save\n")
 
     # Time to block and force save?
-    if since_last >= SAVE_INTERVAL and exchange_count > 0:
+    if blocking and since_last >= SAVE_INTERVAL and exchange_count > 0:
         _set_last_save(session_id, exchange_count)
 
         with open(os.path.join(STATE_DIR, "hook.log"), "a") as f:
@@ -303,29 +382,40 @@ def main():
 
     # Store verbatim on every stop (raw conversation storage)
     try:
-        if transcript_path and os.path.exists(transcript_path):
+        if verbatim and transcript_path and os.path.exists(transcript_path):
             scope = "project:" + os.path.basename(cwd).lower().replace(" ", "-") if cwd else "global"
-            if _spool_enabled():
-                # P1 spec §2.3: append op:"verbatim" envelopes (~10 ms) instead
-                # of opening the multi-GB DB on every stop; the steward drain
-                # lands them in verbatim_memories via store_verbatim.
-                from memorymaster.recall.verbatim_store import spool_transcript
-                spool_transcript(DB_PATH, transcript_path, scope=scope, source_agent="stop-hook")
-            else:
-                from memorymaster.recall.verbatim_store import store_transcript
-                store_transcript(DB_PATH, transcript_path, scope=scope, source_agent="stop-hook")
+            _run_incremental_verbatim(ledger, transcript_path, session_id, scope)
     except Exception:
         pass
 
     # Not time to block — run passive Gemini extraction
-    _run_gemini_extraction(transcript_path, cwd)
+    provider = os.environ.get("MEMORYMASTER_LLM_PROVIDER", "google")
+    if extract:
+        _run_incremental_llm(
+            ledger,
+            transcript_path,
+            session_id,
+            cwd,
+            provider,
+            "stop-distill",
+            _run_gemini_extraction,
+        )
 
     # R1b: mine the latest correction in this session into a rule claim.
     # Accepted P1 residual (spec step 9): mine_transcript_rules needs a live
     # MemoryService, so this stays a direct DB path even under the flag.
-    _run_rule_extraction(transcript_path, cwd)
+    if rule_mining:
+        _run_incremental_llm(
+            ledger,
+            transcript_path,
+            session_id,
+            cwd,
+            provider,
+            "stop-correction",
+            _run_rule_extraction,
+        )
 
-    sys.stdout.write(json.dumps({"decision": "approve"}))
+    _approve()
 
 
 if __name__ == "__main__":

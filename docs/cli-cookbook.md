@@ -60,10 +60,20 @@ python -m memorymaster --db memorymaster.db links 1 --type relates_to
 ```
 
 ### qdrant-search
-**Purpose**: Run semantic search through Qdrant.
+**Purpose**: Reserved for governed semantic retrieval. R1.3 temporarily disables this command; it exits with code 2 before constructing a Qdrant backend. Use `query` for authoritative lexical/hybrid recall.
+
+### qdrant-sync
+**Purpose**: Maintain the Qdrant index while retrieval is quarantined.
 **Example**:
 ```
-python -m memorymaster --db memorymaster.db qdrant-search "retrieval profiles" --limit 5 --states confirmed,stale
+python -m memorymaster --db memorymaster.db qdrant-sync
+```
+
+### qdrant-reconcile
+**Purpose**: Compare the authoritative store with the Qdrant maintenance index and repair drift/orphans. This does not enable claim or verbatim payload retrieval.
+**Example**:
+```
+python -m memorymaster --db memorymaster.db qdrant-reconcile
 ```
 
 ## Ingest & Lifecycle
@@ -304,7 +314,7 @@ python -m memorymaster --db memorymaster.db install-gitnexus-hook
 ```
 
 ### qdrant-sync
-**Purpose**: Bulk-sync active claims to Qdrant vector storage.
+**Purpose**: Bulk-sync active claims to the Qdrant maintenance index. Indexed payloads are not a retrieval authority during R1.3.
 **Example**:
 ```
 python -m memorymaster --db memorymaster.db qdrant-sync --qdrant-url http://localhost:6333 --ollama-url http://localhost:11434
@@ -472,15 +482,17 @@ python -m memorymaster --db memorymaster.db record-media-retry-outcome --retry-i
 **Purpose**: Transcribe a source item through the selected provider.
 **Example**:
 ```
-python -m memorymaster --db memorymaster.db transcribe-source-item --source-item-id 1 --provider mock
+python -m memorymaster --db memorymaster.db transcribe-source-item --source-item-id 1 --provider openai
 ```
 
 ### ocr-source-item
 **Purpose**: Run OCR on a source item through the selected provider.
 **Example**:
 ```
-python -m memorymaster --db memorymaster.db ocr-source-item --source-item-id 1 --provider mock
+python -m memorymaster --db memorymaster.db ocr-source-item --source-item-id 1 --provider tesseract
 ```
+
+Mock providers require both `MEMORYMASTER_MEDIA_MODE=test` (or `development`) and `MEMORYMASTER_ALLOW_SYNTHETIC_MEDIA=1`. They never feed governed claims, actions, citations, or exports.
 
 ### export-actions
 **Purpose**: Export approved Atlas action proposals.

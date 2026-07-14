@@ -84,6 +84,7 @@ def test_gate_excludes_low_confidence_claims(env):
         workspace=env["workspace"],
         min_confidence=0.8,
         detail_level="summary",
+        trust_mode="exploratory",
     )
     assert result["ok"] is True
     confidences = [c["confidence"] for c in result.get("claims", [])]
@@ -100,7 +101,13 @@ def test_open_gate_matches_query_for_context(env):
     _ingest(env, f"{QUERY_TOKEN} alpha claim", confidence=0.9)
     _ingest(env, f"{QUERY_TOKEN} beta claim", confidence=0.4)
 
-    common = dict(query=QUERY_TOKEN, db=env["db"], workspace=env["workspace"], token_budget=2000)
+    common = dict(
+        query=QUERY_TOKEN,
+        db=env["db"],
+        workspace=env["workspace"],
+        token_budget=2000,
+        trust_mode="exploratory",
+    )
     volunteered = env["volunteer_context"](min_confidence=0.0, **common)
     baseline = env["query_for_context"](**common)
 
@@ -122,6 +129,7 @@ def test_no_high_confidence_match_returns_empty_ok(env):
         db=env["db"],
         workspace=env["workspace"],
         min_confidence=0.9,
+        trust_mode="exploratory",
     )
     assert result["ok"] is True
     # The graceful-empty contract: zero claims volunteered (the formatted block
@@ -172,6 +180,7 @@ def test_sensitive_claim_never_volunteered(tmp_path, monkeypatch):
         workspace=workspace,
         min_confidence=0.0,
         detail_level="standard",
+        trust_mode="exploratory",
     )
     assert result["ok"] is True
     assert "[REDACTED:" not in (result["output"] or ""), "redacted-secret claim leaked into volunteered output"
@@ -187,7 +196,12 @@ def test_no_side_effect_on_subsequent_query(env):
     """
     _ingest(env, f"{QUERY_TOKEN} durable claim", confidence=0.5)
 
-    common = dict(query=QUERY_TOKEN, db=env["db"], workspace=env["workspace"])
+    common = dict(
+        query=QUERY_TOKEN,
+        db=env["db"],
+        workspace=env["workspace"],
+        trust_mode="exploratory",
+    )
     before = env["query_for_context"](**common)
     env["volunteer_context"](min_confidence=0.99, **common)  # gate out everything
     after = env["query_for_context"](**common)

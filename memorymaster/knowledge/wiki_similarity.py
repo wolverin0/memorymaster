@@ -121,6 +121,10 @@ class WikiCorpus:
             return list(self.articles.values())
         return [a for a in self.articles.values() if a.article_scope == scope]
 
+    def similarity_for_claim(self, claim: dict[str, Any]) -> float:
+        """Implement the narrow stewardship extension protocol."""
+        return compute_wiki_similarity(claim, self)
+
 
 # ---------------------------------------------------------------------------
 # Article loading

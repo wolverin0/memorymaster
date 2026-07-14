@@ -14,6 +14,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 
+from memorymaster.core.security import sanitize_persisted_text
 from memorymaster.stores._storage_shared import open_conn
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,9 @@ class FeedbackTracker:
         if not claim_ids:
             return 0
 
+        raw_query = query_text if isinstance(query_text, str) else str(query_text or "")
+        safe_query, _ = sanitize_persisted_text(raw_query)
+
         if not isinstance(claim_ids, list):
             logger.warning("record_retrieval: claim_ids is not a list, converting")
             try:
@@ -84,7 +88,7 @@ class FeedbackTracker:
 
         now = datetime.now(timezone.utc).isoformat()
         rows = [
-            (str(uuid.uuid4()), cid, query_text[:500] if query_text else "", now, 1, None)
+            (str(uuid.uuid4()), cid, safe_query[:500], now, 1, None)
             for cid in claim_ids
         ]
         conn = self._connect()

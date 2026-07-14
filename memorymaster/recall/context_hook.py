@@ -1032,66 +1032,8 @@ def _apply_vector_fallback(
     rows: list,
     seen_ids: set[int],
 ) -> list:
-    """Augment ``rows`` with Qdrant semantic-search hits when the primary
-    retrieval stages under-produced.
-
-    Triggers only when ``len(rows) < MEMORYMASTER_RECALL_VECTOR_MIN_CANDIDATES``
-    (default 3) and every env-var gate is satisfied. Silently degrades on
-    any failure (qdrant unreachable, collection missing, embedder import
-    error, etc) so the caller keeps whatever FTS5 + entity fanout produced.
-
-    Returns the (possibly augmented) row list. Always mutates ``seen_ids``
-    when new rows are added.
-    """
-    try:
-        from memorymaster.recall import qdrant_recall_fallback
-    except Exception as exc:  # pragma: no cover — import errors rare
-        logger.debug("vector fallback: module import skipped: %s", exc)
-        return rows
-
-    if not qdrant_recall_fallback.is_fallback_enabled():
-        return rows
-    if len(rows) >= qdrant_recall_fallback.fallback_threshold():
-        return rows
-
-    try:
-        hits = qdrant_recall_fallback.search(query)
-    except Exception as exc:  # pragma: no cover — search() already swallows
-        logger.debug("vector fallback: search skipped: %s", exc)
-        return rows
-
-    if not hits:
-        return rows
-
-    # Lazy security check — mirrors the entity fanout treatment.
-    try:
-        from memorymaster.core.security import is_sensitive_claim
-    except Exception:
-        is_sensitive_claim = lambda _claim: False  # type: ignore[assignment]  # noqa: E731
-
-    appended = 0
-    for hit in hits:
-        cid = hit.claim_id
-        if cid in seen_ids:
-            continue
-        try:
-            claim = svc.store.get_claim(cid, include_citations=True)
-        except Exception as exc:
-            logger.debug("vector fallback: get_claim(%d) failed: %s", cid, exc)
-            continue
-        if claim is None or getattr(claim, "status", "") == "archived":
-            continue
-        if is_sensitive_claim(claim):
-            continue
-        rows.append(_row_for_vector_hit(claim, hit.score))
-        seen_ids.add(cid)
-        appended += 1
-
-    if appended:
-        logger.debug(
-            "vector fallback: appended %d rows (total=%d) for query=%r",
-            appended, len(rows), query[:60],
-        )
+    """Return authoritative rows unchanged while Qdrant retrieval is quarantined."""
+    del svc, query, seen_ids
     return rows
 
 
@@ -1171,6 +1113,9 @@ def recall(
 
     ``return_ids`` defaults to ``False`` so every existing caller — MCP
     tools, CLI, hooks — gets the legacy ``str`` return type unchanged.
+
+    ``skip_qdrant`` is retained for caller compatibility but is a no-op while
+    R1.3 unconditionally quarantines Qdrant retrieval.
     """
     from memorymaster.core.service import MemoryService
 
@@ -1205,6 +1150,61 @@ def recall(
         _emit_recall_latency(phase_ms, total_start)
 
 
+def _prompt_recall_plan(query_text: str, *, limit: int):
+    """Build the immutable trusted policy shared by every prompt stream."""
+    from memorymaster.recall.planner import RetrievalRequest, build_retrieval_plan
+
+    scopes = [_current_scope(), "global"]
+    include_legacy = os.environ.get(
+        "MEMORYMASTER_QUERY_INCLUDE_LEGACY_PROJECT", "1"
+    ).strip().lower() not in {"0", "false", "no"}
+    if include_legacy:
+        scopes.append("project")
+    return build_retrieval_plan(
+        RetrievalRequest(
+            query_text=query_text,
+            limit=limit,
+            trust_mode="trusted",
+            retrieval_mode="legacy",
+            scope_allowlist=tuple(dict.fromkeys(scopes)),
+        )
+    )
+
+
+def _prompt_claim_allowed(claim, plan) -> bool:
+    """Fail closed for claims introduced by any prompt-recall stream."""
+    from memorymaster.core.security import is_sensitive_claim
+
+    if claim is None or getattr(claim, "status", "") not in set(plan.statuses):
+        return False
+    scopes = plan.scope_allowlist
+    if scopes is not None and (getattr(claim, "scope", "") or "").strip() not in scopes:
+        return False
+    visibility = (getattr(claim, "visibility", "public") or "public").strip().lower()
+    return visibility == "public" and not is_sensitive_claim(claim)
+
+
+def _filter_prompt_rows(rows: list[dict], plan) -> list[dict]:
+    return [row for row in rows if _prompt_claim_allowed(row.get("claim"), plan)]
+
+
+def _governed_prompt_rows(svc, query_text: str, *, limit: int) -> list[dict]:
+    """Run prompt-hook lexical recall through the immutable trusted planner."""
+    plan = _prompt_recall_plan(query_text, limit=limit)
+    statuses = set(plan.statuses)
+    rows = svc.query_rows(
+        query_text=plan.search_text,
+        limit=plan.limit,
+        retrieval_mode=plan.effective_mode,
+        include_stale="stale" in statuses,
+        include_conflicted="conflicted" in statuses,
+        include_candidates="candidate" in statuses,
+        scope_allowlist=list(plan.scope_allowlist or ()),
+        record_accesses=False,
+    )
+    return _filter_prompt_rows(rows, plan)
+
+
 def query_for_task(
     task_description: str,
     project_scope: str,
@@ -1234,8 +1234,8 @@ def query_for_task(
         Max TOKENS of inner content (default 500 ≈ 2KB chars). Outer
         XML wrapper adds ~80 chars on top.
     skip_qdrant:
-        Default True — vector search adds latency; FTS5 + ranking are
-        sufficient for most task briefings.
+        Selects primary-store ``legacy`` ranking when true and local ``hybrid``
+        ranking when false. Neither mode reads external Qdrant during R1.3.
 
     Returns
     -------
@@ -1286,10 +1286,11 @@ def query_for_task(
     from memorymaster.core.service import MemoryService
 
     db = db_path or os.environ.get("MEMORYMASTER_DEFAULT_DB") or "memorymaster.db"
-    svc = MemoryService(db_target=db, workspace_root=Path.cwd())
+    svc = MemoryService(db_target=db, workspace_root=Path.cwd(), read_only=True)
 
     scope_filter = [project_scope] if project_scope else None
-    # Query in legacy mode (FTS5 only) when skip_qdrant=True for latency.
+    # Historical name retained: this now selects primary-store legacy vs
+    # local hybrid ranking; external Qdrant reads are quarantined either way.
     retrieval_mode = "legacy" if skip_qdrant else "hybrid"
 
     try:
@@ -1349,17 +1350,10 @@ def _recall_impl(
     """
     MemoryService = _memory_service_cls
     db = db_path or os.environ.get("MEMORYMASTER_DEFAULT_DB") or "memorymaster.db"
-    if _wal_discipline_enabled():
-        # P1 WAL-discipline (spec §2.2): the per-prompt recall hook must
-        # never take a write lock on the shared multi-GB DB. The RO store
-        # hands out mode=ro + query_only connections (side lookups follow
-        # automatically through the store) and _record_accesses spools its
-        # access/feedback signal for the steward drain instead of UPDATEing
-        # inline — no tiering/decay/quality signal is lost (the F9 fix).
-        svc = MemoryService(db_target=db, workspace_root=Path.cwd(), read_only=True)
-    else:
-        # Flag off = the untouched legacy RW path, bit-for-bit.
-        svc = MemoryService(db_target=db, workspace_root=Path.cwd())
+    # Recall is always query-only. Access/feedback signals are emitted once,
+    # after top-level ranking and budget selection, through the RO spool path.
+    svc = MemoryService(db_target=db, workspace_root=Path.cwd(), read_only=True)
+    prompt_plan = _prompt_recall_plan(query, limit=100)
 
     # Pre-extract salient tokens before hitting FTS5. Passing the full
     # prompt verbatim AND-joins every token in FTS5 and rejects nearly all
@@ -1404,13 +1398,7 @@ def _recall_impl(
             # Fan out: top token first (highest IDF), then widen by OR.
             per_token_limit = max(3, 8 // max(1, len(token_list))) * _lr_overfetch
             for tok in token_list:
-                batch = svc.query_rows(
-                    query_text=tok,
-                    limit=per_token_limit,
-                    retrieval_mode="legacy",
-                    include_candidates=True,
-                    scope_allowlist=None,
-                )
+                batch = _governed_prompt_rows(svc, tok, limit=per_token_limit)
                 for row in batch:
                     claim = row.get("claim")
                     cid = getattr(claim, "id", None)
@@ -1423,13 +1411,7 @@ def _recall_impl(
 
         if not rows:
             # Fallback to raw prompt — preserves the old behaviour.
-            rows = svc.query_rows(
-                query_text=query,
-                limit=_fts_cap,
-                retrieval_mode="legacy",
-                include_candidates=True,
-                scope_allowlist=None,
-            )
+            rows = _governed_prompt_rows(svc, query, limit=_fts_cap)
             for row in rows:
                 claim = row.get("claim")
                 cid = getattr(claim, "id", None)
@@ -1474,25 +1456,6 @@ def _recall_impl(
                 if is_sensitive_claim(claim):
                     continue
                 rows.append(_row_for_claim(claim))
-
-    # Vector fallback — Qdrant semantic search when FTS5 + entity fanout
-    # produced fewer than MEMORYMASTER_RECALL_VECTOR_MIN_CANDIDATES rows
-    # (default 3). Fully env-gated so default behaviour is unchanged. See
-    # ``_apply_vector_fallback`` for the exact gating logic. Only time when
-    # the fallback is enabled — otherwise we emit nothing (zero-overhead).
-    _vector_enabled = False
-    try:
-        from memorymaster.recall import qdrant_recall_fallback as _qrf
-
-        _vector_enabled = bool(_qrf.is_fallback_enabled())
-    except Exception:
-        _vector_enabled = False
-
-    if _vector_enabled:
-        with _phase_timer(phase_ms, "vector_fallback"):
-            rows = _apply_vector_fallback(svc, query, rows, seen_ids)
-    else:
-        rows = _apply_vector_fallback(svc, query, rows, seen_ids)
 
     # Verbatim retrieval — MemPalace-style raw conversation stream.
     #
@@ -1736,28 +1699,10 @@ def _recall_impl(
             except Exception as exc:  # noqa: BLE001 — defensive (claim 11907)
                 logger.debug("graph stream skipped: %s", exc)
 
-    if not rows and not skip_qdrant:
-        # Fallback to Qdrant semantic search
-        try:
-            from memorymaster.recall.qdrant_backend import QdrantBackend
-            backend = QdrantBackend()
-            hits = backend.search(query, limit=5)
-            backend.close()
-            if hits:
-                lines = ["# Memory Context (semantic)", ""]
-                for hit in hits:
-                    p = hit.get("payload", {})
-                    text = p.get("claim_text", "")[:200]
-                    lines.append(f"- {text}")
-                    if _rendered_ids is not None:
-                        cid = p.get("claim_id")
-                        if isinstance(cid, int):
-                            _rendered_ids.append(cid)
-                return "\n".join(lines).encode("ascii", errors="replace").decode("ascii")
-        except Exception:
-            pass
-        return ""
-
+    # Every optional stream is untrusted candidate discovery. Apply the same
+    # trusted status/scope/visibility/sensitivity policy after all streams so
+    # graph, entity, two-pass, closets, and verbatim cannot bypass P2-A.
+    rows = _filter_prompt_rows(rows, prompt_plan)
     if not rows:
         return ""
 
@@ -2109,6 +2054,7 @@ def _recall_impl(
 
     # Build output — top claims within budget
     lines = ["# Memory Context", ""]
+    rendered_rows: list[dict] = []
     tokens_used = 0
     chars_per_token = 4
     for row in ranked:
@@ -2129,11 +2075,15 @@ def _recall_impl(
         if tokens_used + chunk_tokens > budget:
             break
         lines.append(chunk)
+        rendered_rows.append(row)
         tokens_used += chunk_tokens
         if _rendered_ids is not None:
             cid = getattr(claim, "id", None)
             if isinstance(cid, int):
                 _rendered_ids.append(cid)
+
+    if rendered_rows:
+        svc._record_accesses(rendered_rows, query_text=query)
 
     # Close the rank_and_build timer right before we emit output so the
     # measurement covers _relevance/RRF + the budget-trimming loop.

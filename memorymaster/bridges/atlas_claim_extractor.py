@@ -6,6 +6,7 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from memorymaster.bridges.evidence_policy import is_governed_evidence_eligible
 from memorymaster.core.models import CitationInput, Claim, EvidenceItem, SourceItem
 
 
@@ -55,6 +56,8 @@ def extract_atlas_claims_from_evidence(
 
     for evidence in evidence_items:
         scanned += 1
+        if not is_governed_evidence_eligible(evidence):
+            continue
         source_item = service.get_source_item_by_id(evidence.source_item_id)
         draft = _draft_from_evidence(evidence)
         if draft is None:

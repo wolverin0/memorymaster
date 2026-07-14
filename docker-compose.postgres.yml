@@ -1,16 +1,22 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:b7587f3cb74f4f4b2a4f9d67f052edbf95eb93f4fec7c5ada3792546caaf7383
     container_name: memorymaster-pg
     restart: unless-stopped
     environment:
       POSTGRES_DB: memorymaster
       POSTGRES_USER: mm
-      POSTGRES_PASSWORD: mm_pw
+      POSTGRES_PASSWORD: "${MEMORYMASTER_POSTGRES_PASSWORD:?}"
     ports:
-      - "6543:5432"
+      - "127.0.0.1:6543:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mm -d memorymaster"]
+      test:
+        - CMD-SHELL
+        - >-
+          PGPASSWORD="$${POSTGRES_PASSWORD}"
+          psql --host=127.0.0.1 --username=$${POSTGRES_USER}
+          --dbname=$${POSTGRES_DB} --no-password --tuples-only
+          --command='SELECT 1'
       interval: 5s
       timeout: 3s
       retries: 20

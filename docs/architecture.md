@@ -37,6 +37,53 @@ External surfaces
   Obsidian vault, dashboard, Qdrant, LLM providers, Auto Dream, Atlas adapters
 ```
 
+## Core and companion extension boundary
+
+The authoritative memory system lives in `memorymaster.core`, `memorymaster.stores`,
+`memorymaster.recall`, and `memorymaster.govern`: claims, lifecycle, citations,
+policy, retrieval, conflict/stewardship, and telemetry remain usable without
+loading optional integrations.
+
+Optional product integrations are built-in companion namespaces composed only
+at explicit surfaces:
+
+| Companion | Owned namespace | Composition roots |
+|---|---|---|
+| Wiki and Obsidian | `memorymaster.knowledge.wiki_*`, `memorymaster.knowledge.vault_*` | CLI/MCP handlers, wiki jobs and opt-in hooks |
+| Dream and OpenClaw | `memorymaster.bridges.dream_bridge`, `db_merge`, `delta_sync`, `qmd_bridge` | CLI/integration handlers |
+| Atlas, media and actions | `memorymaster.bridges.atlas_*`, `media_*`, `action_*`, `connectors` | CLI/MCP integration handlers |
+| Local search | `memorymaster.bridges.local_search` | CLI/MCP tools |
+| Specialized bridges | remaining `memorymaster.bridges.*` modules | explicit integration handlers |
+
+Dependency direction is one-way: companions may consume core contracts, while
+core modules must not import companion modules. Optional behavior is installed
+by importing its companion; for example, importing `wiki_engine` registers the
+wiki lifecycle adapter, while importing `MemoryService` alone does not.
+
+The supported extension seams are narrow typed provider protocols
+(`LocalSearchProvider`, `TranscriptionProvider`, `OcrProvider`) plus the
+read-only `WikiSimilarityCorpus` stewardship protocol. The former generic
+`memorymaster.plugins` callback registry had no production consumers and was
+removed in R4.1 after its deprecation window. Arbitrary validator, retrieval,
+or ingestion callbacks are not a supported security boundary.
+
+### Gradual orchestration decomposition
+
+`MemoryService` remains the supported facade. Its Atlas/media/action persistence
+API is implemented by `core.services.IntegrationService`, preserving instance
+method signatures through inheritance while removing integration ownership from
+the 2,617-line orchestration class. The first enforced ratchet caps
+`core/service.py` at 2,450 lines; the R4.2 result is 2,205 lines. Telemetry and
+lifecycle are the next extraction pair, followed by stewardship and ingestion;
+policy-dense retrieval is last.
+
+Dashboard HTTP handlers own transport only. Read-model construction lives in
+`surfaces/dashboard_read_models.py`, while mutation application lives in
+`surfaces/dashboard_commands.py`. Non-growth tests cap `dashboard.py` at 1,550
+lines and `DashboardRequestHandler` at 720 lines; R4.2 results are 1,381 and 691.
+Compatibility-shim ownership and the dated v5 removal gate are documented in
+`docs/compatibility.md`.
+
 ## Data Flow
 
 **Ingest path**
@@ -63,15 +110,24 @@ service boundary remains the last storage guard even when MCP is bypassed.
 query_memory / CLI query
   -> mcp_server.py or cli.py
   -> MemoryService.query / query_rows
-  -> SQLiteStore.query reads claims_fts + claim metadata
-  -> retrieval.py ranks rows by lexical, confidence, freshness, graph, and vector signals
-  -> optional qdrant_backend.py semantic candidates or fallback rerank
+  -> SQLite/Postgres returns authorized claim rows and lifecycle metadata
+  -> retrieval.py ranks those rows by lexical, confidence, freshness, graph,
+     and optional local/primary-store embedding signals
   -> context_optimizer.py packs query_for_context results into provider-aware budgets
 ```
 
 `query_for_context` reuses the ranked rows and then chooses a text, XML, or JSON envelope that fits
-the caller's token budget. Qdrant is an optional acceleration and recall path; the SQLite claim store
-remains authoritative.
+the caller's token budget. R1.3 does not admit Qdrant hits into this flow: explicit or classified
+claim requests use authoritative lexical fallback in local-trusted mode, prompt-context Qdrant
+fallback is disconnected, and team MCP denies semantic modes. Local `hybrid` ranking is distinct
+from Qdrant retrieval and operates only on rows already authorized by SQLite/Postgres.
+
+The verbatim read path follows the same containment rule. `search_verbatim(mode="vector"|"hybrid")`
+uses authoritative FTS5 and never consumes Qdrant payload text. Direct Qdrant search entry points,
+including `qdrant-search` and `QdrantBackend.search`, fail closed. Qdrant upsert, sync, reconciliation,
+orphan cleanup, and drift checks remain available as index maintenance. R2.1 may restore reads only
+by accepting Qdrant IDs as untrusted candidates, rehydrating the canonical rows from SQLite/Postgres,
+and applying the shared tenant/scope/visibility/lifecycle/sensitivity planner before ranking.
 
 ## Sensitivity Invariant
 
@@ -202,11 +258,10 @@ this track's requested inventory.
 | `memorymaster/models.py` | Domain model dataclasses and validation helpers. | `fe4dbc2 feat(atlas): Atlas Inbox V1 contract (v1.0.0 → v1.5.1, 7 commits) (#27)` |
 | `memorymaster/operator.py` | Operator loop support for reviewing and applying queued memory work. | `886bec4 fix: green CI + v3.2.0 release prep + repo cleanup` |
 | `memorymaster/operator_queue.py` | WAL-backed durable queue for pending operator turns. | `761eabc refactor: extract migration helpers to reduce migrate_from_json complexity (11→8)` |
-| `memorymaster/plugins.py` | Entry-point plugin registry for validators, probes, retrieval hooks, and exporters. | `8c4f302 feat: plugin system + cross-agent scope isolation with RBAC` |
 | `memorymaster/policy.py` | Policy-mode configuration and cadence override helpers. | `0dff74a feat(policy): MEMORYMASTER_POLICY_MODE env-var opt-in for cadence` |
 | `memorymaster/postgres_store.py` | Postgres storage backend with parity methods for the service layer. | `e337c07 chore(storage): audit SQLite/Postgres parity, add 3 missing pg methods (#35)` |
-| `memorymaster/qdrant_backend.py` | Qdrant vector index backend for claim semantic search. | `7b049c5 chore: prepare for open-source release — scrub private data, add docs` |
-| `memorymaster/qdrant_recall_fallback.py` | Optional vector fallback for sparse recall-hook candidate sets. | `a1e6786 feat(recall): Qdrant vector-search fallback for sparse-candidate prompts` |
+| `memorymaster/qdrant_backend.py` | Qdrant maintenance-index backend; payload search fails closed while upsert/sync/reconcile count/ID operations remain available. | `7b049c5 chore: prepare for open-source release — scrub private data, add docs` |
+| `memorymaster/qdrant_recall_fallback.py` | Compatibility helpers for the disconnected prompt-context fallback; activation knobs cannot enable reads during R1.3. | `a1e6786 feat(recall): Qdrant vector-search fallback for sparse-candidate prompts` |
 | `memorymaster/qmd_bridge.py` | Conversion bridge between OpenClaw QMD records and MemoryMaster claims. | `a4b5dcc feat: QMD ↔ memorymaster bridge for OpenClaw integration` |
 | `memorymaster/query_classifier.py` | Rule-based routing of queries to retrieval modes. | `265d951 refactor: inline citation locator/excerpt, merge print_claim header+text` |
 | `memorymaster/query_expansion.py` | Entity alias and synonym expansion for recall queries. | `ac071de feat(recall): query expansion via entity-matched synonyms (roadmap 1.5)` |
@@ -240,7 +295,7 @@ this track's requested inventory.
 | `memorymaster/vault_query_capture.py` | Saves high-value query answers as new wiki pages. | `88d7afb feat: LLM Wiki architecture — lint, log, synthesis, query capture` |
 | `memorymaster/vault_synthesis.py` | Updates related wiki pages when new claims arrive. | `88d7afb feat: LLM Wiki architecture — lint, log, synthesis, query capture` |
 | `memorymaster/verbatim_recall.py` | Optional raw-conversation FTS recall stream. | `6e120a2 feat(recall): MemPalace-style verbatim retrieval stream (opt-in)` |
-| `memorymaster/verbatim_store.py` | Raw conversation storage with FTS5 and optional Qdrant search. | `89c900d fix(verbatim-store): use full-content hash + point IDs for Qdrant dedup (#43)` |
+| `memorymaster/verbatim_store.py` | Raw conversation storage with authoritative FTS5 reads; Qdrant sync remains, while vector/hybrid reads downgrade to FTS5. | `89c900d fix(verbatim-store): use full-content hash + point IDs for Qdrant dedup (#43)` |
 | `memorymaster/webhook.py` | Webhook notification helper for claim events. | `b3cb6c1 fix: add comprehensive error handling and edge case coverage to v2.1 modules` |
 | `memorymaster/wiki_engine.py` | Absorbs claims into compiled wiki articles and related cleanup/breakdown flows. | `bf25482 feat(dashboard): claim lineage view via /claim/<id>/lineage (#46)` |
 | `memorymaster/wiki_freshness.py` | Computes freshness scores from wiki article absorb dates. | `702c904 feat(wiki): wiki-freshness CLI + STALE_ARTICLE lint (11.8, Option A)` |

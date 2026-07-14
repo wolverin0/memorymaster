@@ -43,7 +43,7 @@ operator can install a session-end distiller that reads your last transcript,
 distills <=3 learnings, and ingests them with `source_agent="codex-session"`:
 
 ```
-python scripts/agent_session_end_ingest.py \
+python -m memorymaster.surfaces.session_end_ingest \
   --db <path>/memorymaster.db \
   --transcript ~/.codex/sessions/rollout-<id>.jsonl \
   --source-agent codex-session \

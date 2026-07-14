@@ -17,10 +17,10 @@ experiment logs live under [`archive/`](archive/) and are not maintained.
 
 | Doc | What it covers |
 |-----|----------------|
-| [`MCP-TOOLS.md`](MCP-TOOLS.md) | All 30 MCP tools, grouped by purpose (one line each) |
+| [`MCP-TOOLS.md`](MCP-TOOLS.md) | MCP usage guide; authoritative inventory/counts are generated |
 | [`cli-cookbook.md`](cli-cookbook.md) | CLI recipes for the 104 subcommands |
 | [`architecture.md`](architecture.md) | Module map, data flow, sensitivity-filter invariants |
-| [`ROADMAP.md`](ROADMAP.md) | Release plan and future tracks |
+| [`ROADMAP.md`](../ROADMAP.md) | The single authoritative release plan and future tracks |
 | [`adr/`](adr/) | Architecture Decision Records |
 
 ## Topic guides

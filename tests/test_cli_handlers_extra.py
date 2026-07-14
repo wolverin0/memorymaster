@@ -186,7 +186,7 @@ def test_wiki_breakdown_routes_and_emits_envelope(monkeypatch, capsys):
 
 def test_entity_stats_human_path_ok_json_path_raises(monkeypatch, capsys):
     class FakeEG:
-        def __init__(self, db):
+        def __init__(self, db, *, read_only=False):
             pass
 
         def ensure_tables(self):
@@ -201,8 +201,9 @@ def test_entity_stats_human_path_ok_json_path_raises(monkeypatch, capsys):
     assert rc == 0
     assert "Entities: 2" in capsys.readouterr().out
 
-    with pytest.raises(TypeError):
-        C._handle_entity_stats(_ns(json_output=True), _FakeService(), None, "db.sqlite")
+    assert C._handle_entity_stats(
+        _ns(json_output=True), _FakeService(), None, "db.sqlite"
+    ) == 0
 
 
 def test_feedback_stats_human_path_ok_json_path_raises(monkeypatch, capsys):

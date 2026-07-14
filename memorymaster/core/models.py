@@ -394,6 +394,8 @@ class MediaRetryItem:
     last_http_status: int | None
     last_error: str | None
     next_attempt_time: str | None
+    lease_owner: str | None
+    lease_expires_at: str | None
     created_at: str
     updated_at: str
 

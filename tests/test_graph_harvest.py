@@ -39,6 +39,7 @@ def _clear_recall_env(monkeypatch):
 def _seed(tmp_path):
     """Two FTS5-reachable claims. Returns (db_path, [seeded_claim_ids])."""
     from memorymaster.core.models import CitationInput
+    from memorymaster.core.lifecycle import transition_claim
     from memorymaster.core.service import MemoryService
 
     db = tmp_path / "harvest.db"
@@ -53,9 +54,10 @@ def _seed(tmp_path):
             text=text,
             citations=[CitationInput(source="test")],
             claim_type=ctype,
-            scope="project:test",
+            scope="project",
             confidence=conf,
         )
+        transition_claim(svc.store, claim.id, "confirmed", "trusted recall fixture")
         ids.append(int(claim.id))
     return str(db), ids
 
@@ -65,6 +67,7 @@ def _ingest_offgraph_claim(db, text="A graph-only fact about Kubernetes scaling.
     can only enter the candidate pool via the graph harvest path. Returns id.
     """
     from memorymaster.core.models import CitationInput
+    from memorymaster.core.lifecycle import transition_claim
     from memorymaster.core.service import MemoryService
 
     svc = MemoryService(db_target=db, workspace_root=os.path.dirname(db) or ".")
@@ -72,9 +75,10 @@ def _ingest_offgraph_claim(db, text="A graph-only fact about Kubernetes scaling.
         text=text,
         citations=[CitationInput(source="test")],
         claim_type="fact",
-        scope="project:test",
+        scope="project",
         confidence=0.7,
     )
+    transition_claim(svc.store, claim.id, "confirmed", "trusted recall fixture")
     return int(claim.id)
 
 
