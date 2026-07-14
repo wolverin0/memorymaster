@@ -90,8 +90,9 @@ allowlist of Dockerfile inputs.
 
 On 2026-07-14, Gitleaks 8.21.2 scanned all remediation commits and reported zero
 unreviewed findings after applying the 40 exact reviewed source fingerprints
-plus one exact fingerprint for the squashed release commit's repeat of the same
-test fixture. The reviewed findings occur only in seven synthetic/adversarial test files; there
+plus two exact fingerprints for the same test fixture repeated by the superseded
+and final squashed release commits. The reviewed findings occur only in seven
+synthetic/adversarial test files; there
 were no application, configuration, workflow, documentation, or user-data
 findings. No credential rotation or history rewrite is indicated by that
 classification.
