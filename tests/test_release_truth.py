@@ -109,8 +109,9 @@ build_parser()
 def test_ci_blocks_on_generated_release_truth_drift() -> None:
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "generate_release_truth.py --check" in workflow
-    assert 'pip install -e ".[dev,mcp,security,postgres,vector]"' in workflow
+    assert 'pip install -e ".[dev,mcp,security,postgres]"' in workflow
     assert 'pip install -e ".[dev,mcp,postgres]"' in workflow
+    assert 'pytest tests/ -m "not ml" -q --tb=short' in workflow
 
 
 def test_dev_extra_installs_supply_chain_contract_runtime() -> None:
