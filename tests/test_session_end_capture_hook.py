@@ -24,6 +24,12 @@ def run(db_path, transcript_path, *, source_agent, cwd):
 """,
         encoding="utf-8",
     )
+    (project / "sitecustomize.py").write_text(
+        "import importlib, sys\n"
+        "sys.modules['memorymaster.surfaces.session_end_ingest'] = "
+        "importlib.import_module('scripts.agent_session_end_ingest')\n",
+        encoding="utf-8",
+    )
     hook = tmp_path / "session-end.py"
     hook.write_text(
         TEMPLATE.read_text(encoding="utf-8").replace("__MEMORYMASTER_PROJECT_ROOT__", str(project).replace("\\", "/")),
@@ -36,7 +42,7 @@ def run(db_path, transcript_path, *, source_agent, cwd):
         {
             "MEMORYMASTER_CAPTURE_STATE_DB": str(tmp_path / "capture.db"),
             "MEMORYMASTER_LLM_PROVIDER": "fake",
-            "PYTHONPATH": os.pathsep.join((str(ROOT), str(project))),
+            "PYTHONPATH": os.pathsep.join((str(project), str(ROOT))),
         }
     )
     payload = {"session_id": "session-end", "transcript_path": str(transcript), "cwd": str(project)}

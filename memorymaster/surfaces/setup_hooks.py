@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -48,6 +49,130 @@ CLAUDE_DIR = HOME / ".claude"
 CLAUDE_JSON = HOME / ".claude.json"
 CODEX_DIR = HOME / ".codex"
 PYTHON_EXE = sys.executable
+
+SETUP_PROFILES: dict[str, tuple[str, ...]] = {
+    "minimal": ("db", "mcp"),
+    "semantic": ("db", "mcp", "provider", "vector_backend"),
+    "team": ("db", "mcp"),
+    "full-lab": (
+        "db",
+        "mcp",
+        "recall_hook",
+        "capture_hook",
+        "provider",
+        "steward",
+        "vector_backend",
+        "dashboard",
+    ),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentResult:
+    name: str
+    status: str
+    detail: str
+
+
+def evaluate_setup_profile(
+    profile: str, components: dict[str, ComponentResult]
+) -> tuple[str, int]:
+    required = SETUP_PROFILES[profile]
+    statuses = [components[name].status for name in required]
+    if "BLOCKED" in statuses:
+        return "BLOCKED", 2
+    if "PARTIAL" in statuses:
+        return "PARTIAL", 3
+    return "PASS", 0
+
+
+def _provider_component(
+    detected: Detected, applied: dict[str, Any], config: dict[str, str]
+) -> ComponentResult:
+    provider = config.get("provider", "").lower()
+    stack = applied.get("full_stack", {})
+    if provider == "ollama":
+        if detected.ollama or stack.get("ollama") == "reused":
+            return ComponentResult("provider", "PASS", "Ollama readiness probe passed")
+        if stack.get("ollama") == "started":
+            return ComponentResult("provider", "PARTIAL", "Ollama started; readiness not yet reprobed")
+        return ComponentResult("provider", "BLOCKED", "Ollama is not reachable")
+    key_env = {
+        "google": "GEMINI_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+    }.get(provider, "")
+    if config.get("api_key") or (key_env and os.environ.get(key_env)):
+        return ComponentResult(
+            "provider", "PARTIAL", "credentials configured; paid provider was not called"
+        )
+    return ComponentResult("provider", "BLOCKED", f"{provider or 'remote'} provider is not configured")
+
+
+def _setup_components(
+    *,
+    profile: str,
+    detected: Detected,
+    applied: dict[str, Any],
+    verify: dict[str, Any],
+    llm_config: dict[str, str],
+    db_target: str | Path,
+) -> dict[str, ComponentResult]:
+    verify_status = str(verify.get("status", "FAIL"))
+    db_status = "PASS" if verify_status == "PASS" else "PARTIAL" if verify_status == "PARTIAL" else "BLOCKED"
+    db_detail = str(verify.get("detail", "database verification unavailable"))
+    if profile == "team" and not str(db_target).lower().startswith(("postgres://", "postgresql://")):
+        db_status = "BLOCKED"
+        db_detail = "team profile requires a PostgreSQL DSN and disposable two-role verification"
+
+    mcp_actions = (str(applied.get("mcp_claude", "")), str(applied.get("mcp_codex", "")))
+    try:
+        from memorymaster.surfaces import mcp_server as installed_mcp
+
+        mcp_importable = installed_mcp.FastMCP is not None
+    except Exception:
+        mcp_importable = False
+    mcp_ok = mcp_importable and any(
+        value in {"present", "registered"} for value in mcp_actions
+    )
+    recall_ok = (CLAUDE_DIR / "hooks" / "memorymaster-recall.py").is_file()
+    capture_ok = (CLAUDE_DIR / "hooks" / "memorymaster-session-end.py").is_file()
+    cron_state = str(applied.get("cron", "blocked"))
+    stack = applied.get("full_stack", {}) if isinstance(applied.get("full_stack"), dict) else {}
+    qdrant = stack.get("qdrant")
+    if detected.qdrant or qdrant == "reused":
+        vector = ComponentResult("vector_backend", "PASS", "Qdrant readiness probe passed")
+    elif qdrant == "started":
+        vector = ComponentResult("vector_backend", "PARTIAL", "Qdrant started; authenticated/TLS readiness not reprobed")
+    else:
+        vector = ComponentResult("vector_backend", "BLOCKED", "governed Qdrant backend is unavailable")
+
+    return {
+        "db": ComponentResult("db", db_status, db_detail),
+        "mcp": ComponentResult(
+            "mcp",
+            "PASS" if mcp_ok else "BLOCKED",
+            "MCP registration and import contract verified" if mcp_ok else "no supported MCP client was registered",
+        ),
+        "recall_hook": ComponentResult(
+            "recall_hook", "PASS" if recall_ok else "BLOCKED",
+            "recall hook resource and installed file verified" if recall_ok else "recall hook unavailable",
+        ),
+        "capture_hook": ComponentResult(
+            "capture_hook", "PASS" if capture_ok else "BLOCKED",
+            "quiet capture hook resource and installed file verified" if capture_ok else "capture hook unavailable",
+        ),
+        "provider": _provider_component(detected, applied, llm_config),
+        "steward": ComponentResult(
+            "steward",
+            "PASS" if cron_state == "configured" else "PARTIAL" if cron_state == "manual" else "BLOCKED",
+            "steward schedule configured" if cron_state == "configured" else "manual cron action required" if cron_state == "manual" else "steward schedule unavailable",
+        ),
+        "vector_backend": vector,
+        "dashboard": ComponentResult(
+            "dashboard", "PARTIAL", "dashboard entrypoint is installed; HTTP readiness belongs to R3.4"
+        ),
+    }
 
 # ---------------------------------------------------------------------------
 # Non-interactive mode (set by main() when --yes is passed). When True,
@@ -455,12 +580,11 @@ def append_instructions():
     # rather than auto-scheduling a daemon they didn't ask for. The script sets
     # source_agent + caps the batch at 3 and routes through service.ingest.
     if CODEX_DIR.exists():
-        session_end_script = PROJECT_ROOT / "scripts" / "agent_session_end_ingest.py"
         print("  Codex BEAT-3 (session-end distilled ingest) — no native Stop hook.")
-        print(f"  Turnkey reference: {session_end_script}")
+        print("  Packaged command: memorymaster-session-end")
         print("    Wire it as a Codex notify/exit hook or run at session end:")
         print(
-            f'    "{PYTHON_EXE}" "{session_end_script}" '
+            f'    "{PYTHON_EXE}" -m memorymaster.surfaces.session_end_ingest '
             "--db <path>/memorymaster.db --transcript <rollout.jsonl> "
             "--source-agent codex-session --cwd <project>"
         )
@@ -470,11 +594,11 @@ def append_instructions():
 # ---------------------------------------------------------------------------
 # 5. Steward cron
 # ---------------------------------------------------------------------------
-def setup_steward_cron():
+def setup_steward_cron() -> str:
     banner("Steward Cycle (every 6 hours)")
 
     if not ask_yn("Set up automatic steward cycle every 6 hours?"):
-        return
+        return "blocked"
 
     steward_script = str(CLAUDE_DIR / "hooks" / "memorymaster-steward-cycle.py")
 
@@ -489,14 +613,18 @@ def setup_steward_cron():
             )
             if result.returncode == 0:
                 print("  Created Windows scheduled task: MemoryMasterSteward (every 6h)")
+                return "configured"
             else:
                 print(f"  Failed to create task: {result.stderr}")
+                return "blocked"
         except Exception as e:
             print(f"  Error: {e}")
+            return "blocked"
     else:
         cron_line = f"0 */6 * * * {PYTHON_EXE} {steward_script} >> /var/log/memorymaster-steward.log 2>&1"
         print("  Add this to your crontab (crontab -e):")
         print(f"  {cron_line}")
+        return "manual"
 
 
 # ---------------------------------------------------------------------------
@@ -594,9 +722,17 @@ def setup_full_stack(detected: Detected, *, interactive: bool, yes: bool, model:
             return result
 
     compose_file = PROJECT_ROOT / "docker-compose.yml"
+    if not compose_file.is_file():
+        result["degraded"] = True
+        result["message"] = (
+            "No docker-compose.yml exists in the selected project. Installed-wheel "
+            "setup does not ship deployment assets; configure authenticated services "
+            "explicitly or run from a release bundle."
+        )
+        print(f"  {result['message']}")
+        return result
     up_args = ["docker", "compose"]
-    if compose_file.is_file():
-        up_args += ["-f", str(compose_file)]
+    up_args += ["-f", str(compose_file)]
     services = [s for s, needed in (("qdrant", qdrant_needed), ("ollama", ollama_needed)) if needed]
     up_args += ["up", "-d", *services]
 
@@ -700,6 +836,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="Detect-first, idempotent MemoryMaster onboarding.",
     )
     p.add_argument("-y", "--yes", action="store_true", help="non-interactive; accept all defaults")
+    p.add_argument(
+        "--profile",
+        choices=tuple(SETUP_PROFILES),
+        default=None,
+        help="verify a named setup profile (default: minimal for normal setup)",
+    )
     p.add_argument("--db", help="path to memorymaster.db (overrides project-root default)")
     p.add_argument(
         "--provider",
@@ -799,15 +941,41 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
     # non-interactive (--yes), or for a quick --verify-only check — stdin may
     # not be a tty (CI, `docker exec`, an agent), where input() raises EOFError.
     set_non_interactive(bool(args.yes) or bool(args.json) or bool(args.verify_only))
-    want_full_stack = True if args.full_stack is None else bool(args.full_stack)
+    profile = args.profile or "minimal"
+    want_full_stack = (
+        profile in {"semantic", "full-lab"}
+        if args.full_stack is None
+        else bool(args.full_stack)
+    )
 
     # --verify-only short-circuits BEFORE any project-root prompt: it only needs
     # --db (defaulting to cwd/memorymaster.db) and must never block on input.
     if args.verify_only:
-        vdb = Path(args.db).expanduser().resolve() if args.db else Path.cwd() / "memorymaster.db"
+        vdb: str | Path
+        if args.db and "://" in args.db:
+            vdb = args.db
+        else:
+            vdb = Path(args.db).expanduser().resolve() if args.db else Path.cwd() / "memorymaster.db"
         verify = verify_install(vdb)
-        rc = 0 if verify.get("status") in ("PASS", "PARTIAL") else 1
-        return rc, ({"verify": verify} if args.json else None)
+        if args.profile is None:
+            rc = 0 if verify.get("status") == "PASS" else 3 if verify.get("status") == "PARTIAL" else 1
+            return rc, ({"verify": verify} if args.json else None)
+        detected = detect_environment(cwd=Path.cwd())
+        components = _setup_components(
+            profile=profile,
+            detected=detected,
+            applied={},
+            verify=verify,
+            llm_config=_resolve_provider_config(args),
+            db_target=vdb,
+        )
+        status, rc = evaluate_setup_profile(profile, components)
+        payload = {
+            "verify": verify,
+            "profile": {"name": profile, "status": status},
+            "components": {name: asdict(result) for name, result in components.items()},
+        }
+        return rc, (payload if args.json else None)
 
     # --- Resolve project root (flag > prompt > cwd) ---
     if args.project_root:
@@ -818,7 +986,10 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
     PROJECT_ROOT = Path(root_input).expanduser().resolve()
     PROJECT_ROOT.mkdir(parents=True, exist_ok=True)
 
-    db_path = Path(args.db).expanduser().resolve() if args.db else PROJECT_ROOT / "memorymaster.db"
+    if args.db and "://" in args.db:
+        db_path: str | Path = args.db
+    else:
+        db_path = Path(args.db).expanduser().resolve() if args.db else PROJECT_ROOT / "memorymaster.db"
 
     # --- Detect-first ---
     detected = detect_environment(cwd=PROJECT_ROOT)
@@ -837,7 +1008,7 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
     applied: dict[str, Any] = {}
 
     # --- Init DB if needed ---
-    if not db_path.exists():
+    if isinstance(db_path, Path) and not db_path.exists():
         if not args.json:
             print("\n  Initializing database...")
         try:
@@ -888,8 +1059,7 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
 
     # --- Steward cron (references the Claude hook script; needs ~/.claude) ---
     if not args.no_cron and detected.claude_code:
-        setup_steward_cron()
-        applied["cron"] = "configured"
+        applied["cron"] = setup_steward_cron()
     else:
         applied["cron"] = "skipped" if args.no_cron else "skipped (no ~/.claude/)"
 
@@ -914,7 +1084,17 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
     # --- Verify ---
     verify = verify_install(db_path)
 
-    banner("Setup Complete!")
+    components = _setup_components(
+        profile=profile,
+        detected=detected,
+        applied=applied,
+        verify=verify,
+        llm_config=llm_config,
+        db_target=db_path,
+    )
+    profile_status, profile_rc = evaluate_setup_profile(profile, components)
+
+    banner(f"Setup {profile_status}")
     print("  What actually happened (skips reflect what's installed on this box):")
     if detected.claude_code:
         print("    - Claude hooks (session-start + on-demand recall + session-end distill) — installed")
@@ -937,17 +1117,17 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
     print()
 
     if args.json:
-        from dataclasses import asdict
-
         payload = {
             "detected": asdict(detected),
             "planned": plan,
             "applied": applied,
             "verify": verify,
             "degraded": degraded,
+            "profile": {"name": profile, "status": profile_status},
+            "components": {name: asdict(result) for name, result in components.items()},
         }
-        return 0, payload
-    return 0, None
+        return profile_rc, payload
+    return profile_rc, None
 
 
 if __name__ == "__main__":

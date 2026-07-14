@@ -342,3 +342,33 @@ R3.2 query and storage efficiency completed on 2026-07-13:
 
 The next package is R3.3 setup-profile truth. The active roadmap goal authorizes
 continuing without a new goal.
+
+R3.3 truthful setup profiles completed on 2026-07-13:
+
+- `memorymaster-setup --profile` now exposes explicit `minimal`, `semantic`,
+  `team`, and `full-lab` component contracts. JSON and human results report DB,
+  MCP, recall hook, capture hook, provider, steward, vector backend, and
+  dashboard evidence as PASS, PARTIAL, or BLOCKED.
+- Requested PARTIAL/BLOCKED profiles return nonzero (3/2 respectively); a
+  successful local sentinel no longer masks a missing requested component.
+  Team verification requires a PostgreSQL DSN and retains the disposable
+  two-role external gate.
+- MCP status requires registration plus an importable FastMCP runtime; hooks
+  require installed packaged files; remote providers are never called merely
+  for setup and therefore remain PARTIAL when only credentials are configured.
+  Started-but-unreprobed vector/provider services are PARTIAL, not PASS.
+- Session-end distillation is shipped as
+  `memorymaster.surfaces.session_end_ingest` and the
+  `memorymaster-session-end` entrypoint. Hooks and Codex instructions no longer
+  depend on the repository-only `scripts/` tree. Installed-wheel setup now
+  fails closed when a project-local Compose bundle is absent instead of
+  invoking an unrelated default Compose project.
+- RED evidence: four profile tests initially failed because no profile DTO,
+  aggregation, parser flag, or nonzero semantic result existed. Focused setup,
+  detection, hook, packaged-session, and Qdrant-transport boundary: 161 passed
+  with one existing Pydantic deprecation warning. Changed-file Ruff and
+  `git diff --check` passed.
+- Atomic package commit: the conventional R3.3 commit containing this evidence.
+
+The next package is R3.4 service entrypoints and readiness contracts. The
+active roadmap goal authorizes continuing without a new goal.

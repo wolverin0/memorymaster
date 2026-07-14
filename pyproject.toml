@@ -54,6 +54,7 @@ memorymaster-mcp = "memorymaster.surfaces.mcp_server:main"
 memorymaster-dashboard = "memorymaster.surfaces.dashboard:main"
 memorymaster-steward = "memorymaster.govern.llm_steward:main"
 memorymaster-setup = "memorymaster.surfaces.setup_hooks:main"
+memorymaster-session-end = "memorymaster.surfaces.session_end_ingest:main"
 
 [tool.ruff]
 target-version = "py310"

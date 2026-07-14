@@ -264,6 +264,9 @@ class TestSetupFullStack:
         assert result["ollama"] == "reused"
 
     def test_compose_up_when_available(self, hermetic_home, no_real_subprocess):
+        (hermetic_home["project"] / "docker-compose.yml").write_text(
+            "services: {}\n", encoding="utf-8"
+        )
         det = _detected(docker_compose=True, qdrant=False, ollama=False)
         result = sh.setup_full_stack(det, interactive=False, yes=True, model="llama3.2:3b")
         assert result["compose_run"] is True
@@ -395,6 +398,23 @@ class TestMainNonInteractive:
         payload = json.loads(out)
         assert payload["degraded"] is True
 
+    def test_semantic_profile_blocks_when_provider_and_vector_are_unavailable(
+        self, monkeypatch, hermetic_home, capsys
+    ):
+        det = _detected(docker_compose=False, qdrant=False, ollama=False)
+        argv = self._argv(
+            hermetic_home,
+            extra=["--profile", "semantic", "--json"],
+        )
+        rc = _run_main(monkeypatch, hermetic_home, det, argv)
+        payload = json.loads(capsys.readouterr().out)
+
+        assert rc != 0
+        assert payload["profile"]["name"] == "semantic"
+        assert payload["profile"]["status"] == "BLOCKED"
+        assert payload["components"]["provider"]["status"] == "BLOCKED"
+        assert payload["components"]["vector_backend"]["status"] == "BLOCKED"
+
     def test_json_output_parses(self, monkeypatch, hermetic_home, capsys):
         det = _detected(claude_code=True)
         rc = _run_main(
@@ -402,6 +422,7 @@ class TestMainNonInteractive:
         )
         assert rc == 0
         payload = json.loads(capsys.readouterr().out)
+        assert payload["profile"]["status"] == "PASS"
         assert set(["detected", "planned", "applied", "verify", "degraded"]).issubset(payload)
         assert payload["verify"]["status"] in ("PASS", "PARTIAL")
 
@@ -472,8 +493,7 @@ class TestFromZeroRegressions:
     """
 
     def test_no_claude_code_completes_without_crash(self, hermetic_home, no_real_subprocess, monkeypatch, capsys):
-        """~/.claude absent + claude_code=False: setup must finish (exit 0), not
-        crash in append_instructions writing into a non-existent ~/.claude."""
+        """Missing clients are reported BLOCKED without crashing or writing HOME."""
         import shutil
         shutil.rmtree(hermetic_home["claude_dir"], ignore_errors=True)
         monkeypatch.setattr(sh, "detect_environment", lambda *a, **kw: _detected(claude_code=False))
@@ -482,8 +502,9 @@ class TestFromZeroRegressions:
             ["--yes", "--no-full-stack", "--no-cron", "--no-obsidian-skills",
              "--project-root", str(hermetic_home["project"]), "--db", str(db), "--json"]
         )
-        assert rc == 0
+        assert rc == 2
         payload = json.loads(capsys.readouterr().out)
+        assert payload["profile"]["status"] == "BLOCKED"
         assert payload["applied"]["hooks"].startswith("skipped")
         assert payload["applied"]["mcp_claude"].startswith("skipped")
         assert not (hermetic_home["claude_dir"] / "CLAUDE.md").exists()  # never created a fake ~/.claude

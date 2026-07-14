@@ -30,7 +30,7 @@ def main():
     cwd = str(data.get("cwd") or PROJECT_ROOT)
     try:
         from memorymaster.core.capture_control import CaptureLedger, capture_state_path
-        from scripts.agent_session_end_ingest import run
+        from memorymaster.surfaces.session_end_ingest import run
 
         ledger = CaptureLedger(capture_state_path())
         chunk = ledger.read_increment(transcript_path, f"{session_id}:session-end")
