@@ -331,7 +331,7 @@ python -m memorymaster --db memorymaster.db merge-db --source backups/memorymast
 **Purpose**: Export MCP tool usage for a time window.
 **Example**:
 ```
-python -m memorymaster --db memorymaster.db mcp-usage-report --since 2026-05-01 --format text
+python -m memorymaster --db memorymaster.db mcp-usage-report --since 14d --format csv
 ```
 
 Use this report to decide whether the optional Everything integration earns its
