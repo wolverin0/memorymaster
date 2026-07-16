@@ -1020,7 +1020,13 @@ def _handle_resolve_project(
     roots = load_roots()
     provider = EverythingProvider()
     t0 = time.perf_counter()
-    result = resolve_project(args.alias, svc=service, provider=provider, roots=roots)
+    result = resolve_project(
+        args.alias,
+        svc=service,
+        provider=provider,
+        roots=roots,
+        remember=bool(getattr(args, "remember", False)),
+    )
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
     def _match_dict(match) -> dict:
@@ -1037,11 +1043,15 @@ def _handle_resolve_project(
         "matches": [_match_dict(m) for m in result.matches],
         "best": _match_dict(result.best) if result.best is not None else None,
         "degraded": result.degraded,
+        "remembered": result.remembered,
     }
     if args.json_output:
         print(_json_envelope(payload, total=len(result.matches), query_ms=elapsed_ms))
     else:
-        print(f"query: {result.query!r}  slug={result.canonical_slug}  degraded={result.degraded}")
+        print(
+            f"query: {result.query!r}  slug={result.canonical_slug}  "
+            f"degraded={result.degraded}  remembered={result.remembered}"
+        )
         if not result.matches:
             print("no matches")
         for m in result.matches:
@@ -1064,7 +1074,13 @@ def _handle_local_search(
     degraded = not provider.available()
     safe_limit = max(1, min(int(args.limit), 1000))
     t0 = time.perf_counter()
-    hits = provider.search(args.query, limit=safe_limit, kind=args.kind)
+    exact = bool(getattr(args, "exact", False))
+    hits = provider.search(
+        args.query,
+        limit=safe_limit,
+        kind=args.kind,
+        whole_name=exact,
+    )
     elapsed_ms = (time.perf_counter() - t0) * 1000
     rows = [
         {
@@ -1076,9 +1092,18 @@ def _handle_local_search(
         for hit in hits
     ]
     if args.json_output:
-        print(_json_envelope({"hits": rows, "degraded": degraded}, total=len(rows), query_ms=elapsed_ms))
+        print(
+            _json_envelope(
+                {"hits": rows, "degraded": degraded, "exact": exact},
+                total=len(rows),
+                query_ms=elapsed_ms,
+            )
+        )
     else:
-        print(f"query: {args.query!r}  kind={args.kind}  degraded={degraded}")
+        print(
+            f"query: {args.query!r}  kind={args.kind}  "
+            f"exact={exact}  degraded={degraded}"
+        )
         if not rows:
             print("no hits")
         for row in rows:

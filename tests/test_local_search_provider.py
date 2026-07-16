@@ -514,3 +514,28 @@ def test_whole_name_query_remains_single_argv(monkeypatch: pytest.MonkeyPatch) -
     provider.search("my project name", limit=10, whole_name=True)
     args = captured[-1]
     assert 'wfn:"my project name"' in args
+
+
+@pytest.mark.unit
+def test_es_subprocess_uses_utf8_with_replacement(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ES emits Unicode paths; Windows' locale decoder must never crash search."""
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setenv("MEMORYMASTER_EVERYTHING_ES_PATH", "C:/tools/es.exe")
+
+    def _fake_run(args: list[str], **kwargs: Any) -> MagicMock:
+        calls.append(kwargs)
+        if "-version" in args:
+            return _make_completed("Everything 1.1.0.27", 0)
+        return _make_completed("C:/projects/emoji-☃", 0)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(
+        "memorymaster.bridges.local_search.everything.os.path.isfile",
+        lambda _path: True,
+    )
+
+    hits = EverythingProvider().search("emoji", limit=5)
+
+    assert hits and hits[0].path.endswith("emoji-☃")
+    assert all(call.get("encoding") == "utf-8" for call in calls)
+    assert all(call.get("errors") == "replace" for call in calls)

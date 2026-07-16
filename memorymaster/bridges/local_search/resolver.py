@@ -50,6 +50,7 @@ _AMBIGUITY_DAMP = 0.5
 _EVERYTHING_LIMIT = 200
 
 _MEMORY_CONFIDENCE = 0.95
+_DEFAULT_REMEMBER_THRESHOLD = 0.85
 _MARKER_FILES = ("AGENTS.md", "CLAUDE.md", "pyproject.toml", "package.json")
 
 # A bare IPv4 in a path token is a leak vector that scan_text_for_findings
@@ -250,26 +251,26 @@ def _maybe_ingest(
     svc: object,
     roots: _Roots,
     ingest_threshold: float,
-) -> None:
+) -> bool:
     """Auto-ingest gate (the privacy crown jewel).
 
     Collapses the path to a token, scans it for sensitive findings, and only
     ingests when the scan is clean.  Any finding aborts the write entirely.
     """
     if best.source == "memory":
-        return
+        return False
     if best.confidence < ingest_threshold:
-        return
+        return False
 
     token = collapse_path(roots, best.path)
     text = f"{slug} resolves to {token}"
     if scan_text_for_findings(text):
         # A username / IP+port / secret slipped through collapse — never store it.
-        return
+        return False
     if _IPV4_RE.search(text):
         # Stricter-than-general guard: the shared filter allows bare private
         # IPv4, but a path token must never carry one. Answer, don't remember.
-        return
+        return False
 
     from memorymaster.core.models import CitationInput
 
@@ -285,9 +286,10 @@ def _maybe_ingest(
             source_agent="local-search",
             confidence=best.confidence,
         )
+        return True
     except (ValueError, RuntimeError, AttributeError):
         # Ingest is best-effort; a write failure must never break resolution.
-        return
+        return False
 
 
 def resolve_project(
@@ -295,8 +297,9 @@ def resolve_project(
     *,
     svc: object,
     provider: LocalSearchProvider,
-    ingest_threshold: float = 0.7,
+    ingest_threshold: float = _DEFAULT_REMEMBER_THRESHOLD,
     roots: _Roots | None = None,
+    remember: bool = False,
 ) -> ResolveResult:
     """Resolve a fuzzy project *alias* to canonical on-disk path(s).
 
@@ -304,8 +307,10 @@ def resolve_project(
         alias:            Free-text project name (e.g. ``"MemoryMaster"``).
         svc:              MemoryService-like object exposing ``query`` + ``ingest``.
         provider:         A LocalSearchProvider (EverythingProvider or a fake).
-        ingest_threshold: Minimum confidence to auto-ingest a fresh match.
+        ingest_threshold: Minimum confidence to persist a confirmed fresh match.
         roots:            Root registry from ``load_roots`` (loaded if ``None``).
+        remember:         Explicit confirmation to persist a fresh match. The
+                          default is read-only.
 
     Returns:
         A :class:`ResolveResult` with all matches, the best match (if any),
@@ -337,8 +342,9 @@ def resolve_project(
     if best is not None and best.source == "everything":
         best = _disambiguate(best, matches)
 
-    if best is not None:
-        _maybe_ingest(
+    remembered = False
+    if remember and best is not None:
+        remembered = _maybe_ingest(
             best,
             slug,
             svc=svc,
@@ -352,4 +358,5 @@ def resolve_project(
         matches=matches,
         best=best,
         degraded=degraded,
+        remembered=remembered,
     )

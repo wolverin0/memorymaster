@@ -102,6 +102,7 @@ def test_username_path_is_not_ingested(tmp_path: Path) -> None:
         svc=svc,
         provider=provider,
         roots=[],
+        remember=True,
         ingest_threshold=0.0,  # force the ingest branch; only the scan guard stops it
     )
 
@@ -134,6 +135,7 @@ def test_bare_ip_path_is_not_ingested(tmp_path: Path) -> None:
         svc=svc,
         provider=provider,
         roots=[],  # no root matches => token keeps the bare IP
+        remember=True,
         ingest_threshold=0.0,
     )
 
@@ -156,6 +158,7 @@ def test_collapsed_token_is_ingested_and_refindable(tmp_path: Path) -> None:
         svc=svc,
         provider=provider,
         roots=roots,
+        remember=True,
         ingest_threshold=0.0,
     )
 

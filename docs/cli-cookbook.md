@@ -334,6 +334,25 @@ python -m memorymaster --db memorymaster.db merge-db --source backups/memorymast
 python -m memorymaster --db memorymaster.db mcp-usage-report --since 2026-05-01 --format text
 ```
 
+Use this report to decide whether the optional Everything integration earns its
+maintenance cost. `local_search:exact`, `local_search:fuzzy`, and
+`resolve_project` rows record calls, result status, and latency without storing
+the query or returned path. Compare useful-hit rate and latency over a real
+two-week window; disable the integration if it is rarely called or mostly empty.
+
+### local-search / resolve-project
+**Purpose**: Search the local Everything index without writing claims, or resolve
+a fuzzy project alias. Both commands are read-only by default.
+**Examples**:
+```
+python -m memorymaster --db memorymaster.db local-search AGENTS.md --kind file --exact
+python -m memorymaster --db memorymaster.db resolve-project memorymaster
+python -m memorymaster --db memorymaster.db resolve-project memorymaster --remember
+```
+
+`--exact` requests a whole-name match. `--remember` is explicit and persists only
+non-sensitive matches meeting the calibrated `0.85` confidence threshold.
+
 ## Diagnostics
 
 ### list-claims

@@ -17,9 +17,9 @@ from pathlib import Path
 
 import pytest
 
-from memorymaster.bridges.local_search.provider import PathHit
+from memorymaster.bridges.local_search.everything import EverythingProvider
+from memorymaster.bridges.local_search.provider import LocalSearchProvider, PathHit
 from memorymaster.bridges.local_search.resolver import resolve_project
-from memorymaster.core.scope_utils import canonicalize_slug
 from memorymaster.core.service import MemoryService
 
 pytestmark = pytest.mark.calibration
@@ -42,7 +42,12 @@ class DirScanProvider:
         return self._root.is_dir()
 
     def search(
-        self, query: str, *, limit: int = 50, kind: str = "any"
+        self,
+        query: str,
+        *,
+        limit: int = 50,
+        kind: str = "any",
+        whole_name: bool = False,
     ) -> list[PathHit]:
         hits: list[PathHit] = []
         try:
@@ -58,6 +63,13 @@ class DirScanProvider:
         return hits
 
 
+def test_dir_scan_provider_accepts_resolver_protocol(tmp_path: Path) -> None:
+    """The opt-in calibration must exercise the current provider signature."""
+    provider = DirScanProvider(tmp_path)
+
+    assert provider.search("project", kind="dir", whole_name=True) == []
+
+
 def _build_labels(root: Path) -> dict[str, str]:
     """Map alias (dir basename) -> known-correct absolute path."""
     labels: dict[str, str] = {}
@@ -68,11 +80,12 @@ def _build_labels(root: Path) -> dict[str, str]:
 
 
 def _sweep_thresholds(
-    root: Path, svc: MemoryService
+    root: Path,
+    svc: MemoryService,
+    provider: LocalSearchProvider,
 ) -> list[tuple[float, int, int]]:
     """Return [(threshold, correct_auto_ingests, wrong_auto_ingests)]."""
     labels = _build_labels(root)
-    provider = DirScanProvider(root)
     roots = [("projects", str(root))]
 
     # Record each alias's best match path + confidence once.
@@ -95,22 +108,52 @@ def _sweep_thresholds(
         )
 
     rows: list[tuple[float, int, int]] = []
-    threshold = 0.50
-    while threshold <= 0.90 + 1e-9:
+    for step in range(50, 91, 5):
+        threshold = step / 100
         correct = 0
         wrong = 0
         for correct_path, best_path, conf in observed:
             if best_path is None or conf < threshold:
                 continue
-            if canonicalize_slug(Path(best_path).name) == canonicalize_slug(
-                Path(correct_path).name
-            ):
+            if Path(best_path).resolve() == Path(correct_path).resolve():
                 correct += 1
             else:
                 wrong += 1
-        rows.append((round(threshold, 2), correct, wrong))
-        threshold += 0.05
+        rows.append((threshold, correct, wrong))
     return rows
+
+
+def test_sweep_counts_same_named_wrong_copy(tmp_path: Path) -> None:
+    """Calibration must compare canonical paths, not merely equal basenames."""
+    labelled = tmp_path / "labelled"
+    correct = labelled / "memorymaster"
+    correct.mkdir(parents=True)
+    wrong = tmp_path / "archive" / "memorymaster"
+    wrong.mkdir(parents=True)
+    (wrong / ".git").mkdir()
+    svc = MemoryService(tmp_path / "wrong-copy.db", workspace_root=tmp_path)
+    svc.init_db()
+
+    class WrongCopyProvider:
+        def available(self) -> bool:
+            return True
+
+        def search(
+            self,
+            query: str,
+            *,
+            limit: int = 50,
+            kind: str = "any",
+            whole_name: bool = False,
+        ) -> list[PathHit]:
+            return [PathHit(str(wrong), "dir", None, None)]
+
+    rows = _sweep_thresholds(labelled, svc, WrongCopyProvider())
+
+    by_threshold = {threshold: (correct_count, wrong_count) for threshold, correct_count, wrong_count in rows}
+    assert all(correct_count == 0 for correct_count, _ in by_threshold.values())
+    assert by_threshold[0.8] == (0, 1)
+    assert by_threshold[0.85] == (0, 0)
 
 
 def test_calibration_sweep(tmp_path: Path) -> None:
@@ -128,7 +171,11 @@ def test_calibration_sweep(tmp_path: Path) -> None:
     svc = MemoryService(tmp_path / "calib.db", workspace_root=tmp_path)
     svc.init_db()
 
-    rows = _sweep_thresholds(root, svc)
+    provider = EverythingProvider()
+    if not provider.available():
+        pytest.skip("configured Everything ES provider is required for calibration")
+
+    rows = _sweep_thresholds(root, svc, provider)
     print("\nthreshold  correct  wrong")
     for threshold, correct, wrong in rows:
         print(f"{threshold:>9.2f}  {correct:>7d}  {wrong:>5d}")

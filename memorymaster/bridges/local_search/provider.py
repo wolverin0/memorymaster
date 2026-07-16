@@ -61,6 +61,8 @@ class ResolveResult:
         best:           Highest-confidence match, or ``None`` if none found.
         degraded:       ``True`` when the search backend was unavailable and only
                         memory claims (if any) were consulted.
+        remembered:     ``True`` only when this call explicitly persisted a fresh
+                        high-confidence path reference.
     """
 
     query: str
@@ -68,6 +70,7 @@ class ResolveResult:
     matches: list[ResolveMatch]
     best: ResolveMatch | None
     degraded: bool
+    remembered: bool = False
 
 
 @runtime_checkable

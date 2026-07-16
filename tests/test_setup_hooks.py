@@ -127,6 +127,26 @@ class TestNonInteractive:
 
 
 class TestInstallMcp:
+    def test_mirrors_configured_es_path(self, hermetic_home, monkeypatch, tmp_path):
+        es_path = tmp_path / "es.exe"
+        es_path.write_bytes(b"")
+        monkeypatch.setenv("MEMORYMASTER_EVERYTHING_ES_PATH", str(es_path))
+
+        sh.install_mcp(force=True)
+
+        data = json.loads(hermetic_home["claude_json"].read_text(encoding="utf-8"))
+        env = data["mcpServers"]["memorymaster"]["env"]
+        assert env["MEMORYMASTER_EVERYTHING_ES_PATH"] == str(es_path)
+
+    def test_omits_unconfigured_es_path(self, hermetic_home, monkeypatch):
+        monkeypatch.delenv("MEMORYMASTER_EVERYTHING_ES_PATH", raising=False)
+
+        sh.install_mcp(force=True)
+
+        data = json.loads(hermetic_home["claude_json"].read_text(encoding="utf-8"))
+        env = data["mcpServers"]["memorymaster"]["env"]
+        assert "MEMORYMASTER_EVERYTHING_ES_PATH" not in env
+
     def test_writes_explicit_local_trusted_auth_mode(self, hermetic_home):
         sh.install_mcp(force=True)
         data = json.loads(hermetic_home["claude_json"].read_text(encoding="utf-8"))
@@ -177,6 +197,17 @@ class TestInstallMcp:
 
 
 class TestInstallMcpCodex:
+    def test_mirrors_configured_es_path(self, hermetic_home, monkeypatch, tmp_path):
+        es_path = tmp_path / "es.exe"
+        es_path.write_bytes(b"")
+        monkeypatch.setenv("MEMORYMASTER_EVERYTHING_ES_PATH", str(es_path))
+        hermetic_home["codex_dir"].mkdir(parents=True, exist_ok=True)
+
+        sh.install_mcp_codex(force=True)
+
+        content = (hermetic_home["codex_dir"] / "config.toml").read_text(encoding="utf-8")
+        assert f"MEMORYMASTER_EVERYTHING_ES_PATH = {json.dumps(str(es_path))}" in content
+
     def test_writes_explicit_local_trusted_auth_mode(self, hermetic_home):
         hermetic_home["codex_dir"].mkdir(parents=True, exist_ok=True)
         sh.install_mcp_codex(force=True)

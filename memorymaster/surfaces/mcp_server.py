@@ -409,6 +409,33 @@ def _usage_rollup(db: str) -> dict[str, Any]:
     }
 
 
+def _record_mcp_usage(
+    db: str,
+    *,
+    tool_name: str,
+    started: float,
+    result_status: str,
+) -> None:
+    """Persist aggregate tool evidence without storing queries or result paths."""
+    try:
+        from datetime import datetime, timezone
+        from memorymaster.surfaces.mcp_usage import insert
+
+        context = current_request_context()
+        insert(
+            _resolve_db(db),
+            {
+                "tool_name": tool_name,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "latency_ms": max(0, int((time.perf_counter() - started) * 1000)),
+                "tenant_id": getattr(context, "tenant_id", None),
+                "result_status": result_status,
+            },
+        )
+    except Exception as exc:  # pragma: no cover - telemetry must never break tools
+        logger.debug("MCP usage telemetry unavailable for %s: %s", tool_name, exc)
+
+
 def _empty_to_none(value: str) -> str | None:
     v = value.strip()
     return v if v else None
@@ -974,16 +1001,17 @@ if FastMCP is not None:
     @mcp.tool()
     def resolve_project(
         alias: str,
+        remember: bool = False,
         db: str = "memorymaster.db",
         workspace: str = ".",
     ) -> dict[str, Any]:
         """Resolve a fuzzy project *alias* to canonical on-disk path(s).
 
         Memory-first, Everything-second resolution returning every candidate
-        with an explainable confidence score and human-readable evidence. A
-        confident, non-sensitive match is auto-ingested as a governed
-        ``reference`` claim so the next call is memory-only. All returned paths
-        are collapsed to root-relative tokens (no raw username/IP ever leaves).
+        with an explainable confidence score and human-readable evidence. All
+        returned paths are collapsed to root-relative tokens. The default is
+        read-only; ``remember=True`` explicitly requests persistence of a
+        high-confidence, non-sensitive match.
         """
         from memorymaster.bridges.local_search.everything import EverythingProvider
         from memorymaster.bridges.local_search.redact import collapse_path, load_roots
@@ -998,7 +1026,14 @@ if FastMCP is not None:
             return _structured_error(str(exc), "VALIDATION_ERROR", "workspace")
         roots = load_roots()
         provider = EverythingProvider()
-        result = _resolve(raw_alias, svc=svc, provider=provider, roots=roots)
+        started = time.perf_counter()
+        result = _resolve(
+            raw_alias,
+            svc=svc,
+            provider=provider,
+            roots=roots,
+            remember=bool(remember),
+        )
 
         def _match_dict(match: Any) -> dict[str, Any]:
             return {
@@ -1008,20 +1043,37 @@ if FastMCP is not None:
                 "source": match.source,
             }
 
-        return {
+        payload = {
             "ok": True,
             "query": result.query,
             "canonical_slug": result.canonical_slug,
             "matches": [_match_dict(m) for m in result.matches],
             "best": _match_dict(result.best) if result.best is not None else None,
             "degraded": result.degraded,
+            "remembered": result.remembered,
         }
+        if result.degraded:
+            status = "degraded"
+        elif result.best is None:
+            status = "no_match"
+        elif result.remembered:
+            status = "everything_match_remembered"
+        else:
+            status = f"{result.best.source}_match"
+        _record_mcp_usage(
+            db,
+            tool_name="resolve_project",
+            started=started,
+            result_status=status,
+        )
+        return payload
 
     @mcp.tool()
     def local_search(
         query: str,
         limit: int = 50,
         kind: str = "any",
+        exact: bool = False,
         db: str = "memorymaster.db",
         workspace: str = ".",
     ) -> dict[str, Any]:
@@ -1030,7 +1082,8 @@ if FastMCP is not None:
         Thin wrapper over the local-search provider; performs no ingest. Output
         paths are collapsed to root-relative tokens so a tool result never
         prints a raw ``C:\\Users\\<name>`` path into a transcript. Returns
-        ``degraded: true`` when the search backend is unavailable.
+        ``degraded: true`` when the search backend is unavailable. Set
+        ``exact=True`` for whole-name matching instead of substring matching.
         """
         from memorymaster.bridges.local_search.everything import EverythingProvider
         from memorymaster.bridges.local_search.redact import collapse_path, load_roots
@@ -1043,8 +1096,14 @@ if FastMCP is not None:
         safe_limit = max(1, min(int(limit), 1000))
         roots = load_roots()
         provider = EverythingProvider()
+        started = time.perf_counter()
         degraded = not provider.available()
-        hits = provider.search(raw_query, limit=safe_limit, kind=kind)
+        hits = provider.search(
+            raw_query,
+            limit=safe_limit,
+            kind=kind,
+            whole_name=bool(exact),
+        )
         rows = [
             {
                 "path": collapse_path(roots, hit.path),
@@ -1054,7 +1113,19 @@ if FastMCP is not None:
             }
             for hit in hits
         ]
-        return {"ok": True, "hits": rows, "degraded": degraded}
+        status = "degraded" if degraded else ("ok_hits" if rows else "ok_empty")
+        _record_mcp_usage(
+            db,
+            tool_name=f"local_search:{'exact' if exact else 'fuzzy'}",
+            started=started,
+            result_status=status,
+        )
+        return {
+            "ok": True,
+            "hits": rows,
+            "degraded": degraded,
+            "exact": bool(exact),
+        }
 
     @mcp.tool()
     def run_cycle(

@@ -223,6 +223,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Resolve a fuzzy project alias to canonical on-disk path(s) with confidence + evidence",
     )
     resolve_project_cmd.add_argument("alias", help="Fuzzy project name (e.g. 'MemoryMaster')")
+    resolve_project_cmd.add_argument(
+        "--remember",
+        action="store_true",
+        help="Persist a high-confidence result (default: read-only)",
+    )
 
     local_search_cmd = sub.add_parser(
         "local-search",
@@ -231,6 +236,11 @@ def build_parser() -> argparse.ArgumentParser:
     local_search_cmd.add_argument("query", help="Filename/path fragment to search for")
     local_search_cmd.add_argument("--limit", type=int, default=50, help="Maximum results (default: 50)")
     local_search_cmd.add_argument("--kind", choices=["any", "dir", "file"], default="any", help="Restrict results by kind")
+    local_search_cmd.add_argument(
+        "--exact",
+        action="store_true",
+        help="Match the whole file or directory name instead of a substring",
+    )
 
     recall_analysis = sub.add_parser(
         "recall-analysis",

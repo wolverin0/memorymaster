@@ -194,6 +194,63 @@ def test_non_matching_basenames_filtered(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_fresh_resolution_is_read_only_by_default(tmp_path: Path) -> None:
+    """Resolving a path must not persist it unless the caller explicitly confirms."""
+    svc = _service(tmp_path)
+    roots = [("projects", str(tmp_path))]
+    proj = _make_project_dir(tmp_path, "memorymaster", git=True, marker="AGENTS.md")
+    provider = FakeProvider(
+        [PathHit(path=str(proj), kind="dir", size=None, modified=None)]
+    )
+
+    result = resolve_project("memorymaster", svc=svc, provider=provider, roots=roots)
+
+    claims = svc.store.list_claims(limit=100, scope_allowlist=["project:memorymaster"])
+    assert result.best is not None and result.best.confidence == pytest.approx(1.0)
+    assert result.remembered is False
+    assert [claim for claim in claims if claim.predicate == "local_path"] == []
+
+
+@pytest.mark.unit
+def test_explicit_remember_persists_high_confidence_resolution(tmp_path: Path) -> None:
+    """A conspicuous confirmation may persist only a calibrated strong result."""
+    svc = _service(tmp_path)
+    roots = [("projects", str(tmp_path))]
+    proj = _make_project_dir(tmp_path, "memorymaster", git=True, marker="AGENTS.md")
+    provider = FakeProvider(
+        [PathHit(path=str(proj), kind="dir", size=None, modified=None)]
+    )
+
+    result = resolve_project(
+        "memorymaster", svc=svc, provider=provider, roots=roots, remember=True
+    )
+
+    claims = svc.store.list_claims(limit=100, scope_allowlist=["project:memorymaster"])
+    assert result.remembered is True
+    assert len([claim for claim in claims if claim.predicate == "local_path"]) == 1
+
+
+@pytest.mark.unit
+def test_explicit_remember_rejects_result_below_calibrated_threshold(tmp_path: Path) -> None:
+    """The measured 0.85 floor prevents an explicit request from caching weak guesses."""
+    svc = _service(tmp_path)
+    roots = [("projects", str(tmp_path))]
+    proj = _make_project_dir(tmp_path, "memorymaster", git=True)
+    provider = FakeProvider(
+        [PathHit(path=str(proj), kind="dir", size=None, modified=None)]
+    )
+
+    result = resolve_project(
+        "memorymaster", svc=svc, provider=provider, roots=roots, remember=True
+    )
+
+    claims = svc.store.list_claims(limit=100, scope_allowlist=["project:memorymaster"])
+    assert result.best is not None and result.best.confidence == pytest.approx(0.8)
+    assert result.remembered is False
+    assert [claim for claim in claims if claim.predicate == "local_path"] == []
+
+
+@pytest.mark.unit
 def test_memory_first_short_circuits_provider(tmp_path: Path) -> None:
     """A confirmed prior local_path claim wins and the provider is never queried."""
     svc = _service(tmp_path)

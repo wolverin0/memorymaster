@@ -445,17 +445,34 @@ def _mcp_command_args() -> tuple[str, list[str]]:
     return PYTHON_EXE, ["-m", "memorymaster.surfaces.mcp_server"]
 
 
+def _configured_es_path() -> str | None:
+    """Return a usable operator-configured ES path without inventing one."""
+    raw = os.environ.get("MEMORYMASTER_EVERYTHING_ES_PATH", "").strip()
+    if not raw:
+        return None
+    path = Path(raw)
+    return str(path) if path.is_file() else None
+
+
+def _mcp_environment(db_path: str) -> dict[str, str]:
+    env = {
+        "MEMORYMASTER_DEFAULT_DB": db_path,
+        "MEMORYMASTER_WORKSPACE": str(PROJECT_ROOT),
+        "MEMORYMASTER_MCP_AUTH_MODE": "local-trusted",
+    }
+    es_path = _configured_es_path()
+    if es_path is not None:
+        env["MEMORYMASTER_EVERYTHING_ES_PATH"] = es_path
+    return env
+
+
 def _mcp_server_entry(db_path: str) -> dict[str, Any]:
     command, args = _mcp_command_args()
     return {
         "type": "stdio",
         "command": command,
         "args": args,
-        "env": {
-            "MEMORYMASTER_DEFAULT_DB": db_path,
-            "MEMORYMASTER_WORKSPACE": str(PROJECT_ROOT),
-            "MEMORYMASTER_MCP_AUTH_MODE": "local-trusted",
-        },
+        "env": _mcp_environment(db_path),
     }
 
 
@@ -515,6 +532,12 @@ def install_mcp_codex(*, force: bool = False):
     db_path = str(PROJECT_ROOT / "memorymaster.db")
     command, args = _mcp_command_args()
     args_toml = ", ".join(json.dumps(a) for a in args)
+    es_path = _configured_es_path()
+    es_line = (
+        f"MEMORYMASTER_EVERYTHING_ES_PATH = {json.dumps(es_path)}\n"
+        if es_path is not None
+        else ""
+    )
     block = (
         f"{_CODEX_MCP_BEGIN}\n"
         "[mcp_servers.memorymaster]\n"
@@ -524,6 +547,7 @@ def install_mcp_codex(*, force: bool = False):
         f"MEMORYMASTER_DEFAULT_DB = {json.dumps(db_path)}\n"
         f"MEMORYMASTER_WORKSPACE = {json.dumps(str(PROJECT_ROOT))}\n"
         'MEMORYMASTER_MCP_AUTH_MODE = "local-trusted"\n'
+        f"{es_line}"
         f"{_CODEX_MCP_END}\n"
     )
 
