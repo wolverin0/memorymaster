@@ -1014,7 +1014,10 @@ if FastMCP is not None:
         high-confidence, non-sensitive match.
         """
         from memorymaster.bridges.local_search.everything import EverythingProvider
-        from memorymaster.bridges.local_search.redact import collapse_path, load_roots
+        from memorymaster.bridges.local_search.redact import (
+            load_roots,
+            redact_path_for_output,
+        )
         from memorymaster.bridges.local_search.resolver import resolve_project as _resolve
 
         raw_alias = str(alias or "").strip()
@@ -1037,7 +1040,7 @@ if FastMCP is not None:
 
         def _match_dict(match: Any) -> dict[str, Any]:
             return {
-                "path": collapse_path(roots, match.path),
+                "path": redact_path_for_output(roots, match.path),
                 "confidence": match.confidence,
                 "evidence": list(match.evidence),
                 "source": match.source,
@@ -1086,7 +1089,10 @@ if FastMCP is not None:
         ``exact=True`` for whole-name matching instead of substring matching.
         """
         from memorymaster.bridges.local_search.everything import EverythingProvider
-        from memorymaster.bridges.local_search.redact import collapse_path, load_roots
+        from memorymaster.bridges.local_search.redact import (
+            load_roots,
+            redact_path_for_output,
+        )
 
         raw_query = str(query or "").strip()
         if not raw_query:
@@ -1106,7 +1112,7 @@ if FastMCP is not None:
         )
         rows = [
             {
-                "path": collapse_path(roots, hit.path),
+                "path": redact_path_for_output(roots, hit.path),
                 "kind": hit.kind,
                 "size": hit.size,
                 "modified": hit.modified,

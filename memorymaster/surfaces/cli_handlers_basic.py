@@ -1014,7 +1014,10 @@ def _handle_resolve_project(
 ) -> int:
     """Resolve a fuzzy project alias to canonical on-disk path(s)."""
     from memorymaster.bridges.local_search.everything import EverythingProvider
-    from memorymaster.bridges.local_search.redact import collapse_path, load_roots
+    from memorymaster.bridges.local_search.redact import (
+        load_roots,
+        redact_path_for_output,
+    )
     from memorymaster.bridges.local_search.resolver import resolve_project
 
     roots = load_roots()
@@ -1031,7 +1034,7 @@ def _handle_resolve_project(
 
     def _match_dict(match) -> dict:
         return {
-            "path": collapse_path(roots, match.path),
+            "path": redact_path_for_output(roots, match.path),
             "confidence": match.confidence,
             "evidence": list(match.evidence),
             "source": match.source,
@@ -1056,7 +1059,8 @@ def _handle_resolve_project(
             print("no matches")
         for m in result.matches:
             tag = "*" if result.best is not None and m is result.best else " "
-            print(f" {tag} [{m.source}] {collapse_path(roots, m.path)}  conf={m.confidence:.2f}")
+            path = redact_path_for_output(roots, m.path)
+            print(f" {tag} [{m.source}] {path}  conf={m.confidence:.2f}")
             for reason in m.evidence:
                 print(f"      - {reason}")
     return 0
@@ -1067,7 +1071,10 @@ def _handle_local_search(
 ) -> int:
     """Read-only path lookup across the machine via Everything (ES.exe)."""
     from memorymaster.bridges.local_search.everything import EverythingProvider
-    from memorymaster.bridges.local_search.redact import collapse_path, load_roots
+    from memorymaster.bridges.local_search.redact import (
+        load_roots,
+        redact_path_for_output,
+    )
 
     roots = load_roots()
     provider = EverythingProvider()
@@ -1084,7 +1091,7 @@ def _handle_local_search(
     elapsed_ms = (time.perf_counter() - t0) * 1000
     rows = [
         {
-            "path": collapse_path(roots, hit.path),
+            "path": redact_path_for_output(roots, hit.path),
             "kind": hit.kind,
             "size": hit.size,
             "modified": hit.modified,

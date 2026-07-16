@@ -21,6 +21,7 @@ expand_path(roots, token) -> str
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -28,6 +29,7 @@ from pathlib import Path
 __all__ = [
     "load_roots",
     "collapse_path",
+    "redact_path_for_output",
     "expand_path",
 ]
 
@@ -147,6 +149,18 @@ def collapse_path(roots: list[tuple[str, str]], abspath: str) -> str:
             # abspath IS the root itself.
             return name
     return abspath
+
+
+def redact_path_for_output(roots: list[tuple[str, str]], abspath: str) -> str:
+    """Return a stable display token without exposing an unregistered parent path."""
+    collapsed = collapse_path(roots, abspath)
+    if collapsed != abspath:
+        return collapsed
+
+    normalised = str(Path(abspath))
+    digest = hashlib.sha256(normalised.encode("utf-8", errors="replace")).hexdigest()[:12]
+    basename = Path(normalised).name or "root"
+    return f"unregistered/{digest}/{basename}"
 
 
 def expand_path(roots: list[tuple[str, str]], token: str) -> str:

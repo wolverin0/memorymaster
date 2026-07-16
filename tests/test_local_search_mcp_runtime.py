@@ -113,6 +113,39 @@ def test_mcp_local_search_persists_privacy_safe_usage(monkeypatch, tmp_path) -> 
     assert "secret-query-result.txt" not in json.dumps(rows)
 
 
+def test_mcp_local_search_redacts_paths_outside_registered_roots(
+    monkeypatch, tmp_path
+) -> None:
+    registered = tmp_path / "registered"
+    registered.mkdir()
+    unregistered = tmp_path / "private-user" / "secret-project"
+    unregistered.mkdir(parents=True)
+    target = unregistered / "AGENTS.md"
+    target.write_text("rules", encoding="utf-8")
+    provider = RecordingProvider(str(target))
+    monkeypatch.setattr(
+        "memorymaster.bridges.local_search.everything.EverythingProvider",
+        lambda: provider,
+    )
+    monkeypatch.setattr(
+        "memorymaster.bridges.local_search.redact.load_roots",
+        lambda: [("workspace", str(registered))],
+    )
+
+    payload = mcp_server.local_search(
+        "AGENTS.md",
+        exact=True,
+        db=_initialized_db(tmp_path),
+        workspace=str(registered),
+    )
+
+    displayed = payload["hits"][0]["path"]
+    assert displayed.startswith("unregistered/")
+    assert displayed.endswith("/AGENTS.md")
+    assert str(target) not in displayed
+    assert "private-user" not in displayed
+
+
 def test_mcp_resolve_project_is_read_only_unless_remembered(
     monkeypatch, tmp_path
 ) -> None:
