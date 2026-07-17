@@ -1,6 +1,6 @@
 """0007_rule_stats — per-fingerprint correction tally for rule confidence bootstrap (v3.28).
 
-The rule-miner (:mod:`memorymaster.knowledge.rule_miner`) historically ingested every
+The rule-miner (:mod:`memorymaster.rule_miner`) historically ingested every
 mined rule at a flat ``confidence=0.4``. A correction the user makes repeatedly
 is more load-bearing than a one-off, so v3.28 bootstraps confidence by how many
 times the SAME correction (identified by a stable ``rule_fingerprint`` over the

@@ -14,17 +14,12 @@ Coverage:
 """
 from __future__ import annotations
 
-import datetime
 import sqlite3
-import sys
-import textwrap
 from pathlib import Path
 from typing import Iterator
-from unittest.mock import patch
 
 import pytest
 
-from memorymaster.stores import migrations
 from memorymaster.stores.migrations import (
     MigrationDriftError,
     MigrationRunner,
@@ -66,6 +61,21 @@ def test_discover_each_migration_has_required_attrs():
         # Checksum is sha256 hex (64 chars)
         assert len(m.checksum()) == 64
         int(m.checksum(), 16)  # valid hex
+
+
+def test_historical_source_checksums_match_applied_history():
+    """Immutable migrations must retain the bytes already recorded in user DBs."""
+    expected = {
+        1: "7727a06bcd5d17cb14b9c512e7aa280d51b7e921c77ba2fe6eab613ec96a9385",
+        2: "d6a9084a50f725573930425c8471a34b5ea1602c6b207084a5cb0731357a8375",
+        3: "425506d5d53ef9a7492b32ab10c673049487db4156044f4f3035f4d054c881e1",
+        4: "46f6b5de584d64e09b20247edd6f2f077ef029eb686a0a450a722a07cbdbb14c",
+        6: "769ccce74e1941a6912bac91ffcb78820b7c986a98b53fb15b0eada1f6f9c455",
+        7: "488e3c77c3fccb48aabc0ed998264d249d254424a48015bf4c44e17025564ddb",
+    }
+    actual = {m.version: m.checksum() for m in discover_migrations()}
+
+    assert {version: actual[version] for version in expected} == expected
 
 
 # ---------------------------------------------------------------------------

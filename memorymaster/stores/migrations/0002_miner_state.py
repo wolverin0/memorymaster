@@ -1,6 +1,6 @@
 """0002_miner_state — KV table for resumable miner watermarks (v3.21.0-R1b).
 
-The verbatim rule-miner (:mod:`memorymaster.knowledge.rule_miner`) needs to remember
+The verbatim rule-miner (:mod:`memorymaster.rule_miner`) needs to remember
 how far through ``verbatim_memories`` it has scanned so re-runs are
 incremental. The watermark is a single integer, not a per-row fact, so it
 lives in a small key-value table rather than a column on the 744k-row
