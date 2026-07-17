@@ -104,6 +104,37 @@ def test_new_claim_survives_human_id_collision(tmp_path):
     assert new["human_id"] is None
 
 
+def test_confirmed_replica_conflict_is_preserved_as_candidate(tmp_path):
+    """Two offline replicas may confirm different values before exchanging deltas.
+
+    The incoming evidence must survive without violating the target's single
+    confirmed-value invariant or silently replacing either side's truth.
+    """
+    tgt, src = tmp_path / "t.db", tmp_path / "s.db"
+    _init(tgt)
+    _init(src)
+    with sqlite3.connect(tgt) as conn:
+        conn.execute(
+            "CREATE UNIQUE INDEX one_confirmed_value "
+            "ON claims(subject, predicate, scope) WHERE status = 'confirmed'"
+        )
+    _ins(
+        tgt, text="old endpoint", ikey="target", subject="service",
+        predicate="url", object_value="https://old.test", status="confirmed"
+    )
+    _ins(
+        src, text="new endpoint", ikey="source", subject="service",
+        predicate="url", object_value="https://new.test", status="confirmed"
+    )
+
+    stats = merge_databases(str(tgt), str(src))
+
+    rows = {row["text"]: row for row in _rows(tgt)}
+    assert stats == {"scanned": 1, "merged": 1, "skipped": 0, "errors": 0}
+    assert rows["old endpoint"]["status"] == "confirmed"
+    assert rows["new endpoint"]["status"] == "candidate"
+
+
 def test_supersession_sets_both_link_sides_and_records_event(tmp_path):
     """Conflict resolution must honor the supersession invariant: BOTH the
     winner.supersedes_claim_id and loser.replaced_by_claim_id are set, and a

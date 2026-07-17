@@ -305,6 +305,21 @@ def _find_conflicting_target_claims(
     return [dict(conflict) for conflict in conflicts]
 
 
+def _preserve_confirmed_replica_conflict(
+    row: Mapping[str, object], conflicts: Sequence[Mapping[str, object]]
+) -> tuple[Mapping[str, object], list[Mapping[str, object]]]:
+    """Downgrade an offline confirmed-value collision instead of dropping it."""
+    if row.get("status") != "confirmed" or not any(
+        conflict.get("status") == "confirmed" for conflict in conflicts
+    ):
+        return row, list(conflicts)
+    return {
+        **row,
+        "status": "candidate",
+        **({"pinned": 0} if "pinned" in row else {}),
+    }, []
+
+
 def _find_existing_target_claim(
     tgt: sqlite3.Connection,
     ikey: object,
@@ -720,6 +735,7 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
                         for conflict in _find_conflicting_target_claims(tgt, row, tgt_cols)
                         if _target_claim_envelope_is_safe(tgt, conflict)
                     ]
+                row, conflicts = _preserve_confirmed_replica_conflict(row, conflicts)
                 new_id = _insert_claim_into_target(
                     row,
                     common_cols,
