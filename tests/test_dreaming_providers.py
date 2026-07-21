@@ -31,6 +31,53 @@ def test_gemini_extractor_requests_json_and_retries_429_without_fallback() -> No
     assert result.usage.http_status == 200
 
 
+def test_gemini_extractor_requires_complete_candidate_objects_in_response_schema() -> None:
+    payload = GeminiExtractor._payload(
+        "extract stable knowledge",
+        [{"id": "m1", "role": "user", "text": "The user prefers blue interfaces."}],
+        "project:test",
+    )
+
+    candidate_schema = payload["generationConfig"]["responseSchema"]["properties"]["candidates"]["items"]
+    assert set(candidate_schema["required"]) == {
+        "text",
+        "claim_type",
+        "subject",
+        "predicate",
+        "scope_class",
+        "evidence_message_id",
+        "evidence_quote",
+    }
+    assert candidate_schema["properties"]["scope_class"]["enum"] == ["project", "personal"]
+
+
+def test_gemini_extractor_survives_short_retryable_provider_burst() -> None:
+    statuses = iter((429, 503, 200))
+    sleeps: list[float] = []
+
+    def transport(url, payload, headers, timeout):
+        del url, payload, headers, timeout
+        status = next(statuses)
+        if status == 200:
+            return 200, {
+                "candidates": [{"content": {"parts": [{"text": '{"candidates":[]}'}]}}],
+            }, {}
+        return status, {"error": {"message": "retry later"}}, {}
+
+    result = GeminiExtractor(
+        api_key="test-key",
+        transport=transport,
+        sleep=sleeps.append,
+    ).extract(
+        [{"id": "m1", "role": "user", "text": "Routine transient conversation."}],
+        scope="project:test",
+        capture_hash="capture",
+    )
+
+    assert result.candidates == ()
+    assert sleeps == [1.0, 2.0]
+
+
 def test_glm_consolidator_uses_authenticated_opencode_account_without_api_key(tmp_path) -> None:
     seen: dict = {}
     commands: list[list[str]] = []

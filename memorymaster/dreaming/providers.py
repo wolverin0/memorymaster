@@ -31,6 +31,32 @@ CommandRunner = Callable[
 ]
 LOGGER = logging.getLogger(__name__)
 
+_GEMINI_CANDIDATE_SCHEMA = {
+    "type": "OBJECT",
+    "required": [
+        "text",
+        "claim_type",
+        "subject",
+        "predicate",
+        "scope_class",
+        "evidence_message_id",
+        "evidence_quote",
+    ],
+    "properties": {
+        "text": {"type": "STRING", "description": "A complete stable claim, never empty."},
+        "claim_type": {"type": "STRING", "description": "Fact, decision, preference, profile, or constraint type."},
+        "subject": {"type": "STRING", "description": "The claim subject, never empty."},
+        "predicate": {"type": "STRING", "description": "The claim relationship or attribute, never empty."},
+        "object_value": {"type": "STRING", "nullable": True},
+        "scope_class": {"type": "STRING", "enum": ["project", "personal"]},
+        "evidence_message_id": {"type": "STRING", "description": "ID of the quoted supplied message."},
+        "evidence_quote": {"type": "STRING", "description": "An exact non-empty substring of that message."},
+        "confidence": {"type": "NUMBER", "minimum": 0, "maximum": 1},
+        "valid_from": {"type": "STRING", "nullable": True},
+        "valid_until": {"type": "STRING", "nullable": True},
+    },
+}
+
 
 class ProviderCallError(RuntimeError):
     pass
@@ -52,25 +78,26 @@ def _default_transport(url: str, payload: dict[str, Any], headers: dict[str, str
 
 def _retry_after(headers: dict[str, str], attempt: int) -> float:
     try:
-        return min(5.0, max(0.0, float(headers.get("Retry-After", ""))))
+        return min(30.0, max(0.0, float(headers.get("Retry-After", ""))))
     except ValueError:
-        return 0.5 * (attempt + 1)
+        return min(10.0, float(2**attempt))
 
 
 def _post_with_retry(transport: Transport, url: str, payload: dict[str, Any], headers: dict[str, str], timeout: int, sleep: Callable[[float], None]) -> tuple[int, dict[str, Any]]:
     last_status = 0
-    for attempt in range(2):
+    attempts = 4
+    for attempt in range(attempts):
         try:
             status, body, response_headers = transport(url, payload, headers, timeout)
         except Exception as exc:
-            if attempt == 1:
+            if attempt == attempts - 1:
                 raise ProviderCallError("provider request failed") from exc
-            sleep(0.5)
+            sleep(min(10.0, float(2**attempt)))
             continue
         last_status = status
         if status == 200:
             return status, body
-        if status not in {408, 429, 500, 502, 503, 504} or attempt == 1:
+        if status not in {408, 429, 500, 502, 503, 504} or attempt == attempts - 1:
             break
         sleep(_retry_after(response_headers, attempt))
     raise ProviderCallError(f"provider request failed with HTTP {last_status}")
@@ -125,7 +152,9 @@ class GeminiExtractor:
             raise ProviderCallError("GEMINI_API_KEY is not configured")
         prompt = (
             "Extract at most five stable facts, decisions, preferences, profiles, or constraints. "
-            "Ignore ephemeral work chatter. Cite one exact substring from one supplied message. "
+            "Ignore ephemeral work chatter. For evidence_quote, copy characters verbatim from the "
+            "text of evidence_message_id: never paraphrase, normalize, shorten, or add ellipses. "
+            "If no stable candidate has a verbatim quote, return an empty candidates array. "
             "Use scope_class personal only for stable user preference/profile/constraint knowledge."
         )
         payload = self._payload(prompt, messages, scope)
@@ -145,7 +174,17 @@ class GeminiExtractor:
 
     @staticmethod
     def _payload(prompt: str, messages: list[dict[str, Any]], scope: str) -> dict[str, Any]:
-        schema = {"type": "OBJECT", "required": ["candidates"], "properties": {"candidates": {"type": "ARRAY", "maxItems": 5, "items": {"type": "OBJECT"}}}}
+        schema = {
+            "type": "OBJECT",
+            "required": ["candidates"],
+            "properties": {
+                "candidates": {
+                    "type": "ARRAY",
+                    "maxItems": 5,
+                    "items": _GEMINI_CANDIDATE_SCHEMA,
+                },
+            },
+        }
         text = json.dumps({"scope": scope, "messages": messages}, ensure_ascii=False)
         return {"contents": [{"parts": [{"text": f"{prompt}\n\n{text}"}]}], "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2000, "thinkingConfig": {"thinkingLevel": "minimal"}, "responseMimeType": "application/json", "responseSchema": schema}}
 
