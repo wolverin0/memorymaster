@@ -648,6 +648,7 @@ MCP_TOOL_POLICIES: dict[str, McpToolPolicy] = {
     "checkpoint": McpToolPolicy("ingest"),
     "classify_query": McpToolPolicy("query", team_enabled=True),
     "compact_memory": McpToolPolicy("compact"),
+    "dream_status": McpToolPolicy("query"),
     "entity_stats": McpToolPolicy("configure"),
     "extract_entities": McpToolPolicy("ingest"),
     "federated_query": McpToolPolicy("query"),
@@ -2059,6 +2060,14 @@ if FastMCP is not None:
         counters and session metadata — never claim text.
         """
         return _usage_rollup(db)
+
+    @mcp.tool()
+    def dream_status() -> dict[str, Any]:
+        """Read-only native Dreaming queue, scheduler, and provider health."""
+        from memorymaster.core.capture_control import capture_state_path
+        from memorymaster.dreaming.ledger import DreamLedger
+
+        return {"ok": True, **DreamLedger.read_status(capture_state_path())}
 
     @mcp.tool()
     def open_dashboard(

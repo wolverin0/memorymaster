@@ -31,6 +31,7 @@ from memorymaster.surfaces.cli_handlers_basic import (
     handle_mcp_usage_report,
 )
 from memorymaster.surfaces.cli_handlers_integrity import _handle_drain_spool, _handle_integrity, _handle_qdrant_reconcile, _handle_repair_fk
+from memorymaster.surfaces.dreaming_cli import handle_dream_run, handle_dream_status
 
 
 COMMAND_HANDLERS["integrity"] = _handle_integrity
@@ -47,6 +48,8 @@ COMMAND_HANDLERS["mcp-usage-report"] = (
 )
 COMMAND_HANDLERS["migrate"] = _handle_migrate
 COMMAND_HANDLERS["export-delta"] = _handle_export_delta
+COMMAND_HANDLERS["dream-run"] = handle_dream_run
+COMMAND_HANDLERS["dream-status"] = handle_dream_status
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -674,6 +677,13 @@ def build_parser() -> argparse.ArgumentParser:
     dream_clean_cmd.add_argument("--project", default=None, help="Project path to compute Claude Code memory dir slug")
     dream_clean_cmd.add_argument("--dry-run", action="store_true", help="Preview what would be removed without deleting files")
 
+    native_dream = sub.add_parser("dream-run", help="Run one replayable native cross-session Dreaming pass")
+    native_dream.add_argument("--apply-candidates", action="store_true", help="Apply validated decisions as candidates/proposals (default: shadow only)")
+    native_dream.add_argument("--scope", default="", help="Restrict processing to one exact scope")
+    native_dream.add_argument("--max-sessions", type=int, default=None, help="Bound sessions for this run (capped by configured maximum)")
+
+    sub.add_parser("dream-status", help="Show read-only Dreaming queue, scheduler, and provider health")
+
     # Entity registry (GBrain-inspired)
     entity_list = sub.add_parser("entity-list", help="List canonical entities with alias and claim counts")
     entity_list.add_argument("--scope", default="", help="Filter by scope prefix")
@@ -707,6 +717,7 @@ def main(argv: list[str] | None = None) -> int:
         "mcp-usage-report",
         "export-delta",
         "qdrant-search",
+        "dream-status",
     }
 
     try:

@@ -13,6 +13,7 @@ EXPECTED_TOOLS = {
     "checkpoint",
     "classify_query",
     "compact_memory",
+    "dream_status",
     "entity_stats",
     "extract_entities",
     "federated_query",

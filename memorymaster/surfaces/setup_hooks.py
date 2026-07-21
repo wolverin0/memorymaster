@@ -431,6 +431,148 @@ def install_hooks(llm_config, include_pretooluse: bool = False):
     print(f"  Updated: {settings_path}")
 
 
+def _without_dream_hooks(
+    entries: list[dict[str, Any]], *, remove_legacy_session_end: bool = False
+) -> list[dict[str, Any]]:
+    needles = ["memorymaster-dream-capture.py"]
+    if remove_legacy_session_end:
+        needles.append("memorymaster-session-end.py")
+    return [
+        entry for entry in entries
+        if not any(needle in json.dumps(entry) for needle in needles)
+    ]
+
+
+def install_dream_hooks(*, install_claude: bool, install_codex: bool) -> dict[str, str]:
+    """Install quiet native Dreaming capture hooks without disturbing peers."""
+    hook_dir = HOME / ".memorymaster" / "hooks"
+    hook_dir.mkdir(parents=True, exist_ok=True)
+    destination = hook_dir / "memorymaster-dream-capture.py"
+    template = (TEMPLATES_DIR / "hooks" / destination.name).read_text(encoding="utf-8")
+    destination.write_text(
+        template.replace(
+            "__MEMORYMASTER_PROJECT_ROOT__",
+            str(PROJECT_ROOT).replace("\\", "/"),
+        ),
+        encoding="utf-8",
+    )
+    result: dict[str, str] = {"hook": str(destination)}
+    if install_claude:
+        settings_path = CLAUDE_DIR / "settings.json"
+        settings = _load_json_preserving(settings_path)
+        hooks = settings.setdefault("hooks", {})
+        command = f'"{PYTHON_EXE}" "{destination}" --provider claude'
+        entry = {"hooks": [{"type": "command", "command": command, "timeout": 2}]}
+        for event in ("SessionEnd", "Stop", "PreCompact"):
+            existing = hooks.setdefault(event, [])
+            hooks[event] = _without_dream_hooks(
+                existing,
+                remove_legacy_session_end=event == "SessionEnd",
+            )
+            hooks[event].append(entry)
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+        result["claude"] = "installed"
+    if install_codex:
+        hooks_path = CODEX_DIR / "hooks.json"
+        config = _load_json_preserving(hooks_path)
+        hooks = config.setdefault("hooks", {})
+        command = f'"{PYTHON_EXE}" "{destination}" --provider codex'
+        entry = {"hooks": [{
+            "type": "command",
+            "command": command,
+            "commandWindows": command,
+            "timeout": 2,
+        }]}
+        hooks["Stop"] = _without_dream_hooks(hooks.setdefault("Stop", []))
+        hooks["Stop"].append(entry)
+        hooks_path.parent.mkdir(parents=True, exist_ok=True)
+        hooks_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+        result["codex"] = "installed"
+    return result
+
+
+def setup_dream_schedule(db_path: str | Path, *, apply_candidates: bool) -> str:
+    """Create the hourly Windows task; other platforms get a manual command."""
+    command = (
+        f'"{PYTHON_EXE}" -m memorymaster --db "{db_path}" '
+        f'--workspace "{PROJECT_ROOT}" dream-run'
+    )
+    if apply_candidates:
+        command += " --apply-candidates"
+    if not IS_WINDOWS:
+        print(f"  Add to cron hourly: {command}")
+        return "manual"
+    try:
+        subprocess.run(
+            [
+                "schtasks", "/create", "/tn", "MemoryMaster-Dreaming",
+                "/sc", "hourly", "/mo", "1", "/tr", command, "/f",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return "configured"
+    except (OSError, subprocess.CalledProcessError):
+        return "manual"
+
+
+def verify_dream_install(*, apply_candidates: bool = False) -> dict[str, Any]:
+    """Inspect Dreaming hook and scheduler readiness without changing user state."""
+    hook_path = HOME / ".memorymaster" / "hooks" / "memorymaster-dream-capture.py"
+    client_states: dict[str, bool] = {}
+    for name, path in (
+        ("claude", CLAUDE_DIR / "settings.json"),
+        ("codex", CODEX_DIR / "hooks.json"),
+    ):
+        if path.is_file():
+            try:
+                client_states[name] = "memorymaster-dream-capture.py" in path.read_text(
+                    encoding="utf-8"
+                )
+            except OSError:
+                client_states[name] = False
+
+    schedule = "manual"
+    scheduled_command = ""
+    if IS_WINDOWS:
+        try:
+            probe = subprocess.run(
+                [
+                    "schtasks", "/query", "/tn", "MemoryMaster-Dreaming",
+                    "/fo", "list", "/v",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            scheduled_command = probe.stdout
+            schedule = "configured"
+        except (OSError, subprocess.CalledProcessError):
+            schedule = "missing"
+
+    expected_flag = "--apply-candidates" if apply_candidates else ""
+    mode_matches = not IS_WINDOWS or (
+        (expected_flag in scheduled_command)
+        if apply_candidates
+        else "--apply-candidates" not in scheduled_command
+    )
+    hooks_ready = hook_path.is_file() and any(client_states.values())
+    schedule_ready = schedule in {"configured", "manual"} and mode_matches
+    status = "PASS" if hooks_ready and schedule == "configured" and mode_matches else (
+        "PARTIAL" if hooks_ready and schedule_ready else "BLOCKED"
+    )
+    return {
+        "status": status,
+        "mode": "candidate-apply" if apply_candidates else "shadow",
+        "hook_file": hook_path.is_file(),
+        "clients": client_states,
+        "schedule": schedule,
+        "mode_matches": mode_matches,
+    }
+
+
 # ---------------------------------------------------------------------------
 # 3. MCP config
 # ---------------------------------------------------------------------------
@@ -889,6 +1031,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="skip the vector + local-LLM stack",
     )
     p.add_argument("--no-cron", action="store_true", help="skip steward cron setup")
+    p.add_argument(
+        "--enable-dream",
+        action="store_true",
+        help="install native Dreaming capture hooks and an hourly shadow task",
+    )
+    p.add_argument(
+        "--dream-apply-candidates",
+        action="store_true",
+        help="activate candidate/proposal writes for Dreaming (requires --enable-dream)",
+    )
     p.add_argument("--no-obsidian-skills", action="store_true", help="skip Obsidian skills install")
     p.add_argument(
         "--codex",
@@ -965,6 +1117,9 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
     # non-interactive (--yes), or for a quick --verify-only check — stdin may
     # not be a tty (CI, `docker exec`, an agent), where input() raises EOFError.
     set_non_interactive(bool(args.yes) or bool(args.json) or bool(args.verify_only))
+    if args.dream_apply_candidates and not args.enable_dream:
+        payload = {"error": "--dream-apply-candidates requires --enable-dream"}
+        return 2, (payload if args.json else None)
     profile = args.profile or "minimal"
     want_full_stack = (
         profile in {"semantic", "full-lab"}
@@ -981,9 +1136,20 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
         else:
             vdb = Path(args.db).expanduser().resolve() if args.db else Path.cwd() / "memorymaster.db"
         verify = verify_install(vdb)
+        dream = (
+            verify_dream_install(apply_candidates=bool(args.dream_apply_candidates))
+            if args.enable_dream
+            else None
+        )
         if args.profile is None:
             rc = 0 if verify.get("status") == "PASS" else 3 if verify.get("status") == "PARTIAL" else 1
-            return rc, ({"verify": verify} if args.json else None)
+            if dream is not None:
+                dream_rc = 0 if dream["status"] == "PASS" else 3 if dream["status"] == "PARTIAL" else 1
+                rc = max(rc, dream_rc)
+            payload = {"verify": verify}
+            if dream is not None:
+                payload["dream"] = dream
+            return rc, (payload if args.json else None)
         detected = detect_environment(cwd=Path.cwd())
         components = _setup_components(
             profile=profile,
@@ -999,6 +1165,10 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
             "profile": {"name": profile, "status": status},
             "components": {name: asdict(result) for name, result in components.items()},
         }
+        if dream is not None:
+            payload["dream"] = dream
+            dream_rc = 0 if dream["status"] == "PASS" else 3 if dream["status"] == "PARTIAL" else 1
+            rc = max(rc, dream_rc)
         return rc, (payload if args.json else None)
 
     # --- Resolve project root (flag > prompt > cwd) ---
@@ -1081,6 +1251,27 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
     else:
         applied["mcp_codex"] = "skipped"
 
+    # --- Native Dreaming (explicit opt-in; shadow unless activation flag) ---
+    if args.enable_dream:
+        applied["dream_hooks"] = install_dream_hooks(
+            install_claude=bool(detected.claude_code),
+            install_codex=bool(want_codex and detected.codex),
+        )
+        applied["dream_schedule"] = (
+            "skipped"
+            if args.no_cron
+            else setup_dream_schedule(
+                db_path,
+                apply_candidates=bool(args.dream_apply_candidates),
+            )
+        )
+        applied["dream_mode"] = (
+            "candidate-apply" if args.dream_apply_candidates else "shadow"
+        )
+    else:
+        applied["dream_hooks"] = "skipped"
+        applied["dream_schedule"] = "skipped"
+
     # --- Steward cron (references the Claude hook script; needs ~/.claude) ---
     if not args.no_cron and detected.claude_code:
         applied["cron"] = setup_steward_cron()
@@ -1127,6 +1318,7 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
         print("    - Claude Code not detected — hooks + MCP SKIPPED. Install Claude")
         print("      Code, then re-run `memorymaster-setup` to wire them.")
     print(f"    - Codex MCP — {applied.get('mcp_codex')}")
+    print(f"    - Native Dreaming: {applied.get('dream_mode', 'disabled')}")
     print(f"    - DB: {db_path}  |  verify: {verify.get('status')}")
     print(f"    - LLM provider: {llm_config['provider']}")
     if degraded:
