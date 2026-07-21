@@ -59,7 +59,9 @@ _GEMINI_CANDIDATE_SCHEMA = {
 
 
 class ProviderCallError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, http_status: int = 0) -> None:
+        super().__init__(message)
+        self.http_status = http_status
 
 
 def _default_transport(url: str, payload: dict[str, Any], headers: dict[str, str], timeout: int) -> tuple[int, dict[str, Any], dict[str, str]]:
@@ -100,7 +102,10 @@ def _post_with_retry(transport: Transport, url: str, payload: dict[str, Any], he
         if status not in {408, 429, 500, 502, 503, 504} or attempt == attempts - 1:
             break
         sleep(_retry_after(response_headers, attempt))
-    raise ProviderCallError(f"provider request failed with HTTP {last_status}")
+    raise ProviderCallError(
+        f"provider request failed with HTTP {last_status}",
+        http_status=last_status,
+    )
 
 
 def _json_object(raw: str) -> dict[str, Any]:
@@ -224,9 +229,19 @@ class GLMConsolidator:
         env.update({
             "NO_COLOR": "1",
             "OPENCODE_CONFIG_CONTENT": json.dumps(
-                {"instructions": [], "permission": "deny"}, separators=(",", ":"),
+                {
+                    "instructions": [],
+                    "permission": "deny",
+                    "mcp": {
+                        "gitnexus": {"enabled": False},
+                        "playwright": {"enabled": False},
+                    },
+                },
+                separators=(",", ":"),
             ),
             "OPENCODE_DISABLE_AUTOUPDATE": "1",
+            "OPENCODE_DISABLE_CLAUDE_CODE": "1",
+            "OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
         })
         started = time.monotonic()
         try:

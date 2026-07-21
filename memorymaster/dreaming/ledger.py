@@ -180,6 +180,9 @@ class DreamLedger:
     def mark_retryable(self, capture_id: int, run_id: str, error: str) -> None:
         self._set_capture(capture_id, state="retryable", run_id=run_id, error=error[:500])
 
+    def mark_quarantined(self, capture_id: int, run_id: str, error: str) -> None:
+        self._set_capture(capture_id, state="quarantined", run_id=run_id, error=error[:500])
+
     def _set_capture(self, capture_id: int, *, state: str, run_id: str, error: str | None, extraction_json: str | None = None, decisions_json: str | None = None) -> None:
         assignments = ["state=?", "run_id=?", "last_error=?", "updated_at=?", "attempts=attempts+1"]
         values: list[Any] = [state, run_id, error, _iso(_utc_now())]

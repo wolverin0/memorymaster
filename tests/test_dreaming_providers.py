@@ -153,8 +153,17 @@ def test_glm_consolidator_uses_authenticated_opencode_account_without_api_key(tm
         "json",
     ]
     assert "GLM_API_KEY" not in seen["env"]
+    assert seen["env"]["OPENCODE_DISABLE_CLAUDE_CODE"] == "1"
+    assert seen["env"]["OPENCODE_DISABLE_DEFAULT_PLUGINS"] == "1"
     inline_config = json.loads(seen["env"]["OPENCODE_CONFIG_CONTENT"])
-    assert inline_config == {"instructions": [], "permission": "deny"}
+    assert inline_config == {
+        "instructions": [],
+        "permission": "deny",
+        "mcp": {
+            "gitnexus": {"enabled": False},
+            "playwright": {"enabled": False},
+        },
+    }
     assert '"candidate_id": "c1"' in seen["prompt"]
     assert result.decisions[0].action == "add"
     assert result.usage.provider == "zai-coding-plan"

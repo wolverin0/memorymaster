@@ -55,8 +55,9 @@ Environment variables:
 | `MEMORYMASTER_DREAM_CONSOLIDATE_MODEL` | `zai-coding-plan/glm-5.2` | OpenCode provider/model override |
 | `MEMORYMASTER_OPENCODE_COMMAND` | discovered from `PATH` | Optional explicit OpenCode executable |
 | `MEMORYMASTER_CAPTURE_STATE_DB` | platform default | Auxiliary ledger location |
+| `MEMORYMASTER_DREAM_MAX_SEMANTIC_ATTEMPTS` | `2` | Quarantine bound for repeatedly malformed extraction evidence |
 
-Gemini reads its key at call time. GLM does not require a separate MemoryMaster API key: the worker invokes `opencode run --pure` with the existing `Z.AI Coding Plan` account session and model `zai-coding-plan/glm-5.2`. The prompt is supplied over stdin, all OpenCode tools and external instructions are denied for the call, and output is accepted only from JSON events that pass the Dreaming decision schema. The worker deletes the OpenCode session it created after parsing the result, including schema-rejection paths, so hourly runs do not accumulate a second transcript archive. OpenCode credentials remain owned by OpenCode and are never read, copied, logged, or persisted by MemoryMaster.
+Gemini reads its key at call time. GLM does not require a separate MemoryMaster API key: the worker invokes `opencode run --pure` with the existing `Z.AI Coding Plan` account session and model `zai-coding-plan/glm-5.2`. The prompt is supplied over stdin, all OpenCode tools, configured GitNexus/Playwright MCPs, plugins, Claude compatibility, and external instructions are disabled for the call, and output is accepted only from JSON events that pass the Dreaming decision schema. The worker deletes the OpenCode session it created after parsing the result, including schema-rejection paths, so hourly runs do not accumulate a second transcript archive. OpenCode credentials remain owned by OpenCode and are never read, copied, logged, or persisted by MemoryMaster.
 
 Verify account readiness without exposing credentials:
 
@@ -125,7 +126,7 @@ An invalid or incomplete label blocks activation. Synthetic unit fixtures prove 
 
 ## Operations
 
-`dream-status` reports pending states, run/provider counters, structured yield, 429s, hook error count, scheduler freshness, and warnings. Sustained GLM concurrency is intentionally one because the reused Z.AI account has shown throttling above two concurrent callers elsewhere. OpenCode runs in an isolated non-repository directory with tools denied, so it cannot modify source or absorb project instructions. A recurring Windows task under the authenticated user is used instead of shell-detached processes.
+`dream-status` reports pending states, run/provider counters, structured yield, 429s, hook error count, scheduler freshness, and warnings. The first exhausted Gemini 429 opens a batch circuit so later captures wait for the next run instead of amplifying throttling. Repeated semantic evidence failures quarantine after two attempts for review rather than looping forever. Sustained GLM concurrency is intentionally one because the reused Z.AI account has shown throttling above two concurrent callers elsewhere. OpenCode runs in an isolated non-repository directory with tools and inherited MCP startup denied, so it cannot modify source or absorb project instructions. A recurring Windows task under the authenticated user is used instead of shell-detached processes.
 
 The first real rollout should remain shadow-only for at least 48 hours. Review provider yield, retry/quarantine counts, scope mistakes, ephemeral candidates, evidence accuracy, estimated cost, and a human-labeled sample before considering activation.
 

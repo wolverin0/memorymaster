@@ -15,6 +15,7 @@ from memorymaster.dreaming.models import (
     ExtractionResult,
     ProviderUsage,
 )
+from memorymaster.dreaming.providers import ProviderCallError
 from memorymaster.dreaming.worker import DreamConfig, DreamWorker
 
 
@@ -25,13 +26,18 @@ def _usage(provider: str, model: str) -> ProviderUsage:
     return ProviderUsage(provider, model, 200, 10, 20, 5, True)
 
 
-def _capture(ledger: DreamLedger, *, scope: str = "project:test") -> int:
+def _capture(
+    ledger: DreamLedger,
+    *,
+    scope: str = "project:test",
+    session_hash: str = "session",
+) -> int:
     messages = (
         DreamMessage("m1", "user", "I prefer blue interfaces for daily work.", (NOW - timedelta(hours=1)).isoformat()),
         DreamMessage("m2", "assistant", "Blue interfaces will be treated as your preference.", (NOW - timedelta(minutes=59)).isoformat()),
     )
     return ledger.enqueue(CaptureEnvelope(
-        provider="codex", session_hash="session", scope=scope,
+        provider="codex", session_hash=session_hash, scope=scope,
         captured_at=NOW.isoformat(), last_activity_at=messages[-1].timestamp,
         messages=messages, cursor_start=0, cursor_end=100, content_hash="capture-hash",
     ))
@@ -122,6 +128,54 @@ def test_provider_failure_is_replayable_and_never_mutates_claims(tmp_path: Path)
     assert result["errors"] == 1
     assert ledger.get_capture(capture_id)["state"] == "retryable"
     assert service.list_claims(limit=20, scope_allowlist=["project:test"]) == []
+
+
+def test_extraction_rate_limit_opens_batch_circuit_and_records_429(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    first_id = _capture(ledger, session_hash="first")
+    second_id = _capture(ledger, session_hash="second")
+
+    class RateLimited(_Extractor):
+        calls = 0
+
+        def extract(self, messages, *, scope, capture_hash):
+            self.calls += 1
+            raise ProviderCallError("provider request failed with HTTP 429", http_status=429)
+
+    extractor = RateLimited()
+    result = DreamWorker(
+        ledger, service, extractor, _Consolidator(), config=DreamConfig(), now=lambda: NOW,
+    ).run(apply_candidates=False)
+
+    assert result["errors"] == 1
+    assert extractor.calls == 1
+    assert ledger.get_capture(first_id)["state"] == "retryable"
+    assert ledger.get_capture(second_id)["state"] == "captured"
+    assert DreamLedger.read_status(ledger.db_path)["providers"]["google"]["http_429"] == 1
+
+
+def test_repeated_semantic_extraction_failure_is_quarantined(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    capture_id = _capture(ledger)
+
+    class InvalidEvidence(_Extractor):
+        def extract(self, messages, *, scope, capture_hash):
+            raise ValueError("evidence quote is not exact")
+
+    worker = DreamWorker(
+        ledger,
+        service,
+        InvalidEvidence(),
+        _Consolidator(),
+        config=DreamConfig(max_semantic_attempts=2),
+        now=lambda: NOW,
+    )
+    worker.run(apply_candidates=False)
+    worker.run(apply_candidates=False)
+
+    assert ledger.get_capture(capture_id)["state"] == "quarantined"
 
 
 def test_consolidation_retry_reuses_durable_extraction(tmp_path: Path) -> None:

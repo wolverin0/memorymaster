@@ -21,7 +21,7 @@ from memorymaster.dreaming.models import (
     ExtractionResult,
     ProviderUsage,
 )
-from memorymaster.dreaming.providers import GLMConsolidator, GeminiExtractor
+from memorymaster.dreaming.providers import GLMConsolidator, GeminiExtractor, ProviderCallError
 
 
 class Extractor(Protocol):
@@ -54,6 +54,7 @@ class DreamConfig:
     max_candidate_writes_daily: int = 200
     max_extract_calls_daily: int = 40
     max_consolidate_calls_daily: int = 12
+    max_semantic_attempts: int = 2
     lease_ttl_seconds: int = 900
     retain_days: int = 7
     max_capture_bytes: int = 256 * 1024 * 1024
@@ -68,6 +69,7 @@ class DreamConfig:
             max_candidate_writes_daily=_env_int("MEMORYMASTER_DREAM_MAX_CANDIDATE_WRITES_DAILY", 200),
             max_extract_calls_daily=_env_int("MEMORYMASTER_DREAM_MAX_EXTRACT_CALLS_DAILY", 40),
             max_consolidate_calls_daily=_env_int("MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CALLS_DAILY", 12),
+            max_semantic_attempts=_env_int("MEMORYMASTER_DREAM_MAX_SEMANTIC_ATTEMPTS", 2),
             lease_ttl_seconds=_env_int("MEMORYMASTER_DREAM_LEASE_TTL_SECONDS", 900),
             retain_days=_env_int("MEMORYMASTER_DREAM_CAPTURE_RETAIN_DAYS", 7),
             max_capture_bytes=_env_int("MEMORYMASTER_DREAM_CAPTURE_MAX_BYTES", 256 * 1024 * 1024),
@@ -127,10 +129,22 @@ class DreamWorker:
                 extracted.append(row)
                 summary["extracted"] += 1
             except Exception as exc:
-                self._record_failure(run_id, self.extractor.provider, self.extractor.model)
-                self.ledger.mark_retryable(int(row["id"]), run_id, str(exc))
+                self._record_failure(run_id, self.extractor.provider, self.extractor.model, exc)
+                self._mark_extraction_failure(row, run_id, exc)
                 summary["errors"] += 1
+                if isinstance(exc, ProviderCallError) and exc.http_status == 429:
+                    break
         return extracted
+
+    def _mark_extraction_failure(
+        self, row: dict[str, Any], run_id: str, error: Exception,
+    ) -> None:
+        capture_id = int(row["id"])
+        attempts_after_failure = int(row.get("attempts", 0)) + 1
+        if isinstance(error, ValueError) and attempts_after_failure >= self.config.max_semantic_attempts:
+            self.ledger.mark_quarantined(capture_id, run_id, str(error))
+            return
+        self.ledger.mark_retryable(capture_id, run_id, str(error))
 
     def _bounded_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         kept: list[dict[str, Any]] = []
@@ -171,7 +185,9 @@ class DreamWorker:
                 for decision in result.decisions:
                     decisions_by_capture[owner_by_id[decision.candidate_id]].append(decision.to_dict())
             except Exception as exc:
-                self._record_failure(run_id, self.consolidator.provider, self.consolidator.model)
+                self._record_failure(
+                    run_id, self.consolidator.provider, self.consolidator.model, exc,
+                )
                 self._fail_group(run_id, capture_ids, str(exc), summary)
                 failed_captures.update(capture_ids)
         for row in rows:
@@ -298,10 +314,12 @@ class DreamWorker:
             input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
             http_status=usage.http_status, now=self.now())
 
-    def _record_failure(self, run_id: str, provider: str, model: str) -> None:
+    def _record_failure(
+        self, run_id: str, provider: str, model: str, error: Exception,
+    ) -> None:
         self.ledger.record_provider_call(run_id, provider=provider, model=model,
             outcome="error", latency_ms=0, structured_valid=False, input_tokens=0,
-            output_tokens=0, http_status=0, now=self.now())
+            output_tokens=0, http_status=int(getattr(error, "http_status", 0)), now=self.now())
 
 
 def run_dream(db_path: str | Path, workspace: str | Path, *, apply_candidates: bool = False, scope: str | None = None, max_sessions: int | None = None, ledger_path: str | Path | None = None) -> dict[str, Any]:
