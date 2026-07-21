@@ -17,12 +17,14 @@ Interactive prompts for:
     - Obsidian skills installation
 """
 import argparse
+import gc
 import json
 import os
 import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -937,13 +939,15 @@ def setup_full_stack(detected: Detected, *, interactive: bool, yes: bool, model:
 # 8. Verify install (sentinel round-trip)
 # ---------------------------------------------------------------------------
 def verify_install(db_path: str | Path) -> dict[str, Any]:
-    """Ingest a sentinel claim via the core service, then query it back.
+    """Round-trip a sentinel through a disposable database.
+
+    The selected target is never opened or mutated.
 
     Returns {"status": "PASS"|"PARTIAL"|"FAIL", "detail": str, "mcp_note": str}.
     Never raises — a failure degrades to a FAIL/PARTIAL result.
     """
     banner("Verify Install")
-    db_path = str(db_path)
+    del db_path
     result: dict[str, Any] = {"status": "FAIL", "detail": "", "mcp_note": ""}
 
     try:
@@ -956,22 +960,27 @@ def verify_install(db_path: str | Path) -> dict[str, Any]:
 
     sentinel = "memorymaster setup verification sentinel claim"
     try:
-        svc = MemoryService(db_path)
-        svc.init_db()
-        svc.ingest(
-            sentinel,
-            [CitationInput(source="setup-verify", locator="verify_install")],
-            scope="project:memorymaster-verify",
-            source_agent="memorymaster-setup",
-            idempotency_key="memorymaster-setup-verify-sentinel",
-        )
-        hits = svc.query(
-            "verification sentinel",
-            limit=10,
-            include_candidates=True,
-            scope_allowlist=["project:memorymaster-verify"],
-        )
-        round_tripped = any("sentinel" in (getattr(c, "text", "") or "") for c in hits)
+        with tempfile.TemporaryDirectory(prefix="memorymaster-setup-verify-") as temp_dir:
+            svc = MemoryService(Path(temp_dir) / "verify.db")
+            svc.init_db()
+            svc.ingest(
+                sentinel,
+                [CitationInput(source="setup-verify", locator="verify_install")],
+                scope="project:memorymaster-verify",
+                source_agent="memorymaster-setup",
+                idempotency_key="memorymaster-setup-verify-sentinel",
+            )
+            hits = svc.query(
+                "verification sentinel",
+                limit=10,
+                include_candidates=True,
+                scope_allowlist=["project:memorymaster-verify"],
+            )
+            round_tripped = any(
+                "sentinel" in (getattr(claim, "text", "") or "") for claim in hits
+            )
+            del hits, svc
+            gc.collect()
     except Exception as exc:  # noqa: BLE001
         result["detail"] = f"round-trip failed: {exc}"
         print(f"  FAIL — {result['detail']}")
@@ -979,7 +988,7 @@ def verify_install(db_path: str | Path) -> dict[str, Any]:
 
     if round_tripped:
         result["status"] = "PASS"
-        result["detail"] = "sentinel claim ingested and recalled successfully"
+        result["detail"] = "sentinel claim round-tripped in a disposable database"
         print("  PASS — sentinel claim ingested and recalled.")
     else:
         result["status"] = "PARTIAL"

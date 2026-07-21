@@ -335,6 +335,25 @@ class TestVerifyInstall:
         assert result["status"] == "PASS"
         assert "restart" in result["mcp_note"].lower()
 
+    def test_verify_install_never_mutates_selected_database(
+        self, tmp_path, hermetic_home, monkeypatch
+    ):
+        import sqlite3
+
+        monkeypatch.setattr(
+            sh, "detect_environment", lambda *a, **kw: _detected(mm_mcp_registered=False)
+        )
+        selected = tmp_path / "selected.db"
+        with sqlite3.connect(selected) as conn:
+            conn.execute("CREATE TABLE operator_data (value TEXT NOT NULL)")
+            conn.execute("INSERT INTO operator_data VALUES ('preserve-me')")
+        before = selected.read_bytes()
+
+        result = sh.verify_install(selected)
+
+        assert result["status"] == "PASS", result
+        assert selected.read_bytes() == before
+
 
 # ---------------------------------------------------------------------------
 # main() end-to-end (non-interactive) — wiring + idempotency + JSON + exit 0
