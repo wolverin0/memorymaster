@@ -1,6 +1,6 @@
 # MemoryMaster Native Dreaming V1
 > Covers: quiet transcript capture, asynchronous LLM consolidation, governed candidate writes, rollout, measurement, and rollback.
-> Key terms: Codex, Claude, Gemini 3.5 Flash, GLM 5.2, capture ledger, shadow mode, candidate-first, steward proposal.
+> Key terms: Codex, Claude, Gemini 3.5 Flash, GLM 5.2, OpenCode account auth, capture ledger, shadow mode, candidate-first.
 > Read this before enabling Dreaming hooks, scheduling the worker, changing provider models, or activating candidate writes.
 > Default safety posture: disabled until explicitly installed; shadow processing before activation; never auto-confirms claims.
 > Authority: the claims store remains authoritative; the auxiliary capture ledger is replay state, not a second memory database.
@@ -37,7 +37,7 @@ Project knowledge stays in its exact `project:<name>` scope. Stable user prefere
 - Capture cursor advances only after the envelope is durably queued.
 - Replay state is explicit: `captured`, `extracted`, `consolidated`, `applied`, `retryable`, or `quarantined`.
 - A transactional expiring lease permits one worker at a time.
-- Provider calls have finite timeouts, two bounded attempts, JSON validation, and no model fallback.
+- Provider calls have finite timeouts, bounded execution, JSON validation, and no model fallback.
 - Every candidate requires exact sanitized evidence and every candidate receives exactly one consolidation decision.
 - Credentials in any candidate field, malformed numbers, unknown candidates, cross-scope targets, and malformed provider output fail closed.
 - Applied decisions and proposal events use deterministic idempotency checks.
@@ -51,13 +51,21 @@ Environment variables:
 | Variable | Default | Purpose |
 |---|---|---|
 | `GEMINI_API_KEY` | none | Required by the extractor |
-| `GLM_API_KEY` | none | Required by the consolidator |
 | `MEMORYMASTER_DREAM_EXTRACT_MODEL` | `gemini-3.5-flash` | Extraction model override |
-| `MEMORYMASTER_DREAM_CONSOLIDATE_MODEL` | `glm-5.2` | Consolidation model override |
-| `MEMORYMASTER_ZAI_BASE_URL` | Z.AI coding PaaS v4 | GLM OpenAI-compatible endpoint |
+| `MEMORYMASTER_DREAM_CONSOLIDATE_MODEL` | `zai-coding-plan/glm-5.2` | OpenCode provider/model override |
+| `MEMORYMASTER_OPENCODE_COMMAND` | discovered from `PATH` | Optional explicit OpenCode executable |
 | `MEMORYMASTER_CAPTURE_STATE_DB` | platform default | Auxiliary ledger location |
 
-Keys are read at call time and are never written by setup, capture, status, or evaluation. Missing providers produce actionable failures; they do not silently switch to a different model.
+Gemini reads its key at call time. GLM does not require a separate MemoryMaster API key: the worker invokes `opencode run --pure` with the existing `Z.AI Coding Plan` account session and model `zai-coding-plan/glm-5.2`. The prompt is supplied over stdin, all OpenCode tools and external instructions are denied for the call, and output is accepted only from JSON events that pass the Dreaming decision schema. The worker deletes the OpenCode session it created after parsing the result, including schema-rejection paths, so hourly runs do not accumulate a second transcript archive. OpenCode credentials remain owned by OpenCode and are never read, copied, logged, or persisted by MemoryMaster.
+
+Verify account readiness without exposing credentials:
+
+```powershell
+opencode auth list
+opencode models | Select-String 'zai-coding-plan/glm-5.2'
+```
+
+The scheduled task must run as the same Windows user that authenticated OpenCode. Missing CLI/account/model availability produces an actionable, retryable failure; it never silently switches providers.
 
 ## Installation and modes
 
@@ -117,7 +125,7 @@ An invalid or incomplete label blocks activation. Synthetic unit fixtures prove 
 
 ## Operations
 
-`dream-status` reports pending states, run/provider counters, structured yield, 429s, hook error count, scheduler freshness, and warnings. Sustained GLM concurrency is intentionally one because the reused Z.AI account has shown throttling above two concurrent callers elsewhere. A recurring Windows task is used instead of shell-detached processes.
+`dream-status` reports pending states, run/provider counters, structured yield, 429s, hook error count, scheduler freshness, and warnings. Sustained GLM concurrency is intentionally one because the reused Z.AI account has shown throttling above two concurrent callers elsewhere. OpenCode runs in an isolated non-repository directory with tools denied, so it cannot modify source or absorb project instructions. A recurring Windows task under the authenticated user is used instead of shell-detached processes.
 
 The first real rollout should remain shadow-only for at least 48 hours. Review provider yield, retry/quarantine counts, scope mistakes, ephemeral candidates, evidence accuracy, estimated cost, and a human-labeled sample before considering activation.
 

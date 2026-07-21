@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import subprocess
+
 import pytest
 
 from memorymaster.dreaming.models import DreamCandidate, candidate_from_payload
@@ -28,12 +31,48 @@ def test_gemini_extractor_requests_json_and_retries_429_without_fallback() -> No
     assert result.usage.http_status == 200
 
 
-def test_glm_consolidator_uses_single_flight_json_reasoning_contract() -> None:
+def test_glm_consolidator_uses_authenticated_opencode_account_without_api_key(tmp_path) -> None:
     seen: dict = {}
+    commands: list[list[str]] = []
 
-    def transport(url, payload, headers, timeout):
-        seen.update({"url": url, "payload": payload, "timeout": timeout})
-        return 200, {"choices": [{"message": {"content": '{"decisions":[{"candidate_id":"c1","action":"add","rationale":"new stable preference","confidence":0.9}]}'}}], "usage": {"prompt_tokens": 20, "completion_tokens": 8}}, {}
+    def runner(command, prompt, timeout, cwd, env):
+        commands.append(command)
+        if command[1:3] == ["session", "delete"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        seen.update({
+            "command": command,
+            "prompt": prompt,
+            "timeout": timeout,
+            "cwd": cwd,
+            "env": env,
+        })
+        decision = {
+            "decisions": [
+                {
+                    "candidate_id": "c1",
+                    "action": "add",
+                    "rationale": "new stable preference",
+                    "confidence": 0.9,
+                }
+            ]
+        }
+        events = [
+            {
+                "type": "text",
+                "sessionID": "session-owned-by-dreaming",
+                "part": {"text": f"```json\n{json.dumps(decision)}\n```"},
+            },
+            {
+                "type": "step_finish",
+                "part": {
+                    "tokens": {
+                        "input": 20,
+                        "output": 8,
+                    }
+                },
+            },
+        ]
+        return subprocess.CompletedProcess(command, 0, "\n".join(map(json.dumps, events)), "")
 
     candidate = DreamCandidate(
         candidate_id="c1",
@@ -47,15 +86,36 @@ def test_glm_consolidator_uses_single_flight_json_reasoning_contract() -> None:
         evidence_quote="prefers blue",
         confidence=0.8,
     )
-    consolidator = GLMConsolidator(api_key="test-key", transport=transport, sleep=lambda _: None)
+    consolidator = GLMConsolidator(
+        command="opencode",
+        runner=runner,
+        work_dir=tmp_path,
+    )
 
     result = consolidator.consolidate([candidate], [], scope="personal")
 
-    assert seen["payload"]["model"] == "glm-5.2"
-    assert seen["payload"]["response_format"] == {"type": "json_object"}
-    assert seen["payload"]["thinking"] == {"type": "enabled"}
-    assert seen["payload"]["reasoning_effort"] == "high"
+    assert seen["command"] == [
+        "opencode",
+        "run",
+        "--pure",
+        "--dir",
+        str(tmp_path),
+        "--model",
+        "zai-coding-plan/glm-5.2",
+        "--format",
+        "json",
+    ]
+    assert "GLM_API_KEY" not in seen["env"]
+    inline_config = json.loads(seen["env"]["OPENCODE_CONFIG_CONTENT"])
+    assert inline_config == {"instructions": [], "permission": "deny"}
+    assert '"candidate_id": "c1"' in seen["prompt"]
     assert result.decisions[0].action == "add"
+    assert result.usage.provider == "zai-coding-plan"
+    assert result.usage.input_tokens == 20
+    assert result.usage.output_tokens == 8
+    assert commands[1] == [
+        "opencode", "session", "delete", "session-owned-by-dreaming",
+    ]
 
 
 def test_candidate_rejects_secret_hidden_outside_summary_text() -> None:
@@ -103,15 +163,16 @@ def test_candidate_rejects_non_finite_confidence() -> None:
 
 
 def test_glm_rejects_duplicate_decisions_even_when_candidate_set_matches() -> None:
-    def transport(url, payload, headers, timeout):
-        del url, payload, headers, timeout
+    def runner(command, prompt, timeout, cwd, env):
+        del prompt, timeout, cwd, env
         decisions = {
             "decisions": [
                 {"candidate_id": "c1", "action": "add", "rationale": "new", "confidence": 0.9},
                 {"candidate_id": "c1", "action": "ignore", "rationale": "duplicate", "confidence": 0.2},
             ]
         }
-        return 200, {"choices": [{"message": {"content": __import__("json").dumps(decisions)}}]}, {}
+        event = {"type": "text", "part": {"text": json.dumps(decisions)}}
+        return subprocess.CompletedProcess(command, 0, json.dumps(event), "")
 
     candidate = DreamCandidate(
         candidate_id="c1",
@@ -127,6 +188,72 @@ def test_glm_rejects_duplicate_decisions_even_when_candidate_set_matches() -> No
     )
 
     with pytest.raises(ProviderCallError, match="exactly one decision"):
-        GLMConsolidator(api_key="test-key", transport=transport).consolidate(
+        GLMConsolidator(command="opencode", runner=runner).consolidate(
             [candidate], [], scope="personal"
+        )
+
+
+def test_glm_consolidator_fails_closed_when_opencode_account_call_fails() -> None:
+    def runner(command, prompt, timeout, cwd, env):
+        del prompt, timeout, cwd, env
+        return subprocess.CompletedProcess(command, 1, "", "credential details must not escape")
+
+    candidate = DreamCandidate(
+        candidate_id="c1",
+        text="The user prefers blue interfaces.",
+        claim_type="preference",
+        subject="user",
+        predicate="prefers",
+        object_value="blue interfaces",
+        scope_class="personal",
+        evidence_message_id="m1",
+        evidence_quote="prefers blue",
+        confidence=0.8,
+    )
+
+    with pytest.raises(ProviderCallError, match="OpenCode GLM invocation failed with exit 1") as exc:
+        GLMConsolidator(command="opencode", runner=runner).consolidate(
+            [candidate], [], scope="personal"
+        )
+    assert "credential details" not in str(exc.value)
+
+
+def test_glm_consolidator_requires_opencode_cli(monkeypatch) -> None:
+    monkeypatch.delenv("MEMORYMASTER_OPENCODE_COMMAND", raising=False)
+    monkeypatch.setattr(
+        "memorymaster.dreaming.providers.shutil.which", lambda _name: None,
+    )
+
+    with pytest.raises(ProviderCallError, match="OpenCode CLI is not installed"):
+        GLMConsolidator().consolidate([], [], scope="personal")
+
+
+def test_glm_consolidator_reports_bounded_timeout() -> None:
+    def runner(command, prompt, timeout, cwd, env):
+        del prompt, cwd, env
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    with pytest.raises(ProviderCallError, match="timed out"):
+        GLMConsolidator(command="opencode", runner=runner).consolidate(
+            [], [], scope="personal"
+        )
+
+
+@pytest.mark.parametrize(
+    ("stdout", "message"),
+    [
+        ("not-json", "malformed event JSON"),
+        (json.dumps({"type": "step_start", "part": {}}), "no text event"),
+    ],
+)
+def test_glm_consolidator_rejects_invalid_opencode_event_stream(
+    stdout: str, message: str,
+) -> None:
+    def runner(command, prompt, timeout, cwd, env):
+        del prompt, timeout, cwd, env
+        return subprocess.CompletedProcess(command, 0, stdout, "")
+
+    with pytest.raises(ProviderCallError, match=message):
+        GLMConsolidator(command="opencode", runner=runner).consolidate(
+            [], [], scope="personal"
         )
