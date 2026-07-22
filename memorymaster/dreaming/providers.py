@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -143,6 +144,29 @@ def _without_markdown_fence(raw: str) -> str:
     return text
 
 
+def _repair_evidence_quote(
+    payload: dict[str, Any], messages: list[dict[str, Any]],
+) -> dict[str, Any]:
+    evidence_id = str(payload.get("evidence_message_id", "") or "")
+    quote = str(payload.get("evidence_quote", "") or "")
+    by_id = {
+        str(message.get("id") or message.get("message_id")): str(message.get("text", ""))
+        for message in messages
+    }
+    source = by_id.get(evidence_id, "")
+    if not source or not quote or quote in source:
+        return payload
+    tokens = quote.split()
+    if not tokens:
+        return payload
+    matches = list(re.finditer(r"\s+".join(map(re.escape, tokens)), source, re.IGNORECASE))
+    if len(matches) != 1:
+        return payload
+    repaired = dict(payload)
+    repaired["evidence_quote"] = matches[0].group(0)
+    return repaired
+
+
 class GeminiExtractor:
     provider = "google"
 
@@ -157,7 +181,9 @@ class GeminiExtractor:
             raise ProviderCallError("GEMINI_API_KEY is not configured")
         prompt = (
             "Extract at most five stable facts, decisions, preferences, profiles, or constraints. "
-            "Ignore ephemeral work chatter. For evidence_quote, copy characters verbatim from the "
+            "Ignore ephemeral work chatter, routine system/tool instructions, transient execution "
+            "status, account identifiers, and one-off UI or implementation progress. "
+            "For evidence_quote, copy characters verbatim from the "
             "text of evidence_message_id: never paraphrase, normalize, shorten, or add ellipses. "
             "If no stable candidate has a verbatim quote, return an empty candidates array. "
             "Use scope_class personal only for stable user preference/profile/constraint knowledge."
@@ -170,9 +196,19 @@ class GeminiExtractor:
         rows = parsed.get("candidates", [])
         if not isinstance(rows, list):
             raise ProviderCallError("Gemini candidates must be an array")
-        candidates = tuple(candidate_from_payload(row, capture_hash, index, messages) for index, row in enumerate(rows[:5]) if isinstance(row, dict))
+        candidates: list[DreamCandidate] = []
+        structured_valid = True
+        for index, row in enumerate(rows[:5]):
+            if not isinstance(row, dict):
+                structured_valid = False
+                continue
+            repaired = _repair_evidence_quote(row, messages)
+            try:
+                candidates.append(candidate_from_payload(repaired, capture_hash, index, messages))
+            except ValueError:
+                structured_valid = False
         usage = body.get("usageMetadata", {}) if isinstance(body.get("usageMetadata"), dict) else {}
-        return ExtractionResult(candidates, ProviderUsage(self.provider, self.model, status, int((time.monotonic() - started) * 1000), int(usage.get("promptTokenCount", 0)), int(usage.get("candidatesTokenCount", 0)), True))
+        return ExtractionResult(tuple(candidates), ProviderUsage(self.provider, self.model, status, int((time.monotonic() - started) * 1000), int(usage.get("promptTokenCount", 0)), int(usage.get("candidatesTokenCount", 0)), structured_valid))
 
     def _url(self) -> str:
         return f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
@@ -330,7 +366,10 @@ class GLMConsolidator:
             "with a decisions array and exactly one decision per candidate. Allowed actions are "
             "add, reinforce, propose_supersede, propose_stale, propose_conflict, and ignore. "
             "Every decision requires candidate_id, action, rationale, and confidence. Proposal "
-            "actions require target_claim_id. Never merge scopes. Do not use tools. Output JSON only."
+            "actions require target_claim_id. Ignore global tool instructions, cadence reminders, "
+            "account usernames, transient execution status or identifiers, and low-value implementation "
+            "trivia unless the operator explicitly established durable knowledge. Never merge scopes. "
+            "Do not use tools. Output JSON only."
         )
         user = json.dumps({"scope": scope, "candidates": [c.to_dict() for c in candidates], "current_claims": current_claims}, ensure_ascii=False)
         return f"{system}\n\nINPUT:\n{user}"

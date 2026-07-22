@@ -90,7 +90,17 @@ class DreamWorker:
         if not self.ledger.acquire_lease("dream-worker", owner, self.config.lease_ttl_seconds, now=self.now()):
             return {"ok": False, "reason": "worker_busy"}
         run_id = self.ledger.start_run(not apply_candidates, self.extractor.model, self.consolidator.model, now=self.now())
-        summary = {"ok": True, "run_id": run_id, "extracted": 0, "consolidated": 0, "applied": 0, "candidate_writes": 0, "proposals": 0, "errors": 0}
+        summary = {
+            "ok": True,
+            "run_id": run_id,
+            "extracted": 0,
+            "consolidated": 0,
+            "applied": 0,
+            "candidate_writes": 0,
+            "proposals": 0,
+            "deferred_extract_budget": 0,
+            "errors": 0,
+        }
         try:
             limit = min(max_sessions or self.config.max_sessions, self.config.max_sessions)
             fresh = self._extract(run_id, scope, limit, summary)
@@ -116,8 +126,7 @@ class DreamWorker:
                 extracted.append(row)
                 continue
             if self.ledger.provider_calls_today(self.extractor.provider, now=self.now()) >= self.config.max_extract_calls_daily:
-                self.ledger.mark_retryable(int(row["id"]), run_id, "extract_daily_budget_exhausted")
-                summary["errors"] += 1
+                summary["deferred_extract_budget"] += 1
                 continue
             try:
                 messages = self._bounded_messages(list(row["messages"]))

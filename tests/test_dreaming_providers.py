@@ -78,6 +78,80 @@ def test_gemini_extractor_survives_short_retryable_provider_burst() -> None:
     assert sleeps == [1.0, 2.0]
 
 
+def test_gemini_extractor_salvages_valid_rows_when_one_quote_is_invalid() -> None:
+    response = {
+        "candidates": [{"content": {"parts": [{"text": json.dumps({"candidates": [
+            {
+                "text": "The user prefers blue interfaces.",
+                "claim_type": "preference",
+                "subject": "user",
+                "predicate": "prefers",
+                "object_value": "blue interfaces",
+                "scope_class": "personal",
+                "evidence_message_id": "m1",
+                "evidence_quote": "prefers blue",
+            },
+            {
+                "text": "The user prefers green interfaces.",
+                "claim_type": "preference",
+                "subject": "user",
+                "predicate": "prefers",
+                "object_value": "green interfaces",
+                "scope_class": "personal",
+                "evidence_message_id": "m1",
+                "evidence_quote": "not present anywhere",
+            },
+        ]})}]}}],
+    }
+
+    result = GeminiExtractor(
+        api_key="test-key",
+        transport=lambda *_: (200, response, {}),
+    ).extract(
+        [{"id": "m1", "role": "user", "text": "The user prefers blue interfaces."}],
+        scope="project:test",
+        capture_hash="capture",
+    )
+
+    assert [candidate.object_value for candidate in result.candidates] == ["blue interfaces"]
+    assert result.usage.structured_valid is False
+
+
+def test_gemini_extractor_repairs_unique_whitespace_normalized_quote() -> None:
+    response = {
+        "candidates": [{"content": {"parts": [{"text": json.dumps({"candidates": [{
+            "text": "The user prefers blue interfaces.",
+            "claim_type": "preference",
+            "subject": "user",
+            "predicate": "prefers",
+            "object_value": "blue interfaces",
+            "scope_class": "personal",
+            "evidence_message_id": "m1",
+            "evidence_quote": "USER   PREFERS BLUE",
+        }]})}]}}],
+    }
+
+    result = GeminiExtractor(
+        api_key="test-key",
+        transport=lambda *_: (200, response, {}),
+    ).extract(
+        [{"id": "m1", "role": "user", "text": "The user prefers blue interfaces."}],
+        scope="project:test",
+        capture_hash="capture",
+    )
+
+    assert result.candidates[0].evidence_quote == "user prefers blue"
+    assert result.usage.structured_valid is True
+
+
+def test_glm_prompt_rejects_transient_execution_metadata() -> None:
+    prompt = GLMConsolidator._prompt([], [], "global")
+
+    assert "transient execution status" in prompt
+    assert "account usernames" in prompt
+    assert "global tool instructions" in prompt
+
+
 def test_glm_consolidator_uses_authenticated_opencode_account_without_api_key(tmp_path) -> None:
     seen: dict = {}
     commands: list[list[str]] = []

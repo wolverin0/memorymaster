@@ -27,7 +27,7 @@ def handle_dream_run(args, service, parser, effective_db) -> int:
             f"consolidated={result.get('consolidated', 0)} "
             f"applied={result.get('applied', 0)} errors={result.get('errors', 0)}"
         )
-    return 0 if result.get("ok") else 1
+    return 0 if result.get("ok") and not result.get("errors") else 1
 
 
 def handle_dream_status(args, service, parser, effective_db) -> int:

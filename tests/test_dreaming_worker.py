@@ -155,6 +155,27 @@ def test_extraction_rate_limit_opens_batch_circuit_and_records_429(tmp_path: Pat
     assert DreamLedger.read_status(ledger.db_path)["providers"]["google"]["http_429"] == 1
 
 
+def test_extraction_budget_defers_without_retry_or_error_churn(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    capture_id = _capture(ledger)
+
+    result = DreamWorker(
+        ledger,
+        service,
+        _NoCall(),
+        _NoCall(),
+        config=DreamConfig(max_extract_calls_daily=0),
+        now=lambda: NOW,
+    ).run(apply_candidates=False)
+
+    capture = ledger.get_capture(capture_id)
+    assert result["errors"] == 0
+    assert result["deferred_extract_budget"] == 1
+    assert capture["state"] == "captured"
+    assert capture["attempts"] == 0
+
+
 def test_repeated_semantic_extraction_failure_is_quarantined(tmp_path: Path) -> None:
     service = _service(tmp_path)
     ledger = DreamLedger(tmp_path / "capture.db")

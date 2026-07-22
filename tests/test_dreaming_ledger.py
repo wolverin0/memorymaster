@@ -35,6 +35,38 @@ def test_enqueue_and_lease_are_idempotent_and_single_flight(tmp_path: Path) -> N
     )
 
 
+def test_enqueue_coalesces_contiguous_unprocessed_session_increments(tmp_path: Path) -> None:
+    now = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
+    ledger = DreamLedger(tmp_path / "dream.db")
+    first = _envelope(now)
+    second = CaptureEnvelope(
+        provider=first.provider,
+        session_hash=first.session_hash,
+        scope=first.scope,
+        captured_at=(now + timedelta(minutes=1)).isoformat(),
+        last_activity_at=(now + timedelta(minutes=1)).isoformat(),
+        messages=(
+            DreamMessage(
+                "m2", "assistant", "This preference remains durable.",
+                (now + timedelta(minutes=1)).isoformat(),
+            ),
+        ),
+        cursor_start=first.cursor_end,
+        cursor_end=200,
+        content_hash="def",
+    )
+
+    first_id = ledger.enqueue(first)
+    second_id = ledger.enqueue(second)
+    captured = ledger.get_capture(first_id)
+
+    assert second_id == first_id
+    assert captured["cursor_end"] == 200
+    assert [message["message_id"] for message in captured["messages"]] == ["m1", "m2"]
+    assert captured["turn_count"] == 2
+    assert ledger.status()["queue"] == {"captured": 1}
+
+
 def test_retention_never_discards_unprocessed_capture(tmp_path: Path) -> None:
     now = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
     ledger = DreamLedger(tmp_path / "dream.db")

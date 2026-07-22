@@ -5,8 +5,10 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
-from memorymaster.surfaces import mcp_server, setup_hooks
+from memorymaster.dreaming.ledger import DreamLedger
+from memorymaster.surfaces import dreaming_cli, mcp_server, setup_hooks
 from memorymaster.surfaces.cli import COMMAND_HANDLERS, build_parser, main
 
 
@@ -36,6 +38,24 @@ def test_dream_status_json_never_contains_transcript_text(tmp_path: Path, monkey
     assert payload["ok"] is True
     assert "messages" not in json.dumps(payload)
     assert not state_db.exists()
+
+
+def test_dream_run_returns_failure_exit_for_partial_result(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MEMORYMASTER_CAPTURE_STATE_DB", str(tmp_path / "capture.db"))
+
+    class PartialWorker:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run(self, **kwargs):
+            return {"ok": True, "errors": 2, "extracted": 0, "consolidated": 0}
+
+    monkeypatch.setattr(dreaming_cli, "DreamWorker", PartialWorker)
+    args = SimpleNamespace(
+        apply_candidates=False, scope=None, max_sessions=1, json_output=True,
+    )
+
+    assert dreaming_cli.handle_dream_run(args, object(), None, None) == 1
 
 
 def test_setup_parser_has_explicit_shadow_and_activation_flags() -> None:
@@ -77,6 +97,53 @@ def test_hook_template_is_quiet_and_redacts_before_queue(tmp_path: Path) -> None
     assert proc.stderr == ""
     on_disk = (tmp_path / "capture.db").read_bytes()
     assert secret.encode() not in on_disk
+
+
+def test_hook_template_captures_codex_stop_payload(tmp_path: Path) -> None:
+    rendered = tmp_path / "hook.py"
+    rendered.write_text(
+        TEMPLATE.read_text(encoding="utf-8").replace(
+            "__MEMORYMASTER_PROJECT_ROOT__", str(ROOT).replace("\\", "/"),
+        ),
+        encoding="utf-8",
+    )
+    transcript = tmp_path / "codex.jsonl"
+    rows = [
+        {
+            "type": "response_item",
+            "timestamp": "2026-07-22T10:00:00Z",
+            "payload": {
+                "type": "message", "role": "user",
+                "content": [{"type": "input_text", "text": "I prefer concise reports."}],
+            },
+        },
+        {
+            "type": "response_item",
+            "timestamp": "2026-07-22T10:01:00Z",
+            "payload": {
+                "type": "message", "role": "assistant",
+                "content": [{"type": "output_text", "text": "I will keep reports concise."}],
+            },
+        },
+    ]
+    transcript.write_text("\n".join(map(json.dumps, rows)) + "\n", encoding="utf-8")
+    state_db = tmp_path / "capture.db"
+    env = {**os.environ, "PYTHONPATH": str(ROOT), "MEMORYMASTER_CAPTURE_STATE_DB": str(state_db)}
+    payload = {
+        "session_id": "codex-hook-session",
+        "transcript_path": str(transcript),
+        "cwd": str(tmp_path / "memorymaster"),
+    }
+
+    proc = subprocess.run(
+        [sys.executable, str(rendered), "--provider", "codex"],
+        input=json.dumps(payload), text=True, capture_output=True, env=env, timeout=10,
+    )
+
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+    assert proc.stderr == ""
+    assert DreamLedger.read_status(state_db)["queue"] == {"captured": 1}
 
 
 def test_installer_preserves_existing_hooks_and_is_idempotent(tmp_path: Path, monkeypatch) -> None:

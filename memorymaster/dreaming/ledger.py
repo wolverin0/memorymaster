@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import uuid
@@ -116,11 +117,59 @@ class DreamLedger:
     def _connect(self) -> sqlite3.Connection:
         return open_conn(self.db_path, busy_ms=15_000)
 
+    @staticmethod
+    def _coalesce_captured(
+        conn: sqlite3.Connection, envelope: CaptureEnvelope, now: str,
+    ) -> int | None:
+        latest = conn.execute(
+            """SELECT id, cursor_start, cursor_end, messages_json
+               FROM dream_captures
+               WHERE provider=? AND session_hash=? AND scope=? AND state='captured'
+               ORDER BY cursor_end DESC, id DESC LIMIT 1""",
+            (envelope.provider, envelope.session_hash, envelope.scope),
+        ).fetchone()
+        if latest is None:
+            return None
+        incoming = [message.to_dict() for message in envelope.messages]
+        persisted = json.loads(str(latest["messages_json"]))
+        incoming_ids = {str(message["message_id"]) for message in incoming}
+        persisted_ids = {str(message["message_id"]) for message in persisted}
+        if envelope.cursor_end <= int(latest["cursor_end"]) and incoming_ids <= persisted_ids:
+            return int(latest["id"])
+        if int(latest["cursor_end"]) != envelope.cursor_start:
+            return None
+        merged = [
+            *persisted,
+            *(message for message in incoming if str(message["message_id"]) not in persisted_ids),
+        ]
+        merged_json = json.dumps(merged, ensure_ascii=False)
+        merged_hash = hashlib.sha256(
+            json.dumps(merged, sort_keys=True).encode("utf-8"),
+        ).hexdigest()
+        conn.execute(
+            """UPDATE dream_captures
+               SET last_activity_at=?, messages_json=?, cursor_end=?, content_hash=?,
+                   byte_count=?, turn_count=?, updated_at=? WHERE id=?""",
+            (
+                envelope.last_activity_at, merged_json, envelope.cursor_end, merged_hash,
+                len(merged_json.encode("utf-8")), len(merged), now, int(latest["id"]),
+            ),
+        )
+        return int(latest["id"])
+
     def enqueue(self, envelope: CaptureEnvelope) -> int:
         messages_json = json.dumps([message.to_dict() for message in envelope.messages], ensure_ascii=False)
         capture_key = ":".join((envelope.provider, envelope.session_hash, str(envelope.cursor_start), str(envelope.cursor_end), envelope.content_hash))
         now = _iso(_utc_now())
         with self._connect() as conn:
+            exact = conn.execute(
+                "SELECT id FROM dream_captures WHERE capture_key=?", (capture_key,),
+            ).fetchone()
+            if exact is not None:
+                return int(exact[0])
+            coalesced = self._coalesce_captured(conn, envelope, now)
+            if coalesced is not None:
+                return coalesced
             conn.execute(
                 """INSERT OR IGNORE INTO dream_captures
                    (capture_key, version, provider, session_hash, scope, captured_at,

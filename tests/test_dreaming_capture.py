@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from memorymaster.dreaming.capture import capture_transcript, parse_transcript_lines
+from memorymaster.dreaming.capture import _scope, capture_transcript, parse_transcript_lines
 from memorymaster.dreaming.ledger import DreamLedger
 
 
@@ -80,3 +80,20 @@ def test_capture_cursor_is_replay_safe(tmp_path: Path) -> None:
     assert first["queued"] == 1
     assert second == {"queued": 0, "reason": "no_increment"}
     assert ledger.status()["queue"]["captured"] == 1
+
+
+def test_scope_uses_git_root_instead_of_nested_directory_name(tmp_path: Path) -> None:
+    repo = tmp_path / "Memory Master"
+    nested = repo / "apps" / "react-app"
+    (repo / ".git").mkdir(parents=True)
+    nested.mkdir(parents=True)
+
+    assert _scope(str(nested)) == "project:memory-master"
+
+
+def test_scope_treats_multi_repo_collection_root_as_global(tmp_path: Path) -> None:
+    collection = tmp_path / "Py Apps"
+    (collection / "alpha" / ".git").mkdir(parents=True)
+    (collection / "beta" / ".git").mkdir(parents=True)
+
+    assert _scope(str(collection)) == "global"
