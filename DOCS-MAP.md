@@ -3,7 +3,7 @@
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, ADR, vNext.
 # Read when: locating authoritative project documentation before reading doc bodies.
 # Updated: 2026-07-27 for governed universal capture; generated verdict files remain unchanged.
-# Verdicts: ABANDONED=9, CURRENT=91, GENERATED=3, SUPERSEDED=9.
+# Verdicts: ABANDONED=9, CURRENT=92, GENERATED=3, SUPERSEDED=9.
 # Rule: CURRENT docs are trusted; never implement from SUPERSEDED or ABANDONED docs.
 
 | File | Verdict | Last change | Reason |
@@ -13,6 +13,7 @@
 | .planning/VNEXT-GOVERNED-CAPTURE-SPEC.md | CURRENT | 2026-07-27 | Bounded implementation specification that explicitly implements, and does not compete with, ROADMAP.md. |
 | .planning/VNEXT-BASELINE-2026-07-27.md | CURRENT | 2026-07-27 | Reproducible pre-change retrieval, test, latency, package, capture, graph, and scheduler baseline at d33a268. |
 | docs/adr/0015-governed-universal-capture-lineage.md | CURRENT | 2026-07-27 | Accepted data-flow decision fixing producer-to-source-to-evidence-to-claim-to-supported-graph lineage and retirement semantics. |
+| docs/public-v1.md | CURRENT | 2026-07-27 | Stable public facade, capture trust boundary, limits, retirement semantics, dashboard inbox, and disposable demo. |
 | docs/archive/IMPROVEMENT_PLAN.md | ABANDONED | 2026-06-20 | The doc serves as a generated audit and roadmap from March 2026 but is not referenced by any current docs; it contains specific version claims and 'P0' bugs that likely represent a historical snapshot rather than a living plan.  |
 | docs/archive/v315-experiments/E02-results.md | ABANDONED | 2026-06-20 | This is a negative result experiment from a past version (v315) where the code was explicitly reverted and not retained.  |
 | docs/archive/v315-experiments/E05-results.md | ABANDONED | 2026-06-20 | The experiment explicitly resulted in a 'REVERT' decision because all candidates regressed, confirming this hypothesis is a dead end and the changes were not kept.  |
@@ -53,7 +54,7 @@
 | .planning/audits/2026-07-14-phase4-budget-delta/production-release-approval-request.md | CURRENT | 2026-07-14 | The content sets a durable, bounded approval scope for MemoryMaster 4.4.1 that remains valid and actionable for the release phase.  |
 | .planning/codebase/CONCERNS.md | CURRENT | 2026-06-09 | The document is explicitly dated 2026-06-09 for version v3.28.0, details recent specific production incidents (2026-06-05 corruption), and tracks migration progress for v2.0 and v3.20/3.27 fixes.  |
 | docs/adr/0005-atlas-contract-uses-semver.md | CURRENT | 2026-05-11 | The document defines a stable, architectural decision (SemVer usage) for the Atlas contract that appears active and foundational to the project's current versioning strategy.  |
-| docs/archive/longmemeval-results.md | CURRENT | 2026-06-20 | The file is a canonical benchmark record for MemoryMaster v3.14.0, actively referenced by root docs and containing specific methodology, results, and reproduction commands that remain valid for assessing the system's retrieval performance.  |
+| docs/archive/longmemeval-results.md | CURRENT | 2026-07-27 | Current reproducible 500-question retrieval result and explicit statement that no comparable full-QA baseline exists. |
 | .planning/audit-remediation-ledger.md | CURRENT | 2026-07-14 | This is a high-fidelity ledger of critical security, architectural, and operational remediations with status tracking and specific package references; while the file date is older, the content tracks specific mitigations (some blocked externally) that remain relevant for assessing the project's security posture and compliance status.  |
 | docs/AGENT-INSTALL.md | CURRENT | 2026-07-14 | Provides specific installation instructions and CLI flags for memorymaster, aligns with the project's local-first architecture, and is actively referenced by root documentation.  |
 | docs/archive/security-audit/findings.md | CURRENT | 2026-06-20 | Content is a detailed, dated security audit referencing specific code paths; stable reference docs like this remain CURRENT unless explicitly replaced.  |

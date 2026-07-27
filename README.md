@@ -1,8 +1,10 @@
 # MemoryMaster
-
-**Production-grade memory reliability system for AI coding agents.**
-
-Lifecycle-managed claims with citations, conflict detection, steward governance, hybrid retrieval, and MCP integration. Give your AI agents persistent, trustworthy memory.
+# Covers: personal-first governed memory capture, recall, retirement, and improvement.
+# Key terms: remember, recall, forget, improve, evidence lineage, trusted claims.
+# Read when: installing MemoryMaster, evaluating its posture, or finding deeper docs.
+# Default: local SQLite and private MCP; team/cloud operation is deferred.
+# Safety: captures become candidates; only the steward confirms claims.
+# Updated: 2026-07-27 for governed universal capture v1.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -39,10 +41,10 @@ If you want an agent that recalls more, any vector store works. If you want an a
 
 MemoryMaster is layered around MCP/CLI entry points, the `MemoryService` facade, authoritative
 SQLite storage, an optional deferred Postgres/team backend, an optional Qdrant index, scheduled jobs, and an **optional** Obsidian wiki/vault
-layer (opt-in, off by default — see below). The canonical ingest path is:
+layer (opt-in, off by default — see below). The canonical capture path is:
 
 ```text
-MCP/CLI -> sensitivity filter -> MemoryService.ingest -> store write -> FTS5 index
+producer -> source item -> evidence -> candidate claim -> steward -> confirmed claim -> supported graph
 ```
 
 The query path is:
@@ -64,6 +66,11 @@ recent PR status, and sensitivity-filter invariants.
 ## Key features
 
 - **6-state lifecycle**: `candidate` → `confirmed` → `stale` → `superseded` → `conflicted` → `archived`
+- **Universal governed capture**: inline text, URL references, Markdown, HTML,
+  optional PDF/DOCX, and explicit OCR/transcription providers through one
+  replay-safe source/evidence/job contract
+- **Friendly public facade**: synchronous `remember`, governed `recall`,
+  preview-first `forget`, and budgeted `improve` across Python, CLI, and MCP
 - **Citation tracking** with provenance for every claim
 - **Hybrid retrieval**: authoritative SQLite claim rows ranked with FTS5, local/primary-store embedding signals, freshness, and confidence; governed Qdrant candidates are explicit and optional
 - **Context optimizer**: `query_for_context(budget=4000)` returns auto-curated memory that fits your token budget
@@ -97,17 +104,18 @@ Full feature index lives in [`docs/handbook.md`](docs/handbook.md).
 
 ## Benchmarks
 
-**LongMemEval-S (N=500, retrieval-only)** — v3.15.0 now leads the publicly-reported numbers from [agentmemory](https://github.com/rohitg00/agentmemory) on R@5 and MRR, after wiring `sentence-transformers/all-MiniLM-L6-v2` into the bench harness (the v3.14 baseline was unintentionally BM25-only).
+The current committed LongMemEval-S retrieval result covers all 500 questions:
 
-![LongMemEval-S benchmark](docs/benchmark-longmemeval.svg)
+| Metric | Current reproducible result |
+|---|---:|
+| Recall@5 | 0.9660 |
+| Recall@10 | 0.9840 |
+| MRR | 0.9021 |
 
-| Metric | v3.14.0 | **v3.15.0** | agentmemory | Δ vs agentmemory |
-|---|---|---|---|---|
-| Recall@5 | 0.894 | **0.966** | 0.952 | **+0.014** ★ |
-| Recall@10 | 0.942 | **0.984** | 0.986 | -0.002 |
-| MRR | 0.799 | **0.902** | 0.882 | **+0.020** ★ |
-
-Reproduce: `python tests/bench_longmemeval.py --retrieval-only`. Full methodology, experiment-by-experiment deltas (1 KEEP, 2 REVERT, 3 NULL), and the architectural findings that surfaced along the way live in [`docs/archive/longmemeval-results.md`](docs/archive/longmemeval-results.md) and [`docs/archive/v315-experiments/`](docs/archive/v315-experiments/). QA-accuracy pass (with judge) is deferred until provider quotas allow.
+Reproduce with `python tests/bench_longmemeval.py --retrieval-only`. There is
+no comparable current full-QA result: an OAuth-backed judge must be run before
+and after a release candidate before making a QA-regression claim. See the
+[benchmark record](docs/archive/longmemeval-results.md).
 
 ## Prerequisites
 
@@ -126,15 +134,49 @@ Reproduce: `python tests/bench_longmemeval.py --retrieval-only`. Full methodolog
 
 - **Docker** only if you deliberately want local Ollama or the optional governed Qdrant semantic profile. SQLite remains authoritative and requires neither Docker nor Qdrant.
 
-## 30-second quickstart
+## Quickstart: remember, recall, forget, improve
 
 **1. Install**
 
 ```bash
-pip install "memorymaster[mcp,security,qdrant,embeddings]"
+pip install "memorymaster[mcp,capture]"
 ```
 
-**2. Let your agent do the rest**
+Try the complete disposable flow without touching your active database:
+
+```bash
+memorymaster --json demo
+```
+
+Use the four public operations:
+
+```bash
+memorymaster --workspace . remember --text "Project Atlas uses SQLite WAL."
+memorymaster --workspace . recall "What does Project Atlas use?"
+memorymaster --workspace . forget --source-item-id 1
+memorymaster --workspace . improve
+```
+
+`forget` previews by default; add `--apply` only after reviewing its lifecycle
+effects. `improve` queues extraction and review work but never confirms a claim
+inside the request.
+
+The same contract is available in Python:
+
+```python
+from memorymaster import forget, improve, recall, remember
+
+receipt = remember(text="Project Atlas uses SQLite WAL.", scope="project:atlas")
+context = recall("What does Atlas use?", scope_allowlist=["project:atlas"])
+preview = forget(source_item_id=receipt.source_item["id"])
+queued = improve(scope="project:atlas")
+```
+
+For file capture, configure `MEMORYMASTER_CAPTURE_ROOTS` and use local-trusted
+mode; URL-only capture stores a visible reference and waits for producer-supplied
+evidence. See [the public v1 guide](docs/public-v1.md).
+
+**2. Let your agent configure MCP and hooks**
 
 Paste the contents of [`docs/AGENT-INSTALL.md`](docs/AGENT-INSTALL.md) into Claude Code or Codex. The agent will:
 - run `memorymaster-setup --yes --profile minimal --no-full-stack --json` (wires the SQLite database and private MCP without starting Postgres, Qdrant, or Ollama)
@@ -198,7 +240,10 @@ uses a distinct migrator DSN/role; never give that role to the MCP runtime.
 Unverified host-wide and maintenance tools fail closed. Existing brownfield MCP
 entries must add the mode or be regenerated with setup `--force`.
 
-MemoryMaster exposes setup/lifecycle, ingest, query/retrieval, listing, knowledge-graph, and governance tools. The [generated release truth](docs/generated/release-truth.md) is the authoritative inventory and count.
+MemoryMaster exposes `remember`, `recall`, `forget`, and `improve` plus advanced
+setup, lifecycle, retrieval, graph, and governance tools. The
+[generated release truth](docs/generated/release-truth.md) is the authoritative
+inventory and count.
 
 See [`docs/MCP-TOOLS.md`](docs/MCP-TOOLS.md) for the grouped reference (one line per tool), and [`.mcp.json.example`](.mcp.json.example) for the full config template.
 
@@ -275,6 +320,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
 | [docs/handbook.md](docs/handbook.md) | Full operator handbook — hooks, dashboard, steward, dream bridge, troubleshooting, one-prompt install |
 | [docs/MCP-TOOLS.md](docs/MCP-TOOLS.md) | MCP usage guide; generated inventory and counts are linked from the document |
 | [docs/INTEGRATING.md](docs/INTEGRATING.md) | Integration guide for embedding MemoryMaster in your agent |
+| [docs/public-v1.md](docs/public-v1.md) | Stable remember/recall/forget/improve contract, capture limits, and trust boundary |
 | [INSTALLATION.md](INSTALLATION.md) | Setup guide: pip, Docker, Helm, MCP config |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Dev setup, testing, PR workflow |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design and subsystem details |

@@ -1,0 +1,91 @@
+# Public v1: remember, recall, forget, improve
+# Covers: stable Python, CLI, and MCP contracts for governed personal memory.
+# Key terms: memorymaster.public.v1, capture envelope, trusted recall, logical retirement.
+# Read when: integrating a producer, capturing a file, or building a friendly client.
+# Defaults: project workspace scope, confirmed-only recall, preview-only retirement.
+# Limits: 2 MiB text, 25 MiB document, 100-item batch; directories/archives unsupported.
+# Updated: 2026-07-27; live activation and remote fetching remain operator-owned.
+
+MemoryMaster’s friendly facade does not bypass claim governance. Capture stores
+source and evidence synchronously, then queues extraction. Extracted claims are
+candidates until the existing steward confirms them.
+
+## Python
+
+```python
+from memorymaster import forget, improve, recall, remember
+
+receipt = remember(
+    text="Alice participates in Project Atlas.",
+    source_uri="https://producer.example/items/42",
+    scope="project:atlas",
+    source_agent="my-producer",
+)
+
+context = recall(
+    "What does Alice participate in?",
+    scope_allowlist=["project:atlas"],
+    token_budget=4000,
+)
+
+preview = forget(source_item_id=receipt.source_item["id"])
+queued = improve(scope="project:atlas", max_items=200)
+```
+
+The response contract is versioned as `memorymaster.public.v1`. `remember`
+returns source, evidence, job IDs, replay/deduplication state, and warnings.
+`recall` returns rendered context plus claim IDs, citations, lifecycle state,
+and score explanations. Candidate recall requires `trust_mode="exploratory"`.
+
+## CLI and MCP
+
+```bash
+memorymaster --workspace . remember --text "A governed observation."
+memorymaster --workspace . remember --file .\notes\decision.md
+memorymaster --workspace . remember --url https://example.com/reference
+memorymaster --workspace . recall "governed observation"
+memorymaster --workspace . forget --claim-id 42
+memorymaster --workspace . forget --source-item-id 7 --apply
+memorymaster --workspace . improve --scope project:example
+```
+
+MCP exposes the same four operation names and response fields. Existing
+advanced commands and tools remain available.
+
+## Capture boundary
+
+- Inline text, UTF-8/UTF-8-BOM text/Markdown, deterministic local HTML, and
+  optional PDF/DOCX are supported.
+- Install `memorymaster[capture]` for PDF and DOCX.
+- Images and audio require explicitly configured real OCR/transcription
+  providers. Provider absence becomes an actionable blocked job.
+- MemoryMaster never fetches URLs. A URL-only capture is retained as
+  `awaiting_evidence`; producers own authentication and fetching.
+- Local files are accepted only in private/local-trusted mode, must resolve
+  under `MEMORYMASTER_CAPTURE_ROOTS`, and cannot escape through symlinks.
+- Original local documents are not copied. MemoryMaster stores root-relative
+  locators, hashes, MIME metadata, and governed extracted evidence.
+
+## Retirement semantics
+
+`forget` previews by default. A direct claim target archives through the
+canonical lifecycle. Retiring a source preserves evidence and audit history:
+
+- a candidate with no other active evidence becomes archived;
+- a confirmed claim with no other active evidence becomes stale and leaves
+  trusted recall;
+- a claim with another active source remains active.
+
+This is logical retirement, not privacy erasure. Use the existing redaction or
+erasure workflow when the requirement is removal of sensitive payloads.
+
+## Background processing and visibility
+
+`improve` queues due claim extraction, steward review, and confirmed-claim
+graph work. It never confirms or rewrites a claim in the caller’s request.
+The existing Dreaming schedule drains the bounded queue under the shared
+provider budgets. Capture status, evidence lineage, claims, citations, graph
+supports, and preview/apply source retirement are visible in the dashboard’s
+Capture Inbox.
+
+Run `memorymaster --json demo` for a deterministic temporary-database example.

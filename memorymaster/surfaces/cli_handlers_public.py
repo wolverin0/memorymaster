@@ -7,6 +7,7 @@ import json
 from dataclasses import asdict
 
 from memorymaster.public.v1 import forget, improve, recall, remember
+from memorymaster.public.demo import run_disposable_demo
 
 
 def _emit(payload: object, *, json_output: bool) -> None:
@@ -96,4 +97,25 @@ def handle_improve(
             f"graph={receipt.queued['extract_graph']} "
             f"steward_review_due={receipt.steward_review_due}"
         )
+    return 0
+
+
+def handle_demo(
+    args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str
+) -> int:
+    report = run_disposable_demo()
+    if args.json_output:
+        _emit(report, json_output=True)
+    else:
+        print(
+            f"demo complete: captures={report['captures']} "
+            f"jobs={report['fixture_jobs_completed']} "
+            f"promoted={report['promoted_claim_id']}"
+        )
+        print(
+            f"recall={','.join(map(str, report['recall_claim_ids']))} "
+            f"citations={len(report['recall_citations'])} "
+            f"graph_paths={len(report['graph_paths'])}"
+        )
+        print("temporary database disposed")
     return 0

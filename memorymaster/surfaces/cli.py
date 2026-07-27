@@ -34,6 +34,7 @@ from memorymaster.surfaces.cli_handlers_integrity import _handle_drain_spool, _h
 from memorymaster.surfaces.dreaming_cli import handle_dream_run, handle_dream_status
 from memorymaster.surfaces.cli_handlers_public import (
     handle_forget,
+    handle_demo,
     handle_improve,
     handle_recall,
     handle_remember,
@@ -60,6 +61,7 @@ COMMAND_HANDLERS["remember"] = handle_remember
 COMMAND_HANDLERS["recall"] = handle_recall
 COMMAND_HANDLERS["forget"] = handle_forget
 COMMAND_HANDLERS["improve"] = handle_improve
+COMMAND_HANDLERS["demo"] = handle_demo
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -679,6 +681,11 @@ def build_parser() -> argparse.ArgumentParser:
     improve_cmd = sub.add_parser("improve", help="Queue due extraction, review, and graph work")
     improve_cmd.add_argument("--scope", default=None, help="Scope (default: project:<workspace>)")
     improve_cmd.add_argument("--max-items", type=int, default=200)
+
+    sub.add_parser(
+        "demo",
+        help="Run a disposable deterministic remember-to-recall demonstration",
+    )
 
     observe_cmd = sub.add_parser("observe", help="Extract and ingest observations from text (for post-turn learning)")
     observe_cmd.add_argument("--text", required=True, help="Text to observe and potentially ingest")
