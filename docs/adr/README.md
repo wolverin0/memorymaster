@@ -1,6 +1,10 @@
 # Architectural Decision Records
-
-This index lists the claim-derived ADRs compiled from `project:memorymaster` decision and architecture claims.
+# Covers: accepted architecture decisions and their canonical navigation order.
+# Key terms: ADR, local-first, Atlas, sensitivity, governance, capture lineage.
+# Read when: changing durable data flow, trust boundaries, storage, or public contracts.
+# Authority: accepted ADRs constrain implementation; superseding one requires a new ADR.
+# Scope: personal/local MemoryMaster unless an ADR explicitly names another profile.
+# Updated: 2026-07-27 with governed universal capture lineage.
 
 ## Numbered ADRs
 
@@ -18,6 +22,7 @@ This index lists the claim-derived ADRs compiled from `project:memorymaster` dec
 12. [0012 README Stays Concise, Handbook Holds Operator Depth](0012-readme-stays-concise-handbook-holds-operator-depth.md)
 13. [0013 Context Loading Is Two Phase](0013-context-loading-is-two-phase.md)
 14. [0014 Wiki Articles Auto-Promote After N Successful Validations](0014-wiki-articles-auto-promote-after-n-successful-validations.md)
+15. [0015 Governed Universal Capture Lineage](0015-governed-universal-capture-lineage.md)
 
 ## Existing ADR Notes
 

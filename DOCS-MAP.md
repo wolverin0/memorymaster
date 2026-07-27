@@ -1,12 +1,18 @@
-# DOCS-MAP — memorymaster
-Doc triage map generated 2026-07-18 by the docs-curation pipeline; manually synchronized with Native Dreaming V1 on 2026-07-21.
-Verdicts: ABANDONED=9 · CURRENT=86 · GENERATED=3 · SUPERSEDED=9. CURRENT docs carry a greppable 7-line header.
-SUPERSEDED/ABANDONED/GENERATED files are MAPPED ONLY — nothing was deleted or moved; archive/delete is an operator decision.
-GENERATED files: fix the generator template, not the file. Full verdicts (reason, confidence, topics): _docs-curation/state/verdicts/.
-Read when: you need to know which doc to trust, what replaced what, or what is safe to ignore in memorymaster.
+# DOCS-MAP - memorymaster
+# Covers: trust verdicts and replacements for every canonical documentation surface.
+# Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, ADR, vNext.
+# Read when: locating authoritative project documentation before reading doc bodies.
+# Updated: 2026-07-27 for governed universal capture; generated verdict files remain unchanged.
+# Verdicts: ABANDONED=9, CURRENT=91, GENERATED=3, SUPERSEDED=9.
+# Rule: CURRENT docs are trusted; never implement from SUPERSEDED or ABANDONED docs.
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
+| ROADMAP.md | CURRENT | 2026-07-27 | Sole authoritative product roadmap; vNext governed capture is in Now and hosted/team breadth remains deferred. |
+| COMPETITOR_ANALYSIS.md | CURRENT | 2026-07-27 | Current prior-art analysis corrects Cognee provenance, temporal, tenant, graph, and document capabilities without adopting it as a dependency. |
+| .planning/VNEXT-GOVERNED-CAPTURE-SPEC.md | CURRENT | 2026-07-27 | Bounded implementation specification that explicitly implements, and does not compete with, ROADMAP.md. |
+| .planning/VNEXT-BASELINE-2026-07-27.md | CURRENT | 2026-07-27 | Reproducible pre-change retrieval, test, latency, package, capture, graph, and scheduler baseline at d33a268. |
+| docs/adr/0015-governed-universal-capture-lineage.md | CURRENT | 2026-07-27 | Accepted data-flow decision fixing producer-to-source-to-evidence-to-claim-to-supported-graph lineage and retirement semantics. |
 | docs/archive/IMPROVEMENT_PLAN.md | ABANDONED | 2026-06-20 | The doc serves as a generated audit and roadmap from March 2026 but is not referenced by any current docs; it contains specific version claims and 'P0' bugs that likely represent a historical snapshot rather than a living plan.  |
 | docs/archive/v315-experiments/E02-results.md | ABANDONED | 2026-06-20 | This is a negative result experiment from a past version (v315) where the code was explicitly reverted and not retained.  |
 | docs/archive/v315-experiments/E05-results.md | ABANDONED | 2026-06-20 | The experiment explicitly resulted in a 'REVERT' decision because all candidates regressed, confirming this hypothesis is a dead end and the changes were not kept.  |
