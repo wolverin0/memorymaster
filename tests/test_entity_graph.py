@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -56,22 +56,19 @@ class TestParseJson:
 class TestLlmChat:
     """Test LLM chat wrapper."""
 
-    @patch("memorymaster.knowledge.entity_graph.urllib.request.urlopen")
-    def test_llm_chat_success(self, mock_urlopen):
+    @patch("memorymaster.knowledge.entity_graph.call_llm")
+    def test_llm_chat_success(self, mock_call):
         """Successful LLM call returns content."""
-        mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "message": {"content": '{"entities": [], "relations": []}'}
-        }).encode()
-        mock_urlopen.return_value.__enter__.return_value = mock_response
+        mock_call.return_value = '{"entities": [], "relations": []}'
 
         result = _llm_chat("test query", system="test")
         assert result == '{"entities": [], "relations": []}'
+        mock_call.assert_called_once_with("test", "test query")
 
-    @patch("memorymaster.knowledge.entity_graph.urllib.request.urlopen")
-    def test_llm_chat_timeout_returns_empty(self, mock_urlopen):
+    @patch("memorymaster.knowledge.entity_graph.call_llm")
+    def test_llm_chat_timeout_returns_empty(self, mock_call):
         """Timeout returns empty string."""
-        mock_urlopen.side_effect = TimeoutError()
+        mock_call.side_effect = TimeoutError()
         result = _llm_chat("test")
         assert result == ""
 
@@ -133,7 +130,7 @@ class TestEntityGraph:
         mock_llm.return_value = json.dumps({
             "entities": [
                 {"name": "Alice", "type": "person", "aliases": ["Ally"]},
-                {"name": "Company X", "type": "org", "aliases": []},
+                {"name": "Company X", "type": "organization", "aliases": []},
             ],
             "relations": [
                 {"source": "Alice", "target": "Company X", "relation": "works_at"}
@@ -197,7 +194,9 @@ class TestEntityGraph:
         # Extract entities for claim 2 with edge back to Alice
         mock_llm.return_value = json.dumps({
             "entities": [{"name": "Bob", "type": "person", "aliases": []}],
-            "relations": [{"source": "Bob", "target": "Alice", "relation": "knows"}]
+            "relations": [
+                {"source": "Bob", "target": "Alice", "relation": "related_to"}
+            ]
         })
         graph.extract_and_link(claim_id=2, text="Bob")
 
@@ -223,7 +222,9 @@ class TestEntityGraph:
                 {"name": "Alice", "type": "person", "aliases": []},
                 {"name": "Bob", "type": "person", "aliases": []},
             ],
-            "relations": [{"source": "Alice", "target": "Bob", "relation": "knows"}]
+            "relations": [
+                {"source": "Alice", "target": "Bob", "relation": "related_to"}
+            ]
         })
         graph.extract_and_link(claim_id=1, text="test")
 

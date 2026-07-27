@@ -9,6 +9,7 @@ from memorymaster.capture.adapters import (
     ReferenceUrlAdapter,
     capture_batch,
     capture_input,
+    resolve_local_locator,
 )
 from memorymaster.capture.models import (
     CaptureJob,
@@ -34,4 +35,5 @@ __all__ = [
     "ReferenceUrlAdapter",
     "capture_batch",
     "capture_input",
+    "resolve_local_locator",
 ]

@@ -1529,7 +1529,13 @@ class MemoryService(IntegrationService):
         if record_accesses:
             self._record_accesses(results, query_text=query_text)
         if enrich_with_entities:
-            results = self._enrich_with_entity_graph(results, query_text, limit)
+            results = self._enrich_with_entity_graph(
+                results,
+                query_text,
+                limit,
+                scope_allowlist=normalized_scopes,
+                allow_sensitive=include_sensitive,
+            )
         if cache_path and cache_key:
             query_cache.write(cache_path, cache_key, [
                 {
@@ -1613,7 +1619,13 @@ class MemoryService(IntegrationService):
         return rows
 
     def _enrich_with_entity_graph(
-        self, results: list[dict[str, Any]], query_text: str, limit: int
+        self,
+        results: list[dict[str, Any]],
+        query_text: str,
+        limit: int,
+        *,
+        scope_allowlist: list[str] | None = None,
+        allow_sensitive: bool = False,
     ) -> list[dict[str, Any]]:
         """Add entity-related claims to query results via knowledge graph traversal."""
         from memorymaster.knowledge.entity_graph import EntityGraph
@@ -1629,19 +1641,33 @@ class MemoryService(IntegrationService):
         if not db_target:
             return results
         graph = EntityGraph(db_target, read_only=True)
-        related_ids = graph.find_related_claims(query_words, hops=2, limit=limit)
+        related = graph.find_related_claims_explained(
+            query_words,
+            hops=2,
+            limit=limit,
+            scope_allowlist=scope_allowlist,
+        )
         existing_ids = {
             row["claim"].id for row in results if hasattr(row.get("claim"), "id")
         }
-        for claim_id in [cid for cid in related_ids if cid not in existing_ids][
+        additions = [row for row in related if row["claim_id"] not in existing_ids][
             : limit - len(results)
-        ]:
+        ]
+        for explanation in additions:
+            claim_id = int(explanation["claim_id"])
             claim = self.store.get_claim(claim_id, include_citations=True)
-            if claim and claim.status != "archived":
-                results.append(self._entity_graph_row(claim))
+            if claim is None or claim.status != "confirmed":
+                continue
+            if scope_allowlist is not None and claim.scope not in scope_allowlist:
+                continue
+            if not allow_sensitive and is_sensitive_claim(claim):
+                continue
+            results.append(self._entity_graph_row(claim, explanation=explanation))
         return results
 
-    def _entity_graph_row(self, claim: Claim) -> dict[str, Any]:
+    def _entity_graph_row(
+        self, claim: Claim, *, explanation: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         return {
             "claim": claim,
             "status": claim.status,
@@ -1652,6 +1678,8 @@ class MemoryService(IntegrationService):
             "confidence_score": claim.confidence,
             "vector_score": 0.0,
             "source": "entity_graph",
+            "breakdown": {"entity_graph": explanation or {}},
+            "graph_explanation": explanation or {},
         }
 
     def _record_accesses(self, rows: list[dict[str, Any]], query_text: str = "") -> None:

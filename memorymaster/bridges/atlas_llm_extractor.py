@@ -154,6 +154,7 @@ def extract_atlas_claims_llm(
     limit: int = 200,
     model: str | None = None,
     dry_run: bool = False,
+    evidence_ids: set[int] | None = None,
 ) -> AtlasLlmExtractionResult:
     """Extract typed life-knowledge claims from evidence via an LLM pass.
 
@@ -172,6 +173,8 @@ def extract_atlas_claims_llm(
     claims: list[Claim] = []
 
     for evidence in evidence_items:
+        if evidence_ids is not None and evidence.id not in evidence_ids:
+            continue
         scanned += 1
         if not is_governed_evidence_eligible(evidence):
             continue
@@ -326,7 +329,7 @@ def _ingest_typed_claim(
     *,
     scope: str,
 ) -> Claim:
-    return service.ingest(
+    claim = service.ingest(
         text=typed.text,
         citations=[_citation_for_evidence(evidence, source_item)],
         idempotency_key=_claim_idempotency_key(evidence, typed),
@@ -340,6 +343,12 @@ def _ingest_typed_claim(
         volatility="medium",
         source_agent="atlas-llm-extractor",
     )
+    from memorymaster.capture.repository import CaptureRepository
+
+    CaptureRepository(service.store).link_claim_evidence(
+        claim_id=claim.id, evidence_item_id=evidence.id
+    )
+    return claim
 
 
 def _claim_idempotency_key(evidence: EvidenceItem, typed: _TypedClaim) -> str:

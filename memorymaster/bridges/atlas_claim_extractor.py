@@ -75,6 +75,11 @@ def extract_atlas_claims_from_evidence(
             confidence=draft.confidence,
             volatility="medium",
         )
+        from memorymaster.capture.repository import CaptureRepository
+
+        CaptureRepository(service.store).link_claim_evidence(
+            claim_id=claim.id, evidence_item_id=evidence.id
+        )
         ingested += 1
         claims.append(claim)
 

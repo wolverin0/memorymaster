@@ -65,35 +65,17 @@ def test_registry_first_database_adds_graph_without_replacing_entities(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "registry-first.db"
+    MemoryService(db_path, workspace_root=tmp_path).init_db()
     migration = import_module(
         "memorymaster.stores.migrations.0013_canonical_entity_graph"
     )
     with sqlite3.connect(db_path) as conn:
-        conn.executescript(
-            """
-            PRAGMA foreign_keys = ON;
-            CREATE TABLE claims (id INTEGER PRIMARY KEY);
-            CREATE TABLE entities (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                canonical_name TEXT NOT NULL UNIQUE,
-                entity_type TEXT NOT NULL DEFAULT 'unknown',
-                scope TEXT NOT NULL DEFAULT 'global',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            CREATE TABLE entity_aliases (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-                alias TEXT NOT NULL,
-                variant_key TEXT NOT NULL DEFAULT '',
-                original_form TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                UNIQUE(entity_id, variant_key)
-            );
-            INSERT INTO entities VALUES
-                (7, 'MemoryMaster', 'project', 'project:memorymaster',
-                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
-            """
+        conn.execute(
+            """INSERT INTO entities
+               (id, canonical_name, entity_type, scope, created_at, updated_at)
+               VALUES
+               (7, 'MemoryMaster', 'project', 'project:memorymaster',
+                '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"""
         )
         migration.apply_sqlite(conn)
         assert conn.execute(
@@ -217,10 +199,16 @@ def test_init_extract_stats_related_and_enriched_recall(tmp_path: Path) -> None:
         "Bob collaborates with Alice",
         [CitationInput(source="test://bob")],
     )
+    bob = service.store.apply_status_transition(
+        bob,
+        to_status="confirmed",
+        reason="trusted graph fixture",
+        event_type="validator",
+    )
     payload = (
         '{"entities":[{"name":"Alice","type":"person","aliases":[]},'
         '{"name":"Bob","type":"person","aliases":[]}],'
-        '"relations":[{"source":"Bob","target":"Alice","relation":"knows"}]}'
+        '"relations":[{"source":"Bob","target":"Alice","relation":"related_to"}]}'
     )
 
     graph = EntityGraph(str(db_path))

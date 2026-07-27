@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator
 
@@ -13,6 +14,7 @@ from memorymaster.capture.models import (
     ClaimEvidenceLink,
     EdgeSupport,
 )
+from memorymaster.core.models import EvidenceItem
 from memorymaster.core.security import (
     sanitize_persisted_text,
     validate_persisted_metadata,
@@ -397,3 +399,105 @@ class CaptureRepository:
             data = _mapping(row)
             counts[str(data["status"])] = int(data["count"])
         return counts
+
+    def evidence_for_content(
+        self, *, source_item_id: int, content_hash: str
+    ) -> EvidenceItem | None:
+        with self._connection() as conn:
+            row = self._execute(
+                conn,
+                f"""SELECT * FROM evidence_items
+                    WHERE source_item_id={self.placeholder}
+                      AND content_hash={self.placeholder}
+                    ORDER BY id LIMIT 1""",
+                (source_item_id, content_hash),
+            ).fetchone()
+        if row is None:
+            return None
+        converter = getattr(self.store, "_row_to_evidence_item")
+        return converter(row)
+
+    def claims_for_source(self, source_item_id: int) -> list[Any]:
+        with self._connection() as conn:
+            rows = self._execute(
+                conn,
+                f"""SELECT DISTINCT c.* FROM claims c
+                    JOIN claim_evidence_links cel ON cel.claim_id=c.id
+                    JOIN evidence_items e ON e.id=cel.evidence_item_id
+                    WHERE e.source_item_id={self.placeholder}
+                    ORDER BY c.id""",
+                (source_item_id,),
+            ).fetchall()
+        converter = getattr(self.store, "_row_to_claim")
+        return [converter(row) for row in rows]
+
+    def active_supporting_source_count(
+        self, claim_id: int, *, excluding_source_item_id: int | None = None
+    ) -> int:
+        clauses = ["cel.claim_id=" + self.placeholder, "s.retired_at IS NULL"]
+        params: list[Any] = [claim_id]
+        if excluding_source_item_id is not None:
+            clauses.append("s.id<>" + self.placeholder)
+            params.append(excluding_source_item_id)
+        with self._connection() as conn:
+            row = self._execute(
+                conn,
+                f"""SELECT COUNT(DISTINCT s.id) AS count
+                    FROM claim_evidence_links cel
+                    JOIN evidence_items e ON e.id=cel.evidence_item_id
+                    JOIN source_items s ON s.id=e.source_item_id
+                    WHERE {' AND '.join(clauses)}""",
+                tuple(params),
+            ).fetchone()
+        return int(_mapping(row)["count"]) if row is not None else 0
+
+    def due_evidence(self, *, scope: str, limit: int) -> list[dict[str, Any]]:
+        with self._connection() as conn:
+            rows = self._execute(
+                conn,
+                f"""SELECT e.id AS evidence_id, e.source_item_id, e.content_hash,
+                           s.content_hash AS source_hash, s.payload_json
+                    FROM evidence_items e
+                    JOIN source_items s ON s.id=e.source_item_id
+                    WHERE s.retired_at IS NULL
+                      AND e.text IS NOT NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM capture_jobs j
+                          WHERE j.source_item_id=s.id
+                            AND j.content_hash=COALESCE(e.content_hash, s.content_hash)
+                            AND j.stage='extract_claims')
+                    ORDER BY e.id LIMIT {self.placeholder}""",
+                (min(max(limit * 4, 0), 800),),
+            ).fetchall()
+        results = []
+        for row in rows:
+            data = _mapping(row)
+            payload = data.get("payload_json") or {}
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except json.JSONDecodeError:
+                    payload = {}
+            if isinstance(payload, dict) and payload.get("scope") == scope:
+                results.append(data)
+            if len(results) >= limit:
+                break
+        return results
+
+    def due_confirmed_graph_claims(self, *, scope: str, limit: int) -> list[dict[str, Any]]:
+        with self._connection() as conn:
+            rows = self._execute(
+                conn,
+                f"""SELECT c.id AS claim_id, c.updated_at,
+                           MIN(e.source_item_id) AS source_item_id
+                    FROM claims c
+                    JOIN claim_evidence_links cel ON cel.claim_id=c.id
+                    JOIN evidence_items e ON e.id=cel.evidence_item_id
+                    JOIN source_items s ON s.id=e.source_item_id
+                    WHERE c.status='confirmed' AND c.scope={self.placeholder}
+                      AND s.retired_at IS NULL
+                    GROUP BY c.id, c.updated_at
+                    ORDER BY c.id LIMIT {self.placeholder}""",
+                (scope, min(max(limit, 0), 200)),
+            ).fetchall()
+        return [_mapping(row) for row in rows]

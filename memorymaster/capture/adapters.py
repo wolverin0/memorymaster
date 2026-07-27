@@ -161,6 +161,19 @@ def _trusted_file(path: str | Path) -> tuple[Path, str]:
     return resolved, matched[0]
 
 
+def resolve_local_locator(locator: str) -> Path:
+    """Expand a persisted root-relative locator under the current capture roots."""
+    root_name, separator, relative = locator.partition("/")
+    for name, root in _configured_roots():
+        if name != root_name:
+            continue
+        resolved = (root / relative).resolve(strict=True) if separator else root
+        if _under_root(resolved, [(name, root)]) is None or not resolved.is_file():
+            raise CaptureRejected("path_outside_capture_roots", "Locator escaped its capture root.")
+        return resolved
+    raise CaptureRejected("capture_root_unavailable", "Locator root is not configured.")
+
+
 def _read_document(path: Path) -> bytes:
     size = path.stat().st_size
     if size > DOCUMENT_LIMIT:

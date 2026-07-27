@@ -652,10 +652,12 @@ MCP_TOOL_POLICIES: dict[str, McpToolPolicy] = {
     "entity_stats": McpToolPolicy("configure"),
     "extract_entities": McpToolPolicy("ingest"),
     "federated_query": McpToolPolicy("query"),
+    "forget": McpToolPolicy("delete"),
     "find_related_claims": McpToolPolicy("configure"),
     "get_usage_rollup": McpToolPolicy("query"),
     "ingest_claim": McpToolPolicy("ingest", team_enabled=True),
     "ingest_rule": McpToolPolicy("ingest"),
+    "improve": McpToolPolicy("steward"),
     "init_db": McpToolPolicy("configure"),
     "list_claims": McpToolPolicy("query", team_enabled=True),
     "list_events": McpToolPolicy("query"),
@@ -664,6 +666,7 @@ MCP_TOOL_POLICIES: dict[str, McpToolPolicy] = {
     "open_dashboard": McpToolPolicy("query"),
     "pin_claim": McpToolPolicy("steward"),
     "quality_scores": McpToolPolicy("steward"),
+    "recall": McpToolPolicy("query", team_enabled=True),
     "query_claim_paths": McpToolPolicy("query"),
     "query_for_context": McpToolPolicy("query"),
     "query_for_task": McpToolPolicy("query"),
@@ -675,6 +678,7 @@ MCP_TOOL_POLICIES: dict[str, McpToolPolicy] = {
     "recompute_tiers": McpToolPolicy("steward"),
     "redact_claim_payload": McpToolPolicy("delete"),
     "resolve_project": McpToolPolicy("ingest"),
+    "remember": McpToolPolicy("ingest", team_enabled=True),
     "resolve_steward_proposal": McpToolPolicy("steward"),
     "rules_export": McpToolPolicy("export"),
     "run_cycle": McpToolPolicy("steward"),
@@ -811,6 +815,94 @@ if FastMCP is not None:
         svc = _service(db, workspace)
         svc.init_db()
         return {"ok": True, "db": db}
+
+    @mcp.tool()
+    def remember(
+        text: str = "",
+        path: str = "",
+        source_uri: str = "",
+        scope: str = "",
+        source_agent: str = "",
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Capture text, one local file, or a URL reference and queue governed work."""
+        context = current_request_context()
+        if path and context is not None and context.mode is AuthMode.TEAM:
+            raise PermissionError("Client-supplied local paths are disabled in team mode.")
+        from memorymaster.public.v1 import remember as public_remember
+
+        receipt = public_remember(
+            text=text or None,
+            path=path or None,
+            source_uri=source_uri or None,
+            scope=scope or None,
+            source_agent=source_agent or "memorymaster-mcp",
+            db=db,
+            workspace=workspace,
+        )
+        return {"ok": True, **asdict(receipt)}
+
+    @mcp.tool()
+    def recall(
+        query: str,
+        scope_allowlist: str = "",
+        token_budget: int = 4000,
+        trust_mode: str = "trusted",
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Recall governed context; trusted mode returns confirmed claims only."""
+        from memorymaster.public.v1 import recall as public_recall
+
+        scopes = _effective_scope_allowlist(scope_allowlist, workspace)
+        receipt = public_recall(
+            query,
+            scope_allowlist=scopes,
+            token_budget=_bounded_limit(token_budget, maximum=32_000),
+            trust_mode=trust_mode,
+            db=db,
+            workspace=workspace,
+        )
+        return {"ok": True, **asdict(receipt)}
+
+    @mcp.tool()
+    def forget(
+        claim_id: int = 0,
+        source_item_id: int = 0,
+        apply: bool = False,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Preview or apply logical retirement; evidence and audit history remain."""
+        from memorymaster.public.v1 import forget as public_forget
+
+        receipt = public_forget(
+            claim_id=claim_id or None,
+            source_item_id=source_item_id or None,
+            apply=apply,
+            db=db,
+            workspace=workspace,
+        )
+        return {"ok": True, **asdict(receipt)}
+
+    @mcp.tool()
+    def improve(
+        scope: str = "",
+        max_items: int = 200,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Queue due extraction, steward-review, and confirmed-claim graph work."""
+        from memorymaster.public.v1 import improve as public_improve
+
+        receipt = public_improve(
+            scope=scope or None,
+            max_items=max_items,
+            db=db,
+            workspace=workspace,
+        )
+        return {"ok": True, **asdict(receipt)}
 
     @mcp.tool()
     def ingest_claim(

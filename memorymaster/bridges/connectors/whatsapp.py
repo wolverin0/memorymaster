@@ -12,6 +12,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from memorymaster.capture.producers import ProducerItem, normalize_producer_item
+
 
 @dataclass(frozen=True)
 class WhatsAppImportResult:
@@ -50,6 +52,17 @@ def import_wacli_json(
 
     for index, raw in enumerate(rows):
         normalized = _normalize_message(raw, index=index, fallback_chat_id=chat_id)
+        envelope = normalize_producer_item(
+            "whatsapp",
+            ProducerItem(
+                external_id=str(normalized["source_item_id"]),
+                text=str(normalized["text"] or ""),
+                content_hash=str(normalized["content_hash"]),
+                metadata=raw,
+            ),
+        )
+        normalized["text"] = envelope.text
+        normalized["content_hash"] = envelope.content_hash
         source_item_id = normalized["source_item_id"]
         if source_item_id in seen_keys:
             duplicates_seen += 1
@@ -83,6 +96,7 @@ def import_wacli_json(
                 provider="wacli",
                 confidence=1.0,
                 payload_json={"source_item_id": source_item_id},
+                content_hash=normalized["content_hash"],
             )
             evidence_items_added += 1
 

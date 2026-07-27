@@ -32,6 +32,12 @@ from memorymaster.surfaces.cli_handlers_basic import (
 )
 from memorymaster.surfaces.cli_handlers_integrity import _handle_drain_spool, _handle_integrity, _handle_qdrant_reconcile, _handle_repair_fk
 from memorymaster.surfaces.dreaming_cli import handle_dream_run, handle_dream_status
+from memorymaster.surfaces.cli_handlers_public import (
+    handle_forget,
+    handle_improve,
+    handle_recall,
+    handle_remember,
+)
 
 
 COMMAND_HANDLERS["integrity"] = _handle_integrity
@@ -50,6 +56,10 @@ COMMAND_HANDLERS["migrate"] = _handle_migrate
 COMMAND_HANDLERS["export-delta"] = _handle_export_delta
 COMMAND_HANDLERS["dream-run"] = handle_dream_run
 COMMAND_HANDLERS["dream-status"] = handle_dream_status
+COMMAND_HANDLERS["remember"] = handle_remember
+COMMAND_HANDLERS["recall"] = handle_recall
+COMMAND_HANDLERS["forget"] = handle_forget
+COMMAND_HANDLERS["improve"] = handle_improve
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -69,6 +79,21 @@ def build_parser() -> argparse.ArgumentParser:
     migrate_mode.add_argument("--status", action="store_true", help="Report applied vs pending per migration")
 
     sub.add_parser("stealth-status", help="Show whether stealth mode is active and which DB is in use")
+
+    remember_cmd = sub.add_parser("remember", help="Capture text, one local file, or a URL reference")
+    remember_input = remember_cmd.add_mutually_exclusive_group(required=True)
+    remember_input.add_argument("--text", default=None, help="Inline or producer-extracted text")
+    remember_input.add_argument("--file", default=None, help="One file under a configured capture root")
+    remember_input.add_argument("--url", default=None, help="Reference URL; never fetched by MemoryMaster")
+    remember_cmd.add_argument(
+        "--source-uri",
+        default=None,
+        help="Original HTTP(S) provenance accompanying --text or --file",
+    )
+    remember_cmd.add_argument("--scope", default=None, help="Scope (default: project:<workspace>)")
+    remember_cmd.add_argument(
+        "--source-agent", default="memorymaster-cli", help="Producer attribution"
+    )
 
     ingest = sub.add_parser("ingest", help="Ingest a raw claim with citations")
     ingest.add_argument("--text", required=True, help="Claim text")
@@ -631,8 +656,29 @@ def build_parser() -> argparse.ArgumentParser:
 
     recall_cmd = sub.add_parser("recall", help="Query memory for relevant context (for pre-turn injection)")
     recall_cmd.add_argument("query", help="What context do you need?")
-    recall_cmd.add_argument("--budget", type=int, default=2000, help="Token budget for context")
+    recall_cmd.add_argument("--budget", type=int, default=4000, help="Token budget for context")
     recall_cmd.add_argument("--format", dest="output_format", default="text", choices=["text", "xml", "json"], help="Output format")
+    recall_cmd.add_argument(
+        "--scope-allowlist",
+        default="",
+        help="Comma-separated scopes; defaults to project:<workspace>",
+    )
+    recall_cmd.add_argument(
+        "--trust-mode",
+        choices=["trusted", "exploratory"],
+        default="trusted",
+        help="Trusted excludes candidate/stale/conflicted claims",
+    )
+
+    forget_cmd = sub.add_parser("forget", help="Preview or apply logical retirement")
+    forget_target = forget_cmd.add_mutually_exclusive_group(required=True)
+    forget_target.add_argument("--claim-id", type=int, default=None)
+    forget_target.add_argument("--source-item-id", type=int, default=None)
+    forget_cmd.add_argument("--apply", action="store_true", help="Apply the previewed retirement")
+
+    improve_cmd = sub.add_parser("improve", help="Queue due extraction, review, and graph work")
+    improve_cmd.add_argument("--scope", default=None, help="Scope (default: project:<workspace>)")
+    improve_cmd.add_argument("--max-items", type=int, default=200)
 
     observe_cmd = sub.add_parser("observe", help="Extract and ingest observations from text (for post-turn learning)")
     observe_cmd.add_argument("--text", required=True, help="Text to observe and potentially ingest")

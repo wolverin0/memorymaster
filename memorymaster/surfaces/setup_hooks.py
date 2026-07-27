@@ -497,8 +497,8 @@ def install_dream_hooks(*, install_claude: bool, install_codex: bool) -> dict[st
 def setup_dream_schedule(db_path: str | Path, *, apply_candidates: bool) -> str:
     """Create the hourly Windows task; other platforms get a manual command."""
     command = (
-        f'"{PYTHON_EXE}" -m memorymaster --db "{db_path}" '
-        f'--workspace "{PROJECT_ROOT}" dream-run'
+        f'"{_hidden_python_exe()}" -m memorymaster.surfaces.scheduled_task dream '
+        f'--db "{db_path}" --workspace "{PROJECT_ROOT}"'
     )
     if apply_candidates:
         command += " --apply-candidates"
@@ -520,7 +520,116 @@ def setup_dream_schedule(db_path: str | Path, *, apply_candidates: bool) -> str:
         return "manual"
 
 
-def verify_dream_install(*, apply_candidates: bool = False) -> dict[str, Any]:
+def _hidden_python_exe() -> str:
+    candidate = Path(PYTHON_EXE).with_name("pythonw.exe")
+    return str(candidate if candidate.is_file() else Path(PYTHON_EXE))
+
+
+def _task_probe(task_name: str) -> dict[str, Any]:
+    if not IS_WINDOWS:
+        return {
+            "name": task_name,
+            "status": "manual",
+            "task_action": "",
+            "hidden_execution": True,
+            "last_result": "not-applicable",
+        }
+    try:
+        probe = subprocess.run(
+            ["schtasks", "/query", "/tn", task_name, "/fo", "list", "/v"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return {
+            "name": task_name,
+            "status": "missing",
+            "task_action": "",
+            "hidden_execution": False,
+            "last_result": "unknown",
+        }
+    import re
+
+    output = probe.stdout
+    action_match = re.search(
+        r"(?im)^(?:Task To Run|Tarea que se ejecutar[aá]|Acci[oó]n):\s*(.+)$", output
+    )
+    result_match = re.search(
+        r"(?im)^(?:Last Result|[UÚ]ltimo resultado):\s*(.+)$", output
+    )
+    action = action_match.group(1).strip() if action_match else output
+    hidden = "pythonw" in action.lower() or "-windowstyle hidden" in action.lower()
+    return {
+        "name": task_name,
+        "status": "configured",
+        "task_action": action,
+        "hidden_execution": hidden,
+        "last_result": result_match.group(1).strip() if result_match else "unknown",
+    }
+
+
+def _capture_queue_depth(db_path: str | Path | None) -> dict[str, int] | str:
+    if db_path is None or "://" in str(db_path):
+        return "unavailable"
+    path = Path(db_path)
+    if not path.is_file():
+        return {}
+    import sqlite3
+
+    try:
+        uri = f"file:{path.resolve().as_posix()}?mode=ro"
+        with sqlite3.connect(uri, uri=True) as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='capture_jobs'"
+            ).fetchone()
+            if exists is None:
+                return {}
+            rows = conn.execute(
+                "SELECT status, COUNT(*) FROM capture_jobs GROUP BY status"
+            ).fetchall()
+        return {str(status): int(count) for status, count in rows}
+    except sqlite3.Error:
+        return "unavailable"
+
+
+def _provider_readiness() -> dict[str, bool]:
+    return {
+        "dream_extractor": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
+        "dream_consolidator": shutil.which("opencode") is not None,
+        "claim_extractor": bool(
+            os.environ.get("MEMORYMASTER_LLM_PROVIDER", "").strip()
+            or os.environ.get("MEMORYMASTER_LLM_FALLBACK_PROVIDER", "").strip()
+        ),
+        "ocr": bool(os.environ.get("MEMORYMASTER_OCR_PROVIDER", "").strip()),
+        "transcription": bool(
+            os.environ.get("MEMORYMASTER_TRANSCRIPTION_PROVIDER", "").strip()
+        ),
+    }
+
+
+def verify_scheduled_automation(
+    db_path: str | Path | None, *, apply_candidates: bool = False
+) -> dict[str, Any]:
+    dreaming = _task_probe("MemoryMaster-Dreaming")
+    steward = _task_probe("MemoryMasterSteward")
+    expected_flag = "--apply-candidates" if apply_candidates else ""
+    action = str(dreaming["task_action"])
+    mode_matches = (
+        expected_flag in action if apply_candidates else "--apply-candidates" not in action
+    )
+    return {
+        "dreaming": dreaming,
+        "steward": steward,
+        "mode_matches": mode_matches,
+        "queue_depth": _capture_queue_depth(db_path),
+        "provider_readiness": _provider_readiness(),
+    }
+
+
+def verify_dream_install(
+    *, apply_candidates: bool = False, db_path: str | Path | None = None
+) -> dict[str, Any]:
     """Inspect Dreaming hook and scheduler readiness without changing user state."""
     hook_path = HOME / ".memorymaster" / "hooks" / "memorymaster-dream-capture.py"
     client_states: dict[str, bool] = {}
@@ -536,24 +645,12 @@ def verify_dream_install(*, apply_candidates: bool = False) -> dict[str, Any]:
             except OSError:
                 client_states[name] = False
 
-    schedule = "manual"
-    scheduled_command = ""
-    if IS_WINDOWS:
-        try:
-            probe = subprocess.run(
-                [
-                    "schtasks", "/query", "/tn", "MemoryMaster-Dreaming",
-                    "/fo", "list", "/v",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            scheduled_command = probe.stdout
-            schedule = "configured"
-        except (OSError, subprocess.CalledProcessError):
-            schedule = "missing"
-
+    automation = verify_scheduled_automation(
+        db_path, apply_candidates=apply_candidates
+    )
+    task = automation["dreaming"]
+    schedule = str(task["status"])
+    scheduled_command = str(task["task_action"])
     expected_flag = "--apply-candidates" if apply_candidates else ""
     mode_matches = not IS_WINDOWS or (
         (expected_flag in scheduled_command)
@@ -572,6 +669,11 @@ def verify_dream_install(*, apply_candidates: bool = False) -> dict[str, Any]:
         "clients": client_states,
         "schedule": schedule,
         "mode_matches": mode_matches,
+        "task_action": task["task_action"],
+        "hidden_execution": task["hidden_execution"],
+        "last_result": task["last_result"],
+        "queue_depth": automation["queue_depth"],
+        "provider_readiness": automation["provider_readiness"],
     }
 
 
@@ -772,10 +874,15 @@ def setup_steward_cron() -> str:
 
     if IS_WINDOWS:
         try:
+            action = (
+                f'"{_hidden_python_exe()}" -m memorymaster.surfaces.scheduled_task steward '
+                f'--db "{PROJECT_ROOT / "memorymaster.db"}" '
+                f'--workspace "{PROJECT_ROOT}" --script "{steward_script}"'
+            )
             result = subprocess.run(
                 ["schtasks", "/create",
                  "/tn", "MemoryMasterSteward",
-                 "/tr", f'"{PYTHON_EXE}" "{steward_script}"',
+                 "/tr", action,
                  "/sc", "hourly", "/mo", "6", "/f"],
                 capture_output=True, text=True
             )
@@ -1145,8 +1252,14 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
         else:
             vdb = Path(args.db).expanduser().resolve() if args.db else Path.cwd() / "memorymaster.db"
         verify = verify_install(vdb)
+        scheduler = verify_scheduled_automation(
+            vdb, apply_candidates=bool(args.dream_apply_candidates)
+        )
         dream = (
-            verify_dream_install(apply_candidates=bool(args.dream_apply_candidates))
+            verify_dream_install(
+                apply_candidates=bool(args.dream_apply_candidates),
+                db_path=vdb,
+            )
             if args.enable_dream
             else None
         )
@@ -1155,7 +1268,7 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
             if dream is not None:
                 dream_rc = 0 if dream["status"] == "PASS" else 3 if dream["status"] == "PARTIAL" else 1
                 rc = max(rc, dream_rc)
-            payload = {"verify": verify}
+            payload = {"verify": verify, "scheduler": scheduler}
             if dream is not None:
                 payload["dream"] = dream
             return rc, (payload if args.json else None)
@@ -1171,6 +1284,7 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
         status, rc = evaluate_setup_profile(profile, components)
         payload = {
             "verify": verify,
+            "scheduler": scheduler,
             "profile": {"name": profile, "status": status},
             "components": {name: asdict(result) for name, result in components.items()},
         }

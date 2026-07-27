@@ -92,6 +92,19 @@ def _insert_edge(graph: EntityGraph, src, tgt, relation, weight, last_reinforced
             (src, tgt, relation, weight, claim_id,
              datetime.now(timezone.utc).isoformat(), last_reinforced_at),
         )
+        conn.execute(
+            """INSERT INTO entity_edge_supports
+               (source_entity_id, target_entity_id, relation, supporting_claim_id,
+                scope, ontology_version, created_at)
+               VALUES (?, ?, ?, ?, 'project:test', 'personal-v1', ?)""",
+            (
+                src,
+                tgt,
+                relation,
+                claim_id,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
         conn.commit()
     finally:
         conn.close()

@@ -1,0 +1,476 @@
+"""Versioned remember/recall/forget/improve facade over governed MemoryMaster behavior."""
+
+from __future__ import annotations
+
+import hashlib
+import os
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
+
+from memorymaster.capture import CaptureRepository, capture_input
+from memorymaster.core.models import Claim, EvidenceItem, SourceItem
+from memorymaster.core.scope_utils import scope_from_cwd
+from memorymaster.core.service import MemoryService
+
+API_VERSION = "memorymaster.public.v1"
+
+
+@dataclass(frozen=True, slots=True)
+class RememberReceipt:
+    api_version: str
+    source_item: dict[str, Any]
+    evidence: dict[str, Any] | None
+    job_ids: tuple[int, ...]
+    deduplicated: bool
+    warnings: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class RecallReceipt:
+    api_version: str
+    output: str
+    claims: tuple[dict[str, Any], ...]
+    token_budget: int
+    tokens_used: int
+    trust_mode: str
+    output_format: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ForgetReceipt:
+    api_version: str
+    target: dict[str, Any]
+    apply: bool
+    actions: tuple[dict[str, Any], ...]
+    evidence_preserved: bool = True
+    privacy_erasure: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ImproveReceipt:
+    api_version: str
+    scope: str
+    queued: dict[str, int]
+    already_pending: dict[str, int]
+    steward_review_due: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _workspace_path(workspace: str | Path | None) -> Path | None:
+    if workspace is None:
+        configured = os.environ.get("MEMORYMASTER_WORKSPACE", "").strip()
+        return Path(configured).resolve() if configured else Path.cwd().resolve()
+    value = str(workspace).strip()
+    return Path(value).resolve() if value else None
+
+
+def _scope(scope: str | None, workspace: Path | None) -> str:
+    if scope and scope.strip():
+        return scope.strip()
+    derived = scope_from_cwd(workspace)
+    return derived if derived != "global" else "user"
+
+
+def _service(db: str | Path | None, workspace: Path | None) -> MemoryService:
+    target = str(
+        db
+        or os.environ.get("MEMORYMASTER_DB", "").strip()
+        or os.environ.get("MEMORYMASTER_DEFAULT_DB", "").strip()
+        or "memorymaster.db"
+    )
+    service = MemoryService(target, workspace_root=workspace or Path.cwd())
+    service.init_db()
+    return service
+
+
+def _source_dict(source: SourceItem) -> dict[str, Any]:
+    return {
+        "id": source.id,
+        "source_id": source.source_id,
+        "source_item_id": source.source_item_id,
+        "item_type": source.item_type,
+        "content_hash": source.content_hash,
+        "retired_at": source.retired_at,
+        "retirement_reason": source.retirement_reason,
+    }
+
+
+def _evidence_dict(evidence: EvidenceItem) -> dict[str, Any]:
+    return {
+        "id": evidence.id,
+        "source_item_id": evidence.source_item_id,
+        "evidence_type": evidence.evidence_type,
+        "provider": evidence.provider,
+        "confidence": evidence.confidence,
+        "content_hash": evidence.content_hash,
+    }
+
+
+def _persist_capture(
+    service: MemoryService,
+    *,
+    envelope: Any,
+    scope: str,
+    source_agent: str,
+) -> tuple[SourceItem, EvidenceItem | None, bool]:
+    source = service.upsert_external_source(
+        source_type="universal_capture",
+        display_name="MemoryMaster Capture",
+        config_json={"contract": API_VERSION},
+    )
+    source_key = envelope.locator if envelope.source_kind != "inline" else envelope.content_hash
+    existing_source = service.get_source_item(
+        source_id=source.id, source_item_id=source_key
+    )
+    item = service.upsert_source_item(
+        source_id=source.id,
+        source_item_id=source_key,
+        item_type=envelope.content_type,
+        text=envelope.text,
+        payload_json={
+            "locator": envelope.locator,
+            "mime_type": envelope.mime_type,
+            "source_uri": envelope.source_uri,
+            "scope": scope,
+            "source_agent": source_agent,
+            "provider_kind": envelope.provider_kind,
+        },
+        content_hash=envelope.content_hash,
+    )
+    repository = CaptureRepository(service.store)
+    evidence = repository.evidence_for_content(
+        source_item_id=item.id, content_hash=envelope.content_hash
+    )
+    deduplicated = evidence is not None or (
+        existing_source is not None and envelope.text is None
+    )
+    if evidence is None and envelope.text is not None:
+        evidence = service.add_evidence_item(
+            source_item_id=item.id,
+            evidence_type=envelope.evidence_type or "text",
+            text=envelope.text,
+            provider="memorymaster-capture",
+            confidence=1.0,
+            payload_json={"locator": envelope.locator, "mime_type": envelope.mime_type},
+            content_hash=envelope.content_hash,
+        )
+    return item, evidence, deduplicated
+
+
+def _queue_capture_jobs(
+    repository: CaptureRepository,
+    *,
+    source_item_id: int,
+    content_hash: str,
+    has_evidence: bool,
+    blocked_code: str | None,
+) -> tuple[tuple[int, ...], bool]:
+    jobs: list[int] = []
+    all_existing = True
+    if not has_evidence:
+        status = "blocked" if blocked_code else "pending"
+        job, created = repository.queue_job(
+            source_item_id=source_item_id,
+            content_hash=content_hash,
+            stage="extract_text",
+            status=status,
+            error_code=blocked_code,
+            error_detail="Producer must submit extracted evidence." if blocked_code else None,
+        )
+        jobs.append(job.id)
+        all_existing &= not created
+    else:
+        job, created = repository.queue_job(
+            source_item_id=source_item_id,
+            content_hash=content_hash,
+            stage="extract_claims",
+        )
+        jobs.append(job.id)
+        all_existing &= not created
+    return tuple(jobs), all_existing
+
+
+def remember(
+    *,
+    text: str | None = None,
+    path: str | Path | None = None,
+    source_uri: str | None = None,
+    scope: str | None = None,
+    source_agent: str = "memorymaster-public",
+    db: str | Path | None = None,
+    workspace: str | Path | None = None,
+) -> RememberReceipt:
+    """Persist evidence synchronously and queue governed extraction work."""
+    workspace_path = _workspace_path(workspace)
+    resolved_scope = _scope(scope, workspace_path)
+    envelope = capture_input(text=text, path=path, source_uri=source_uri)
+    service = _service(db, workspace_path)
+    item, evidence, evidence_duplicate = _persist_capture(
+        service,
+        envelope=envelope,
+        scope=resolved_scope,
+        source_agent=source_agent,
+    )
+    jobs, jobs_duplicate = _queue_capture_jobs(
+        CaptureRepository(service.store),
+        source_item_id=item.id,
+        content_hash=envelope.content_hash,
+        has_evidence=evidence is not None,
+        blocked_code=envelope.blocked_code,
+    )
+    warnings = tuple(
+        dict.fromkeys(
+            (*envelope.warning_codes, *((envelope.blocked_code,) if envelope.blocked_code else ()))
+        )
+    )
+    return RememberReceipt(
+        api_version=API_VERSION,
+        source_item=_source_dict(item),
+        evidence=_evidence_dict(evidence) if evidence else None,
+        job_ids=jobs,
+        deduplicated=evidence_duplicate and jobs_duplicate,
+        warnings=warnings,
+    )
+
+
+def _citation_dict(citation: Any) -> dict[str, Any]:
+    return {
+        "id": citation.id,
+        "source": citation.source,
+        "locator": citation.locator,
+        "excerpt": citation.excerpt,
+    }
+
+
+def _recall_claim(row: dict[str, Any]) -> dict[str, Any]:
+    claim = row["claim"]
+    breakdown = row.get("breakdown")
+    return {
+        "claim_id": claim.id,
+        "human_id": claim.human_id,
+        "text": claim.text,
+        "status": claim.status,
+        "scope": claim.scope,
+        "confidence": claim.confidence,
+        "score": row.get("score"),
+        "score_explanation": breakdown if isinstance(breakdown, dict) else {},
+        "citations": [_citation_dict(citation) for citation in claim.citations],
+    }
+
+
+def recall(
+    query: str,
+    *,
+    scope_allowlist: list[str] | tuple[str, ...] | None = None,
+    token_budget: int = 4000,
+    trust_mode: str = "trusted",
+    output_format: str = "text",
+    db: str | Path | None = None,
+    workspace: str | Path | None = None,
+) -> RecallReceipt:
+    """Return governed context and structured lifecycle/citation details."""
+    workspace_path = _workspace_path(workspace)
+    service = _service(db, workspace_path)
+    scopes = list(scope_allowlist) if scope_allowlist else [_scope(None, workspace_path)]
+    result = service.query_for_context(
+        query=query,
+        token_budget=token_budget,
+        output_format=output_format,
+        retrieval_mode="hybrid",
+        trust_mode=trust_mode,
+        scope_allowlist=scopes,
+    )
+    claims = tuple(_recall_claim(row) for row in result.rows)
+    return RecallReceipt(
+        api_version=API_VERSION,
+        output=result.output,
+        claims=claims,
+        token_budget=result.token_budget,
+        tokens_used=result.tokens_used,
+        trust_mode=trust_mode,
+        output_format=result.format,
+    )
+
+
+def _forget_claim_action(claim: Claim) -> dict[str, Any]:
+    return {
+        "claim_id": claim.id,
+        "from_status": claim.status,
+        "to_status": "archived",
+        "reason": "friendly_forget_claim",
+    }
+
+
+def _source_actions(repository: CaptureRepository, source_item_id: int) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = [
+        {
+            "source_item_id": source_item_id,
+            "action": "retire_source",
+            "reason": "friendly_forget_source",
+        }
+    ]
+    for claim in repository.claims_for_source(source_item_id):
+        other_count = repository.active_supporting_source_count(
+            claim.id, excluding_source_item_id=source_item_id
+        )
+        if other_count:
+            next_status = claim.status
+        elif claim.status == "candidate":
+            next_status = "archived"
+        elif claim.status == "confirmed":
+            next_status = "stale"
+        else:
+            next_status = claim.status
+        actions.append(
+            {
+                "claim_id": claim.id,
+                "from_status": claim.status,
+                "to_status": next_status,
+                "other_active_sources": other_count,
+            }
+        )
+    return actions
+
+
+def _apply_source_actions(
+    service: MemoryService,
+    repository: CaptureRepository,
+    source_item_id: int,
+    actions: list[dict[str, Any]],
+) -> None:
+    repository.retire_source(source_item_id, reason="friendly_forget_source")
+    for action in actions[1:]:
+        if action["from_status"] == action["to_status"]:
+            continue
+        claim = service.store.get_claim(int(action["claim_id"]), include_citations=False)
+        if claim is None:
+            continue
+        service.store.apply_status_transition(
+            claim,
+            to_status=str(action["to_status"]),
+            reason="sole active evidence source retired",
+            event_type="transition",
+        )
+
+
+def forget(
+    *,
+    claim_id: int | None = None,
+    source_item_id: int | None = None,
+    apply: bool = False,
+    db: str | Path | None = None,
+    workspace: str | Path | None = None,
+) -> ForgetReceipt:
+    """Preview or apply logical retirement; this is not privacy erasure."""
+    if (claim_id is None) == (source_item_id is None):
+        raise ValueError("Provide exactly one claim_id or source_item_id.")
+    service = _service(db, _workspace_path(workspace))
+    repository = CaptureRepository(service.store)
+    if claim_id is not None:
+        claim = service.store.get_claim(claim_id, include_citations=False)
+        if claim is None:
+            raise KeyError(f"claim {claim_id} not found")
+        action = _forget_claim_action(claim)
+        if apply and claim.status != "archived":
+            service.store.apply_status_transition(
+                claim,
+                to_status="archived",
+                reason="friendly_forget_claim",
+                event_type="transition",
+            )
+        return ForgetReceipt(
+            API_VERSION, {"claim_id": claim_id}, apply, (action,)
+        )
+    assert source_item_id is not None
+    source = service.get_source_item_by_id(source_item_id)
+    if source is None:
+        raise KeyError(f"source item {source_item_id} not found")
+    actions = _source_actions(repository, source_item_id)
+    if apply and source.retired_at is None:
+        _apply_source_actions(service, repository, source_item_id, actions)
+    return ForgetReceipt(
+        API_VERSION, {"source_item_id": source_item_id}, apply, tuple(actions)
+    )
+
+
+def _queue_due_evidence(
+    repository: CaptureRepository, *, scope: str, limit: int
+) -> tuple[int, int]:
+    queued = existing = 0
+    for row in repository.due_evidence(scope=scope, limit=limit):
+        digest = str(row["content_hash"] or row["source_hash"] or "")
+        if len(digest) != 64:
+            continue
+        _, created = repository.queue_job(
+            source_item_id=int(row["source_item_id"]),
+            content_hash=digest,
+            stage="extract_claims",
+        )
+        queued += int(created)
+        existing += int(not created)
+    return queued, existing
+
+
+def _queue_due_graph(
+    repository: CaptureRepository, *, scope: str, limit: int
+) -> tuple[int, int]:
+    queued = existing = 0
+    for row in repository.due_confirmed_graph_claims(scope=scope, limit=limit):
+        digest = hashlib.sha256(
+            f"claim:{row['claim_id']}:{row['updated_at']}".encode("utf-8")
+        ).hexdigest()
+        _, created = repository.queue_job(
+            source_item_id=int(row["source_item_id"]),
+            content_hash=digest,
+            stage="extract_graph",
+        )
+        queued += int(created)
+        existing += int(not created)
+    return queued, existing
+
+
+def improve(
+    *,
+    scope: str | None = None,
+    max_items: int = 200,
+    db: str | Path | None = None,
+    workspace: str | Path | None = None,
+) -> ImproveReceipt:
+    """Queue due work without directly confirming or rewriting claims."""
+    if not 1 <= max_items <= 200:
+        raise ValueError("max_items must be between 1 and 200.")
+    workspace_path = _workspace_path(workspace)
+    resolved_scope = _scope(scope, workspace_path)
+    service = _service(db, workspace_path)
+    repository = CaptureRepository(service.store)
+    claim_queued, claim_existing = _queue_due_evidence(
+        repository, scope=resolved_scope, limit=max_items
+    )
+    graph_queued, graph_existing = _queue_due_graph(
+        repository, scope=resolved_scope, limit=max_items
+    )
+    candidates = service.store.list_claims(
+        status="candidate",
+        limit=max_items,
+        include_archived=False,
+        scope_allowlist=[resolved_scope],
+    )
+    return ImproveReceipt(
+        api_version=API_VERSION,
+        scope=resolved_scope,
+        queued={"extract_claims": claim_queued, "extract_graph": graph_queued},
+        already_pending={"extract_claims": claim_existing, "extract_graph": graph_existing},
+        steward_review_due=len(candidates),
+    )
