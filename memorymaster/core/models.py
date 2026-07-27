@@ -352,6 +352,8 @@ class SourceItem:
     sensitivity: str | None
     created_at: str
     updated_at: str
+    retired_at: str | None = None
+    retirement_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -366,6 +368,7 @@ class EvidenceItem:
     payload_json: str | None
     sensitivity: str | None
     created_at: str
+    content_hash: str | None = None
 
 
 MEDIA_RETRY_STATUSES = ("pending", "retrying", "expired", "done", "failed")

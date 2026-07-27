@@ -1176,7 +1176,17 @@ class PostgresStore(SQLiteStore):
         from memorymaster.stores.migrations import MigrationRunner
 
         with self._connect_schema_admin() as mig_conn:
-            MigrationRunner(mig_conn, backend="postgres").apply_pending()
+            runner = MigrationRunner(mig_conn, backend="postgres")
+            runner.apply_pending()
+            capture_migration = next(
+                item for item in runner.status() if item.version == 17
+            )
+            if capture_migration.applied:
+                from importlib import import_module
+
+                import_module(
+                    "memorymaster.stores.migrations.0017_governed_capture_lineage"
+                ).apply_postgres(mig_conn)
 
     @staticmethod
     def _canonical_payload(payload: object | None) -> str:
@@ -3570,6 +3580,8 @@ class PostgresStore(SQLiteStore):
             sensitivity=cls._as_text(row.get("sensitivity")),
             created_at=cls._as_iso(row["created_at"]) or "",
             updated_at=cls._as_iso(row["updated_at"]) or "",
+            retired_at=cls._as_iso(row.get("retired_at")),
+            retirement_reason=cls._as_text(row.get("retirement_reason")),
         )
 
     @classmethod
@@ -3586,6 +3598,7 @@ class PostgresStore(SQLiteStore):
             payload_json=cls._json_text(row.get("payload_json")),
             sensitivity=cls._as_text(row.get("sensitivity")),
             created_at=cls._as_iso(row["created_at"]) or "",
+            content_hash=cls._as_text(row.get("content_hash")),
         )
 
     @classmethod
@@ -4017,6 +4030,7 @@ class PostgresStore(SQLiteStore):
         confidence: float | None = None,
         payload_json: dict[str, object] | str | None = None,
         sensitivity: str | None = None,
+        content_hash: str | None = None,
     ) -> EvidenceItem:
         self._deny_unsupported_team_surface("add_evidence_item")
         from memorymaster.stores._storage_sources import _normalize_sensitivity
@@ -4030,6 +4044,12 @@ class PostgresStore(SQLiteStore):
             raise ValueError("evidence_type must be non-empty.")
         normalized_sensitivity = _normalize_sensitivity(sensitivity)
         text, media_path, provider = map(_safe_text, (text, media_path, provider))
+        normalized_hash = (content_hash or "").strip().lower() or None
+        if normalized_hash is not None and (
+            len(normalized_hash) != 64
+            or any(ch not in "0123456789abcdef" for ch in normalized_hash)
+        ):
+            raise ValueError("content_hash must be a SHA-256 hex digest.")
         now = utc_now()
         bounded = None if confidence is None else max(0.0, min(1.0, float(confidence)))
         payload = self._json_payload(payload_json)
@@ -4038,9 +4058,9 @@ class PostgresStore(SQLiteStore):
                 """
                 INSERT INTO evidence_items (
                     source_item_id, evidence_type, text, media_path, provider,
-                    confidence, payload_json, sensitivity, created_at
+                    confidence, payload_json, sensitivity, content_hash, created_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING *
                 """,
                 (
@@ -4052,6 +4072,7 @@ class PostgresStore(SQLiteStore):
                     bounded,
                     Jsonb(payload) if payload is not None else None,
                     normalized_sensitivity,
+                    normalized_hash,
                     now,
                 ),
             )

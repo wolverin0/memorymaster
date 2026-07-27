@@ -265,6 +265,35 @@ class _SchemaMixin:
 
 
     @staticmethod
+    def _ensure_governed_capture_schema(conn: sqlite3.Connection) -> None:
+        """Converge vNext capture tables after the baseline and migrations exist."""
+        existing = {
+            row[0]
+            for row in conn.execute(
+                """SELECT name FROM sqlite_master
+                   WHERE type='table' AND name IN
+                   ('claims','source_items','evidence_items','entities')"""
+            )
+        }
+        if existing != {"claims", "source_items", "evidence_items", "entities"}:
+            return
+        for table, definition in (
+            ("evidence_items", "content_hash TEXT"),
+            ("source_items", "retired_at TEXT"),
+            ("source_items", "retirement_reason TEXT"),
+        ):
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+        from memorymaster.stores.migrations import discover_migrations
+
+        migration = next(item for item in discover_migrations() if item.version == 17)
+        migration.apply_sqlite(conn)
+
+
+    @staticmethod
     def _ensure_claim_idempotency_schema(conn: sqlite3.Connection) -> None:
         _SchemaMixin._ensure_tenant_id_schema(conn)
         _SchemaMixin._ensure_scope_schema(conn)

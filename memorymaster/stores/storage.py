@@ -173,6 +173,7 @@ class SQLiteStore(
             self._ensure_version_column(conn)
             self._ensure_embeddings_schema(conn)
             self._ensure_atlas_source_schema(conn)
+            self._ensure_governed_capture_schema(conn)
             conn.commit()
 
         # v3.20.0-S1: apply versioned migrations after the legacy init flow.
@@ -184,6 +185,9 @@ class SQLiteStore(
 
         with contextlib.closing(self.connect()) as mig_conn, mig_conn:
             MigrationRunner(mig_conn, backend="sqlite").apply_pending()
+            # A standalone `migrate` may have stamped v17 on an empty database.
+            # Converge again after all prerequisite tables now exist.
+            self._ensure_governed_capture_schema(mig_conn)
             if fastpath:
                 # Stamp ONLY after the full path succeeded end-to-end — an
                 # exception above propagates and leaves the DB unstamped, so

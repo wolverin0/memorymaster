@@ -75,18 +75,25 @@ def _safe_text(value: str | None) -> str | None:
 
 
 def _atlas_row_is_safe(row: Any, fields: tuple[str, ...]) -> bool:
-    return not any(scan_persisted_value(row[field]) for field in fields if row[field] is not None)
+    available = set(row.keys()) if hasattr(row, "keys") else set(fields)
+    return not any(
+        scan_persisted_value(row[field])
+        for field in fields
+        if field in available and row[field] is not None
+    )
 
 
 _SOURCE_FIELDS = (
     "source_item_id", "item_type", "chat_id", "sender_id", "sender_name", "occurred_at",
     "text", "payload_json", "content_hash", "sensitivity", "created_at", "updated_at",
+    "retired_at", "retirement_reason",
 )
 _EXTERNAL_SOURCE_FIELDS = (
     "source_type", "display_name", "config_json", "created_at", "updated_at",
 )
 _EVIDENCE_FIELDS = (
-    "evidence_type", "text", "media_path", "provider", "payload_json", "sensitivity", "created_at",
+    "evidence_type", "text", "media_path", "provider", "payload_json", "sensitivity",
+    "content_hash", "created_at",
 )
 _ACTION_FIELDS = (
     "proposal_type", "title", "description", "suggested_due_at", "destination", "status",
@@ -303,6 +310,7 @@ class _SourceItemsMixin:
         confidence: float | None = None,
         payload_json: dict[str, Any] | str | None = None,
         sensitivity: str | None = None,
+        content_hash: str | None = None,
     ) -> EvidenceItem:
         validate_persisted_metadata({"evidence_type": evidence_type})
         normalized_evidence_type = evidence_type.strip().lower()
@@ -312,6 +320,12 @@ class _SourceItemsMixin:
             raise ValueError("evidence_type must be non-empty.")
         normalized_sensitivity = _normalize_sensitivity(sensitivity)
         text, media_path, provider = map(_safe_text, (text, media_path, provider))
+        normalized_hash = (content_hash or "").strip().lower() or None
+        if normalized_hash is not None and (
+            len(normalized_hash) != 64
+            or any(ch not in "0123456789abcdef" for ch in normalized_hash)
+        ):
+            raise ValueError("content_hash must be a SHA-256 hex digest.")
 
         now = utc_now()
         payload = _json_or_none(payload_json)
@@ -321,11 +335,22 @@ class _SourceItemsMixin:
                 """
                 INSERT INTO evidence_items (
                     source_item_id, evidence_type, text, media_path, provider,
-                    confidence, payload_json, sensitivity, created_at
+                    confidence, payload_json, sensitivity, content_hash, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (source_item_id, normalized_evidence_type, text, media_path, provider, bounded, payload, normalized_sensitivity, now),
+                (
+                    source_item_id,
+                    normalized_evidence_type,
+                    text,
+                    media_path,
+                    provider,
+                    bounded,
+                    payload,
+                    normalized_sensitivity,
+                    normalized_hash,
+                    now,
+                ),
             )
             evidence_id = int(cur.lastrowid)
             self._insert_event_row(
@@ -1186,6 +1211,10 @@ class _SourceItemsMixin:
             sensitivity=row["sensitivity"] if "sensitivity" in row.keys() else None,
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
+            retired_at=row["retired_at"] if "retired_at" in row.keys() else None,
+            retirement_reason=(
+                row["retirement_reason"] if "retirement_reason" in row.keys() else None
+            ),
         )
 
     @staticmethod
@@ -1202,6 +1231,7 @@ class _SourceItemsMixin:
             payload_json=row["payload_json"],
             sensitivity=row["sensitivity"] if "sensitivity" in row.keys() else None,
             created_at=str(row["created_at"]),
+            content_hash=row["content_hash"] if "content_hash" in row.keys() else None,
         )
 
     @staticmethod

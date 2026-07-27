@@ -82,6 +82,7 @@ class IntegrationService:
         confidence: float | None = None,
         payload_json: dict[str, object] | str | None = None,
         sensitivity: str | None = None,
+        content_hash: str | None = None,
     ) -> EvidenceItem:
         return self.store.add_evidence_item(
             source_item_id=source_item_id,
@@ -92,6 +93,7 @@ class IntegrationService:
             confidence=confidence,
             payload_json=payload_json,
             sensitivity=sensitivity,
+            content_hash=content_hash,
         )
 
     def set_source_item_sensitivity(
