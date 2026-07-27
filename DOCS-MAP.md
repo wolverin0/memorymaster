@@ -3,7 +3,7 @@
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, ADR, vNext.
 # Read when: locating authoritative project documentation before reading doc bodies.
 # Updated: 2026-07-27 for governed universal capture; generated verdict files remain unchanged.
-# Verdicts: ABANDONED=9, CURRENT=92, GENERATED=3, SUPERSEDED=9.
+# Verdicts: ABANDONED=9, CURRENT=93, GENERATED=3, SUPERSEDED=9.
 # Rule: CURRENT docs are trusted; never implement from SUPERSEDED or ABANDONED docs.
 
 | File | Verdict | Last change | Reason |
@@ -14,6 +14,7 @@
 | .planning/VNEXT-BASELINE-2026-07-27.md | CURRENT | 2026-07-27 | Reproducible pre-change retrieval, test, latency, package, capture, graph, and scheduler baseline at d33a268. |
 | docs/adr/0015-governed-universal-capture-lineage.md | CURRENT | 2026-07-27 | Accepted data-flow decision fixing producer-to-source-to-evidence-to-claim-to-supported-graph lineage and retirement semantics. |
 | docs/public-v1.md | CURRENT | 2026-07-27 | Stable public facade, capture trust boundary, limits, retirement semantics, dashboard inbox, and disposable demo. |
+| .planning/audits/2026-07-27-vnext-governed-capture/audit-delta.md | CURRENT | 2026-07-27 | Release-candidate evidence and remaining operator gates limited to capture, lineage, graph, scheduling, and public interfaces. |
 | docs/archive/IMPROVEMENT_PLAN.md | ABANDONED | 2026-06-20 | The doc serves as a generated audit and roadmap from March 2026 but is not referenced by any current docs; it contains specific version claims and 'P0' bugs that likely represent a historical snapshot rather than a living plan.  |
 | docs/archive/v315-experiments/E02-results.md | ABANDONED | 2026-06-20 | This is a negative result experiment from a past version (v315) where the code was explicitly reverted and not retained.  |
 | docs/archive/v315-experiments/E05-results.md | ABANDONED | 2026-06-20 | The experiment explicitly resulted in a 'REVERT' decision because all candidates regressed, confirming this hypothesis is a dead end and the changes were not kept.  |

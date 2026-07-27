@@ -11,6 +11,13 @@ from memorymaster.core.service import MemoryService
 from memorymaster.public.v1 import API_VERSION
 
 
+def test_recall_export_remains_callable_after_subpackage_import() -> None:
+    import memorymaster
+    import memorymaster.recall
+
+    assert callable(memorymaster.recall)
+
+
 @pytest.fixture
 def public_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
     db = tmp_path / "public.db"

@@ -108,6 +108,42 @@ def _extract_fixture_graph(db: Path, claim) -> list[dict]:
         conn.close()
 
 
+def _demo_report(workspace: Path, db: Path, captures: list) -> dict:
+    service = MemoryService(db, workspace_root=workspace)
+    service.init_db()
+    repository = CaptureRepository(service.store)
+    claims, completed = _run_fixture_worker(service, repository, captures)
+    confirmed = service.store.apply_status_transition(
+        claims[0],
+        to_status="confirmed",
+        reason="deterministic demo fixture",
+        event_type="validator",
+    )
+    paths = _extract_fixture_graph(db, confirmed)
+    recalled = recall(
+        "Alice Project Atlas",
+        scope_allowlist=["project:demo"],
+        db=db,
+        workspace=workspace,
+    )
+    report = {
+        "api_version": recalled.api_version,
+        "temporary_database_disposed": True,
+        "captures": len(captures),
+        "fixture_jobs_completed": completed,
+        "candidate_claims_created": len(claims),
+        "promoted_claim_id": confirmed.id,
+        "recall_claim_ids": [int(claim["claim_id"]) for claim in recalled.claims],
+        "recall_citations": [
+            citation for claim in recalled.claims for citation in claim["citations"]
+        ],
+        "graph_paths": paths,
+    }
+    del service, repository
+    gc.collect()
+    return report
+
+
 def run_disposable_demo() -> dict:
     """Run the complete local demo and return a portable evidence report."""
     with tempfile.TemporaryDirectory(prefix="memorymaster-demo-") as raw:
@@ -132,40 +168,4 @@ def run_disposable_demo() -> dict:
                     workspace=workspace,
                 ),
             ]
-        service = MemoryService(db, workspace_root=workspace)
-        service.init_db()
-        repository = CaptureRepository(service.store)
-        claims, completed = _run_fixture_worker(service, repository, captures)
-        confirmed = service.store.apply_status_transition(
-            claims[0],
-            to_status="confirmed",
-            reason="deterministic demo fixture",
-            event_type="validator",
-        )
-        paths = _extract_fixture_graph(db, confirmed)
-        recalled = recall(
-            "Alice Project Atlas",
-            scope_allowlist=["project:demo"],
-            db=db,
-            workspace=workspace,
-        )
-        report = {
-            "api_version": recalled.api_version,
-            "temporary_database_disposed": True,
-            "captures": len(captures),
-            "fixture_jobs_completed": completed,
-            "candidate_claims_created": len(claims),
-            "promoted_claim_id": confirmed.id,
-            "recall_claim_ids": [
-                int(claim["claim_id"]) for claim in recalled.claims
-            ],
-            "recall_citations": [
-                citation
-                for claim in recalled.claims
-                for citation in claim["citations"]
-            ],
-            "graph_paths": paths,
-        }
-        del service, repository
-        gc.collect()
-        return report
+        return _demo_report(workspace, db, captures)

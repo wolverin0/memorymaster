@@ -42,6 +42,16 @@ def _seed_graph(db_path: Path) -> None:
             ],
         )
         conn.executemany(
+            "INSERT INTO entity_edge_supports "
+            "(source_entity_id, target_entity_id, relation, supporting_claim_id, "
+            "scope, ontology_version, created_at) "
+            "VALUES (?, ?, ?, ?, 'project:test', 'personal-v1', ?)",
+            [
+                (1, 2, "related_to", 1, now),
+                (2, 3, "related_to", 2, now),
+            ],
+        )
+        conn.executemany(
             "INSERT INTO claims "
             "(id, text, scope, status, wiki_article, created_at, updated_at) "
             "VALUES (?, 'wiki graph claim', 'project:test', ?, ?, ?, ?)",

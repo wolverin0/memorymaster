@@ -578,8 +578,9 @@ def _capture_queue_depth(db_path: str | Path | None) -> dict[str, int] | str:
     import sqlite3
 
     try:
-        uri = f"file:{path.resolve().as_posix()}?mode=ro"
-        with sqlite3.connect(uri, uri=True) as conn:
+        from memorymaster.stores._storage_shared import connect_ro
+
+        with connect_ro(path.resolve()) as conn:
             exists = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='capture_jobs'"
             ).fetchone()

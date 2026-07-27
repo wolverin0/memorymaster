@@ -187,6 +187,8 @@ def test_dashboard_health_and_html() -> None:
         assert "/api/claims?limit=50" in html
         assert "/api/operator/stream" in html
         assert "JSON.stringify(data, null, 2)" not in html
+        with urllib.request.urlopen(f"{base_url}/favicon.ico", timeout=3) as response:
+            assert int(response.status) == 204
 
 
 def test_dashboard_data_endpoints() -> None:

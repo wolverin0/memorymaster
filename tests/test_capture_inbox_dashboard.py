@@ -124,6 +124,20 @@ def test_capture_inbox_read_model_exposes_complete_lineage(tmp_path: Path) -> No
     }
 
 
+def test_capture_inbox_masks_sensitive_claim_text(tmp_path: Path) -> None:
+    service, _, _, _, claim = _fixture(tmp_path)
+    with service.store.connect() as conn:
+        conn.execute(
+            "UPDATE claims SET visibility = ? WHERE id = ?",
+            ("sensitive", claim.id),
+        )
+        conn.commit()
+
+    payload = capture_inbox_payload(service)
+
+    assert payload["items"][0]["claims"][0]["text"] == "[sensitive claim]"
+
+
 def test_dashboard_retirement_is_preview_then_apply(tmp_path: Path) -> None:
     service, db, workspace, receipt, claim = _fixture(tmp_path)
     source_id = int(receipt.source_item["id"])
