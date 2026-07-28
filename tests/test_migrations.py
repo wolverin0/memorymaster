@@ -121,6 +121,95 @@ def test_apply_pending_idempotent_rerun(sqlite_conn):
     assert second == []  # nothing on re-run
 
 
+def test_legacy_v12_schema_adopts_superseded_v9_before_replay(sqlite_conn):
+    sqlite_conn.executescript(
+        """
+        CREATE TABLE claims (
+            id INTEGER PRIMARY KEY,
+            idempotency_key TEXT,
+            human_id TEXT,
+            subject TEXT,
+            predicate TEXT,
+            scope TEXT NOT NULL,
+            status TEXT NOT NULL,
+            tenant_id TEXT,
+            source_agent TEXT,
+            visibility TEXT NOT NULL DEFAULT 'public',
+            supersedes_claim_id INTEGER,
+            replaced_by_claim_id INTEGER
+        );
+        CREATE UNIQUE INDEX idx_claims_public_human_id_unique
+            ON claims(COALESCE(tenant_id, ''), scope, human_id)
+            WHERE visibility = 'public' AND human_id IS NOT NULL;
+        CREATE UNIQUE INDEX idx_claims_nonpublic_principal_human_id_unique
+            ON claims(COALESCE(tenant_id, ''), scope, visibility, source_agent, human_id)
+            WHERE visibility <> 'public' AND source_agent IS NOT NULL
+              AND human_id IS NOT NULL;
+        INSERT INTO claims(id, human_id, scope, status)
+        VALUES (1, 'mm-same', 'project:one', 'candidate'),
+               (2, 'mm-same', 'project:two', 'candidate');
+        """
+    )
+    real = {migration.version: migration for migration in discover_migrations()}
+    runner = MigrationRunner(sqlite_conn, backend="sqlite")
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            "memorymaster.stores.migrations.runner.discover_migrations",
+            lambda: [real[9], real[12]],
+        )
+        assert runner.apply_pending() == [9, 12]
+        assert runner.apply_pending() == []
+
+    versions = {
+        row[0]
+        for row in sqlite_conn.execute(
+            "SELECT version FROM schema_versions ORDER BY version"
+        ).fetchall()
+    }
+    assert versions == {9, 12}
+    assert sqlite_conn.execute(
+        "SELECT COUNT(*) FROM claims WHERE human_id='mm-same'"
+    ).fetchone()[0] == 2
+
+
+def test_legacy_event_dag_defers_v10_to_v18(sqlite_conn, monkeypatch):
+    real = {migration.version: migration for migration in discover_migrations()}
+    applied = {"v18": False}
+
+    def fail_linear_chain(_conn):
+        raise RuntimeError("Invalid primary event chain at event 42.")
+
+    def preserve_dag(_conn):
+        applied["v18"] = True
+
+    v10 = Migration(
+        version=10,
+        description=real[10].description,
+        module_name=real[10].module_name,
+        source_path=real[10].source_path,
+        apply_sqlite=fail_linear_chain,
+        apply_postgres=real[10].apply_postgres,
+    )
+    v18 = Migration(
+        version=18,
+        description=real[18].description,
+        module_name=real[18].module_name,
+        source_path=real[18].source_path,
+        apply_sqlite=preserve_dag,
+        apply_postgres=real[18].apply_postgres,
+    )
+    monkeypatch.setattr(
+        "memorymaster.stores.migrations.runner.discover_migrations",
+        lambda: [v10, v18],
+    )
+
+    runner = MigrationRunner(sqlite_conn, backend="sqlite")
+    assert runner.apply_pending() == [10, 18]
+    assert applied["v18"] is True
+    assert runner.apply_pending() == []
+
+
 def test_apply_pending_mid_version_applies_tail(sqlite_conn, monkeypatch):
     """Simulate a DB at v0001 only, with a synthetic v0002 pending."""
     runner = MigrationRunner(sqlite_conn, backend="sqlite")

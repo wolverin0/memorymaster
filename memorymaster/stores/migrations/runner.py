@@ -210,6 +210,53 @@ class MigrationRunner:
             )
         self._commit()
 
+    def _adopt_superseded_sqlite_identity_migration(
+        self,
+        applied: dict[int, tuple[str, str, str]],
+        migrations: list[Migration],
+    ) -> list[int]:
+        """Adopt v9 when the database already proves the superseding v12 schema.
+
+        Legacy databases can predate ``schema_versions`` while already carrying
+        the scope/principal-local identity indexes installed by the bootstrap
+        convergence path. Replaying v9 would temporarily recreate its broader
+        tenant-local uniqueness and fail on valid cross-scope duplicate IDs.
+        """
+        if self.backend != "sqlite" or 9 in applied or 12 in applied:
+            return []
+        index_rows = self.conn.execute("PRAGMA index_list(claims)").fetchall()
+        index_names = {str(row[1]) for row in index_rows}
+        final_markers = {
+            "idx_claims_public_human_id_unique",
+            "idx_claims_nonpublic_principal_human_id_unique",
+        }
+        if not final_markers.issubset(index_names):
+            return []
+        migration = next((item for item in migrations if item.version == 9), None)
+        if migration is None:
+            return []
+        stamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        self._insert_record(9, migration.description, migration.checksum(), stamp)
+        applied[9] = (migration.description, migration.checksum(), stamp)
+        logger.info(
+            "migrations: adopted superseded v0009 from verified v0012 identity schema"
+        )
+        return [9]
+
+    def _can_adopt_legacy_event_dag(
+        self,
+        migration: Migration,
+        error: Exception,
+        migrations: list[Migration],
+    ) -> bool:
+        """Allow v18 to preserve a self-verifying legacy event DAG."""
+        return (
+            self.backend == "sqlite"
+            and migration.version == 10
+            and str(error).startswith("Invalid primary event chain at event ")
+            and any(item.version == 18 for item in migrations)
+        )
+
     # ----- public API ----------------------------------------------------
 
     def apply_pending(self) -> list[int]:
@@ -220,6 +267,9 @@ class MigrationRunner:
         """
         applied = self._query_applied()
         migrations = discover_migrations()
+        newly_applied = self._adopt_superseded_sqlite_identity_migration(
+            applied, migrations
+        )
 
         # Drift check: every applied version that still has a file on disk
         # must match the stored checksum.
@@ -233,13 +283,20 @@ class MigrationRunner:
                         f"Migrations are immutable once applied — revert your edits or write a new migration."
                     )
 
-        newly_applied: list[int] = []
         for m in migrations:
             if m.version in applied:
                 continue
             logger.info("migrations: applying v%04d — %s", m.version, m.description)
             apply_fn = m.apply_sqlite if self.backend == "sqlite" else m.apply_postgres
-            apply_fn(self.conn)
+            try:
+                apply_fn(self.conn)
+            except RuntimeError as exc:
+                if not self._can_adopt_legacy_event_dag(m, exc, migrations):
+                    raise
+                logger.warning(
+                    "migrations: adopting v0010 for legacy event DAG; "
+                    "v0018 will verify every surviving event hash and preserve links"
+                )
             self._insert_record(
                 m.version,
                 m.description,
