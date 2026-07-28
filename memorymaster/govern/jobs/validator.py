@@ -62,6 +62,26 @@ def _candidate_recency_key(claim: Claim) -> tuple[str, int]:
     return (claim.created_at, claim.id)
 
 
+def _retire_duplicate(store, claim: Claim, duplicate: Claim) -> str:
+    reason = f"duplicate_of_confirmed_claim:{duplicate.id}"
+    if duplicate.supersedes_claim_id in {None, claim.id}:
+        store.mark_superseded(
+            old_claim_id=claim.id,
+            new_claim_id=duplicate.id,
+            reason=reason,
+        )
+        return "superseded"
+    transition_claim(
+        store,
+        claim_id=claim.id,
+        to_status="archived",
+        reason=reason,
+        event_type="validator",
+        replaced_by_claim_id=duplicate.id,
+    )
+    return "archived"
+
+
 def run(
     store,
     limit: int = 200,
@@ -85,6 +105,7 @@ def run(
             "confirmed": 0,
             "conflicted": 0,
             "superseded": 0,
+            "archived_duplicates": 0,
             "pending": 0,
             "staled": 0,
             "revalidated_healthy": 0,
@@ -109,6 +130,7 @@ def run(
     confirmed = 0
     conflicted = 0
     superseded = 0
+    archived_duplicates = 0
     pending = 0
     staled = 0
     revalidated_healthy = 0
@@ -138,12 +160,9 @@ def run(
 
         duplicate = next((x for x in related if x.object_value == claim.object_value and x.object_value), None)
         if duplicate is not None and not is_revalidation:
-            store.mark_superseded(
-                old_claim_id=claim.id,
-                new_claim_id=duplicate.id,
-                reason=f"duplicate_of_confirmed_claim:{duplicate.id}",
-            )
-            superseded += 1
+            outcome = _retire_duplicate(store, claim, duplicate)
+            superseded += int(outcome == "superseded")
+            archived_duplicates += int(outcome == "archived")
             continue
 
         # Calibrated-classifier gate (task #129): when the artifact is present
@@ -255,6 +274,7 @@ def run(
         "confirmed": confirmed,
         "conflicted": conflicted,
         "superseded": superseded,
+        "archived_duplicates": archived_duplicates,
         "pending": pending,
         "staled": staled,
         "revalidated_healthy": revalidated_healthy,

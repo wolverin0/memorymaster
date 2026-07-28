@@ -48,3 +48,34 @@ def test_duplicate_validation_writes_reciprocal_supersession(
     assert refreshed_duplicate.status == "superseded"
     assert refreshed_duplicate.replaced_by_claim_id == confirmed.id
     assert refreshed_confirmed.supersedes_claim_id == duplicate.id
+
+
+def test_second_duplicate_archives_without_overwriting_reciprocal_link(
+    tmp_path: Path,
+) -> None:
+    service = MemoryService(str(tmp_path / "validator.db"))
+    service.init_db()
+    confirmed = _claim(service, "confirmed winner", "confirmed-winner")
+    transition_claim(
+        service.store,
+        confirmed.id,
+        "confirmed",
+        reason="fixture",
+        event_type="validator",
+    )
+    first = _claim(service, "first duplicate", "first-duplicate")
+    run(service.store, min_citations=0, min_score=0.0)
+    second = _claim(service, "second duplicate", "second-duplicate")
+
+    result = run(service.store, min_citations=0, min_score=0.0)
+
+    refreshed_confirmed = service.store.get_claim(
+        confirmed.id, include_citations=False,
+    )
+    refreshed_second = service.store.get_claim(
+        second.id, include_citations=False,
+    )
+    assert result["archived_duplicates"] == 1
+    assert refreshed_confirmed.supersedes_claim_id == first.id
+    assert refreshed_second.status == "archived"
+    assert refreshed_second.replaced_by_claim_id == confirmed.id
