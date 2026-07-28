@@ -100,8 +100,12 @@ class DreamWorker:
             "proposals": 0,
             "deferred_extract_budget": 0,
             "errors": 0,
+            "recovered_stale_runs": 0,
         }
         try:
+            summary["recovered_stale_runs"] = self.ledger.abandon_stale_runs(
+                run_id, now=self.now(),
+            )
             limit = min(max_sessions or self.config.max_sessions, self.config.max_sessions)
             fresh = self._extract(run_id, scope, limit, summary)
             self._consolidate(run_id, fresh, summary)

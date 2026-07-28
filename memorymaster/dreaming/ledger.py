@@ -282,6 +282,24 @@ class DreamLedger:
             conn.execute("UPDATE dream_runs SET status=?, heartbeat_at=?, completed_at=?, summary_json=? WHERE run_id=?",
                          (status, timestamp, timestamp, json.dumps(summary, ensure_ascii=False), run_id))
 
+    def abandon_stale_runs(
+        self, current_run_id: str, *, now: datetime | None = None,
+    ) -> int:
+        timestamp = _iso(now or _utc_now())
+        summary = json.dumps(
+            {"ok": False, "reason": "stale_lease_recovered"},
+            separators=(",", ":"),
+        )
+        with self._connect() as conn:
+            result = conn.execute(
+                """UPDATE dream_runs
+                   SET status='abandoned', heartbeat_at=?, completed_at=?,
+                       summary_json=?
+                   WHERE status='running' AND run_id<>? AND heartbeat_at<?""",
+                (timestamp, timestamp, summary, current_run_id, timestamp),
+            )
+        return max(0, int(result.rowcount))
+
     def record_provider_call(self, run_id: str, *, provider: str, model: str, outcome: str, latency_ms: int, structured_valid: bool, input_tokens: int, output_tokens: int, http_status: int, now: datetime | None = None) -> None:
         with self._connect() as conn:
             conn.execute("""INSERT INTO dream_provider_usage

@@ -103,6 +103,27 @@ def test_status_warns_on_stale_scheduler_and_low_structured_yield(tmp_path: Path
     assert "zai_structured_yield_low" in status["warnings"]
 
 
+def test_new_run_marks_older_running_rows_abandoned(tmp_path: Path) -> None:
+    now = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
+    ledger = DreamLedger(tmp_path / "dream.db")
+    old_run = ledger.start_run(
+        False, "gemini-3.5-flash", "glm-5.2", now=now - timedelta(hours=1),
+    )
+    current_run = ledger.start_run(
+        False, "gemini-3.5-flash", "glm-5.2", now=now,
+    )
+
+    assert ledger.abandon_stale_runs(current_run, now=now) == 1
+
+    with sqlite3.connect(ledger.db_path) as conn:
+        rows = dict(conn.execute("SELECT run_id, status FROM dream_runs"))
+        summary = conn.execute(
+            "SELECT summary_json FROM dream_runs WHERE run_id=?", (old_run,),
+        ).fetchone()[0]
+    assert rows == {old_run: "abandoned", current_run: "running"}
+    assert summary == '{"ok":false,"reason":"stale_lease_recovered"}'
+
+
 def test_read_status_handles_pre_dream_capture_database_without_migrating(tmp_path: Path) -> None:
     path = tmp_path / "capture.db"
     with sqlite3.connect(path) as conn:
