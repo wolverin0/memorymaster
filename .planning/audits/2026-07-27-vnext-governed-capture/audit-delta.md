@@ -130,6 +130,11 @@ Dreaming Task Scheduler result remains `1`, correctly reflecting the Gemini
 quota and OpenCode timeout failures. The sources and queued work were preserved
 for safe retry.
 
+The next hourly run started from the installed trigger without manual
+intervention. It applied 20 more consolidated captures, wrote 24 candidates
+and seven proposals, timed out and removed both OpenCode process trees, left
+no lease or child process, and again returned the truthful result `1`.
+
 The final Steward cycle:
 
 - completed with Task Scheduler result `0` and no new `steward error`;
@@ -146,12 +151,12 @@ governance behaviors were not introduced or expanded by vNext.
 ## Open gates and operator actions
 
 1. Observe the hourly Dreaming task and Steward telemetry for 24 hours from
-   the final clean activation boundary at `2026-07-28T06:05:27Z`.
+   the completed first automatic cycle at `2026-07-28T06:17:18Z`.
 2. Do not create the PR unless the 24-hour check confirms no orphan process or
    lease, no duplicate writes, acceptable queue depth, preserved trusted
    recall, and an explicit disposition for Dreaming's provider failures.
-3. Earliest PR decision time is `2026-07-29T06:05:27Z`
-   (`2026-07-29 03:05:27` America/Argentina/Buenos_Aires).
+3. Earliest PR decision time is `2026-07-29T06:17:18Z`
+   (`2026-07-29 03:17:18` America/Argentina/Buenos_Aires).
 4. Continue the seven-day observation for capture precision, graph support,
    provider usage, task results, and recall regressions.
 5. Keep full comparable OAuth QA and the statistically sufficient private
