@@ -6,7 +6,12 @@ import subprocess
 import pytest
 
 from memorymaster.dreaming.models import DreamCandidate, candidate_from_payload
-from memorymaster.dreaming.providers import GLMConsolidator, GeminiExtractor, ProviderCallError
+from memorymaster.dreaming.providers import (
+    GLMConsolidator,
+    GeminiExtractor,
+    ProviderCallError,
+    _default_command_runner,
+)
 
 
 def test_gemini_extractor_requests_json_and_retries_429_without_fallback() -> None:
@@ -367,6 +372,45 @@ def test_glm_consolidator_reports_bounded_timeout() -> None:
         GLMConsolidator(command="opencode", runner=runner).consolidate(
             [], [], scope="personal"
         )
+
+
+def test_default_command_runner_terminates_windows_process_tree_on_timeout(
+    monkeypatch, tmp_path,
+) -> None:
+    calls: list[tuple[str, object]] = []
+
+    class FakeProcess:
+        pid = 321
+        returncode = 1
+
+        def communicate(self, value=None, timeout=None):
+            calls.append(("communicate", (value, timeout)))
+            if len([call for call in calls if call[0] == "communicate"]) == 1:
+                raise subprocess.TimeoutExpired(["opencode"], timeout)
+            return "", ""
+
+        def kill(self):
+            calls.append(("kill", None))
+
+    def fake_run(command, **kwargs):
+        calls.append(("run", (command, kwargs)))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("memorymaster.dreaming.providers.os.name", "nt")
+    monkeypatch.setattr(
+        "memorymaster.dreaming.providers.subprocess.Popen",
+        lambda *args, **kwargs: FakeProcess(),
+    )
+    monkeypatch.setattr("memorymaster.dreaming.providers.subprocess.run", fake_run)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        _default_command_runner(
+            ["opencode"], "prompt", 180, tmp_path, {"NO_COLOR": "1"},
+        )
+
+    taskkill = next(value for name, value in calls if name == "run")
+    assert taskkill[0] == ["taskkill", "/PID", "321", "/T", "/F"]
+    assert ("kill", None) not in calls
 
 
 @pytest.mark.parametrize(

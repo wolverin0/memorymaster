@@ -122,18 +122,52 @@ def _json_object(raw: str) -> dict[str, Any]:
 def _default_command_runner(
     command: list[str], prompt: str, timeout: int, cwd: Path, env: dict[str, str],
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = (
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        )
+    process = subprocess.Popen(
         command,
-        input=prompt,
-        capture_output=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=timeout,
         cwd=cwd,
         env=env,
-        check=False,
+        creationflags=creationflags,
     )
+    try:
+        stdout, stderr = process.communicate(prompt, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        _terminate_process_tree(process)
+        try:
+            stdout, stderr = process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, stderr = exc.output or "", exc.stderr or ""
+        raise subprocess.TimeoutExpired(
+            command, timeout, output=stdout, stderr=stderr,
+        ) from exc
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
+def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    if os.name != "nt":
+        process.kill()
+        return
+    completed = subprocess.run(
+        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+        capture_output=True,
+        text=True,
+        check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if completed.returncode != 0:
+        process.kill()
 
 
 def _without_markdown_fence(raw: str) -> str:
