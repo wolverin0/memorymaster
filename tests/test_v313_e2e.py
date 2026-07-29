@@ -209,6 +209,7 @@ def test_dedupe_shadow_mode_does_not_archive(
     assert sample["claim_id"] == paraphrase_id
 
 
+@pytest.mark.ml
 def test_dedupe_synthetic_corpus_30_dupes(
     tmp_db: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
