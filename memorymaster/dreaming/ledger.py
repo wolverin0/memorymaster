@@ -232,6 +232,15 @@ class DreamLedger:
     def mark_quarantined(self, capture_id: int, run_id: str, error: str) -> None:
         self._set_capture(capture_id, state="quarantined", run_id=run_id, error=error[:500])
 
+    def defer_consolidation(self, capture_id: int, run_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE dream_captures
+                   SET state='extracted', run_id=?, last_error=NULL, updated_at=?
+                   WHERE id=? AND extraction_json IS NOT NULL""",
+                (run_id, _iso(_utc_now()), capture_id),
+            )
+
     def _set_capture(self, capture_id: int, *, state: str, run_id: str, error: str | None, extraction_json: str | None = None, decisions_json: str | None = None) -> None:
         assignments = ["state=?", "run_id=?", "last_error=?", "updated_at=?", "attempts=attempts+1"]
         values: list[Any] = [state, run_id, error, _iso(_utc_now())]

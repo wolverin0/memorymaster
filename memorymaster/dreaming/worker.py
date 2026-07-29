@@ -103,6 +103,7 @@ class DreamWorker:
             "candidate_writes": 0,
             "proposals": 0,
             "deferred_extract_budget": 0,
+            "deferred_consolidate_budget": 0,
             "errors": 0,
             "recovered_stale_runs": 0,
         }
@@ -191,6 +192,7 @@ class DreamWorker:
                 groups.setdefault(effective_scope, []).append((row, candidate))
         decisions_by_capture: dict[int, list[dict[str, Any]]] = {int(row["id"]): [] for row in rows}
         failed_captures: set[int] = set()
+        deferred_captures: set[int] = set()
         for effective_scope in sorted(groups):
             pairs = groups[effective_scope]
             capture_ids = {int(row["id"]) for row, _ in pairs}
@@ -199,8 +201,10 @@ class DreamWorker:
                 model=self.consolidator.model,
                 now=self.now(),
             ) >= self.config.max_consolidate_calls_daily:
-                self._fail_group(run_id, capture_ids, "consolidate_daily_budget_exhausted", summary)
-                failed_captures.update(capture_ids)
+                for capture_id in capture_ids:
+                    self.ledger.defer_consolidation(capture_id, run_id)
+                deferred_captures.update(capture_ids)
+                summary["deferred_consolidate_budget"] = len(deferred_captures)
                 continue
             try:
                 candidates = [candidate for _, candidate in pairs]
@@ -217,7 +221,7 @@ class DreamWorker:
                 failed_captures.update(capture_ids)
         for row in rows:
             capture_id = int(row["id"])
-            if capture_id in failed_captures:
+            if capture_id in failed_captures or capture_id in deferred_captures:
                 continue
             self.ledger.set_decisions(capture_id, decisions_by_capture[capture_id], run_id)
             summary["consolidated"] += 1

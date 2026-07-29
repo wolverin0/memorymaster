@@ -39,6 +39,7 @@ Project knowledge stays in its exact `project:<name>` scope. Stable user prefere
 - A transactional expiring lease permits one worker at a time.
 - Provider calls have finite timeouts, bounded execution, JSON validation, and no model fallback.
 - Extraction and consolidation quotas are counted by provider/model so two stages using one OAuth provider do not consume each other's stage budget.
+- Budget exhaustion defers captured or extracted work without incrementing attempts, creating retry errors, or failing the scheduled task.
 - Every candidate requires exact sanitized evidence and every candidate receives exactly one consolidation decision.
 - Credentials in any candidate field, malformed numbers, unknown candidates, cross-scope targets, and malformed provider output fail closed.
 - Applied decisions and proposal events use deterministic idempotency checks.
