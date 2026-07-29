@@ -9,8 +9,10 @@ from memorymaster.dreaming.models import DreamCandidate, candidate_from_payload
 from memorymaster.dreaming.providers import (
     GLMConsolidator,
     GeminiExtractor,
+    OpenCodeExtractor,
     ProviderCallError,
     _default_command_runner,
+    create_dream_extractor,
 )
 
 
@@ -149,6 +151,103 @@ def test_gemini_extractor_repairs_unique_whitespace_normalized_quote() -> None:
     assert result.usage.structured_valid is True
 
 
+def test_opencode_extractor_uses_oauth_without_api_key(
+    monkeypatch, tmp_path,
+) -> None:
+    seen: dict = {}
+    commands: list[list[str]] = []
+
+    def runner(command, prompt, timeout, cwd, env):
+        commands.append(command)
+        if command[1:3] == ["session", "delete"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        seen.update({
+            "prompt": prompt,
+            "timeout": timeout,
+            "cwd": cwd,
+            "env": env,
+        })
+        payload = {
+            "candidates": [{
+                "text": "The project uses SQLite.",
+                "claim_type": "fact",
+                "subject": "project",
+                "predicate": "uses",
+                "object_value": "SQLite",
+                "scope_class": "project",
+                "evidence_message_id": "m1",
+                "evidence_quote": "uses SQLite",
+                "confidence": 0.9,
+            }],
+        }
+        events = [
+            {
+                "type": "text",
+                "sessionID": "extract-session",
+                "part": {"text": json.dumps(payload)},
+            },
+            {
+                "type": "step_finish",
+                "part": {"tokens": {"input": 10, "output": 5}},
+            },
+        ]
+        return subprocess.CompletedProcess(
+            command, 0, "\n".join(map(json.dumps, events)), "",
+        )
+
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-be-used")
+    monkeypatch.setenv("MEMORYMASTER_OPENCODE_AUTH_MODE", "oauth")
+    monkeypatch.setenv("OPENCODE_DISABLE_DEFAULT_PLUGINS", "1")
+    extractor = OpenCodeExtractor(
+        model="openai/gpt-5.4-mini",
+        variant="medium",
+        command="opencode",
+        runner=runner,
+        work_dir=tmp_path,
+    )
+
+    result = extractor.extract(
+        [{"id": "m1", "role": "user", "text": "The project uses SQLite."}],
+        scope="project:test",
+        capture_hash="capture",
+    )
+
+    assert result.candidates[0].object_value == "SQLite"
+    assert result.usage.provider == "openai"
+    assert result.usage.input_tokens == 10
+    assert seen["timeout"] == 180
+    assert seen["cwd"] == tmp_path
+    assert "OPENAI_API_KEY" not in seen["env"]
+    assert "OPENCODE_DISABLE_DEFAULT_PLUGINS" not in seen["env"]
+    assert "evidence_message_id" in seen["prompt"]
+    assert commands[0] == [
+        "opencode",
+        "run",
+        "--pure",
+        "--dir",
+        str(tmp_path),
+        "--model",
+        "openai/gpt-5.4-mini",
+        "--variant",
+        "medium",
+        "--format",
+        "json",
+    ]
+    assert commands[1] == ["opencode", "session", "delete", "extract-session"]
+
+
+def test_dream_extractor_factory_selects_configured_provider(monkeypatch) -> None:
+    monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "opencode")
+    assert isinstance(create_dream_extractor(), OpenCodeExtractor)
+
+    monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "gemini")
+    assert isinstance(create_dream_extractor(), GeminiExtractor)
+
+    monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "unknown")
+    with pytest.raises(ProviderCallError, match="must be gemini or opencode"):
+        create_dream_extractor()
+
+
 def test_glm_prompt_rejects_transient_execution_metadata() -> None:
     prompt = GLMConsolidator._prompt([], [], "global")
 
@@ -257,7 +356,7 @@ def test_glm_consolidator_uses_authenticated_opencode_account_without_api_key(tm
     ]
     assert "GLM_API_KEY" not in seen["env"]
     assert seen["env"]["OPENCODE_DISABLE_CLAUDE_CODE"] == "1"
-    assert seen["env"]["OPENCODE_DISABLE_DEFAULT_PLUGINS"] == "1"
+    assert "OPENCODE_DISABLE_DEFAULT_PLUGINS" not in seen["env"]
     inline_config = json.loads(seen["env"]["OPENCODE_CONFIG_CONTENT"])
     assert inline_config == {
         "instructions": [],

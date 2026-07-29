@@ -6,7 +6,7 @@ import json
 
 from memorymaster.core.capture_control import capture_state_path
 from memorymaster.dreaming.ledger import DreamLedger
-from memorymaster.dreaming.providers import GLMConsolidator, GeminiExtractor
+from memorymaster.dreaming.providers import GLMConsolidator, create_dream_extractor
 from memorymaster.dreaming.worker import DreamWorker
 
 
@@ -18,7 +18,7 @@ def handle_dream_run(args, service, parser, effective_db) -> int:
         service.init_db()
         capture_result = run_capture_worker(service, limit=25)
     ledger = DreamLedger(capture_state_path())
-    worker = DreamWorker(ledger, service, GeminiExtractor(), GLMConsolidator())
+    worker = DreamWorker(ledger, service, create_dream_extractor(), GLMConsolidator())
     result = worker.run(
         apply_candidates=bool(args.apply_candidates),
         scope=(args.scope or None),

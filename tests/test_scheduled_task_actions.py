@@ -46,6 +46,21 @@ def test_verify_reports_action_last_result_queue_and_provider(monkeypatch, tmp_p
     assert "claim_extractor" in report["provider_readiness"]
 
 
+def test_provider_readiness_uses_opencode_for_dream_extraction(monkeypatch) -> None:
+    monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "opencode")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        setup_hooks.shutil,
+        "which",
+        lambda command: "C:\\Tools\\opencode.cmd" if command == "opencode" else None,
+    )
+
+    readiness = setup_hooks._provider_readiness()
+
+    assert readiness["dream_extractor"] is True
+    assert readiness["dream_consolidator"] is True
+
+
 def test_verify_reads_full_task_action_from_xml(monkeypatch, tmp_path: Path) -> None:
     list_output = (
         "Task To Run: C:\\Python\\pythonw.exe -m memorymaster.surfaces.scheduled_task dream\r\n"

@@ -622,8 +622,16 @@ def _capture_queue_depth(db_path: str | Path | None) -> dict[str, int] | str:
 
 
 def _provider_readiness() -> dict[str, bool]:
+    dream_provider = os.environ.get(
+        "MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "gemini",
+    ).strip().lower()
+    dream_extractor_ready = (
+        shutil.which("opencode") is not None
+        if dream_provider in {"opencode", "openai"}
+        else bool(os.environ.get("GEMINI_API_KEY", "").strip())
+    )
     return {
-        "dream_extractor": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
+        "dream_extractor": dream_extractor_ready,
         "dream_consolidator": shutil.which("opencode") is not None,
         "claim_extractor": bool(
             os.environ.get("MEMORYMASTER_LLM_PROVIDER", "").strip()

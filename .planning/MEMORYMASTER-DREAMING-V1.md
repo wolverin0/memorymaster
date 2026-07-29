@@ -1,6 +1,6 @@
 # MemoryMaster Native Dreaming V1
 > Covers: quiet transcript capture, asynchronous LLM consolidation, governed candidate writes, rollout, measurement, and rollback.
-> Key terms: Codex, Claude, Gemini 3.5 Flash, OpenCode OAuth, provider/model variants, capture ledger, shadow mode, candidate-first.
+> Key terms: Codex, Claude, Gemini, OpenCode OAuth, GPT-5.4 Mini, provider/model variants, capture ledger, shadow mode, candidate-first.
 > Read this before enabling Dreaming hooks, scheduling the worker, changing provider models, or activating candidate writes.
 > Default safety posture: disabled until explicitly installed; shadow processing before activation; never auto-confirms claims.
 > Authority: the claims store remains authoritative; the auxiliary capture ledger is replay state, not a second memory database.
@@ -13,7 +13,7 @@ Dreaming turns eligible Codex and Claude conversations into a small number of du
 The design deliberately separates three jobs:
 
 1. A quiet hook extracts user and assistant text, redacts locally, and appends an immutable capture envelope.
-2. A bounded worker asks Gemini 3.5 Flash for evidence-linked candidates, then asks GLM 5.2 to compare them with current exact-scope claims.
+2. A bounded worker asks the configured Gemini or OpenCode extractor for evidence-linked candidates, then asks the configured OpenCode model to compare them with current exact-scope claims.
 3. The governed application layer may add or reinforce candidates, or create steward proposals for stale, conflict, or supersede decisions. It never confirms or destructively changes a claim directly.
 
 ## Data flow and authority
@@ -22,8 +22,8 @@ The design deliberately separates three jobs:
 Claude/Codex transcript
   -> local parser and redaction
   -> auxiliary replay ledger
-  -> Gemini extraction
-  -> GLM consolidation against exact-scope claims
+  -> configured Gemini or OpenCode extraction
+  -> OpenCode consolidation against exact-scope claims
   -> shadow report OR governed candidate/proposal application
   -> existing MemoryMaster lifecycle and steward
 ```
@@ -38,6 +38,7 @@ Project knowledge stays in its exact `project:<name>` scope. Stable user prefere
 - Replay state is explicit: `captured`, `extracted`, `consolidated`, `applied`, `retryable`, or `quarantined`.
 - A transactional expiring lease permits one worker at a time.
 - Provider calls have finite timeouts, bounded execution, JSON validation, and no model fallback.
+- Extraction and consolidation quotas are counted by provider/model so two stages using one OAuth provider do not consume each other's stage budget.
 - Every candidate requires exact sanitized evidence and every candidate receives exactly one consolidation decision.
 - Credentials in any candidate field, malformed numbers, unknown candidates, cross-scope targets, and malformed provider output fail closed.
 - Applied decisions and proposal events use deterministic idempotency checks.
@@ -50,33 +51,39 @@ Environment variables:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `GEMINI_API_KEY` | none | Required by the extractor |
-| `MEMORYMASTER_DREAM_EXTRACT_MODEL` | `gemini-3.5-flash` | Extraction model override |
+| `MEMORYMASTER_DREAM_EXTRACT_PROVIDER` | `gemini` | Select `gemini` or authenticated `opencode` extraction |
+| `GEMINI_API_KEY` | none | Required only by the Gemini extractor |
+| `MEMORYMASTER_DREAM_EXTRACT_MODEL` | provider default | `gemini-3.5-flash` or `openai/gpt-5.4-mini` |
+| `MEMORYMASTER_DREAM_EXTRACT_VARIANT` | `medium` | OpenCode extraction reasoning-effort variant |
 | `MEMORYMASTER_DREAM_CONSOLIDATE_MODEL` | `zai-coding-plan/glm-5.2` | OpenCode provider/model override |
 | `MEMORYMASTER_DREAM_CONSOLIDATE_VARIANT` | none | Optional OpenCode reasoning-effort variant |
+| `MEMORYMASTER_OPENCODE_AUTH_MODE` | automatic | Set `oauth` to exclude provider API-key variables from child processes |
 | `MEMORYMASTER_OPENCODE_COMMAND` | discovered from `PATH` | Optional explicit OpenCode executable |
 | `MEMORYMASTER_CAPTURE_STATE_DB` | platform default | Auxiliary ledger location |
 | `MEMORYMASTER_DREAM_MAX_SEMANTIC_ATTEMPTS` | `2` | Quarantine bound for repeatedly malformed extraction evidence |
 
-Gemini reads its key at call time. Consolidation does not require a separate
-MemoryMaster API key: the worker invokes `opencode run --pure` with the selected
-provider/model and OpenCode's existing authenticated account session. The
-optional variant is passed as `--variant` without changing provider
-credentials. The prompt is supplied over stdin, all OpenCode tools, configured
-GitNexus/Playwright MCPs, plugins, Claude compatibility, and external
-instructions are disabled for the call, and output is accepted only from JSON
-events that pass the Dreaming decision schema. The worker deletes the OpenCode
-session it created after parsing the result, including schema-rejection paths,
-so hourly runs do not accumulate a second transcript archive. OpenCode
-credentials remain owned by OpenCode and are never read, copied, logged, or
-persisted by MemoryMaster.
+Gemini reads its key at call time. OpenCode extraction and consolidation do not
+require separate MemoryMaster API keys: the worker invokes `opencode run
+--pure` with the selected provider/model and OpenCode's authenticated account
+session. Setting `MEMORYMASTER_OPENCODE_AUTH_MODE=oauth` removes the selected
+provider's API-key variable from the child process, making OAuth use explicit.
+The optional variants are passed as `--variant`. The prompt is supplied over
+stdin; tools, configured GitNexus/Playwright MCPs, Claude compatibility, and
+external plugins or instructions are disabled. OpenCode's internal
+authentication plugin remains enabled because it owns the OAuth session.
+Output is accepted only from JSON events that pass the Dreaming schemas. The
+worker deletes every OpenCode session it creates after parsing the result,
+including schema-rejection paths, so hourly runs do not accumulate a second
+transcript archive. OpenCode credentials remain owned by OpenCode and are never
+read, copied, logged, or persisted by MemoryMaster.
 
-The local vNext activation uses ChatGPT OAuth with
-`openai/gpt-5.6-luna` and variant `low`, selected by a no-write synthetic
-comparison against `openai/gpt-5.4-mini` at medium effort. Luna returned the
-expected add, reinforce, and conflict decisions on both unambiguous batches;
-Mini made lifecycle/scope errors. This is a local activation choice, not a
-change to the portable default.
+The local vNext activation uses ChatGPT OAuth for both stages:
+`openai/gpt-5.4-mini` at medium effort extracts typed evidence-linked
+candidates, while `openai/gpt-5.6-luna` at low effort performs the harder
+lifecycle comparison. Luna was selected over Mini for consolidation because
+Mini made lifecycle/scope errors in the no-write comparison. Mini passed the
+bounded extraction schema and exact-evidence check. These are local activation
+choices; the portable extractor default remains Gemini.
 
 Verify account readiness without exposing credentials:
 

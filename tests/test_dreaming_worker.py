@@ -176,6 +176,34 @@ def test_extraction_budget_defers_without_retry_or_error_churn(tmp_path: Path) -
     assert capture["attempts"] == 0
 
 
+def test_same_provider_models_keep_stage_budgets_independent(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    capture_id = _capture(ledger)
+
+    class OpenAIExtractor(_Extractor):
+        provider = "openai"
+        model = "openai/gpt-5.4-mini"
+
+    class OpenAIConsolidator(_Consolidator):
+        provider = "openai"
+        model = "openai/gpt-5.6-luna"
+
+    result = DreamWorker(
+        ledger,
+        service,
+        OpenAIExtractor(),
+        OpenAIConsolidator(),
+        config=DreamConfig(max_consolidate_calls_daily=1),
+        now=lambda: NOW,
+    ).run(apply_candidates=False)
+
+    assert result["errors"] == 0
+    assert result["extracted"] == 1
+    assert result["consolidated"] == 1
+    assert ledger.get_capture(capture_id)["state"] == "consolidated"
+
+
 def test_repeated_semantic_extraction_failure_is_quarantined(tmp_path: Path) -> None:
     service = _service(tmp_path)
     ledger = DreamLedger(tmp_path / "capture.db")

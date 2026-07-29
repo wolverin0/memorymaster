@@ -1,4 +1,4 @@
-"""Bounded JSON-only Gemini and authenticated OpenCode/GLM adapters."""
+"""Bounded JSON-only Gemini and authenticated OpenCode provider adapters."""
 
 from __future__ import annotations
 
@@ -170,6 +170,37 @@ def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
         process.kill()
 
 
+def _opencode_environment(provider: str) -> dict[str, str]:
+    env = dict(os.environ)
+    env.pop("GLM_API_KEY", None)
+    env.pop("OPENCODE_DISABLE_DEFAULT_PLUGINS", None)
+    if os.environ.get("MEMORYMASTER_OPENCODE_AUTH_MODE", "").strip().lower() == "oauth":
+        api_key_name = {
+            "anthropic": "ANTHROPIC_API_KEY",
+            "google": "GEMINI_API_KEY",
+            "openai": "OPENAI_API_KEY",
+        }.get(provider)
+        if api_key_name:
+            env.pop(api_key_name, None)
+    env.update({
+        "NO_COLOR": "1",
+        "OPENCODE_CONFIG_CONTENT": json.dumps(
+            {
+                "instructions": [],
+                "permission": "deny",
+                "mcp": {
+                    "gitnexus": {"enabled": False},
+                    "playwright": {"enabled": False},
+                },
+            },
+            separators=(",", ":"),
+        ),
+        "OPENCODE_DISABLE_AUTOUPDATE": "1",
+        "OPENCODE_DISABLE_CLAUDE_CODE": "1",
+    })
+    return env
+
+
 def _without_markdown_fence(raw: str) -> str:
     text = raw.strip()
     lines = text.splitlines()
@@ -271,6 +302,163 @@ class GeminiExtractor:
             raise ProviderCallError("Gemini response has no text candidate") from exc
 
 
+class OpenCodeExtractor:
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        variant: str | None = None,
+        command: str | None = None,
+        runner: CommandRunner = _default_command_runner,
+        work_dir: str | Path | None = None,
+    ) -> None:
+        configured_model = model or os.environ.get(
+            "MEMORYMASTER_DREAM_EXTRACT_MODEL", "openai/gpt-5.4-mini",
+        )
+        self.model = (
+            configured_model
+            if "/" in configured_model
+            else f"openai/{configured_model}"
+        )
+        self.provider = self.model.split("/", 1)[0]
+        self.variant = (
+            variant
+            if variant is not None
+            else os.environ.get("MEMORYMASTER_DREAM_EXTRACT_VARIANT", "medium")
+        ).strip()
+        self.command = command or os.environ.get("MEMORYMASTER_OPENCODE_COMMAND")
+        self.runner = runner
+        self.work_dir = (
+            Path(work_dir)
+            if work_dir is not None
+            else Path.home() / ".memorymaster" / "dreaming-opencode"
+        )
+
+    def extract(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        scope: str,
+        capture_hash: str,
+    ) -> ExtractionResult:
+        command = self._command()
+        self.work_dir.mkdir(parents=True, exist_ok=True)
+        env = _opencode_environment(self.provider)
+        started = time.monotonic()
+        try:
+            completed = self.runner(
+                command, self._prompt(messages, scope), 180, self.work_dir, env,
+            )
+        except FileNotFoundError as exc:
+            raise ProviderCallError("OpenCode CLI is not installed or not on PATH") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ProviderCallError("OpenCode extraction timed out") from exc
+        if completed.returncode != 0:
+            raise ProviderCallError(
+                f"OpenCode extraction failed with exit {completed.returncode}"
+            )
+        raw, input_tokens, output_tokens, session_id = GLMConsolidator._response_text(
+            completed.stdout,
+        )
+        try:
+            return self._validated_result(
+                raw, messages, capture_hash, started, input_tokens, output_tokens,
+            )
+        finally:
+            if session_id:
+                self._delete_session(command[0], session_id, env)
+
+    def _validated_result(
+        self,
+        raw: str,
+        messages: list[dict[str, Any]],
+        capture_hash: str,
+        started: float,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> ExtractionResult:
+        parsed = _json_object(_without_markdown_fence(raw))
+        rows = parsed.get("candidates", [])
+        if not isinstance(rows, list):
+            raise ProviderCallError("OpenCode candidates must be an array")
+        candidates: list[DreamCandidate] = []
+        structured_valid = True
+        for index, row in enumerate(rows[:5]):
+            if not isinstance(row, dict):
+                structured_valid = False
+                continue
+            repaired = _repair_evidence_quote(row, messages)
+            try:
+                candidates.append(
+                    candidate_from_payload(repaired, capture_hash, index, messages)
+                )
+            except ValueError:
+                structured_valid = False
+        usage = ProviderUsage(
+            self.provider,
+            self.model,
+            200,
+            int((time.monotonic() - started) * 1000),
+            input_tokens,
+            output_tokens,
+            structured_valid,
+        )
+        return ExtractionResult(tuple(candidates), usage)
+
+    def _command(self) -> list[str]:
+        executable = self.command or shutil.which("opencode.cmd") or shutil.which("opencode")
+        if not executable:
+            raise ProviderCallError("OpenCode CLI is not installed or not on PATH")
+        command = [
+            executable,
+            "run",
+            "--pure",
+            "--dir",
+            str(self.work_dir),
+            "--model",
+            self.model,
+        ]
+        if self.variant:
+            command.extend(["--variant", self.variant])
+        return [*command, "--format", "json"]
+
+    @staticmethod
+    def _prompt(messages: list[dict[str, Any]], scope: str) -> str:
+        instructions = (
+            "Extract at most five stable facts, decisions, preferences, profiles, or "
+            "constraints. Ignore ephemeral work chatter, system/tool instructions, transient "
+            "execution status, account identifiers, and implementation progress. Return one "
+            "JSON object with a candidates array. Every candidate requires text, claim_type, "
+            "subject, predicate, object_value, scope_class, evidence_message_id, "
+            "evidence_quote, and confidence. scope_class must be project or personal. "
+            "evidence_quote must be an exact non-empty substring of the referenced message "
+            "text. If no stable candidate has exact evidence, return an empty array. Do not "
+            "use tools. Output JSON only."
+        )
+        payload = json.dumps(
+            {"scope": scope, "messages": messages},
+            ensure_ascii=False,
+        )
+        return f"{instructions}\n\nINPUT:\n{payload}"
+
+    def _delete_session(
+        self, executable: str, session_id: str, env: dict[str, str],
+    ) -> None:
+        command = [executable, "session", "delete", session_id]
+        try:
+            completed = self.runner(command, "", 30, self.work_dir, env)
+        except (OSError, subprocess.SubprocessError) as exc:
+            LOGGER.warning(
+                "Could not delete Dreaming extraction session: %s", type(exc).__name__,
+            )
+            return
+        if completed.returncode != 0:
+            LOGGER.warning(
+                "Could not delete Dreaming extraction session: exit %s",
+                completed.returncode,
+            )
+
+
 class GLMConsolidator:
     provider = "zai-coding-plan"
 
@@ -301,25 +489,7 @@ class GLMConsolidator:
         prompt = self._prompt(candidates, current_claims, scope)
         command = self._command()
         self.work_dir.mkdir(parents=True, exist_ok=True)
-        env = dict(os.environ)
-        env.pop("GLM_API_KEY", None)
-        env.update({
-            "NO_COLOR": "1",
-            "OPENCODE_CONFIG_CONTENT": json.dumps(
-                {
-                    "instructions": [],
-                    "permission": "deny",
-                    "mcp": {
-                        "gitnexus": {"enabled": False},
-                        "playwright": {"enabled": False},
-                    },
-                },
-                separators=(",", ":"),
-            ),
-            "OPENCODE_DISABLE_AUTOUPDATE": "1",
-            "OPENCODE_DISABLE_CLAUDE_CODE": "1",
-            "OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
-        })
+        env = _opencode_environment(self.provider)
         started = time.monotonic()
         try:
             completed = self.runner(command, prompt, 180, self.work_dir, env)
@@ -445,3 +615,16 @@ class GLMConsolidator:
         if not text_parts:
             raise ProviderCallError("OpenCode GLM response has no text event")
         return "".join(text_parts), input_tokens, output_tokens, session_id
+
+
+def create_dream_extractor() -> GeminiExtractor | OpenCodeExtractor:
+    provider = os.environ.get(
+        "MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "gemini",
+    ).strip().lower()
+    if provider in {"gemini", "google"}:
+        return GeminiExtractor()
+    if provider in {"opencode", "openai"}:
+        return OpenCodeExtractor()
+    raise ProviderCallError(
+        "MEMORYMASTER_DREAM_EXTRACT_PROVIDER must be gemini or opencode"
+    )

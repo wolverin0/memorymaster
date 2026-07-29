@@ -308,12 +308,22 @@ class DreamLedger:
                 (run_id, provider, model, outcome, http_status, max(0, latency_ms), int(structured_valid),
                  max(0, input_tokens), max(0, output_tokens), _iso(now or _utc_now())))
 
-    def provider_calls_today(self, provider: str, *, now: datetime | None = None) -> int:
+    def provider_calls_today(
+        self,
+        provider: str,
+        *,
+        model: str | None = None,
+        now: datetime | None = None,
+    ) -> int:
         day = (now or _utc_now()).astimezone(timezone.utc).date().isoformat()
+        model_filter = " AND model=?" if model else ""
+        params = (provider, day, model) if model else (provider, day)
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) FROM dream_provider_usage WHERE provider=? AND substr(created_at,1,10)=?",
-                (provider, day),
+                "SELECT COUNT(*) FROM dream_provider_usage "
+                "WHERE provider=? AND substr(created_at,1,10)=?"
+                + model_filter,
+                params,
             ).fetchone()
         return int(row[0])
 

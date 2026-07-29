@@ -21,7 +21,11 @@ from memorymaster.dreaming.models import (
     ExtractionResult,
     ProviderUsage,
 )
-from memorymaster.dreaming.providers import GLMConsolidator, GeminiExtractor, ProviderCallError
+from memorymaster.dreaming.providers import (
+    GLMConsolidator,
+    ProviderCallError,
+    create_dream_extractor,
+)
 
 
 class Extractor(Protocol):
@@ -129,7 +133,11 @@ class DreamWorker:
             if row.get("extraction") is not None:
                 extracted.append(row)
                 continue
-            if self.ledger.provider_calls_today(self.extractor.provider, now=self.now()) >= self.config.max_extract_calls_daily:
+            if self.ledger.provider_calls_today(
+                self.extractor.provider,
+                model=self.extractor.model,
+                now=self.now(),
+            ) >= self.config.max_extract_calls_daily:
                 summary["deferred_extract_budget"] += 1
                 continue
             try:
@@ -186,7 +194,11 @@ class DreamWorker:
         for effective_scope in sorted(groups):
             pairs = groups[effective_scope]
             capture_ids = {int(row["id"]) for row, _ in pairs}
-            if self.ledger.provider_calls_today(self.consolidator.provider, now=self.now()) >= self.config.max_consolidate_calls_daily:
+            if self.ledger.provider_calls_today(
+                self.consolidator.provider,
+                model=self.consolidator.model,
+                now=self.now(),
+            ) >= self.config.max_consolidate_calls_daily:
                 self._fail_group(run_id, capture_ids, "consolidate_daily_budget_exhausted", summary)
                 failed_captures.update(capture_ids)
                 continue
@@ -340,5 +352,5 @@ def run_dream(db_path: str | Path, workspace: str | Path, *, apply_candidates: b
 
     ledger = DreamLedger(ledger_path or capture_state_path())
     service = MemoryService(db_path, workspace_root=workspace)
-    worker = DreamWorker(ledger, service, GeminiExtractor(), GLMConsolidator())
+    worker = DreamWorker(ledger, service, create_dream_extractor(), GLMConsolidator())
     return worker.run(apply_candidates=apply_candidates, scope=scope, max_sessions=max_sessions)

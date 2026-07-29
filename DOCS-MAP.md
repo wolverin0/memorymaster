@@ -2,7 +2,7 @@
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, ADR, vNext.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-07-29 for Dreaming OpenCode OAuth activation; generated verdict files remain unchanged.
+# Updated: 2026-07-29 for OAuth extraction stabilization; generated verdict files remain unchanged.
 # Verdicts: ABANDONED=9, CURRENT=93, GENERATED=3, SUPERSEDED=9.
 # Rule: CURRENT docs are trusted; never implement from SUPERSEDED or ABANDONED docs.
 
