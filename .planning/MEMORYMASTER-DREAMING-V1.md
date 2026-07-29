@@ -1,6 +1,6 @@
 # MemoryMaster Native Dreaming V1
 > Covers: quiet transcript capture, asynchronous LLM consolidation, governed candidate writes, rollout, measurement, and rollback.
-> Key terms: Codex, Claude, Gemini 3.5 Flash, GLM 5.2, OpenCode account auth, capture ledger, shadow mode, candidate-first.
+> Key terms: Codex, Claude, Gemini 3.5 Flash, OpenCode OAuth, provider/model variants, capture ledger, shadow mode, candidate-first.
 > Read this before enabling Dreaming hooks, scheduling the worker, changing provider models, or activating candidate writes.
 > Default safety posture: disabled until explicitly installed; shadow processing before activation; never auto-confirms claims.
 > Authority: the claims store remains authoritative; the auxiliary capture ledger is replay state, not a second memory database.
@@ -53,17 +53,36 @@ Environment variables:
 | `GEMINI_API_KEY` | none | Required by the extractor |
 | `MEMORYMASTER_DREAM_EXTRACT_MODEL` | `gemini-3.5-flash` | Extraction model override |
 | `MEMORYMASTER_DREAM_CONSOLIDATE_MODEL` | `zai-coding-plan/glm-5.2` | OpenCode provider/model override |
+| `MEMORYMASTER_DREAM_CONSOLIDATE_VARIANT` | none | Optional OpenCode reasoning-effort variant |
 | `MEMORYMASTER_OPENCODE_COMMAND` | discovered from `PATH` | Optional explicit OpenCode executable |
 | `MEMORYMASTER_CAPTURE_STATE_DB` | platform default | Auxiliary ledger location |
 | `MEMORYMASTER_DREAM_MAX_SEMANTIC_ATTEMPTS` | `2` | Quarantine bound for repeatedly malformed extraction evidence |
 
-Gemini reads its key at call time. GLM does not require a separate MemoryMaster API key: the worker invokes `opencode run --pure` with the existing `Z.AI Coding Plan` account session and model `zai-coding-plan/glm-5.2`. The prompt is supplied over stdin, all OpenCode tools, configured GitNexus/Playwright MCPs, plugins, Claude compatibility, and external instructions are disabled for the call, and output is accepted only from JSON events that pass the Dreaming decision schema. The worker deletes the OpenCode session it created after parsing the result, including schema-rejection paths, so hourly runs do not accumulate a second transcript archive. OpenCode credentials remain owned by OpenCode and are never read, copied, logged, or persisted by MemoryMaster.
+Gemini reads its key at call time. Consolidation does not require a separate
+MemoryMaster API key: the worker invokes `opencode run --pure` with the selected
+provider/model and OpenCode's existing authenticated account session. The
+optional variant is passed as `--variant` without changing provider
+credentials. The prompt is supplied over stdin, all OpenCode tools, configured
+GitNexus/Playwright MCPs, plugins, Claude compatibility, and external
+instructions are disabled for the call, and output is accepted only from JSON
+events that pass the Dreaming decision schema. The worker deletes the OpenCode
+session it created after parsing the result, including schema-rejection paths,
+so hourly runs do not accumulate a second transcript archive. OpenCode
+credentials remain owned by OpenCode and are never read, copied, logged, or
+persisted by MemoryMaster.
+
+The local vNext activation uses ChatGPT OAuth with
+`openai/gpt-5.6-luna` and variant `low`, selected by a no-write synthetic
+comparison against `openai/gpt-5.4-mini` at medium effort. Luna returned the
+expected add, reinforce, and conflict decisions on both unambiguous batches;
+Mini made lifecycle/scope errors. This is a local activation choice, not a
+change to the portable default.
 
 Verify account readiness without exposing credentials:
 
 ```powershell
 opencode auth list
-opencode models | Select-String 'zai-coding-plan/glm-5.2'
+opencode models openai | Select-String 'openai/gpt-5.6-luna'
 ```
 
 The scheduled task must run as the same Windows user that authenticated OpenCode. Missing CLI/account/model availability produces an actionable, retryable failure; it never silently switches providers.

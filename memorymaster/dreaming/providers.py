@@ -278,6 +278,7 @@ class GLMConsolidator:
         self,
         *,
         model: str | None = None,
+        variant: str | None = None,
         command: str | None = None,
         runner: CommandRunner = _default_command_runner,
         work_dir: str | Path | None = None,
@@ -286,6 +287,12 @@ class GLMConsolidator:
             "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL", "zai-coding-plan/glm-5.2",
         )
         self.model = configured_model if "/" in configured_model else f"zai-coding-plan/{configured_model}"
+        self.provider = self.model.split("/", 1)[0]
+        self.variant = (
+            variant
+            if variant is not None
+            else os.environ.get("MEMORYMASTER_DREAM_CONSOLIDATE_VARIANT", "")
+        ).strip()
         self.command = command or os.environ.get("MEMORYMASTER_OPENCODE_COMMAND")
         self.runner = runner
         self.work_dir = Path(work_dir) if work_dir is not None else Path.home() / ".memorymaster" / "dreaming-opencode"
@@ -379,7 +386,7 @@ class GLMConsolidator:
         executable = self.command or shutil.which("opencode.cmd") or shutil.which("opencode")
         if not executable:
             raise ProviderCallError("OpenCode CLI is not installed or not on PATH")
-        return [
+        command = [
             executable,
             "run",
             "--pure",
@@ -387,9 +394,10 @@ class GLMConsolidator:
             str(self.work_dir),
             "--model",
             self.model,
-            "--format",
-            "json",
         ]
+        if self.variant:
+            command.extend(["--variant", self.variant])
+        return [*command, "--format", "json"]
 
     @staticmethod
     def _prompt(

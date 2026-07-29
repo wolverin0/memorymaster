@@ -2,7 +2,7 @@
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, ADR, vNext.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-07-28 for SQLite activation evidence; generated verdict files remain unchanged.
+# Updated: 2026-07-29 for Dreaming OpenCode OAuth activation; generated verdict files remain unchanged.
 # Verdicts: ABANDONED=9, CURRENT=93, GENERATED=3, SUPERSEDED=9.
 # Rule: CURRENT docs are trusted; never implement from SUPERSEDED or ABANDONED docs.
 
@@ -25,7 +25,7 @@
 | docs/archive/AUDIT-2026-04-09.md | ABANDONED | 2026-06-20 | The doc is a dated audit from April 2026 with a specific 30-day fix plan for temporary issues (hardcoded paths, missing auth, failing tests) that implies a transient state of the codebase rather than permanent reference material.  |
 | .planning/audits/2026-07-13-phase2-budget-delta/pr-draft.md | ABANDONED | 2026-07-14 | The file is a draft PR from 2026 that describes Phase 2 core convergence as not yet deployed and requiring specific external evidence, suggesting a temporary plan that was either superseded or discarded.  |
 | .planning/P1-RELIABILITY-SPEC.md | CURRENT | 2026-06-10 | This is the approved, active specification for the v3.29 reliability build, with detailed implementation tasks and migration steps based on recent evidence.  |
-| .planning/MEMORYMASTER-DREAMING-V1.md | CURRENT | 2026-07-21 | Canonical implementation and operator contract for quiet capture, Gemini extraction, authenticated OpenCode/GLM consolidation, shadow rollout, activation gates, and rollback. |
+| .planning/MEMORYMASTER-DREAMING-V1.md | CURRENT | 2026-07-29 | Canonical contract for quiet capture, Gemini extraction, authenticated OpenCode provider/model variants, activation gates, and rollback. |
 | .planning/codebase/STRUCTURE.md | CURRENT | 2026-07-14 | The document accurately reflects the project's current directory layout, module boundaries, and file organization logic (e.g., 800 LOC limits), confirmed by specific references to existing paths and integration patterns.  |
 | .planning/audits/2026-07-13-phase2-budget-delta/audit-delta.md | CURRENT | 2026-07-14 | This document serves as the authoritative audit record for Phase 2 convergence, referencing specific completed milestones (e.g., P2-A through P2-F) and remaining external blockers, with no indication of being superseded or abandoned.  |
 | .planning/REMEDIATION-OPTIMIZATION-PLAN-2026-07-10.md | CURRENT | 2026-07-14 | The document is a dated 2026 remediation plan with proposed status and clear work packages that align with the project's scope, and no signals indicate it has been executed or superseded.  |

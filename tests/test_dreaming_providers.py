@@ -157,6 +157,30 @@ def test_glm_prompt_rejects_transient_execution_metadata() -> None:
     assert "global tool instructions" in prompt
 
 
+def test_glm_consolidator_uses_configured_provider_and_variant(tmp_path) -> None:
+    consolidator = GLMConsolidator(
+        model="openai/gpt-5.6-luna",
+        variant="low",
+        command="opencode",
+        work_dir=tmp_path,
+    )
+
+    assert consolidator.provider == "openai"
+    assert consolidator._command() == [
+        "opencode",
+        "run",
+        "--pure",
+        "--dir",
+        str(tmp_path),
+        "--model",
+        "openai/gpt-5.6-luna",
+        "--variant",
+        "low",
+        "--format",
+        "json",
+    ]
+
+
 def test_glm_consolidator_uses_authenticated_opencode_account_without_api_key(tmp_path) -> None:
     seen: dict = {}
     commands: list[list[str]] = []
