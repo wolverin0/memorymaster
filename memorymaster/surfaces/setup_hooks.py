@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -525,6 +526,22 @@ def _hidden_python_exe() -> str:
     return str(candidate if candidate.is_file() else Path(PYTHON_EXE))
 
 
+def _task_action_from_xml(output: str) -> str:
+    try:
+        root = ET.fromstring(output)
+    except ET.ParseError:
+        return ""
+    command = ""
+    arguments = ""
+    for element in root.iter():
+        name = element.tag.rsplit("}", 1)[-1]
+        if name == "Command":
+            command = str(element.text or "").strip()
+        elif name == "Arguments":
+            arguments = str(element.text or "").strip()
+    return " ".join(part for part in (command, arguments) if part)
+
+
 def _task_probe(task_name: str) -> dict[str, Any]:
     if not IS_WINDOWS:
         return {
@@ -559,6 +576,16 @@ def _task_probe(task_name: str) -> dict[str, Any]:
         r"(?im)^(?:Last Result|[UÚ]ltimo resultado):\s*(.+)$", output
     )
     action = action_match.group(1).strip() if action_match else output
+    try:
+        xml_probe = subprocess.run(
+            ["schtasks", "/query", "/tn", task_name, "/xml"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        action = _task_action_from_xml(xml_probe.stdout) or action
+    except (OSError, subprocess.CalledProcessError):
+        pass
     hidden = "pythonw" in action.lower() or "-windowstyle hidden" in action.lower()
     return {
         "name": task_name,

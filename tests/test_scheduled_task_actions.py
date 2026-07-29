@@ -44,3 +44,35 @@ def test_verify_reports_action_last_result_queue_and_provider(monkeypatch, tmp_p
     assert report["dreaming"]["last_result"] == "0"
     assert report["queue_depth"] == {}
     assert "claim_extractor" in report["provider_readiness"]
+
+
+def test_verify_reads_full_task_action_from_xml(monkeypatch, tmp_path: Path) -> None:
+    list_output = (
+        "Task To Run: C:\\Python\\pythonw.exe -m memorymaster.surfaces.scheduled_task dream\r\n"
+        "Last Result: 0\r\n"
+    )
+    xml_output = """<?xml version="1.0" encoding="UTF-16"?>
+<Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Actions>
+    <Exec>
+      <Command>C:\\Python\\pythonw.exe</Command>
+      <Arguments>-m memorymaster.surfaces.scheduled_task dream --apply-candidates</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"""
+
+    def fake_run(command, **kwargs):
+        output = xml_output if "/xml" in command else list_output
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr(setup_hooks, "IS_WINDOWS", True)
+    monkeypatch.setattr(setup_hooks.subprocess, "run", fake_run)
+
+    report = setup_hooks.verify_scheduled_automation(
+        tmp_path / "missing.db",
+        apply_candidates=True,
+    )
+
+    assert report["mode_matches"] is True
+    assert "--apply-candidates" in report["dreaming"]["task_action"]
