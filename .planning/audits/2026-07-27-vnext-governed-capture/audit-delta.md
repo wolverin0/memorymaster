@@ -1,10 +1,10 @@
 # MemoryMaster vNext governed capture audit delta
 # Covers: SQLite activation, capture, lineage, trusted graph, scheduling, and public v1 evidence.
-# Key terms: memorymaster.public.v1, capture_jobs, legacy event DAG, hidden tasks, candidate writes.
+# Key terms: memorymaster.public.v1, OpenCode OAuth, hidden tasks, candidate writes, 24-hour observation.
 # Read when: reviewing the activated local candidate or deciding whether the 24-hour PR gate passes.
-# Baseline: d33a268; activated branch includes 8502933 through 41ae21d.
+# Baseline: d33a268; stabilized activation head is af6deeb.
 # Evidence boundary: local SQLite and private providers; Postgres was explicitly waived for this release.
-# Verdict: locally activated with rollback evidence; PR, seven-day gate, and public publication remain open.
+# Verdict: locally stabilized; clean 24-hour PR observation began 2026-07-30T00:58:53Z.
 
 ## Scope and implementation
 
@@ -25,6 +25,10 @@ processing, or the public facade.
 | Windows provider timeout | `a391784` | Timed-out OpenCode calls terminate their complete Windows process tree. |
 | Dreaming crash recovery | `945bdc2` | A newly acquired lease reconciles historical `running` rows as explicitly abandoned. |
 | Steward duplicate integrity | `41ae21d` | Later duplicates archive against the canonical claim without overwriting its one reciprocal supersession link. |
+| OpenCode OAuth extraction | `4a9e95a` | OAuth-only GPT-5.4 Mini extraction, model-specific stage budgets, and provider-aware readiness replaced the exhausted Gemini free-tier path. |
+| Budget deferral | `d083abf` | Consolidation budget exhaustion now preserves extracted work without retry/error churn or task failure. |
+| Candidate-ID integrity | `df06d99` | Five-ID batches and a reference-only current-claims contract prevent claim IDs from entering candidate decisions. |
+| Time-stable calibration gate | `af6deeb` | The CLI calibration fixture no longer drifts outside its 90-day window at UTC date boundaries. |
 
 Postgres implementation remains additive in the branch for source
 compatibility, but the operator selected SQLite-only activation and explicitly
@@ -58,9 +62,9 @@ triggers. It did not rewrite history into a false linear chain.
 
 ### Functional, storage, and lifecycle
 
-- Final exact-SHA non-ML suite: 4,198 passed, 71 skipped, 95 deselected,
+- Final stabilized-head non-ML suite: 4,206 passed, 71 skipped, 96 deselected,
   one expected xfail, and one existing Pydantic deprecation warning in
-  952.53 seconds.
+  1,008.26 seconds.
 - Activation hardening added focused coverage for Windows process-tree
   termination, stale Dreaming run reconciliation, and repeated validator
   duplicates.
@@ -116,24 +120,27 @@ triggers, principals, settings, and task XML backups were preserved.
 - Dreaming extractor and consolidator discoverable;
 - direct capture claim extractor, OCR, and transcription providers not ready.
 
-The first authorized Dreaming cycle:
+Stabilization reproduced the Gemini failure as a free-tier limit of 20
+requests per project/model/day, then proved OpenCode OAuth with
+`OPENAI_API_KEY` removed from both child stages. GPT-5.4 Mini at medium effort
+now performs extraction; GPT-5.6 Luna at low effort performs lifecycle
+consolidation.
 
-- honored the 15-minute stale lease rather than stealing it;
-- removed each timed-out OpenCode process tree at 180 seconds;
-- left no Dreaming or OpenCode process and released its lease;
-- reconciled seven historical phantom runs as `abandoned`;
-- applied 20 previously consolidated captures;
-- wrote 34 candidate claims and one review proposal;
-- finished `partial` with four recorded provider errors.
+The decisive live run `dream-28f695a354c241fe9e508b36548bf993` completed at
+`2026-07-30T00:58:53.996749Z` with Task Scheduler result `0`:
 
-Dreaming Task Scheduler result remains `1`, correctly reflecting the Gemini
-quota and OpenCode timeout failures. The sources and queued work were preserved
-for safe retry.
+- one capture consolidated and applied, with five candidate writes;
+- four captures cleanly deferred at the existing daily model budget;
+- zero errors, retryable rows, leases, hook errors, or OpenAI HTTP 429s;
+- queue state `applied=161`, `captured=73`, `extracted=29`.
 
-The next hourly run started from the installed trigger without manual
-intervention. It applied 20 more consolidated captures, wrote 24 candidates
-and seven proposals, timed out and removed both OpenCode process trees, left
-no lease or child process, and again returned the truthful result `1`.
+Earlier live failures were preserved during diagnosis. Their final root cause
+was not OAuth: Luna emitted correct decisions for the supplied candidates and
+then incorrectly emitted additional decisions for reference claim IDs. The
+stabilized prompt makes current claims reference-only, supplies an explicit
+candidate-ID allowlist and decision count, and caps batches at five. The exact
+previously failing five-candidate fixture then passed in no-write mode with an
+exact decision-ID set before live activation.
 
 The final Steward cycle:
 
@@ -151,12 +158,12 @@ governance behaviors were not introduced or expanded by vNext.
 ## Open gates and operator actions
 
 1. Observe the hourly Dreaming task and Steward telemetry for 24 hours from
-   the completed first automatic cycle at `2026-07-28T06:17:18Z`.
+   the clean stabilized cycle completed at `2026-07-30T00:58:53.996749Z`.
 2. Do not create the PR unless the 24-hour check confirms no orphan process or
    lease, no duplicate writes, acceptable queue depth, preserved trusted
    recall, and an explicit disposition for Dreaming's provider failures.
-3. Earliest PR decision time is `2026-07-29T06:17:18Z`
-   (`2026-07-29 03:17:18` America/Argentina/Buenos_Aires).
+3. Earliest PR decision time is `2026-07-31T00:58:53.996749Z`
+   (`2026-07-30 21:58:53` America/Argentina/Buenos_Aires).
 4. Continue the seven-day observation for capture precision, graph support,
    provider usage, task results, and recall regressions.
 5. Keep full comparable OAuth QA and the statistically sufficient private
