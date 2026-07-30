@@ -173,6 +173,20 @@ Terra Medium extraction and Luna Low consolidation. The active daily Terra
 budget was not bypassed, so an authoritative final live extraction cycle must
 wait for the UTC budget reset before a new 24-hour window can begin.
 
+The first hourly final-code cycle,
+`dream-25df415f8aec4047918dde4af0374fdb`, completed at
+`2026-07-30T03:11:04.721802Z`. It made zero provider calls, deferred all 12
+eligible captures at the existing Terra daily limit, returned zero errors, and
+released its lease. The pre-window queue was `applied=165`, `captured=18`,
+`extracted=85`; Task Scheduler reported result `0` with no missed runs.
+
+The corresponding pre-window integrity baseline found 99 recent
+`dream-worker` candidates. All 99 retained one citation and a non-null
+idempotency key, with zero duplicate idempotency groups. Dreaming capture keys
+and application keys also had zero duplicate groups, no leases were active, and
+no pending capture carried an error. These counts are the comparison point for
+the replacement 24-hour observation.
+
 Earlier live failures were preserved during diagnosis. Their final root cause
 was not OAuth: Luna emitted correct decisions for the supplied candidates and
 then incorrectly emitted additional decisions for reference claim IDs. The

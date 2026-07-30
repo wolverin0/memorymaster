@@ -2,7 +2,7 @@
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, ADR, vNext.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-07-29 for exact-span stabilization and final non-ML/ML verification.
+# Updated: 2026-07-30 for supply-chain and pre-window integrity evidence.
 # Verdicts: ABANDONED=9, CURRENT=93, GENERATED=3, SUPERSEDED=9.
 # Rule: CURRENT docs are trusted; never implement from SUPERSEDED or ABANDONED docs.
 
@@ -14,7 +14,7 @@
 | .planning/VNEXT-BASELINE-2026-07-27.md | CURRENT | 2026-07-27 | Reproducible pre-change retrieval, test, latency, package, capture, graph, and scheduler baseline at d33a268. |
 | docs/adr/0015-governed-universal-capture-lineage.md | CURRENT | 2026-07-27 | Accepted data-flow decision fixing producer-to-source-to-evidence-to-claim-to-supported-graph lineage and retirement semantics. |
 | docs/public-v1.md | CURRENT | 2026-07-27 | Stable public facade, capture trust boundary, limits, retirement semantics, dashboard inbox, and disposable demo. |
-| .planning/audits/2026-07-27-vnext-governed-capture/audit-delta.md | CURRENT | 2026-07-29 | SQLite activation, OAuth/model stabilization, exact-span evidence, final non-ML/ML verification, rollback, and replacement PR gate. |
+| .planning/audits/2026-07-27-vnext-governed-capture/audit-delta.md | CURRENT | 2026-07-30 | SQLite activation, OAuth/model stabilization, exact-span evidence, final verification, pre-window integrity baseline, rollback, and replacement PR gate. |
 | docs/archive/IMPROVEMENT_PLAN.md | ABANDONED | 2026-06-20 | The doc serves as a generated audit and roadmap from March 2026 but is not referenced by any current docs; it contains specific version claims and 'P0' bugs that likely represent a historical snapshot rather than a living plan.  |
 | docs/archive/v315-experiments/E02-results.md | ABANDONED | 2026-06-20 | This is a negative result experiment from a past version (v315) where the code was explicitly reverted and not retained.  |
 | docs/archive/v315-experiments/E05-results.md | ABANDONED | 2026-06-20 | The experiment explicitly resulted in a 'REVERT' decision because all candidates regressed, confirming this hypothesis is a dead end and the changes were not kept.  |
@@ -31,7 +31,7 @@
 | .planning/REMEDIATION-OPTIMIZATION-PLAN-2026-07-10.md | CURRENT | 2026-07-14 | The document is a dated 2026 remediation plan with proposed status and clear work packages that align with the project's scope, and no signals indicate it has been executed or superseded.  |
 | docs/archive/sensitivity-audit-2026-05-11.md | CURRENT | 2026-06-20 | This is a specific snapshot audit of sensitive data leakage within the claims database; unless the database was wiped or regenerated, these findings remain relevant for security remediation and the remediation commands are still valid.  |
 | docs/incident_drill_evidence_template.md | CURRENT | 2026-03-07 | The file is a structured template for incident drills, referencing sibling files and operational metrics that appear to be stable for a memory system.  |
-| docs/security_supply_chain.md | CURRENT | 2026-07-14 | The content specifies a rigorous, dated security gate with exact command invocations and policy constraints, remaining valid for release engineering.  |
+| docs/security_supply_chain.md | CURRENT | 2026-07-30 | The current fail-closed release gate documents exact test-only Gitleaks fingerprints, strict OSV auditing, SBOM binding, and scanner boundaries. |
 | .planning/P4-AGENTS-CONTRACT.md | CURRENT | 2026-06-15 | The document is a dated DESIGN/MAP specification detailing the integration status of MemoryMaster's 3-beat contract across different agents (Claude, Codex, Generic, Hermes), identifying specific implementation gaps and code references that remain relevant for the project's current state.  |
 | docs/atlas-api-contract-v1.md | CURRENT | 2026-07-14 | The doc is a v1.5.0 specification explicitly stated as the source of truth for the Atlas API, strongly referenced by root files, and contains detailed, stable, and actionable interface definitions.  |
 | .planning/audits/2026-07-12-phase1-budget-delta/audit-delta.md | CURRENT | 2026-07-14 | This is a finalized audit record for Phase 1 convergence under V3 contract, explicitly defining the stop condition and backlog boundary, serving as a stable historical reference for the specific commit range and security posture.  |
