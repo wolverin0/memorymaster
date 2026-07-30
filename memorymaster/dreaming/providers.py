@@ -20,6 +20,7 @@ from memorymaster.dreaming.models import (
     DreamCandidate,
     ExtractionResult,
     ProviderUsage,
+    _project_specific_personal,
     candidate_from_payload,
     decision_from_payload,
 )
@@ -291,6 +292,27 @@ def _resolve_evidence_span(
     return enriched
 
 
+def _candidate_with_safe_scope(
+    payload: dict[str, Any],
+    capture_hash: str,
+    index: int,
+    messages: list[dict[str, Any]],
+) -> DreamCandidate:
+    try:
+        return candidate_from_payload(payload, capture_hash, index, messages)
+    except ValueError as error:
+        if str(error) != "personal candidate is not an allowlisted stable personal claim":
+            raise
+        project_payload = dict(payload)
+        project_payload["scope_class"] = "project"
+        candidate = candidate_from_payload(
+            project_payload, capture_hash, index, messages,
+        )
+        if not _project_specific_personal(candidate):
+            raise error
+        return candidate
+
+
 class GeminiExtractor:
     provider = "google"
 
@@ -450,7 +472,9 @@ class OpenCodeExtractor:
             try:
                 resolved = _resolve_evidence_span(row, evidence_lookup)
                 candidates.append(
-                    candidate_from_payload(resolved, capture_hash, index, messages)
+                    _candidate_with_safe_scope(
+                        resolved, capture_hash, index, messages,
+                    )
                 )
             except ValueError:
                 structured_valid = False

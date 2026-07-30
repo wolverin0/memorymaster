@@ -280,6 +280,66 @@ def test_opencode_extractor_rejects_unknown_evidence_span(tmp_path) -> None:
     assert result.usage.structured_valid is False
 
 
+def test_opencode_extractor_routes_project_markers_out_of_personal_scope(
+    tmp_path,
+) -> None:
+    extractor = OpenCodeExtractor(command="opencode", work_dir=tmp_path)
+    result = extractor._validated_result(
+        json.dumps({"candidates": [{
+            "text": "The project implements storage in example.py.",
+            "claim_type": "fact",
+            "subject": "project",
+            "predicate": "implements storage in",
+            "object_value": "example.py",
+            "scope_class": "personal",
+            "evidence_span_id": "e0",
+            "confidence": 0.9,
+        }]}),
+        [{
+            "id": "m1",
+            "role": "user",
+            "text": "The project implements storage in example.py.",
+        }],
+        "capture",
+        0.0,
+        0,
+        0,
+    )
+
+    assert result.candidates[0].scope_class == "project"
+    assert result.usage.structured_valid is True
+
+
+def test_opencode_extractor_does_not_coerce_ambiguous_personal_fact(
+    tmp_path,
+) -> None:
+    extractor = OpenCodeExtractor(command="opencode", work_dir=tmp_path)
+    result = extractor._validated_result(
+        json.dumps({"candidates": [{
+            "text": "The user lives in Argentina.",
+            "claim_type": "fact",
+            "subject": "user",
+            "predicate": "lives in",
+            "object_value": "Argentina",
+            "scope_class": "personal",
+            "evidence_span_id": "e0",
+            "confidence": 0.9,
+        }]}),
+        [{
+            "id": "m1",
+            "role": "user",
+            "text": "The user lives in Argentina.",
+        }],
+        "capture",
+        0.0,
+        0,
+        0,
+    )
+
+    assert result.candidates == ()
+    assert result.usage.structured_valid is False
+
+
 def test_dream_extractor_factory_selects_configured_provider(monkeypatch) -> None:
     monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "opencode")
     assert isinstance(create_dream_extractor(), OpenCodeExtractor)
