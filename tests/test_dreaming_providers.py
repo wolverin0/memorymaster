@@ -256,6 +256,33 @@ def test_glm_prompt_rejects_transient_execution_metadata() -> None:
     assert "global tool instructions" in prompt
 
 
+def test_glm_prompt_makes_current_claims_reference_only() -> None:
+    candidate = DreamCandidate(
+        candidate_id="c1",
+        text="The project uses SQLite.",
+        claim_type="fact",
+        subject="project",
+        predicate="uses",
+        object_value="SQLite",
+        scope_class="project",
+        evidence_message_id="m1",
+        evidence_quote="uses SQLite",
+        confidence=0.9,
+    )
+
+    prompt = GLMConsolidator._prompt(
+        [candidate],
+        [{"id": 45810, "text": "Reference claim"}],
+        "project:test",
+    )
+    payload = json.loads(prompt.split("\n\nINPUT:\n", 1)[1])
+
+    assert payload["valid_candidate_ids"] == ["c1"]
+    assert payload["current_claims_reference_only"][0]["id"] == 45810
+    assert "exactly 1 items" in prompt
+    assert "never a source of candidate_id values" in prompt
+
+
 def test_glm_consolidator_uses_configured_provider_and_variant(tmp_path) -> None:
     consolidator = GLMConsolidator(
         model="openai/gpt-5.6-luna",

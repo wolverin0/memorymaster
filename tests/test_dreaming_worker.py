@@ -226,6 +226,60 @@ def test_consolidation_budget_defers_without_retry_or_error_churn(tmp_path: Path
     assert capture["last_error"] is None
 
 
+def test_consolidation_batches_bound_candidate_ids_without_splitting_capture(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    for index in range(3):
+        _capture(ledger, session_hash=f"batch-{index}")
+
+    class ManyExtractor(_Extractor):
+        def extract(self, messages, *, scope, capture_hash):
+            candidates = tuple(
+                DreamCandidate(
+                    f"{capture_hash[:8]}-{index}",
+                    f"Stable fact {index}.",
+                    "fact",
+                    "project",
+                    "records",
+                    str(index),
+                    "project",
+                    "m1",
+                    "prefer blue interfaces",
+                    0.9,
+                )
+                for index in range(5)
+            )
+            return ExtractionResult(candidates, _usage("openai", self.model))
+
+    class BoundedConsolidator(_Consolidator):
+        batch_sizes: list[int] = []
+
+        def consolidate(self, candidates, current_claims, *, scope):
+            del current_claims, scope
+            self.batch_sizes.append(len(candidates))
+            decisions = tuple(
+                DreamDecision(candidate.candidate_id, "ignore", "test", 0.9)
+                for candidate in candidates
+            )
+            return ConsolidationResult(decisions, _usage("openai", self.model))
+
+    consolidator = BoundedConsolidator()
+    result = DreamWorker(
+        ledger,
+        service,
+        ManyExtractor(),
+        consolidator,
+        config=DreamConfig(max_consolidate_candidates=5),
+        now=lambda: NOW,
+    ).run(apply_candidates=False)
+
+    assert result["errors"] == 0
+    assert result["consolidated"] == 3
+    assert consolidator.batch_sizes == [5, 5, 5]
+
+
 def test_repeated_semantic_extraction_failure_is_quarantined(tmp_path: Path) -> None:
     service = _service(tmp_path)
     ledger = DreamLedger(tmp_path / "capture.db")

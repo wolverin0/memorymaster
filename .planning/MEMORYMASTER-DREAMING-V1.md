@@ -40,6 +40,7 @@ Project knowledge stays in its exact `project:<name>` scope. Stable user prefere
 - Provider calls have finite timeouts, bounded execution, JSON validation, and no model fallback.
 - Extraction and consolidation quotas are counted by provider/model so two stages using one OAuth provider do not consume each other's stage budget.
 - Budget exhaustion defers captured or extracted work without incrementing attempts, creating retry errors, or failing the scheduled task.
+- Consolidation batches contain at most five candidate IDs and keep one capture together when possible, reducing identifier transcription failures.
 - Every candidate requires exact sanitized evidence and every candidate receives exactly one consolidation decision.
 - Credentials in any candidate field, malformed numbers, unknown candidates, cross-scope targets, and malformed provider output fail closed.
 - Applied decisions and proposal events use deterministic idempotency checks.
@@ -58,6 +59,7 @@ Environment variables:
 | `MEMORYMASTER_DREAM_EXTRACT_VARIANT` | `medium` | OpenCode extraction reasoning-effort variant |
 | `MEMORYMASTER_DREAM_CONSOLIDATE_MODEL` | `zai-coding-plan/glm-5.2` | OpenCode provider/model override |
 | `MEMORYMASTER_DREAM_CONSOLIDATE_VARIANT` | none | Optional OpenCode reasoning-effort variant |
+| `MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CANDIDATES` | `5` | Maximum candidate IDs in one consolidation call |
 | `MEMORYMASTER_OPENCODE_AUTH_MODE` | automatic | Set `oauth` to exclude provider API-key variables from child processes |
 | `MEMORYMASTER_OPENCODE_COMMAND` | discovered from `PATH` | Optional explicit OpenCode executable |
 | `MEMORYMASTER_CAPTURE_STATE_DB` | platform default | Auxiliary ledger location |

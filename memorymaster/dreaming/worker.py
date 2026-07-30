@@ -58,6 +58,7 @@ class DreamConfig:
     max_candidate_writes_daily: int = 200
     max_extract_calls_daily: int = 40
     max_consolidate_calls_daily: int = 12
+    max_consolidate_candidates: int = 5
     max_semantic_attempts: int = 2
     lease_ttl_seconds: int = 900
     retain_days: int = 7
@@ -73,6 +74,9 @@ class DreamConfig:
             max_candidate_writes_daily=_env_int("MEMORYMASTER_DREAM_MAX_CANDIDATE_WRITES_DAILY", 200),
             max_extract_calls_daily=_env_int("MEMORYMASTER_DREAM_MAX_EXTRACT_CALLS_DAILY", 40),
             max_consolidate_calls_daily=_env_int("MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CALLS_DAILY", 12),
+            max_consolidate_candidates=_env_int(
+                "MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CANDIDATES", 5,
+            ),
             max_semantic_attempts=_env_int("MEMORYMASTER_DREAM_MAX_SEMANTIC_ATTEMPTS", 2),
             lease_ttl_seconds=_env_int("MEMORYMASTER_DREAM_LEASE_TTL_SECONDS", 900),
             retain_days=_env_int("MEMORYMASTER_DREAM_CAPTURE_RETAIN_DAYS", 7),
@@ -193,8 +197,12 @@ class DreamWorker:
         decisions_by_capture: dict[int, list[dict[str, Any]]] = {int(row["id"]): [] for row in rows}
         failed_captures: set[int] = set()
         deferred_captures: set[int] = set()
-        for effective_scope in sorted(groups):
-            pairs = groups[effective_scope]
+        batches = (
+            (effective_scope, batch)
+            for effective_scope in sorted(groups)
+            for batch in self._candidate_batches(groups[effective_scope])
+        )
+        for effective_scope, pairs in batches:
             capture_ids = {int(row["id"]) for row, _ in pairs}
             if self.ledger.provider_calls_today(
                 self.consolidator.provider,
@@ -225,6 +233,27 @@ class DreamWorker:
                 continue
             self.ledger.set_decisions(capture_id, decisions_by_capture[capture_id], run_id)
             summary["consolidated"] += 1
+
+    def _candidate_batches(
+        self,
+        pairs: list[tuple[dict[str, Any], DreamCandidate]],
+    ) -> list[list[tuple[dict[str, Any], DreamCandidate]]]:
+        limit = max(1, self.config.max_consolidate_candidates)
+        by_capture: list[list[tuple[dict[str, Any], DreamCandidate]]] = []
+        for pair in pairs:
+            if not by_capture or by_capture[-1][0][0]["id"] != pair[0]["id"]:
+                by_capture.append([])
+            by_capture[-1].append(pair)
+        batches: list[list[tuple[dict[str, Any], DreamCandidate]]] = []
+        for capture_pairs in by_capture:
+            if batches and len(batches[-1]) + len(capture_pairs) <= limit:
+                batches[-1].extend(capture_pairs)
+            else:
+                batches.extend(
+                    capture_pairs[index:index + limit]
+                    for index in range(0, len(capture_pairs), limit)
+                )
+        return batches
 
     def _fail_group(self, run_id: str, capture_ids: set[int], error: str, summary: dict[str, Any]) -> None:
         for capture_id in capture_ids:

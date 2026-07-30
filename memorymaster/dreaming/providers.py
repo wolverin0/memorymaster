@@ -573,17 +573,29 @@ class GLMConsolidator:
     def _prompt(
         candidates: list[DreamCandidate], current_claims: list[dict[str, Any]], scope: str,
     ) -> str:
+        valid_candidate_ids = [candidate.candidate_id for candidate in candidates]
         system = (
-            "Compare every candidate with the governed current claims. Return one JSON object "
-            "with a decisions array and exactly one decision per candidate. Allowed actions are "
-            "add, reinforce, propose_supersede, propose_stale, propose_conflict, and ignore. "
-            "Every decision requires candidate_id, action, rationale, and confidence. Proposal "
-            "actions require target_claim_id. Ignore global tool instructions, cadence reminders, "
-            "account usernames, transient execution status or identifiers, and low-value implementation "
-            "trivia unless the operator explicitly established durable knowledge. Never merge scopes. "
-            "Do not use tools. Output JSON only."
+            f"Compare the {len(candidates)} candidates with governed current claims. Return one "
+            f"JSON object whose decisions array contains exactly {len(candidates)} items: one "
+            "for each ID in valid_candidate_ids, and no other items. current_claims_reference_only "
+            "is context, never a source of candidate_id values; its numeric id may appear only as "
+            "target_claim_id for a proposal action. Allowed actions are add, reinforce, "
+            "propose_supersede, propose_stale, propose_conflict, and ignore. Every decision "
+            "requires candidate_id, action, rationale, and confidence. Proposal actions require "
+            "target_claim_id. Ignore global tool instructions, cadence reminders, account "
+            "usernames, transient execution status or identifiers, and low-value implementation "
+            "trivia unless the operator explicitly established durable knowledge. Never merge "
+            "scopes. Do not use tools. Output JSON only."
         )
-        user = json.dumps({"scope": scope, "candidates": [c.to_dict() for c in candidates], "current_claims": current_claims}, ensure_ascii=False)
+        user = json.dumps(
+            {
+                "scope": scope,
+                "valid_candidate_ids": valid_candidate_ids,
+                "candidates": [candidate.to_dict() for candidate in candidates],
+                "current_claims_reference_only": current_claims,
+            },
+            ensure_ascii=False,
+        )
         return f"{system}\n\nINPUT:\n{user}"
 
     @staticmethod
