@@ -1,6 +1,12 @@
-# Spec — LLM Typed-Entity Atlas Extractor
+# Spec - LLM Typed-Entity Atlas Extractor
+# Covers: typed claim extraction from governed Atlas evidence bodies.
+# Key terms: evidence, candidate claim, typed entity, provider, diagnostics.
+# Read when: implementing or evaluating the optional LLM extraction stage.
+# Status: draft to building; generic capability with hermetic fixtures only.
+# Boundary: real evidence activation remains a separate private operation.
+# Updated: 2026-07-30 after retiring a named legacy consumer integration.
 
-**Status:** DRAFT → building (full autonomy granted).
+**Status:** DRAFT to building (full autonomy granted).
 **Why:** The current `bridges/atlas_claim_extractor.py` is a deterministic keyword-matcher. On the live VM it produced 5,544 misclassified subject-line wrappers ("Atlas commitment evidence from vercel[bot]: Re:[repo]") with `subject="whatsapp_contact"` and `whatsapp://` citations even for email — noise, not knowledge. This is why the user's "AI that knows my life" never materialized (claim `mm-d993`). The connectors + evidence harvest are solid; only extraction is the weak link.
 **Goal:** Replace the extractor with an LLM pass that reads evidence **bodies** (+ sender + date) and emits 0..N **typed life-knowledge** claims (person/company/project/commitment/decision/preference/fact/event), or **nothing** for newsletters/bot-notifications. This is also the Karpathy typed-entity model (P1+P2+P3 converge).
 
@@ -57,7 +63,7 @@ Validate each LLM claim object: required `type` (in the allowed set), `subject` 
 
 ## 4. CLI — `extract-atlas-claims` gains a mode
 
-In `cli_handlers_*` / `cli.py`: add `--extractor {llm,deterministic}` (**default `llm`**), `--model`, `--dry-run` to the `extract-atlas-claims` subcommand. Dispatch: `llm` → `extract_atlas_claims_llm`; `deterministic` → existing `extract_atlas_claims_from_evidence` (preserved, unchanged). The LifeAgent bridge calls `extract-atlas-claims --scope X` unchanged and now gets the LLM path by default. If `llm` is selected but no LLM is usable, **degrade gracefully** (emit nothing + a clear note in the JSON result), do NOT silently fall back to the deterministic junk.
+In `cli_handlers_*` / `cli.py`: add `--extractor {llm,deterministic}` (**default `llm`**), `--model`, `--dry-run` to the `extract-atlas-claims` subcommand. Dispatch: `llm` → `extract_atlas_claims_llm`; `deterministic` → existing `extract_atlas_claims_from_evidence` (preserved, unchanged). External producer bridges call `extract-atlas-claims --scope X` unchanged and now get the LLM path by default. If `llm` is selected but no LLM is usable, **degrade gracefully** (emit nothing + a clear note in the JSON result), do NOT silently fall back to the deterministic junk.
 
 ---
 

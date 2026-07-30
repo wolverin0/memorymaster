@@ -1,6 +1,12 @@
-# Atlas Inbox API/CLI Contract — v1.5.0
+# Atlas Inbox API/CLI Contract - v1.5.0
+# Covers: the versioned producer and review-frontend contract for Atlas Inbox.
+# Key terms: source item, evidence, review status, SemVer, producer, consumer.
+# Read when: implementing capture producers or validating compatibility.
+# Authority: memorymaster/bridges/atlas_contract.py and its contract tests.
+# Boundary: Atlas is MemoryMaster's generic governed evidence subsystem.
+# Updated: 2026-07-30 after retiring a named legacy consumer integration.
 
-**Audience:** LifeAgent (and any other Atlas frontend) consuming MemoryMaster's Atlas Inbox backend.
+**Audience:** External capture producers and review frontends consuming MemoryMaster's Atlas Inbox backend.
 
 **Stable since:** 2026-05-05.
 
@@ -99,7 +105,7 @@ Both tables expose a `sensitivity` field. Allowed values:
 
 Set via `label-source-item` / `label-evidence-item` CLIs, or via the service methods `set_source_item_sensitivity` / `set_evidence_item_sensitivity`. **Re-importing a labeled `source_item` via `import-whatsapp` PRESERVES the label** unless the importer explicitly passes a new sensitivity — operator decisions are sticky.
 
-LifeAgent should treat these as authoritative backend labels and use them to filter/display review surfaces.
+Capture consumers should treat these as authoritative backend labels and use them to filter/display review surfaces.
 
 ### Real provider adapters (v1.5.0)
 
@@ -138,13 +144,13 @@ Both CLIs run the existing `process_transcription` / `process_ocr` pipeline. Fai
 
 ### Media retry queue (v1.4.0)
 
-**Architecture:** MemoryMaster owns durable queue STATE; LifeAgent/wacli owns the actual WhatsApp media download. There is **no HTTP fetcher in MemoryMaster**.
+**Architecture:** MemoryMaster owns durable queue STATE; the external producer owns the actual WhatsApp media download. There is **no HTTP fetcher in MemoryMaster**.
 
 **Workflow:**
 
-1. wacli reports a missing/failing media → LifeAgent calls `enqueue-media-retry` (idempotent on `(source_item_id, media_key)`).
-2. Periodic tick: LifeAgent calls `process-media-retry-queue --limit N`. Pending rows whose `next_attempt_time` has passed are atomically promoted to `retrying` and `attempt_count++`. Returns the claimed rows so LifeAgent knows what to fetch.
-3. LifeAgent fetches each via wacli, then calls `record-media-retry-outcome --retry-id N --status X` per row:
+1. A producer reports missing/failing media and calls `enqueue-media-retry` (idempotent on `(source_item_id, media_key)`).
+2. Periodic tick: the producer calls `process-media-retry-queue --limit N`. Pending rows whose `next_attempt_time` has passed are atomically promoted to `retrying` and `attempt_count++`. The response tells the producer what to fetch.
+3. The producer fetches each item, then calls `record-media-retry-outcome --retry-id N --status X` per row:
    - `done` → success; **`--media-path` required**.
    - `expired` → terminal (HTTP 403/410 — WhatsApp media is gone).
    - `failed` → gave up but not WhatsApp-terminal.
@@ -155,10 +161,10 @@ Both CLIs run the existing `process_transcription` / `process_ocr` pipeline. Fai
 | Status | Meaning |
 |---|---|
 | `pending` | Enqueued, awaiting `next_attempt_time` |
-| `retrying` | Claimed by `process-media-retry-queue`; LifeAgent is fetching |
-| `done` | LifeAgent reported success; `media_path` populated |
+| `retrying` | Claimed by `process-media-retry-queue`; the producer is fetching |
+| `done` | The producer reported success; `media_path` populated |
 | `expired` | Terminal — WhatsApp returned 403/410 |
-| `failed` | LifeAgent gave up (max attempts, etc.) |
+| `failed` | The producer gave up (max attempts, etc.) |
 
 **Critical guarantee:** Text/source imports continue working even when media retries fail. The queue tracks ONLY media-fetch state; it does not block claim extraction or proposal generation from text evidence.
 
@@ -299,7 +305,7 @@ WhatsApp fixture. It contains:
 - 1 image message with media metadata + caption
 - 1 duplicate row that must be deduplicated by the importer
 
-LifeAgent (and any other consumer) is welcome to copy this fixture into its
+Any consumer is welcome to copy this fixture into its
 own test suite for end-to-end pipeline assertions. `tests/test_atlas_contract.py`
 exercises the full `import → extract → propose → list → resolve → export`
 chain against this fixture and pins the envelope shapes — break the chain in
@@ -309,7 +315,7 @@ MemoryMaster and the test fails.
 
 What this contract does **not** cover (handled elsewhere):
 
-- **Frontend dashboard / review UI** — owned by LifeAgent. MemoryMaster only ships backend.
+- **Frontend dashboard / review UI** — owned by the consuming application. MemoryMaster only ships backend.
 - **MemoryMaster's general claim/citation/event API** — see `memorymaster/service.py:MemoryService`. Atlas extracted claims live in the regular `claims` table and are reachable via the standard MemoryMaster query/wiki tooling.
 - **Real transcription/OCR provider implementations** — only `Mock*` ship in v1.0.0. Real adapters will plug into the existing `TranscriptionProvider`/`OcrProvider` `Protocol`s in `memorymaster/media_processing.py`.
 - **Connector lifecycle (auth, sync, push)** — v1.0.0 ships only the wacli JSON/JSONL importer (`import-whatsapp`). Future connectors are independent additions.

@@ -659,9 +659,9 @@ class _SourceItemsMixin:
     # ----------------------------------------------------------------------
     # Media retry queue (Atlas v1.4.0)
     #
-    # Architecture: MemoryMaster owns DURABLE STATE; LifeAgent/wacli owns the
+    # Architecture: MemoryMaster owns DURABLE STATE; the external producer owns the
     # actual HTTP fetch. process-media-retry-queue claims pending rows by
-    # transitioning them to 'retrying' so LifeAgent picks them up; LifeAgent
+    # transitioning them to 'retrying' so the producer picks them up; the producer
     # then calls record-media-retry-outcome with the result.
     # ----------------------------------------------------------------------
 
@@ -762,7 +762,7 @@ class _SourceItemsMixin:
         """Atomically claim up to N pending rows whose next_attempt_time is past.
 
         Transitions claimed rows from 'pending' to 'retrying' and increments
-        attempt_count. Returns the claimed rows so LifeAgent can fetch them.
+        attempt_count. Returns the claimed rows so the external producer can fetch them.
         """
         if limit <= 0:
             return []
@@ -886,15 +886,15 @@ class _SourceItemsMixin:
         last_error: str | None = None,
         next_attempt_time: str | None = None,
     ) -> MediaRetryItem:
-        """Record the outcome of LifeAgent's fetch attempt.
+        """Record the outcome of an external producer's fetch attempt.
 
         Status semantics:
         - 'done': success. media_path is required.
         - 'expired': terminal — WhatsApp returned 403/410 or similar.
-        - 'failed': non-terminal failure but LifeAgent gave up (max attempts).
+        - 'failed': non-terminal failure but the producer gave up (max attempts).
         - 'pending': transient failure, retry later (set next_attempt_time).
         - 'retrying': uncommon — generally set by claim_pending; pass it back
-          if LifeAgent wants to keep ownership without yet declaring outcome.
+          if the producer wants to keep ownership without yet declaring outcome.
         """
         if retry_id <= 0:
             raise ValueError("retry_id must be positive.")

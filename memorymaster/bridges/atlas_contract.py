@@ -1,7 +1,7 @@
 """Atlas Inbox API/CLI contract.
 
 This module is the **single source of truth** for the stable backend contract
-that LifeAgent (and any other Atlas frontend) depends on. The contract covers:
+that external Atlas producers and frontends depend on. The contract covers:
 
 - CLI subcommand inputs and JSON output envelope shape
 - Dashboard HTTP endpoints (path, method, request payload, response payload)
@@ -45,7 +45,7 @@ from typing import Any
 ATLAS_CONTRACT_VERSION = "2.0.0"
 """Semver string for the Atlas API/CLI contract.
 
-LifeAgent and any other consumer MUST refuse to start if the major component
+External consumers MUST refuse to start if the major component
 of this string differs from what they were compiled against.
 """
 
@@ -64,7 +64,7 @@ ATLAS_SUBCOMMANDS: list[dict[str, Any]] = [
         "inputs": {},
         "data_keys": ["db", "stealth"],
         "meta_total": "(omitted)",
-        "note": "init-db is general MemoryMaster, not Atlas-specific, but listed here so consumers like LifeAgent can call it as part of their bootstrap.",
+        "note": "init-db is general MemoryMaster, not Atlas-specific, but listed here so external consumers can call it as part of their bootstrap.",
     },
     {
         "name": "import-whatsapp",
@@ -172,7 +172,7 @@ ATLAS_SUBCOMMANDS: list[dict[str, Any]] = [
     },
     {
         "name": "enqueue-media-retry",
-        "description": "Enqueue a media-retry row. LifeAgent/wacli calls this when a WhatsApp media is missing or fetch failed. Idempotent on (source_item_id, media_key).",
+        "description": "Enqueue a media-retry row. An external producer calls this when media is missing or a fetch failed. Idempotent on (source_item_id, media_key).",
         "inputs": {
             "--source-item-id": {"type": "int", "required": True},
             "--media-key": {"type": "str", "required": True, "note": "External media identifier (wacli message id)."},
@@ -187,7 +187,7 @@ ATLAS_SUBCOMMANDS: list[dict[str, Any]] = [
     },
     {
         "name": "process-media-retry-queue",
-        "description": "Claim up to N pending media-retry rows whose next_attempt_time has passed. Transitions pending -> retrying, increments attempt_count, returns claimed rows + queue counts. LifeAgent then fetches each via wacli and reports back via record-media-retry-outcome.",
+        "description": "Claim up to N pending media-retry rows whose next_attempt_time has passed. Transitions pending -> retrying, increments attempt_count, returns claimed rows + queue counts. The external producer fetches each item and reports back via record-media-retry-outcome.",
         "inputs": {
             "--limit": {"type": "int", "required": False, "default": 25, "min": 1},
         },
@@ -196,7 +196,7 @@ ATLAS_SUBCOMMANDS: list[dict[str, Any]] = [
     },
     {
         "name": "record-media-retry-outcome",
-        "description": "Record LifeAgent's fetch result for a media-retry row. 'done' requires --media-path. 'expired' is terminal (HTTP 403/410). Records audit event with from/to status.",
+        "description": "Record an external producer's fetch result for a media-retry row. 'done' requires --media-path. 'expired' is terminal (HTTP 403/410). Records audit event with from/to status.",
         "inputs": {
             "--retry-id": {"type": "int", "required": True},
             "--status": {

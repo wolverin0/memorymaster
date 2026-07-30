@@ -1,14 +1,14 @@
 # 0005 Atlas Contract Uses SemVer
-
-Date: 2026-05-05
-
-Status: Accepted
-
-Source Claims: claim #36342
+# Decision: external Atlas consumers negotiate a stable SemVer contract.
+# Key terms: Atlas, SemVer, compatibility, producer, consumer, contract.
+# Read when: changing capture envelopes, review payloads, or versions.
+# Status: Accepted on 2026-05-05; source claim #36342.
+# Boundary: consumer branding does not form part of the public contract.
+# Updated: 2026-07-30 after retiring a named legacy consumer integration.
 
 ## Context
 
-Atlas has CLI and HTTP consumers, including LifeAgent. Consumers need a reliable way to detect incompatible changes before they start processing data.
+Atlas has CLI and HTTP consumers. Those consumers need a reliable way to detect incompatible changes before they start processing data.
 
 The Atlas v1 contract introduced a discoverable contract payload through the `atlas-version` CLI and the `/api/atlas/version` HTTP endpoint.
 

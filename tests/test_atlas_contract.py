@@ -1,6 +1,6 @@
 """Atlas API/CLI contract tests.
 
-These tests pin the JSON envelope shape that LifeAgent (and any other Atlas
+These tests pin the JSON envelope shape that external producers and Atlas
 frontend) depends on. **If you break a test here, you are making a breaking
 change** — bump the major in ``memorymaster/atlas_contract.py:ATLAS_CONTRACT_VERSION``
 and add an entry to ``BREAKING_CHANGES_SINCE``.
@@ -268,7 +268,7 @@ def test_export_actions_envelope(tmp_path: Path, capsys) -> None:
     assert output.exists()
     sp_payload = json.loads(output.read_text(encoding="utf-8"))
     # Lock the Super-Productivity bridge JSON shape too — this is the file
-    # LifeAgent or Super Productivity will consume.
+    # External producers or Super Productivity will consume.
     assert set(sp_payload.keys()) >= {"format", "destination", "tasks"}
     assert sp_payload["format"] == "atlas-super-productivity-bridge-v1"
     assert sp_payload["tasks"], "expected at least one exported task"
@@ -323,7 +323,7 @@ _FIXTURE_DIR = Path(__file__).parent / "fixtures" / "atlas"
 def test_whatsapp_basic_fixture_full_pipeline(tmp_path: Path, capsys) -> None:
     """End-to-end contract test using the canonical WhatsApp wacli fixture.
 
-    LifeAgent and other consumers should be able to mirror this fixture in
+    External consumers should be able to mirror this fixture in
     their own test suite to lock the import → extract → propose → list →
     resolve → export pipeline. Any breakage here is a contract break.
     """
@@ -413,7 +413,7 @@ def test_edit_action_proposal_envelope(tmp_path: Path, capsys) -> None:
     env = _run_cli(
         "--db", str(db), "--json", "edit-action-proposal",
         "--proposal-id", str(proposal_id),
-        "--title", "Renamed by LifeAgent",
+        "--title", "Renamed by external producer",
         "--description", "Updated description",
         "--suggested-due-at", "2026-06-01T09:00:00-03:00",
         "--confidence", "0.85",
@@ -421,7 +421,7 @@ def test_edit_action_proposal_envelope(tmp_path: Path, capsys) -> None:
     )
     _assert_envelope(env, subcommand="edit-action-proposal")
     assert env["data"]["id"] == proposal_id
-    assert env["data"]["title"] == "Renamed by LifeAgent"
+    assert env["data"]["title"] == "Renamed by external producer"
     assert env["data"]["description"] == "Updated description"
     assert env["data"]["suggested_due_at"] == "2026-06-01T09:00:00-03:00"
     assert env["data"]["confidence"] == 0.85
@@ -785,12 +785,12 @@ def test_list_media_retries_filters_by_status(tmp_path: Path, capsys) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Stale-DB migration (v1.5.1 fix for LifeAgent's "no such column: sensitivity")
+# Stale-DB migration (v1.5.1 fix for a consumer's "no such column: sensitivity")
 # ---------------------------------------------------------------------------
 
 
 def test_init_db_migrates_stale_atlas_db_without_sensitivity_column(tmp_path: Path) -> None:
-    """Regression for LifeAgent's blocker: existing Atlas DB from PR #20 era
+    """Regression for a legacy consumer blocker: an Atlas DB from the PR #20 era
     (no sensitivity column) must migrate cleanly via init-db.
 
     The bug (v1.5.0): schema.sql had CREATE INDEX ON source_items(sensitivity)

@@ -2,7 +2,7 @@
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, ADR, vNext.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-07-30 for supply-chain and pre-window integrity evidence.
+# Updated: 2026-07-30 for legacy-consumer retirement and pre-window evidence.
 # Verdicts: ABANDONED=9, CURRENT=93, GENERATED=3, SUPERSEDED=9.
 # Rule: CURRENT docs are trusted; never implement from SUPERSEDED or ABANDONED docs.
 
@@ -33,11 +33,11 @@
 | docs/incident_drill_evidence_template.md | CURRENT | 2026-03-07 | The file is a structured template for incident drills, referencing sibling files and operational metrics that appear to be stable for a memory system.  |
 | docs/security_supply_chain.md | CURRENT | 2026-07-30 | The current fail-closed release gate documents exact test-only Gitleaks fingerprints, strict OSV auditing, SBOM binding, and scanner boundaries. |
 | .planning/P4-AGENTS-CONTRACT.md | CURRENT | 2026-06-15 | The document is a dated DESIGN/MAP specification detailing the integration status of MemoryMaster's 3-beat contract across different agents (Claude, Codex, Generic, Hermes), identifying specific implementation gaps and code references that remain relevant for the project's current state.  |
-| docs/atlas-api-contract-v1.md | CURRENT | 2026-07-14 | The doc is a v1.5.0 specification explicitly stated as the source of truth for the Atlas API, strongly referenced by root files, and contains detailed, stable, and actionable interface definitions.  |
+| docs/atlas-api-contract-v1.md | CURRENT | 2026-07-30 | Stable generic producer/review-frontend contract for the governed Atlas evidence subsystem; no named application dependency remains. |
 | .planning/audits/2026-07-12-phase1-budget-delta/audit-delta.md | CURRENT | 2026-07-14 | This is a finalized audit record for Phase 1 convergence under V3 contract, explicitly defining the stop condition and backlog boundary, serving as a stable historical reference for the specific commit range and security posture.  |
 | .planning/R1.4-LEGACY-SENSITIVITY-INVENTORY.md | CURRENT | 2026-07-14 | The doc specifies the exact behavior, CLI usage, and output schema of the legacy sensitivity inventory tool, which remains the authoritative reference for this R1.4 component.  |
 | docs/adr/0011-recall-ranking-features-stay-measured-and-gated.md | CURRENT | 2026-05-11 | The document establishes a stable, ongoing governance policy for recall-ranking features that remains relevant to the project's development philosophy.  |
-| docs/cli-cookbook.md | CURRENT | 2026-07-16 | The content is a comprehensive, freshly dated (2026-07-16) reference of CLI commands that claims to be checked against the current parser, reflecting a stable, operational interface.  |
+| docs/cli-cookbook.md | CURRENT | 2026-07-30 | Parser-checked operational examples now describe media retry ownership through the generic external-producer contract. |
 | docs/INTEGRATING.md | CURRENT | 2026-06-22 | The content is technical, precise, and actively referenced by root docs; it defines the canonical integration contract for multiple agent types.  |
 | docs/adr/2026-04-23-steward-v2-classifier.md | CURRENT | 2026-04-23 | The document describes the accepted steward v2 classifier system with specific implementation details, metrics, and file paths that appear active and referenced by other docs.  |
 | .planning/audits/2026-07-14-phase4-budget-delta/production-release-verification.md | CURRENT | 2026-07-14 | This is a stable historical verification record for the released v4.5.0 version, documenting immutable facts like commit hashes and CI status.  |
@@ -54,7 +54,7 @@
 | .planning/audits/2026-07-14-phase4-budget-delta/audit-delta.md | CURRENT | 2026-07-14 | The document is a recent (2026-07-14) delta audit resolving specific Phase 4 issues, explicitly stating the project is 'READY for local release-candidate review' and listing resolved findings, suggesting it reflects the current state of the codebase remediation.  |
 | .planning/audits/2026-07-14-phase4-budget-delta/production-release-approval-request.md | CURRENT | 2026-07-14 | The content sets a durable, bounded approval scope for MemoryMaster 4.4.1 that remains valid and actionable for the release phase.  |
 | .planning/codebase/CONCERNS.md | CURRENT | 2026-06-09 | The document is explicitly dated 2026-06-09 for version v3.28.0, details recent specific production incidents (2026-06-05 corruption), and tracks migration progress for v2.0 and v3.20/3.27 fixes.  |
-| docs/adr/0005-atlas-contract-uses-semver.md | CURRENT | 2026-05-11 | The document defines a stable, architectural decision (SemVer usage) for the Atlas contract that appears active and foundational to the project's current versioning strategy.  |
+| docs/adr/0005-atlas-contract-uses-semver.md | CURRENT | 2026-07-30 | Active SemVer decision for generic Atlas consumers; application branding is explicitly outside the public contract. |
 | docs/archive/longmemeval-results.md | CURRENT | 2026-07-27 | Current reproducible 500-question retrieval result and explicit statement that no comparable full-QA baseline exists. |
 | .planning/audit-remediation-ledger.md | CURRENT | 2026-07-14 | This is a high-fidelity ledger of critical security, architectural, and operational remediations with status tracking and specific package references; while the file date is older, the content tracks specific mitigations (some blocked externally) that remain relevant for assessing the project's security posture and compliance status.  |
 | docs/AGENT-INSTALL.md | CURRENT | 2026-07-14 | Provides specific installation instructions and CLI flags for memorymaster, aligns with the project's local-first architecture, and is actively referenced by root documentation.  |
@@ -94,7 +94,7 @@
 | docs/adr/0014-wiki-articles-auto-promote-after-n-successful-validations.md | CURRENT | 2026-05-12 | The doc describes a specific accepted architecture decision with detailed implementation references, configuration options, and tradeoffs that remain relevant.  |
 | .planning/audits/2026-07-14-phase3-budget-delta/pr-draft.md | CURRENT | 2026-07-14 | The document is a draft PR summary for Phase 3, likely tracking the current implementation status with verification results showing recent test passes and pending external reviews.  |
 | docs/adr/0002-atlas-inbox-extends-memorymaster-primitives.md | CURRENT | 2026-05-11 | The document records a specific architectural decision to integrate Atlas Inbox with MemoryMaster primitives; references to database paths and shared lifecycle models imply ongoing architectural relevance without any signals of replacement.  |
-| .planning/ATLAS-LLM-EXTRACTOR-SPEC.md | CURRENT | 2026-06-22 | The spec is a detailed implementation plan with active status, acceptance criteria, and test definitions for a feature upgrade, indicating it is the reference document for the LLM extractor build.  |
+| .planning/ATLAS-LLM-EXTRACTOR-SPEC.md | CURRENT | 2026-07-30 | Active typed-entity extractor plan framed as a generic governed evidence capability with private activation separated from implementation. |
 | docs/architecture.md | CURRENT | 2026-07-14 | The doc is a detailed, fresh architecture map explicitly referencing the current branch, recent PRs, and specific module responsibilities, actively maintained and referenced by root files.  |
 | docs/integration_playbooks.md | CURRENT | 2026-03-07 | The document provides actionable configuration examples and operational workflows for the MemoryMaster MCP server, which aligns with the project's architectural claims and current functionality.  |
 | .planning/audits/2026-07-14-phase3-budget-delta/audit-delta.md | CURRENT | 2026-07-14 | The file is a recent, high-fidelity audit report documenting specific issue resolutions and evidence for Phase 3.  |

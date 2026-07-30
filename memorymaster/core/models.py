@@ -332,7 +332,7 @@ ATLAS_SENSITIVITY_LEVELS = ("none", "low", "medium", "high", "redacted")
 
 NULL = unlabeled (never inspected). 'none' = inspected and verified
 non-sensitive. The other levels are operator-applied during review.
-LifeAgent (or any frontend) uses these to filter and display.
+External frontends use these to filter and display.
 """
 
 
@@ -374,11 +374,11 @@ class EvidenceItem:
 MEDIA_RETRY_STATUSES = ("pending", "retrying", "expired", "done", "failed")
 """Allowed values for media_retry_queue.status.
 
-- pending: enqueued by LifeAgent/wacli, awaiting next_attempt_time
-- retrying: claimed by process-media-retry-queue tick; LifeAgent should fetch
-- done: LifeAgent reported success (media_path now points at the local file)
+- pending: enqueued by an external producer, awaiting next_attempt_time
+- retrying: claimed by process-media-retry-queue tick; the producer should fetch
+- done: the producer reported success (media_path now points at the local file)
 - expired: WhatsApp returned terminal HTTP 403/410 (media gone, no retry)
-- failed: max attempts hit OR LifeAgent reported a non-terminal failure it
+- failed: max attempts hit OR the producer reported a non-terminal failure it
   has decided to give up on
 """
 

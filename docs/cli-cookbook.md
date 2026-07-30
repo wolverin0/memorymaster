@@ -1,4 +1,10 @@
 # MemoryMaster CLI Cookbook
+# Covers: executable examples for the current argparse command surface.
+# Key terms: init-db, remember, recall, forget, improve, steward, rollback.
+# Read when: operating MemoryMaster locally or validating CLI compatibility.
+# Assumption: examples use an explicit database path and existing fixture IDs.
+# Authority: memorymaster/surfaces/cli.py and parser-focused tests.
+# Updated: 2026-07-30 after retiring a named legacy consumer integration.
 
 Every example below uses the current `memorymaster/cli.py` argparse surface and keeps the default `memorymaster.db` database path explicit.
 
@@ -477,7 +483,7 @@ python -m memorymaster --db memorymaster.db label-evidence-item --evidence-item-
 ```
 
 ### enqueue-media-retry
-**Purpose**: Enqueue a media retry row for LifeAgent.
+**Purpose**: Enqueue a media retry row for an external capture producer.
 **Example**:
 ```
 python -m memorymaster --db memorymaster.db enqueue-media-retry --source-item-id 1 --media-key msg-123 --chat-id project-chat --media-type audio
