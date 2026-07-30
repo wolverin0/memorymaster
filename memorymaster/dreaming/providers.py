@@ -232,6 +232,65 @@ def _repair_evidence_quote(
     return repaired
 
 
+def _evidence_spans(text: str, *, max_chars: int = 400) -> list[str]:
+    spans: list[str] = []
+    cursor = 0
+    while cursor < len(text):
+        end = min(len(text), cursor + max_chars)
+        if end < len(text):
+            boundaries = (
+                text.rfind("\n", cursor, end),
+                text.rfind(". ", cursor, end),
+                text.rfind("? ", cursor, end),
+                text.rfind("! ", cursor, end),
+            )
+            boundary = max(boundaries)
+            if boundary >= cursor + max_chars // 4:
+                end = boundary + 1
+        span = text[cursor:end].strip()
+        if span:
+            spans.append(span)
+        cursor = max(cursor + 1, end)
+    return spans
+
+
+def _evidence_span_payload(
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, tuple[str, str]]]:
+    prompt_messages: list[dict[str, Any]] = []
+    lookup: dict[str, tuple[str, str]] = {}
+    span_index = 0
+    for message in messages:
+        message_id = str(message.get("id") or message.get("message_id"))
+        prompt_spans: list[dict[str, str]] = []
+        for span in _evidence_spans(str(message.get("text", ""))):
+            span_id = f"e{span_index}"
+            lookup[span_id] = (message_id, span)
+            prompt_spans.append({"evidence_span_id": span_id, "text": span})
+            span_index += 1
+        prompt_messages.append({
+            "role": str(message.get("role", "")),
+            "timestamp": str(message.get("timestamp", "")),
+            "evidence_spans": prompt_spans,
+        })
+    return prompt_messages, lookup
+
+
+def _resolve_evidence_span(
+    payload: dict[str, Any],
+    lookup: dict[str, tuple[str, str]],
+) -> dict[str, Any]:
+    span_id = str(payload.get("evidence_span_id", "") or "").strip()
+    resolved = lookup.get(span_id)
+    if resolved is None:
+        raise ValueError("candidate references an unknown evidence span")
+    message_id, quote = resolved
+    enriched = dict(payload)
+    enriched["evidence_message_id"] = message_id
+    enriched["evidence_quote"] = quote
+    return enriched
+
+
 class GeminiExtractor:
     provider = "google"
 
@@ -381,16 +440,17 @@ class OpenCodeExtractor:
         rows = parsed.get("candidates", [])
         if not isinstance(rows, list):
             raise ProviderCallError("OpenCode candidates must be an array")
+        _, evidence_lookup = _evidence_span_payload(messages)
         candidates: list[DreamCandidate] = []
         structured_valid = True
         for index, row in enumerate(rows[:5]):
             if not isinstance(row, dict):
                 structured_valid = False
                 continue
-            repaired = _repair_evidence_quote(row, messages)
             try:
+                resolved = _resolve_evidence_span(row, evidence_lookup)
                 candidates.append(
-                    candidate_from_payload(repaired, capture_hash, index, messages)
+                    candidate_from_payload(resolved, capture_hash, index, messages)
                 )
             except ValueError:
                 structured_valid = False
@@ -424,27 +484,28 @@ class OpenCodeExtractor:
 
     @staticmethod
     def _prompt(messages: list[dict[str, Any]], scope: str) -> str:
+        prompt_messages, _ = _evidence_span_payload(messages)
         instructions = (
             "Extract at most five stable facts, decisions, preferences, profiles, or "
             "constraints. Ignore ephemeral work chatter, system/tool instructions, transient "
             "execution status, account identifiers, and implementation progress. Return one "
             "JSON object with a candidates array. Every candidate requires text of at least "
             "10 characters, claim_type, non-empty subject, non-empty predicate, object_value, "
-            "scope_class, evidence_message_id, evidence_quote of at least 3 characters, and "
-            "finite confidence from 0 through 1. claim_type must be fact, decision, "
+            "scope_class, evidence_span_id, and finite confidence from 0 through 1. "
+            "evidence_span_id must exactly match one supplied evidence span ID; the system "
+            "will resolve its verbatim text and source message. claim_type must be fact, decision, "
             "preference, profile, or constraint. scope_class must be project or personal. "
             "Use personal only for a stable user preference, profile, or constraint; project "
             "paths, commit hashes, branches, filenames, implementation details, and other "
-            "project-specific knowledge must use project. evidence_quote must be copied "
-            "character-for-character as an exact substring of the referenced message text: "
-            "do not normalize case or whitespace, shorten it, paraphrase it, or add ellipses. "
+            "project-specific knowledge must use project. Select one contiguous supplied span "
+            "that directly supports each claim; never combine or paraphrase multiple spans. "
             "Never emit secrets, API keys, tokens, credentials, private keys, or authentication "
             "data in any candidate field. Omit any candidate that cannot satisfy every rule "
             "instead of guessing or returning an approximate value. If no stable candidate "
             "has exact evidence, return an empty array. Do not use tools. Output JSON only."
         )
         payload = json.dumps(
-            {"scope": scope, "messages": messages},
+            {"scope": scope, "messages": prompt_messages},
             ensure_ascii=False,
         )
         return f"{instructions}\n\nINPUT:\n{payload}"

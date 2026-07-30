@@ -175,8 +175,7 @@ def test_opencode_extractor_uses_oauth_without_api_key(
                 "predicate": "uses",
                 "object_value": "SQLite",
                 "scope_class": "project",
-                "evidence_message_id": "m1",
-                "evidence_quote": "uses SQLite",
+                "evidence_span_id": "e0",
                 "confidence": 0.9,
             }],
         }
@@ -213,13 +212,15 @@ def test_opencode_extractor_uses_oauth_without_api_key(
     )
 
     assert result.candidates[0].object_value == "SQLite"
+    assert result.candidates[0].evidence_message_id == "m1"
+    assert result.candidates[0].evidence_quote == "The project uses SQLite."
     assert result.usage.provider == "openai"
     assert result.usage.input_tokens == 10
     assert seen["timeout"] == 180
     assert seen["cwd"] == tmp_path
     assert "OPENAI_API_KEY" not in seen["env"]
     assert "OPENCODE_DISABLE_DEFAULT_PLUGINS" not in seen["env"]
-    assert "evidence_message_id" in seen["prompt"]
+    assert "evidence_span_id" in seen["prompt"]
     assert commands[0] == [
         "opencode",
         "run",
@@ -237,14 +238,46 @@ def test_opencode_extractor_uses_oauth_without_api_key(
 
 
 def test_opencode_extraction_prompt_matches_fail_closed_contract() -> None:
-    prompt = OpenCodeExtractor._prompt([], "project:test")
+    prompt = OpenCodeExtractor._prompt(
+        [{"id": "m1", "role": "user", "text": "The project uses SQLite."}],
+        "project:test",
+    )
+    payload = json.loads(prompt.split("\n\nINPUT:\n", 1)[1])
 
     assert "claim_type must be fact, decision, preference, profile, or constraint" in prompt
     assert "Use personal only for a stable user preference, profile, or constraint" in prompt
     assert "must use project" in prompt
-    assert "character-for-character as an exact substring" in prompt
+    assert "evidence_span_id must exactly match one supplied evidence span ID" in prompt
     assert "Never emit secrets, API keys, tokens, credentials" in prompt
     assert "Omit any candidate that cannot satisfy every rule" in prompt
+    assert payload["messages"][0]["evidence_spans"] == [{
+        "evidence_span_id": "e0",
+        "text": "The project uses SQLite.",
+    }]
+
+
+def test_opencode_extractor_rejects_unknown_evidence_span(tmp_path) -> None:
+    extractor = OpenCodeExtractor(command="opencode", work_dir=tmp_path)
+    result = extractor._validated_result(
+        json.dumps({"candidates": [{
+            "text": "The project uses SQLite.",
+            "claim_type": "fact",
+            "subject": "project",
+            "predicate": "uses",
+            "object_value": "SQLite",
+            "scope_class": "project",
+            "evidence_span_id": "unknown",
+            "confidence": 0.9,
+        }]}),
+        [{"id": "m1", "role": "user", "text": "The project uses SQLite."}],
+        "capture",
+        0.0,
+        0,
+        0,
+    )
+
+    assert result.candidates == ()
+    assert result.usage.structured_valid is False
 
 
 def test_dream_extractor_factory_selects_configured_provider(monkeypatch) -> None:
