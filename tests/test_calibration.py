@@ -110,7 +110,12 @@ def test_cli_recompute_confidence_priors_writes_json(tmp_path: Path, capsys) -> 
     assert main(["--db", str(db), "init-db"]) == 0
     svc = MemoryService(str(db), workspace_root=tmp_path)
     claim = _claim(svc, "cli fact success", "fact")
-    _insert_validator_event(svc, claim.id, to_status="confirmed")
+    _insert_validator_event(
+        svc,
+        claim.id,
+        to_status="confirmed",
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
 
     capsys.readouterr()
     rc = main(
