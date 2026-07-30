@@ -236,6 +236,17 @@ def test_opencode_extractor_uses_oauth_without_api_key(
     assert commands[1] == ["opencode", "session", "delete", "extract-session"]
 
 
+def test_opencode_extraction_prompt_matches_fail_closed_contract() -> None:
+    prompt = OpenCodeExtractor._prompt([], "project:test")
+
+    assert "claim_type must be fact, decision, preference, profile, or constraint" in prompt
+    assert "Use personal only for a stable user preference, profile, or constraint" in prompt
+    assert "must use project" in prompt
+    assert "character-for-character as an exact substring" in prompt
+    assert "Never emit secrets, API keys, tokens, credentials" in prompt
+    assert "Omit any candidate that cannot satisfy every rule" in prompt
+
+
 def test_dream_extractor_factory_selects_configured_provider(monkeypatch) -> None:
     monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "opencode")
     assert isinstance(create_dream_extractor(), OpenCodeExtractor)
