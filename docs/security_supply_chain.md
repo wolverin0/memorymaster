@@ -88,14 +88,14 @@ allowlist of Dockerfile inputs.
 
 ## Verification state
 
-On 2026-07-14, Gitleaks 8.21.2 scanned all remediation commits and reported zero
-unreviewed findings after applying the 40 exact reviewed source fingerprints
-plus two exact fingerprints for the same test fixture repeated by the superseded
-and final squashed release commits. The reviewed findings occur only in seven
-synthetic/adversarial test files; there
-were no application, configuration, workflow, documentation, or user-data
-findings. No credential rotation or history rewrite is indicated by that
-classification.
+On 2026-07-30, Gitleaks 8.21.2 scanned all 860 commits and reported zero
+unreviewed findings after applying 44 exact reviewed fingerprints. The two
+fingerprints added after the 2026-07-14 review are synthetic redaction-test
+values in `tests/test_dreaming_surfaces.py` and
+`tests/test_dreaming_capture.py`; both commits precede the vNext baseline.
+All reviewed findings remain test-only, with no application, configuration,
+workflow, documentation, or user-data finding. No credential rotation or
+history rewrite is indicated by that classification.
 
 An isolated install of `.[mcp,security]` produced 36 dependencies and passed a
 strict OSV audit with zero known vulnerabilities. Qdrant was intentionally

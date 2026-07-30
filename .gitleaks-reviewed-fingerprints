@@ -40,3 +40,5 @@ ce4fd3c2f6f0009d5662f7bb236d0c48300b5549:tests/test_security_patterns.py:generic
 d0490e9000a0b5e5914e3b9ba2ab2f203cb16724:tests/test_bridge_persistence_sensitivity.py:generic-api-key:577
 4674c1a023770325c2b9eccb22a554b0f5572d28:tests/test_bridge_persistence_sensitivity.py:generic-api-key:577
 dd5b0d8e207e8167e748a8b0b98899b83abb4bf2:tests/test_spool.py:generic-api-key:187
+0037e8313b9b676cc3e2ffb703170be12a2054ed:tests/test_dreaming_surfaces.py:generic-api-key:58
+8f0fc72d101a37fd69224136cf037ca0106403f4:tests/test_dreaming_capture.py:generic-api-key:31

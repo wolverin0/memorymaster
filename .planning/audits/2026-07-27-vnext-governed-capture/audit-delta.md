@@ -107,8 +107,15 @@ quality. Full QA remains a release-quality gate, not an activation invariant.
   `b7476e18a76ce3e4e4c101466090fa7ce6946981e4ffbb2f418734786fd77a18`.
 - Default and `capture`-extra clean-wheel installations, package-content
   inspection, SBOM generation, and dependency audit passed before activation.
-- Gitleaks reported 71 known whole-tree fixture/index/cache findings and zero
-  findings in the exact implementation delta checked before activation.
+- The final-code verification wheel installed cleanly with both default and
+  `capture` extras; strict OSV audits covered 8 and 12 installed dependencies
+  respectively and reported zero known vulnerabilities.
+- Its CycloneDX 1.6 SBOM validated against the exact wheel identity and hash.
+- Gitleaks 8.21.2 reported zero findings in the exact vNext implementation
+  delta. The current-tree scan's 52 findings are confined to synthetic security
+  fixtures/tests, the checked-in benchmark, bytecode cache, and GitNexus index.
+  Full history passed after two pre-baseline synthetic redaction-test values
+  were classified with exact commit/path/rule/line fingerprints.
 
 ## Live scheduler and candidate-write evidence
 
