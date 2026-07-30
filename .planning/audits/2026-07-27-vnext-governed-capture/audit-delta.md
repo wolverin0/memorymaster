@@ -1,10 +1,10 @@
 # MemoryMaster vNext governed capture audit delta
 # Covers: SQLite activation, capture, lineage, trusted graph, scheduling, and public v1 evidence.
-# Key terms: memorymaster.public.v1, OpenCode OAuth, hidden tasks, candidate writes, 24-hour observation.
+# Key terms: memorymaster.public.v1, OpenCode OAuth, exact evidence spans, candidate writes, observation.
 # Read when: reviewing the activated local candidate or deciding whether the 24-hour PR gate passes.
-# Baseline: d33a268; stabilized activation head is af6deeb.
+# Baseline: d33a268; current stabilization head is da0b9f9.
 # Evidence boundary: local SQLite and private providers; Postgres was explicitly waived for this release.
-# Verdict: locally stabilized; clean 24-hour PR observation began 2026-07-30T00:58:53Z.
+# Verdict: stabilization continues; the first observation was invalidated and the replacement has not started.
 
 ## Scope and implementation
 
@@ -29,6 +29,9 @@ processing, or the public facade.
 | Budget deferral | `d083abf` | Consolidation budget exhaustion now preserves extracted work without retry/error churn or task failure. |
 | Candidate-ID integrity | `df06d99` | Five-ID batches and a reference-only current-claims contract prevent claim IDs from entering candidate decisions. |
 | Time-stable calibration gate | `af6deeb` | The CLI calibration fixture no longer drifts outside its 90-day window at UTC date boundaries. |
+| Extraction prompt contract | `ebdc5cc` | OpenCode extraction instructions now mirror the fail-closed candidate validator. |
+| Exact evidence spans | `612aa6d` | Models select deterministic sanitized source-span IDs instead of copying or joining evidence text. |
+| Project-scope repair | `da0b9f9` | Unmistakably project-specific candidates mislabeled personal route one-way back to project; ambiguous personal facts still fail closed. |
 
 Postgres implementation remains additive in the branch for source
 compatibility, but the operator selected SQLite-only activation and explicitly
@@ -122,9 +125,10 @@ triggers, principals, settings, and task XML backups were preserved.
 
 Stabilization reproduced the Gemini failure as a free-tier limit of 20
 requests per project/model/day, then proved OpenCode OAuth with
-`OPENAI_API_KEY` removed from both child stages. GPT-5.4 Mini at medium effort
-now performs extraction; GPT-5.6 Luna at low effort performs lifecycle
-consolidation.
+`OPENAI_API_KEY` removed from both child stages. The initial GPT-5.4 Mini
+extraction configuration was subsequently replaced by GPT-5.6 Terra at medium
+effort after live yield failures; GPT-5.6 Luna at low effort continues to
+perform lifecycle consolidation.
 
 The decisive live run `dream-28f695a354c241fe9e508b36548bf993` completed at
 `2026-07-30T00:58:53.996749Z` with Task Scheduler result `0`:
@@ -133,6 +137,34 @@ The decisive live run `dream-28f695a354c241fe9e508b36548bf993` completed at
 - four captures cleanly deferred at the existing daily model budget;
 - zero errors, retryable rows, leases, hook errors, or OpenAI HTTP 429s;
 - queue state `applied=161`, `captured=73`, `extracted=29`.
+
+That run started an observation but did not complete it. The next automatic
+cycle exposed a 75 percent call-level structured yield from GPT-5.4 Mini.
+Reproduction on the same sanitized queued envelopes found an OpenCode exit-1,
+malformed JSON, and noncontiguous evidence quotes. The observation was
+therefore invalidated instead of being counted toward the PR gate.
+
+GPT-5.6 Terra at medium effort eliminated Mini's transport failures but raw
+quote copying still produced only 65 percent fully valid calls in a 20-capture
+live cycle. Higher Terra effort and GPT-5.6 Sol at low effort were worse on the
+bounded no-write sample, so the runtime did not escalate to a larger model.
+
+The durable correction removes verbatim copying from the LLM contract.
+Sanitized messages are deterministically divided into exact source spans; the
+model selects a supplied span ID, and MemoryMaster resolves the stored message
+ID and quote from the original sanitized envelope. Unknown span IDs fail
+closed. A subsequent 20-capture live run improved to 90 percent fully valid
+calls and isolated the remaining rejection to project-specific knowledge
+labeled personal. A one-way repair now routes only candidates with
+unmistakable project markers back to the capture's project scope. Ambiguous
+personal facts remain rejected.
+
+The final bounded no-write regression on the next ten eligible captures
+produced 10 provider successes, 10 fully valid results, 47 accepted candidates,
+and zero rejection codes. The exact final code is installed at `da0b9f9` with
+Terra Medium extraction and Luna Low consolidation. The active daily Terra
+budget was not bypassed, so an authoritative final live extraction cycle must
+wait for the UTC budget reset before a new 24-hour window can begin.
 
 Earlier live failures were preserved during diagnosis. Their final root cause
 was not OAuth: Luna emitted correct decisions for the supplied candidates and
@@ -157,18 +189,24 @@ governance behaviors were not introduced or expanded by vNext.
 
 ## Open gates and operator actions
 
-1. Observe the hourly Dreaming task and Steward telemetry for 24 hours from
-   the clean stabilized cycle completed at `2026-07-30T00:58:53.996749Z`.
-2. Do not create the PR unless the 24-hour check confirms no orphan process or
+1. Run the first final-code live extraction cycle after the UTC provider-budget
+   reset and require at least 95 percent structured yield with no provider or
+   worker errors.
+2. Start a replacement 24-hour observation only from that green final-code
+   cycle; the prior `2026-07-30T00:58:53.996749Z` window is invalid.
+3. Do not create the PR unless the 24-hour check confirms no orphan process or
    lease, no duplicate writes, acceptable queue depth, preserved trusted
    recall, and an explicit disposition for Dreaming's provider failures.
-3. Earliest PR decision time is `2026-07-31T00:58:53.996749Z`
-   (`2026-07-30 21:58:53` America/Argentina/Buenos_Aires).
-4. Continue the seven-day observation for capture precision, graph support,
+4. The PR decision time is the replacement green-cycle completion plus 24
+   hours; it is not yet established.
+5. The configured GitHub origin is public. Do not push the branch or create a
+   PR until the operator supplies an approved private target or changes the
+   repository visibility.
+6. Continue the seven-day observation for capture precision, graph support,
    provider usage, task results, and recall regressions.
-5. Keep full comparable OAuth QA and the statistically sufficient private
+7. Keep full comparable OAuth QA and the statistically sufficient private
    capture/graph precision corpus open as release-quality evidence.
-6. Public publication, package publication, and public deployment remain
+8. Public publication, package publication, and public deployment remain
    prohibited until separately authorized.
 
 ## Rollback position

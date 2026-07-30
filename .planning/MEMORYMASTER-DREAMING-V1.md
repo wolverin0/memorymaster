@@ -1,10 +1,10 @@
 # MemoryMaster Native Dreaming V1
 > Covers: quiet transcript capture, asynchronous LLM consolidation, governed candidate writes, rollout, measurement, and rollback.
-> Key terms: Codex, Claude, Gemini, OpenCode OAuth, GPT-5.4 Mini, provider/model variants, capture ledger, shadow mode, candidate-first.
+> Key terms: Codex, Claude, OpenCode OAuth, GPT-5.6 Terra, exact evidence spans, capture ledger, candidate-first.
 > Read this before enabling Dreaming hooks, scheduling the worker, changing provider models, or activating candidate writes.
 > Default safety posture: disabled until explicitly installed; shadow processing before activation; never auto-confirms claims.
 > Authority: the claims store remains authoritative; the auxiliary capture ledger is replay state, not a second memory database.
-> Status: CURRENT implementation and operator contract for Dreaming V1.
+> Status: CURRENT implementation and stabilization contract; replacement 24-hour observation has not started.
 
 ## Intent
 
@@ -41,6 +41,8 @@ Project knowledge stays in its exact `project:<name>` scope. Stable user prefere
 - Extraction and consolidation quotas are counted by provider/model so two stages using one OAuth provider do not consume each other's stage budget.
 - Budget exhaustion defers captured or extracted work without incrementing attempts, creating retry errors, or failing the scheduled task.
 - Consolidation batches contain at most five candidate IDs and keep one capture together when possible, reducing identifier transcription failures.
+- OpenCode extraction selects deterministic sanitized evidence-span IDs; MemoryMaster resolves the exact source message and quote, and unknown IDs fail closed.
+- Project-specific candidates mislabeled personal may route only back to their capture's project scope; ambiguous personal facts remain rejected.
 - Every candidate requires exact sanitized evidence and every candidate receives exactly one consolidation decision.
 - Credentials in any candidate field, malformed numbers, unknown candidates, cross-scope targets, and malformed provider output fail closed.
 - Applied decisions and proposal events use deterministic idempotency checks.
@@ -80,13 +82,14 @@ including schema-rejection paths, so hourly runs do not accumulate a second
 transcript archive. OpenCode credentials remain owned by OpenCode and are never
 read, copied, logged, or persisted by MemoryMaster.
 
-The local vNext activation uses ChatGPT OAuth for both stages:
-`openai/gpt-5.4-mini` at medium effort extracts typed evidence-linked
+The local vNext stabilization uses ChatGPT OAuth for both stages:
+`openai/gpt-5.6-terra` at medium effort extracts typed evidence-linked
 candidates, while `openai/gpt-5.6-luna` at low effort performs the harder
-lifecycle comparison. Luna was selected over Mini for consolidation because
-Mini made lifecycle/scope errors in the no-write comparison. Mini passed the
-bounded extraction schema and exact-evidence check. These are local activation
-choices; the portable extractor default remains Gemini.
+lifecycle comparison. GPT-5.4 Mini was removed from the local extraction
+configuration after live runs reproduced exit failures, malformed JSON, and
+low exact-evidence yield. Terra remains separate from Luna so model-specific
+stage budgets cannot consume one another. These are local activation choices;
+the portable extractor default remains Gemini.
 
 Verify account readiness without exposing credentials:
 
