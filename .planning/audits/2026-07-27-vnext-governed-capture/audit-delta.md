@@ -3,7 +3,7 @@
 # Key terms: memorymaster.public.v1, OpenCode OAuth, exact evidence spans, candidate writes, observation.
 # Read when: reviewing the activated local candidate or deciding whether the 24-hour PR gate passes.
 # Baseline: d33a268; current stabilization head is da0b9f9.
-# Evidence boundary: local SQLite and private providers; Postgres was explicitly waived for this release.
+# Evidence boundary: SQLite/private providers; final non-ML suite has 4,210 passing tests; Postgres waived.
 # Verdict: stabilization continues; the first observation was invalidated and the replacement has not started.
 
 ## Scope and implementation
@@ -65,9 +65,9 @@ triggers. It did not rewrite history into a false linear chain.
 
 ### Functional, storage, and lifecycle
 
-- Final stabilized-head non-ML suite: 4,206 passed, 71 skipped, 96 deselected,
+- Final exact-span/scope-head non-ML suite: 4,210 passed, 71 skipped, 96 deselected,
   one expected xfail, and one existing Pydantic deprecation warning in
-  1,008.26 seconds.
+  665.94 seconds.
 - Activation hardening added focused coverage for Windows process-tree
   termination, stale Dreaming run reconciliation, and repeated validator
   duplicates.
