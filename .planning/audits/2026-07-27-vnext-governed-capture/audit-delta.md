@@ -2,9 +2,9 @@
 # Covers: SQLite activation, capture, lineage, trusted graph, scheduling, and public v1 evidence.
 # Key terms: memorymaster.public.v1, OpenCode OAuth, exact evidence spans, candidate writes, observation.
 # Read when: reviewing the activated local candidate or deciding whether the 24-hour PR gate passes.
-# Baseline: d33a268; current stabilization head is da0b9f9.
+# Baseline: d33a268; pre-retirement code head is 6be23d7.
 # Evidence boundary: SQLite/private providers; 4,210 non-ML and 96 ML tests pass; Postgres waived.
-# Verdict: stabilization continues; the first observation was invalidated and the replacement has not started.
+# Verdict: replacement 24-hour observation and LifeAgent retirement passed; public PR/push remains prohibited.
 
 ## Scope and implementation
 
@@ -12,6 +12,37 @@ This delta covers only the vNext surfaces introduced by governed universal
 capture and the activation defects found while exercising them. It does not
 reopen findings outside capture, lineage, graph integrity, scheduled
 processing, or the public facade.
+
+## Post-observation LifeAgent retirement (2026-07-31)
+
+The prior 81.818 percent result is superseded. It was a cumulative
+`dream-status` provider aggregate that intentionally retained pre-fix failures,
+not the bounded final-code observation metric. The bounded window after
+`dream-367d558a363d45f59815f61f1648d627`'s final provider completion at
+`2026-07-30T16:06:38.756270+00:00` passed: 15/15 Terra and 12/12 Luna calls
+were structured-valid, `ok`/HTTP 200, with zero HTTP 429 or error outcomes.
+At execution time more successful post-window Terra calls existed; they were
+excluded from the 24-hour gate rather than changing its period-scoped result.
+
+The previously failed E-drive copy is not retirement evidence. The replacement
+SQLite backup-API snapshot at
+`E:\MemoryMaster\snapshots\retirement-20260731\memorymaster-pre-lifeagent-retirement-retry-20260731T172145Z.db`
+was fully read, byte-matched to its disposable restore, and matched SHA-256
+`78e213482f93d677d50bc15ae0bf19620ac97ffcd22f7da17c7dc2af9550f53d` at
+6,382,559,232 bytes. The verified restore recorded `quick_check=ok`, zero
+foreign-key rows, and 119,351 claims, 121,560 citations, and 1,785,204 events.
+
+All 331 non-archived exact-scope `project:lifeagent` claims were retired using
+the public `memorymaster.public.v1` `forget(..., apply=True)` operation; no
+claims, citations, or events were deleted. The scope now has 423 archived and
+zero non-archived claims. Its 499 citations remain, its event count increased
+from 21,284 to 21,615 for the canonical transitions, and repeat retirement
+returned the archived-to-archived idempotent result with evidence preserved.
+Trusted recall returned no LifeAgent claims. The active database post-write
+`quick_check` was `ok`, foreign-key check returned zero rows, candidate claims
+all retained citations, duplicate idempotency groups were zero, and the capture
+queue and leases were empty. Focused public/lifecycle retirement coverage passed
+46 tests; Ruff and `git diff --check` passed.
 
 | Package | Commit | Result |
 | --- | --- | --- |
