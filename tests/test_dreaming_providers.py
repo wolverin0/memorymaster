@@ -411,7 +411,13 @@ def test_glm_consolidator_uses_configured_provider_and_variant(tmp_path) -> None
     ]
 
 
-def test_glm_consolidator_uses_authenticated_opencode_account_without_api_key(tmp_path) -> None:
+def test_glm_consolidator_uses_authenticated_opencode_account_without_api_key(
+    tmp_path, monkeypatch,
+) -> None:
+    # This test verifies the shipped defaults, independently of the operator's
+    # live Dreaming model and variant configuration.
+    monkeypatch.delenv("MEMORYMASTER_DREAM_CONSOLIDATE_MODEL", raising=False)
+    monkeypatch.delenv("MEMORYMASTER_DREAM_CONSOLIDATE_VARIANT", raising=False)
     seen: dict = {}
     commands: list[list[str]] = []
 
