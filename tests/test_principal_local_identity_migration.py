@@ -6,7 +6,6 @@ another even for the same principal.
 """
 from __future__ import annotations
 
-import hashlib
 import importlib
 import re
 import sqlite3
@@ -181,9 +180,10 @@ def test_v0012_is_discoverable_and_checksum_is_source_frozen() -> None:
 
     assert migration.module_name.endswith("0012_principal_local_claim_identities")
     assert "principal" in migration.description.lower()
-    assert migration.checksum() == hashlib.sha256(
-        migration.source_path.read_bytes()
-    ).hexdigest()
+    assert (
+        migration.checksum()
+        == "4193fe879817723db4e107a5236713f668144e33e2694f57558d3a377b6a6be0"
+    )
 
 
 def test_v0012_sqlite_replaces_v9_globals_with_exact_six_indexes() -> None:
