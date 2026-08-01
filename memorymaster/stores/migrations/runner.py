@@ -24,6 +24,23 @@ logger = logging.getLogger(__name__)
 # Migration filenames look like 0001_short_description.py
 _FILENAME_RE = re.compile(r"^(\d{4})_[a-z0-9_]+\.py$")
 
+
+def _sha256(source: bytes) -> str:
+    return hashlib.sha256(source).hexdigest()
+
+
+def _lf_source(source: bytes) -> bytes:
+    return source.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
+def _canonical_source(source: bytes) -> bytes:
+    return _lf_source(source).replace(b"\n", b"\r\n")
+
+
+def _newline_variants(source: bytes) -> frozenset[bytes]:
+    """Return equivalent raw, LF, and CRLF source encodings."""
+    return frozenset((source, _lf_source(source), _canonical_source(source)))
+
 # DDL for the bookkeeping table, applied separately on first run.
 # Same shape on both backends — INTEGER/TEXT vs INTEGER/TEXT works on
 # SQLite and Postgres without dialect divergence here.
@@ -66,8 +83,15 @@ class Migration:
     apply_postgres: Callable[[Any], None]
 
     def checksum(self) -> str:
-        """sha256 hex of the migration file's source bytes."""
-        return hashlib.sha256(self.source_path.read_bytes()).hexdigest()
+        """Platform-stable sha256 using the historical CRLF representation."""
+        return _sha256(_canonical_source(self.source_path.read_bytes()))
+
+    def accepts_checksum(self, checksum: str) -> bool:
+        """Accept canonical or legacy platform-native newline hashes only."""
+        return checksum in {
+            _sha256(source)
+            for source in _newline_variants(self.source_path.read_bytes())
+        }
 
 
 def discover_migrations(package: str = "memorymaster.stores.migrations") -> list[Migration]:
@@ -276,10 +300,11 @@ class MigrationRunner:
         for m in migrations:
             if m.version in applied:
                 stored_desc, stored_checksum, _ = applied[m.version]
-                if stored_checksum != m.checksum():
+                current_checksum = m.checksum()
+                if not m.accepts_checksum(stored_checksum):
                     raise MigrationDriftError(
                         f"migration v{m.version:04d} ({m.description!r}) source has changed since it was applied. "
-                        f"Stored checksum={stored_checksum[:12]}…, current={m.checksum()[:12]}…. "
+                        f"Stored checksum={stored_checksum[:12]}…, current={current_checksum[:12]}…. "
                         f"Migrations are immutable once applied — revert your edits or write a new migration."
                     )
 

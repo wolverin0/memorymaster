@@ -950,8 +950,10 @@ class PostgresStore(SQLiteStore):
             for row in rows
             if isinstance(row, dict)
         }
-        expected = {version: migrations[version].checksum() for version in required_versions}
-        if stored != expected:
+        if set(stored) != set(required_versions) or any(
+            not migrations[version].accepts_checksum(stored[version])
+            for version in required_versions
+        ):
             raise PermissionError("Postgres runtime migration checksums are missing or invalid.")
 
     @classmethod

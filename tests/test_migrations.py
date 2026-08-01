@@ -14,6 +14,7 @@ Coverage:
 """
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from pathlib import Path
 from typing import Iterator
@@ -76,6 +77,55 @@ def test_historical_source_checksums_match_applied_history():
     actual = {m.version: m.checksum() for m in discover_migrations()}
 
     assert {version: actual[version] for version in expected} == expected
+
+
+def test_migration_checksums_are_line_ending_independent(tmp_path):
+    lf_path = tmp_path / "lf.py"
+    crlf_path = tmp_path / "crlf.py"
+    lf_source = b"VERSION = 1\nDESCRIPTION = 'test'\n"
+    crlf_source = lf_source.replace(b"\n", b"\r\n")
+    lf_path.write_bytes(lf_source)
+    crlf_path.write_bytes(crlf_source)
+    migration_args = {
+        "version": 1,
+        "description": "test",
+        "module_name": "tests.synthetic",
+        "apply_sqlite": lambda _conn: None,
+        "apply_postgres": lambda _conn: None,
+    }
+
+    lf_migration = Migration(source_path=lf_path, **migration_args)
+    crlf_migration = Migration(source_path=crlf_path, **migration_args)
+
+    assert lf_migration.checksum() == crlf_migration.checksum()
+    assert crlf_migration.accepts_checksum(hashlib.sha256(lf_source).hexdigest())
+
+
+def test_runner_accepts_legacy_lf_checksum(sqlite_conn, tmp_path, monkeypatch):
+    source_path = tmp_path / "0001_synthetic.py"
+    source_path.write_bytes(b"VERSION = 1\r\n")
+    migration = Migration(
+        version=1,
+        description="synthetic",
+        module_name="tests.synthetic",
+        source_path=source_path,
+        apply_sqlite=lambda _conn: None,
+        apply_postgres=lambda _conn: None,
+    )
+    legacy_lf = hashlib.sha256(b"VERSION = 1\n").hexdigest()
+    runner = MigrationRunner(sqlite_conn, backend="sqlite")
+    sqlite_conn.execute(
+        "INSERT INTO schema_versions(version, description, checksum, applied_at) "
+        "VALUES (?, ?, ?, ?)",
+        (1, migration.description, legacy_lf, "2026-08-01T00:00:00+00:00"),
+    )
+    sqlite_conn.commit()
+    monkeypatch.setattr(
+        "memorymaster.stores.migrations.runner.discover_migrations",
+        lambda: [migration],
+    )
+
+    assert runner.apply_pending() == []
 
 
 # ---------------------------------------------------------------------------

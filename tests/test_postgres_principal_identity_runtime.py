@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import inspect
 import re
 from types import SimpleNamespace
@@ -214,6 +215,20 @@ def test_runtime_requires_v0012_source_checksum() -> None:
 
 def test_runtime_accepts_matching_v0011_and_v0012_checksums() -> None:
     cursor = RuntimeMigrationCursor(_migration_checksums())
+
+    PostgresStore._validate_runtime_migration(cursor)
+
+    assert cursor.requested_versions == {11, 12}
+
+
+def test_runtime_accepts_legacy_lf_migration_checksums() -> None:
+    migrations = {item.version: item for item in discover_migrations()}
+    checksums = {}
+    for version in (11, 12):
+        source = migrations[version].source_path.read_bytes()
+        lf_source = source.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        checksums[version] = hashlib.sha256(lf_source).hexdigest()
+    cursor = RuntimeMigrationCursor(checksums)
 
     PostgresStore._validate_runtime_migration(cursor)
 
