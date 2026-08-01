@@ -1,10 +1,10 @@
 # MemoryMaster vNext governed capture audit delta
-# Covers: SQLite activation, capture, lineage, trusted graph, scheduling, and public v1 evidence.
-# Key terms: memorymaster.public.v1, OpenCode OAuth, exact evidence spans, candidate writes, observation.
-# Read when: reviewing the activated local candidate or deciding whether the 24-hour PR gate passes.
+# Covers: SQLite activation, capture, lineage, trusted graph, scheduling, and public-safe v1 evidence.
+# Key terms: memorymaster.public.v1, OpenCode OAuth, provider window, candidate writes, observation.
+# Read when: reviewing the local candidate, public PR readiness, or remaining release-quality gates.
 # Baseline: d33a268; pre-retirement code head is 6be23d7.
-# Evidence boundary: SQLite/private providers; 4,210 non-ML and 96 ML tests pass; Postgres waived.
-# Verdict: replacement 24-hour observation and LifeAgent retirement passed; public PR/push remains prohibited.
+# Evidence boundary: SQLite/private providers; private paths, fingerprints, and row counts are excluded.
+# Verdict: 24-hour observation and LifeAgent retirement passed; no PR, push, or publication is included.
 
 ## Scope and implementation
 
@@ -15,34 +15,27 @@ processing, or the public facade.
 
 ## Post-observation LifeAgent retirement (2026-07-31)
 
-The prior 81.818 percent result is superseded. It was a cumulative
-`dream-status` provider aggregate that intentionally retained pre-fix failures,
-not the bounded final-code observation metric. The bounded window after
-`dream-367d558a363d45f59815f61f1648d627`'s final provider completion at
-`2026-07-30T16:06:38.756270+00:00` passed: 15/15 Terra and 12/12 Luna calls
-were structured-valid, `ok`/HTTP 200, with zero HTTP 429 or error outcomes.
-At execution time more successful post-window Terra calls existed; they were
-excluded from the 24-hour gate rather than changing its period-scoped result.
+The prior cumulative provider result is superseded as an observation signal: it
+retained pre-fix failures and did not represent the bounded final-code window.
+The replacement 24-hour observation passed above the required structured-yield
+threshold; every post-anchor provider call was structured-valid and completed
+without HTTP 429 or provider error outcomes. The public status contract now
+labels its backward-compatible lifetime aggregate separately from a rolling
+24-hour provider window, and low-yield warnings are calculated from that window.
 
-The previously failed E-drive copy is not retirement evidence. The replacement
-SQLite backup-API snapshot at
-`E:\MemoryMaster\snapshots\retirement-20260731\memorymaster-pre-lifeagent-retirement-retry-20260731T172145Z.db`
-was fully read, byte-matched to its disposable restore, and matched SHA-256
-`78e213482f93d677d50bc15ae0bf19620ac97ffcd22f7da17c7dc2af9550f53d` at
-6,382,559,232 bytes. The verified restore recorded `quick_check=ok`, zero
-foreign-key rows, and 119,351 claims, 121,560 citations, and 1,785,204 events.
+The retirement write was gated by a SQLite backup-API snapshot and a disposable,
+byte-matching restore. The restore passed `quick_check` and foreign-key checks.
+Backup locations, database fingerprints, sizes, and personal row counts remain
+in local operator evidence and are intentionally excluded from this repository.
 
-All 331 non-archived exact-scope `project:lifeagent` claims were retired using
-the public `memorymaster.public.v1` `forget(..., apply=True)` operation; no
-claims, citations, or events were deleted. The scope now has 423 archived and
-zero non-archived claims. Its 499 citations remain, its event count increased
-from 21,284 to 21,615 for the canonical transitions, and repeat retirement
-returned the archived-to-archived idempotent result with evidence preserved.
-Trusted recall returned no LifeAgent claims. The active database post-write
-`quick_check` was `ok`, foreign-key check returned zero rows, candidate claims
-all retained citations, duplicate idempotency groups were zero, and the capture
-queue and leases were empty. Focused public/lifecycle retirement coverage passed
-46 tests; Ruff and `git diff --check` passed.
+All non-archived exact-scope `project:lifeagent` claims were retired through the
+public `memorymaster.public.v1` `forget(..., apply=True)` operation. No source,
+evidence, claim, citation, or event was hard-deleted; repeat retirement was
+idempotent and preserved evidence. Trusted recall now returns no LifeAgent
+claims. The active database passed post-write integrity and foreign-key checks,
+candidate citations remained intact, duplicate idempotency checks were clear,
+and the capture queue and leases were empty. Focused lifecycle coverage, Ruff,
+and `git diff --check` passed.
 
 | Package | Commit | Result |
 | --- | --- | --- |
@@ -77,20 +70,20 @@ replacement.
 
 | Evidence | Result |
 | --- | --- |
-| Initial rollback snapshot | `memorymaster-pre-vnext.db`, 6,090,358,784 bytes, SHA-256 `06bce2bf57e7ab584d72eed377e6e0cac1219158e3c27358316d7fca2f6f852a` |
-| Immediate pre-activation snapshot | `memorymaster-pre-activation-final.db`, 6,095,273,984 bytes, SHA-256 `686c2fbb07b0a8a5a4a3101d589389345ea7d0b6817c554d59c61e5641bde253` |
-| Backup root | Configured `E:\MemoryMaster\activation\20260727-vnext` location |
+| Initial rollback snapshot | Verified by SQLite backup API, full read, and cryptographic identity; private artifact details retained locally. |
+| Immediate pre-activation snapshot | Verified independently before writes; private artifact details retained locally. |
+| Backup root | Operator-configured location outside the repository. |
 | Restore proof | Byte-matching disposable restore, `quick_check=ok`, zero foreign-key rows, and matching core counts |
 | Fresh migration proof | Original snapshot migrated through version 18 in 37.76 s; replay completed in 11.1 ms |
 | Live migration proof | First run completed in 37.09 s; replay completed in 18.85 ms; core row counts remained unchanged |
-| Previous-package read proof | Previous package queried the migrated restore successfully with 12 results |
+| Previous-package read proof | Previous package queried the migrated restore successfully with governed results. |
 | Rollback compatibility | Additive tables remain in place for the previous package to ignore; original task XML is retained |
 
-The legacy event ledger contained 1,622,356 surviving rows at activation: all
-stored event content hashes verified, with 330 historical fork points and 66
-missing predecessor hashes. Migration 18 preserved these signed facts exactly,
-reported the topology, rebuilt tenant metadata, and restored append-only
-triggers. It did not rewrite history into a false linear chain.
+All stored content hashes in the legacy event ledger verified at activation.
+Migration 18 preserved the existing historical fork and predecessor topology,
+rebuilt tenant metadata, and restored append-only triggers. Exact private-ledger
+counts remain in local evidence; the migration did not rewrite history into a
+false linear chain.
 
 ## Verification evidence
 
@@ -104,6 +97,9 @@ triggers. It did not rewrite history into a false linear chain.
   duplicates.
 - Final ML-marked suite: 96 passed, 4,282 deselected, with the same existing
   Pydantic warning, in 375.60 seconds.
+- The 2026-08-01 stabilization rerun passed 98 focused Dreaming, surface,
+  release-truth, setup-profile, and supply-chain contract tests. Ruff passed,
+  and collection completed with 4,380 tests.
 - Migration and restored/live databases passed `quick_check`; foreign-key
   checks returned no rows.
 - Exact replay produced no duplicate source, evidence, capture-job, claim, or
@@ -142,11 +138,12 @@ quality. Full QA remains a release-quality gate, not an activation invariant.
   `capture` extras; strict OSV audits covered 8 and 12 installed dependencies
   respectively and reported zero known vulnerabilities.
 - Its CycloneDX 1.6 SBOM validated against the exact wheel identity and hash.
-- Gitleaks 8.21.2 reported zero findings in the exact vNext implementation
-  delta. The current-tree scan's 52 findings are confined to synthetic security
-  fixtures/tests, the checked-in benchmark, bytecode cache, and GitNexus index.
-  Full history passed after two pre-baseline synthetic redaction-test values
-  were classified with exact commit/path/rule/line fingerprints.
+- On 2026-08-01, the current worktree rebuilt as a wheel and source archive;
+  Twine metadata, package-content allowlisting, the default clean install, and
+  the `capture`-extra clean install all passed.
+- Gitleaks 8.21.2 strict full-history and uncommitted-patch scans reported zero
+  unreviewed findings. Synthetic redaction fixtures remain admitted only by
+  exact commit/path/rule/line fingerprints.
 
 ## Live scheduler and candidate-write evidence
 
@@ -168,13 +165,11 @@ extraction configuration was subsequently replaced by GPT-5.6 Terra at medium
 effort after live yield failures; GPT-5.6 Luna at low effort continues to
 perform lifecycle consolidation.
 
-The decisive live run `dream-28f695a354c241fe9e508b36548bf993` completed at
-`2026-07-30T00:58:53.996749Z` with Task Scheduler result `0`:
+The decisive live run completed with Task Scheduler result `0`:
 
-- one capture consolidated and applied, with five candidate writes;
-- four captures cleanly deferred at the existing daily model budget;
+- captures consolidated or deferred cleanly at the existing daily model budget;
 - zero errors, retryable rows, leases, hook errors, or OpenAI HTTP 429s;
-- queue state `applied=161`, `captured=73`, `extracted=29`.
+- no duplicate or orphaned work was observed.
 
 That run started an observation but did not complete it. The next automatic
 cycle exposed a 75 percent call-level structured yield from GPT-5.4 Mini.
@@ -183,7 +178,7 @@ malformed JSON, and noncontiguous evidence quotes. The observation was
 therefore invalidated instead of being counted toward the PR gate.
 
 GPT-5.6 Terra at medium effort eliminated Mini's transport failures but raw
-quote copying still produced only 65 percent fully valid calls in a 20-capture
+quote copying still produced only 65 percent fully valid calls in a bounded
 live cycle. Higher Terra effort and GPT-5.6 Sol at low effort were worse on the
 bounded no-write sample, so the runtime did not escalate to a larger model.
 
@@ -191,32 +186,26 @@ The durable correction removes verbatim copying from the LLM contract.
 Sanitized messages are deterministically divided into exact source spans; the
 model selects a supplied span ID, and MemoryMaster resolves the stored message
 ID and quote from the original sanitized envelope. Unknown span IDs fail
-closed. A subsequent 20-capture live run improved to 90 percent fully valid
-calls and isolated the remaining rejection to project-specific knowledge
+closed. A subsequent bounded live run improved to 90 percent fully valid calls
+and isolated the remaining rejection to project-specific knowledge
 labeled personal. A one-way repair now routes only candidates with
 unmistakable project markers back to the capture's project scope. Ambiguous
 personal facts remain rejected.
 
-The final bounded no-write regression on the next ten eligible captures
-produced 10 provider successes, 10 fully valid results, 47 accepted candidates,
-and zero rejection codes. The exact final code is installed at `da0b9f9` with
+The final bounded no-write regression produced provider success, fully valid
+results, accepted candidates, and zero rejection codes for every eligible
+capture in the sample. The exact final code is installed at `da0b9f9` with
 Terra Medium extraction and Luna Low consolidation. The active daily Terra
-budget was not bypassed, so an authoritative final live extraction cycle must
-wait for the UTC budget reset before a new 24-hour window can begin.
+budget was not bypassed; the authoritative replacement cycle began after the
+normal UTC budget reset.
 
-The first hourly final-code cycle,
-`dream-25df415f8aec4047918dde4af0374fdb`, completed at
-`2026-07-30T03:11:04.721802Z`. It made zero provider calls, deferred all 12
-eligible captures at the existing Terra daily limit, returned zero errors, and
-released its lease. The pre-window queue was `applied=165`, `captured=18`,
-`extracted=85`; Task Scheduler reported result `0` with no missed runs.
-
-The corresponding pre-window integrity baseline found 99 recent
-`dream-worker` candidates. All 99 retained one citation and a non-null
-idempotency key, with zero duplicate idempotency groups. Dreaming capture keys
-and application keys also had zero duplicate groups, no leases were active, and
-no pending capture carried an error. These counts are the comparison point for
-the replacement 24-hour observation.
+The first hourly final-code cycle deferred eligible captures at the existing
+Terra daily limit, returned zero errors, released its lease, and completed with
+Task Scheduler result `0` and no missed runs. The corresponding pre-window
+integrity baseline confirmed citations and idempotency keys on recent Dreaming
+candidates, zero duplicate capture/application key groups, no active leases,
+and no pending capture error. Exact queue and candidate counts remain in local
+operator evidence.
 
 Earlier live failures were preserved during diagnosis. Their final root cause
 was not OAuth: Luna emitted correct decisions for the supplied candidates and
@@ -229,43 +218,42 @@ exact decision-ID set before live activation.
 The final Steward cycle:
 
 - completed with Task Scheduler result `0` and no new `steward error`;
-- processed 2,000 candidates through the existing governed pipeline;
-- confirmed eight claims through the canonical validator;
-- archived one repeated duplicate against its canonical claim;
+- processed candidates through the existing governed pipeline;
+- confirmed eligible claims only through the canonical validator;
+- archived repeated duplicates against their canonical claims;
 - completed `quick_check=ok` with zero foreign-key orphans;
 - left trusted recall confirmed-only.
 
 The existing Steward cadence policy also staled and archived older unused
-claims and created its configured E-drive vacuum snapshot. Those pre-existing
-governance behaviors were not introduced or expanded by vNext.
+claims and created its configured off-repository vacuum snapshot. Those
+pre-existing governance behaviors were not introduced or expanded by vNext.
 
-## Open gates and operator actions
+## Completed activation gates and remaining release evidence
 
-1. Run the first final-code live extraction cycle after the UTC provider-budget
-   reset and require at least 95 percent structured yield with no provider or
-   worker errors.
-2. Start a replacement 24-hour observation only from that green final-code
-   cycle; the prior `2026-07-30T00:58:53.996749Z` window is invalid.
-3. Do not create the PR unless the 24-hour check confirms no orphan process or
-   lease, no duplicate writes, acceptable queue depth, preserved trusted
-   recall, and an explicit disposition for Dreaming's provider failures.
-4. The PR decision time is the replacement green-cycle completion plus 24
-   hours; it is not yet established.
-5. The configured GitHub origin is public. Do not push the branch or create a
-   PR until the operator supplies an approved private target or changes the
-   repository visibility.
-6. Continue the seven-day observation for capture precision, graph support,
+The final-code provider run and replacement 24-hour observation are complete.
+They passed the structured-yield threshold, scheduler/lease checks, duplicate
+checks, queue-health checks, and confirmed-only trusted recall checks. The
+LifeAgent scope retirement, verified restore, and idempotent repeat are also
+complete. `dream-status` now distinguishes the rolling provider window from
+lifetime history, so historical failures no longer produce a misleading
+current-window warning.
+
+The remaining work is release evidence, not an activation blocker:
+
+1. Continue the seven-day observation for capture precision, graph support,
    provider usage, task results, and recall regressions.
-7. Keep full comparable OAuth QA and the statistically sufficient private
-   capture/graph precision corpus open as release-quality evidence.
-8. Public publication, package publication, and public deployment remain
-   prohibited until separately authorized.
+2. Run comparable before/after OAuth-backed full QA before package release.
+3. Expand the private capture/graph corpus enough to make the 90/90/85 quality
+   thresholds statistically meaningful.
+4. Obtain separate operator authorization before creating a public PR, pushing
+   this branch, publishing a package, or performing a public deployment. This
+   stabilization does none of those actions.
 
 ## Rollback position
 
 Rollback remains additive and conservative: disable capture/ontology worker
 flags, restore the prior task actions from the saved XML, and leave new tables
-in place for the older package to ignore. Restore
-`memorymaster-pre-activation-final.db` only if an invariant or migration
-failure affected existing rows. No rollback trigger has fired: the live
-database passes integrity and compatibility checks.
+in place for the older package to ignore. Restore the verified pre-activation
+snapshot only if an invariant or migration failure affected existing rows. No
+rollback trigger has fired: the live database passes integrity and
+compatibility checks.

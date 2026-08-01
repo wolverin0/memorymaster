@@ -370,21 +370,36 @@ class DreamLedger:
                 (provider[:50], error_code[:100], _iso(now or _utc_now())),
             )
 
-    def status(self, *, now: datetime | None = None, interval_minutes: int = 60) -> dict[str, Any]:
+    def status(
+        self,
+        *,
+        now: datetime | None = None,
+        interval_minutes: int = 60,
+        provider_window_hours: int = 24,
+    ) -> dict[str, Any]:
         current = now or _utc_now()
         with self._connect() as conn:
-            return self._status_from_connection(conn, current, interval_minutes)
+            return self._status_from_connection(
+                conn, current, interval_minutes, provider_window_hours,
+            )
 
     @classmethod
     def read_status(
-        cls, db_path: str | Path, *, now: datetime | None = None, interval_minutes: int = 60
+        cls,
+        db_path: str | Path,
+        *,
+        now: datetime | None = None,
+        interval_minutes: int = 60,
+        provider_window_hours: int = 24,
     ) -> dict[str, Any]:
         """Read status through SQLite query-only mode; never create or migrate a ledger."""
         path = Path(db_path)
         current = now or _utc_now()
+        empty_window = cls._provider_window({}, current, provider_window_hours)
         if not path.is_file():
             return {
                 "queue": {}, "last_run": None, "providers": {}, "leases": [],
+                "providers_lifetime": {}, "provider_window": empty_window,
                 "hook_errors": 0, "warnings": ["scheduler_stale"],
             }
         with connect_ro(path) as conn:
@@ -399,23 +414,71 @@ class DreamLedger:
             if not required <= tables:
                 return {
                     "queue": {}, "last_run": None, "providers": {}, "leases": [],
+                    "providers_lifetime": {}, "provider_window": empty_window,
                     "hook_errors": 0, "warnings": ["dream_schema_missing"],
                 }
-            return cls._status_from_connection(conn, current, interval_minutes)
+            return cls._status_from_connection(
+                conn, current, interval_minutes, provider_window_hours,
+            )
 
     @classmethod
     def _status_from_connection(
-        cls, conn: sqlite3.Connection, current: datetime, interval_minutes: int
+        cls,
+        conn: sqlite3.Connection,
+        current: datetime,
+        interval_minutes: int,
+        provider_window_hours: int,
     ) -> dict[str, Any]:
         queue = {str(row[0]): int(row[1]) for row in conn.execute("SELECT state, COUNT(*) FROM dream_captures GROUP BY state")}
         last = conn.execute("SELECT * FROM dream_runs ORDER BY started_at DESC LIMIT 1").fetchone()
-        usage = conn.execute("""SELECT provider, COUNT(*), SUM(structured_valid), SUM(input_tokens), SUM(output_tokens), SUM(CASE WHEN http_status=429 THEN 1 ELSE 0 END)
-            FROM dream_provider_usage GROUP BY provider""").fetchall()
+        usage_sql = """SELECT provider, COUNT(*), SUM(structured_valid), SUM(input_tokens), SUM(output_tokens), SUM(CASE WHEN http_status=429 THEN 1 ELSE 0 END)
+            FROM dream_provider_usage {where_clause} GROUP BY provider"""
+        lifetime_usage = conn.execute(usage_sql.format(where_clause="")).fetchall()
+        window_start = current - timedelta(hours=max(1, provider_window_hours))
+        recent_usage = conn.execute(
+            usage_sql.format(where_clause="WHERE created_at >= ?"), (_iso(window_start),),
+        ).fetchall()
         leases = [dict(row) for row in conn.execute("SELECT * FROM dream_leases")]
         hook_errors = int(conn.execute("SELECT COUNT(*) FROM dream_hook_errors").fetchone()[0])
-        providers = {str(row[0]): {"calls": int(row[1]), "structured_yield": float(row[2] or 0) / max(1, int(row[1])), "input_tokens": int(row[3] or 0), "output_tokens": int(row[4] or 0), "http_429": int(row[5] or 0)} for row in usage}
-        warnings = cls._warnings(last, providers, current, interval_minutes)
-        return {"queue": queue, "last_run": _decode_row(last) if last else None, "providers": providers, "leases": leases, "hook_errors": hook_errors, "warnings": warnings}
+        providers_lifetime = cls._provider_stats(lifetime_usage)
+        providers_recent = cls._provider_stats(recent_usage)
+        warnings = cls._warnings(last, providers_recent, current, interval_minutes)
+        return {
+            "queue": queue,
+            "last_run": _decode_row(last) if last else None,
+            "providers": providers_lifetime,
+            "providers_lifetime": providers_lifetime,
+            "provider_window": cls._provider_window(
+                providers_recent, current, provider_window_hours,
+            ),
+            "leases": leases,
+            "hook_errors": hook_errors,
+            "warnings": warnings,
+        }
+
+    @staticmethod
+    def _provider_stats(rows: list[sqlite3.Row]) -> dict[str, dict[str, Any]]:
+        return {
+            str(row[0]): {
+                "calls": int(row[1]),
+                "structured_yield": float(row[2] or 0) / max(1, int(row[1])),
+                "input_tokens": int(row[3] or 0),
+                "output_tokens": int(row[4] or 0),
+                "http_429": int(row[5] or 0),
+            }
+            for row in rows
+        }
+
+    @staticmethod
+    def _provider_window(
+        providers: dict[str, dict[str, Any]], current: datetime, hours: int,
+    ) -> dict[str, Any]:
+        bounded_hours = max(1, hours)
+        return {
+            "hours": bounded_hours,
+            "started_at": _iso(current - timedelta(hours=bounded_hours)),
+            "providers": providers,
+        }
 
     @staticmethod
     def _warnings(last: sqlite3.Row | None, providers: dict[str, dict[str, Any]], now: datetime, interval_minutes: int) -> list[str]:

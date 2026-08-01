@@ -103,6 +103,57 @@ def test_status_warns_on_stale_scheduler_and_low_structured_yield(tmp_path: Path
     assert "zai_structured_yield_low" in status["warnings"]
 
 
+def test_status_separates_lifetime_and_recent_provider_yield(tmp_path: Path) -> None:
+    now = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
+    ledger = DreamLedger(tmp_path / "dream.db")
+    run_id = ledger.start_run(False, "gpt-5.4-mini", "glm-5.2", now=now)
+    for index in range(10):
+        ledger.record_provider_call(
+            run_id,
+            provider="openai",
+            model="gpt-5.4-mini",
+            outcome="schema_error",
+            latency_ms=100,
+            structured_valid=False,
+            input_tokens=10,
+            output_tokens=5,
+            http_status=200,
+            now=now - timedelta(hours=48, minutes=index),
+        )
+        ledger.record_provider_call(
+            run_id,
+            provider="openai",
+            model="gpt-5.4-mini",
+            outcome="ok",
+            latency_ms=100,
+            structured_valid=True,
+            input_tokens=10,
+            output_tokens=5,
+            http_status=200,
+            now=now - timedelta(minutes=index),
+        )
+
+    status = ledger.status(now=now, provider_window_hours=24)
+
+    assert status["providers"] == status["providers_lifetime"]
+    assert status["providers_lifetime"]["openai"]["calls"] == 20
+    assert status["providers_lifetime"]["openai"]["structured_yield"] == 0.5
+    assert status["provider_window"] == {
+        "hours": 24,
+        "started_at": "2026-07-20T12:00:00+00:00",
+        "providers": {
+            "openai": {
+                "calls": 10,
+                "structured_yield": 1.0,
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "http_429": 0,
+            },
+        },
+    }
+    assert "openai_structured_yield_low" not in status["warnings"]
+
+
 def test_new_run_marks_older_running_rows_abandoned(tmp_path: Path) -> None:
     now = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
     ledger = DreamLedger(tmp_path / "dream.db")

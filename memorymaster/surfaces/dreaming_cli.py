@@ -49,9 +49,12 @@ def handle_dream_status(args, service, parser, effective_db) -> int:
     if args.json_output:
         print(json.dumps(status, ensure_ascii=False))
     else:
+        provider_window = status["provider_window"]
         print(
             "dream-status: "
             f"queue={status['queue']} warnings={status['warnings']} "
-            f"hook_errors={status['hook_errors']}"
+            f"hook_errors={status['hook_errors']} "
+            f"providers_{provider_window['hours']}h={provider_window['providers']} "
+            f"providers_lifetime={status['providers_lifetime']}"
         )
     return 0

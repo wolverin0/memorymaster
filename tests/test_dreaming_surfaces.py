@@ -36,8 +36,23 @@ def test_dream_status_json_never_contains_transcript_text(tmp_path: Path, monkey
     payload = json.loads(capsys.readouterr().out)
 
     assert payload["ok"] is True
+    assert payload["providers"] == payload["providers_lifetime"] == {}
+    assert payload["provider_window"]["hours"] == 24
+    assert payload["provider_window"]["providers"] == {}
     assert "messages" not in json.dumps(payload)
     assert not state_db.exists()
+
+
+def test_dream_status_text_labels_recent_and_lifetime_metrics(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    monkeypatch.setenv("MEMORYMASTER_CAPTURE_STATE_DB", str(tmp_path / "capture.db"))
+
+    assert main(["dream-status"]) == 0
+    output = capsys.readouterr().out
+
+    assert "providers_24h={}" in output
+    assert "providers_lifetime={}" in output
 
 
 def test_dream_run_returns_failure_exit_for_partial_result(tmp_path: Path, monkeypatch) -> None:
