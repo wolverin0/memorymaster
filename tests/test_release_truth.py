@@ -114,6 +114,13 @@ def test_ci_blocks_on_generated_release_truth_drift() -> None:
     assert 'pytest tests/ -m "not ml" -q --tb=short' in workflow
 
 
+def test_mcp_extra_excludes_the_breaking_v2_sdk() -> None:
+    source = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r"^mcp\s*=\s*\[(.*?)\]", source, re.MULTILINE | re.DOTALL)
+    assert match is not None
+    assert '"mcp>=1.8.1,<2"' in match.group(1)
+
+
 def test_dev_extra_installs_supply_chain_contract_runtime() -> None:
     source = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     match = re.search(r"^dev\s*=\s*\[(.*?)\]", source, re.MULTILINE | re.DOTALL)
