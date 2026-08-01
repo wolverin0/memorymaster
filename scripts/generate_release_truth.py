@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.metadata
 import json
 from pathlib import Path
 import re
-import subprocess
 import sys
 from typing import Any
 
@@ -33,20 +33,21 @@ def _command_names(parser: Any) -> list[str]:
     return sorted(subparsers.choices) if subparsers is not None else []
 
 
-def _pytest_count() -> int:
-    result = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests", "--collect-only", "-q"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=240,
+def _source_test_function_count(tests_root: Path | None = None) -> int:
+    """Count test functions without expanding platform-dependent pytest items."""
+    root = tests_root or ROOT / "tests"
+    paths = (
+        path
+        for path in root.rglob("*.py")
+        if path.match("test_*.py") or path.match("*_test.py")
     )
-    output = f"{result.stdout}\n{result.stderr}"
-    matches = re.findall(r"(\d+) tests? collected", output)
-    if result.returncode != 0 or not matches:
-        raise RuntimeError(f"pytest collection failed ({result.returncode}): {output[-1200:]}")
-    return int(matches[-1])
+    return sum(
+        1
+        for path in paths
+        for node in ast.walk(ast.parse(path.read_bytes(), filename=str(path)))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test_")
+    )
 
 
 def _release_truth() -> dict[str, Any]:
@@ -71,7 +72,7 @@ def _release_truth() -> dict[str, Any]:
             "cli_commands": len(_command_names(build_parser())),
             "ops_cli_commands": len(_command_names(build_ops_parser())),
             "console_entrypoints": len(entrypoints),
-            "pytest_tests": _pytest_count(),
+            "pytest_test_functions": _source_test_function_count(),
         },
         "mcp_tools": sorted(tool.name for tool in mcp_server.mcp._tool_manager.list_tools()),
         "cli_commands": _command_names(build_parser()),
@@ -97,7 +98,7 @@ def _markdown(data: dict[str, Any]) -> str:
         f"- Main CLI commands: **{counts['cli_commands']}**",
         f"- Operations CLI commands: **{counts['ops_cli_commands']}**",
         f"- Console entrypoints: **{counts['console_entrypoints']}**",
-        f"- Collected pytest tests: **{counts['pytest_tests']}**",
+        f"- Pytest source test functions: **{counts['pytest_test_functions']}**",
         "",
         "## MCP tools",
         "",
