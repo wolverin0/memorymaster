@@ -264,6 +264,14 @@ def init_ephemeral_service(tmpdir: Path, embedding_provider: Any | None = None) 
 
 
 def ingest_haystack(service: MemoryService, item: dict[str, Any], *, chunk_chars: int = DEFAULT_CHUNK_CHARS) -> None:
+    """Load trusted benchmark sessions through the store's write primitive.
+
+    The benchmark only measures retrieval, so it can skip the service-layer
+    policy, entity, webhook, and observability hooks after constructing the
+    same claim payload.  Keeping the store's ``create_claim`` path preserves
+    the schema, citation, event, and FTS side effects used by retrieval while
+    avoiding repeated harness-only lifecycle overhead per session.
+    """
     sessions = item["haystack_sessions"]
     session_ids = item["haystack_session_ids"]
     dates = item.get("haystack_dates") or [""] * len(sessions)
@@ -278,7 +286,7 @@ def ingest_haystack(service: MemoryService, item: dict[str, Any], *, chunk_chars
         chunks = chunk_text(text, chunk_chars=chunk_chars)
         for chunk_idx, chunk in enumerate(chunks):
             suffix = f":{chunk_idx}" if len(chunks) > 1 else ""
-            service.ingest(
+            service.store.create_claim(
                 text=chunk,
                 citations=[
                     CitationInput(
