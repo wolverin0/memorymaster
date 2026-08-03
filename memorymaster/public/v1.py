@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -428,12 +427,12 @@ def _queue_due_graph(
 ) -> tuple[int, int]:
     queued = existing = 0
     for row in repository.due_confirmed_graph_claims(scope=scope, limit=limit):
-        digest = hashlib.sha256(
-            f"claim:{row['claim_id']}:{row['updated_at']}".encode("utf-8")
-        ).hexdigest()
+        if bool(row.get("job_exists")):
+            existing += 1
+            continue
         _, created = repository.queue_job(
             source_item_id=int(row["source_item_id"]),
-            content_hash=digest,
+            content_hash=str(row["job_content_hash"]),
             stage="extract_graph",
         )
         queued += int(created)

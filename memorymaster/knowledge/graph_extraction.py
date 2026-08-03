@@ -8,16 +8,15 @@ eligibility, or provider failure behavior.
 
 from __future__ import annotations
 
-import hashlib
 from typing import Any
 
 from memorymaster.capture.adapters import CaptureRejected
+from memorymaster.capture.repository import graph_job_content_hash
 from memorymaster.knowledge.entity_graph import EntityGraph
 
 
 def _claim_job_hash(claim: Any) -> str:
-    value = f"claim:{claim.id}:{claim.updated_at}".encode("utf-8")
-    return hashlib.sha256(value).hexdigest()
+    return graph_job_content_hash(claim.id, claim.updated_at)
 
 
 def _matching_claim(repository: Any, job: Any) -> Any | None:

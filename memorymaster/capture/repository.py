@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator
@@ -22,6 +23,12 @@ from memorymaster.core.security import (
 
 MAX_ATTEMPTS = 5
 MAX_RETRY_SECONDS = 6 * 60 * 60
+
+
+def graph_job_content_hash(claim_id: int, updated_at: Any) -> str:
+    """Return the single replay identity used for confirmed-claim graph work."""
+    value = f"claim:{int(claim_id)}:{updated_at}".encode("utf-8")
+    return hashlib.sha256(value).hexdigest()
 
 
 def _now() -> datetime:
@@ -452,52 +459,87 @@ class CaptureRepository:
         return int(_mapping(row)["count"]) if row is not None else 0
 
     def due_evidence(self, *, scope: str, limit: int) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        results: list[dict[str, Any]] = []
+        cursor = 0
+        page_size = min(max(limit * 4, 100), 800)
         with self._connection() as conn:
-            rows = self._execute(
-                conn,
-                f"""SELECT e.id AS evidence_id, e.source_item_id, e.content_hash,
-                           s.content_hash AS source_hash, s.payload_json
-                    FROM evidence_items e
-                    JOIN source_items s ON s.id=e.source_item_id
-                    WHERE s.retired_at IS NULL
-                      AND e.text IS NOT NULL
-                      AND NOT EXISTS (
-                          SELECT 1 FROM capture_jobs j
-                          WHERE j.source_item_id=s.id
-                            AND j.content_hash=COALESCE(e.content_hash, s.content_hash)
-                            AND j.stage='extract_claims')
-                    ORDER BY e.id LIMIT {self.placeholder}""",
-                (min(max(limit * 4, 0), 800),),
-            ).fetchall()
-        results = []
-        for row in rows:
-            data = _mapping(row)
-            payload = data.get("payload_json") or {}
-            if isinstance(payload, str):
-                try:
-                    payload = json.loads(payload)
-                except json.JSONDecodeError:
-                    payload = {}
-            if isinstance(payload, dict) and payload.get("scope") == scope:
-                results.append(data)
-            if len(results) >= limit:
-                break
+            while len(results) < limit:
+                rows = self._execute(
+                    conn,
+                    f"""SELECT e.id AS evidence_id, e.source_item_id, e.content_hash,
+                               s.content_hash AS source_hash, s.payload_json
+                        FROM evidence_items e
+                        JOIN source_items s ON s.id=e.source_item_id
+                        WHERE e.id>{self.placeholder} AND s.retired_at IS NULL
+                          AND e.text IS NOT NULL
+                          AND NOT EXISTS (
+                              SELECT 1 FROM capture_jobs j
+                              WHERE j.source_item_id=s.id
+                                AND j.content_hash=COALESCE(e.content_hash, s.content_hash)
+                                AND j.stage='extract_claims')
+                        ORDER BY e.id LIMIT {self.placeholder}""",
+                    (cursor, page_size),
+                ).fetchall()
+                if not rows:
+                    break
+                cursor = int(_mapping(rows[-1])["evidence_id"])
+                for row in rows:
+                    data = _mapping(row)
+                    payload = data.get("payload_json") or {}
+                    if isinstance(payload, str):
+                        try:
+                            payload = json.loads(payload)
+                        except json.JSONDecodeError:
+                            payload = {}
+                    if isinstance(payload, dict) and payload.get("scope") == scope:
+                        results.append(data)
+                    if len(results) >= limit:
+                        break
         return results
 
     def due_confirmed_graph_claims(self, *, scope: str, limit: int) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        results: list[dict[str, Any]] = []
+        missing = 0
+        cursor = 0
+        page_size = min(max(limit, 50), 200)
         with self._connection() as conn:
-            rows = self._execute(
-                conn,
-                f"""SELECT c.id AS claim_id, c.updated_at,
-                           MIN(e.source_item_id) AS source_item_id
-                    FROM claims c
-                    JOIN claim_evidence_links cel ON cel.claim_id=c.id
-                    JOIN evidence_items e ON e.id=cel.evidence_item_id
-                    JOIN source_items s ON s.id=e.source_item_id
-                    WHERE c.status='confirmed' AND c.scope={self.placeholder}
-                      AND s.retired_at IS NULL
-                    GROUP BY c.id, c.updated_at
-                    ORDER BY c.id LIMIT {self.placeholder}""",
-                (scope, min(max(limit, 0), 200)),
-            ).fetchall()
-        return [_mapping(row) for row in rows]
+            hashes = {
+                str(_mapping(row)["content_hash"])
+                for row in self._execute(
+                    conn,
+                    "SELECT content_hash FROM capture_jobs WHERE stage='extract_graph'",
+                ).fetchall()
+            }
+            while missing < limit:
+                rows = self._execute(
+                    conn,
+                    f"""SELECT c.id AS claim_id, c.updated_at,
+                               MIN(e.source_item_id) AS source_item_id
+                        FROM claims c
+                        JOIN claim_evidence_links cel ON cel.claim_id=c.id
+                        JOIN evidence_items e ON e.id=cel.evidence_item_id
+                        JOIN source_items s ON s.id=e.source_item_id
+                        WHERE c.id>{self.placeholder} AND c.status='confirmed'
+                          AND c.scope={self.placeholder} AND s.retired_at IS NULL
+                        GROUP BY c.id, c.updated_at
+                        ORDER BY c.id LIMIT {self.placeholder}""",
+                    (cursor, scope, page_size),
+                ).fetchall()
+                if not rows:
+                    break
+                cursor = int(_mapping(rows[-1])["claim_id"])
+                for row in rows:
+                    data = _mapping(row)
+                    digest = graph_job_content_hash(data["claim_id"], data["updated_at"])
+                    exists = digest in hashes
+                    results.append(
+                        {**data, "job_content_hash": digest, "job_exists": exists}
+                    )
+                    missing += int(not exists)
+                    if missing >= limit:
+                        break
+        return results

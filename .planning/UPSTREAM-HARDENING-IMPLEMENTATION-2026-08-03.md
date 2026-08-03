@@ -26,12 +26,16 @@ only to evaluation surfaces after runtime correctness is green.
 
 ### H1 — Complete queue enumeration
 
-- [ ] Add failing regression: requested-scope evidence survives more than 800
+- [x] Add failing regression: requested-scope evidence survives more than 800
   earlier rows from other scopes.
-- [ ] Add failing regression: confirmed claim 201 is queued after the first 200.
-- [ ] Implement stable keyset enumeration without changing the schema.
-- [ ] Centralize graph-job identity and preserve replay-safe uniqueness.
-- [ ] Verify `max_items` caps newly queued work and repeated calls converge.
+- [x] Add failing regression: confirmed claim 201 is queued after the first 200.
+- [x] Implement stable keyset enumeration without changing the schema.
+- [x] Centralize graph-job identity and preserve replay-safe uniqueness.
+- [x] Verify `max_items` caps newly queued work and repeated calls converge.
+
+Evidence: `tests/test_public_v1.py` failed twice before the fix, then passed
+11/11; the related capture/storage/graph set passed 26/26; focused Ruff and
+`git diff --check` passed.
 
 ### H2 — Honest extraction outcomes
 
@@ -78,4 +82,3 @@ only to evaluation surfaces after runtime correctness is green.
 - Streaming capture, compact MCP output, MCP-major compatibility, Qdrant work,
   daemons, hosted/team operation, and new third-party dependencies remain out
   of scope.
-

@@ -11,6 +11,9 @@ from memorymaster.core.service import MemoryService
 from memorymaster.public.v1 import API_VERSION
 
 
+_STAMP = "2026-08-03T00:00:00+00:00"
+
+
 def test_recall_export_remains_callable_after_subpackage_import() -> None:
     import memorymaster
     import memorymaster.recall
@@ -218,3 +221,119 @@ def test_improve_queues_without_promoting_candidates(public_env) -> None:
     assert receipt.queued["extract_claims"] == 1
     assert receipt.steward_review_due == 1
     assert service.store.get_claim(candidate.id).status == "candidate"
+
+
+def test_improve_finds_requested_scope_beyond_global_scan_window(public_env) -> None:
+    db, workspace = public_env
+    service = _service(db, workspace)
+    source = service.upsert_external_source(
+        source_type="fixture", display_name="Enumeration fixture"
+    )
+    rows = [
+        (
+            source.id,
+            f"other-{index}",
+            "text",
+            f"Other scope evidence {index}",
+            '{"scope":"project:other"}',
+            "a" * 64,
+            _STAMP,
+            _STAMP,
+        )
+        for index in range(801)
+    ]
+    rows.append(
+        (
+            source.id,
+            "wanted",
+            "text",
+            "Requested scope evidence",
+            '{"scope":"project:demo-workspace"}',
+            "b" * 64,
+            _STAMP,
+            _STAMP,
+        )
+    )
+    with service.store.connect() as conn:
+        conn.executemany(
+            """INSERT INTO source_items
+               (source_id, source_item_id, item_type, text, payload_json,
+                content_hash, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
+        source_rows = conn.execute(
+            "SELECT id, source_item_id, text, content_hash FROM source_items ORDER BY id"
+        ).fetchall()
+        conn.executemany(
+            """INSERT INTO evidence_items
+               (source_item_id, evidence_type, text, content_hash, created_at)
+               VALUES (?, 'text', ?, ?, ?)""",
+            [
+                (row["id"], row["text"], row["content_hash"], _STAMP)
+                for row in source_rows
+            ],
+        )
+
+    receipt = improve(db=db, workspace=workspace, max_items=200)
+
+    assert receipt.queued["extract_claims"] == 1
+    with service.store.connect() as conn:
+        wanted_job = conn.execute(
+            """SELECT j.status FROM capture_jobs j
+               JOIN source_items s ON s.id=j.source_item_id
+               WHERE s.source_item_id='wanted' AND j.stage='extract_claims'"""
+        ).fetchone()
+    assert wanted_job is not None
+
+
+def test_repeated_improve_advances_beyond_existing_graph_job_prefix(public_env) -> None:
+    db, workspace = public_env
+    service = _service(db, workspace)
+    source = service.upsert_external_source(
+        source_type="fixture", display_name="Graph enumeration fixture"
+    )
+    item = service.upsert_source_item(
+        source_id=source.id,
+        source_item_id="graph-evidence",
+        item_type="text",
+        text="Graph evidence",
+        payload_json={"scope": "project:demo-workspace"},
+        content_hash="c" * 64,
+    )
+    evidence = service.add_evidence_item(
+        source_item_id=item.id,
+        evidence_type="text",
+        text="Graph evidence",
+        content_hash="c" * 64,
+    )
+    with service.store.connect() as conn:
+        conn.executemany(
+            """INSERT INTO claims
+               (text, scope, status, confidence, created_at, updated_at)
+               VALUES (?, 'project:demo-workspace', 'confirmed', 1.0, ?, ?)""",
+            [(f"Confirmed graph claim {index}", _STAMP, _STAMP) for index in range(201)],
+        )
+        claim_ids = [
+            int(row["id"])
+            for row in conn.execute(
+                "SELECT id FROM claims WHERE status='confirmed' ORDER BY id"
+            ).fetchall()
+        ]
+        conn.executemany(
+            """INSERT INTO claim_evidence_links
+               (claim_id, evidence_item_id, role, created_at)
+               VALUES (?, ?, 'support', ?)""",
+            [(claim_id, evidence.id, _STAMP) for claim_id in claim_ids],
+        )
+
+    first = improve(db=db, workspace=workspace, max_items=200)
+    second = improve(db=db, workspace=workspace, max_items=200)
+
+    assert first.queued["extract_graph"] == 200
+    assert second.queued["extract_graph"] == 1
+    with service.store.connect() as conn:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM capture_jobs WHERE stage='extract_graph'"
+        ).fetchone()[0]
+    assert total == 201
