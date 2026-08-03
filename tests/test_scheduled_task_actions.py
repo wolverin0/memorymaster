@@ -43,6 +43,7 @@ def test_verify_reports_action_last_result_queue_and_provider(monkeypatch, tmp_p
     assert report["dreaming"]["hidden_execution"] is True
     assert report["dreaming"]["last_result"] == "0"
     assert report["queue_depth"] == {}
+    assert report["capture_coverage"]["status"] == "unavailable"
     assert "claim_extractor" in report["provider_readiness"]
 
 

@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 from typing import Any
 
+from memorymaster.capture.coverage import capture_coverage
 from memorymaster.core.audit_envelope import build_audit_envelope
 from memorymaster.govern.recovery import backup_status
 
@@ -94,6 +95,9 @@ def evaluate_operational_health(
     provider_failures = _provider_failure_count(service)
     if provider_failures > max(0, int(provider_failure_threshold)):
         alerts.append({"code": "provider_failures", "value": provider_failures})
+    capture = capture_coverage(service)
+    if capture["status"] in {"attention", "broken"}:
+        alerts.append({"code": f"capture_coverage_{capture['status']}"})
     result = {
         "schema_version": "memorymaster.operational-health.v1",
         "status": "alert" if alerts else "ok",
@@ -104,6 +108,7 @@ def evaluate_operational_health(
         "media_retry": retry_counts,
         "database": database,
         "provider_failures": provider_failures,
+        "capture": capture,
         "otel": otel_status(),
         "error_tracking": error_tracking_status(),
     }

@@ -50,6 +50,7 @@ def test_operational_health_persists_alert_snapshot(tmp_path: Path) -> None:
     events = service.list_events(limit=20, event_type="system")
     assert any(event.details == "operational_health_snapshot" for event in events)
     assert result["owner"] == "platform-owner"
+    assert result["capture"]["status"] == "ok"
 
 
 def test_otel_is_explicitly_disabled_by_default(monkeypatch) -> None:

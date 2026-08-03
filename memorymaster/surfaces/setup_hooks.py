@@ -621,6 +621,14 @@ def _capture_queue_depth(db_path: str | Path | None) -> dict[str, int] | str:
         return "unavailable"
 
 
+def _capture_coverage(db_path: str | Path | None) -> dict[str, Any]:
+    if db_path is None or "://" in str(db_path):
+        return {"status": "unavailable", "reason": "non_sqlite_target"}
+    from memorymaster.capture.coverage import capture_coverage_from_path
+
+    return capture_coverage_from_path(db_path)
+
+
 def _provider_readiness() -> dict[str, bool]:
     dream_provider = os.environ.get(
         "MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "gemini",
@@ -659,6 +667,7 @@ def verify_scheduled_automation(
         "steward": steward,
         "mode_matches": mode_matches,
         "queue_depth": _capture_queue_depth(db_path),
+        "capture_coverage": _capture_coverage(db_path),
         "provider_readiness": _provider_readiness(),
     }
 
@@ -709,6 +718,7 @@ def verify_dream_install(
         "hidden_execution": task["hidden_execution"],
         "last_result": task["last_result"],
         "queue_depth": automation["queue_depth"],
+        "capture_coverage": automation["capture_coverage"],
         "provider_readiness": automation["provider_readiness"],
     }
 

@@ -52,12 +52,17 @@ governed-storage, and Dreaming-surface set passed 85/85; focused Ruff passed.
 
 ### H3 — Capture coverage read model
 
-- [ ] Add a content-free, scope-aware coverage report from existing tables.
-- [ ] Count missing stages, expired leases, due retries, blocked codes, and
+- [x] Add a content-free, scope-aware coverage report from existing tables.
+- [x] Count missing stages, expired leases, due retries, blocked codes, and
   completed jobs with partial diagnostics.
-- [ ] Integrate the report into operations health, setup verification, and the
+- [x] Integrate the report into operations health, setup verification, and the
   Capture Inbox summary without adding a fifth public verb.
-- [ ] Add invariant, scope-isolation, sensitivity, and dashboard tests.
+- [x] Add invariant, scope-isolation, sensitivity, and dashboard tests.
+
+Evidence: the focused coverage/operator/dashboard set passed 14/14; the wider
+public capture, worker, setup-hooks, and operations set passed 69/69. The
+serialized report test proves captured text is absent; focused Ruff and
+`git diff --check` passed.
 
 ### H4 — Evaluation-only OpenCode OAuth judge
 

@@ -14,6 +14,8 @@ from http import HTTPStatus
 from typing import Any
 from urllib.parse import parse_qs
 
+from memorymaster.capture.coverage import capture_coverage
+
 
 CAPTURE_INBOX_SECTION_HTML = """<section class="wide">
 <div class="section-head"><div class="icon icon-blue">&#128229;</div><div><h2>Capture Inbox</h2><div class="desc">Sources, processing jobs, evidence, governed claims, and supported relationships</div></div></div>
@@ -23,7 +25,8 @@ CAPTURE_INBOX_SECTION_HTML = """<section class="wide">
 
 CAPTURE_INBOX_FUNCTIONS_JS = """
 function captureBadge(j){return '<span class="badge badge-'+esc(j.status||'archived')+'">'+esc(j.stage||'job')+': '+esc(j.status||'unknown')+'</span>'+(j.error_code?'<span class="muted"> '+esc(j.error_code)+'</span>':'');}
-function fillCapture(d){const rows=Array.isArray(d.items)?d.items:[];const box=document.getElementById('capture-inbox');if(!rows.length){box.innerHTML='<div class="empty">No captures yet</div>';return;}box.innerHTML=rows.map(i=>{const jobs=(i.jobs||[]).map(captureBadge).join(' ')||'<span class="muted">no jobs</span>';const ev=(i.evidence||[]).map(e=>'<div><span class="mono">evidence #'+esc(e.id)+'</span> '+esc(e.evidence_type)+': '+esc(e.excerpt||'-')+'</div>').join('')||'<div class="muted">awaiting evidence</div>';const claims=(i.claims||[]).map(c=>'<div>'+statusBadge(c.status)+' <span class="mono">#'+esc(c.id)+'</span> '+esc(c.text||'-')+' <span class="muted">('+esc((c.citations||[]).length)+' citations)</span></div>').join('')||'<div class="muted">no derived claims</div>';const rels=(i.relationships||[]).map(r=>'<div class="mono">'+esc(r.source)+' '+esc(r.relation)+' '+esc(r.target)+' &#8592; claim #'+esc(r.supporting_claim_id)+'</div>').join('')||'<div class="muted">no supported relationships</div>';const retired=i.retired_at?'<span class="badge badge-archived">retired</span>':'<button data-capture-retire="'+esc(i.id)+'">Preview retirement</button>';return '<div class="card" data-source-id="'+esc(i.id)+'"><div class="card-head"><strong>'+esc(i.display_name||i.source_type)+'</strong> <span class="mono">#'+esc(i.id)+'</span> '+esc(i.item_type)+' '+retired+'</div><div class="card-row"><strong>Processing:</strong> '+jobs+'</div><div class="card-row"><strong>Evidence:</strong> '+ev+'</div><div class="card-row"><strong>Claims:</strong> '+claims+'</div><div class="card-row"><strong>Relationships:</strong> '+rels+'</div></div>';}).join('');}
+function fillCaptureCoverage(d){const c=d.coverage||{};const a=c.anomalies||{};const missing=(a.missing_claim_jobs||{}).count||0;const graph=(a.missing_graph_jobs||{}).count||0;const partial=(a.partial_completed||{}).count||0;document.getElementById('capture-status').textContent='Capture coverage: '+String(c.status||'unavailable')+'; missing claims '+missing+'; missing graphs '+graph+'; partial '+partial;}
+function fillCapture(d){fillCaptureCoverage(d);const rows=Array.isArray(d.items)?d.items:[];const box=document.getElementById('capture-inbox');if(!rows.length){box.innerHTML='<div class="empty">No captures yet</div>';return;}box.innerHTML=rows.map(i=>{const jobs=(i.jobs||[]).map(captureBadge).join(' ')||'<span class="muted">no jobs</span>';const ev=(i.evidence||[]).map(e=>'<div><span class="mono">evidence #'+esc(e.id)+'</span> '+esc(e.evidence_type)+': '+esc(e.excerpt||'-')+'</div>').join('')||'<div class="muted">awaiting evidence</div>';const claims=(i.claims||[]).map(c=>'<div>'+statusBadge(c.status)+' <span class="mono">#'+esc(c.id)+'</span> '+esc(c.text||'-')+' <span class="muted">('+esc((c.citations||[]).length)+' citations)</span></div>').join('')||'<div class="muted">no derived claims</div>';const rels=(i.relationships||[]).map(r=>'<div class="mono">'+esc(r.source)+' '+esc(r.relation)+' '+esc(r.target)+' &#8592; claim #'+esc(r.supporting_claim_id)+'</div>').join('')||'<div class="muted">no supported relationships</div>';const retired=i.retired_at?'<span class="badge badge-archived">retired</span>':'<button data-capture-retire="'+esc(i.id)+'">Preview retirement</button>';return '<div class="card" data-source-id="'+esc(i.id)+'"><div class="card-head"><strong>'+esc(i.display_name||i.source_type)+'</strong> <span class="mono">#'+esc(i.id)+'</span> '+esc(i.item_type)+' '+retired+'</div><div class="card-row"><strong>Processing:</strong> '+jobs+'</div><div class="card-row"><strong>Evidence:</strong> '+ev+'</div><div class="card-row"><strong>Claims:</strong> '+claims+'</div><div class="card-row"><strong>Relationships:</strong> '+rels+'</div></div>';}).join('');}
 async function refreshCapture(){fillCapture(await jget('/api/capture-inbox?limit=30'));}
 """
 
@@ -172,7 +175,12 @@ def capture_inbox_payload(service: Any, *, limit: int = 50) -> dict[str, Any]:
             (min(max(limit, 1), 100),),
         ).fetchall()
         items = [_source_row(service, conn, postgres, row) for row in rows]
-    return {"ok": True, "rows": len(items), "items": items}
+    return {
+        "ok": True,
+        "rows": len(items),
+        "coverage": capture_coverage(service),
+        "items": items,
+    }
 
 
 def hydrate_dashboard_html(html: str, version: str) -> str:

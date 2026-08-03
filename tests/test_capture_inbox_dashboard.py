@@ -21,7 +21,10 @@ from memorymaster.capture import CaptureRepository
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
 from memorymaster.knowledge.entity_graph import EntityGraph
-from memorymaster.surfaces.capture_inbox import capture_inbox_payload
+from memorymaster.surfaces.capture_inbox import (
+    CAPTURE_INBOX_FUNCTIONS_JS,
+    capture_inbox_payload,
+)
 from memorymaster.surfaces.dashboard import create_dashboard_server
 
 
@@ -108,6 +111,8 @@ def test_capture_inbox_read_model_exposes_complete_lineage(tmp_path: Path) -> No
 
     payload = capture_inbox_payload(service)
 
+    assert payload["coverage"]["status"] == "broken"
+    assert "Capture coverage" in CAPTURE_INBOX_FUNCTIONS_JS
     item = payload["items"][0]
     assert item["id"] == receipt.source_item["id"]
     assert item["jobs"][0]["stage"] == "extract_claims"
