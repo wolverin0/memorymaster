@@ -4,7 +4,7 @@
 # Read when: selecting reliability work after governed capture vNext or refreshing upstream clones.
 # Authority: research input to `ROADMAP.md`; this report does not create or reorder roadmap commitments.
 # Scope: behavior and release-note analysis only; no third-party runtime or copied code is introduced.
-# Verdict: five bounded patterns merit implementation; cloud, daemon, agentic-retrieval, and backend breadth stay deferred.
+# Verdict: four bounded patterns are implemented and verified; producer identity waits for a real caller; broader scope stays deferred.
 
 ## Executive decision
 
@@ -33,6 +33,7 @@ Recommended order:
    immediate deliverable is a regression contract, not a rewrite.
    [Mem0 release](https://github.com/mem0ai/mem0/releases/tag/v2.0.15),
    [codebase-memory-mcp release](https://github.com/DeusData/codebase-memory-mcp/releases/tag/v0.9.1-rc.1)
+
 3. **P0 — honest partial-failure semantics.** Structured-output parse failures,
    unparseable success responses, embedding chunk failures, and provider exhaustion
    must produce completed/retryable/blocked counts that cannot look fully successful.
@@ -53,6 +54,21 @@ Recommended order:
    metadata as evidence, but make the chosen identity explicit and tested. Zep's first
    hardened ingest release fixed Slack authors by choosing `real_name` rather than the
    mutable display name. [Zep release](https://github.com/getzep/zep/releases/tag/zep-ingest-v0.1.0)
+
+## Implementation result
+
+The bounded reliability work is complete on
+`research/upstream-delta-20260803`. Commits `4e3d5bf`, `bb0e553`, `67cd3e3`,
+and `7f5f249` implement complete queue enumeration, honest partial/provider
+outcomes, content-free capture coverage, and an evaluation-only OpenCode OAuth
+judge. No third-party runtime code or dependency was copied into MemoryMaster.
+
+The final local gates passed 4,335 tests, 57 focused retrieval/embedding tests,
+85 release/e2e tests, clean default and capture wheel installs, encrypted
+SQLite restore, wheel-bound CycloneDX validation, strict OSV audits, and the
+reviewed full-history secret scan. LongMemEval-S held R@5 at 0.9660 and improved
+MRR to 0.9033913. Producer actor fields remain deferred until Hermes or another
+real generic producer supplies a tested identity-precedence caller.
 
 ## Useful later, not immediate
 

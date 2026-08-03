@@ -4,7 +4,7 @@
 # Read when: implementing or verifying the bounded reliability work selected from the 2026-08-03 upstream audit.
 # Authority: implements the Now reliability and quality-gate commitments in `ROADMAP.md`; it is not a second roadmap.
 # Boundaries: SQLite-first, no new runtime dependency, no live activation, no provider fallback, no public fifth verb.
-# Status: IN PROGRESS; update every checkbox and evidence pointer in the same commit as the corresponding work.
+# Status: COMPLETE locally; activation and private PR remain behind the authorized 24-hour observation boundary.
 
 ## Outcome
 
@@ -80,14 +80,30 @@ version, prompt hash, latency, and token counts without exposing credentials.
 
 ### H5 — Convergence and handoff
 
-- [ ] Run focused tests red then green for each package.
-- [ ] Run the complete non-ML suite, required retrieval/ML gates, Ruff,
+- [x] Run focused tests red then green for each package.
+- [x] Run the complete non-ML suite, required retrieval/ML gates, Ruff,
   collection, `git diff --check`, release-truth, and package-content checks.
-- [ ] Run disposable SQLite backup/restore and migration compatibility checks.
-- [ ] Run GitNexus change detection before every commit and refresh the index
+- [x] Run disposable SQLite backup/restore and migration compatibility checks.
+- [x] Run GitNexus change detection before every commit and refresh the index
   after the final commit while preserving embeddings.
-- [ ] Update this checklist, the upstream audit, and `DOCS-MAP.md` with final
+- [x] Update this checklist, the upstream audit, and `DOCS-MAP.md` with final
   evidence; do not publish or activate live scheduling in this work package.
+
+Evidence: the full suite passed 4,335 with 71 skipped and one expected failure;
+4,407 tests collected. Focused retrieval/embedding tests passed 57/57 and
+release-truth/supply-chain/e2e tests passed 85/85. The 500-question
+LongMemEval-S rerun held R@5 at 0.9660 and R@10 at 0.9840 while MRR improved
+from 0.9020579 to 0.9033913. Ruff and `git diff --check` passed.
+
+The disposable SQLite drill applied migrations idempotently twice, preserved
+one fixture claim, retained WAL, produced an encrypted authenticated backup,
+and restored with `integrity_check=ok`, zero foreign-key violations, and RTO
+met in 0.031 seconds. Clean default and `capture` wheel installs passed; the
+922,291-byte wheel was bound to a validated CycloneDX 1.6 SBOM. Reviewed
+full-history Gitleaks and strict OSV project/release-extra audits passed; the
+capture environment also passed after updating only its disposable bootstrap
+pip. No PostgreSQL, live database, scheduler, image, push, or publication was
+touched. Final GitNexus change detection and reindex complete the local handoff.
 
 ## Explicit deferrals
 
