@@ -4,7 +4,7 @@
 # Read when: implementing or verifying the bounded reliability work selected from the 2026-08-03 upstream audit.
 # Authority: implements the Now reliability and quality-gate commitments in `ROADMAP.md`; it is not a second roadmap.
 # Boundaries: SQLite-first, no new runtime dependency, no live activation, no provider fallback, no public fifth verb.
-# Status: COMPLETE locally; activation and private PR remain behind the authorized 24-hour observation boundary.
+# Status: COMPLETE locally; the ancestor observation passed, but PR creation is withheld because the only configured remote is public.
 
 ## Outcome
 
@@ -104,6 +104,10 @@ full-history Gitleaks and strict OSV project/release-extra audits passed; the
 capture environment also passed after updating only its disposable bootstrap
 pip. No PostgreSQL, live database, scheduler, image, push, or publication was
 touched. Final GitNexus change detection and reindex complete the local handoff.
+The authoritative vNext audit records its replacement 24-hour observation as
+passed. GitHub reports the sole configured `origin` as public, so no push or PR
+was created under the operator's explicit no-publication boundary. A private
+review remote, or later public-release authorization, is the only PR input left.
 
 ## Explicit deferrals
 
