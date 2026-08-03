@@ -66,12 +66,17 @@ serialized report test proves captured text is absent; focused Ruff and
 
 ### H4 — Evaluation-only OpenCode OAuth judge
 
-- [ ] Add an opt-in OpenCode judge to evaluation scripts, defaulting to
+- [x] Add an opt-in OpenCode judge to evaluation scripts, defaulting to
   `openai/gpt-5.4-mini` with medium effort.
-- [ ] Record provider, model, effort, OpenCode version, prompt hash, latency,
+- [x] Record provider, model, effort, OpenCode version, prompt hash, latency,
   and fixture identity.
-- [ ] Keep the judge outside steward promotion and production extraction.
-- [ ] Add hermetic command, malformed-output, timeout, and resume tests.
+- [x] Keep the judge outside steward promotion and production extraction.
+- [x] Add hermetic command, malformed-output, timeout, and resume tests.
+
+Evidence: 12/12 focused evaluator tests pass. A real OAuth-only smoke call with
+OpenCode 1.18.9 returned the exact `[7]` fixture through
+`openai/gpt-5.4-mini` at medium effort; the result recorded model, effort,
+version, prompt hash, latency, and token counts without exposing credentials.
 
 ### H5 — Convergence and handoff
 

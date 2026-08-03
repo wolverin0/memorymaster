@@ -1,22 +1,22 @@
-"""LLM-judge: label which retrieved claims actually answer each synthetic prompt.
+"""Offline judge labels for recall prompts with resumable provenance.
 
-For each prompt in the input JSONL:
-  1. Run the production recall hook to get the top-K (default 20) candidate claims.
-  2. Send (prompt + candidate snippets) to a haiku judge.
-  3. Judge returns the subset of claim IDs that genuinely answer the prompt.
-  4. Write {sha1_16(prompt): [claim_ids]} into the labels JSON.
+Key terms: recall evaluation, OpenCode OAuth, judge provenance, fixture hash.
+Read this when generating ground-truth labels for retrieval evaluation.
+This script never participates in capture, recall, or production claim writes.
+Provider failures remain explicit errors and never become empty labels.
+Existing label files resume without rejudging completed prompts.
 
 Usage:
-    python scripts/label_prompts_with_judge.py \
-        --prompts artifacts/real-prompts-1000.jsonl \
-        --db memorymaster.db \
-        --labels-out artifacts/real-prompts-1000-labels.json \
-        --top-k 20 \
-        --max-prompts 1000
+    python scripts/label_prompts_with_judge.py \\
+        --prompts artifacts/real-prompts-1000.jsonl \\
+        --db memorymaster.db \\
+        --labels-out artifacts/real-prompts-1000-labels.json \\
+        --judge-provider opencode
 
 The output is consumed by scripts/eval_recall_precision_at_5.py via the
 ``<prompts>-labels.json`` convention.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -27,6 +27,8 @@ import sys
 import time
 from pathlib import Path
 
+from memorymaster.evaluation.opencode_judge import OpenCodeJudge, OpenCodeJudgeError
+
 
 def _sha1_16(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
@@ -34,7 +36,7 @@ def _sha1_16(text: str) -> str:
 
 def _judge_prompt(prompt: str, candidates: list[dict]) -> str:
     candidate_lines = "\n".join(
-        f"[{c['id']}] {c['text'][:300]}" for c in candidates
+        f"[{candidate['id']}] {candidate['text'][:300]}" for candidate in candidates
     )
     return f"""You are a relevance judge. Given a USER QUERY and a list of CANDIDATE memory claims, return the subset of claim IDs that genuinely answer the query.
 
@@ -52,27 +54,14 @@ Rules:
 
 def _get_candidates(db_path: str, prompt: str, top_k: int) -> list[dict]:
     """Run production recall via context_hook and return top-K candidates."""
-    # Use the same return_ids=True path as the eval harness.
     from memorymaster.recall import context_hook
 
-    # Recall returns rendered bullet text; we need ids + raw claim text.
-    # Easiest: get the IDs from recall, then fetch claim text from DB.
     try:
-        # context_hook.recall signature:
-        #   recall(query, *, db_path='', budget=2000, format='text', skip_qdrant=False, return_ids=False)
-        result = context_hook.recall(
-            prompt,
-            db_path=db_path,
-            return_ids=True,
-        )
-        if isinstance(result, tuple):
-            _, ids = result
-        else:
-            ids = []
+        result = context_hook.recall(prompt, db_path=db_path, return_ids=True)
+        ids = result[1] if isinstance(result, tuple) else []
     except Exception as exc:
         print(f"[label] recall() raised: {exc}", flush=True)
         ids = []
-
     if not ids:
         return []
 
@@ -81,9 +70,9 @@ def _get_candidates(db_path: str, prompt: str, top_k: int) -> list[dict]:
     conn = sqlite3.connect(db_path)
     try:
         rows = []
-        for cid in ids[:top_k]:
+        for claim_id in ids[:top_k]:
             row = conn.execute(
-                "SELECT id, text FROM claims WHERE id = ?", (cid,)
+                "SELECT id, text FROM claims WHERE id = ?", (claim_id,)
             ).fetchone()
             if row:
                 rows.append({"id": row[0], "text": row[1] or ""})
@@ -92,119 +81,221 @@ def _get_candidates(db_path: str, prompt: str, top_k: int) -> list[dict]:
         conn.close()
 
 
-def _call_judge(prompt: str, candidates: list[dict]) -> list[int]:
-    """Single LLM call to the judge. Returns list of claim IDs."""
-    from memorymaster.core.llm_provider import call_llm, parse_json_response
-
-    judge_text = _judge_prompt(prompt, candidates)
-    raw = call_llm(judge_text, "")
-    if not raw:
-        return []
+def _parse_judge_ids(raw: str) -> list[int]:
+    from memorymaster.core.llm_provider import parse_json_response
 
     parsed = parse_json_response(raw)
-    # parse_json_response returns list of dicts; we want bare ints.
-    # If it returns [{"id": 123}, ...] coerce; otherwise try raw int parsing.
     ids: list[int] = []
     for item in parsed:
         if isinstance(item, int):
             ids.append(item)
         elif isinstance(item, dict):
-            v = item.get("id") or item.get("claim_id")
-            if isinstance(v, int):
-                ids.append(v)
+            value = item.get("id") or item.get("claim_id")
+            if isinstance(value, int):
+                ids.append(value)
         elif isinstance(item, str) and item.strip().lstrip("-").isdigit():
             ids.append(int(item.strip()))
-
-    # Fallback: regex-extract integers from raw if parser missed it
     if not ids:
         import re
 
-        ids = [int(m) for m in re.findall(r"\b\d{2,8}\b", raw)]
+        ids = [int(match) for match in re.findall(r"\b\d{2,8}\b", raw)]
     return ids
 
 
-def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--prompts", type=Path, required=True)
-    p.add_argument("--db", type=str, required=True)
-    p.add_argument("--labels-out", type=Path, required=True)
-    p.add_argument("--top-k", type=int, default=20)
-    p.add_argument("--max-prompts", type=int, default=1000)
-    p.add_argument(
+def _call_judge(
+    prompt: str,
+    candidates: list[dict],
+    *,
+    provider: str = "claude_cli",
+    judge: OpenCodeJudge | None = None,
+) -> tuple[list[int], dict]:
+    """Run one judge call and return IDs plus content-free provenance."""
+    judge_text = _judge_prompt(prompt, candidates)
+    if provider == "opencode":
+        if judge is None:
+            raise OpenCodeJudgeError("judge_unavailable", "OpenCode judge is unavailable.")
+        result = judge.complete(judge_text)
+        return _parse_judge_ids(result.text), result.provenance()
+
+    from memorymaster.core.llm_provider import call_llm
+
+    started = time.monotonic()
+    raw = call_llm(judge_text, "")
+    if not raw:
+        raise RuntimeError("Judge returned no output.")
+    provenance = {
+        "provider": provider,
+        "model": os.environ.get("MEMORYMASTER_LLM_MODEL", ""),
+        "prompt_hash": hashlib.sha256(judge_text.encode("utf-8")).hexdigest(),
+        "latency_ms": int((time.monotonic() - started) * 1000),
+    }
+    return _parse_judge_ids(raw), provenance
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--prompts", type=Path, required=True)
+    parser.add_argument("--db", type=str, required=True)
+    parser.add_argument("--labels-out", type=Path, required=True)
+    parser.add_argument("--top-k", type=int, default=20)
+    parser.add_argument("--max-prompts", type=int, default=1000)
+    parser.add_argument(
+        "--judge-provider", choices=("claude_cli", "opencode"), default="claude_cli"
+    )
+    parser.add_argument("--judge-model", default="openai/gpt-5.4-mini")
+    parser.add_argument("--judge-effort", default="medium")
+    parser.add_argument("--judge-timeout", type=int, default=180)
+    parser.add_argument(
         "--checkpoint-every",
         type=int,
         default=25,
         help="Flush labels JSON every N prompts (resume-safe).",
     )
-    args = p.parse_args()
+    return parser.parse_args()
 
-    # Force claude_cli for the judge — Gemini API is rate-limited and slow.
-    # Direct assignment (NOT setdefault) — avoid the v3.5.0 hook bug where
-    # an inherited shell env left the provider stale.
+
+def _load_prompts(path: Path, maximum: int) -> list[dict]:
+    prompts: list[dict] = []
+    with path.open(encoding="utf-8") as stream:
+        for line in stream:
+            if line.strip():
+                prompts.append(json.loads(line))
+    return prompts[:maximum]
+
+
+def _load_resume(path: Path) -> tuple[dict, dict, dict]:
+    if not path.exists():
+        return {}, {}, {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return (
+        dict(payload.get("labels", {})),
+        dict(payload.get("provenance", {})),
+        dict(payload.get("errors", {})),
+    )
+
+
+def _judge_config(args: argparse.Namespace) -> dict:
+    model = (
+        args.judge_model
+        if args.judge_provider == "opencode"
+        else os.environ.get("MEMORYMASTER_LLM_MODEL", "")
+    )
+    return {
+        "provider": args.judge_provider,
+        "model": model,
+        "effort": args.judge_effort if args.judge_provider == "opencode" else "",
+        "timeout_seconds": args.judge_timeout,
+    }
+
+
+def _output_payload(
+    args: argparse.Namespace, labels: dict, provenance: dict, errors: dict
+) -> dict:
+    return {
+        "schema": "memorymaster.recall-labels.v2",
+        "labels": labels,
+        "judge": _judge_config(args),
+        "fixture": {
+            "prompts_sha256": hashlib.sha256(args.prompts.read_bytes()).hexdigest(),
+            "prompt_count": len(labels) + len(errors),
+        },
+        "provenance": provenance,
+        "errors": errors,
+    }
+
+
+def _write_output(
+    args: argparse.Namespace, labels: dict, provenance: dict, errors: dict
+) -> None:
+    args.labels_out.parent.mkdir(parents=True, exist_ok=True)
+    args.labels_out.write_text(
+        json.dumps(_output_payload(args, labels, provenance, errors), indent=2),
+        encoding="utf-8",
+    )
+
+
+def _judge_client(args: argparse.Namespace) -> OpenCodeJudge | None:
+    if args.judge_provider != "opencode":
+        return None
+    return OpenCodeJudge(
+        model=args.judge_model,
+        effort=args.judge_effort,
+        timeout=args.judge_timeout,
+    )
+
+
+def _configure_legacy_provider(args: argparse.Namespace) -> None:
+    if args.judge_provider != "claude_cli":
+        return
     os.environ["MEMORYMASTER_LLM_PROVIDER"] = "claude_cli"
     os.environ["MEMORYMASTER_LLM_MODEL"] = "claude-haiku-4-5-20251001"
 
-    prompts: list[dict] = []
-    with args.prompts.open(encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            prompts.append(json.loads(line))
-    prompts = prompts[: args.max_prompts]
 
-    # Resume from existing labels file if present
-    labels: dict[str, list[int]] = {}
-    if args.labels_out.exists():
-        labels = json.loads(args.labels_out.read_text(encoding="utf-8")).get(
-            "labels", {}
-        )
+def _error_record(exc: Exception) -> dict[str, str]:
+    return {
+        "code": getattr(exc, "code", exc.__class__.__name__.lower()),
+        "detail": str(exc)[:500],
+    }
+
+
+def _label_one(
+    args: argparse.Namespace,
+    judge: OpenCodeJudge | None,
+    text: str,
+) -> tuple[list[int], dict]:
+    candidates = _get_candidates(args.db, text, args.top_k)
+    if not candidates:
+        return [], {"status": "skipped", "reason": "no_candidates"}
+    ids, provenance = _call_judge(
+        text, candidates, provider=args.judge_provider, judge=judge
+    )
+    candidate_ids = {candidate["id"] for candidate in candidates}
+    return [claim_id for claim_id in ids if claim_id in candidate_ids][:5], provenance
+
+
+def _progress(index: int, total: int, started: float, label: object) -> None:
+    elapsed = time.monotonic() - started
+    average = elapsed / index
+    eta = average * (total - index)
+    print(
+        f"[label] {index}/{total} avg={average:.1f}s "
+        f"eta={eta / 60:.1f}min last={label}",
+        flush=True,
+    )
+
+
+def main() -> int:
+    args = _parse_args()
+    _configure_legacy_provider(args)
+    prompts = _load_prompts(args.prompts, args.max_prompts)
+    labels, provenance, errors = _load_resume(args.labels_out)
+    if labels:
         print(f"[label] resuming from {len(labels)} existing labels", flush=True)
-
-    t_start = time.monotonic()
-    for i, p_obj in enumerate(prompts, 1):
-        text = p_obj["text"]
+    judge = _judge_client(args)
+    started = time.monotonic()
+    for index, prompt_object in enumerate(prompts, 1):
+        text = prompt_object["text"]
         sha = _sha1_16(text)
         if sha in labels:
             continue
         try:
-            cands = _get_candidates(args.db, text, args.top_k)
-            if not cands:
-                labels[sha] = []
-            else:
-                ids = _call_judge(text, cands)
-                # Filter to only IDs that were actually in the candidate set
-                cand_ids = {c["id"] for c in cands}
-                labels[sha] = [i for i in ids if i in cand_ids][:5]
+            labels[sha], provenance[sha] = _label_one(args, judge, text)
+            errors.pop(sha, None)
         except Exception as exc:
-            print(f"[label] {i}: ERROR {exc}", flush=True)
-            labels[sha] = []
-
-        if i % 5 == 0:
-            elapsed = time.monotonic() - t_start
-            avg = elapsed / i
-            eta = avg * (len(prompts) - i)
-            print(
-                f"[label] {i}/{len(prompts)}  avg={avg:.1f}s  eta={eta/60:.1f}min  "
-                f"last={labels[sha]}",
-                flush=True,
-            )
-
-        if i % args.checkpoint_every == 0:
-            args.labels_out.write_text(
-                json.dumps({"labels": labels}, indent=2), encoding="utf-8"
-            )
-
-    args.labels_out.write_text(
-        json.dumps({"labels": labels}, indent=2), encoding="utf-8"
-    )
-    n_labeled = sum(1 for v in labels.values() if v)
+            errors[sha] = _error_record(exc)
+            print(f"[label] {index}: ERROR {exc}", flush=True)
+        if index % 5 == 0:
+            _progress(index, len(prompts), started, labels.get(sha, "ERROR"))
+        if index % args.checkpoint_every == 0:
+            _write_output(args, labels, provenance, errors)
+    _write_output(args, labels, provenance, errors)
+    non_empty = sum(1 for value in labels.values() if value)
     print(
         f"[label] DONE wrote {len(labels)} labels "
-        f"({n_labeled} non-empty) to {args.labels_out}",
+        f"({non_empty} non-empty) to {args.labels_out}",
         flush=True,
     )
-    return 0
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":

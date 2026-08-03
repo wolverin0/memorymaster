@@ -24,6 +24,7 @@ from memorymaster.core.models import CitationInput  # noqa: E402
 from memorymaster.recall.embeddings import create_best_provider  # noqa: E402
 from memorymaster.core.config import reset_config  # noqa: E402
 from memorymaster.core.service import MemoryService  # noqa: E402
+from memorymaster.evaluation.opencode_judge import OpenCodeJudge  # noqa: E402
 
 
 DATA_PATH = ROOT / "benchmark" / "data" / "longmemeval_s_cleaned.json"
@@ -39,6 +40,8 @@ GEMINI_GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models/{
 OPENAI_JUDGE_MODEL = "gpt-4o"
 GEMINI_FALLBACK_MODEL = "gemini-2.5-flash"
 CLAUDE_CLI_JUDGE_MODEL = "claude-haiku-4-5-20251001"
+OPENCODE_JUDGE_MODEL = "openai/gpt-5.4-mini"
+OPENCODE_JUDGE_EFFORT = "medium"
 DEFAULT_JUDGE = "sonnet"
 DEFAULT_JUDGE_PACING_SECONDS = 1.0
 DEFAULT_QA_MAX_SECONDS = 90 * 60
@@ -63,6 +66,7 @@ class LLMResponse:
     model: str
     provider: str
     tokens: int = 0
+    provenance: dict[str, Any] | None = None
 
 
 @dataclass
@@ -72,14 +76,23 @@ class JudgeClient:
     gemini_api_key: str
     pacing_seconds: float = DEFAULT_JUDGE_PACING_SECONDS
     primary: str = DEFAULT_JUDGE
+    opencode_model: str = OPENCODE_JUDGE_MODEL
+    opencode_effort: str = OPENCODE_JUDGE_EFFORT
+    opencode_judge: Any | None = None
     total_tokens: int = 0
     models_used: set[str] = field(default_factory=set)
     call_models: list[str] = field(default_factory=list)
     calls: int = 0
+    call_provenance: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.provider_order = self._provider_order(self.primary)
         self.active_provider_idx = 0
+        if self.primary == "opencode" and self.opencode_judge is None:
+            self.opencode_judge = OpenCodeJudge(
+                model=self.opencode_model,
+                effort=self.opencode_effort,
+            )
 
     def complete(self, prompt: str, *, max_tokens: int, temperature: float = 0.0) -> LLMResponse:
         last_error: Exception | None = None
@@ -130,6 +143,16 @@ class JudgeClient:
             return call_openai_chat(prompt, self.openai_api_key, max_tokens=max_tokens, temperature=temperature)
         if provider == "claude_cli":
             return call_claude_cli_judge(prompt, max_tokens=max_tokens, temperature=temperature)
+        if provider == "opencode":
+            result = self.opencode_judge.complete(prompt)
+            return LLMResponse(
+                text=result.text,
+                model=result.model,
+                provider="opencode",
+                tokens=int(getattr(result, "input_tokens", 0))
+                + int(getattr(result, "output_tokens", 0)),
+                provenance=result.provenance(),
+            )
         raise ValueError(f"Unknown judge provider: {provider}")
 
     def _record(self, response: LLMResponse) -> None:
@@ -137,6 +160,8 @@ class JudgeClient:
         self.models_used.add(response.model)
         self.call_models.append(response.model)
         self.calls += 1
+        if response.provenance is not None:
+            self.call_provenance.append(dict(response.provenance))
 
     def _pace(self) -> None:
         if self.pacing_seconds > 0:
@@ -154,6 +179,8 @@ class JudgeClient:
             return "sonnet"
         if self.models_used == {CLAUDE_CLI_JUDGE_MODEL}:
             return "claude_cli"
+        if self.models_used == {self.opencode_model}:
+            return "opencode"
         return "mixed"
 
     @staticmethod
@@ -168,6 +195,8 @@ class JudgeClient:
             # OAuth-only via local Claude Code binary; no API keys needed.
             # Fall back to API providers only if explicit keys are present.
             return ["claude_cli", "gpt-4o", "gemini", "sonnet"]
+        if primary == "opencode":
+            return ["opencode"]
         raise ValueError(f"Unknown judge: {primary}")
 
     @staticmethod
@@ -178,6 +207,8 @@ class JudgeClient:
             return GEMINI_FALLBACK_MODEL
         if provider == "claude_cli":
             return CLAUDE_CLI_JUDGE_MODEL
+        if provider == "opencode":
+            return OPENCODE_JUDGE_MODEL
         return OPENAI_JUDGE_MODEL
 
 
@@ -762,6 +793,8 @@ def run_full(
     *,
     limit: int | None = None,
     judge_name: str = DEFAULT_JUDGE,
+    judge_model: str = OPENCODE_JUDGE_MODEL,
+    judge_effort: str = OPENCODE_JUDGE_EFFORT,
     judge_pacing_seconds: float = DEFAULT_JUDGE_PACING_SECONDS,
     max_seconds: int | None = DEFAULT_QA_MAX_SECONDS,
     mode: str = "full",
@@ -770,7 +803,12 @@ def run_full(
     openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
     gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
     # claude_cli judge runs entirely via local OAuth — no API keys required.
-    if judge_name != "claude_cli" and not anthropic_key and not openai_key and not gemini_key:
+    if (
+        judge_name not in {"claude_cli", "opencode"}
+        and not anthropic_key
+        and not openai_key
+        and not gemini_key
+    ):
         print("[full] no ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY; deferring QA")
         return {
             "mode": mode,
@@ -784,6 +822,11 @@ def run_full(
             "elapsed_seconds": 0.0,
             "judge_model": "none",
             "judge_primary": judge_name,
+            "judge_config": {
+                "model": judge_model if judge_name == "opencode" else "",
+                "effort": judge_effort if judge_name == "opencode" else "",
+            },
+            "judge_provenance": [],
             "tokens": 0,
         }
 
@@ -797,6 +840,8 @@ def run_full(
         gemini_api_key=gemini_key,
         pacing_seconds=judge_pacing_seconds,
         primary=judge_name,
+        opencode_model=judge_model,
+        opencode_effort=judge_effort,
     )
     started = time.time()
 
@@ -807,6 +852,7 @@ def run_full(
         qid = str(item["question_id"])
         retrieval = by_id[qid]
         call_start = len(judge.call_models)
+        provenance_start = len(judge.call_provenance)
         try:
             hypothesis = answer_question(str(item["question"]), retrieval.top_contexts, judge)
             verdict = judge_answer(str(item["answer"]), hypothesis, judge)
@@ -826,6 +872,7 @@ def run_full(
                 "verdict": verdict,
                 "correct": correct,
                 "judge_models": judge.call_models[call_start:],
+                "judge_provenance": judge.call_provenance[provenance_start:],
                 "top_session_ids": retrieval.top_session_ids,
                 "answer_session_ids": retrieval.answer_session_ids,
             }
@@ -853,6 +900,11 @@ def run_full(
         "mode": mode,
         "judge_model": judge.judge_used_label,
         "judge_primary": judge_name,
+        "judge_config": {
+            "model": judge_model if judge_name == "opencode" else "",
+            "effort": judge_effort if judge_name == "opencode" else "",
+        },
+        "judge_provenance": judge.call_provenance,
         "judge_retry_policy": (
             "Selected primary judge uses tenacity: 5 attempts, exponential backoff 2-60s, "
             "429 retry-after honored; sonnet default cascades Sonnet -> Gemini -> GPT-4o"
@@ -950,9 +1002,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--qa-output", type=Path, default=QA_OUTPUT, help="QA-only output JSON path")
     parser.add_argument(
         "--judge",
-        choices=["sonnet", "gpt-4o", "gemini", "claude_cli"],
+        choices=["sonnet", "gpt-4o", "gemini", "claude_cli", "opencode"],
         default=DEFAULT_JUDGE,
         help="Primary judge model; default sonnet. claude_cli uses local OAuth (no API key)",
+    )
+    parser.add_argument(
+        "--judge-model",
+        default=OPENCODE_JUDGE_MODEL,
+        help="OpenCode model identifier; ignored by other judges",
+    )
+    parser.add_argument(
+        "--judge-effort",
+        default=OPENCODE_JUDGE_EFFORT,
+        help="OpenCode reasoning variant; ignored by other judges",
     )
     parser.add_argument(
         "--judge-pacing-seconds",
@@ -985,6 +1047,8 @@ def main() -> None:
             retrieval_results,
             limit=args.limit,
             judge_name=args.judge,
+            judge_model=args.judge_model,
+            judge_effort=args.judge_effort,
             judge_pacing_seconds=args.judge_pacing_seconds,
             max_seconds=args.qa_max_seconds,
             mode="qa-only",
@@ -1001,6 +1065,8 @@ def main() -> None:
                 retrieval_results,
                 limit=args.limit,
                 judge_name=args.judge,
+                judge_model=args.judge_model,
+                judge_effort=args.judge_effort,
                 judge_pacing_seconds=args.judge_pacing_seconds,
                 max_seconds=args.qa_max_seconds,
             )
