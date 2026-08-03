@@ -39,12 +39,16 @@ Evidence: `tests/test_public_v1.py` failed twice before the fix, then passed
 
 ### H2 — Honest extraction outcomes
 
-- [ ] Add failing claim fixtures for all-invalid and partially-invalid JSON.
-- [ ] Add failing graph fixtures for timeout, empty output, malformed JSON,
+- [x] Add failing claim fixtures for all-invalid and partially-invalid JSON.
+- [x] Add failing graph fixtures for timeout, empty output, malformed JSON,
   unknown ontology values, and valid empty output.
-- [ ] Add stable retryable error codes without silent provider fallback.
-- [ ] Preserve valid partial claims and record a completed-job diagnostic.
-- [ ] Verify five failed attempts become blocked and evidence is preserved.
+- [x] Add stable retryable error codes without silent provider fallback.
+- [x] Preserve valid partial claims and record a completed-job diagnostic.
+- [x] Verify five failed attempts become blocked and evidence is preserved.
+
+Evidence: new tests failed at collection before the typed retry errors existed;
+after implementation, the Atlas, capture-worker, entity-graph, ontology,
+governed-storage, and Dreaming-surface set passed 85/85; focused Ruff passed.
 
 ### H3 — Capture coverage read model
 

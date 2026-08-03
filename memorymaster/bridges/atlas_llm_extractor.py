@@ -124,6 +124,8 @@ class AtlasLlmExtractionResult(AtlasClaimExtractionResult):
 
     degraded: int = 0
     emitted: int = 0
+    partial: int = 0
+    invalid_rows: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -132,6 +134,8 @@ class AtlasLlmExtractionResult(AtlasClaimExtractionResult):
             "ingested": self.ingested,
             "degraded": self.degraded,
             "emitted": self.emitted,
+            "partial": self.partial,
+            "invalid_rows": self.invalid_rows,
             "claims": [asdict(claim) for claim in self.claims],
         }
 
@@ -170,6 +174,8 @@ def extract_atlas_claims_llm(
     ingested = 0
     degraded = 0
     emitted = 0
+    partial = 0
+    invalid_rows = 0
     claims: list[Claim] = []
 
     for evidence in evidence_items:
@@ -179,10 +185,17 @@ def extract_atlas_claims_llm(
         if not is_governed_evidence_eligible(evidence):
             continue
         source_item = service.get_source_item_by_id(evidence.source_item_id)
-        typed_claims = _extract_for_evidence(evidence, source_item, model=model)
-        if typed_claims is None:
+        extraction = _extract_for_evidence(evidence, source_item, model=model)
+        if extraction is None:
             degraded += 1
             continue
+        typed_claims, rejected = extraction
+        invalid_rows += rejected
+        if rejected and not typed_claims:
+            degraded += 1
+            continue
+        if rejected:
+            partial += 1
         if typed_claims:
             matched += 1
         for typed in typed_claims:
@@ -199,6 +212,8 @@ def extract_atlas_claims_llm(
         ingested=ingested,
         degraded=degraded,
         emitted=emitted,
+        partial=partial,
+        invalid_rows=invalid_rows,
         claims=claims,
     )
 
@@ -208,7 +223,7 @@ def _extract_for_evidence(
     source_item: SourceItem | None,
     *,
     model: str | None,
-) -> list[_TypedClaim] | None:
+) -> tuple[list[_TypedClaim], int] | None:
     """Return validated typed claims, or ``None`` on a degraded (skipped) item."""
     body = (evidence.text or "").strip()
     if not body:
@@ -222,11 +237,14 @@ def _extract_for_evidence(
     if rows is None:
         return None
     typed: list[_TypedClaim] = []
+    invalid_rows = 0
     for row in rows:
-        candidate = _validate_row(row)
+        candidate = _validate_row(row) if isinstance(row, dict) else None
         if candidate is not None:
             typed.append(candidate)
-    return typed
+        else:
+            invalid_rows += 1
+    return typed, invalid_rows
 
 
 def _call_llm_safe(prompt: str, text: str, *, model: str | None) -> str | None:
@@ -252,7 +270,7 @@ def _call_llm_safe(prompt: str, text: str, *, model: str | None) -> str | None:
     return raw
 
 
-def _parse_rows(raw: str) -> list[dict] | None:
+def _parse_rows(raw: str) -> list[Any] | None:
     """Parse a JSON array of claim objects. ``None`` on malformed output."""
     try:
         parsed = parse_json_response(raw)
@@ -261,7 +279,7 @@ def _parse_rows(raw: str) -> list[dict] | None:
         return None
     if not isinstance(parsed, list):
         return None
-    return [row for row in parsed if isinstance(row, dict)]
+    return parsed
 
 
 def _validate_row(row: dict) -> _TypedClaim | None:

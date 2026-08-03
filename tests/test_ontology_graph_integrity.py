@@ -17,7 +17,7 @@ import pytest
 
 from memorymaster import forget, remember
 from memorymaster.capture import CaptureRepository
-from memorymaster.capture.adapters import CaptureRejected
+from memorymaster.capture.adapters import CaptureRejected, CaptureRetryable
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
 from memorymaster.knowledge.entity_graph import EntityGraph
@@ -217,6 +217,67 @@ def test_graph_worker_surfaces_ontology_diagnostics(tmp_path: Path) -> None:
         extract_confirmed_claim_graph(service, repository, job)
 
     assert exc.value.code == "ontology_validation_failed"
+
+
+@pytest.mark.parametrize(
+    ("provider_output", "expected_code"),
+    [
+        ("", "provider_empty_response"),
+        ("not-json", "malformed_json"),
+    ],
+)
+def test_graph_worker_retries_unusable_provider_output(
+    tmp_path: Path, provider_output: str, expected_code: str
+) -> None:
+    service, db, workspace = _service(tmp_path)
+    receipt, claim = _captured_claim(
+        service, db, workspace, text="Alice uses Atlas.", scope="project:a"
+    )
+    repository = CaptureRepository(service.store)
+    digest = hashlib.sha256(
+        f"claim:{claim.id}:{claim.updated_at}".encode("utf-8")
+    ).hexdigest()
+    repository.queue_job(
+        source_item_id=int(receipt.source_item["id"]),
+        content_hash=digest,
+        stage="extract_graph",
+    )
+    job = repository.lease_jobs(
+        owner="test", stages=("extract_graph",), limit=1
+    )[0]
+
+    with patch(
+        "memorymaster.knowledge.entity_graph._llm_chat",
+        return_value=provider_output,
+    ), pytest.raises(CaptureRetryable) as exc:
+        extract_confirmed_claim_graph(service, repository, job)
+
+    assert exc.value.code == expected_code
+
+
+def test_graph_worker_accepts_valid_empty_graph(tmp_path: Path) -> None:
+    service, db, workspace = _service(tmp_path)
+    receipt, claim = _captured_claim(
+        service, db, workspace, text="No named entities here.", scope="project:a"
+    )
+    repository = CaptureRepository(service.store)
+    digest = hashlib.sha256(
+        f"claim:{claim.id}:{claim.updated_at}".encode("utf-8")
+    ).hexdigest()
+    repository.queue_job(
+        source_item_id=int(receipt.source_item["id"]),
+        content_hash=digest,
+        stage="extract_graph",
+    )
+    job = repository.lease_jobs(
+        owner="test", stages=("extract_graph",), limit=1
+    )[0]
+
+    with patch(
+        "memorymaster.knowledge.entity_graph._llm_chat",
+        return_value='{"entities":[],"relations":[]}',
+    ):
+        assert extract_confirmed_claim_graph(service, repository, job) == []
 
 
 def test_custom_ontology_is_additive_and_validated(

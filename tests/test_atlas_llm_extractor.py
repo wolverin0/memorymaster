@@ -284,6 +284,70 @@ def test_call_llm_raises_is_caught_and_degraded(tmp_path: Path, monkeypatch) -> 
     assert result.claims == []
 
 
+def test_all_invalid_rows_are_unusable_not_a_success(tmp_path: Path, monkeypatch) -> None:
+    service = _service(tmp_path)
+    _seed_evidence(
+        service,
+        source_type="whatsapp",
+        provider="whatsapp",
+        text="A provider response with no usable structured claims.",
+    )
+    _patch_llm(
+        monkeypatch,
+        _canned(
+            [[{
+                    "type": "unsupported",
+                    "subject": "Alice",
+                    "predicate": "uses",
+                    "object": "Atlas",
+                    "text": "Alice uses Atlas.",
+            }]]
+        ),
+    )
+
+    result = extract_atlas_claims_llm(service, scope="project:atlas-test")
+
+    assert result.degraded == 1
+    assert result.partial == 0
+    assert result.invalid_rows == 1
+    assert result.emitted == 0
+
+
+def test_partial_rows_preserve_valid_claim_and_report_diagnostic(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = _service(tmp_path)
+    _seed_evidence(
+        service,
+        source_type="whatsapp",
+        provider="whatsapp",
+        text="Alice uses Atlas, accompanied by one malformed candidate.",
+    )
+    _patch_llm(
+        monkeypatch,
+        _canned(
+            [[
+                    {
+                        "type": "fact",
+                        "subject": "Alice",
+                        "predicate": "uses",
+                        "object": "Atlas",
+                        "text": "Alice uses Atlas.",
+                    },
+                    {"type": "unsupported", "subject": "discard me"},
+            ]]
+        ),
+    )
+
+    result = extract_atlas_claims_llm(service, scope="project:atlas-test")
+
+    assert result.degraded == 0
+    assert result.partial == 1
+    assert result.invalid_rows == 1
+    assert result.emitted == 1
+    assert result.ingested == 1
+
+
 # --------------------------------------------------------------------------- #
 # (4) Sensitivity routing — proves we go through service.ingest               #
 # --------------------------------------------------------------------------- #

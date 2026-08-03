@@ -8,7 +8,11 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from memorymaster.capture.adapters import CaptureRejected, resolve_local_locator
+from memorymaster.capture.adapters import (
+    CaptureRejected,
+    CaptureRetryable,
+    resolve_local_locator,
+)
 from memorymaster.capture.repository import CaptureRepository
 
 
@@ -19,6 +23,13 @@ class CaptureWorkerResult:
     retryable: int
     blocked: int
     errors: int
+    partial: int
+
+
+@dataclass(frozen=True, slots=True)
+class CaptureJobCompletion:
+    error_code: str
+    error_detail: str
 
 
 def _payload(source: Any) -> dict[str, Any]:
@@ -86,7 +97,9 @@ def _run_text_job(service: Any, repository: CaptureRepository, job: Any) -> None
     )
 
 
-def _run_claim_job(service: Any, repository: CaptureRepository, job: Any) -> None:
+def _run_claim_job(
+    service: Any, repository: CaptureRepository, job: Any
+) -> CaptureJobCompletion | None:
     evidence = repository.evidence_for_content(
         source_item_id=job.source_item_id, content_hash=job.content_hash
     )
@@ -103,23 +116,33 @@ def _run_claim_job(service: Any, repository: CaptureRepository, job: Any) -> Non
         evidence_ids={evidence.id},
     )
     if result.degraded:
-        raise RuntimeError("claim_extraction_degraded")
+        raise CaptureRetryable(
+            "claim_provider_output_invalid",
+            f"Claim provider output was unusable ({result.invalid_rows} invalid rows).",
+        )
+    if getattr(result, "partial", 0):
+        return CaptureJobCompletion(
+            "partial_provider_output",
+            f"Preserved valid claims and rejected {result.invalid_rows} invalid rows.",
+        )
+    return None
 
 
-def _process_job(service: Any, repository: CaptureRepository, job: Any) -> None:
+def _process_job(
+    service: Any, repository: CaptureRepository, job: Any
+) -> CaptureJobCompletion | None:
     if job.stage == "extract_text":
         _run_text_job(service, repository, job)
-        return
+        return None
     if job.stage == "extract_claims":
-        _run_claim_job(service, repository, job)
-        return
+        return _run_claim_job(service, repository, job)
     if job.stage == "extract_graph":
         from memorymaster.knowledge.graph_extraction import (
             extract_confirmed_claim_graph,
         )
 
         extract_confirmed_claim_graph(service, repository, job)
-        return
+        return None
     raise CaptureRejected("unsupported_stage", f"Unsupported stage: {job.stage}")
 
 
@@ -132,17 +155,38 @@ def run_capture_worker(
     """Drain a bounded batch; no job can exceed repository retry limits."""
     repository = CaptureRepository(service.store)
     jobs = repository.lease_jobs(owner=owner or f"capture-{uuid.uuid4().hex}", limit=limit)
-    counts = {"completed": 0, "retryable": 0, "blocked": 0, "errors": 0}
+    counts = {
+        "completed": 0,
+        "retryable": 0,
+        "blocked": 0,
+        "errors": 0,
+        "partial": 0,
+    }
     for job in jobs:
         try:
-            _process_job(service, repository, job)
-            repository.finish_job(job.id, status="completed")
+            completion = _process_job(service, repository, job)
+            repository.finish_job(
+                job.id,
+                status="completed",
+                error_code=completion.error_code if completion else None,
+                error_detail=completion.error_detail if completion else None,
+            )
             counts["completed"] += 1
+            counts["partial"] += int(completion is not None)
         except CaptureRejected as exc:
             repository.finish_job(
                 job.id, status="blocked", error_code=exc.code, error_detail=exc.detail
             )
             counts["blocked"] += 1
+        except CaptureRetryable as exc:
+            finished = repository.finish_job(
+                job.id,
+                status="retryable",
+                error_code=exc.code,
+                error_detail=exc.detail,
+            )
+            counts[finished.status] += 1
+            counts["errors"] += 1
         except Exception as exc:  # noqa: BLE001 - durable retry boundary
             finished = repository.finish_job(
                 job.id,

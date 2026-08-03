@@ -42,6 +42,15 @@ class CaptureRejected(ValueError):
         self.detail = detail
 
 
+class CaptureRetryable(RuntimeError):
+    """A transient capture failure with a stable operator-facing code."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+
+
 @dataclass(frozen=True, slots=True)
 class CaptureEnvelope:
     """Normalized input; ``resolved_path`` is transient and must not be persisted."""

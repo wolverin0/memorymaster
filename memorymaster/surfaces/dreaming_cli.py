@@ -31,6 +31,7 @@ def handle_dream_run(args, service, parser, effective_db) -> int:
             "retryable": capture_result.retryable,
             "blocked": capture_result.blocked,
             "errors": capture_result.errors,
+            "partial": capture_result.partial,
         }
     if args.json_output:
         print(json.dumps(result, ensure_ascii=False))

@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from memorymaster.capture.adapters import CaptureRejected
+from memorymaster.capture.adapters import CaptureRejected, CaptureRetryable
 from memorymaster.capture.repository import graph_job_content_hash
-from memorymaster.knowledge.entity_graph import EntityGraph
+from memorymaster.knowledge.entity_graph import EntityGraph, EntityGraphProviderError
 
 
 def _claim_job_hash(claim: Any) -> str:
@@ -26,11 +26,13 @@ def _matching_claim(repository: Any, job: Any) -> Any | None:
     return None
 
 
-def _diagnostic_error(diagnostics: list[str]) -> CaptureRejected:
+def _diagnostic_error(diagnostics: list[str]) -> CaptureRejected | CaptureRetryable:
     detail = ", ".join(diagnostics)
-    ontology_codes = ("unknown_", "malformed_")
-    if any(item.startswith(ontology_codes) for item in diagnostics):
+    if any(item.startswith("unknown_") for item in diagnostics):
         return CaptureRejected("ontology_validation_failed", detail)
+    if any(item.startswith("malformed_") for item in diagnostics):
+        code = next(item.split(":", 1)[0] for item in diagnostics if item.startswith("malformed_"))
+        return CaptureRetryable(code, detail)
     return CaptureRejected("graph_claim_ineligible", detail)
 
 
@@ -53,7 +55,10 @@ def extract_confirmed_claim_graph(
             "No active confirmed claim matches this graph job identity.",
         )
     graph = EntityGraph(str(service.store.db_path))
-    entities = graph.extract_and_link(claim.id, claim.text)
+    try:
+        entities = graph.extract_and_link(claim.id, claim.text)
+    except EntityGraphProviderError as exc:
+        raise CaptureRetryable(exc.code, exc.detail) from exc
     if graph.last_diagnostics:
         raise _diagnostic_error(graph.last_diagnostics)
     return entities

@@ -77,6 +77,57 @@ def test_llm_timeout_preserves_source_and_retries(worker_env, monkeypatch) -> No
     assert "secret-value" not in job["error_detail"]
 
 
+def test_partial_claim_output_completes_with_visible_diagnostic(
+    worker_env, monkeypatch
+) -> None:
+    service, db, workspace = worker_env
+    receipt = remember(text="Partially structured evidence", db=db, workspace=workspace)
+
+    def partial(*args, **kwargs):
+        return SimpleNamespace(degraded=0, partial=1, invalid_rows=1)
+
+    monkeypatch.setattr(
+        "memorymaster.bridges.atlas_llm_extractor.extract_atlas_claims_llm",
+        partial,
+    )
+    result = run_capture_worker(service, owner="fixture", limit=1)
+
+    assert result.completed == 1
+    assert result.partial == 1
+    with service.store.connect() as conn:
+        job = conn.execute(
+            "SELECT status, error_code FROM capture_jobs WHERE id=?",
+            (receipt.job_ids[0],),
+        ).fetchone()
+    assert tuple(job) == ("completed", "partial_provider_output")
+
+
+def test_unusable_claim_output_retries_with_stable_code(worker_env, monkeypatch) -> None:
+    service, db, workspace = worker_env
+    receipt = remember(text="Unusable structured evidence", db=db, workspace=workspace)
+
+    def unusable(*args, **kwargs):
+        return SimpleNamespace(degraded=1, partial=0, invalid_rows=2)
+
+    monkeypatch.setattr(
+        "memorymaster.bridges.atlas_llm_extractor.extract_atlas_claims_llm",
+        unusable,
+    )
+    result = run_capture_worker(service, owner="fixture", limit=1)
+
+    assert result.retryable == 1
+    assert service.get_source_item_by_id(receipt.source_item["id"]) is not None
+    assert service.list_evidence_items(
+        source_item_id=receipt.source_item["id"], limit=10
+    )
+    with service.store.connect() as conn:
+        job = conn.execute(
+            "SELECT status, error_code FROM capture_jobs WHERE id=?",
+            (receipt.job_ids[0],),
+        ).fetchone()
+    assert tuple(job) == ("retryable", "claim_provider_output_invalid")
+
+
 @pytest.mark.parametrize(
     "producer",
     ["hermes", "whatsapp", "obsidian-clipper", "agent"],

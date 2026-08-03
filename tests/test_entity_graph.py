@@ -13,6 +13,7 @@ from memorymaster.core.service import MemoryService
 from memorymaster.knowledge.entity_graph import (
     EntityGraph,
     EntityGraphNotReady,
+    EntityGraphProviderError,
     _llm_chat,
     _parse_json,
 )
@@ -66,11 +67,12 @@ class TestLlmChat:
         mock_call.assert_called_once_with("test", "test query")
 
     @patch("memorymaster.knowledge.entity_graph.call_llm")
-    def test_llm_chat_timeout_returns_empty(self, mock_call):
-        """Timeout returns empty string."""
+    def test_llm_chat_timeout_is_explicit(self, mock_call):
+        """Provider timeouts must not become successful empty extraction."""
         mock_call.side_effect = TimeoutError()
-        result = _llm_chat("test")
-        assert result == ""
+        with pytest.raises(EntityGraphProviderError) as exc:
+            _llm_chat("test")
+        assert exc.value.code == "provider_timeout"
 
 
 class TestEntityGraph:
@@ -116,11 +118,13 @@ class TestEntityGraph:
 
     @patch("memorymaster.knowledge.entity_graph._llm_chat")
     def test_extract_and_link_empty_response(self, mock_llm, graph):
-        """extract_and_link handles empty LLM response."""
+        """Empty provider output must not look like a valid empty graph."""
         graph.ensure_tables()
+        _seed_claims(graph, 1)
         mock_llm.return_value = ""
-        result = graph.extract_and_link(claim_id=1, text="test text")
-        assert result == []
+        with pytest.raises(EntityGraphProviderError) as exc:
+            graph.extract_and_link(claim_id=1, text="test text")
+        assert exc.value.code == "provider_empty_response"
 
     @patch("memorymaster.knowledge.entity_graph._llm_chat")
     def test_extract_and_link_with_entities(self, mock_llm, graph):

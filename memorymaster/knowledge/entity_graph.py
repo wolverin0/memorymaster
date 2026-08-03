@@ -35,6 +35,15 @@ class EntityGraphNotReady(RuntimeError):
     """Raised when the versioned relational graph schema is unavailable."""
 
 
+class EntityGraphProviderError(RuntimeError):
+    """Raised when a graph provider response is unusable and may be retried."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+
+
 def _llm_chat(prompt: str, system: str = "", model: str = "", base_url: str = "") -> str:
     """Call the configured MemoryMaster provider; legacy arguments remain additive."""
     overrides = {"MEMORYMASTER_LLM_MODEL": model} if model else {}
@@ -42,10 +51,21 @@ def _llm_chat(prompt: str, system: str = "", model: str = "", base_url: str = ""
         logger.warning("EntityGraph base_url is ignored; configure the selected provider.")
     try:
         with use_call_scoped_env(overrides):
-            return call_llm(system, prompt)
-    except Exception as exc:  # noqa: BLE001 - graph extraction degrades to diagnostics
+            raw = call_llm(system, prompt)
+    except TimeoutError as exc:
+        raise EntityGraphProviderError(
+            "provider_timeout", "Graph provider invocation timed out."
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - typed retry boundary
         logger.warning("LLM call failed: %s", exc)
-        return ""
+        raise EntityGraphProviderError(
+            "provider_call_failed", "Graph provider invocation failed."
+        ) from exc
+    if not raw or not raw.strip():
+        raise EntityGraphProviderError(
+            "provider_empty_response", "Graph provider returned no output."
+        )
+    return raw
 
 
 def _parse_json(raw: str) -> dict:
@@ -214,7 +234,9 @@ class EntityGraph:
         context = f"\nKnown entities: {', '.join(known)}" if known else ""
         raw = _llm_chat(text[:2000], system=self.ontology.prompt() + context)
         if not raw:
-            return None
+            raise EntityGraphProviderError(
+                "provider_empty_response", "Graph provider returned no output."
+            )
         data = _parse_json(raw)
         if data == {"entities": [], "relations": []}:
             try:
