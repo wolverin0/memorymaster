@@ -4,7 +4,7 @@
 > Read this before enabling Dreaming hooks, scheduling the worker, changing provider models, or activating candidate writes.
 > Default safety posture: disabled until explicitly installed; shadow processing before activation; never auto-confirms claims.
 > Authority: the claims store remains authoritative; the auxiliary capture ledger is replay state, not a second memory database.
-> Status: CURRENT implementation and stabilization contract; replacement 24-hour observation has not started.
+> Status: CURRENT implementation and stabilization contract; replacement 24-hour observation passed.
 
 ## Intent
 
@@ -160,7 +160,13 @@ An invalid or incomplete label blocks activation. Synthetic unit fixtures prove 
 
 `dream-status` reports pending states, run/provider counters, structured yield, 429s, hook error count, scheduler freshness, and warnings. The first exhausted Gemini 429 opens a batch circuit so later captures wait for the next run instead of amplifying throttling. Repeated semantic evidence failures quarantine after two attempts for review rather than looping forever. Sustained GLM concurrency is intentionally one because the reused Z.AI account has shown throttling above two concurrent callers elsewhere. OpenCode runs in an isolated non-repository directory with tools and inherited MCP startup denied, so it cannot modify source or absorb project instructions. A recurring Windows task under the authenticated user is used instead of shell-detached processes.
 
-The first real rollout should remain shadow-only for at least 48 hours. Review provider yield, retry/quarantine counts, scope mistakes, ephemeral candidates, evidence accuracy, estimated cost, and a human-labeled sample before considering activation.
+The initial real rollout was required to remain shadow-only while provider yield,
+retry/quarantine counts, scope mistakes, ephemeral candidates, evidence accuracy,
+estimated cost, and human-reviewed samples were evaluated. The completed
+activation and replacement 24-hour observation evidence is recorded in
+`.planning/audits/2026-07-27-vnext-governed-capture/audit-delta.md`; future
+rollouts must establish an equivalent bounded observation instead of assuming
+that earlier evidence covers a new provider or configuration.
 
 ## Rollback
 

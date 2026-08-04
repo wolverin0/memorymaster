@@ -2,14 +2,15 @@
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, ADR, vNext.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-04 after capture performance and integrity passed repeated and adversarial gates.
-# Verdicts: ABANDONED=9, CURRENT=96, GENERATED=3, SUPERSEDED=9.
+# Updated: 2026-08-04 after autoresearch convergence and release-gate reconciliation.
+# Verdicts: ABANDONED=9, CURRENT=97, GENERATED=3, SUPERSEDED=9.
 # Rule: CURRENT docs are trusted; never implement from SUPERSEDED or ABANDONED docs.
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
 | ROADMAP.md | CURRENT | 2026-07-27 | Sole authoritative product roadmap; vNext governed capture is in Now and hosted/team breadth remains deferred. |
-| .planning/AUTORESEARCH-PROGRAM-2026-08-03.md | CURRENT | 2026-08-04 | Active execution overlay records completed harness, query, retrieval-quality, governed graph, and capture phases; release-candidate convergence is next. |
+| .planning/AUTORESEARCH-PROGRAM-2026-08-03.md | CURRENT | 2026-08-04 | Completed six-phase execution overlay records benchmark, production query, retrieval, graph, capture, and local convergence evidence plus external release gates. |
+| .planning/audits/2026-08-04-autoresearch-convergence/audit-delta.md | CURRENT | 2026-08-04 | Bounded convergence delta records exact SQLite-only tests, metrics, artifact identities, supply-chain evidence, and the remaining authenticated/external gates. |
 | COMPETITOR_ANALYSIS.md | CURRENT | 2026-07-27 | Current prior-art analysis corrects Cognee provenance, temporal, tenant, graph, and document capabilities without adopting it as a dependency. |
 | .planning/UPSTREAM-PRIOR-ART-DELTA-2026-08-03.md | CURRENT | 2026-08-03 | Dated refresh of twelve cloned upstreams with exact SHAs and adopt/retain/defer/reject recommendations that remain subordinate to ROADMAP.md. |
 | .planning/UPSTREAM-HARDENING-IMPLEMENTATION-2026-08-03.md | CURRENT | 2026-08-03 | Completed SQLite-first execution record for queue enumeration, honest extraction outcomes, capture coverage, OAuth evaluation, and release gates. |
@@ -28,7 +29,7 @@
 | docs/archive/AUDIT-2026-04-09.md | ABANDONED | 2026-06-20 | The doc is a dated audit from April 2026 with a specific 30-day fix plan for temporary issues (hardcoded paths, missing auth, failing tests) that implies a transient state of the codebase rather than permanent reference material.  |
 | .planning/audits/2026-07-13-phase2-budget-delta/pr-draft.md | ABANDONED | 2026-07-14 | The file is a draft PR from 2026 that describes Phase 2 core convergence as not yet deployed and requiring specific external evidence, suggesting a temporary plan that was either superseded or discarded.  |
 | .planning/P1-RELIABILITY-SPEC.md | CURRENT | 2026-06-10 | This is the approved, active specification for the v3.29 reliability build, with detailed implementation tasks and migration steps based on recent evidence.  |
-| .planning/MEMORYMASTER-DREAMING-V1.md | CURRENT | 2026-07-29 | Canonical contract for quiet capture, exact-span OpenCode extraction, provider/model variants, activation gates, and rollback. |
+| .planning/MEMORYMASTER-DREAMING-V1.md | CURRENT | 2026-08-04 | Canonical contract for quiet capture, exact-span OpenCode extraction, provider/model variants, completed activation evidence, and rollback. |
 | .planning/codebase/STRUCTURE.md | CURRENT | 2026-07-14 | The document accurately reflects the project's current directory layout, module boundaries, and file organization logic (e.g., 800 LOC limits), confirmed by specific references to existing paths and integration patterns.  |
 | .planning/audits/2026-07-13-phase2-budget-delta/audit-delta.md | CURRENT | 2026-07-14 | This document serves as the authoritative audit record for Phase 2 convergence, referencing specific completed milestones (e.g., P2-A through P2-F) and remaining external blockers, with no indication of being superseded or abandoned.  |
 | .planning/REMEDIATION-OPTIMIZATION-PLAN-2026-07-10.md | CURRENT | 2026-07-14 | The document is a dated 2026 remediation plan with proposed status and clear work packages that align with the project's scope, and no signals indicate it has been executed or superseded.  |
