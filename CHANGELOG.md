@@ -1,9 +1,62 @@
 # Changelog
+# Covers: public MemoryMaster releases and their user-visible changes.
+# Key terms: governed capture, recall, lineage, ontology, Docker, LongMemEval.
+# Read when: upgrading MemoryMaster or preparing release notes and migrations.
+# Current release: 4.6.0, personal-first governed universal capture.
+# Format: Keep a Changelog with Semantic Versioning.
+# Updated: 2026-08-04 for the v4.6.0 release.
 
-All notable changes to this project will be documented in this file.
+## [4.6.0] - 2026-08-04
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+MemoryMaster 4.6 adds a friendly governed-memory facade and universal local
+capture while retaining confirmed-only trusted recall, SQLite authority, and
+steward-controlled promotion. No cloud service, multi-user expansion, Cognee
+runtime, or required external vector database is introduced.
+
+### Added
+
+- Public `remember`, `recall`, `forget`, and `improve` operations across Python,
+  CLI, and MCP, with versioned receipts, citations, lifecycle states, and
+  preview-first logical retirement.
+- Text, Markdown, deterministic HTML, optional PDF/DOCX, image, and audio
+  capture adapters with bounded sizes, configured-root enforcement, replay-safe
+  hashes, and producer envelopes for agents, WhatsApp, and web clippers.
+- Durable claim/evidence lineage, capture-job leasing and retry states, and
+  claim-backed entity-edge supports through additive SQLite migrations.
+- The `personal-v1` ontology, configured-provider graph extraction, supported
+  graph retrieval, Capture Inbox dashboard, and disposable local demo.
+- Resumable, exact-window LongMemEval OAuth QA and bounded autoresearch gates for
+  retrieval, graph, capture, latency, packaging, and supply-chain evidence.
+
+### Changed
+
+- LongMemEval-S retrieval improved from R@5 0.966 to 0.972 and MRR 0.9021 to
+  0.9076 while R@10 held at 0.984; comparable full QA improved from 46.2 to
+  46.4 percent with the same OAuth-backed judge.
+- Temporary-SQLite query p95 improved from 52.265 ms to 38.608 ms, and the
+  benchmark iteration slice improved from 105.168 s to 66.569 s.
+- Dreaming provider calls, leases, scheduler actions, and readiness reporting
+  now have bounded failure behavior and hidden Windows task execution.
+
+### Security
+
+- The release supply-chain gate covers full-history Gitleaks, strict project
+  and release-extra OSV audits, artifact-bound CycloneDX validation, and an
+  authenticated immutable-image Docker Scout scan.
+- Both container stages now use a pinned official Python 3.12 Alpine base. The
+  release candidate scan reports zero critical, high, medium, or low findings.
+- Trusted graph traversal requires active, authorized supporting claims and
+  cannot bypass lifecycle, scope, sensitivity, or principal checks.
+
+### Known follow-ups
+
+- The seven-day operational observation continues after the already-passing
+  24-hour candidate-write window.
+- The private capture/graph precision corpus remains too small for statistically
+  strong 90/90/85 precision claims.
+- Legacy MCP ingest logging can still create a cwd-relative
+  `obsidian-vault/log.md` even when wiki export is disabled; this is scheduled
+  for a follow-up fix and the claims database remains authoritative.
 
 ## [4.5.0] - 2026-07-14
 

@@ -2,12 +2,13 @@
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, ADR, vNext.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-04 after authenticated Docker and comparable full-QA convergence.
-# Verdicts: ABANDONED=9, CURRENT=97, GENERATED=3, SUPERSEDED=9.
+# Updated: 2026-08-04 for the v4.6.0 release and changelog registration.
+# Verdicts: ABANDONED=9, CURRENT=98, GENERATED=3, SUPERSEDED=9.
 # Rule: CURRENT docs are trusted; never implement from SUPERSEDED or ABANDONED docs.
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
+| CHANGELOG.md | CURRENT | 2026-08-04 | Public release history; v4.6.0 records governed universal capture, measured quality changes, security evidence, and known follow-ups. |
 | ROADMAP.md | CURRENT | 2026-07-27 | Sole authoritative product roadmap; vNext governed capture is in Now and hosted/team breadth remains deferred. |
 | .planning/AUTORESEARCH-PROGRAM-2026-08-03.md | CURRENT | 2026-08-04 | Completed six-phase execution overlay records benchmark, production query, retrieval, graph, capture, Docker, full-QA, and remaining longitudinal evidence. |
 | .planning/audits/2026-08-04-autoresearch-convergence/audit-delta.md | CURRENT | 2026-08-04 | Bounded convergence delta records exact SQLite-only tests, metrics, artifact identities, authenticated supply-chain and full-QA evidence, and remaining longitudinal/public gates. |
