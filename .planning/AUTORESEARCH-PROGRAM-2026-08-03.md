@@ -4,7 +4,7 @@
 # Read when: launching, monitoring, or deciding whether an autoresearch phase is complete.
 # Authority: implements ROADMAP.md quality gates; it does not replace the product roadmap.
 # Safety: temporary SQLite and deterministic providers only; no live DB, scheduler, push, PR, or publish.
-# Updated: 2026-08-04 after governed graph retrieval passed focused and full-corpus gates.
+# Updated: 2026-08-04 after capture performance and integrity passed repeated and adversarial gates.
 
 ## Objective
 
@@ -23,8 +23,8 @@ it never terminates the entire program.
 | 2. Production-path performance | Temporary-SQLite query p95 | 0 misses; confirmed count; ingest/cycle SLOs | **Complete**: 52.265ms -> 38.608ms (`544048b`); one 44.624ms drift run remains recorded |
 | 3. Retrieval quality | LongMemEval-S MRR | R@5/R@10 no regression; held-out/full gate; provider-call cap | **Complete**: full MRR 0.9021 -> 0.9076; R@5 0.966 -> 0.972; R@10 0.984; 0 provider calls (`8f2caf6`) |
 | 4. Graph-supported retrieval | Graph-focused top-5 hit rate | Authorized active supports only; 0 cross-scope results | **Complete**: 0/6 -> 6/6; 0 forbidden hits/provider calls; full LongMemEval unchanged (`1b4f5f2`) |
-| 5. Capture performance | Capture acknowledgement p95 | 0 duplicates/orphans/secrets; terminal job states | **Next** |
-| 6. Convergence | Gate pass count | Full tests, Ruff, diff check, package validation | Pending |
+| 5. Capture performance | Capture acknowledgement p95 | 0 duplicates/orphans/secrets; terminal job states | **Complete at baseline**: worst of five p95 runs 107.0ms vs 500ms SLO; 0 integrity failures; 62 passed, 1 optional-parser skip (`0dd80de`) |
+| 6. Convergence | Gate pass count | Full tests, Ruff, diff check, package validation | **Next** |
 
 ## Execution contract
 
