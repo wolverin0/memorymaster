@@ -6,6 +6,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -92,3 +93,22 @@ def test_apply_threshold_overrides_only_changes_specified_values() -> None:
     assert merged.query_throughput_min_ops_per_sec == 8.0
     assert merged.cycle_p95_seconds_max == 9.0
     assert merged.total_runtime_seconds_max == 44.0
+
+
+def test_contains_expected_claim_requires_exact_target() -> None:
+    mod = _load_perf_smoke_module()
+    rows = [
+        SimpleNamespace(object_value="marker_0007"),
+        SimpleNamespace(object_value="marker_0008"),
+    ]
+
+    assert mod._contains_expected_claim(rows, "marker_0007") is True
+    assert mod._contains_expected_claim(rows, "marker_0070") is False
+    assert mod._contains_expected_claim([], "marker_0007") is False
+
+
+def test_fixture_value_has_unique_retrieval_token() -> None:
+    mod = _load_perf_smoke_module()
+
+    assert mod._fixture_value(7) == "marker_0007"
+    assert mod._fixture_value(70) == "marker_0070"

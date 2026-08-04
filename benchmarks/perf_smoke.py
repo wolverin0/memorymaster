@@ -47,6 +47,16 @@ def percentile(values: list[float], p: float) -> float:
     return ordered[rank - 1]
 
 
+def _contains_expected_claim(rows: list[object], expected_value: str) -> bool:
+    """Return whether governed recall included the exact synthetic target."""
+    return any(getattr(row, "object_value", None) == expected_value for row in rows)
+
+
+def _fixture_value(index: int) -> str:
+    """Create a unique token that survives retrieval tokenization."""
+    return f"marker_{index:04d}"
+
+
 @dataclass(slots=True)
 class Thresholds:
     ingest_p95_seconds_max: float = DEFAULT_INGEST_P95_MAX
@@ -166,9 +176,10 @@ def run_perf_smoke(*, claims: int, queries: int, cycles: int, workspace_root: Pa
 
         ingest_started = time.monotonic()
         for idx in range(claims):
+            fixture_value = _fixture_value(idx)
             started = time.perf_counter()
             service.ingest(
-                text=f"Synthetic perf claim {idx} has value value_{idx}",
+                text=f"Synthetic perf claim {idx} has value {fixture_value}",
                 citations=[
                     CitationInput(
                         source="perf://smoke",
@@ -180,7 +191,7 @@ def run_perf_smoke(*, claims: int, queries: int, cycles: int, workspace_root: Pa
                 claim_type="perf_smoke",
                 subject=f"entity_{idx}",
                 predicate="setting",
-                object_value=f"value_{idx}",
+                object_value=fixture_value,
                 scope="perf",
                 volatility="low",
                 confidence=0.72,
@@ -201,12 +212,20 @@ def run_perf_smoke(*, claims: int, queries: int, cycles: int, workspace_root: Pa
             cycle_times.append(time.perf_counter() - started)
             cycle_results.append(cycle_result)
 
+        query_targets = service.list_claims(
+            status="confirmed",
+            limit=min(max(queries, 1), max(claims, 1)),
+        )
         query_started = time.monotonic()
         for idx in range(queries):
-            target = idx % max(claims, 1)
+            expected_value = (
+                str(query_targets[idx % len(query_targets)].object_value)
+                if query_targets
+                else _fixture_value(idx % max(claims, 1))
+            )
             started = time.perf_counter()
             rows = service.query(
-                query_text=f"value_{target}",
+                query_text=expected_value,
                 limit=5,
                 include_stale=True,
                 include_conflicted=True,
@@ -214,7 +233,7 @@ def run_perf_smoke(*, claims: int, queries: int, cycles: int, workspace_root: Pa
                 allow_sensitive=False,
             )
             query_times.append(time.perf_counter() - started)
-            if not rows:
+            if not _contains_expected_claim(rows, expected_value):
                 query_misses += 1
         query_total = time.monotonic() - query_started
 
