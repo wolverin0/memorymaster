@@ -126,6 +126,12 @@ class TestCosine:
         v = normalize([1.0, 2.0, 3.0])
         assert abs(cosine_similarity(v, v) - 1.0) < 1e-6
 
+    def test_matches_normalized_dot_product(self):
+        left = normalize([2.0, 3.0, 4.0])
+        right = normalize([5.0, 6.0, 7.0])
+        expected = sum(x * y for x, y in zip(left, right, strict=True))
+        assert cosine_similarity(left, right) == pytest.approx(expected)
+
     def test_different_dims_raises(self):
         with pytest.raises(ValueError, match="same dimension"):
             cosine_similarity([1.0], [1.0, 2.0])
