@@ -4,7 +4,7 @@
 # Read when: reviewing the local candidate, public PR readiness, or remaining release-quality gates.
 # Baseline: d33a268; pre-retirement code head is 6be23d7.
 # Evidence boundary: SQLite/private providers; private paths, fingerprints, and row counts are excluded.
-# Verdict: 24-hour observation and LifeAgent retirement passed; no PR, push, or publication is included.
+# Verdict: 24-hour, LifeAgent, Docker, and full-QA gates passed; no public push or publication is included.
 
 ## Scope and implementation
 
@@ -122,9 +122,11 @@ produced 100 percent candidate, entity, and relationship precision. Usage was
 small activation smoke, not a statistically sufficient substitute for the
 90/90/85 private-corpus gate.
 
-The comparable full OAuth-backed before/after QA judge was not run. The
-existing one-question smoke proves only judge-path readiness, not answer
-quality. Full QA remains a release-quality gate, not an activation invariant.
+Comparable full OAuth-backed before/after QA passed with the same keyless
+OpenCode 1.18.13 judge (`openai/gpt-5.4-mini`, medium effort). Baseline accuracy
+was 46.2 percent (231/500) and retained accuracy was 46.4 percent (232/500), a
++0.2 percentage-point delta versus the permitted -2.0-point floor. This closes
+the answer-quality comparison without changing the activation invariant.
 
 ### Package and supply chain
 
@@ -242,10 +244,9 @@ The remaining work is release evidence, not an activation blocker:
 
 1. Continue the seven-day observation for capture precision, graph support,
    provider usage, task results, and recall regressions.
-2. Run comparable before/after OAuth-backed full QA before package release.
-3. Expand the private capture/graph corpus enough to make the 90/90/85 quality
+2. Expand the private capture/graph corpus enough to make the 90/90/85 quality
    thresholds statistically meaningful.
-4. Obtain separate operator authorization before creating a public PR, pushing
+3. Obtain separate operator authorization before creating a public PR, pushing
    this branch, publishing a package, or performing a public deployment. This
    stabilization does none of those actions.
 
