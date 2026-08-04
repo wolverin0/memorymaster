@@ -1527,6 +1527,8 @@ class MemoryService(IntegrationService):
                 limit,
                 scope_allowlist=normalized_scopes,
                 allow_sensitive=include_sensitive,
+                statuses=statuses,
+                requesting_agent=requesting_agent,
             )
         if cache_path and cache_key:
             query_cache.write(cache_path, cache_key, [
@@ -1618,8 +1620,17 @@ class MemoryService(IntegrationService):
         *,
         scope_allowlist: list[str] | None = None,
         allow_sensitive: bool = False,
+        statuses: list[str] | None = None,
+        requesting_agent: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Add entity-related claims to query results via knowledge graph traversal."""
+        """Merge governed entity candidates without making graph retrieval default.
+
+        Entity paths are discovery hints only: every graph candidate is
+        rehydrated through the authoritative claim store and rechecked against
+        the same lifecycle, tenant, scope, sensitivity, and principal rules as
+        ranked rows. Valid graph evidence reserves result slots so a full
+        lexical top-k cannot turn opt-in enrichment into a vacancy-only path.
+        """
         from memorymaster.knowledge.entity_graph import EntityGraph
 
         query_words = [
@@ -1642,20 +1653,31 @@ class MemoryService(IntegrationService):
         existing_ids = {
             row["claim"].id for row in results if hasattr(row.get("claim"), "id")
         }
-        additions = [row for row in related if row["claim_id"] not in existing_ids][
-            : limit - len(results)
-        ]
-        for explanation in additions:
+        allowed_statuses = set(statuses or ("confirmed",))
+        graph_rows: list[dict[str, Any]] = []
+        for explanation in related:
             claim_id = int(explanation["claim_id"])
+            if claim_id in existing_ids:
+                continue
             claim = self.store.get_claim(claim_id, include_citations=True)
-            if claim is None or claim.status != "confirmed":
+            if claim is None or claim.status not in allowed_statuses:
+                continue
+            if self.tenant_id is not None and claim.tenant_id != self.tenant_id:
                 continue
             if scope_allowlist is not None and claim.scope not in scope_allowlist:
                 continue
             if not allow_sensitive and is_sensitive_claim(claim):
                 continue
-            results.append(self._entity_graph_row(claim, explanation=explanation))
-        return results
+            if not _filter_agent_visibility([claim], requesting_agent):
+                continue
+            graph_rows.append(self._entity_graph_row(claim, explanation=explanation))
+            existing_ids.add(claim.id)
+
+        if not graph_rows:
+            return results[:limit]
+        graph_rows = graph_rows[:limit]
+        lexical_limit = max(0, limit - len(graph_rows))
+        return results[:lexical_limit] + graph_rows
 
     def _entity_graph_row(
         self, claim: Claim, *, explanation: dict[str, Any] | None = None

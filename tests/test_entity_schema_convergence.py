@@ -232,3 +232,58 @@ def test_init_extract_stats_related_and_enriched_recall(tmp_path: Path) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_entity_enrichment_reserves_governed_graph_slots(tmp_path: Path) -> None:
+    """Graph candidates cannot be starved by a full lexical top-k."""
+    db_path = tmp_path / "graph-slots.db"
+    service = MemoryService(db_path, workspace_root=tmp_path)
+    service.init_db()
+    scope = "project:graph-slots"
+
+    def confirmed(text: str, confidence: float = 0.5):
+        claim = service.ingest(
+            text=text,
+            citations=[CitationInput(source="test", locator="graph-slots")],
+            scope=scope,
+            confidence=confidence,
+            source_agent="graph-slots",
+        )
+        return service.store.apply_status_transition(
+            claim, to_status="confirmed", reason="fixture", event_type="validator"
+        )
+
+    support = confirmed("Mira coordinates Operations Atlas.")
+    target = confirmed("The shift review is on Thursday.", confidence=0.2)
+    graph = EntityGraph(str(db_path))
+    with patch("memorymaster.knowledge.entity_graph._llm_chat") as extract:
+        extract.return_value = (
+            '{"entities":[{"name":"Mira","type":"person","aliases":[]},'
+            '{"name":"Operations Atlas","type":"project","aliases":[]}],'
+            '"relations":[{"source":"Mira","target":"Operations Atlas",'
+            '"relation":"manages"}]}'
+        )
+        graph.extract_and_link(support.id, support.text)
+        extract.return_value = (
+            '{"entities":[{"name":"Operations Atlas","type":"project",'
+            '"aliases":[]}],"relations":[]}'
+        )
+        graph.extract_and_link(target.id, target.text)
+    for index in range(5):
+        confirmed(f"Mira shift reference {index}.", confidence=0.99)
+
+    rows = service.query_rows(
+        "Mira shift",
+        limit=5,
+        include_stale=False,
+        include_conflicted=False,
+        include_candidates=False,
+        retrieval_mode="hybrid",
+        enrich_with_entities=True,
+        scope_allowlist=[scope],
+        record_accesses=False,
+    )
+
+    assert len(rows) == 5
+    assert target.id in {row["claim"].id for row in rows}
+    assert any(row.get("source") == "entity_graph" for row in rows)
