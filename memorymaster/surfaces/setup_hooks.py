@@ -638,18 +638,49 @@ def _provider_readiness() -> dict[str, bool]:
         if dream_provider in {"opencode", "openai"}
         else bool(os.environ.get("GEMINI_API_KEY", "").strip())
     )
+    from memorymaster.capture.worker import capture_llm_overrides
+
+    capture_env = capture_llm_overrides()
+    capture_provider = capture_env.get("MEMORYMASTER_LLM_PROVIDER", "google").lower()
+    fallback_provider = os.environ.get(
+        "MEMORYMASTER_LLM_FALLBACK_PROVIDER", ""
+    ).strip().lower()
+    capture_ready = _llm_provider_ready(capture_provider) or (
+        bool(fallback_provider) and _llm_provider_ready(fallback_provider)
+    )
     return {
         "dream_extractor": dream_extractor_ready,
         "dream_consolidator": shutil.which("opencode") is not None,
-        "claim_extractor": bool(
-            os.environ.get("MEMORYMASTER_LLM_PROVIDER", "").strip()
-            or os.environ.get("MEMORYMASTER_LLM_FALLBACK_PROVIDER", "").strip()
-        ),
+        "claim_extractor": capture_ready,
+        "graph_extractor": capture_ready,
         "ocr": bool(os.environ.get("MEMORYMASTER_OCR_PROVIDER", "").strip()),
         "transcription": bool(
             os.environ.get("MEMORYMASTER_TRANSCRIPTION_PROVIDER", "").strip()
         ),
     }
+
+
+def _llm_provider_ready(provider: str) -> bool:
+    if provider in {"opencode", "opencode_cli", "opencode-cli"}:
+        command = os.environ.get("MEMORYMASTER_OPENCODE_COMMAND", "").strip()
+        return shutil.which(command or "opencode") is not None
+    if provider in {"google", "gemini"}:
+        key_vars = (
+            "GEMINI_API_KEY",
+            "GEMINI_API_KEYS",
+            "MEMORYMASTER_API_KEY",
+            "MEMORYMASTER_LLM_API_KEYS",
+        )
+        return any(os.environ.get(key, "").strip() for key in key_vars) or (
+            HOME / ".memorymaster" / "gemini-keys.env"
+        ).is_file()
+    if provider == "openai":
+        return bool(os.environ.get("OPENAI_API_KEY", "").strip())
+    if provider in {"anthropic", "claude"}:
+        return bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+    if provider in {"claude_cli", "claude-cli"}:
+        return shutil.which("claude") is not None
+    return provider == "ollama"
 
 
 def verify_scheduled_automation(

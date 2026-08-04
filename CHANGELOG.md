@@ -4,12 +4,17 @@
 # Read when: upgrading MemoryMaster or preparing release notes and migrations.
 # Current release: 4.6.0, personal-first governed universal capture.
 # Format: Keep a Changelog with Semantic Versioning.
-# Updated: 2026-08-04 for the post-v4.6.0 Obsidian opt-in fix.
+# Updated: 2026-08-04 for post-v4.6.0 OAuth capture and Obsidian fixes.
 
 ## [Unreleased]
 
 ### Fixed
 
+- Capture claim and graph jobs can now reuse the configured OpenCode OAuth
+  provider and model without API keys or process-global environment mutation;
+  scheduled-task verification reports both extractors' actual readiness.
+- Sequential capture jobs now pass their exact evidence row into Atlas, so
+  later queued items cannot be skipped by a global list limit.
 - MCP claim ingestion no longer creates or updates an Obsidian vault unless
   `MEMORYMASTER_WIKI_ABSORB=1`; explicit opt-in logging and synthesis now share
   the configured vault path.

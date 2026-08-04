@@ -32,6 +32,34 @@ class CaptureJobCompletion:
     error_detail: str
 
 
+def capture_llm_overrides() -> dict[str, str]:
+    """Resolve capture LLM settings without mutating the process environment."""
+    provider = (
+        os.environ.get("MEMORYMASTER_CAPTURE_LLM_PROVIDER", "").strip()
+        or os.environ.get("MEMORYMASTER_LLM_PROVIDER", "").strip()
+        or os.environ.get("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "").strip()
+    )
+    model = (
+        os.environ.get("MEMORYMASTER_CAPTURE_LLM_MODEL", "").strip()
+        or os.environ.get("MEMORYMASTER_LLM_MODEL", "").strip()
+        or os.environ.get("MEMORYMASTER_DREAM_EXTRACT_MODEL", "").strip()
+    )
+    effort = (
+        os.environ.get("MEMORYMASTER_CAPTURE_LLM_REASONING_EFFORT", "").strip()
+        or os.environ.get("MEMORYMASTER_LLM_REASONING_EFFORT", "").strip()
+        or os.environ.get("MEMORYMASTER_DREAM_EXTRACT_VARIANT", "").strip()
+    )
+    return {
+        key: value
+        for key, value in (
+            ("MEMORYMASTER_LLM_PROVIDER", provider),
+            ("MEMORYMASTER_LLM_MODEL", model),
+            ("MEMORYMASTER_LLM_REASONING_EFFORT", effort),
+        )
+        if value
+    }
+
+
 def _payload(source: Any) -> dict[str, Any]:
     raw = source.payload_json or "{}"
     if isinstance(raw, dict):
@@ -114,6 +142,7 @@ def _run_claim_job(
         scope=scope,
         limit=1,
         evidence_ids={evidence.id},
+        evidence_items=[evidence],
     )
     if result.degraded:
         raise CaptureRetryable(
@@ -135,13 +164,18 @@ def _process_job(
         _run_text_job(service, repository, job)
         return None
     if job.stage == "extract_claims":
-        return _run_claim_job(service, repository, job)
+        from memorymaster.core.llm_provider import use_call_scoped_env
+
+        with use_call_scoped_env(capture_llm_overrides()):
+            return _run_claim_job(service, repository, job)
     if job.stage == "extract_graph":
         from memorymaster.knowledge.graph_extraction import (
             extract_confirmed_claim_graph,
         )
+        from memorymaster.core.llm_provider import use_call_scoped_env
 
-        extract_confirmed_claim_graph(service, repository, job)
+        with use_call_scoped_env(capture_llm_overrides()):
+            extract_confirmed_claim_graph(service, repository, job)
         return None
     raise CaptureRejected("unsupported_stage", f"Unsupported stage: {job.stage}")
 

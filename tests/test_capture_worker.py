@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -40,6 +42,85 @@ def test_claim_worker_completes_with_bounded_extractor(worker_env, monkeypatch) 
     assert result.completed == 1
     assert result.errors == 0
     assert len(seen["evidence_ids"]) == 1
+
+
+def test_capture_jobs_inherit_dream_opencode_config_without_mutating_env(
+    worker_env, monkeypatch
+) -> None:
+    service, db, workspace = worker_env
+    remember(text="OAuth-backed worker evidence", db=db, workspace=workspace)
+    monkeypatch.delenv("MEMORYMASTER_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("MEMORYMASTER_LLM_MODEL", raising=False)
+    monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "opencode")
+    monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_MODEL", "openai/gpt-5.6-terra")
+    monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_VARIANT", "medium")
+    seen = {}
+
+    def fake_extract(_service, **kwargs):
+        from memorymaster.core.llm_provider import _env
+
+        seen["provider"] = _env("MEMORYMASTER_LLM_PROVIDER")
+        seen["model"] = _env("MEMORYMASTER_LLM_MODEL")
+        seen["effort"] = _env("MEMORYMASTER_LLM_REASONING_EFFORT")
+        return SimpleNamespace(degraded=0)
+
+    monkeypatch.setattr(
+        "memorymaster.bridges.atlas_llm_extractor.extract_atlas_claims_llm",
+        fake_extract,
+    )
+
+    result = run_capture_worker(service, owner="fixture", limit=1)
+
+    assert result.completed == 1
+    assert seen == {
+        "provider": "opencode",
+        "model": "openai/gpt-5.6-terra",
+        "effort": "medium",
+    }
+    assert "MEMORYMASTER_LLM_PROVIDER" not in os.environ
+    assert "MEMORYMASTER_LLM_MODEL" not in os.environ
+
+
+def test_sequential_jobs_extract_their_exact_evidence(worker_env, monkeypatch) -> None:
+    service, db, workspace = worker_env
+    remember(text="Project First uses SQLite.", db=db, workspace=workspace)
+    remember(text="Project Second uses Redis.", db=db, workspace=workspace)
+
+    def fake_call(_prompt: str, text: str) -> str:
+        subject = "Project First" if "First" in text else "Project Second"
+        technology = "SQLite" if "First" in text else "Redis"
+        return json.dumps(
+            [
+                {
+                    "type": "project",
+                    "subject": subject,
+                    "predicate": "uses",
+                    "object": technology,
+                    "text": f"{subject} uses {technology}.",
+                    "confidence": 0.95,
+                }
+            ]
+        )
+
+    monkeypatch.setattr(
+        "memorymaster.bridges.atlas_llm_extractor.call_llm", fake_call
+    )
+
+    first = run_capture_worker(service, owner="first", limit=1)
+    second = run_capture_worker(service, owner="second", limit=1)
+
+    assert first.completed == second.completed == 1
+    with service.store.connect() as conn:
+        rows = conn.execute(
+            """SELECT c.object_value, l.evidence_item_id
+               FROM claims c
+               JOIN claim_evidence_links l ON l.claim_id=c.id
+               ORDER BY l.evidence_item_id"""
+        ).fetchall()
+    assert [(row["object_value"], row["evidence_item_id"]) for row in rows] == [
+        ("SQLite", 1),
+        ("Redis", 2),
+    ]
 
 
 def test_provider_absence_blocks_media_with_actionable_code(worker_env) -> None:

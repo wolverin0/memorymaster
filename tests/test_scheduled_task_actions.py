@@ -60,6 +60,25 @@ def test_provider_readiness_uses_opencode_for_dream_extraction(monkeypatch) -> N
 
     assert readiness["dream_extractor"] is True
     assert readiness["dream_consolidator"] is True
+    assert readiness["claim_extractor"] is True
+    assert readiness["graph_extractor"] is True
+
+
+def test_provider_readiness_accepts_ready_capture_fallback(monkeypatch) -> None:
+    monkeypatch.setenv("MEMORYMASTER_LLM_PROVIDER", "google")
+    monkeypatch.setenv("MEMORYMASTER_LLM_FALLBACK_PROVIDER", "opencode")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(setup_hooks.Path, "is_file", lambda _path: False)
+    monkeypatch.setattr(
+        setup_hooks.shutil,
+        "which",
+        lambda command: "C:\\Tools\\opencode.cmd" if command == "opencode" else None,
+    )
+
+    readiness = setup_hooks._provider_readiness()
+
+    assert readiness["claim_extractor"] is True
+    assert readiness["graph_extractor"] is True
 
 
 def test_verify_reads_full_task_action_from_xml(monkeypatch, tmp_path: Path) -> None:

@@ -159,6 +159,7 @@ def extract_atlas_claims_llm(
     model: str | None = None,
     dry_run: bool = False,
     evidence_ids: set[int] | None = None,
+    evidence_items: list[EvidenceItem] | None = None,
 ) -> AtlasLlmExtractionResult:
     """Extract typed life-knowledge claims from evidence via an LLM pass.
 
@@ -168,7 +169,11 @@ def extract_atlas_claims_llm(
     Empty/malformed/erroring LLM output skips the item and increments
     ``degraded`` — never a fallback junk claim.
     """
-    evidence_items = service.list_evidence_items(limit=limit)
+    selected_evidence = (
+        evidence_items
+        if evidence_items is not None
+        else service.list_evidence_items(limit=limit)
+    )
     scanned = 0
     matched = 0
     ingested = 0
@@ -178,7 +183,7 @@ def extract_atlas_claims_llm(
     invalid_rows = 0
     claims: list[Claim] = []
 
-    for evidence in evidence_items:
+    for evidence in selected_evidence:
         if evidence_ids is not None and evidence.id not in evidence_ids:
             continue
         scanned += 1

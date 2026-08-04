@@ -1,7 +1,8 @@
 """Multi-provider LLM client for MemoryMaster hooks and curators.
 
 Supports: google (Gemini), openai (GPT/o-series), anthropic (Claude API),
-claude_cli (Claude Code OAuth via local `claude --print` binary), ollama (local).
+opencode (OpenAI OAuth via local `opencode`), claude_cli (Claude Code OAuth
+via local `claude --print` binary), and ollama (local).
 Provider is selected via MEMORYMASTER_LLM_PROVIDER env var (default: google).
 """
 from __future__ import annotations
@@ -288,6 +289,46 @@ def _call_ollama(prompt: str, text: str) -> str:
     }
 
     return _http_post(url, payload, _extract_ollama, timeout=60)
+
+
+_OPENCODE_CLIENTS: dict[tuple[str, str, str, int], Any] = {}
+
+
+def _opencode_timeout() -> int:
+    try:
+        return max(1, int(_env("MEMORYMASTER_OPENCODE_TIMEOUT", "180")))
+    except ValueError:
+        return 180
+
+
+def _call_opencode(prompt: str, text: str) -> str:
+    """OpenAI-compatible models through authenticated OpenCode OAuth."""
+    from memorymaster.core.opencode_client import (
+        OpenCodeClient,
+        OpenCodeClientError,
+    )
+
+    model = _env("MEMORYMASTER_LLM_MODEL", "openai/gpt-5.4-mini")
+    effort = _env("MEMORYMASTER_LLM_REASONING_EFFORT", "medium")
+    command = _env("MEMORYMASTER_OPENCODE_COMMAND", "")
+    timeout = _opencode_timeout()
+    key = (model, effort, command, timeout)
+    client = _OPENCODE_CLIENTS.get(key)
+    if client is None:
+        work_dir = os.path.join(os.path.expanduser("~"), ".memorymaster", "opencode")
+        client = OpenCodeClient(
+            model=model,
+            effort=effort,
+            command=command or None,
+            work_dir=work_dir,
+            timeout=timeout,
+        )
+        _OPENCODE_CLIENTS[key] = client
+    try:
+        return client.complete(f"{prompt}\n\n{text}").text
+    except OpenCodeClientError as exc:
+        logging.getLogger(__name__).warning("opencode: provider call failed code=%s", exc.code)
+        return ""
 
 
 # Capability-probe cache for the `claude` CLI. A binary that is present on PATH
@@ -602,6 +643,9 @@ _PROVIDERS = {
     "google": _call_google,
     "gemini": _call_google,
     "openai": _call_openai,
+    "opencode": _call_opencode,
+    "opencode_cli": _call_opencode,
+    "opencode-cli": _call_opencode,
     "anthropic": _call_anthropic,
     "claude": _call_anthropic,
     "claude_cli": _call_claude_cli,
@@ -661,7 +705,7 @@ def call_llm(prompt: str, text: str) -> str:
     """Call configured LLM provider with optional fallback chain. Returns raw text.
 
     Configure via env vars:
-        MEMORYMASTER_LLM_PROVIDER           — google|openai|anthropic|claude_cli|ollama (default: google)
+        MEMORYMASTER_LLM_PROVIDER           — google|openai|anthropic|opencode|claude_cli|ollama (default: google)
         MEMORYMASTER_LLM_MODEL              — model override (default per provider)
         MEMORYMASTER_LLM_FALLBACK_PROVIDER  — (optional) provider to use if primary returns
                                               empty or a quota-exhausted error
