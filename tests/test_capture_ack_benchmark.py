@@ -12,6 +12,8 @@ def test_capture_ack_benchmark_preserves_replay_and_integrity_contracts() -> Non
     assert result["update_job_delta"] == 2
     assert result["secret_warning"] == 1
     assert result["secret_url_rejected"] == 1
+    assert result["duplicate_sources"] == 0
+    assert result["duplicate_evidence"] == 0
     assert result["duplicate_jobs"] == 0
     assert result["orphan_jobs"] == 0
     assert result["orphan_evidence"] == 0

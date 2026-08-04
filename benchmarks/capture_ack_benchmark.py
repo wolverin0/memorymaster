@@ -58,9 +58,32 @@ def _duplicate_jobs(conn: sqlite3.Connection) -> int:
     )
 
 
+def _duplicate_sources(conn: sqlite3.Connection) -> int:
+    return _count(
+        conn,
+        """SELECT COALESCE(SUM(c - 1), 0) FROM (
+               SELECT COUNT(*) c FROM source_items
+               GROUP BY source_id, source_item_id HAVING COUNT(*) > 1
+           )""",
+    )
+
+
+def _duplicate_evidence(conn: sqlite3.Connection) -> int:
+    return _count(
+        conn,
+        """SELECT COALESCE(SUM(c - 1), 0) FROM (
+               SELECT COUNT(*) c FROM evidence_items
+               GROUP BY source_item_id, content_hash, evidence_type
+               HAVING COUNT(*) > 1
+           )""",
+    )
+
+
 def _integrity_counts(db: Path, secret: str) -> dict[str, int]:
     with sqlite3.connect(db) as conn:
         return {
+            "duplicate_sources": _duplicate_sources(conn),
+            "duplicate_evidence": _duplicate_evidence(conn),
             "duplicate_jobs": _duplicate_jobs(conn),
             "orphan_jobs": _count(
                 conn,
@@ -90,6 +113,13 @@ def _integrity_counts(db: Path, secret: str) -> dict[str, int]:
                 conn,
                 """SELECT COUNT(*) FROM evidence_items
                    WHERE COALESCE(text, '') LIKE ? OR COALESCE(payload_json, '') LIKE ?""",
+                (f"%{secret}%", f"%{secret}%"),
+            )
+            + _count(
+                conn,
+                """SELECT COUNT(*) FROM capture_jobs
+                   WHERE COALESCE(error_code, '') LIKE ?
+                      OR COALESCE(error_detail, '') LIKE ?""",
                 (f"%{secret}%", f"%{secret}%"),
             ),
             "jobs": _count(conn, "SELECT COUNT(*) FROM capture_jobs"),
