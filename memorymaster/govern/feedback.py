@@ -25,7 +25,6 @@ class FeedbackTracker:
 
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
-        self._tables_ready = False
 
     def _connect(self) -> sqlite3.Connection:
         return open_conn(self.db_path)
@@ -55,7 +54,6 @@ class FeedbackTracker:
                 );
             """)
             conn.commit()
-            self._tables_ready = True
         finally:
             conn.close()
 
@@ -83,8 +81,7 @@ class FeedbackTracker:
             return 0
 
         try:
-            if not self._tables_ready:
-                self.ensure_tables()
+            self.ensure_tables()
         except sqlite3.OperationalError as exc:
             logger.error("Failed to ensure feedback tables: %s", exc)
             return 0
@@ -104,7 +101,6 @@ class FeedbackTracker:
             return len(rows)
         except sqlite3.OperationalError as exc:
             logger.error("Failed to record retrieval: %s", exc)
-            self._tables_ready = False
             conn.rollback()
             return 0
         finally:
