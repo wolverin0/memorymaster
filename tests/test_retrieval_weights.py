@@ -4,7 +4,7 @@ import pytest
 
 from memorymaster.core.config import reset_config
 from memorymaster.core.models import Claim
-from memorymaster.recall.retrieval import rank_claim_rows
+from memorymaster.recall.retrieval import _tokens, rank_claim_rows
 
 
 @pytest.fixture(autouse=True)
@@ -50,6 +50,10 @@ def _row(*, semantic_vectors: bool):
         vector_hook=vector_hook,
         semantic_vectors=semantic_vectors,
     )[0]
+
+
+def test_tokens_exclude_conversational_query_scaffolding():
+    assert _tokens("What did I buy for my sister?") == {"buy", "sister"}
 
 
 def test_memorymaster_w_lex_affects_vector_enabled_ranking_paths(monkeypatch):
