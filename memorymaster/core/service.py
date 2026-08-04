@@ -1718,8 +1718,10 @@ class MemoryService(IntegrationService):
                 from memorymaster.govern.feedback import FeedbackTracker
                 db_path = str(getattr(self.store, 'db_path', ''))
                 if db_path:
-                    ft = FeedbackTracker(db_path)
-                    ft.ensure_tables()
+                    ft = getattr(self, "_feedback_tracker", None)
+                    if ft is None or ft.db_path != db_path:
+                        ft = FeedbackTracker(db_path)
+                        self._feedback_tracker = ft
                     ft.record_retrieval(claim_ids, query_text)
             except Exception:
                 pass  # best-effort
