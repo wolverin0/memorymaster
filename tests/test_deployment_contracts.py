@@ -128,7 +128,7 @@ def test_deployment_images_are_immutable_or_required_by_digest():
     dockerfile = _read("Dockerfile")
     compose = _read("docker-compose.yml")
     postgres = _read("docker-compose.postgres.yml")
-    python_image = "python:3.12-slim@sha256:d764629ce0ddd8c71fd371e9901efb324a95789d2315a47db7e4d27e78f1b0e9"
+    python_image = "python:3.12-alpine@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df"
     postgres_image = "postgres:16-alpine@sha256:b7587f3cb74f4f4b2a4f9d67f052edbf95eb93f4fec7c5ada3792546caaf7383"
 
     assert dockerfile.count(f"FROM {python_image}") == 2
