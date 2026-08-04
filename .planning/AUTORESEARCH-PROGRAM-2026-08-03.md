@@ -4,7 +4,7 @@
 # Read when: launching, monitoring, or deciding whether an autoresearch phase is complete.
 # Authority: implements ROADMAP.md quality gates; it does not replace the product roadmap.
 # Safety: temporary SQLite and deterministic providers only; no live DB, scheduler, push, PR, or publish.
-# Updated: 2026-08-03 after the harness-speed phase reached its narrow stop condition.
+# Updated: 2026-08-03 after production query latency passed its repeated exact-hit gate.
 
 ## Objective
 
@@ -20,8 +20,8 @@ it never terminates the entire program.
 | Phase | Primary metric | Non-regression gates | Status |
 |---|---|---|---|
 | 1. Benchmark iteration speed | LongMemEval-S 25-question elapsed seconds | Exact rankings, R@5/R@10/MRR, 0 provider calls | **Complete**: 105.168s -> 66.569s (`7a41390`) |
-| 2. Production-path performance | Temporary-SQLite query p95 | 0 misses; confirmed count; ingest/cycle SLOs | **Next** |
-| 3. Retrieval quality | LongMemEval-S MRR | R@5/R@10 no regression; latency and provider-call caps | Pending |
+| 2. Production-path performance | Temporary-SQLite query p95 | 0 misses; confirmed count; ingest/cycle SLOs | **Complete**: 52.265ms -> 38.608ms (`544048b`); one 44.624ms drift run remains recorded |
+| 3. Retrieval quality | LongMemEval-S MRR | R@5/R@10 no regression; held-out/full gate; provider-call cap | **Next**: dev 25-question MRR 0.8733; held-out slicing added (`df922ea`) |
 | 4. Graph-supported retrieval | Graph-focused top-5 hit rate | Authorized active supports only; 0 cross-scope results | Pending |
 | 5. Capture performance | Capture acknowledgement p95 | 0 duplicates/orphans/secrets; terminal job states | Pending |
 | 6. Convergence | Gate pass count | Full tests, Ruff, diff check, package validation | Pending |
