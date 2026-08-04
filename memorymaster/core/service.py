@@ -1719,6 +1719,7 @@ class MemoryService(IntegrationService):
                 db_path = str(getattr(self.store, 'db_path', ''))
                 if db_path:
                     ft = FeedbackTracker(db_path)
+                    ft.ensure_tables()
                     ft.record_retrieval(claim_ids, query_text)
             except Exception:
                 pass  # best-effort
