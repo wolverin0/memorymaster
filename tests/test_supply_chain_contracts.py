@@ -198,6 +198,51 @@ def test_scanners_receive_sterile_environment_and_working_directory(
         assert tmp_path.resolve() not in working_directory.parents
 
 
+def test_docker_config_is_scoped_to_docker_argv(
+    tmp_path: Path,
+) -> None:
+    docker_config = tmp_path.parent / f"{tmp_path.name}-docker-config"
+    docker_config.mkdir()
+    (docker_config / "config.json").write_text('{"credsStore":"desktop"}', encoding="utf-8")
+    observed: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+    def fake_runner(argv: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        observed.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    report = supply.execute_plan(
+        _plan(tmp_path),
+        runner=fake_runner,
+        resolver=_resolver(tmp_path),
+        docker_config=docker_config,
+    )
+
+    assert report.ok is True
+    docker_argv, docker_kwargs = next(item for item in observed if "scout" in item[0])
+    assert docker_argv[1:3] == ("--config", str(docker_config.resolve()))
+    assert not any(key.startswith("DOCKER_") for key in docker_kwargs["env"])
+    assert all(
+        str(docker_config.resolve()) not in argv for argv, _ in observed if "scout" not in argv
+    )
+
+
+def test_repository_local_docker_config_fails_closed(tmp_path: Path) -> None:
+    docker_config = tmp_path / ".docker"
+    docker_config.mkdir()
+    (docker_config / "config.json").write_text("{}", encoding="utf-8")
+
+    report = supply.execute_plan(
+        _plan(tmp_path),
+        runner=lambda *_args, **_kwargs: pytest.fail("runner called"),
+        resolver=_resolver(tmp_path),
+        docker_config=docker_config,
+    )
+
+    assert report.ok is False
+    assert report.results[0].name == "supply_chain_preflight"
+    assert report.results[0].failure_kind == "evidence_unavailable"
+
+
 def test_native_scanners_are_absolute_and_validator_is_trusted(tmp_path: Path) -> None:
     observed: list[tuple[str, ...]] = []
 

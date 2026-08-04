@@ -535,7 +535,10 @@ def _trusted_executable(name: str, repo_root: Path, resolver: Resolver) -> Path:
 
 
 def _materialize_tools(
-    plan: Sequence[CommandSpec], repo_root: Path, resolver: Resolver
+    plan: Sequence[CommandSpec],
+    repo_root: Path,
+    resolver: Resolver,
+    docker_config: Path | None = None,
 ) -> tuple[tuple[CommandSpec, ...], dict[str, Path]]:
     tools = {
         "gitleaks": _trusted_executable("gitleaks", repo_root, resolver),
@@ -547,10 +550,33 @@ def _materialize_tools(
         _GITLEAKS_EXECUTABLE: str(tools["gitleaks"]),
         _DOCKER_EXECUTABLE: str(tools["docker"]),
     }
+    config = _validated_docker_config(docker_config, repo_root)
     materialized = tuple(
-        replace(spec, argv=tuple(replacements.get(value, value) for value in spec.argv)) for spec in plan
+        replace(spec, argv=_materialized_argv(spec, replacements, config)) for spec in plan
     )
     return materialized, tools
+
+
+def _validated_docker_config(path: Path | None, repo_root: Path) -> Path | None:
+    if path is None:
+        return None
+    directory = path.expanduser().resolve(strict=True)
+    root = repo_root.resolve(strict=True)
+    if not directory.is_dir() or directory == root or root in directory.parents:
+        raise ValueError("docker configuration directory is not trusted")
+    config_file = (directory / "config.json").resolve(strict=True)
+    if not config_file.is_file() or config_file.parent != directory:
+        raise ValueError("docker configuration file is not trusted")
+    return directory
+
+
+def _materialized_argv(
+    spec: CommandSpec, replacements: dict[str, str], docker_config: Path | None
+) -> tuple[str, ...]:
+    argv = tuple(replacements.get(value, value) for value in spec.argv)
+    if docker_config is None or not spec.name.startswith("docker_scout_"):
+        return argv
+    return (argv[0], "--config", str(docker_config), *argv[1:])
 
 
 def _filtered_path(repo_root: Path, tools: dict[str, Path]) -> str:
@@ -635,6 +661,7 @@ def execute_plan(
     *,
     runner: Runner = subprocess.run,
     resolver: Resolver = shutil.which,
+    docker_config: Path | None = None,
 ) -> ExecutionReport:
     requires_policy = any(_GITLEAKS_CONFIG_PATH in spec.argv for spec in plan)
     if not requires_policy:
@@ -650,7 +677,9 @@ def execute_plan(
             directory = Path(raw_directory)
             repo_root, sbom_path, artifact_path, image_ids = _plan_context(plan)
             materialized = _materialize_policy(plan, directory)
-            materialized, tools = _materialize_tools(materialized, repo_root, resolver)
+            materialized, tools = _materialize_tools(
+                materialized, repo_root, resolver, docker_config
+            )
             environment = _sterile_environment(directory, repo_root, tools)
             evidence = _collect_evidence(repo_root, sbom_path, artifact_path, image_ids, tools)
             report = _execute(
@@ -680,6 +709,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--local-image", action="append", default=[])
     parser.add_argument("--expected-name")
     parser.add_argument("--expected-version")
+    parser.add_argument("--docker-config", type=Path)
     parser.add_argument("--command-plan", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser
@@ -687,6 +717,11 @@ def _parser() -> argparse.ArgumentParser:
 
 def _plan_payload(plan: Sequence[CommandSpec]) -> dict[str, Any]:
     return {"mode": "command-plan", "commands": [item.to_dict() for item in plan]}
+
+
+def _default_docker_config() -> Path:
+    configured = os.environ.get("DOCKER_CONFIG", "").strip()
+    return Path(configured) if configured else Path.home() / ".docker"
 
 
 def main(argv: Sequence[str] | None = None, *, runner: Runner = subprocess.run) -> int:
@@ -708,7 +743,11 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner = subprocess.run) 
     if args.command_plan or args.dry_run:
         print(json.dumps(_plan_payload(plan), indent=2))
         return 0
-    report = execute_plan(plan, runner=runner)
+    report = execute_plan(
+        plan,
+        runner=runner,
+        docker_config=args.docker_config or _default_docker_config(),
+    )
     print(json.dumps(report.to_dict(), indent=2))
     return 0 if report.ok else 2
 

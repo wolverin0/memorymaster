@@ -1,4 +1,10 @@
 # Supply-chain security checks
+# Covers: the fail-closed local release gate for secrets, dependencies, SBOMs, and images.
+# Key terms: Gitleaks, pip-audit, CycloneDX, Docker Scout, immutable image, Docker config.
+# Read when: preparing release evidence or changing scanner policy and authentication boundaries.
+# Authentication: Docker config is supplied only to Docker CLI through its explicit `--config` flag.
+# Privacy: scanner streams and Docker configuration paths are excluded from persisted reports.
+# Updated: 2026-08-04 after authenticated immutable-image validation exposed the sterile-config boundary.
 
 MemoryMaster's local release gate combines five fail-closed checks:
 
@@ -21,6 +27,14 @@ plus safe evidence hashes: repository commit, release-wheel SHA-256, SBOM
 SHA-256, immutable image IDs, native-tool hashes, and Python/`pip-audit`
 versions. Missing tools, unavailable evidence, timeouts, nonzero exits,
 mutable image tags, and invalid or mismatched SBOMs all fail the gate.
+
+At execution time, the runner resolves the operator's Docker configuration
+directory before creating its sterile scanner environment. It passes that
+directory only as Docker CLI's global `--config` argument; no `DOCKER_*`
+environment variable is inherited, the configuration is never copied, and
+absolute paths remain redacted from command-plan/report serialization. A
+missing, symlink-escaped, or repository-local `config.json` fails preflight.
+Use `--docker-config` to select a non-default configuration directory.
 
 ## Inspect the command plan without execution
 
