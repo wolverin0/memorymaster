@@ -10,6 +10,18 @@ from unittest.mock import patch
 
 import pytest
 
+from memorymaster.surfaces.mcp_server import (
+    _claim_to_dict,
+    _effective_ingest_scope,
+    _effective_scope_allowlist,
+    _empty_to_none,
+    _parse_scope_allowlist,
+    _parse_sources_json,
+    _project_scope,
+    _resolve_db,
+    _resolve_workspace,
+)
+
 
 def _port_bound(host: str = "127.0.0.1", port: int = 8765) -> bool:
     """True if *something* is already listening on (host, port).
@@ -25,18 +37,6 @@ def _port_bound(host: str = "127.0.0.1", port: int = 8765) -> bool:
             return True
         except OSError:
             return False
-
-from memorymaster.surfaces.mcp_server import (
-    _claim_to_dict,
-    _effective_ingest_scope,
-    _effective_scope_allowlist,
-    _empty_to_none,
-    _parse_scope_allowlist,
-    _parse_sources_json,
-    _project_scope,
-    _resolve_db,
-    _resolve_workspace,
-)
 
 
 class TestResolveDb:
@@ -302,6 +302,53 @@ class TestMcpToolsIntegration:
         )
         assert query_result["ok"] is True
         assert query_result["rows"] >= 1
+
+    def test_ingest_does_not_create_obsidian_vault_by_default(self, tmp_path, monkeypatch):
+        from memorymaster.surfaces.mcp_server import ingest_claim, init_db
+
+        caller_dir = tmp_path / "caller-project"
+        caller_dir.mkdir()
+        monkeypatch.chdir(caller_dir)
+        monkeypatch.delenv("MEMORYMASTER_WIKI_ABSORB", raising=False)
+        monkeypatch.delenv("MEMORYMASTER_VAULT_DIR", raising=False)
+
+        init_db(db=self.db_path, workspace=self.workspace)
+        result = ingest_claim(
+            text="The claims database is authoritative",
+            db=self.db_path,
+            workspace=self.workspace,
+            sources_json='["test.py"]',
+        )
+
+        assert result["ok"] is True
+        assert not (caller_dir / "obsidian-vault").exists()
+        assert not (Path(self.workspace) / "obsidian-vault").exists()
+
+    def test_ingest_writes_configured_vault_when_wiki_is_enabled(self, tmp_path, monkeypatch):
+        from memorymaster.surfaces.mcp_server import ingest_claim, init_db
+
+        vault_dir = tmp_path / "configured-vault"
+        synthesis_calls = []
+        monkeypatch.setenv("MEMORYMASTER_WIKI_ABSORB", "1")
+        monkeypatch.setenv("MEMORYMASTER_VAULT_DIR", str(vault_dir))
+        monkeypatch.setattr(
+            "memorymaster.knowledge.vault_synthesis.synthesize_on_ingest",
+            lambda claim, target: synthesis_calls.append((claim, target)),
+        )
+
+        init_db(db=self.db_path, workspace=self.workspace)
+        result = ingest_claim(
+            text="Explicit wiki projection remains available",
+            db=self.db_path,
+            workspace=self.workspace,
+            sources_json='["test.py"]',
+        )
+
+        assert result["ok"] is True
+        log_text = (vault_dir / "log.md").read_text(encoding="utf-8")
+        assert "ingest | claim #" in log_text
+        assert len(synthesis_calls) == 1
+        assert synthesis_calls[0][1] == vault_dir
 
     def test_list_claims_tool(self):
         try:

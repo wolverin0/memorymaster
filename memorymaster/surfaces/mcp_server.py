@@ -54,6 +54,8 @@ _ENV_QUERY_INCLUDE_LEGACY_PROJECT = (
 )
 _DEFAULT_INGEST_RATE_LIMIT_PER_MIN = 60
 _INGEST_RATE_LIMIT_ENV = "MM_INGEST_RATE_LIMIT_PER_MIN"
+_WIKI_ABSORB_ENV = "MEMORYMASTER_WIKI_ABSORB"
+_WIKI_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _ANONYMOUS_SOURCE_AGENT = "_anonymous"
 # Reserved key for the GLOBAL (cross-agent) bucket. A leading NUL keeps it out
 # of any attacker-chosen source_agent namespace (NUL can't reach here via MCP).
@@ -73,6 +75,17 @@ _INGEST_RATE_BUCKETS_LOCK = threading.Lock()
 _monotonic = time.monotonic
 # Slug canonicalization (copy/channel-suffix regexes) now lives in
 # core/scope_utils.canonicalize_slug; _canonicalize_slug below delegates to it.
+
+
+def _wiki_absorb_enabled() -> bool:
+    """Return whether the optional Obsidian projection is explicitly enabled."""
+    return os.environ.get(_WIKI_ABSORB_ENV, "").strip().lower() in _WIKI_TRUE_VALUES
+
+
+def _wiki_vault_dir(workspace: str) -> Path:
+    """Resolve the configured vault or the workspace-local opt-in default."""
+    configured = os.environ.get("MEMORYMASTER_VAULT_DIR", "").strip()
+    return Path(configured) if configured else Path(workspace) / "obsidian-vault"
 
 
 class _ToolInput(BaseModel):
@@ -1000,20 +1013,23 @@ if FastMCP is not None:
             )
         except ValueError as exc:
             return _structured_error(str(exc), "VALIDATION_ERROR", "text")
-        # Log to vault chronicle + cross-source synthesis
-        try:
-            from memorymaster.knowledge.vault_log import log_ingest
-            log_ingest(claim.id, claim.subject, claim.scope)
-        except Exception as exc:
-            logger.debug("Vault log failed: %s", exc)
-        try:
-            from memorymaster.knowledge.vault_synthesis import synthesize_on_ingest
-            import os
-            vault_dir = os.path.join(os.environ.get("MEMORYMASTER_WORKSPACE", "."), "obsidian-vault")
-            if os.path.isdir(vault_dir):
-                synthesize_on_ingest(_claim_to_dict(claim), vault_dir)
-        except Exception as exc:
-            logger.debug("Vault synthesis failed: %s", exc)
+        # The Obsidian projection is optional. MCP ingest must never create a
+        # cwd-relative vault unless the operator explicitly enables it.
+        if _wiki_absorb_enabled():
+            vault_dir = _wiki_vault_dir(request.workspace)
+            try:
+                from memorymaster.knowledge.vault_log import log_ingest
+
+                log_ingest(claim.id, claim.subject, claim.scope, vault_dir)
+            except Exception as exc:
+                logger.debug("Vault log failed: %s", exc)
+            try:
+                from memorymaster.knowledge.vault_synthesis import synthesize_on_ingest
+
+                if vault_dir.is_dir():
+                    synthesize_on_ingest(_claim_to_dict(claim), vault_dir)
+            except Exception as exc:
+                logger.debug("Vault synthesis failed: %s", exc)
         # Create timeline entry (use service store connection for WAL mode)
         try:
             with svc.store.connect() as _conn:
