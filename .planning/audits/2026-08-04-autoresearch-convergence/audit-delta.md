@@ -1,6 +1,6 @@
 # MemoryMaster autoresearch convergence audit delta — 2026-08-04
 # Covers: SQLite-only retrieval, graph, capture, package, and supply-chain convergence evidence.
-# Key terms: LongMemEval, graph support, capture replay, CycloneDX, Gitleaks, Docker Scout.
+# Key terms: LongMemEval, graph support, capture replay, OAuth QA, CycloneDX, Gitleaks, Docker Scout.
 # Read when: deciding what the autoresearch program proved and what still gates a PR or release.
 # Baseline: vNext branch before the 2026-08-03 autoresearch program; artifact evidence at 954a6e7.
 # Boundary: temporary databases and local artifacts only; PostgreSQL was explicitly waived.
@@ -95,6 +95,14 @@ follow-up, not a failure of the current artifact.
 The earlier replacement 24-hour observation and candidate-write activation
 already passed. This autoresearch program did not touch the live database,
 replace scheduled tasks, push commits, create a PR, or publish anything.
+
+A post-convergence feasibility smoke verified the keyless OpenCode 1.18.9 path
+with `openai/gpt-5.4-mini` at medium effort. One question completed normally but
+consumed 12,031 tokens; its one-case accuracy is not statistically meaningful.
+At that observed rate, two comparable 500-question passes could approach 12
+million tokens. The full QA gate therefore needs an explicit evaluation budget
+or a separately validated lower-cost design; it was not launched as an
+unbounded background job.
 
 ## Rollback and evidence handling
 
