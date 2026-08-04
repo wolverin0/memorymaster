@@ -14,8 +14,13 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _signature(payload: dict[str, Any], limit: int) -> list[tuple[Any, ...]]:
-    rows = payload["retrieval"]["results"][:limit]
+def _signature(
+    payload: dict[str, Any],
+    *,
+    offset: int,
+    limit: int,
+) -> list[tuple[Any, ...]]:
+    rows = payload["retrieval"]["results"][offset : offset + limit]
     return [
         (
             row["question_id"],
@@ -28,7 +33,7 @@ def _signature(payload: dict[str, Any], limit: int) -> list[tuple[Any, ...]]:
     ]
 
 
-def _run_benchmark(output: Path, limit: int) -> None:
+def _run_benchmark(output: Path, limit: int, offset: int) -> None:
     env = {**os.environ, "MEMORYMASTER_LLM_RERANK": "0"}
     subprocess.run(
         [
@@ -37,6 +42,8 @@ def _run_benchmark(output: Path, limit: int) -> None:
             "--retrieval-only",
             "--limit",
             str(limit),
+            "--offset",
+            str(offset),
             "--output",
             str(output),
         ],
@@ -51,20 +58,29 @@ def main() -> int:
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=25)
+    parser.add_argument("--offset", type=int, default=0)
     args = parser.parse_args()
+    if args.limit <= 0:
+        parser.error("--limit must be greater than zero")
+    if args.offset < 0:
+        parser.error("--offset must be zero or greater")
 
-    _run_benchmark(args.output, args.limit)
+    _run_benchmark(args.output, args.limit, args.offset)
     baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
     current = json.loads(args.output.read_text(encoding="utf-8"))
     retrieval = current["retrieval"]
     metrics = retrieval["metrics"]
     result = {
         "elapsed_seconds": float(retrieval["elapsed_seconds"]),
-        "rankings_match": int(_signature(current, args.limit) == _signature(baseline, args.limit)),
+        "rankings_match": int(
+            _signature(current, offset=0, limit=args.limit)
+            == _signature(baseline, offset=args.offset, limit=args.limit)
+        ),
         "recall_at_5": float(metrics["recall_at_5"]),
         "recall_at_10": float(metrics["recall_at_10"]),
         "mrr": float(metrics["mrr"]),
         "questions": int(metrics["count"]),
+        "offset": int(args.offset),
         "provider_calls": int(retrieval["llm_rerank"]["approx_calls"]),
     }
     print(json.dumps(result, sort_keys=True))

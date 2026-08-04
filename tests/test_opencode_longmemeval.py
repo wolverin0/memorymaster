@@ -67,6 +67,19 @@ def test_opencode_judge_is_keyless_single_provider_and_records_provenance() -> N
     ]
 
 
+def test_longmemeval_cli_accepts_held_out_offset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["bench_longmemeval.py", "--retrieval-only", "--limit", "25", "--offset", "50"],
+    )
+
+    args = bench.parse_args()
+
+    assert args.limit == 25
+    assert args.offset == 50
+
+
 def test_keyless_opencode_run_is_not_rejected_as_missing_api_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

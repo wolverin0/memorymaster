@@ -1005,6 +1005,12 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--full", action="store_true", help="Run retrieval plus answer/judge pass")
     mode.add_argument("--qa-only", action="store_true", help="Run answer/judge pass using existing retrieval results")
     parser.add_argument("--limit", type=int, default=None, help="Optional question limit for partial runs")
+    parser.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="Skip this many questions before applying --limit",
+    )
     parser.add_argument("--dataset", type=Path, default=DATA_PATH, help="Dataset JSON path")
     parser.add_argument("--output", type=Path, default=RESULTS_OUTPUT, help="Results JSON path")
     parser.add_argument("--qa-output", type=Path, default=QA_OUTPUT, help="QA-only output JSON path")
@@ -1047,11 +1053,14 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.offset < 0:
+        raise SystemExit("--offset must be zero or greater")
     data = load_dataset(args.dataset)
+    evaluation_data = data[args.offset :]
     if args.qa_only:
         retrieval_payload, retrieval_results = load_retrieval_payload(args.output)
         full_payload = run_full(
-            data,
+            evaluation_data,
             retrieval_results,
             limit=args.limit,
             judge_name=args.judge,
@@ -1065,11 +1074,15 @@ def main() -> None:
         metrics = retrieval_payload["metrics"]
         qa = output.get("qa") or {}
     else:
-        retrieval_payload, retrieval_results = run_retrieval(data, limit=args.limit, chunk_chars=args.chunk_chars)
+        retrieval_payload, retrieval_results = run_retrieval(
+            evaluation_data,
+            limit=args.limit,
+            chunk_chars=args.chunk_chars,
+        )
         full_payload = None
         if args.full:
             full_payload = run_full(
-                data,
+                evaluation_data,
                 retrieval_results,
                 limit=args.limit,
                 judge_name=args.judge,
