@@ -126,6 +126,9 @@ class TestCosine:
         v = normalize([1.0, 2.0, 3.0])
         assert abs(cosine_similarity(v, v) - 1.0) < 1e-6
 
+    def test_dot_product_preserves_mixed_sign_values(self):
+        assert cosine_similarity([1.0, -1.0], [1.0, 1.0]) == pytest.approx(0.0)
+
     def test_different_dims_raises(self):
         with pytest.raises(ValueError, match="same dimension"):
             cosine_similarity([1.0], [1.0, 2.0])
