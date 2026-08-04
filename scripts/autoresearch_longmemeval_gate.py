@@ -1,4 +1,4 @@
-"""Run a deterministic LongMemEval slice and emit one metrics JSON line."""
+"""Run a deterministic LongMemEval slice and persist its gate metrics."""
 
 from __future__ import annotations
 
@@ -53,6 +53,19 @@ def _run_benchmark(output: Path, limit: int, offset: int) -> None:
     )
 
 
+def _persist_gate_summary(
+    output: Path,
+    payload: dict[str, Any],
+    summary: dict[str, float | int],
+) -> None:
+    """Keep detailed evidence while exposing stable top-level gate metrics."""
+    persisted = {**payload, **summary}
+    output.write_text(
+        json.dumps(persisted, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", type=Path, required=True)
@@ -83,6 +96,7 @@ def main() -> int:
         "offset": int(args.offset),
         "provider_calls": int(retrieval["llm_rerank"]["approx_calls"]),
     }
+    _persist_gate_summary(args.output, current, result)
     print(json.dumps(result, sort_keys=True))
     return 0
 
