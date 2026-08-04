@@ -1471,20 +1471,12 @@ class MemoryService(IntegrationService):
         candidates = _filter_agent_visibility(candidates, requesting_agent)
         semantic = False
         if vector_hook is None and hasattr(self.store, "vector_scores"):
-            query_vector = None
+            # Compute the query vector once and pass it through to storage. This
+            # avoids recomputing the same provider embedding inside vector_scores
+            # while preserving the post-embed semantic/degraded decision.
+            query_vector = self.embedding_provider.embed(query_text)
             semantic = self.embedding_provider.is_semantic
-            if semantic:
-                # The Gemini->hash downgrade is lazy: is_semantic only reflects a
-                # runtime fallback AFTER an embed has run. Probe once with the query
-                # (the hook embeds it anyway; embed() handles its own failure and sets
-                # degraded) so a degraded provider is not reported as semantic — which
-                # would apply retrieval's lenient vector-only filter to non-semantic
-                # hash vectors. (audit: embeddings TOCTOU)
-                query_vector = self.embedding_provider.embed(query_text)
-                semantic = self.embedding_provider.is_semantic
             def _vector_hook(text, claims):
-                if query_vector is None:
-                    return self.store.vector_scores(text, claims, self.embedding_provider)
                 return self.store.vector_scores(
                     text,
                     claims,
