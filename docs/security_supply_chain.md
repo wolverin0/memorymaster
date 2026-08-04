@@ -2,7 +2,7 @@
 # Covers: the fail-closed local release gate for secrets, dependencies, SBOMs, and images.
 # Key terms: Gitleaks, pip-audit, CycloneDX, Docker Scout, immutable image, Docker config.
 # Read when: preparing release evidence or changing scanner policy and authentication boundaries.
-# Authentication: Docker config is supplied only to Docker CLI through its explicit `--config` flag.
+# Authentication: Docker config is scoped only to the Docker Scout subprocess.
 # Privacy: scanner streams and Docker configuration paths are excluded from persisted reports.
 # Updated: 2026-08-04 after authenticated immutable-image validation exposed the sterile-config boundary.
 
@@ -30,11 +30,17 @@ mutable image tags, and invalid or mismatched SBOMs all fail the gate.
 
 At execution time, the runner resolves the operator's Docker configuration
 directory before creating its sterile scanner environment. It passes that
-directory only as Docker CLI's global `--config` argument; no `DOCKER_*`
-environment variable is inherited, the configuration is never copied, and
-absolute paths remain redacted from command-plan/report serialization. A
-missing, symlink-escaped, or repository-local `config.json` fails preflight.
-Use `--docker-config` to select a non-default configuration directory.
+directory as Docker CLI's global `--config` argument and as `DOCKER_CONFIG` for
+that Docker Scout subprocess only. Docker Scout's CLI plugin requires the
+environment variable even when the parent Docker command received the global
+flag. On Windows, the sterile environment retains only the standard program
+directory variables needed to discover Docker Desktop's bundled Scout plugin.
+No other `DOCKER_*` variable is inherited, no other scanner receives the
+configuration path, the configuration is never copied, and the ordinary user
+`PATH` remains excluded. Absolute paths stay redacted from command-plan/report
+serialization. A missing, symlink-escaped, or repository-local `config.json`
+fails preflight. Use `--docker-config` to select a non-default configuration
+directory.
 
 ## Inspect the command plan without execution
 

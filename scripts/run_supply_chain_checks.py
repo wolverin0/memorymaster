@@ -589,7 +589,15 @@ def _filtered_path(repo_root: Path, tools: dict[str, Path]) -> str:
 
 def _sterile_environment(directory: Path, repo_root: Path, tools: dict[str, Path]) -> dict[str, str]:
     environment: dict[str, str] = {}
-    for key in ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT"):
+    for key in (
+        "SYSTEMROOT",
+        "WINDIR",
+        "COMSPEC",
+        "PATHEXT",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "PROGRAMW6432",
+    ):
         value = os.environ.get(key)
         if value:
             environment[key] = value
@@ -646,7 +654,7 @@ def _execute(
         result = _run_one(
             spec,
             runner,
-            environment=environment,
+            environment=_environment_for_spec(spec, environment),
             working_directory=working_directory,
             timeout_seconds=min(float(spec.timeout_seconds), remaining),
         )
@@ -654,6 +662,15 @@ def _execute(
         if result.status != "passed":
             return ExecutionReport(False, tuple(results))
     return ExecutionReport(True, tuple(results))
+
+
+def _environment_for_spec(spec: CommandSpec, environment: dict[str, str]) -> dict[str, str]:
+    if not spec.name.startswith("docker_scout_") or "--config" not in spec.argv:
+        return environment
+    config_index = spec.argv.index("--config") + 1
+    if config_index >= len(spec.argv):
+        return environment
+    return {**environment, "DOCKER_CONFIG": spec.argv[config_index]}
 
 
 def execute_plan(

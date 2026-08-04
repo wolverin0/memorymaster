@@ -171,6 +171,8 @@ def test_gitleaks_policy_cannot_be_suppressed_by_repo_or_environment(
 def test_scanners_receive_sterile_environment_and_working_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    program_files = tmp_path.parent / "program-files"
+    monkeypatch.setenv("PROGRAMFILES", str(program_files))
     for key in (
         "GIT_DIR",
         "GIT_WORK_TREE",
@@ -193,6 +195,7 @@ def test_scanners_receive_sterile_environment_and_working_directory(
         assert isinstance(environment, dict)
         assert not any(key.startswith(("GIT_", "PIP_AUDIT_", "DOCKER_")) for key in environment)
         assert "AWS_SECRET_ACCESS_KEY" not in environment
+        assert environment["PROGRAMFILES"] == str(program_files)
         working_directory = Path(str(kwargs["cwd"])).resolve()
         assert working_directory != tmp_path.resolve()
         assert tmp_path.resolve() not in working_directory.parents
@@ -220,9 +223,15 @@ def test_docker_config_is_scoped_to_docker_argv(
     assert report.ok is True
     docker_argv, docker_kwargs = next(item for item in observed if "scout" in item[0])
     assert docker_argv[1:3] == ("--config", str(docker_config.resolve()))
-    assert not any(key.startswith("DOCKER_") for key in docker_kwargs["env"])
+    assert docker_kwargs["env"]["DOCKER_CONFIG"] == str(docker_config.resolve())
+    assert not any(
+        key.startswith("DOCKER_") and key != "DOCKER_CONFIG" for key in docker_kwargs["env"]
+    )
     assert all(
         str(docker_config.resolve()) not in argv for argv, _ in observed if "scout" not in argv
+    )
+    assert all(
+        "DOCKER_CONFIG" not in kwargs["env"] for argv, kwargs in observed if "scout" not in argv
     )
 
 
