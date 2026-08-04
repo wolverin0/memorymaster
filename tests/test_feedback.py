@@ -6,6 +6,7 @@ import sqlite3
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -129,6 +130,14 @@ class TestRecordRetrieval:
             assert count == 3
         finally:
             conn.close()
+
+    def test_record_retrieval_reuses_ready_tables(self, tracker):
+        """Repeated writes do not repeat schema setup after initialization."""
+        tracker.ensure_tables()
+        with patch.object(tracker, "ensure_tables", wraps=tracker.ensure_tables) as ensure:
+            assert tracker.record_retrieval([1], "first query") == 1
+            assert tracker.record_retrieval([2], "second query") == 1
+        assert ensure.call_count == 0
 
     def test_record_retrieval_truncates_long_query(self, tracker):
         """record_retrieval truncates query to 500 chars."""
