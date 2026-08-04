@@ -2,13 +2,14 @@
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, ADR, vNext.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-03 for completed upstream-hardening implementation evidence.
-# Verdicts: ABANDONED=9, CURRENT=95, GENERATED=3, SUPERSEDED=9.
+# Updated: 2026-08-03 for the measured multi-phase autoresearch execution overlay.
+# Verdicts: ABANDONED=9, CURRENT=96, GENERATED=3, SUPERSEDED=9.
 # Rule: CURRENT docs are trusted; never implement from SUPERSEDED or ABANDONED docs.
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
 | ROADMAP.md | CURRENT | 2026-07-27 | Sole authoritative product roadmap; vNext governed capture is in Now and hosted/team breadth remains deferred. |
+| .planning/AUTORESEARCH-PROGRAM-2026-08-03.md | CURRENT | 2026-08-03 | Bounded execution overlay for latency, retrieval, graph, capture, and convergence gates; per-phase success cannot terminate the whole program. |
 | COMPETITOR_ANALYSIS.md | CURRENT | 2026-07-27 | Current prior-art analysis corrects Cognee provenance, temporal, tenant, graph, and document capabilities without adopting it as a dependency. |
 | .planning/UPSTREAM-PRIOR-ART-DELTA-2026-08-03.md | CURRENT | 2026-08-03 | Dated refresh of twelve cloned upstreams with exact SHAs and adopt/retain/defer/reject recommendations that remain subordinate to ROADMAP.md. |
 | .planning/UPSTREAM-HARDENING-IMPLEMENTATION-2026-08-03.md | CURRENT | 2026-08-03 | Completed SQLite-first execution record for queue enumeration, honest extraction outcomes, capture coverage, OAuth evaluation, and release gates. |
