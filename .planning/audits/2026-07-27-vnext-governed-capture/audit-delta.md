@@ -1,10 +1,10 @@
 # MemoryMaster vNext governed capture audit delta
-# Covers: SQLite activation, capture, lineage, trusted graph, scheduling, and public-safe v1 evidence.
-# Key terms: memorymaster.public.v1, OpenCode OAuth, provider window, candidate writes, observation.
-# Read when: reviewing the local candidate, public PR readiness, or remaining release-quality gates.
+# Covers: SQLite activation, capture, lineage, trusted graph, scheduling, quality, and release evidence.
+# Key terms: memorymaster.public.v1, OpenCode OAuth, v4.6.0, candidate writes, observation.
+# Read when: reviewing the released vNext architecture or the final longitudinal gate.
 # Baseline: d33a268; pre-retirement code head is 6be23d7.
 # Evidence boundary: SQLite/private providers; private paths, fingerprints, and row counts are excluded.
-# Verdict: 24-hour, LifeAgent, Docker, and full-QA gates passed; no public push or publication is included.
+# Verdict: activation, quality, supply-chain, and public v4.6.0 gates passed; seven-day observation remains.
 
 ## Scope and implementation
 
@@ -115,12 +115,21 @@ The reproducible 500-question LongMemEval candidate run produced R@5 0.9660,
 R@10 0.9840, and MRR 0.9033912698 versus baseline R@5 0.9660, R@10 0.9840,
 and MRR 0.9020579365. The retrieval regression gate passes.
 
-One bounded private Codex headless evaluation used `gpt-5.6-sol` at high
-reasoning, with no subagents or retry fan-out. Three synthetic private cases
-produced 100 percent candidate, entity, and relationship precision. Usage was
-28,606 input tokens, 893 output tokens, and 516 reasoning tokens. This is a
-small activation smoke, not a statistically sufficient substitute for the
-90/90/85 private-corpus gate.
+The original three-case Codex smoke produced 100 percent candidate, entity, and
+relationship precision but was not statistically sufficient. The completed
+production-path evaluator then ran 40 explicitly synthetic private gate cases
+through `remember`, the capture worker, canonical confirmation, `improve`, and
+graph extraction using keyless OpenCode OAuth with GPT-5.6 Terra at medium
+effort. Candidate precision was 40/40 (Wilson 95 percent lower bound 0.9124),
+entity precision was 79/79 (lower bound 0.9536), and relationship precision was
+39/39 (lower bound 0.9103). All 90/90/85 precision gates pass.
+
+That evaluator exposed and fixed an exact-lineage defect: claim jobs asked
+Atlas for the oldest global evidence row before filtering to the job's evidence
+ID. The worker now supplies the exact leased evidence object, so sequential
+captures cannot silently complete with zero derived claims. Commit `a2e59ea`
+adds the regression, shared OpenCode OAuth provider, call-scoped capture/graph
+configuration, readiness checks, and reusable quality evaluator.
 
 Comparable full OAuth-backed before/after QA passed with the same keyless
 OpenCode 1.18.13 judge (`openai/gpt-5.4-mini`, medium effort). Baseline accuracy
@@ -230,7 +239,7 @@ The existing Steward cadence policy also staled and archived older unused
 claims and created its configured off-repository vacuum snapshot. Those
 pre-existing governance behaviors were not introduced or expanded by vNext.
 
-## Completed activation gates and remaining release evidence
+## Completed activation and release gates
 
 The final-code provider run and replacement 24-hour observation are complete.
 They passed the structured-yield threshold, scheduler/lease checks, duplicate
@@ -240,15 +249,20 @@ complete. `dream-status` now distinguishes the rolling provider window from
 lifetime history, so historical failures no longer produce a misleading
 current-window warning.
 
-The remaining work is release evidence, not an activation blocker:
+The operator subsequently authorized a public main push and release. v4.6.0 was
+tagged at `a4e954d945bff4359e8737a2f064f3888557f6d9`, its GitHub release and
+publish workflows passed, and PyPI serves 4.6.0. The authenticated 40-case
+capture/graph gate above closes the statistical quality item.
 
-1. Continue the seven-day observation for capture precision, graph support,
-   provider usage, task results, and recall regressions.
-2. Expand the private capture/graph corpus enough to make the 90/90/85 quality
-   thresholds statistically meaningful.
-3. Obtain separate operator authorization before creating a public PR, pushing
-   this branch, publishing a package, or performing a public deployment. This
-   stabilization does none of those actions.
+Only the seven-day observation remains. Its authoritative anchor is
+2026-07-30 16:06:38 UTC, so it cannot close before 2026-08-06 16:06:38 UTC
+(13:06 Argentina). At the 2026-08-04 22:36 UTC interim snapshot, 126 Dreaming
+runs were `ok`, 167/169 provider calls were structured-valid, no call had an
+HTTP 429 or non-ok provider outcome, there were no duplicate application keys
+or active/expired leases, both hidden tasks had last result 0, and trusted
+recall remained governed. Three hook-level `JSONDecodeError` records remain
+visible for final classification; they are not being erased or counted as
+provider successes.
 
 ## Rollback position
 

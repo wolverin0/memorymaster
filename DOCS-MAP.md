@@ -2,16 +2,16 @@
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, ADR, vNext.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-04 for the v4.6.0 release and changelog registration.
+# Updated: 2026-08-04 for v4.6.0, capture-quality convergence, and the final observation gate.
 # Verdicts: ABANDONED=9, CURRENT=98, GENERATED=3, SUPERSEDED=9.
 # Rule: CURRENT docs are trusted; never implement from SUPERSEDED or ABANDONED docs.
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
 | CHANGELOG.md | CURRENT | 2026-08-04 | Public release history; v4.6.0 records governed universal capture, measured quality changes, security evidence, and known follow-ups. |
-| ROADMAP.md | CURRENT | 2026-07-27 | Sole authoritative product roadmap; vNext governed capture is in Now and hosted/team breadth remains deferred. |
-| .planning/AUTORESEARCH-PROGRAM-2026-08-03.md | CURRENT | 2026-08-04 | Completed six-phase execution overlay records benchmark, production query, retrieval, graph, capture, Docker, full-QA, and remaining longitudinal evidence. |
-| .planning/audits/2026-08-04-autoresearch-convergence/audit-delta.md | CURRENT | 2026-08-04 | Bounded convergence delta records exact SQLite-only tests, metrics, artifact identities, authenticated supply-chain and full-QA evidence, and remaining longitudinal/public gates. |
+| ROADMAP.md | CURRENT | 2026-08-04 | Sole authoritative roadmap; v4.6.0 is shipped, the seven-day observation is Now, and hosted/team breadth remains deferred. |
+| .planning/AUTORESEARCH-PROGRAM-2026-08-03.md | CURRENT | 2026-08-04 | Completed six-phase execution overlay records retrieval, graph, capture, full-QA, OAuth quality, public release, and the sole remaining longitudinal gate. |
+| .planning/audits/2026-08-04-autoresearch-convergence/audit-delta.md | CURRENT | 2026-08-04 | Bounded convergence delta records SQLite-only tests, 40-case quality evidence, public v4.6.0 release evidence, and the remaining seven-day observation. |
 | COMPETITOR_ANALYSIS.md | CURRENT | 2026-07-27 | Current prior-art analysis corrects Cognee provenance, temporal, tenant, graph, and document capabilities without adopting it as a dependency. |
 | .planning/UPSTREAM-PRIOR-ART-DELTA-2026-08-03.md | CURRENT | 2026-08-03 | Dated refresh of twelve cloned upstreams with exact SHAs and adopt/retain/defer/reject recommendations that remain subordinate to ROADMAP.md. |
 | .planning/UPSTREAM-HARDENING-IMPLEMENTATION-2026-08-03.md | CURRENT | 2026-08-03 | Completed SQLite-first execution record for queue enumeration, honest extraction outcomes, capture coverage, OAuth evaluation, and release gates. |
@@ -19,7 +19,7 @@
 | .planning/VNEXT-BASELINE-2026-07-27.md | CURRENT | 2026-07-27 | Reproducible pre-change retrieval, test, latency, package, capture, graph, and scheduler baseline at d33a268. |
 | docs/adr/0015-governed-universal-capture-lineage.md | CURRENT | 2026-07-27 | Accepted data-flow decision fixing producer-to-source-to-evidence-to-claim-to-supported-graph lineage and retirement semantics. |
 | docs/public-v1.md | CURRENT | 2026-07-27 | Stable public facade, capture trust boundary, limits, retirement semantics, dashboard inbox, and disposable demo. |
-| .planning/audits/2026-07-27-vnext-governed-capture/audit-delta.md | CURRENT | 2026-08-04 | Public-safe SQLite activation, final-code observation, LifeAgent retirement, Docker/full-QA closure, rollback evidence, and remaining release-quality gates. |
+| .planning/audits/2026-07-27-vnext-governed-capture/audit-delta.md | CURRENT | 2026-08-04 | SQLite activation, LifeAgent retirement, OAuth capture quality, public v4.6.0 release, rollback evidence, and the final seven-day observation gate. |
 | docs/archive/IMPROVEMENT_PLAN.md | ABANDONED | 2026-06-20 | The doc serves as a generated audit and roadmap from March 2026 but is not referenced by any current docs; it contains specific version claims and 'P0' bugs that likely represent a historical snapshot rather than a living plan.  |
 | docs/archive/v315-experiments/E02-results.md | ABANDONED | 2026-06-20 | This is a negative result experiment from a past version (v315) where the code was explicitly reverted and not retained.  |
 | docs/archive/v315-experiments/E05-results.md | ABANDONED | 2026-06-20 | The experiment explicitly resulted in a 'REVERT' decision because all candidates regressed, confirming this hypothesis is a dead end and the changes were not kept.  |

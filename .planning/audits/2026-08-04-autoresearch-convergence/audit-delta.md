@@ -1,10 +1,10 @@
-# MemoryMaster autoresearch convergence audit delta — 2026-08-04
-# Covers: SQLite-only retrieval, graph, capture, package, and supply-chain convergence evidence.
-# Key terms: LongMemEval, graph support, capture replay, OAuth QA, CycloneDX, Gitleaks, Docker Scout.
-# Read when: deciding what the autoresearch program proved and what still gates a PR or release.
+# MemoryMaster autoresearch convergence audit delta - 2026-08-04
+# Covers: SQLite-only retrieval, graph, capture, OAuth quality, package, and release evidence.
+# Key terms: LongMemEval, graph support, capture replay, OAuth QA, v4.6.0, observation.
+# Read when: deciding what autoresearch proved and what remains after the public release.
 # Baseline: vNext branch before the 2026-08-03 autoresearch program; artifact evidence at 954a6e7.
 # Boundary: temporary databases and local artifacts only; PostgreSQL was explicitly waived.
-# Verdict: local convergence, authenticated image scan, and full QA passed; public and longitudinal gates remain.
+# Verdict: convergence, 40-case quality, and public v4.6.0 passed; only the seven-day observation remains.
 
 ## Outcome
 
@@ -29,6 +29,9 @@ It does not supersede the product roadmap or the earlier live activation and
 | Graph-focused top-five hits | 0/6 | 6/6 | Zero forbidden hits; active authorized supports only |
 | Capture acknowledgement p95 | n/a | 107.0 ms worst of five runs | Below 500 ms SLO; zero replay/integrity failures |
 | Comparable full QA | 46.2% (231/500) | 46.4% (232/500) | +0.2 points; allowed floor was -2.0 points |
+| Private capture candidates | n/a | 40/40 correct; precision 1.0 | Wilson 95% lower bound 0.9124 >= 0.90 |
+| Private graph entities | n/a | 79/79 correct; precision 1.0 | Wilson 95% lower bound 0.9536 >= 0.90 |
+| Private graph relations | n/a | 39/39 correct; precision 1.0 | Wilson 95% lower bound 0.9103 >= 0.85 |
 
 The graph fix reserves a bounded slot for authoritative claim-store results
 rehydrated from active, authorized edge supports. It does not allow the graph to
@@ -87,16 +90,21 @@ follow-up, not a failure of the current artifact.
 
 ## Remaining gates
 
-1. Expand the private capture/graph evaluation corpus enough to support the
-   90/90/85 precision thresholds statistically.
-2. Continue the already-established seven-day observation described by the
-   governed-capture audit.
-3. Obtain explicit public-release authorization before pushing this branch,
-   opening a PR on the public remote, tagging, or publishing a package.
+Only the already-established seven-day observation remains. It ends at
+2026-08-06 16:06:38 UTC (13:06 Argentina); the governed-capture audit records
+the interim operational evidence and the three hook-level parse errors that
+must be classified at closure.
 
-The earlier replacement 24-hour observation and candidate-write activation
-already passed. This autoresearch program did not touch the live database,
-replace scheduled tasks, push commits, create a PR, or publish anything.
+The 40-case capture/graph corpus and its Wilson lower-bound gates passed. The
+operator authorized direct publication, public v4.6.0 was tagged at `a4e954d`,
+its release and publish workflows passed, and PyPI serves 4.6.0. Candidate-write
+activation and the replacement 24-hour observation had already passed.
+
+Post-release commit `3b2edce` makes MCP Obsidian logging explicitly opt-in.
+Commit `a2e59ea` adds the shared keyless OpenCode provider, exact-evidence job
+fix, readiness reporting, and reusable capture/graph evaluator. Current code
+passed 4,215 non-ML tests (94 skipped, 97 deselected, one expected xfail) and
+96 ML/retrieval tests (six skipped); Ruff, diff, and release-truth checks pass.
 
 The operator explicitly authorized the full QA budget. Two comparable
 500-question passes used keyless OpenCode 1.18.13 with

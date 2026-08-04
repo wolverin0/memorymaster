@@ -1,39 +1,40 @@
 # MemoryMaster roadmap
-# Covers: the authoritative personal-first MemoryMaster product sequence and explicit deferrals.
-# Key terms: remember, recall, forget, improve, governed claims, capture lineage, personal-v1.
+# Covers: the authoritative post-v4.6 personal-first product sequence and explicit deferrals.
+# Key terms: v4.6.0, remember, recall, forget, improve, governed claims, observation.
 # Read when: choosing release scope, accepting a feature, or deciding whether work is deferred.
 # Authority: this is the sole roadmap; `.planning/` specifications implement it and never replace it.
-# Safety: SQLite remains authoritative, candidate promotion stays steward-owned, and live activation is separate.
-# Updated: 2026-07-27 for governed universal capture and graph hardening.
+# Safety: SQLite remains authoritative, candidate promotion stays steward-owned, and live upgrades stay operator-gated.
+# Updated: 2026-08-04 after the public v4.6.0 release and capture-quality convergence.
+
+## Shipped in v4.6.0
+
+- The personal/local SQLite profile and versioned `remember / recall / forget /
+  improve` Python, CLI, and MCP facade are public.
+- Unified bounded capture, exact source -> evidence -> claim -> graph lineage,
+  replay-safe background jobs, and the `personal-v1` ontology are implemented.
+- Trusted graph traversal requires active authorized supporting claims and
+  citations; candidate promotion remains steward-controlled.
+- Capture Inbox, deterministic demo, clean package profiles, supply-chain
+  evidence, LongMemEval gates, and comparable OAuth-backed QA are complete.
 
 ## Now
 
-- Ship and operate the personal/local minimal profile: one SQLite database,
-  private stdio MCP, and no required external database or vector service.
-- Add a small, versioned `remember / recall / forget / improve` facade over
-  the governed claim lifecycle, with Python, CLI, and MCP parity.
-- Capture pasted text, reference URLs, common local documents, images, and
-  audio through one bounded source/evidence envelope. URL-only items remain
-  `awaiting_evidence`; MemoryMaster does not fetch remote content.
-- Persist replay-safe capture jobs and exact source -> evidence -> claim ->
-  graph lineage. Candidate extraction may run in the existing hourly worker;
-  confirmation remains exclusively steward-controlled.
-- Ship the `personal-v1` ontology and make graph traversal depend on active,
-  authorized supporting claims and citations.
-- Add a local Capture Inbox, a disposable deterministic demo, and reproducible
-  capture/lineage/graph/latency quality gates.
-- Resolve only the supply-chain and publication evidence that applies to the
-  local package; keep optional-profile blockers classified separately.
-- Preserve governed retrieval, lifecycle authority, tenant/principal isolation,
-  finite capture budgets, and fail-closed production evidence defaults.
+- Complete the seven-day post-activation observation at 2026-08-06 16:06 UTC
+  (13:06 Argentina) and record queue, provider, duplicate, lease, task-result,
+  graph-support, and trusted-recall evidence without changing live state.
+- Keep v4.6.0 operational while the post-release Obsidian opt-in and OpenCode
+  OAuth capture fixes converge on `main` for a separately approved patch release.
+- Preserve governed retrieval, lifecycle authority, scope isolation, finite
+  capture budgets, and fail-closed production evidence defaults.
 
 ## Next
 
-- Improve personal/local backup guidance and verify restore on a disposable
-  copy before migrating the user's active SQLite database.
+- Improve personal/local backup guidance beyond the already verified disposable
+  backup/restore and migration procedure.
 - Keep semantic recall optional and disabled unless a local user deliberately
   configures a governed Qdrant/provider profile.
-- Execute the verified release workflow only after explicit release approval.
+- Upgrade the pinned private runtime only through a separately authorized,
+  snapshot-backed operator action; a public package release is not a live cutover.
 
 ## Later
 
