@@ -12,7 +12,7 @@ from memorymaster.public.demo import run_disposable_demo
 
 def _emit(payload: object, *, json_output: bool) -> None:
     if json_output:
-        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        print(json.dumps(payload, ensure_ascii=True, sort_keys=True))
 
 
 def handle_remember(

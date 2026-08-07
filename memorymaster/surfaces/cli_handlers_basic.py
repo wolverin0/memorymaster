@@ -1665,12 +1665,14 @@ def _handle_migrate(args: argparse.Namespace, service, parser: argparse.Argument
     )
     from memorymaster.stores.store_factory import is_postgres_dsn
 
+    started = time.perf_counter()
+
     # --list works without a DB connection at all.
     if getattr(args, "list", False):
         migrations = discover_migrations()
         if args.json_output:
             payload = [{"version": m.version, "description": m.description} for m in migrations]
-            print(_json_envelope(payload))
+            print(_json_envelope(payload, query_ms=(time.perf_counter() - started) * 1000))
         else:
             print(f"known migrations ({len(migrations)}):")
             for m in migrations:
@@ -1694,7 +1696,7 @@ def _handle_migrate(args: argparse.Namespace, service, parser: argparse.Argument
                     }
                     for e in entries
                 ]
-                print(_json_envelope(payload))
+                print(_json_envelope(payload, query_ms=(time.perf_counter() - started) * 1000))
             else:
                 print(f"backend={backend} db={effective_db}")
                 for e in entries:
@@ -1706,7 +1708,12 @@ def _handle_migrate(args: argparse.Namespace, service, parser: argparse.Argument
         # Default: apply pending
         newly = runner.apply_pending()
         if args.json_output:
-            print(_json_envelope({"applied": newly, "backend": backend}))
+            print(
+                _json_envelope(
+                    {"applied": newly, "backend": backend},
+                    query_ms=(time.perf_counter() - started) * 1000,
+                )
+            )
         else:
             if not newly:
                 print(f"migrate: nothing to apply (backend={backend}, db={effective_db})")
