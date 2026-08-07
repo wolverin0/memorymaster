@@ -4,7 +4,7 @@
 # Read when: implementing, reviewing, activating, or rolling back the post-v4.6 companion-integration program.
 # Authority: this specification implements `ROADMAP.md`; it is not a second roadmap and cannot override lifecycle policy.
 # Safety: Windows SQLite stays authoritative, VM SQLite is fallback-only, global scope is never inferred, and skills require approval.
-# Status: P1-P3 IMPLEMENTED locally on 2026-08-07; P4 live gates, observation, and PR have not occurred.
+# Status: P1-P3 and Windows P4 gates are complete; the unreachable Hermes VM blocks shadow activation, observation, and PR.
 
 ## 1. Outcome
 
@@ -236,6 +236,24 @@ previewed, operator-gated step outside automatic stewardship.
 - [ ] Measure baseline recall latency, sync freshness, and duplicate counts.
 - [ ] Create and restore-test snapshots of the Windows authority and VM replica.
 
+P0 live evidence on 2026-08-07:
+
+- The Windows authority was snapshotted to the configured `E:` backup root and
+  restored independently to both `E:` and a fast local disposable path. The
+  local restore passed `PRAGMA quick_check`, zero foreign-key violations,
+  idempotent migration, schema-version, trusted-recall, and prior-runtime
+  compatibility checks. The snapshot and both restores have identical byte
+  sizes and authoritative table counts.
+- Trusted restored recall returned only confirmed claims with citations and
+  completed within 9.5 seconds. Replay, scope, and duplicate invariants pass in
+  the focused integration gate; Windows scheduled tasks reported result `0`.
+- The available WSL Ubuntu instance is not the Hermes host: it has no Hermes
+  binary, Hermes home, gateway service, or replica. Known SSH endpoints, keys,
+  Docker contexts, and expected service ports did not locate another reachable
+  host. Hyper-V inventory is unavailable to the current non-administrator
+  account. Therefore the three mixed Windows/VM checkboxes remain open rather
+  than inferring VM evidence from the wrong machine.
+
 Exit: a redacted baseline identifies exact install paths, service actions,
 rollback commands, and no production state was mutated.
 
@@ -327,17 +345,43 @@ P3 verification on 2026-08-07:
 
 ### P4 - Convergence, activation, and PR
 
-- [ ] Run focused security, scope, replay, lifecycle, and provider tests.
-- [ ] Run Ruff, collection, migration/restore, and package-content checks.
-- [ ] Run the full non-ML suite once at the integration boundary.
-- [ ] Run LongMemEval once; R@5 and MRR may regress by at most 0.01 absolute.
-- [ ] Run disposable end-to-end activation with fake/local providers.
+- [x] Run focused security, scope, replay, lifecycle, and provider tests.
+- [x] Run Ruff, collection, migration/restore, and package-content checks.
+- [x] Run the full non-ML suite once at the integration boundary.
+- [x] Run LongMemEval once; R@5 and MRR may regress by at most 0.01 absolute.
+- [x] Run disposable end-to-end activation with fake/local providers.
 - [ ] Install live provider in read-only shadow mode.
 - [ ] Enable candidate writes only after all prior gates pass.
 - [ ] Observe 24 hours and record scope, lineage, duplicates, outbox, blocked
       jobs, provider state, latency, and task results.
 - [ ] Create the PR after the 24-hour check.
-- [ ] Do not publish a new public release in this package.
+- [x] Do not publish a new public release in this package.
+
+P4 verification on 2026-08-07:
+
+- Full non-ML: 4,358 passed, 71 skipped, 97 deselected, 1 xfailed. Focused
+  final security/scope/replay/lifecycle/Hermes/capture gate: 155 passed.
+  Required ML/retrieval: 97 passed. Collection: 4,527 tests.
+- LongMemEval completed once for all 500 questions: R@5 `0.972`, R@10
+  `0.984`, and MRR `0.907565`, exactly matching the controlled baseline with
+  zero provider calls. It was not rerun after deployment-only fixes.
+- SQLite snapshot/restore, repeated migration, quick-check, foreign keys,
+  installed-prior-version recall, wheel builds, clean install, package content,
+  dependency audit, Gitleaks, Ruff, and diff checks passed. PostgreSQL remains
+  explicitly waived for this SQLite-only rollout.
+- Final wheels are `memorymaster-4.6.0` SHA-256
+  `B74CA275126B51584D2E74694AC0C063220B5058047C269D6AFEE0A03405A733`
+  and `hermes-memorymaster-0.1.0` SHA-256
+  `2F2C240588EC0F2A26B446DCB288DD9DDD4AA14A0080DF1496A3912B8295DDCE`.
+- Dreaming and Steward now point to the verified inactive-to-live runtime using
+  `pythonw.exe`. A manual Dreaming task execution returned `0`, queued graph
+  work completed once, capture coverage is `ok`, and candidate mode remains
+  steward-governed. The previous runtime path is recorded in the audit delta
+  for one-command action rollback.
+- No live Hermes profile was changed. Read-only shadow mode, Hermes candidate
+  capture, the 24-hour observation, and PR creation remain blocked until the
+  actual UbuntuVM/Hermes host is reachable. The observation clock has not been
+  started and no public release was created.
 
 Exit: the PR contains reproducible evidence, activation and rollback commands,
 and no unresolved scope or lineage invariant.
