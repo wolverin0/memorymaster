@@ -4,7 +4,7 @@
 # Read when: choosing release scope, accepting a feature, or deciding whether work is deferred.
 # Authority: this is the sole roadmap; `.planning/` specifications implement it and never replace it.
 # Safety: SQLite remains authoritative, candidate promotion stays steward-owned, and live upgrades stay operator-gated.
-# Updated: 2026-08-04 after the public v4.6.0 release and capture-quality convergence.
+# Updated: 2026-08-07 to schedule the governed Hermes, session-scope, and skill-proposal integration.
 
 ## Shipped in v4.6.0
 
@@ -29,6 +29,11 @@
 
 ## Next
 
+- Implement the bounded session-scope, native Hermes MemoryProvider, and
+  governed-skill proposal program defined by
+  `.planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md`; Windows SQLite
+  remains authoritative, global is never inferred, and skills require explicit
+  approval.
 - Improve personal/local backup guidance beyond the already verified disposable
   backup/restore and migration procedure.
 - Keep semantic recall optional and disabled unless a local user deliberately

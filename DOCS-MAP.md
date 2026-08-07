@@ -2,14 +2,15 @@
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, ADR, vNext.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-04 for v4.6.0, capture-quality convergence, and the final observation gate.
-# Verdicts: ABANDONED=9, CURRENT=98, GENERATED=3, SUPERSEDED=9.
+# Updated: 2026-08-07 for the governed Hermes, session-scope, and skill-proposal implementation specification.
+# Verdicts: ABANDONED=9, CURRENT=99, GENERATED=3, SUPERSEDED=9.
 # Rule: CURRENT docs are trusted; never implement from SUPERSEDED or ABANDONED docs.
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
 | CHANGELOG.md | CURRENT | 2026-08-04 | Public release history; v4.6.0 records governed universal capture, measured quality changes, security evidence, and known follow-ups. |
-| ROADMAP.md | CURRENT | 2026-08-04 | Sole authoritative roadmap; v4.6.0 is shipped, the seven-day observation is Now, and hosted/team breadth remains deferred. |
+| ROADMAP.md | CURRENT | 2026-08-07 | Sole authoritative roadmap; v4.6.0 is shipped and the governed Hermes, session-scope, and skill-proposal program is scheduled next without expanding into hosted/team breadth. |
+| .planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md | CURRENT | 2026-08-07 | Planned implementation specification for explicit session scopes, an authoritative native Hermes provider, and evidence-linked skill candidates; subordinate to ROADMAP.md. |
 | .planning/AUTORESEARCH-PROGRAM-2026-08-03.md | CURRENT | 2026-08-04 | Completed six-phase execution overlay records retrieval, graph, capture, full-QA, OAuth quality, public release, and the sole remaining longitudinal gate. |
 | .planning/audits/2026-08-04-autoresearch-convergence/audit-delta.md | CURRENT | 2026-08-04 | Bounded convergence delta records SQLite-only tests, 40-case quality evidence, public v4.6.0 release evidence, and the remaining seven-day observation. |
 | COMPETITOR_ANALYSIS.md | CURRENT | 2026-07-27 | Current prior-art analysis corrects Cognee provenance, temporal, tenant, graph, and document capabilities without adopting it as a dependency. |
