@@ -39,7 +39,7 @@ from memorymaster.core.intake_policy import (
     evaluate_intake,
 )
 from memorymaster.core.temporal_policy import claim_is_temporally_current
-from memorymaster.govern import ingest_governance
+from memorymaster.govern import ingest_governance, skill_review_phase
 from memorymaster.core.services.integration import IntegrationService
 from memorymaster.stores.claim_identity import (
     normalize_claim_identity,
@@ -53,7 +53,6 @@ import contextlib
 logger = logging.getLogger(__name__)
 
 RetrievalWeights = tuple[float, float, float, float]
-
 # Rule-mining steward phase (P3). DEFAULT OFF: run_cycle only mines verbatim
 # corrections into rule candidates when MEMORYMASTER_STEWARD_RULE_MINING is
 # explicitly enabled. When unset/off, run_cycle makes ZERO rule-mining LLM
@@ -62,9 +61,6 @@ RetrievalWeights = tuple[float, float, float, float]
 _RULE_MINING_FLAG = "MEMORYMASTER_STEWARD_RULE_MINING"
 _RULE_MINING_LIMIT_ENV = "MEMORYMASTER_STEWARD_RULE_MINING_LIMIT"
 _RULE_MINING_DEFAULT_LIMIT = 25
-_SKILL_REVIEW_FLAG = "MEMORYMASTER_SKILL_REVIEW"
-_SKILL_REVIEW_LIMIT_ENV = "MEMORYMASTER_SKILL_REVIEW_LIMIT"
-_SKILL_REVIEW_DEFAULT_LIMIT = 5
 
 
 def _rule_mining_enabled() -> bool:
@@ -83,21 +79,6 @@ def _rule_mining_limit() -> int:
         return max(1, int(raw))
     except ValueError:
         return _RULE_MINING_DEFAULT_LIMIT
-
-
-def _skill_review_enabled() -> bool:
-    raw = os.environ.get(_SKILL_REVIEW_FLAG, "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
-
-
-def _skill_review_limit() -> int:
-    raw = os.environ.get(_SKILL_REVIEW_LIMIT_ENV, "").strip()
-    if not raw:
-        return _SKILL_REVIEW_DEFAULT_LIMIT
-    try:
-        return max(1, min(int(raw), 20))
-    except ValueError:
-        return _SKILL_REVIEW_DEFAULT_LIMIT
 
 
 # Hard ceiling for BFS path traversal — clamps caller-supplied max_hops so a
@@ -861,19 +842,6 @@ class MemoryService(IntegrationService):
         result["enabled"] = True
         return result
 
-    def _skill_review_phase(self) -> dict[str, object]:
-        """Review recurring rules into candidates only; default off and bounded."""
-        if not _skill_review_enabled():
-            return {"enabled": False}
-        db_path = str(getattr(self.store, "db_path", "") or "")
-        if not db_path or "://" in db_path:
-            return {"enabled": True, "skipped": "no_sqlite_db_path"}
-        from memorymaster.knowledge.skills import review_due_skills
-
-        result = review_due_skills(self, limit=_skill_review_limit())
-        result["enabled"] = True
-        return result
-
     def run_cycle(
         self,
         *,
@@ -960,11 +928,7 @@ class MemoryService(IntegrationService):
                 except Exception as exc:
                     logger.warning("rule mining phase failed: %s", exc)
                     result["rule_mining"] = {"enabled": True, "error": str(exc)}
-                try:
-                    result["skill_review"] = self._skill_review_phase()
-                except Exception as exc:
-                    logger.warning("skill review phase failed: %s", exc)
-                    result["skill_review"] = {"enabled": True, "error": str(exc)}
+                result["skill_review"] = skill_review_phase.run(self)
                 budget_snapshot = budget.snapshot()
         except llm_budget.LLMBudgetExceeded as exc:
             current = llm_budget.get_current()

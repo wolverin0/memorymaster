@@ -57,7 +57,6 @@ def import_wacli_json(
             ProducerItem(
                 external_id=str(normalized["source_item_id"]),
                 text=str(normalized["text"] or ""),
-                content_hash=str(normalized["content_hash"]),
                 metadata=raw,
             ),
         )
