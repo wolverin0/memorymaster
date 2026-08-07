@@ -32,6 +32,7 @@ from memorymaster.surfaces.cli_handlers_basic import (
 )
 from memorymaster.surfaces.cli_handlers_integrity import _handle_drain_spool, _handle_integrity, _handle_qdrant_reconcile, _handle_repair_fk
 from memorymaster.surfaces.dreaming_cli import handle_dream_run, handle_dream_status
+from memorymaster.surfaces.session_scope import handle_session_scope
 from memorymaster.surfaces.cli_handlers_public import (
     handle_forget,
     handle_demo,
@@ -62,6 +63,7 @@ COMMAND_HANDLERS["recall"] = handle_recall
 COMMAND_HANDLERS["forget"] = handle_forget
 COMMAND_HANDLERS["improve"] = handle_improve
 COMMAND_HANDLERS["demo"] = handle_demo
+COMMAND_HANDLERS["session-scope"] = handle_session_scope
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -96,6 +98,8 @@ def build_parser() -> argparse.ArgumentParser:
     remember_cmd.add_argument(
         "--source-agent", default="memorymaster-cli", help="Producer attribution"
     )
+    remember_cmd.add_argument("--session-id", default=None, help="Optional producer session ID")
+    remember_cmd.add_argument("--platform", default="cli", help="Producer platform")
 
     ingest = sub.add_parser("ingest", help="Ingest a raw claim with citations")
     ingest.add_argument("--text", required=True, help="Claim text")
@@ -671,6 +675,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="trusted",
         help="Trusted excludes candidate/stale/conflicted claims",
     )
+    recall_cmd.add_argument("--session-id", default=None, help="Optional producer session ID")
+    recall_cmd.add_argument("--source-agent", default="memorymaster-cli")
+    recall_cmd.add_argument("--platform", default="cli")
 
     forget_cmd = sub.add_parser("forget", help="Preview or apply logical retirement")
     forget_target = forget_cmd.add_mutually_exclusive_group(required=True)
@@ -681,6 +688,30 @@ def build_parser() -> argparse.ArgumentParser:
     improve_cmd = sub.add_parser("improve", help="Queue due extraction, review, and graph work")
     improve_cmd.add_argument("--scope", default=None, help="Scope (default: project:<workspace>)")
     improve_cmd.add_argument("--max-items", type=int, default=200)
+    improve_cmd.add_argument("--session-id", default=None, help="Optional producer session ID")
+    improve_cmd.add_argument("--source-agent", default="memorymaster-cli")
+    improve_cmd.add_argument("--platform", default="cli")
+
+    session_scope_cmd = sub.add_parser(
+        "session-scope", help="Show, bind, or clear durable session scope"
+    )
+    session_scope_actions = session_scope_cmd.add_subparsers(
+        dest="session_scope_action", required=True
+    )
+    session_scope_show = session_scope_actions.add_parser("show")
+    session_scope_show.add_argument("--session-id", default=None)
+    session_scope_bind = session_scope_actions.add_parser("bind")
+    session_scope_bind.add_argument("--session-id", required=True)
+    session_scope_bind.add_argument("--scope", required=True)
+    session_scope_bind.add_argument("--source-agent", default="memorymaster-cli")
+    session_scope_bind.add_argument("--platform", default="cli")
+    session_scope_bind.add_argument("--task-label", default=None)
+    session_scope_bind.add_argument("--ttl-seconds", type=int, default=604800)
+    session_scope_bind.add_argument("--allow-global", action="store_true")
+    session_scope_clear = session_scope_actions.add_parser("clear")
+    session_scope_clear.add_argument("--session-id", required=True)
+    session_scope_clear.add_argument("--source-agent", default="")
+    session_scope_clear.add_argument("--platform", default="")
 
     sub.add_parser(
         "demo",

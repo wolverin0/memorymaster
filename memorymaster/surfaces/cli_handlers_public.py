@@ -24,6 +24,8 @@ def handle_remember(
         source_uri=args.url or args.source_uri,
         scope=args.scope,
         source_agent=args.source_agent,
+        session_id=args.session_id,
+        platform=args.platform,
         db=effective_db,
         workspace=args.workspace,
     )
@@ -50,6 +52,9 @@ def handle_recall(
         token_budget=args.budget,
         trust_mode=args.trust_mode,
         output_format=args.output_format,
+        session_id=args.session_id,
+        source_agent=args.source_agent,
+        platform=args.platform,
         db=effective_db,
         workspace=args.workspace,
     )
@@ -86,6 +91,9 @@ def handle_improve(
     receipt = improve(
         scope=args.scope,
         max_items=args.max_items,
+        session_id=args.session_id,
+        source_agent=args.source_agent,
+        platform=args.platform,
         db=effective_db,
         workspace=args.workspace,
     )

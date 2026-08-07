@@ -83,10 +83,12 @@ def ingest_learnings(
     if not Path(db_path).is_file():
         raise FileNotFoundError(f"DB not found: {db_path}")
     from memorymaster.core.models import CitationInput
+    from memorymaster.core.scope_utils import scope_from_cwd
     from memorymaster.core.service import MemoryService
 
     service = MemoryService(db_path, workspace_root=Path(cwd or os.getcwd()))
-    scope = "global" if not cwd else f"project:{Path(cwd).name.lower().replace(' ', '-')}"
+    derived_scope = scope_from_cwd(cwd)
+    scope = derived_scope if derived_scope != "global" else "user"
     batch_id = f"session-end-{uuid.uuid4().hex[:16]}"
     ingested = 0
     for claim in claims[:MAX_LEARNINGS]:

@@ -49,6 +49,9 @@ EXPECTED_TOOLS = {
     "run_cycle",
     "run_steward",
     "search_verbatim",
+    "session_scope_bind",
+    "session_scope_clear",
+    "session_scope_show",
     "volunteer_context",
 }
 

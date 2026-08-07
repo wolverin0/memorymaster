@@ -10,6 +10,7 @@ from typing import Any
 from memorymaster.capture import CaptureRepository, capture_input
 from memorymaster.core.models import Claim, EvidenceItem, SourceItem
 from memorymaster.core.scope_utils import scope_from_cwd
+from memorymaster.core.session_scope import ResolvedScope, SessionScopeResolver
 from memorymaster.core.service import MemoryService
 
 API_VERSION = "memorymaster.public.v1"
@@ -23,6 +24,8 @@ class RememberReceipt:
     job_ids: tuple[int, ...]
     deduplicated: bool
     warnings: tuple[str, ...]
+    scope: str = "user"
+    scope_source: str = "default_user"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -37,6 +40,8 @@ class RecallReceipt:
     tokens_used: int
     trust_mode: str
     output_format: str
+    scope: str = "user"
+    scope_source: str = "default_user"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -62,6 +67,7 @@ class ImproveReceipt:
     queued: dict[str, int]
     already_pending: dict[str, int]
     steward_review_due: int
+    scope_source: str = "default_user"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -92,6 +98,24 @@ def _service(db: str | Path | None, workspace: Path | None) -> MemoryService:
     service = MemoryService(target, workspace_root=workspace or Path.cwd())
     service.init_db()
     return service
+
+
+def _resolve_scope(
+    service: MemoryService,
+    *,
+    scope: str | None,
+    workspace: Path | None,
+    session_id: str | None,
+    source_agent: str,
+    platform: str,
+) -> ResolvedScope:
+    return SessionScopeResolver(service.store.db_path).resolve(
+        session_id=session_id,
+        explicit_scope=scope,
+        workspace=workspace,
+        source_agent=source_agent,
+        platform=platform,
+    )
 
 
 def _source_dict(source: SourceItem) -> dict[str, Any]:
@@ -208,18 +232,27 @@ def remember(
     source_uri: str | None = None,
     scope: str | None = None,
     source_agent: str = "memorymaster-public",
+    session_id: str | None = None,
+    platform: str = "local",
     db: str | Path | None = None,
     workspace: str | Path | None = None,
 ) -> RememberReceipt:
     """Persist evidence synchronously and queue governed extraction work."""
     workspace_path = _workspace_path(workspace)
-    resolved_scope = _scope(scope, workspace_path)
     envelope = capture_input(text=text, path=path, source_uri=source_uri)
     service = _service(db, workspace_path)
+    resolved = _resolve_scope(
+        service,
+        scope=scope,
+        workspace=workspace_path,
+        session_id=session_id,
+        source_agent=source_agent,
+        platform=platform,
+    )
     item, evidence, evidence_duplicate = _persist_capture(
         service,
         envelope=envelope,
-        scope=resolved_scope,
+        scope=resolved.scope,
         source_agent=source_agent,
     )
     jobs, jobs_duplicate = _queue_capture_jobs(
@@ -241,6 +274,8 @@ def remember(
         job_ids=jobs,
         deduplicated=evidence_duplicate and jobs_duplicate,
         warnings=warnings,
+        scope=resolved.scope,
+        scope_source=resolved.scope_source,
     )
 
 
@@ -276,13 +311,31 @@ def recall(
     token_budget: int = 4000,
     trust_mode: str = "trusted",
     output_format: str = "text",
+    session_id: str | None = None,
+    source_agent: str = "memorymaster-public",
+    platform: str = "local",
     db: str | Path | None = None,
     workspace: str | Path | None = None,
 ) -> RecallReceipt:
     """Return governed context and structured lifecycle/citation details."""
     workspace_path = _workspace_path(workspace)
     service = _service(db, workspace_path)
-    scopes = list(scope_allowlist) if scope_allowlist else [_scope(None, workspace_path)]
+    if scope_allowlist:
+        scopes = list(scope_allowlist)
+        receipt_scope = scopes[0] if len(scopes) == 1 else "multiple"
+        scope_source = "scope_allowlist"
+    else:
+        resolved = _resolve_scope(
+            service,
+            scope=None,
+            workspace=workspace_path,
+            session_id=session_id,
+            source_agent=source_agent,
+            platform=platform,
+        )
+        scopes = [resolved.scope]
+        receipt_scope = resolved.scope
+        scope_source = resolved.scope_source
     result = service.query_for_context(
         query=query,
         token_budget=token_budget,
@@ -300,6 +353,8 @@ def recall(
         tokens_used=result.tokens_used,
         trust_mode=trust_mode,
         output_format=result.format,
+        scope=receipt_scope,
+        scope_source=scope_source,
     )
 
 
@@ -444,6 +499,9 @@ def improve(
     *,
     scope: str | None = None,
     max_items: int = 200,
+    session_id: str | None = None,
+    source_agent: str = "memorymaster-public",
+    platform: str = "local",
     db: str | Path | None = None,
     workspace: str | Path | None = None,
 ) -> ImproveReceipt:
@@ -451,8 +509,16 @@ def improve(
     if not 1 <= max_items <= 200:
         raise ValueError("max_items must be between 1 and 200.")
     workspace_path = _workspace_path(workspace)
-    resolved_scope = _scope(scope, workspace_path)
     service = _service(db, workspace_path)
+    resolved = _resolve_scope(
+        service,
+        scope=scope,
+        workspace=workspace_path,
+        session_id=session_id,
+        source_agent=source_agent,
+        platform=platform,
+    )
+    resolved_scope = resolved.scope
     repository = CaptureRepository(service.store)
     claim_queued, claim_existing = _queue_due_evidence(
         repository, scope=resolved_scope, limit=max_items
@@ -472,4 +538,5 @@ def improve(
         queued={"extract_claims": claim_queued, "extract_graph": graph_queued},
         already_pending={"extract_claims": claim_existing, "extract_graph": graph_existing},
         steward_review_due=len(candidates),
+        scope_source=resolved.scope_source,
     )

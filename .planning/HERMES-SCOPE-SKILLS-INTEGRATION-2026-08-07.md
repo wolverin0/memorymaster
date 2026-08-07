@@ -4,7 +4,7 @@
 # Read when: implementing, reviewing, activating, or rolling back the post-v4.6 companion-integration program.
 # Authority: this specification implements `ROADMAP.md`; it is not a second roadmap and cannot override lifecycle policy.
 # Safety: Windows SQLite stays authoritative, VM SQLite is fallback-only, global scope is never inferred, and skills require approval.
-# Status: PLANNED on 2026-08-07; no code, database, hook, scheduled-task, or VM activation has occurred from this specification.
+# Status: P1 IMPLEMENTED locally on 2026-08-07; live DB, installed hook, scheduled-task, and VM activation have not occurred.
 
 ## 1. Outcome
 
@@ -228,7 +228,7 @@ previewed, operator-gated step outside automatic stewardship.
 
 ### P0 - Read-only topology and baseline
 
-- [ ] Work only from a clean worktree based on `origin/main`.
+- [x] Work only from a clean worktree based on `origin/main`.
 - [ ] Record current Hermes version/commit and provider ABI.
 - [ ] Record `hermes memory status` and active provider without changing it.
 - [ ] Verify gateway platform state, not only `/health`.
@@ -241,13 +241,26 @@ rollback commands, and no production state was mutated.
 
 ### P1 - Session binding and scope hardening
 
-- [ ] Add the immutable binding model, repository, migration, and resolver.
-- [ ] Wire public facade, CLI, MCP, dashboard, and hook templates.
-- [ ] Add global-scope negative tests and session switch/resume tests.
-- [ ] Produce, but do not apply, the operator-owned global-hook diff.
+- [x] Add the immutable binding model, repository, migration, and resolver.
+- [x] Wire public facade, CLI, MCP, dashboard, and hook templates.
+- [x] Add global-scope negative tests and session switch/resume tests.
+- [x] Produce, but do not apply, the operator-owned global-hook diff.
 
 Exit: no implicit-global path remains in the new surfaces or repository
 templates; existing public calls stay backward compatible.
+
+P1 verification on 2026-08-07:
+
+- RED was captured as missing `core.session_scope` and `surfaces.session_scope` modules.
+- Focused compatibility, migration, authorization, dashboard, and hook gate:
+  110 passed; Ruff and `git diff --check` passed.
+- New-module coverage: 88% combined; core binding/resolver coverage: 91%.
+- Full non-ML run: 4,297 passed, 71 skipped, 97 deselected, 1 xfailed;
+  the owned dashboard line-budget failure was fixed and retested. The remaining
+  unrelated gate is the workstation's stale installed distribution metadata
+  (`3.2.0`) versus the source-tree version (`4.6.0`).
+- The installed operator hook was read only. Its hash-pinned proposal is in
+  `_intel/briefs/memorymaster-installed-hook-scope-fallback-proposal-2026-08-07.md`.
 
 ### P2 - Hermes provider and authoritative transport
 

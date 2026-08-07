@@ -721,6 +721,9 @@ MCP_TOOL_POLICIES: dict[str, McpToolPolicy] = {
     "run_cycle": McpToolPolicy("steward"),
     "run_steward": McpToolPolicy("steward"),
     "search_verbatim": McpToolPolicy("export"),
+    "session_scope_bind": McpToolPolicy("ingest", team_enabled=True),
+    "session_scope_clear": McpToolPolicy("ingest", team_enabled=True),
+    "session_scope_show": McpToolPolicy("query", team_enabled=True),
     "volunteer_context": McpToolPolicy("query"),
 }
 
@@ -860,6 +863,8 @@ if FastMCP is not None:
         source_uri: str = "",
         scope: str = "",
         source_agent: str = "",
+        session_id: str = "",
+        platform: str = "mcp",
         db: str = "memorymaster.db",
         workspace: str = ".",
     ) -> dict[str, Any]:
@@ -875,6 +880,8 @@ if FastMCP is not None:
             source_uri=source_uri or None,
             scope=scope or None,
             source_agent=source_agent or "memorymaster-mcp",
+            session_id=session_id or None,
+            platform=platform,
             db=db,
             workspace=workspace,
         )
@@ -886,6 +893,9 @@ if FastMCP is not None:
         scope_allowlist: str = "",
         token_budget: int = 4000,
         trust_mode: str = "trusted",
+        session_id: str = "",
+        source_agent: str = "",
+        platform: str = "mcp",
         db: str = "memorymaster.db",
         workspace: str = ".",
     ) -> dict[str, Any]:
@@ -898,6 +908,9 @@ if FastMCP is not None:
             scope_allowlist=scopes,
             token_budget=_bounded_limit(token_budget, maximum=32_000),
             trust_mode=trust_mode,
+            session_id=session_id or None,
+            source_agent=source_agent or "memorymaster-mcp",
+            platform=platform,
             db=db,
             workspace=workspace,
         )
@@ -927,6 +940,9 @@ if FastMCP is not None:
     def improve(
         scope: str = "",
         max_items: int = 200,
+        session_id: str = "",
+        source_agent: str = "",
+        platform: str = "mcp",
         db: str = "memorymaster.db",
         workspace: str = ".",
     ) -> dict[str, Any]:
@@ -936,10 +952,88 @@ if FastMCP is not None:
         receipt = public_improve(
             scope=scope or None,
             max_items=max_items,
+            session_id=session_id or None,
+            source_agent=source_agent or "memorymaster-mcp",
+            platform=platform,
             db=db,
             workspace=workspace,
         )
         return {"ok": True, **asdict(receipt)}
+
+    @mcp.tool()
+    def session_scope_show(
+        session_id: str = "",
+        source_agent: str = "",
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Show bounded session-scope metadata without exposing raw session IDs."""
+        from memorymaster.core.session_scope import SessionScopeRepository
+
+        service = _service(db, workspace)
+        repository = SessionScopeRepository(service.store.db_path)
+        if session_id:
+            items = repository.history(session_id)
+            if source_agent:
+                items = [item for item in items if item.source_agent == source_agent]
+        else:
+            items = repository.list_active()
+            if source_agent:
+                items = [item for item in items if item.source_agent == source_agent]
+        return {
+            "ok": True,
+            "rows": len(items),
+            "items": [item.to_dict() for item in items],
+        }
+
+    @mcp.tool()
+    def session_scope_bind(
+        session_id: str,
+        scope: str,
+        source_agent: str = "",
+        platform: str = "mcp",
+        task_label: str = "",
+        ttl_seconds: int = 604800,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Bind one authenticated session to user or project scope."""
+        from memorymaster.core.session_scope import SessionScopeRepository, validate_scope
+
+        service = _service(db, workspace)
+        service.init_db()
+        workspace_path = Path(_resolve_workspace(workspace))
+        binding = SessionScopeRepository(service.store.db_path).bind(
+            session_id,
+            scope=validate_scope(scope, allow_global=False),
+            source_agent=source_agent or "memorymaster-mcp",
+            platform=platform,
+            binding_source="explicit",
+            workspace_slug=workspace_path.name if workspace_path.is_dir() else None,
+            task_label=task_label or None,
+            ttl_seconds=_bounded_limit(ttl_seconds, maximum=2592000),
+            replace=True,
+        )
+        return {"ok": True, **binding.to_dict()}
+
+    @mcp.tool()
+    def session_scope_clear(
+        session_id: str,
+        source_agent: str = "",
+        platform: str = "",
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Logically end the authenticated session's active scope binding."""
+        from memorymaster.core.session_scope import SessionScopeRepository
+
+        service = _service(db, workspace)
+        ended = SessionScopeRepository(service.store.db_path).end(
+            session_id,
+            source_agent=source_agent or None,
+            platform=platform or None,
+        )
+        return {"ok": True, "ended": ended}
 
     @mcp.tool()
     def ingest_claim(
