@@ -3,8 +3,8 @@
 # Key terms: MemoryProvider, MCP HTTP, Windows authority, VM replica, session scope, replay safety.
 # Read when: installing or operating the Hermes companion without modifying Hermes core.
 # Authority: MemoryMaster on Windows is the only writer; the VM SQLite replica is recall-only fallback.
-# Safety: tokens stay in environment files, raw session IDs never persist, global scope is forbidden.
-# Status: local implementation; do not activate against live Hermes until MemoryMaster P4 gates pass.
+# Safety: tokens stay in protected user environments, raw session IDs never persist, and global scope is forbidden.
+# Status: local implementation; activate only after the MemoryMaster P4 database and authorization gates pass.
 
 This package implements Hermes Agent's supported external `MemoryProvider` ABI.
 It sends authenticated streamable-MCP calls to the authoritative Windows
@@ -64,6 +64,12 @@ Non-secret options live in `$HERMES_HOME/memorymaster-provider.json`:
   "replica_workspace": "/srv/memorymaster"
 }
 ```
+
+On Windows, the consoleless launcher reads the same allowlisted
+`MEMORYMASTER_MCP_*` values from the current user's environment when Task
+Scheduler does not inherit a recent environment update. Explicit process
+environment values always win. The task action therefore contains no bearer
+token, and the launcher never reads arbitrary registry values.
 
 `default_scope` accepts only `user` or `project:<slug>`. Prefer the
 `memorymaster_scope` tool to bind a specific live session explicitly.
