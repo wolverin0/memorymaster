@@ -365,6 +365,8 @@ class EntityGraph:
     ) -> dict[int, list[dict]]:
         clauses = [
             "c.status='confirmed'",
+            "(c.valid_from IS NULL OR julianday(c.valid_from) <= julianday('now'))",
+            "(c.valid_until IS NULL OR julianday(c.valid_until) > julianday('now'))",
             "COALESCE(c.visibility, 'public') <> 'sensitive'",
             """(
                 NOT EXISTS (SELECT 1 FROM claim_evidence_links cel WHERE cel.claim_id=c.id)
@@ -436,6 +438,8 @@ class EntityGraph:
         clauses = [
             f"cl.entity_id IN ({marks})",
             "c.status='confirmed'",
+            "(c.valid_from IS NULL OR julianday(c.valid_from) <= julianday('now'))",
+            "(c.valid_until IS NULL OR julianday(c.valid_until) > julianday('now'))",
             "COALESCE(c.visibility, 'public') <> 'sensitive'",
             """(
                 NOT EXISTS (SELECT 1 FROM claim_evidence_links cel WHERE cel.claim_id=c.id)

@@ -32,6 +32,7 @@ from memorymaster.core.security import (
     resolve_allow_sensitive_access,
 )
 from memorymaster.core.service import MemoryService
+from memorymaster.core.temporal_policy import classify_mutable_state
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,7 @@ class IngestClaimInput(_ToolInput):
     event_time: str = ""
     valid_from: str = ""
     valid_until: str = ""
+    supersedes_claim_id: int | None = None
     source_agent: str = ""
     holder: str = ""
 
@@ -596,6 +598,7 @@ def _checkpoint_batch(
     claim_ids: list[int] = []
     errors: list[dict[str, Any]] = []
     skipped_sensitive = 0
+    warnings: list[dict[str, Any]] = []
     for idx, item in enumerate(items):
         if not isinstance(item, dict):
             errors.append({"index": idx, "error": "item is not a JSON object"})
@@ -632,6 +635,11 @@ def _checkpoint_batch(
                 event_time=_empty_to_none(str(item.get("event_time", "") or "")),
                 valid_from=_empty_to_none(str(item.get("valid_from", "") or "")),
                 valid_until=_empty_to_none(str(item.get("valid_until", "") or "")),
+                supersedes_claim_id=(
+                    int(item["supersedes_claim_id"])
+                    if item.get("supersedes_claim_id") is not None
+                    else None
+                ),
                 # holder landed after checkpoint (fresh-eyes audit seam gap):
                 # keep batch items at parity with ingest_claim's fields.
                 holder=_empty_to_none(str(item.get("holder", "") or "")),
@@ -639,15 +647,31 @@ def _checkpoint_batch(
                 require_source_agent=True,
             )
             claim_ids.append(claim.id)
+            mutable_state = classify_mutable_state(
+                text=text,
+                claim_type=_empty_to_none(str(item.get("claim_type", "") or "")),
+                volatility=str(item.get("volatility", "medium") or "medium"),
+                valid_until=_empty_to_none(str(item.get("valid_until", "") or "")),
+            )
+            if mutable_state.forced_high:
+                warnings.append(
+                    {
+                        "index": idx,
+                        "warning": "mutable state forced to high volatility; supply valid_until",
+                    }
+                )
         except (ValueError, TypeError) as exc:
             errors.append({"index": idx, "error": str(exc)})
-    return {
+    response = {
         "ok": True,
         "ingested": len(claim_ids),
         "skipped_sensitive": skipped_sensitive,
         "errors": errors,
         "claim_ids": claim_ids,
     }
+    if warnings:
+        response["warnings"] = warnings
+    return response
 
 
 @dataclass(frozen=True, slots=True)
@@ -934,6 +958,7 @@ if FastMCP is not None:
         event_time: str = "",
         valid_from: str = "",
         valid_until: str = "",
+        supersedes_claim_id: int | None = None,
         source_agent: str = "",
         holder: str = "",
     ) -> dict[str, Any]:
@@ -968,6 +993,7 @@ if FastMCP is not None:
                 "event_time": event_time,
                 "valid_from": valid_from,
                 "valid_until": valid_until,
+                "supersedes_claim_id": supersedes_claim_id,
                 "source_agent": source_agent,
                 "holder": holder,
             },
@@ -1007,6 +1033,7 @@ if FastMCP is not None:
                 event_time=_empty_to_none(request.event_time),
                 valid_from=_empty_to_none(request.valid_from),
                 valid_until=_empty_to_none(request.valid_until),
+                supersedes_claim_id=request.supersedes_claim_id,
                 source_agent=effective_source,
                 holder=_empty_to_none(request.holder),
                 require_source_agent=True,
@@ -1040,7 +1067,23 @@ if FastMCP is not None:
         except Exception as exc:
             logger.debug("Timeline entry failed: %s", exc)
 
-        return {"ok": True, "claim": _claim_to_dict(claim)}
+        warnings = []
+        mutable_state = classify_mutable_state(
+            text=request.text,
+            claim_type=_empty_to_none(request.claim_type),
+            volatility=request.volatility,
+            valid_until=_empty_to_none(request.valid_until),
+        )
+        if mutable_state.forced_high:
+            warnings.append(
+                "mutable state forced to high volatility; supply valid_until"
+            )
+        if request.supersedes_claim_id is not None:
+            warnings.append("supersession queued for steward review")
+        response = {"ok": True, "claim": _claim_to_dict(claim)}
+        if warnings:
+            response["warnings"] = warnings
+        return response
 
     @mcp.tool()
     def checkpoint(
@@ -1054,7 +1097,8 @@ if FastMCP is not None:
 
         `claims_json` is a JSON array of objects, each with at least `text` and
         optionally: sources_json, claim_type, subject, predicate, object_value,
-        scope, volatility, confidence, event_time, valid_from, valid_until.
+        scope, volatility, confidence, event_time, valid_from, valid_until,
+        supersedes_claim_id.
         Every item passes through the SAME sensitivity filter + ingest path as
         ingest_claim — this only saves N round-trips, it does not bypass anything.
         Returns a per-item summary (ingested ids, sensitive-skips, per-index

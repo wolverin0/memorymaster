@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from memorymaster.core.models import Claim
@@ -110,6 +111,11 @@ def _claim_block_text(claim: Claim, score: float) -> str:
     ]
     if claim.updated_at:
         meta_parts.append(f"updated={claim.updated_at}")
+    meta_parts.append(f"age_days={_claim_age_days(claim)}")
+    if claim.last_validated_at:
+        meta_parts.append(f"last_validated={claim.last_validated_at}")
+    if claim.valid_until:
+        meta_parts.append(f"valid_until={claim.valid_until}")
     meta = "  ".join(meta_parts)
     lines = [f"- {summary}", f"  ({meta})"]
     for citation in claim.citations:
@@ -127,6 +133,11 @@ def _claim_xml(claim: Claim, score: float) -> str:
         f'confidence="{claim.confidence:.2f}" scope="{claim.scope}" '
         f'volatility="{claim.volatility}"'
     )
+    attrs += f' age_days="{_claim_age_days(claim)}"'
+    if claim.last_validated_at:
+        attrs += f' last_validated_at="{_xml_escape(claim.last_validated_at)}"'
+    if claim.valid_until:
+        attrs += f' valid_until="{_xml_escape(claim.valid_until)}"'
     if claim.pinned:
         attrs += ' pinned="true"'
     lines = [f"<claim {attrs}>"]
@@ -158,6 +169,7 @@ def _claim_json_entry(claim: Claim, score: float) -> dict[str, Any]:
         "scope": claim.scope,
         "volatility": claim.volatility,
         "pinned": claim.pinned,
+        "age_days": _claim_age_days(claim),
     }
     if claim.subject or claim.predicate or claim.object_value:
         entry["triple"] = {
@@ -175,7 +187,25 @@ def _claim_json_entry(claim: Claim, score: float) -> dict[str, Any]:
         ]
     if claim.updated_at:
         entry["updated_at"] = claim.updated_at
+    if claim.last_validated_at:
+        entry["last_validated_at"] = claim.last_validated_at
+    if claim.valid_until:
+        entry["valid_until"] = claim.valid_until
     return entry
+
+
+def _claim_age_days(claim: Claim) -> int:
+    """Age since the latest validation/update, with malformed values failing safe."""
+    value = claim.last_validated_at or claim.updated_at or claim.created_at
+    if not value:
+        return 0
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return max(0, (datetime.now(timezone.utc) - parsed).days)
 
 
 def _xml_escape(text: str | None) -> str:

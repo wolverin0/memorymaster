@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -118,6 +119,17 @@ class TestPackContextText:
         result = pack_context(rows, token_budget=4000, output_format="text")
         assert "[pinned]" in result.output
 
+    def test_temporal_freshness_metadata_shown(self):
+        claim = replace(
+            _make_claim(),
+            last_validated_at="2026-07-01T00:00:00+00:00",
+            valid_until="2026-12-31T00:00:00+00:00",
+        )
+        result = pack_context([_make_row(claim)], token_budget=4000, output_format="text")
+        assert "age_days=" in result.output
+        assert "last_validated=2026-07-01T00:00:00+00:00" in result.output
+        assert "valid_until=2026-12-31T00:00:00+00:00" in result.output
+
 
 class TestPackContextXml:
     def test_empty(self):
@@ -148,6 +160,17 @@ class TestPackContextXml:
         result = pack_context(rows, token_budget=4000, output_format="xml")
         assert '<triple subject="DB"' in result.output
 
+    def test_temporal_freshness_metadata_shown(self):
+        claim = replace(
+            _make_claim(),
+            last_validated_at="2026-07-01T00:00:00+00:00",
+            valid_until="2026-12-31T00:00:00+00:00",
+        )
+        result = pack_context([_make_row(claim)], token_budget=4000, output_format="xml")
+        assert 'age_days="' in result.output
+        assert 'last_validated_at="2026-07-01T00:00:00+00:00"' in result.output
+        assert 'valid_until="2026-12-31T00:00:00+00:00"' in result.output
+
 
 class TestPackContextJson:
     def test_empty(self):
@@ -171,6 +194,18 @@ class TestPackContextJson:
         result = pack_context(rows, token_budget=4000, output_format="json")
         data = json.loads(result.output)
         assert data["meta"]["tokens_used"] <= 4000
+
+    def test_temporal_freshness_metadata_shown(self):
+        claim = replace(
+            _make_claim(),
+            last_validated_at="2026-07-01T00:00:00+00:00",
+            valid_until="2026-12-31T00:00:00+00:00",
+        )
+        result = pack_context([_make_row(claim)], token_budget=4000, output_format="json")
+        entry = json.loads(result.output)["claims"][0]
+        assert isinstance(entry["age_days"], int)
+        assert entry["last_validated_at"] == "2026-07-01T00:00:00+00:00"
+        assert entry["valid_until"] == "2026-12-31T00:00:00+00:00"
 
 
 class TestPackContextEdgeCases:

@@ -80,3 +80,34 @@ def test_partial_batch_reports_every_item_no_silent_drop(svc):
 def test_empty_batch_is_a_clean_noop(svc):
     res = _batch(svc, [])
     assert res == {"ok": True, "ingested": 0, "skipped_sensitive": 0, "errors": [], "claim_ids": []}
+
+
+def test_batch_reports_mutable_state_volatility_override(svc):
+    res = _batch(
+        svc,
+        [
+            {
+                "text": "The provider quota is currently exhausted.",
+                "claim_type": "constraint",
+                "volatility": "low",
+            }
+        ],
+    )
+
+    assert res["ingested"] == 1
+    assert res["warnings"] == [
+        {
+            "index": 0,
+            "warning": "mutable state forced to high volatility; supply valid_until",
+        }
+    ]
+    assert svc.store.get_claim(res["claim_ids"][0]).volatility == "high"
+
+
+def test_batch_does_not_misreport_deduplicated_high_volatility_claim(svc):
+    text = "The scheduler has a durable provider budget architecture."
+    first = _batch(svc, [{"text": text, "volatility": "high"}])
+    second = _batch(svc, [{"text": text, "volatility": "low"}])
+
+    assert first["claim_ids"] == second["claim_ids"]
+    assert "warnings" not in second

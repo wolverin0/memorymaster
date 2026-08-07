@@ -38,6 +38,8 @@ from memorymaster.core.intake_policy import (
     IntakeRejected,
     evaluate_intake,
 )
+from memorymaster.core.temporal_policy import claim_is_temporally_current
+from memorymaster.govern import ingest_governance
 from memorymaster.core.services.integration import IntegrationService
 from memorymaster.stores.claim_identity import (
     normalize_claim_identity,
@@ -533,6 +535,7 @@ class MemoryService(IntegrationService):
         event_time: str | None = None,
         valid_from: str | None = None,
         valid_until: str | None = None,
+        supersedes_claim_id: int | None = None,
         source_agent: str | None = None,
         visibility: str = "public",
         holder: str | None = None,
@@ -610,6 +613,13 @@ class MemoryService(IntegrationService):
         # from the classify hook don't create a separate type from "decision".
         if claim_type:
             claim_type = claim_type.strip().lower() or None
+        intake_governance = ingest_governance.prepare_ingest_governance(
+            self.store, text=sanitized.text, claim_type=claim_type,
+            supersedes_claim_id=supersedes_claim_id, tenant_id=self.tenant_id,
+            scope=scope, volatility=volatility, valid_until=valid_until,
+            visibility=visibility, source_agent=source_agent,
+        )
+        volatility = intake_governance.mutable_state.volatility
         # Dedup by idempotency key
         normalized_idempotency_key = (idempotency_key or "").strip() or None
         if normalized_idempotency_key is not None and hasattr(self.store, "get_claim_by_idempotency_key"):
@@ -622,7 +632,10 @@ class MemoryService(IntegrationService):
             )
             if existing_claim is not None:
                 observability.bump_claim_ingested(source_agent)
-                return self._revive_archived_dedup_match(existing_claim, source_agent)
+                revived = self._revive_archived_dedup_match(existing_claim, source_agent)
+                ingest_governance.queue_supersession_proposal(
+                    self.store, intake_governance.supersession_target, revived, confidence)
+                return revived
         # Dedup by content hash (catch duplicates without idempotency key)
         # Include scope + tenant to avoid cross-tenant/cross-scope dedup
         import hashlib
@@ -639,7 +652,11 @@ class MemoryService(IntegrationService):
             )
             if existing_by_hash is not None:
                 observability.bump_claim_ingested(source_agent)
-                return self._revive_archived_dedup_match(existing_by_hash, source_agent)
+                revived = self._revive_archived_dedup_match(existing_by_hash, source_agent)
+                ingest_governance.queue_supersession_proposal(
+                    self.store, intake_governance.supersession_target, revived, confidence
+                )
+                return revived
         # Set content hash as idempotency key if none provided
         if normalized_idempotency_key is None:
             normalized_idempotency_key = content_hash
@@ -753,6 +770,9 @@ class MemoryService(IntegrationService):
             visibility=visibility,
             holder=holder,
             _pre_sanitization_findings=redaction_findings,
+        )
+        ingest_governance.apply_post_ingest_governance(
+            self.store, claim, intake_governance, confidence
         )
 
         # Set entity_id on the claim (best-effort, don't fail ingest)
@@ -1107,6 +1127,8 @@ class MemoryService(IntegrationService):
         claim = self.store.get_claim(candidate.claim_id, include_citations=True)
         if claim is None or claim.status not in plan.statuses:
             return None
+        if not claim_is_temporally_current(claim):
+            return None
         if self.tenant_id is not None and claim.tenant_id != self.tenant_id:
             return None
         if scopes is not None and claim.scope not in scopes:
@@ -1351,6 +1373,8 @@ class MemoryService(IntegrationService):
                 tenant_id=self.tenant_id,
             )
             for claim in claims:
+                if not claim_is_temporally_current(claim):
+                    continue
                 merged.setdefault(claim.id, claim)
         return list(merged.values())[:limit]
 
@@ -1464,6 +1488,7 @@ class MemoryService(IntegrationService):
             scope_allowlist=normalized_scopes,
             tenant_id=self.tenant_id,
         )
+        candidates = [claim for claim in candidates if claim_is_temporally_current(claim)]
         if not include_sensitive:
             candidates = [claim for claim in candidates if not is_sensitive_claim(claim)]
         # Visibility: filter out private claims from other agents (parity with
@@ -1599,6 +1624,8 @@ class MemoryService(IntegrationService):
             claim = self.store.get_claim(stub["id"], include_citations=True)
             if claim is None or claim.status == "archived":
                 continue
+            if not claim_is_temporally_current(claim):
+                continue
             rows.append({
                 "claim": claim,
                 "status": claim.status,
@@ -1661,6 +1688,8 @@ class MemoryService(IntegrationService):
                 continue
             claim = self.store.get_claim(claim_id, include_citations=True)
             if claim is None or claim.status not in allowed_statuses:
+                continue
+            if not claim_is_temporally_current(claim):
                 continue
             if self.tenant_id is not None and claim.tenant_id != self.tenant_id:
                 continue

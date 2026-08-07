@@ -303,6 +303,43 @@ class TestMcpToolsIntegration:
         assert query_result["ok"] is True
         assert query_result["rows"] >= 1
 
+    def test_ingest_surfaces_mutable_state_and_supersession_warnings(self):
+        from memorymaster.core.models import CitationInput
+        from memorymaster.core.service import MemoryService
+        from memorymaster.surfaces.mcp_server import ingest_claim, init_db
+
+        init_db(db=self.db_path, workspace=self.workspace)
+        svc = MemoryService(self.db_path, workspace_root=Path(self.workspace))
+        old = svc.ingest(
+            "Use the previous provider policy.",
+            [CitationInput(source="pytest")],
+            scope="project:test",
+            source_agent="mcp-session",
+        )
+        svc.store.apply_status_transition(
+            old,
+            to_status="confirmed",
+            reason="MCP supersession fixture",
+            event_type="validator",
+        )
+
+        result = ingest_claim(
+            text="The Codex quota is currently exhausted.",
+            db=self.db_path,
+            workspace=self.workspace,
+            sources_json='["test.py"]',
+            scope="project:test",
+            volatility="low",
+            supersedes_claim_id=old.id,
+        )
+
+        assert result["ok"] is True
+        assert result["claim"]["volatility"] == "high"
+        assert result["warnings"] == [
+            "mutable state forced to high volatility; supply valid_until",
+            "supersession queued for steward review",
+        ]
+
     def test_ingest_does_not_create_obsidian_vault_by_default(self, tmp_path, monkeypatch):
         from memorymaster.surfaces.mcp_server import ingest_claim, init_db
 
