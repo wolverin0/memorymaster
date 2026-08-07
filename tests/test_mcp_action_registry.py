@@ -19,6 +19,7 @@ EXPECTED_TOOLS = {
     "federated_query",
     "find_related_claims",
     "forget",
+    "forget_preview",
     "get_usage_rollup",
     "ingest_claim",
     "ingest_rule",

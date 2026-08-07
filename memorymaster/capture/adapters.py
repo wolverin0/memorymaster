@@ -67,6 +67,11 @@ class CaptureEnvelope:
     blocked_code: str | None = None
     warning_codes: tuple[str, ...] = ()
     resolved_path: str | None = None
+    producer: str | None = None
+    producer_external_id_hash: str | None = None
+    producer_session_hash: str | None = None
+    producer_turn_id: str | None = None
+    producer_metadata: tuple[tuple[str, str], ...] = ()
 
 
 class CaptureAdapter(Protocol):

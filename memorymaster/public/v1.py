@@ -7,7 +7,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from memorymaster.capture import CaptureRepository, capture_input
+from memorymaster.capture import CaptureEnvelope, CaptureRepository, capture_input
+from memorymaster.capture.producers import ProducerItem, normalize_producer_item
 from memorymaster.core.models import Claim, EvidenceItem, SourceItem
 from memorymaster.core.scope_utils import scope_from_cwd
 from memorymaster.core.session_scope import ResolvedScope, SessionScopeResolver
@@ -153,7 +154,13 @@ def _persist_capture(
         display_name="MemoryMaster Capture",
         config_json={"contract": API_VERSION},
     )
-    source_key = envelope.locator if envelope.source_kind != "inline" else envelope.content_hash
+    producer = getattr(envelope, "producer", None)
+    external_hash = getattr(envelope, "producer_external_id_hash", None)
+    source_key = (
+        f"producer:{producer}:{external_hash}"
+        if producer and external_hash
+        else envelope.locator if envelope.source_kind != "inline" else envelope.content_hash
+    )
     existing_source = service.get_source_item(
         source_id=source.id, source_item_id=source_key
     )
@@ -169,6 +176,11 @@ def _persist_capture(
             "scope": scope,
             "source_agent": source_agent,
             "provider_kind": envelope.provider_kind,
+            "producer": producer,
+            "producer_external_id_hash": external_hash,
+            "producer_session_hash": getattr(envelope, "producer_session_hash", None),
+            "producer_turn_id": getattr(envelope, "producer_turn_id", None),
+            "producer_metadata": dict(getattr(envelope, "producer_metadata", ())),
         },
         content_hash=envelope.content_hash,
     )
@@ -186,7 +198,15 @@ def _persist_capture(
             text=envelope.text,
             provider="memorymaster-capture",
             confidence=1.0,
-            payload_json={"locator": envelope.locator, "mime_type": envelope.mime_type},
+            payload_json={
+                "locator": envelope.locator,
+                "mime_type": envelope.mime_type,
+                "producer": producer,
+                "producer_external_id_hash": external_hash,
+                "producer_session_hash": getattr(envelope, "producer_session_hash", None),
+                "producer_turn_id": getattr(envelope, "producer_turn_id", None),
+                "producer_metadata": dict(getattr(envelope, "producer_metadata", ())),
+            },
             content_hash=envelope.content_hash,
         )
     return item, evidence, deduplicated
@@ -234,12 +254,28 @@ def remember(
     source_agent: str = "memorymaster-public",
     session_id: str | None = None,
     platform: str = "local",
+    producer: str | None = None,
+    producer_external_id: str | None = None,
+    producer_content_hash: str | None = None,
+    producer_session_hash: str | None = None,
+    producer_turn_id: str | None = None,
+    producer_metadata: dict[str, Any] | None = None,
     db: str | Path | None = None,
     workspace: str | Path | None = None,
 ) -> RememberReceipt:
     """Persist evidence synchronously and queue governed extraction work."""
     workspace_path = _workspace_path(workspace)
-    envelope = capture_input(text=text, path=path, source_uri=source_uri)
+    envelope = _remember_envelope(
+        text=text,
+        path=path,
+        source_uri=source_uri,
+        producer=producer,
+        producer_external_id=producer_external_id,
+        producer_content_hash=producer_content_hash,
+        producer_session_hash=producer_session_hash,
+        producer_turn_id=producer_turn_id,
+        producer_metadata=producer_metadata,
+    )
     service = _service(db, workspace_path)
     resolved = _resolve_scope(
         service,
@@ -276,6 +312,36 @@ def remember(
         warnings=warnings,
         scope=resolved.scope,
         scope_source=resolved.scope_source,
+    )
+
+
+def _remember_envelope(
+    *,
+    text: str | None,
+    path: str | Path | None,
+    source_uri: str | None,
+    producer: str | None,
+    producer_external_id: str | None,
+    producer_content_hash: str | None,
+    producer_session_hash: str | None,
+    producer_turn_id: str | None,
+    producer_metadata: dict[str, Any] | None,
+) -> CaptureEnvelope:
+    if not producer:
+        return capture_input(text=text, path=path, source_uri=source_uri)
+    if text is None or path is not None or not producer_external_id:
+        raise ValueError("Producer capture requires text and producer_external_id; paths are forbidden.")
+    return normalize_producer_item(
+        producer,
+        ProducerItem(
+            external_id=producer_external_id,
+            text=text,
+            source_uri=source_uri,
+            content_hash=producer_content_hash,
+            session_hash=producer_session_hash,
+            turn_id=producer_turn_id,
+            metadata=producer_metadata,
+        ),
     )
 
 

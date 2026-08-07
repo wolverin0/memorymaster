@@ -4,7 +4,7 @@
 # Read when: implementing, reviewing, activating, or rolling back the post-v4.6 companion-integration program.
 # Authority: this specification implements `ROADMAP.md`; it is not a second roadmap and cannot override lifecycle policy.
 # Safety: Windows SQLite stays authoritative, VM SQLite is fallback-only, global scope is never inferred, and skills require approval.
-# Status: P1 IMPLEMENTED locally on 2026-08-07; live DB, installed hook, scheduled-task, and VM activation have not occurred.
+# Status: P1-P2 IMPLEMENTED locally on 2026-08-07; live DB, installed hook, scheduled-task, and VM activation have not occurred.
 
 ## 1. Outcome
 
@@ -229,7 +229,7 @@ previewed, operator-gated step outside automatic stewardship.
 ### P0 - Read-only topology and baseline
 
 - [x] Work only from a clean worktree based on `origin/main`.
-- [ ] Record current Hermes version/commit and provider ABI.
+- [x] Record current Hermes version/commit and provider ABI.
 - [ ] Record `hermes memory status` and active provider without changing it.
 - [ ] Verify gateway platform state, not only `/health`.
 - [ ] Record Windows/VM DB quick-check, claim counts, and sync-task results.
@@ -264,14 +264,35 @@ P1 verification on 2026-08-07:
 
 ### P2 - Hermes provider and authoritative transport
 
-- [ ] Add the standalone plugin and fake client/backend tests.
-- [ ] Add replay-safe producer metadata and durable outbox.
-- [ ] Exercise authenticated MCP/HTTP against a disposable Windows DB.
-- [ ] Prove offline queue, recovery replay, circuit breaker, and shutdown drain.
-- [ ] Add headless Windows action templates and VM systemd configuration docs.
+- [x] Add the standalone plugin and fake client/backend tests.
+- [x] Add replay-safe producer metadata and durable outbox.
+- [x] Exercise authenticated MCP/HTTP against a disposable Windows DB.
+- [x] Prove offline queue, recovery replay, circuit breaker, and shutdown drain.
+- [x] Add headless Windows action templates and VM systemd configuration docs.
 
 Exit: one synthetic VM turn reaches the disposable authority exactly once with
 source, evidence, capture job, candidate, and claim-evidence link intact.
+
+P2 verification on 2026-08-07:
+
+- The provider ABI and discovery layout were checked against Hermes commit
+  `7cf71c32bbd27ac4044b6b6a5f0c280268e7ecb5`; installation is a previewed
+  `$HERMES_HOME/plugins/memorymaster/` shim because that pinned memory loader
+  does not consume the general pip entry-point context.
+- The focused scope, authorization, HTTP, producer, lifecycle, retry, replica,
+  packaging, and capture gate passed: 98 tests; Ruff and `git diff --check`
+  passed, and the wheel contains the provider plus installation resources.
+- A real authenticated Streamable-HTTP fixture bound and cleared a project
+  scope, delivered one sanitized turn, completed its capture job, produced one
+  candidate and exact evidence link, previewed retirement, and queued bounded
+  improvement work. A wrong bearer token was permanently rejected.
+- Enqueue p95 is test-enforced below 50 ms; the real local HTTP path passes at
+  the provider's 350 ms default timeout. Five-attempt exhaustion, expired-lease
+  recovery, circuit opening, restart replay, bounded shutdown, and read-only
+  replica byte integrity are covered.
+- No live Hermes profile, scheduled task, firewall, authority database, or VM
+  replica was changed. One accidental ignored DB inside the isolated worktree
+  was verified as test-only and removed.
 
 ### P3 - Skill reviewer and approval flow
 

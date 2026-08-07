@@ -1,0 +1,231 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import httpx
+import pytest
+
+
+PLUGIN_SRC = Path(__file__).parents[1] / "integrations" / "hermes-memorymaster" / "src"
+if str(PLUGIN_SRC) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_SRC))
+
+from hermes_memorymaster.backend import (  # noqa: E402
+    BackendAuthError,
+    MCPHttpBackend,
+    ReadOnlyReplicaBackend,
+)
+from hermes_memorymaster.config import ProviderConfig  # noqa: E402
+from hermes_memorymaster.provider import MemoryMasterProvider  # noqa: E402
+from memorymaster.capture.worker import run_capture_worker  # noqa: E402
+from memorymaster.core.models import CitationInput  # noqa: E402
+from memorymaster.core.service import MemoryService  # noqa: E402
+
+
+def _free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+@pytest.fixture
+def mcp_http_server(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    db = tmp_path / "authority.db"
+    token = "fixture-bearer-token"
+    port = _free_port()
+    MemoryService(db, workspace_root=workspace).init_db()
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "MEMORYMASTER_MCP_AUTH_MODE": "team",
+            "MEMORYMASTER_MCP_HTTP_TOKEN": token,
+            "MEMORYMASTER_DEFAULT_DB": str(db),
+            "MEMORYMASTER_WORKSPACE": str(workspace),
+            "MEMORYMASTER_MCP_PRINCIPAL": "hermes-memorymaster",
+            "MEMORYMASTER_ROLE_HERMES_MEMORYMASTER": "writer",
+            "MEMORYMASTER_MCP_TENANT_ID": "fixture-tenant",
+            "MEMORYMASTER_MCP_WORKSPACE": str(workspace),
+            "MEMORYMASTER_MCP_ALLOWED_SCOPES": "project:workspace",
+            "MEMORYMASTER_MCP_DB": str(db),
+            "PYTHONPATH": os.pathsep.join(
+                filter(
+                    None,
+                    (str(Path(__file__).parents[1]), environment.get("PYTHONPATH", "")),
+                )
+            ),
+        }
+    )
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "memorymaster.surfaces.mcp_http",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--db",
+            str(db),
+            "--workspace",
+            str(workspace),
+        ],
+        cwd=workspace,
+        env=environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=flags,
+    )
+    health = f"http://127.0.0.1:{port}/healthz"
+    for _ in range(100):
+        try:
+            if httpx.get(health, timeout=0.2).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.02)
+    else:
+        raise AssertionError("disposable MemoryMaster MCP server did not start")
+    yield f"http://127.0.0.1:{port}/mcp", token, db, workspace
+    process.terminate()
+    process.wait(timeout=3.0)
+
+
+def test_authenticated_mcp_http_delivers_disposable_capture(
+    mcp_http_server, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    endpoint, token, db, workspace = mcp_http_server
+    config = ProviderConfig(
+        endpoint=endpoint,
+        token=token,
+        outbox_path=tmp_path / "outbox.db",
+        default_scope="project:workspace",
+        worker_enabled=False,
+    )
+    provider = MemoryMasterProvider(
+        config=config,
+        backend=MCPHttpBackend(
+            endpoint,
+            token,
+            timeout_seconds=config.request_timeout_seconds,
+        ),
+    )
+    provider.initialize(
+        "raw-session",
+        hermes_home=str(tmp_path),
+        platform="telegram",
+        agent_context="primary",
+        agent_identity="otacon",
+    )
+    bound = provider.backend.scope(
+        "bind",
+        session_id=provider.session_hash,
+        source_agent=provider.source_agent,
+        platform=provider.platform,
+        scope="project:workspace",
+        task_label="fixture",
+    )
+    shown = json.loads(provider.handle_tool_call("memorymaster_scope", {"action": "show"}))
+    assert bound.get("ok") is True, bound
+    assert bound["scope"] == "project:workspace"
+    assert shown["rows"] == 1
+    provider.on_turn_start(4, "capture")
+    provider.sync_turn("The fixture project uses SQLite.", "Recorded.")
+
+    assert provider.drain_once() is True
+    status = provider.status()
+    assert status["last_error_code"] is None, status
+    assert status["completed"] == 1, status
+    service = MemoryService(db, workspace_root=workspace, read_only=True)
+    with service.store.connect() as connection:
+        source = connection.execute(
+            "SELECT id, source_item_id, payload_json FROM source_items"
+        ).fetchone()
+        evidence = connection.execute("SELECT COUNT(*) FROM evidence_items").fetchone()[0]
+    assert source[1].startswith("producer:hermes:")
+    assert "raw-session" not in source[2]
+    assert evidence == 1
+    preview = provider.backend.forget_preview(source_item_id=int(source[0]))
+    assert preview["apply"] is False
+    assert preview["evidence_preserved"] is True
+
+    def fake_call(_prompt: str, _text: str) -> str:
+        return json.dumps(
+            [
+                {
+                    "type": "project",
+                    "subject": "Fixture project",
+                    "predicate": "uses",
+                    "object": "SQLite",
+                    "text": "The fixture project uses SQLite.",
+                    "confidence": 0.95,
+                }
+            ]
+        )
+
+    monkeypatch.setattr("memorymaster.bridges.atlas_llm_extractor.call_llm", fake_call)
+    worker = run_capture_worker(
+        MemoryService(db, workspace_root=workspace),
+        owner="hermes-http-fixture",
+        limit=1,
+    )
+    assert worker.completed == 1
+    with MemoryService(db, workspace_root=workspace, read_only=True).store.connect() as connection:
+        lineage = connection.execute(
+            """SELECT c.status, j.status, COUNT(*) AS links
+               FROM claims c
+               JOIN claim_evidence_links cel ON cel.claim_id=c.id
+               JOIN evidence_items e ON e.id=cel.evidence_item_id
+               JOIN capture_jobs j ON j.source_item_id=e.source_item_id
+               GROUP BY c.id, j.id"""
+        ).fetchone()
+    assert tuple(lineage) == ("candidate", "completed", 1)
+
+    provider.on_session_end([])
+    assert provider.status()["completed"] == 2
+    cleared = json.loads(provider.handle_tool_call("memorymaster_scope", {"action": "clear"}))
+    assert cleared["ended"] == 1
+    provider.close_outbox()
+
+
+def test_mcp_http_rejects_wrong_token_as_permanent_auth_error(mcp_http_server) -> None:
+    endpoint, _token, _db, _workspace = mcp_http_server
+    backend = MCPHttpBackend(endpoint, "wrong-token", timeout_seconds=2.0)
+    with pytest.raises(BackendAuthError):
+        backend.recall("fixture", scope="user", session_id="a" * 64)
+
+
+def test_replica_recall_leaves_sqlite_bytes_unchanged(tmp_path: Path) -> None:
+    db = tmp_path / "replica.db"
+    service = MemoryService(db, workspace_root=tmp_path)
+    service.init_db()
+    claim = service.ingest(
+        text="Replica fixture memory",
+        citations=[CitationInput(source="fixture", locator="fixture")],
+        scope="user",
+        source_agent="fixture",
+    )
+    service.store.apply_status_transition(
+        claim,
+        to_status="confirmed",
+        reason="fixture",
+        event_type="validator",
+    )
+    with service.store.connect() as connection:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    before = hashlib.sha256(db.read_bytes()).hexdigest()
+
+    context = ReadOnlyReplicaBackend(db, tmp_path).recall(
+        "Replica fixture", scope="user", session_id="a" * 64
+    )
+
+    assert "Replica fixture memory" in context
+    assert hashlib.sha256(db.read_bytes()).hexdigest() == before

@@ -690,11 +690,12 @@ MCP_TOOL_POLICIES: dict[str, McpToolPolicy] = {
     "extract_entities": McpToolPolicy("ingest"),
     "federated_query": McpToolPolicy("query"),
     "forget": McpToolPolicy("delete"),
+    "forget_preview": McpToolPolicy("query", team_enabled=True),
     "find_related_claims": McpToolPolicy("configure"),
     "get_usage_rollup": McpToolPolicy("query"),
     "ingest_claim": McpToolPolicy("ingest", team_enabled=True),
     "ingest_rule": McpToolPolicy("ingest"),
-    "improve": McpToolPolicy("steward"),
+    "improve": McpToolPolicy("ingest", team_enabled=True),
     "init_db": McpToolPolicy("configure"),
     "list_claims": McpToolPolicy("query", team_enabled=True),
     "list_events": McpToolPolicy("query"),
@@ -865,6 +866,12 @@ if FastMCP is not None:
         source_agent: str = "",
         session_id: str = "",
         platform: str = "mcp",
+        producer: str = "",
+        producer_external_id: str = "",
+        producer_content_hash: str = "",
+        producer_session_hash: str = "",
+        producer_turn_id: str = "",
+        producer_metadata_json: str = "",
         db: str = "memorymaster.db",
         workspace: str = ".",
     ) -> dict[str, Any]:
@@ -874,6 +881,9 @@ if FastMCP is not None:
             raise PermissionError("Client-supplied local paths are disabled in team mode.")
         from memorymaster.public.v1 import remember as public_remember
 
+        metadata = json.loads(producer_metadata_json) if producer_metadata_json else None
+        if metadata is not None and not isinstance(metadata, dict):
+            raise ValueError("producer_metadata_json must contain an object")
         receipt = public_remember(
             text=text or None,
             path=path or None,
@@ -882,6 +892,12 @@ if FastMCP is not None:
             source_agent=source_agent or "memorymaster-mcp",
             session_id=session_id or None,
             platform=platform,
+            producer=producer or None,
+            producer_external_id=producer_external_id or None,
+            producer_content_hash=producer_content_hash or None,
+            producer_session_hash=producer_session_hash or None,
+            producer_turn_id=producer_turn_id or None,
+            producer_metadata=metadata,
             db=db,
             workspace=workspace,
         )
@@ -961,6 +977,25 @@ if FastMCP is not None:
         return {"ok": True, **asdict(receipt)}
 
     @mcp.tool()
+    def forget_preview(
+        claim_id: int = 0,
+        source_item_id: int = 0,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Preview logical retirement without exposing an apply capability."""
+        from memorymaster.public.v1 import forget as public_forget
+
+        receipt = public_forget(
+            claim_id=claim_id or None,
+            source_item_id=source_item_id or None,
+            apply=False,
+            db=db,
+            workspace=workspace,
+        )
+        return {"ok": True, **asdict(receipt)}
+
+    @mcp.tool()
     def session_scope_show(
         session_id: str = "",
         source_agent: str = "",
@@ -1001,7 +1036,9 @@ if FastMCP is not None:
         from memorymaster.core.session_scope import SessionScopeRepository, validate_scope
 
         service = _service(db, workspace)
-        service.init_db()
+        context = current_request_context()
+        if context is None or context.mode is not AuthMode.TEAM:
+            service.init_db()
         workspace_path = Path(_resolve_workspace(workspace))
         binding = SessionScopeRepository(service.store.db_path).bind(
             session_id,
