@@ -37,6 +37,8 @@ def test_plugin_install_is_previewed_then_discoverable_from_hermes_home(
     applied = install_plugin(tmp_path, apply=True)
 
     assert applied["written"] == ["__init__.py", "cli.py", "plugin.yaml"]
+    shim_source = (target / "__init__.py").read_text(encoding="utf-8")[:8192]
+    assert "register_memory_provider" in shim_source or "MemoryProvider" in shim_source
     spec = importlib.util.spec_from_file_location(
         "hermes_fixture_memorymaster",
         target / "__init__.py",

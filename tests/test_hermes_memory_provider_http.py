@@ -48,6 +48,7 @@ def mcp_http_server(tmp_path: Path):
         {
             "MEMORYMASTER_MCP_AUTH_MODE": "team",
             "MEMORYMASTER_MCP_HTTP_TOKEN": token,
+            "MEMORYMASTER_MCP_HTTP_ALLOWED_HOSTS": f"127.0.0.1:{port}",
             "MEMORYMASTER_DEFAULT_DB": str(db),
             "MEMORYMASTER_WORKSPACE": str(workspace),
             "MEMORYMASTER_MCP_PRINCIPAL": "hermes-memorymaster",
