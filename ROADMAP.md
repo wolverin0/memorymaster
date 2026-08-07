@@ -4,7 +4,7 @@
 # Read when: choosing release scope, accepting a feature, or deciding whether work is deferred.
 # Authority: this is the sole roadmap; `.planning/` specifications implement it and never replace it.
 # Safety: SQLite remains authoritative, candidate promotion stays steward-owned, and live upgrades stay operator-gated.
-# Updated: 2026-08-07 after Windows P4 convergence and consoleless runtime activation; Hermes VM gates remain.
+# Updated: 2026-08-07 after native Hermes activation; its 24-hour observation is running.
 
 ## Shipped in v4.6.0
 
@@ -22,6 +22,10 @@
 - Complete the seven-day post-activation observation at 2026-08-06 16:06 UTC
   (13:06 Argentina) and record queue, provider, duplicate, lease, task-result,
   graph-support, and trusted-recall evidence without changing live state.
+- Complete the native Hermes provider observation at 2026-08-08 20:36
+  Argentina time. The hidden headless check may create the PR only when scope,
+  lineage, replay, outbox, task, OAuth, and gateway gates remain healthy; it
+  must not tag, release, publish a package, deploy, or merge.
 - Keep v4.6.0 operational while the post-release Obsidian opt-in and OpenCode
   OAuth capture fixes converge on `main` for a separately approved patch release.
 - Preserve governed retrieval, lifecycle authority, scope isolation, finite
@@ -36,8 +40,10 @@
   approval. P1 session binding, P2 Hermes transport, and P3 governed skills are
   implemented and locally verified on their feature branch. Windows P4
   convergence, backup/restore, candidate scheduling, and consoleless runtime
-  activation are complete; the unreachable Hermes VM still blocks provider
-  shadow mode, its candidate capture, the 24-hour observation, and the PR.
+  activation are complete. The live VM now uses the native provider with the
+  legacy bridge disabled; shadow recall, scoped replay-safe capture, exact
+  lineage, trusted-recall isolation, OAuth, and Telegram transport passed. The
+  24-hour observation is running and is the only remaining PR gate.
 - Improve personal/local backup guidance beyond the already verified disposable
   backup/restore and migration procedure.
 - Keep semantic recall optional and disabled unless a local user deliberately

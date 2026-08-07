@@ -4,7 +4,7 @@
 # Read when: implementing, reviewing, activating, or rolling back the post-v4.6 companion-integration program.
 # Authority: this specification implements `ROADMAP.md`; it is not a second roadmap and cannot override lifecycle policy.
 # Safety: Windows SQLite stays authoritative, VM SQLite is fallback-only, global scope is never inferred, and skills require approval.
-# Status: P1-P3 and Windows P4 gates are complete; the unreachable Hermes VM blocks shadow activation, observation, and PR.
+# Status: P1-P3 and live activation pass; the 24-hour observation is the only PR gate.
 
 ## 1. Outcome
 
@@ -350,8 +350,8 @@ P3 verification on 2026-08-07:
 - [x] Run the full non-ML suite once at the integration boundary.
 - [x] Run LongMemEval once; R@5 and MRR may regress by at most 0.01 absolute.
 - [x] Run disposable end-to-end activation with fake/local providers.
-- [ ] Install live provider in read-only shadow mode.
-- [ ] Enable candidate writes only after all prior gates pass.
+- [x] Install live provider in read-only shadow mode.
+- [x] Enable candidate writes only after all prior gates pass.
 - [ ] Observe 24 hours and record scope, lineage, duplicates, outbox, blocked
       jobs, provider state, latency, and task results.
 - [ ] Create the PR after the 24-hour check.
@@ -372,16 +372,28 @@ P4 verification on 2026-08-07:
 - Final wheels are `memorymaster-4.6.0` SHA-256
   `B74CA275126B51584D2E74694AC0C063220B5058047C269D6AFEE0A03405A733`
   and `hermes-memorymaster-0.1.0` SHA-256
-  `2F2C240588EC0F2A26B446DCB288DD9DDD4AA14A0080DF1496A3912B8295DDCE`.
+  `8D169DA9BCA0F98FBEBE5756046FEFDC44FA4BD559D200A44F3257C6D65FF121`.
 - Dreaming and Steward now point to the verified inactive-to-live runtime using
   `pythonw.exe`. A manual Dreaming task execution returned `0`, queued graph
   work completed once, capture coverage is `ok`, and candidate mode remains
   steward-governed. The previous runtime path is recorded in the audit delta
   for one-command action rollback.
-- No live Hermes profile was changed. Read-only shadow mode, Hermes candidate
-  capture, the 24-hour observation, and PR creation remain blocked until the
-  actual UbuntuVM/Hermes host is reachable. The observation clock has not been
-  started and no public release was created.
+- The actual UbuntuVM was reached with its existing SSH key. Hermes `0.19.0`
+  now selects the native `memorymaster` provider; the legacy
+  `memorymaster-bridge` is disabled, the provider outbox is empty, and the
+  authoritative transport, read-only fallback, Codex OAuth, and Telegram TLS
+  paths are healthy. A fixed replay produced one source, one evidence item,
+  one candidate, and one exact support link under `project:memorymaster`; the
+  identical replay produced no duplicate, and trusted recall returned only
+  confirmed claims.
+- Live remote recall completed five shadow queries with median `0.492 s` and
+  p95/max `1.373 s`. That I/O runs in the provider's background prefetch path:
+  the response-loop prefetch return p95 measured `0.032 ms`, while durable
+  `sync_turn` enqueue p95 measured `1.032 ms`. The configured three-second
+  authority timeout therefore does not block the Hermes response loop.
+- The 24-hour observation started at 2026-08-07 20:36 Argentina time. A hidden
+  consoleless headless Codex task is due at 2026-08-08 20:36 and may create the
+  PR only if every gate passes. No public release was created.
 
 Exit: the PR contains reproducible evidence, activation and rollback commands,
 and no unresolved scope or lineage invariant.

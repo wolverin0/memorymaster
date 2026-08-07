@@ -1,18 +1,19 @@
 # Hermes scope and governed-skills convergence delta
-# Covers: SQLite safety gates, package evidence, Windows activation, rollback, and remaining Hermes VM work.
+# Covers: SQLite safety, Windows activation, native Hermes rollout, rollback, and the running observation.
 # Key terms: Hermes MemoryProvider, session scope, personal-skill-v1, pythonw, snapshot, 24-hour observation.
 # Read when: reviewing this feature branch, operating the activated Windows tasks, or resuming the VM rollout.
 # Authority: evidence delta for `.planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md`; ROADMAP.md remains authoritative.
-# Status: Windows convergence and activation PASS; live Hermes shadow, observation, and PR BLOCKED by unreachable VM.
-# Updated: 2026-08-07 18:37 America/Buenos_Aires; no public release was created.
+# Status: activation PASS; the 24-hour observation is running and remains the sole PR gate.
+# Updated: 2026-08-07 20:36 America/Buenos_Aires; no public release was created.
 
 ## Verdict
 
-The branch is locally converged and the authorized Windows SQLite/runtime
-activation is healthy. It is not yet a completed Hermes production rollout.
-The actual UbuntuVM/Hermes host could not be located or reached, so provider
-installation, shadow recall, Hermes candidate capture, the real 24-hour clock,
-and the PR remain open.
+The branch is locally converged, the authorized Windows SQLite/runtime is
+healthy, and the native provider is active on the actual Hermes VM. Scope,
+lineage, replay, provider, OAuth, and Telegram gates pass. This is not yet a
+completed PR gate: the 24-hour observation is running until 2026-08-08 20:36
+Argentina time. No tag, GitHub Release, package publication, merge, or public
+deployment is authorized by this delta.
 
 ## Durable storage evidence
 
@@ -46,7 +47,7 @@ and the PR remain open.
   - `memorymaster-4.6.0-py3-none-any.whl`:
     `B74CA275126B51584D2E74694AC0C063220B5058047C269D6AFEE0A03405A733`
   - `hermes_memorymaster-0.1.0-py3-none-any.whl`:
-    `2F2C240588EC0F2A26B446DCB288DD9DDD4AA14A0080DF1496A3912B8295DDCE`
+    `8D169DA9BCA0F98FBEBE5756046FEFDC44FA4BD559D200A44F3257C6D65FF121`
 
 ## Windows activation evidence
 
@@ -79,16 +80,44 @@ Their arguments are unchanged. Additive schema and audit/candidate rows stay in
 place. Restore the database snapshot only for a proven invariant or migration
 failure, not for an ordinary provider rollback.
 
+## Live Hermes activation evidence
+
+- The gateway outage was reproduced from the user journal: `systemd-oomd`
+  killed the service cgroup after sustained user-slice memory pressure. The
+  service recovered automatically. `ManagedOOMPreference=avoid` is now a
+  persistent service property, leaving system OOM protection enabled while
+  making the gateway a last-choice victim. Current service state is active,
+  memory is approximately 300 MiB, and Telegram has established TLS sockets.
+- Hermes Agent remains at `0.19.0`; the two known upstream commits do not touch
+  its send, Telegram, or memory-provider paths. The working tree has unrelated
+  local edits, so no live Hermes source update was attempted.
+- The audited MemoryMaster `4.6.0` and native-provider `0.1.0` wheels are
+  installed with `--no-deps`; the exact pre-install freeze was restored after
+  an accidental resolver upgrade, and final `pip check` is clean.
+- Hermes provider discovery required a literal `MemoryProvider` or
+  `register_memory_provider` marker in the directory shim. The corrected shim
+  is installed, `memorymaster` is selected/enabled, and the legacy lifecycle
+  bridge is disabled. This prevents duplicate automatic recall/capture.
+- Five authoritative shadow recalls returned confirmed claims with citations:
+  median `0.492 s`, p95/max `1.373 s`. The live nonblocking prefetch return p95
+  is `0.032 ms`; `sync_turn` enqueue p95 is `1.032 ms`.
+- A fixed project-scoped canary created exactly one source, one evidence item,
+  one completed extraction job, one candidate, and one
+  `claim_evidence_links(role=support)` row. An identical replay produced no
+  second delivery, source, evidence, job, claim, or link. Trusted recall did
+  not return the candidate and returned only confirmed claims.
+- A real Codex OAuth one-shot returned the requested sentinel. Provider outbox
+  state after both canaries is zero pending, leased, retryable, and blocked.
+  Direct Telegram API delivery and the gateway's persistent Telegram TLS
+  connections pass. The standalone `hermes send` helper hung during a delivery
+  attempt and is recorded as a separate upstream CLI defect; it is not used by
+  the gateway.
+
 ## Remaining live gate
 
-The local WSL Ubuntu instance has no Hermes binary, Hermes home, gateway
-service, or database replica and is not the documented Hermes VM. Known SSH
-aliases/endpoints, available keys, Docker contexts, and expected service ports
-did not reveal a reachable target. Hyper-V inventory requires authority the
-current account does not have and was not escalated.
-
-Resume only when the real UbuntuVM is running/reachable or its non-secret SSH
-alias is known. Then install the provider inactive, record `hermes memory
-status`, verify gateway platform state, run read-only shadow recall, enable
-Hermes candidate capture, and start the 24-hour observation. Create the PR only
-after that observation passes; do not publish a release.
+The observation clock started at 2026-08-07 20:36 Argentina time. Hidden task
+`MemoryMaster-Hermes-24h-Check` uses `pythonw.exe` and a bounded headless Codex
+run at 2026-08-08 20:36. It records queue, scope, lineage, replay, task,
+provider, latency, and gateway evidence. It must leave a failure report and
+skip push/PR on any failed gate; on a full pass it may push the feature branch
+and create the PR to `main`. It must not tag, release, publish, deploy, or merge.
