@@ -4,7 +4,7 @@
 # Read when: choosing release scope, accepting a feature, or deciding whether work is deferred.
 # Authority: this is the sole roadmap; `.planning/` specifications implement it and never replace it.
 # Safety: SQLite remains authoritative, candidate promotion stays steward-owned, and live upgrades stay operator-gated.
-# Updated: 2026-08-07 after local P1-P2 scope and Hermes-provider implementation; governed skills remain next.
+# Updated: 2026-08-07 after local P1-P3 scope, Hermes-provider, and governed-skill implementation.
 
 ## Shipped in v4.6.0
 
@@ -33,9 +33,9 @@
   governed-skill proposal program defined by
   `.planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md`; Windows SQLite
   remains authoritative, global is never inferred, and skills require explicit
-  approval. P1 session binding and P2 Hermes transport are implemented and
-  locally verified on their feature branch; P3-P4 and all live activation
-  gates remain.
+  approval. P1 session binding, P2 Hermes transport, and P3 governed skills are
+  implemented and locally verified on their feature branch; P4 convergence,
+  live activation, observation, and PR gates remain.
 - Improve personal/local backup guidance beyond the already verified disposable
   backup/restore and migration procedure.
 - Keep semantic recall optional and disabled unless a local user deliberately

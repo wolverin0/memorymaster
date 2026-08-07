@@ -4,7 +4,7 @@
 # Read when: implementing, reviewing, activating, or rolling back the post-v4.6 companion-integration program.
 # Authority: this specification implements `ROADMAP.md`; it is not a second roadmap and cannot override lifecycle policy.
 # Safety: Windows SQLite stays authoritative, VM SQLite is fallback-only, global scope is never inferred, and skills require approval.
-# Status: P1-P2 IMPLEMENTED locally on 2026-08-07; live DB, installed hook, scheduled-task, and VM activation have not occurred.
+# Status: P1-P3 IMPLEMENTED locally on 2026-08-07; P4 live gates, observation, and PR have not occurred.
 
 ## 1. Outcome
 
@@ -296,15 +296,34 @@ P2 verification on 2026-08-07:
 
 ### P3 - Skill reviewer and approval flow
 
-- [ ] Add `personal-skill-v1` schema, parser, renderer, and validator.
-- [ ] Reuse rule evidence and correction counts for bounded proposal input.
-- [ ] Add read-before-write matching and SHA-256 idempotency.
-- [ ] Block automatic skill promotion and add explicit audited approval.
-- [ ] Add confirmed-skill recall and deterministic staging export.
+- [x] Add `personal-skill-v1` schema, parser, renderer, and validator.
+- [x] Reuse rule evidence and correction counts for bounded proposal input.
+- [x] Add read-before-write matching and SHA-256 idempotency.
+- [x] Block automatic skill promotion and add explicit audited approval.
+- [x] Add confirmed-skill recall and deterministic staging export.
 
 Exit: repeated fixture evidence creates one candidate; it is absent from
 trusted recall until approval; an approved update supersedes rather than
 rewrites the prior version.
+
+P3 verification on 2026-08-07:
+
+- A strict `personal-skill-v1` boundary validates bounded workflow fields and
+  five quality dimensions, rejects unknown output, and computes a canonical
+  SHA-256 over executable content rather than mutable lineage metadata.
+- Recurring rule inputs require at least two observations. Candidate creation
+  copies exact evidence links, is replay-safe, and reads existing skill
+  versions before creating or updating.
+- The generic validator leaves skill candidates pending. Local steward approval
+  confirms a candidate and atomically supersedes its immutable parent; version
+  races roll back both sides and event-chain integrity remains clean.
+- The default-off reviewer uses the configured provider inside the existing
+  cycle budget, processes at most 20 items, treats evidence as untrusted, never
+  chooses `global`, and records permanent versus retryable diagnostics.
+- CLI/MCP operations cover inputs, proposal, review, confirmed-only recall, and
+  staging export. Generated files stay under the MemoryMaster staging root.
+- Focused skill, rule, validator, lifecycle, MCP, and public-contract gate:
+  140 passed; touched-file Ruff and `git diff --check` passed.
 
 ### P4 - Convergence, activation, and PR
 

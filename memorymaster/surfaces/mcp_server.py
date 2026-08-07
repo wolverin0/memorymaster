@@ -725,6 +725,11 @@ MCP_TOOL_POLICIES: dict[str, McpToolPolicy] = {
     "session_scope_bind": McpToolPolicy("ingest", team_enabled=True),
     "session_scope_clear": McpToolPolicy("ingest", team_enabled=True),
     "session_scope_show": McpToolPolicy("query", team_enabled=True),
+    "skill_export": McpToolPolicy("export"),
+    "skill_inputs": McpToolPolicy("query", team_enabled=True),
+    "skill_propose": McpToolPolicy("ingest", team_enabled=True),
+    "skill_recall": McpToolPolicy("query", team_enabled=True),
+    "skill_review": McpToolPolicy("steward"),
     "volunteer_context": McpToolPolicy("query"),
 }
 
@@ -2221,6 +2226,113 @@ if FastMCP is not None:
             allow_sensitive=allow_sensitive,
         )
         return {"ok": True, "rows": len(rows), "rules": rows}
+
+    @mcp.tool()
+    def skill_inputs(
+        scope: str = "",
+        min_corrections: int = 2,
+        limit: int = 20,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """List recurring rule evidence eligible for bounded skill review."""
+        from memorymaster.knowledge.skills import collect_skill_proposal_inputs
+
+        effective_scope = _effective_ingest_scope(scope, workspace)
+        rows = collect_skill_proposal_inputs(
+            _read_service(db, workspace),
+            scope=effective_scope,
+            min_corrections=max(2, min(min_corrections, 100)),
+            limit=_bounded_limit(limit, maximum=100),
+        )
+        return {"ok": True, "rows": len(rows), "inputs": rows}
+
+    @mcp.tool()
+    def skill_propose(
+        payload_json: str,
+        supporting_claim_ids: list[int],
+        scope: str = "",
+        source_agent: str = "skill-reviewer-mcp",
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Create a governed skill candidate; this can never confirm it."""
+        from memorymaster.knowledge.skills import propose_skill
+
+        rate_limit_error = _check_ingest_rate_limit(source_agent)
+        if rate_limit_error is not None:
+            return rate_limit_error
+        payload = json.loads(payload_json)
+        if not isinstance(payload, dict):
+            return _structured_error("payload_json must contain an object", "VALIDATION_ERROR", "payload_json")
+        return propose_skill(
+            _service(db, workspace),
+            payload=payload,
+            supporting_claim_ids=supporting_claim_ids,
+            scope=_effective_ingest_scope(scope, workspace),
+            source_agent=source_agent,
+        )
+
+    @mcp.tool()
+    def skill_review(
+        claim_id: int,
+        action: str,
+        actor: str = "operator-mcp",
+        reason: str = "",
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Explicitly approve or reject a skill candidate with an audit event."""
+        from memorymaster.knowledge.skills import approve_skill_candidate, reject_skill_candidate
+
+        normalized = action.strip().lower()
+        if normalized == "approve":
+            return approve_skill_candidate(_service(db, workspace), claim_id, actor=actor)
+        if normalized == "reject":
+            return reject_skill_candidate(
+                _service(db, workspace),
+                claim_id,
+                actor=actor,
+                reason=reason or "operator rejected candidate",
+            )
+        return _structured_error("action must be approve or reject", "VALIDATION_ERROR", "action")
+
+    @mcp.tool()
+    def skill_recall(
+        query: str,
+        scope_allowlist: str = "",
+        limit: int = 10,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Recall confirmed, active, authorized personal skills only."""
+        from memorymaster.knowledge.skills import recall_skills
+
+        rows = recall_skills(
+            _read_service(db, workspace),
+            query,
+            scope_allowlist=_effective_scope_allowlist(scope_allowlist, workspace),
+            limit=_bounded_limit(limit, maximum=100),
+        )
+        return {"ok": True, "rows": len(rows), "skills": rows}
+
+    @mcp.tool()
+    def skill_export(
+        staging_root: str = "",
+        scope_allowlist: str = "",
+        limit: int = 200,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Render confirmed skills under MemoryMaster staging; never activate them."""
+        from memorymaster.knowledge.skills import export_confirmed_skills
+
+        return export_confirmed_skills(
+            _read_service(db, workspace),
+            staging_root=staging_root or None,
+            scope_allowlist=_effective_scope_allowlist(scope_allowlist, workspace),
+            limit=_bounded_limit(limit, maximum=1000),
+        )
 
     @mcp.tool()
     def redact_claim_payload(

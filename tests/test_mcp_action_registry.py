@@ -53,6 +53,11 @@ EXPECTED_TOOLS = {
     "session_scope_bind",
     "session_scope_clear",
     "session_scope_show",
+    "skill_export",
+    "skill_inputs",
+    "skill_propose",
+    "skill_recall",
+    "skill_review",
     "volunteer_context",
 }
 

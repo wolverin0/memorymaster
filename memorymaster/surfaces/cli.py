@@ -33,6 +33,7 @@ from memorymaster.surfaces.cli_handlers_basic import (
 from memorymaster.surfaces.cli_handlers_integrity import _handle_drain_spool, _handle_integrity, _handle_qdrant_reconcile, _handle_repair_fk
 from memorymaster.surfaces.dreaming_cli import handle_dream_run, handle_dream_status
 from memorymaster.surfaces.session_scope import handle_session_scope
+from memorymaster.surfaces.cli_handlers_skills import SKILL_COMMAND_HANDLERS, register_skill_parsers
 from memorymaster.surfaces.cli_handlers_public import (
     handle_forget,
     handle_demo,
@@ -64,6 +65,7 @@ COMMAND_HANDLERS["forget"] = handle_forget
 COMMAND_HANDLERS["improve"] = handle_improve
 COMMAND_HANDLERS["demo"] = handle_demo
 COMMAND_HANDLERS["session-scope"] = handle_session_scope
+COMMAND_HANDLERS.update(SKILL_COMMAND_HANDLERS)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -783,6 +785,8 @@ def build_parser() -> argparse.ArgumentParser:
     entity_aliases_cmd.add_argument("--add", default="", help="Add this alias to the entity")
 
     sub.add_parser("entity-backfill", help="Backfill entity_id on claims with subject but no entity")
+
+    register_skill_parsers(sub)
 
     return parser
 
