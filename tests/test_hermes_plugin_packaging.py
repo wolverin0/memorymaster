@@ -76,6 +76,7 @@ def test_windows_launcher_loads_missing_team_environment_from_user_registry(
         "MEMORYMASTER_MCP_HTTP_TOKEN": "fixture-token",
         "MEMORYMASTER_MCP_AUTH_MODE": "team",
         "MEMORYMASTER_MCP_ALLOWED_SCOPES": "user,project:memorymaster",
+        "MEMORYMASTER_ROLE_HERMES_MEMORYMASTER": "writer",
     }
     for name in values:
         monkeypatch.delenv(name, raising=False)
