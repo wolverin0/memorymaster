@@ -4,7 +4,7 @@
 # Read when: choosing release scope, accepting a feature, or deciding whether work is deferred.
 # Authority: this is the sole roadmap; `.planning/` specifications implement it and never replace it.
 # Safety: SQLite remains authoritative, candidate promotion stays steward-owned, and live upgrades stay operator-gated.
-# Updated: 2026-08-08 after the offline PPR-1 representation-evaluation checkpoint.
+# Updated: 2026-08-08 after the offline PPR-2 sustainability-telemetry checkpoint.
 
 ## Shipped in v4.6.0
 
@@ -132,7 +132,10 @@ rewriting can erase temporal, emotional, or narrative information.
   tokens, content read, tool/provider calls, latency, and cost per correct answer
   or solved task. Compare claims-only, evidence-only, claims+evidence,
   claims+approved-skills, and claims+ephemeral-guidance profiles with both a
-  smaller OAuth-backed model and the stronger OAuth-backed judge.
+  smaller OAuth-backed model and the stronger OAuth-backed judge. The offline
+  PPR-2 checkpoint now provides a bounded aggregate-safe stage schema and a
+  disposable-SQLite observer over authoritative retrieval and packing. It does
+  not persist query/evidence text or enable any provider/model by itself.
 
 Exit gates: zero secret or cross-scope leakage, zero automatic promotion,
 replay-safe radar updates, primary-source traceability for every verdict, no
