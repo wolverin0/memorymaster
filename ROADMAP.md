@@ -4,7 +4,7 @@
 # Read when: choosing release scope, accepting a feature, or deciding whether work is deferred.
 # Authority: this is the sole roadmap; `.planning/` specifications implement it and never replace it.
 # Safety: SQLite remains authoritative, candidate promotion stays steward-owned, and live upgrades stay operator-gated.
-# Updated: 2026-08-08 with the governed paper radar and research-derived memory-quality program.
+# Updated: 2026-08-08 after 57-paper triage and the 18-PDF primary-review checkpoint.
 
 ## Shipped in v4.6.0
 
@@ -94,6 +94,12 @@ rewriting can erase temporal, emotional, or narrative information.
   only for a bounded review batch. Every reviewed paper receives an explicit
   `adopt`, `benchmark`, `defer`, or `reject` verdict with primary citations,
   reproducibility notes, expected benefit, implementation surface, and cost.
+  The 2026-08-08 checkpoint parsed all 57 Memory & RAG records and completed
+  primary-PDF result/limitation review for an 18-paper priority batch, including
+  the earlier filesystem-memory paper and cross-section active-use/cost work.
+  Decisions and the ordered PPR-1 through PPR-6 packages are recorded in
+  `.planning/PAPER-RADAR-REVIEW-2026-08-08.md`; importer and runtime experiments
+  remain unimplemented.
 - **R1 - Representation-preservation benchmark:** add private, synthetic, and
   publishable fixtures covering latest-versus-superseded state, affect and
   emphasis, narrative-arc co-retrieval, ordinary factual recall, and procedural

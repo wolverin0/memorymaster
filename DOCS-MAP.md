@@ -2,14 +2,15 @@
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, paper radar, ADR, vNext.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-08 after adding the governed paper radar and memory sustainability roadmap.
-# Verdicts: ABANDONED=9, CURRENT=101, GENERATED=3, SUPERSEDED=9.
+# Updated: 2026-08-08 after the primary-paper review and research-derived implementation ledger.
+# Verdicts: ABANDONED=9, CURRENT=102, GENERATED=3, SUPERSEDED=9.
 # Rule: CURRENT docs are trusted; never implement from SUPERSEDED or ABANDONED docs.
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
 | CHANGELOG.md | CURRENT | 2026-08-04 | Public release history; v4.6.0 records governed universal capture, measured quality changes, security evidence, and known follow-ups. |
 | ROADMAP.md | CURRENT | 2026-08-08 | Sole authoritative roadmap; records live P5, the governed paper radar, research-derived memory experiments, and their release gates. |
+| .planning/PAPER-RADAR-REVIEW-2026-08-08.md | CURRENT | 2026-08-08 | Primary-paper ledger covers 57-paper triage, 18 deep reviews, exact MemoryMaster gaps, and ordered PPR-1 through PPR-6 decisions subordinate to ROADMAP.md. |
 | .planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md | CURRENT | 2026-08-08 | Executable Tencent-derived ledger; P1-P5 are implemented and active while the clean observation remains the PR gate. |
 | .planning/audits/2026-08-07-hermes-scope-skills/audit-delta.md | CURRENT | 2026-08-08 | Bounded delta records SQLite safety, exact P5 activation, rollback, and replacement observation evidence. |
 | docs/governed-skills.md | CURRENT | 2026-08-08 | Operator guide for proposal/promotion, progressive confirmed-skill recall, isolation, and staging-only export. |
