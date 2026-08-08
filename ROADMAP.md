@@ -1,10 +1,10 @@
 # MemoryMaster roadmap
-# Covers: the authoritative post-v4.6 product sequence, Tencent-derived improvements, and explicit deferrals.
-# Key terms: v4.6.0, TencentDB Agent Memory, Hermes, governed skills, live P5, observation.
+# Covers: the authoritative post-v4.6 sequence, Tencent-derived work, research radar, and explicit deferrals.
+# Key terms: v4.6.0, Hermes, governed skills, paper radar, memory sustainability, observation.
 # Read when: choosing release scope, accepting a feature, or deciding whether work is deferred.
 # Authority: this is the sole roadmap; `.planning/` specifications implement it and never replace it.
 # Safety: SQLite remains authoritative, candidate promotion stays steward-owned, and live upgrades stay operator-gated.
-# Updated: 2026-08-08 after P5 activation and replacement of the invalid observation window.
+# Updated: 2026-08-08 with the governed paper radar and research-derived memory-quality program.
 
 ## Shipped in v4.6.0
 
@@ -68,6 +68,68 @@ its governed-claims authority:
 - Upgrade the pinned private runtime only through a separately authorized,
   snapshot-backed operator action; a public package release is not a live cutover.
 
+### Research-derived memory sustainability program
+
+This program turns useful research into reproducible MemoryMaster experiments;
+papers are prior art, never trusted memory or implementation authority. The
+first reviewed input is `arXiv:2607.26637`, *Filesystem-Based Memory for LLM
+Agents: Organization, Evolution, and Sustainability*. Its useful lesson is to
+measure preservation, answer quality, and total retrieval cost separately:
+organization may reduce search cost without improving answers, and uncontrolled
+rewriting can erase temporal, emotional, or narrative information.
+
+- **R0 - Governed paper radar:** build a deterministic, read-only metadata
+  importer for all sections of
+  `VoltAgent/awesome-ai-agent-papers`, initially pinned at upstream commit
+  `c8502b6acd3978a84b8b25453eda24be83088d00`. Record source revision, observed
+  time, section, title, canonical arXiv ID/version, links, and upstream summary;
+  deduplicate by canonical arXiv ID and DOI. Snapshot and diff additions,
+  removals, retitles, duplicate IDs, broken links, and displayed-count drift.
+  A refresh may update only the non-authoritative research ledger; it must not
+  mutate runtime configuration, the roadmap, evidence, claims, or skills.
+- **R0 review funnel:** ingest metadata for the full list without downloading
+  every PDF. Score entries against governance/lifecycle, retrieval/routing,
+  procedural skills, graph/evidence, evaluation/cost, reliability, privacy, and
+  security. Fetch primary arXiv metadata for shortlisted items and full text
+  only for a bounded review batch. Every reviewed paper receives an explicit
+  `adopt`, `benchmark`, `defer`, or `reject` verdict with primary citations,
+  reproducibility notes, expected benefit, implementation surface, and cost.
+- **R1 - Representation-preservation benchmark:** add private, synthetic, and
+  publishable fixtures covering latest-versus-superseded state, affect and
+  emphasis, narrative-arc co-retrieval, ordinary factual recall, and procedural
+  reuse. Score answer correctness separately from citation correctness and raw
+  evidence preservation so a cited but temporally wrong answer cannot pass.
+- **R2 - Explicit consumer-aware recall projections:** compare governed claims
+  plus bounded evidence for strong consumers, concise task guidance for smaller
+  consumers, lifecycle timelines for temporal/high-stakes questions, and
+  confirmed skills plus warnings for procedural tasks. The caller selects a
+  versioned profile; MemoryMaster must not infer a weaker trust mode or silently
+  change lifecycle and scope rules.
+- **R3 - Ephemeral guidance and outcome-aware skills:** synthesize cited,
+  token-budgeted task guidance from confirmed authorized skills without storing
+  or promoting the synthesis. Extend skill evidence with
+  `success`/`failure`/`ambiguous` outcomes; failed traces may generate warnings
+  but cannot reinforce a positive procedure. Promotion remains human-only.
+- **R4 - Prioritized paper experiments:** start with query-budget routing
+  (`BudgetMem`), progressive evidence sufficiency and source rehydration
+  (`A2RAG`), generator-aligned evidence pruning (`Less is More for RAG`),
+  intent-aware retrieval, temporal occurrence-time modeling, deterministic
+  versus LLM graph extraction, and action-oriented memory evaluation
+  (`Mem2ActBench`). Adopt none until a focused baseline/mutation comparison
+  proves a gain on an authoritative MemoryMaster execution path.
+- **R5 - Sustainability and cost gates:** measure current-versus-superseded
+  errors, early-memory survival, duplication/fragmentation, citation accuracy,
+  tokens, content read, tool/provider calls, latency, and cost per correct answer
+  or solved task. Compare claims-only, evidence-only, claims+evidence,
+  claims+approved-skills, and claims+ephemeral-guidance profiles with both a
+  smaller OAuth-backed model and the stronger OAuth-backed judge.
+
+Exit gates: zero secret or cross-scope leakage, zero automatic promotion,
+replay-safe radar updates, primary-source traceability for every verdict, no
+LongMemEval or full-QA regression beyond existing thresholds, and a measured
+quality or cost win before any experimental retrieval behavior becomes a
+default. This program begins only after the clean P5 observation/PR gate closes.
+
 ## Later
 
 - Continue the measured service-facade decomposition without breaking the
@@ -96,3 +158,8 @@ its governed-claims authority:
   the personal/local minimal profile.
 - Adding Cognee as a runtime dependency or replacing governed claims with
   graph/vector output.
+- Bulk-importing paper full text into governed memory, treating curated-list
+  metadata as verified evidence, or automatically implementing research claims.
+- Replacing SQLite claim authority with a filesystem hierarchy, restoring the
+  Obsidian projection as the read layer, or allowing an LLM to rewrite, merge,
+  compact, or delete authoritative history autonomously.
