@@ -13,6 +13,7 @@ from memorymaster.core.models import Claim, EvidenceItem, SourceItem
 from memorymaster.core.scope_utils import scope_from_cwd
 from memorymaster.core.session_scope import ResolvedScope, SessionScopeResolver
 from memorymaster.core.service import MemoryService
+from memorymaster.knowledge.context_bundle import query_context_bundle
 
 API_VERSION = "memorymaster.public.v1"
 
@@ -41,6 +42,7 @@ class RecallReceipt:
     tokens_used: int
     trust_mode: str
     output_format: str
+    skills: tuple[dict[str, Any], ...] = ()
     scope: str = "user"
     scope_source: str = "default_user"
 
@@ -377,6 +379,9 @@ def recall(
     token_budget: int = 4000,
     trust_mode: str = "trusted",
     output_format: str = "text",
+    retrieval_mode: str = "hybrid",
+    include_skills: bool = False,
+    skill_limit: int = 3,
     session_id: str | None = None,
     source_agent: str = "memorymaster-public",
     platform: str = "local",
@@ -402,13 +407,16 @@ def recall(
         scopes = [resolved.scope]
         receipt_scope = resolved.scope
         scope_source = resolved.scope_source
-    result = service.query_for_context(
-        query=query,
+    result = query_context_bundle(
+        service,
+        query,
+        scope_allowlist=scopes,
         token_budget=token_budget,
         output_format=output_format,
-        retrieval_mode="hybrid",
+        retrieval_mode=retrieval_mode,
         trust_mode=trust_mode,
-        scope_allowlist=scopes,
+        include_skills=include_skills,
+        skill_limit=skill_limit,
     )
     claims = tuple(_recall_claim(row) for row in result.rows)
     return RecallReceipt(
@@ -418,7 +426,8 @@ def recall(
         token_budget=result.token_budget,
         tokens_used=result.tokens_used,
         trust_mode=trust_mode,
-        output_format=result.format,
+        output_format=result.output_format,
+        skills=result.skills,
         scope=receipt_scope,
         scope_source=scope_source,
     )

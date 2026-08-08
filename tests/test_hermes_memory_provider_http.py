@@ -27,6 +27,7 @@ from hermes_memorymaster.provider import MemoryMasterProvider  # noqa: E402
 from memorymaster.capture.worker import run_capture_worker  # noqa: E402
 from memorymaster.core.models import CitationInput  # noqa: E402
 from memorymaster.core.service import MemoryService  # noqa: E402
+from memorymaster.knowledge.skill_schema import build_skill_fields  # noqa: E402
 
 
 def _free_port() -> int:
@@ -229,4 +230,81 @@ def test_replica_recall_leaves_sqlite_bytes_unchanged(tmp_path: Path) -> None:
     )
 
     assert "Replica fixture memory" in context
+    assert hashlib.sha256(db.read_bytes()).hexdigest() == before
+
+
+def _confirmed_skill(service: MemoryService, *, scope: str) -> int:
+    fields = build_skill_fields(
+        {
+            "schema": "personal-skill-v1",
+            "slug": "recover-provider",
+            "title": "Recover provider",
+            "when_to_use": "Use when the memory provider stops responding.",
+            "when_not_to_use": "Do not use when the provider is healthy.",
+            "inputs": ["provider status"],
+            "prerequisites": ["service access"],
+            "workflow": ["Inspect provider state", "Restart only the failed service"],
+            "decision_rules": ["Never reboot the host before targeted recovery"],
+            "expected_output": "A healthy provider with direct evidence.",
+            "validation": ["Provider status is active"],
+            "pitfalls": ["Restarting unrelated containers"],
+            "recovery": ["Use the documented rollback"],
+            "quality_scores": {
+                "recurrence": 16,
+                "reusability": 16,
+                "executability": 16,
+                "validation": 16,
+                "safety": 16,
+            },
+        },
+        supporting_claim_ids=[11, 12],
+    )
+    claim = service.ingest(
+        **fields,
+        citations=[CitationInput(source="fixture", locator="skill")],
+        scope=scope,
+        source_agent="fixture",
+    )
+    service.store.apply_status_transition(
+        claim,
+        to_status="confirmed",
+        reason="fixture approval",
+        event_type="validator",
+    )
+    return claim.id
+
+
+def test_authoritative_hermes_recall_injects_confirmed_skill(mcp_http_server) -> None:
+    endpoint, token, db, workspace = mcp_http_server
+    service = MemoryService(db, workspace_root=workspace)
+    claim_id = _confirmed_skill(service, scope="project:workspace")
+
+    context = MCPHttpBackend(endpoint, token, timeout_seconds=10.0).recall(
+        "recover provider",
+        scope="project:workspace",
+        session_id="a" * 64,
+    )
+
+    assert "=== APPROVED SKILLS ===" in context
+    assert "Restart only the failed service" in context
+    assert str(claim_id) in context
+
+
+def test_replica_recall_injects_confirmed_skill_without_writing(tmp_path: Path) -> None:
+    db = tmp_path / "replica-skill.db"
+    service = MemoryService(db, workspace_root=tmp_path)
+    service.init_db()
+    _confirmed_skill(service, scope="user")
+    with service.store.connect() as connection:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    before = hashlib.sha256(db.read_bytes()).hexdigest()
+
+    context = ReadOnlyReplicaBackend(db, tmp_path).recall(
+        "recover provider",
+        scope="user",
+        session_id="a" * 64,
+    )
+
+    assert "=== APPROVED SKILLS ===" in context
+    assert "Restart only the failed service" in context
     assert hashlib.sha256(db.read_bytes()).hexdigest() == before

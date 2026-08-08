@@ -88,6 +88,9 @@ class MCPHttpBackend:
                 "session_id": session_id,
                 "source_agent": "hermes-memorymaster",
                 "platform": "hermes",
+                "retrieval_mode": "legacy",
+                "include_skills": True,
+                "skill_limit": 3,
             },
         )
         return str(result.get("output", ""))
@@ -156,15 +159,19 @@ class ReadOnlyReplicaBackend:
 
     def recall(self, query: str, *, scope: str, session_id: str) -> str:
         from memorymaster.core.service import MemoryService
+        from memorymaster.knowledge.context_bundle import query_context_bundle
 
         service = MemoryService(self.db_path, workspace_root=self.workspace, read_only=True)
-        result = service.query_for_context(
+        result = query_context_bundle(
+            service,
             query,
+            scope_allowlist=[scope],
             token_budget=4000,
             output_format="text",
             retrieval_mode="legacy",
             trust_mode="trusted",
-            scope_allowlist=[scope],
+            include_skills=True,
+            skill_limit=3,
         )
         return result.output
 

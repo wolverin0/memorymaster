@@ -1,19 +1,39 @@
 # Hermes scope and governed-skills convergence delta
-# Covers: SQLite safety, Windows activation, native Hermes rollout, rollback, and the running observation.
-# Key terms: Hermes MemoryProvider, session scope, personal-skill-v1, pythonw, snapshot, 24-hour observation.
+# Covers: SQLite safety, native Hermes rollout, progressive skills, rollback, and observation gates.
+# Key terms: TencentDB Agent Memory, Hermes, session scope, personal-skill-v1, approved skills, snapshot.
 # Read when: reviewing this feature branch, operating the activated Windows tasks, or resuming the VM rollout.
 # Authority: evidence delta for `.planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md`; ROADMAP.md remains authoritative.
-# Status: activation PASS; the 24-hour observation is running and remains the sole PR gate.
-# Updated: 2026-08-07 20:36 America/Buenos_Aires; no public release was created.
+# Status: original activation passed; P5 passes locally, but activation and a fresh observation remain.
+# Updated: 2026-08-08 after P5 local verification; no public release was created.
 
 ## Verdict
 
-The branch is locally converged, the authorized Windows SQLite/runtime is
-healthy, and the native provider is active on the actual Hermes VM. Scope,
-lineage, replay, provider, OAuth, and Telegram gates pass. This is not yet a
-completed PR gate: the 24-hour observation is running until 2026-08-08 20:36
-Argentina time. No tag, GitHub Release, package publication, merge, or public
-deployment is authorized by this delta.
+The original branch activation passed its safety gates and the native provider
+is active on the Hermes VM. The Tencent-derived P5 progressive approved-skill
+path now passes locally, but is not yet installed live. The original 24-hour
+window also included a VM OOM/gateway interruption, so it cannot authorize the
+PR. Rebuild/activate P5 and complete a fresh clean observation. No tag, GitHub
+Release, package publication, merge, or public deployment is authorized here.
+
+## P5 progressive-skill evidence
+
+- Public and MCP recall now expose additive `include_skills` and `skill_limit`
+  inputs plus a structured `skills` result; defaults preserve ordinary recall.
+- One shared bundle implementation serves authoritative HTTP and read-only
+  replica recall. Hermes requests deterministic legacy retrieval to stay within
+  its bounded provider timeout; other public callers retain the hybrid default.
+- Skill projection accepts only confirmed, active, authorized skills, packs
+  complete workflows into the total recall budget, and removes opaque raw skill
+  JSON from the ordinary claim section.
+- Focused regression: 62 passed across public v1/MCP, real authenticated MCP
+  HTTP, Hermes provider/fallback, governed skill lifecycle, scope exclusion,
+  stale/candidate exclusion, token budget, and replica DB-byte preservation.
+- Full non-ML convergence: 4,367 passed, 71 skipped, 97 deselected, and one
+  expected xfail in 684.58 seconds.
+- Isolated wheel builds, package-content inspection, clean dependency install,
+  imports, public signature inspection, and `pip check` pass. P5 wheel hashes:
+  MemoryMaster `33D6D702DF59EDA0239CA688D3B2BF8B9C6D2101EBE8C78A76D6B24B2A8309D6`;
+  Hermes provider `4694023420364BCA4BEBD200ABF2D6328426671FD432F135067F4CE2234EEED9`.
 
 ## Durable storage evidence
 
@@ -113,11 +133,12 @@ failure, not for an ordinary provider rollback.
   attempt and is recorded as a separate upstream CLI defect; it is not used by
   the gateway.
 
-## Remaining live gate
+## Remaining live gates
 
-The observation clock started at 2026-08-07 20:36 Argentina time. Hidden task
-`MemoryMaster-Hermes-24h-Check` uses `pythonw.exe` and a bounded headless Codex
-run at 2026-08-08 20:36. It records queue, scope, lineage, replay, task,
-provider, latency, and gateway evidence. It must leave a failure report and
-skip push/PR on any failed gate; on a full pass it may push the feature branch
-and create the PR to `main`. It must not tag, release, publish, deploy, or merge.
+Build and install the P5 packages through the recorded rollback-safe procedure,
+then prove one authorized confirmed skill is returned while candidate, stale,
+and wrong-scope fixtures are absent. Start a new hidden, consoleless 24-hour
+check only after those gates pass. It must record queue, scope, lineage, replay,
+task, provider, latency, gateway, and approved-skill isolation evidence; leave
+a failure report and skip push/PR on any failed gate; and never tag, release,
+publish, deploy, or merge.

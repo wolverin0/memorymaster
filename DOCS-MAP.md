@@ -2,17 +2,17 @@
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, ADR, vNext.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-07 after native Hermes activation; its 24-hour observation is running.
+# Updated: 2026-08-08 after TencentDB v2.0 delta and progressive-skill implementation.
 # Verdicts: ABANDONED=9, CURRENT=101, GENERATED=3, SUPERSEDED=9.
 # Rule: CURRENT docs are trusted; never implement from SUPERSEDED or ABANDONED docs.
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
 | CHANGELOG.md | CURRENT | 2026-08-04 | Public release history; v4.6.0 records governed universal capture, measured quality changes, security evidence, and known follow-ups. |
-| ROADMAP.md | CURRENT | 2026-08-07 | Sole authoritative roadmap; native Hermes activation is complete and its running 24-hour observation is the only remaining PR gate. |
-| .planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md | CURRENT | 2026-08-07 | Executable implementation specification and evidence ledger; P1-P3 plus live activation pass, observation remains, and it stays subordinate to ROADMAP.md. |
-| .planning/audits/2026-08-07-hermes-scope-skills/audit-delta.md | CURRENT | 2026-08-07 | Bounded delta records SQLite restore, tests, packages, live native-provider evidence, exact rollback, and the running observation. |
-| docs/governed-skills.md | CURRENT | 2026-08-07 | Operator guide for personal-skill-v1 evidence thresholds, default-off review, human-only promotion, recall, and staging-only export. |
+| ROADMAP.md | CURRENT | 2026-08-08 | Sole authoritative roadmap; records the Tencent v2.0 adopt/retain/defer boundary and remaining P5 activation plus clean observation gates. |
+| .planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md | CURRENT | 2026-08-08 | Executable Tencent-derived ledger; P1-P3 and P5 pass locally while activation and a clean observation remain. |
+| .planning/audits/2026-08-07-hermes-scope-skills/audit-delta.md | CURRENT | 2026-08-08 | Bounded delta records SQLite restore, P5 local evidence, prior activation, rollback, and remaining clean-observation gates. |
+| docs/governed-skills.md | CURRENT | 2026-08-08 | Operator guide for proposal/promotion, progressive confirmed-skill recall, isolation, and staging-only export. |
 | .planning/AUTORESEARCH-PROGRAM-2026-08-03.md | CURRENT | 2026-08-04 | Completed six-phase execution overlay records retrieval, graph, capture, full-QA, OAuth quality, public release, and the sole remaining longitudinal gate. |
 | .planning/audits/2026-08-04-autoresearch-convergence/audit-delta.md | CURRENT | 2026-08-04 | Bounded convergence delta records SQLite-only tests, 40-case quality evidence, public v4.6.0 release evidence, and the remaining seven-day observation. |
 | COMPETITOR_ANALYSIS.md | CURRENT | 2026-07-27 | Current prior-art analysis corrects Cognee provenance, temporal, tenant, graph, and document capabilities without adopting it as a dependency. |
@@ -21,7 +21,7 @@
 | .planning/VNEXT-GOVERNED-CAPTURE-SPEC.md | CURRENT | 2026-07-27 | Bounded implementation specification that explicitly implements, and does not compete with, ROADMAP.md. |
 | .planning/VNEXT-BASELINE-2026-07-27.md | CURRENT | 2026-07-27 | Reproducible pre-change retrieval, test, latency, package, capture, graph, and scheduler baseline at d33a268. |
 | docs/adr/0015-governed-universal-capture-lineage.md | CURRENT | 2026-07-27 | Accepted data-flow decision fixing producer-to-source-to-evidence-to-claim-to-supported-graph lineage and retirement semantics. |
-| docs/public-v1.md | CURRENT | 2026-07-27 | Stable public facade, capture trust boundary, limits, retirement semantics, dashboard inbox, and disposable demo. |
+| docs/public-v1.md | CURRENT | 2026-08-08 | Stable facade, capture boundary, additive approved-skill recall, retirement semantics, dashboard inbox, and demo. |
 | .planning/audits/2026-07-27-vnext-governed-capture/audit-delta.md | CURRENT | 2026-08-04 | SQLite activation, LifeAgent retirement, OAuth capture quality, public v4.6.0 release, rollback evidence, and the final seven-day observation gate. |
 | docs/archive/IMPROVEMENT_PLAN.md | ABANDONED | 2026-06-20 | The doc serves as a generated audit and roadmap from March 2026 but is not referenced by any current docs; it contains specific version claims and 'P0' bugs that likely represent a historical snapshot rather than a living plan.  |
 | docs/archive/v315-experiments/E02-results.md | ABANDONED | 2026-06-20 | This is a negative result experiment from a past version (v315) where the code was explicitly reverted and not retained.  |

@@ -8,6 +8,8 @@ import pytest
 
 import memorymaster.core.access_control as access_control
 import memorymaster.surfaces.mcp_server as mcp_server
+from memorymaster.core.models import CitationInput
+from memorymaster.knowledge.skill_schema import build_skill_fields
 
 
 @pytest.fixture
@@ -49,6 +51,114 @@ def test_public_mcp_contract_round_trip(mcp_env) -> None:
     improved = mcp_server.improve(db=db, workspace=workspace)
     assert improved["ok"] is True
     assert improved["api_version"] == "memorymaster.public.v1"
+
+
+def _skill_payload() -> dict[str, object]:
+    return {
+        "schema": "personal-skill-v1",
+        "slug": "verify-release",
+        "title": "Verify release",
+        "when_to_use": "Use when a release gate must be checked.",
+        "when_not_to_use": "Do not use for routine local edits.",
+        "inputs": ["release candidate"],
+        "prerequisites": ["tests collected"],
+        "workflow": ["Run the focused gate", "Inspect the evidence"],
+        "decision_rules": ["Stop when a required gate fails"],
+        "expected_output": "An evidence-backed release verdict.",
+        "validation": ["Every required check has direct evidence"],
+        "pitfalls": ["Treating skipped checks as passes"],
+        "recovery": ["Repair the failed gate and rerun it"],
+        "quality_scores": {
+            "recurrence": 16,
+            "reusability": 16,
+            "executability": 16,
+            "validation": 16,
+            "safety": 16,
+        },
+    }
+
+
+def _ingest_skill(service, *, slug: str, scope: str, marker: str):
+    payload = _skill_payload()
+    payload.update(
+        {
+            "slug": slug,
+            "title": f"Verify release {slug}",
+            "workflow": [marker, "Inspect the evidence"],
+        }
+    )
+    fields = build_skill_fields(payload, supporting_claim_ids=[7, 8])
+    return service.ingest(
+        **fields,
+        citations=[CitationInput(source="fixture", locator=slug)],
+        scope=scope,
+        source_agent="fixture",
+    )
+
+
+def _transition(service, claim, status: str):
+    return service.store.apply_status_transition(
+        claim,
+        to_status=status,
+        reason="fixture approval",
+        event_type="validator",
+    )
+
+
+def test_public_recall_optionally_includes_only_confirmed_scoped_skills(mcp_env) -> None:
+    db, workspace = mcp_env
+    service = mcp_server._service(db, workspace)
+    service.init_db()
+    candidate = _ingest_skill(
+        service,
+        slug="verify-release",
+        scope="project:workspace",
+        marker="Run the focused gate",
+    )
+    wrong_scope = _ingest_skill(
+        service,
+        slug="wrong-scope",
+        scope="project:other",
+        marker="NEVER INJECT WRONG SCOPE",
+    )
+    stale = _ingest_skill(
+        service,
+        slug="stale-skill",
+        scope="project:workspace",
+        marker="NEVER INJECT STALE SKILL",
+    )
+    _transition(service, wrong_scope, "confirmed")
+    stale = _transition(service, stale, "confirmed")
+    _transition(service, stale, "stale")
+
+    before = mcp_server.recall(
+        query="verify release",
+        scope_allowlist="project:workspace",
+        include_skills=True,
+        db=db,
+        workspace=workspace,
+    )
+    assert before["skills"] == ()
+    assert "Run the focused gate" not in before["output"]
+
+    _transition(service, candidate, "confirmed")
+    after = mcp_server.recall(
+        query="verify release",
+        scope_allowlist="project:workspace",
+        include_skills=True,
+        skill_limit=2,
+        db=db,
+        workspace=workspace,
+    )
+
+    assert len(after["skills"]) == 1
+    assert after["skills"][0]["claim_id"] == candidate.id
+    assert all(item["claim_id"] != candidate.id for item in after["claims"])
+    assert "=== APPROVED SKILLS ===" in after["output"]
+    assert "Run the focused gate" in after["output"]
+    assert "NEVER INJECT WRONG SCOPE" not in after["output"]
+    assert "NEVER INJECT STALE SKILL" not in after["output"]
+    assert after["tokens_used"] <= after["token_budget"]
 
 
 def test_team_mcp_rejects_client_local_path_before_public_body(

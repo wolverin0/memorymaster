@@ -1,10 +1,10 @@
 # Public v1: remember, recall, forget, improve
 # Covers: stable Python, CLI, and MCP contracts for governed personal memory.
-# Key terms: memorymaster.public.v1, capture envelope, trusted recall, logical retirement.
+# Key terms: memorymaster.public.v1, capture envelope, trusted recall, approved skills, logical retirement.
 # Read when: integrating a producer, capturing a file, or building a friendly client.
 # Defaults: project workspace scope, confirmed-only recall, preview-only retirement.
 # Limits: 2 MiB text, 25 MiB document, 100-item batch; directories/archives unsupported.
-# Updated: 2026-07-27; live activation and remote fetching remain operator-owned.
+# Updated: 2026-08-08; approved-skill projection is additive and off by default.
 
 MemoryMaster’s friendly facade does not bypass claim governance. Capture stores
 source and evidence synchronously, then queues extraction. Extracted claims are
@@ -26,6 +26,8 @@ context = recall(
     "What does Alice participate in?",
     scope_allowlist=["project:atlas"],
     token_budget=4000,
+    include_skills=True,
+    skill_limit=3,
 )
 
 preview = forget(source_item_id=receipt.source_item["id"])
@@ -35,7 +37,11 @@ queued = improve(scope="project:atlas", max_items=200)
 The response contract is versioned as `memorymaster.public.v1`. `remember`
 returns source, evidence, job IDs, replay/deduplication state, and warnings.
 `recall` returns rendered context plus claim IDs, citations, lifecycle state,
-and score explanations. Candidate recall requires `trust_mode="exploratory"`.
+score explanations, and a `skills` tuple. `include_skills=True` adds complete
+confirmed skills authorized for the requested scopes as an explicit text
+section while sharing the same token budget. It excludes raw skill JSON from
+ordinary claim context. The option defaults off; candidate recall still
+requires `trust_mode="exploratory"`, and candidate skills are never projected.
 
 ## CLI and MCP
 

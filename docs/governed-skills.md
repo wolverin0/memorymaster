@@ -1,10 +1,10 @@
 # Governed personal skills
-# Covers: personal-skill-v1 proposals, recurring evidence, explicit review, recall, and staging export.
-# Key terms: skill candidate, correction_count, content_sha256, approval, supersession, SKILL.md.
-# Read when: reviewing reusable workflows or operating the skill CLI/MCP surfaces.
+# Covers: personal-skill-v1 proposals, review, progressive recall reuse, and staging export.
+# Key terms: skill candidate, approval, supersession, include_skills, APPROVED SKILLS, SKILL.md.
+# Read when: reviewing workflows or integrating approved skills into an agent recall surface.
 # Authority: skills remain ordinary governed claims; this guide does not bypass lifecycle policy.
 # Safety: review is default-off, promotion is human-only, and export never activates global files.
-# Updated: 2026-08-07 after local P3 implementation and focused lifecycle verification.
+# Updated: 2026-08-08 after progressive confirmed-skill recall and Hermes integration.
 
 MemoryMaster can turn a recurring, reusable workflow into a governed skill
 candidate. The source of truth remains SQLite: a skill is an ordinary claim
@@ -21,6 +21,7 @@ with `claim_type=skill`, `predicate=applies_when`, and a strict
 6. Approval confirms a new skill; update approval atomically supersedes its
    immutable parent version.
 7. Confirmed skills can be recalled or rendered to MemoryMaster staging.
+8. Agent surfaces may opt into a bounded per-turn `APPROVED SKILLS` section.
 
 The reviewer is disabled unless `MEMORYMASTER_SKILL_REVIEW=1`. Its per-cycle
 limit is `MEMORYMASTER_SKILL_REVIEW_LIMIT` (default 5, hard maximum 20), and
@@ -49,6 +50,20 @@ The equivalent tools are `skill_inputs`, `skill_propose`, `skill_review`,
 `skill_recall`, and `skill_export`. Candidate proposal and confirmed recall are
 available to authenticated team transports with normal scope grants.
 `skill_review` and filesystem export remain local-trusted/operator surfaces.
+
+## Progressive recall
+
+The public Python and MCP `recall` operations accept `include_skills=True` and
+an optional `skill_limit` (default 3, maximum 10 through MCP). The result adds a
+structured `skills` tuple and, for text output, an `APPROVED SKILLS` section.
+Only complete confirmed skills in the requested scope are included; raw skill
+JSON is removed from ordinary claim context, and the combined result shares
+the caller's token budget.
+
+Hermes enables this mode for authoritative and read-only fallback recall.
+Candidate, stale, superseded, conflicted, archived, sensitive, and wrong-scope
+skills remain unavailable. Ordinary public recall keeps the option off, so
+existing callers and non-text output are unchanged.
 
 ## Staging boundary
 

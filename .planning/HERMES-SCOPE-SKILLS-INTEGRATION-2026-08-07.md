@@ -1,20 +1,22 @@
-# Hermes scope and governed-skills integration specification
-# Covers: the executable plan for session scope binding, a native Hermes MemoryProvider, and governed skill proposals.
-# Key terms: SessionBinding, Hermes, MemoryProvider, MCP HTTP, durable outbox, skill candidate, evidence lineage.
+# Tencent-derived scope, governed-skills, and Hermes integration specification
+# Covers: session binding, native Hermes memory, governed skill proposals, and progressive approved-skill reuse.
+# Key terms: TencentDB Agent Memory, SessionBinding, Hermes, durable outbox, skill candidate, approved skills.
 # Read when: implementing, reviewing, activating, or rolling back the post-v4.6 companion-integration program.
 # Authority: this specification implements `ROADMAP.md`; it is not a second roadmap and cannot override lifecycle policy.
 # Safety: Windows SQLite stays authoritative, VM SQLite is fallback-only, global scope is never inferred, and skills require approval.
-# Status: P1-P3 and live activation pass; the 24-hour observation is the only PR gate.
+# Status: P1-P3 and P5 pass locally; P5 activation and a fresh 24-hour observation remain PR gates.
 
 ## 1. Outcome
 
-Deliver three bounded improvements without importing TencentDB Agent Memory or
+Deliver four bounded improvements without importing TencentDB Agent Memory or
 changing MemoryMaster's governed-claims architecture:
 
 1. Bind every agent session to an explicit, visible personal or project scope.
 2. Integrate Hermes through its supported standalone `MemoryProvider` API.
 3. Convert recurring, reusable workflows into evidence-linked skill candidates
    that cannot become active without an explicit approval.
+4. Reuse matched confirmed skills progressively in Hermes recall without
+   exposing candidates, stale versions, or another project's instructions.
 
 The release remains personal-first and SQLite-only. It does not add a database
 server, team tenancy, a second authority, or automatic global instructions.
@@ -34,6 +36,8 @@ server, team tenancy, a second authority, or automatic global instructions.
 - Trusted recall remains confirmed-only. Candidate inclusion stays explicit.
 - Skills are governed claims with evidence links and supersession history, not
   files written directly by an LLM.
+- Per-turn skill reuse is an opt-in recall projection over confirmed scoped
+  claims. It is not a second skill store or an automatic activation path.
 - Generated `SKILL.md` files first land in a MemoryMaster staging directory.
   Activation under operator-owned global agent directories is a separate,
   previewed operator action.
@@ -224,6 +228,20 @@ The generated header includes claim ID, scope, content hash, version, and
 citations. Copying into global Claude/Codex/Hermes skill directories remains a
 previewed, operator-gated step outside automatic stewardship.
 
+### 6.5 Progressive per-turn reuse
+
+Public and MCP `recall` accept additive `include_skills` and `skill_limit`
+parameters. When enabled, MemoryMaster retrieves confirmed skills under the
+same scope allowlist, packs whole workflows into a bounded share of the total
+token budget, removes opaque raw skill JSON from ordinary claim context, and
+returns both a structured `skills` tuple and an explicit `APPROVED SKILLS`
+section. Non-text formats fail closed when skill projection is requested.
+
+Hermes opts into this projection for authoritative MCP recall and read-only
+replica recall. Candidate, stale, conflicted, superseded, archived, sensitive,
+or cross-scope skills never participate. Ordinary public recall remains
+unchanged by default.
+
 ## 7. Implementation packages
 
 ### P0 - Read-only topology and baseline
@@ -398,6 +416,38 @@ P4 verification on 2026-08-07:
 Exit: the PR contains reproducible evidence, activation and rollback commands,
 and no unresolved scope or lineage invariant.
 
+### P5 - Progressive governed skill reuse (Tencent v2.0 delta)
+
+- [x] Add optional approved-skill projection to public and MCP recall.
+- [x] Share one token budget between ordinary claims and complete skill assets.
+- [x] Keep raw skill JSON out of ordinary claim context when projection is on.
+- [x] Opt authoritative and read-only Hermes recall into the same bundle logic.
+- [x] Prove candidate, stale, and wrong-scope skills are never injected.
+- [ ] Build and activate updated packages through the rollback-safe path.
+- [ ] Start and pass a fresh 24-hour observation before PR creation.
+
+P5 local verification on 2026-08-08:
+
+- RED first showed the missing `include_skills` public contract and missing
+  Hermes skill section. The initial real HTTP test also exposed cold hybrid
+  retrieval exceeding the provider timeout.
+- Hermes now explicitly requests deterministic `legacy` retrieval while the
+  public default remains `hybrid`. The real authenticated MCP HTTP path and
+  read-only replica both return the same confirmed-skill bundle.
+- The focused public/Hermes/governed-skills regression set passes: 62 tests.
+  It covers candidate, stale, cross-scope, and confirmed states; structured
+  skill receipts; bounded tokens; authoritative transport; replica DB-byte
+  preservation; and existing skill lifecycle/MCP behavior.
+- Full non-ML convergence passes: 4,367 passed, 71 skipped, 97 deselected,
+  and 1 expected xfail in 684.58 seconds.
+- Isolated wheel builds and a clean dependency-resolving install pass with
+  `pip check`. The wheels contain the new bundle/public/MCP/backend modules:
+  MemoryMaster SHA-256 `33D6D702DF59EDA0239CA688D3B2BF8B9C6D2101EBE8C78A76D6B24B2A8309D6`;
+  Hermes provider SHA-256 `4694023420364BCA4BEBD200ABF2D6328426671FD432F135067F4CE2234EEED9`.
+- The earlier live observation is not a clean PR gate because the VM suffered
+  an OOM/gateway interruption during its window. P5 activation must be followed
+  by a new uninterrupted observation.
+
 ## 8. Acceptance gates
 
 ### Scope and authorization
@@ -431,6 +481,8 @@ and no unresolved scope or lineage invariant.
 - Unknown reviewer output is blocked with diagnostics.
 - No skill file is activated automatically.
 - Approval and supersession are atomic, audited, and idempotent.
+- Per-turn reuse contains only complete confirmed skills authorized for the
+  requested scope, stays inside the recall budget, and is off by default.
 
 ### Regression
 
@@ -485,5 +537,8 @@ Rollback order:
 - `memorymaster/knowledge/rule_miner.py` - candidate-only recurring rule mining.
 - Hermes provider API:
   https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/memory-provider-plugin.md
+- TencentDB Agent Memory v2.0 delta reviewed at
+  `fe3230f176f1bf5832fee79d12494bbc2d19a8aa`:
+  https://github.com/TencentCloud/TencentDB-Agent-Memory/tree/fe3230f176f1bf5832fee79d12494bbc2d19a8aa
 - Tencent skill-review prior art:
-  https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/v2.0.0/MemoryCore/src/core/skill/prompts/skill-review-prompt.ts
+  https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/fe3230f176f1bf5832fee79d12494bbc2d19a8aa/MemoryCore/src/core/skill/prompts/skill-review-prompt.ts
