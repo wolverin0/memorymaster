@@ -1,10 +1,11 @@
+<!-- doc-head: canonical documentation map; current after PPR-4 -->
 # DOCS-MAP - memorymaster
 # Covers: trust verdicts and replacements for every canonical documentation surface.
-# Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, paper radar, ADR, vNext.
+# Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, paper radar, ADR.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-08 after completing offline PPR-1 through PPR-3 research infrastructure.
-# Verdicts: ABANDONED=9, CURRENT=103, GENERATED=3, SUPERSEDED=9.
-# Rule: CURRENT docs are trusted; never implement from SUPERSEDED or ABANDONED docs.
+# Updated: 2026-08-08 after completing offline PPR-1 through PPR-4.
+# Rule: CURRENT docs are trusted; verdict counts remain 9/103/3/9.
+<!-- /doc-head -->
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|

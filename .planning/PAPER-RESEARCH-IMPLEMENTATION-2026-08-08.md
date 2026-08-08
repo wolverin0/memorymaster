@@ -1,10 +1,11 @@
+<!-- doc-head: implementation ledger; PPR-1 through PPR-4 complete -->
 # MemoryMaster paper-research implementation ledger - 2026-08-08
 # Covers: executable PPR-1 through PPR-6 work derived from the governed paper radar.
-# Key terms: representation evaluation, sustainability telemetry, budget policy, evidence rehydration, temporal projection, skill outcomes.
-# Read when: implementing or verifying research-derived MemoryMaster changes after the primary-paper review.
-# Authority: subordinate to ROADMAP.md and PAPER-RADAR-REVIEW-2026-08-08.md; it does not create product scope.
-# Safety: SQLite-only, temporary/synthetic evaluation first, no live activation, automatic promotion, or public release.
-# Updated: 2026-08-08 after PPR-3 GREEN; PPR-4 through PPR-6 remain queued.
+# Key terms: evaluation, telemetry, budget policy, evidence rehydration, temporal projection, skill outcomes.
+# Read when: implementing or verifying research-derived MemoryMaster changes.
+# Authority: subordinate to ROADMAP.md; SQLite-only and no live/public activation.
+# Updated: 2026-08-08 after PPR-4 GREEN; PPR-5 and PPR-6 remain queued.
+<!-- /doc-head -->
 
 ## Execution status
 
@@ -13,7 +14,7 @@
 | PPR-1 | COMPLETE | Versioned synthetic representation and active-use evaluator | Deterministic scorer, five-profile matrix contract, failure attribution, tests, and no provider calls |
 | PPR-2 | COMPLETE | Stage-level sustainability observations | Aggregate-safe timing, content-read, provider, token, cache, tier, fallback, and correctness fields |
 | PPR-3 | COMPLETE | Explicit deterministic retrieval budgets | Low/balanced/high/temporal/procedural policies evaluated in shadow mode before runtime adoption |
-| PPR-4 | QUEUED | Progressive claim-to-evidence rehydration | Scope-filtered supported paths, exact evidence map-back, bounded sufficiency checks, diagnostic fallback |
+| PPR-4 | COMPLETE | Progressive claim-to-evidence rehydration | Scope-filtered supported paths, exact evidence map-back, bounded sufficiency checks, diagnostic fallback |
 | PPR-5 | QUEUED | Temporal and episode projections | Rebuildable occurrence/interval/current/adjacent-evidence projections with atomic citations preserved |
 | PPR-6 | QUEUED | Outcome-aware governed skills | Success/failure/ambiguous evidence without automatic confirmation, reinforcement, rewrite, or archival |
 
@@ -50,6 +51,9 @@
 | 2026-08-08 | PPR-3 | RED: shadow policy import failed before implementation. GREEN: 6 tests pass with 99% focused coverage; 60 combined research/planner/packing/architecture tests pass. | Implemented and verified |
 | 2026-08-08 | PPR-3 | Versioned explicit low/balanced/high/temporal/procedural policies filter scope, sensitivity, and lifecycle before selection/admission, then emit content-free duplicate, near-duplicate, weak-support, conflict, and budget diagnostics. | Shadow-only policy complete |
 | 2026-08-08 | PPR-3 | Replay returns byte-equivalent reports; the shadow pass records zero provider calls and does not mutate ranking, cache, claims, evidence, or live configuration. | Runtime adoption remains gated |
+| 2026-08-08 | PPR-4 | RED: evidence rehydration import failed before implementation. GREEN: 5 tests pass with 94% coverage; 27 capture/graph/lineage compatibility tests pass. | Implemented and verified |
+| 2026-08-08 | PPR-4 | Disposable SQLite maps confirmed authorized claims through active `claim_evidence_links`; graph-signal IDs are bounded and fully revalidated before exact excerpts are returned. | Governed rehydration complete |
+| 2026-08-08 | PPR-4 | Retired, cross-scope, candidate, sensitive, and unsupported evidence fails closed with explicit `no_authorized_evidence` or `insufficient_evidence` diagnostics. | No graph/evidence authority bypass |
 
 ## Activation and rollback
 

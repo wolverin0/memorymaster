@@ -1,10 +1,11 @@
+<!-- doc-head: sole authoritative roadmap; PPR-4 offline checkpoint -->
 # MemoryMaster roadmap
-# Covers: the authoritative post-v4.6 sequence, Tencent-derived work, research radar, and explicit deferrals.
-# Key terms: v4.6.0, Hermes, governed skills, paper radar, memory sustainability, observation.
-# Read when: choosing release scope, accepting a feature, or deciding whether work is deferred.
-# Authority: this is the sole roadmap; `.planning/` specifications implement it and never replace it.
-# Safety: SQLite remains authoritative, candidate promotion stays steward-owned, and live upgrades stay operator-gated.
-# Updated: 2026-08-08 after the offline PPR-3 shadow-policy checkpoint.
+# Covers: post-v4.6 sequence, Tencent-derived work, paper research, and deferrals.
+# Key terms: Hermes, governed skills, paper radar, evidence rehydration, sustainability.
+# Read when: choosing release scope, accepting a feature, or checking deferrals.
+# Authority: sole roadmap; planning ledgers implement it and never replace it.
+# Safety: SQLite authority, steward promotion, and operator-gated live upgrades remain fixed.
+<!-- /doc-head -->
 
 ## Shipped in v4.6.0
 
@@ -129,7 +130,10 @@ rewriting can erase temporal, emotional, or narrative information.
   intent-aware retrieval, temporal occurrence-time modeling, deterministic
   versus LLM graph extraction, and action-oriented memory evaluation
   (`Mem2ActBench`). Adopt none until a focused baseline/mutation comparison
-  proves a gain on an authoritative MemoryMaster execution path.
+  proves a gain on an authoritative MemoryMaster execution path. The offline
+  PPR-4 checkpoint now provides bounded claim-to-evidence rehydration with
+  active-source and scope/sensitivity revalidation; it is explicit evaluation
+  functionality and is not a new default answer path.
 - **R5 - Sustainability and cost gates:** measure current-versus-superseded
   errors, early-memory survival, duplication/fragmentation, citation accuracy,
   tokens, content read, tool/provider calls, latency, and cost per correct answer
