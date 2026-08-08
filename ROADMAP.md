@@ -4,7 +4,7 @@
 # Read when: choosing release scope, accepting a feature, or deciding whether work is deferred.
 # Authority: this is the sole roadmap; `.planning/` specifications implement it and never replace it.
 # Safety: SQLite remains authoritative, candidate promotion stays steward-owned, and live upgrades stay operator-gated.
-# Updated: 2026-08-08 after 57-paper triage and the 18-PDF primary-review checkpoint.
+# Updated: 2026-08-08 after the offline PPR-1 representation-evaluation checkpoint.
 
 ## Shipped in v4.6.0
 
@@ -105,6 +105,10 @@ rewriting can erase temporal, emotional, or narrative information.
   emphasis, narrative-arc co-retrieval, ordinary factual recall, and procedural
   reuse. Score answer correctness separately from citation correctness and raw
   evidence preservation so a cited but temporally wrong answer cannot pass.
+  The offline PPR-1 checkpoint now provides eight publishable synthetic cases,
+  a five-profile prediction contract, independent answer/citation/tool scores,
+  exact parameter-provenance checks, and deterministic failure attribution.
+  Product-profile baselines and behavior changes remain later gated work.
 - **R2 - Explicit consumer-aware recall projections:** compare governed claims
   plus bounded evidence for strong consumers, concise task guidance for smaller
   consumers, lifecycle timelines for temporal/high-stakes questions, and
@@ -134,7 +138,9 @@ Exit gates: zero secret or cross-scope leakage, zero automatic promotion,
 replay-safe radar updates, primary-source traceability for every verdict, no
 LongMemEval or full-QA regression beyond existing thresholds, and a measured
 quality or cost win before any experimental retrieval behavior becomes a
-default. This program begins only after the clean P5 observation/PR gate closes.
+default. Offline synthetic harness work may proceed under explicit operator
+authorization; runtime experiments and activation begin only after the clean P5
+observation/PR gate closes.
 
 ## Later
 
