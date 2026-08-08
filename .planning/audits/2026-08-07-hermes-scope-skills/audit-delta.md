@@ -3,16 +3,17 @@
 # Key terms: TencentDB Agent Memory, Hermes, session scope, personal-skill-v1, approved skills, snapshot.
 # Read when: reviewing this feature branch, operating the activated Windows tasks, or resuming the VM rollout.
 # Authority: evidence delta for `.planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md`; ROADMAP.md remains authoritative.
-# Status: original activation passed; P5 passes locally, but activation and a fresh observation remain.
-# Updated: 2026-08-08 after P5 local verification; no public release was created.
+# Status: P5 is active on Windows and Hermes; a clean 24-hour observation remains before the PR.
+# Updated: 2026-08-08 after rollback-safe P5 activation and replacement observation scheduling.
 
 ## Verdict
 
-The original branch activation passed its safety gates and the native provider
-is active on the Hermes VM. The Tencent-derived P5 progressive approved-skill
-path now passes locally, but is not yet installed live. The original 24-hour
-window also included a VM OOM/gateway interruption, so it cannot authorize the
-PR. Rebuild/activate P5 and complete a fresh clean observation. No tag, GitHub
+The Tencent-derived P5 progressive approved-skill path now passes locally and
+is installed on both the Windows authority and Hermes VM. Rollback artifacts,
+consoleless task actions, authenticated live recall, provider outbox, and the
+installed-wheel isolation canary pass. The original 24-hour window included a
+VM OOM/gateway interruption and did not contain P5, so it cannot authorize the
+PR. A replacement check is due 2026-08-09 02:20 Argentina time. No tag, GitHub
 Release, package publication, merge, or public deployment is authorized here.
 
 ## P5 progressive-skill evidence
@@ -37,6 +38,12 @@ Release, package publication, merge, or public deployment is authorized here.
 
 ## Durable storage evidence
 
+- Pre-P5 online snapshot:
+  `E:\MemoryMaster\snapshots\memorymaster\20260808-0130-tencent-p5\memorymaster-pre-p5.db`
+  (`6,684,131,328` bytes), with `PRAGMA quick_check=ok`, zero foreign-key
+  violations, 125,643 claims, 128,124 citations, and 2,074,691 events. P5 has
+  no schema migration, so the completed P4 restore and prior-version read gate
+  remain the destructive-change rollback evidence.
 - Authority snapshot:
   `E:\MemoryMaster\snapshots\memorymaster\20260807-160651-hermes-scope-skills\memorymaster-pre-activation.db`
   (`6,655,746,048` bytes).
@@ -71,11 +78,15 @@ Release, package publication, merge, or public deployment is authorized here.
 
 ## Windows activation evidence
 
-- Runtime:
-  `C:\Users\pauol\.memorymaster\runtime\hermes-scope-skills-20260807`
+- The original P4 runtime remains at
+  `C:\Users\pauol\.memorymaster\runtime\hermes-scope-skills-20260807`.
+  P5 is installed side-by-side at
+  `C:\Users\pauol\.memorymaster\runtime\hermes-scope-skills-p5-20260808`
   with MemoryMaster 4.6.0, Hermes provider 0.1.0, and a clean `pip check`.
-- `MemoryMaster-Dreaming` and `MemoryMasterSteward` now execute that runtime's
-  `pythonw.exe`; no console-hosted PowerShell action was introduced.
+- `MemoryMaster-Dreaming`, `MemoryMasterSteward`, and
+  `MemoryMaster-MCP-HTTP-Hermes` execute the P5 runtime's `pythonw.exe`; no
+  console-hosted PowerShell action was introduced. HTTP readiness is `200` and
+  authenticated P5 recall returns governed context.
 - Dreaming retains `--apply-candidates`. Candidate promotion remains exclusively
   controlled by the steward.
 - Public `improve --scope user --max-items 10` queued the one missing graph job.
@@ -84,12 +95,26 @@ Release, package publication, merge, or public deployment is authorized here.
   completed graph job.
 - Final verify-only status: disposable sentinel PASS, Dreaming PASS,
   candidate-apply mode matches, provider readiness true for dream, claim, and
-  graph extraction, and both scheduled-task last results are `0`.
+  graph extraction, and both scheduled-task last results are `0`. The P5
+  verify-only pass found the newly confirmed canary's one due graph job before
+  queuing; public `improve` queued exactly that job and the 02:11 hourly worker
+  completed it with result `0`. Final coverage is `ok`: seven completed jobs,
+  zero missing graph jobs, and zero lease, retry, blocked, partial, or orphan
+  anomalies.
 
 ## Rollback
 
-Only the two task actions changed. Preserve triggers, principals, and settings;
-restore these former action executables if rollback is required:
+P5 changed three Windows task actions while preserving triggers, principals,
+and settings. Restore the prior runtime's `pythonw.exe` for Dreaming, Steward,
+and MCP HTTP if P5 rollback is required:
+
+- P5 rollback runtime:
+  `C:\Users\pauol\.memorymaster\runtime\hermes-scope-skills-20260807\Scripts\pythonw.exe`
+- VM rollback wheels:
+  `~/.hermes/tmp/memorymaster-p5-20260808/rollback/`; reinstall both with
+  `uv pip --no-deps --reinstall`, then restart `hermes-gateway.service`.
+
+The older full P4 rollback actions remain:
 
 - `MemoryMaster-Dreaming` executable:
   `C:\Users\pauol\.memorymaster\runtime\vnext-20260727\Scripts\pythonw.exe`
@@ -133,12 +158,40 @@ failure, not for an ordinary provider rollback.
   attempt and is recorded as a separate upstream CLI defect; it is not used by
   the gateway.
 
+## P5 live activation evidence
+
+- New wheel hashes match the locally audited artifacts exactly: MemoryMaster
+  `33D6D702DF59EDA0239CA688D3B2BF8B9C6D2101EBE8C78A76D6B24B2A8309D6` and
+  Hermes provider
+  `4694023420364BCA4BEBD200ABF2D6328426671FD432F135067F4CE2234EEED9`.
+- Windows installed-wheel smoke proves confirmed-skill inclusion, candidate
+  exclusion, token bounding, and installed-package imports. A first disposable
+  run passed its assertions but hit a Windows temporary-directory cleanup lock;
+  the isolated rerun exited zero, so the lock is not a product failure.
+- The Hermes venv was upgraded only while the gateway was stopped, using exact
+  new and rollback wheels. `uv pip check` reports 128 compatible packages. The
+  current gateway has zero restarts, result `success`,
+  `ManagedOOMPreference=avoid`, approximately 304 MB resident, and six
+  established TLS connections. Its three post-start warnings are the expected
+  Telegram DNS/connect messages and an unrelated Home Assistant filter notice;
+  there is no OOM, traceback, or restart-loop warning. The intentional stop's
+  prior shutdown status remains operational evidence, not a runtime failure.
+- The actual provider backend is configured and returns nonempty governed
+  context. Five VM-to-Windows P5 samples measured median `0.115 s` and max
+  `1.045 s`. Outbox counts are completed `5` and zero pending, leased,
+  retryable, blocked, or cancelled, with no last error code.
+- Production contains zero `claim_type=skill` claims in every lifecycle state.
+  Live recall therefore correctly omits `APPROVED SKILLS`; no synthetic skill
+  was inserted or self-approved. Disposable installed-wheel fixtures prove
+  confirmed-only, active-scope injection and candidate/stale/wrong-scope
+  exclusion.
+- The original observation task never ran. Its invalid 2026-08-08 20:36 trigger
+  is replaced by a consoleless P5 runner due 2026-08-09 02:20 Argentina time.
+
 ## Remaining live gates
 
-Build and install the P5 packages through the recorded rollback-safe procedure,
-then prove one authorized confirmed skill is returned while candidate, stale,
-and wrong-scope fixtures are absent. Start a new hidden, consoleless 24-hour
-check only after those gates pass. It must record queue, scope, lineage, replay,
-task, provider, latency, gateway, and approved-skill isolation evidence; leave
-a failure report and skip push/PR on any failed gate; and never tag, release,
-publish, deploy, or merge.
+Complete the clean hidden 24-hour check. It must record queue, scope, lineage,
+replay, task, provider, latency, gateway, installed-wheel skill isolation, and
+the absence of unauthorized production skill injection. It must leave a
+failure report and skip push/PR on any failed gate. On success it may push this
+branch and create the PR; it may never tag, release, publish, deploy, or merge.

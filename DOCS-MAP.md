@@ -2,16 +2,16 @@
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, ADR, vNext.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-08 after TencentDB v2.0 delta and progressive-skill implementation.
+# Updated: 2026-08-08 after Tencent-derived P5 activation and clean observation scheduling.
 # Verdicts: ABANDONED=9, CURRENT=101, GENERATED=3, SUPERSEDED=9.
 # Rule: CURRENT docs are trusted; never implement from SUPERSEDED or ABANDONED docs.
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
 | CHANGELOG.md | CURRENT | 2026-08-04 | Public release history; v4.6.0 records governed universal capture, measured quality changes, security evidence, and known follow-ups. |
-| ROADMAP.md | CURRENT | 2026-08-08 | Sole authoritative roadmap; records the Tencent v2.0 adopt/retain/defer boundary and remaining P5 activation plus clean observation gates. |
-| .planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md | CURRENT | 2026-08-08 | Executable Tencent-derived ledger; P1-P3 and P5 pass locally while activation and a clean observation remain. |
-| .planning/audits/2026-08-07-hermes-scope-skills/audit-delta.md | CURRENT | 2026-08-08 | Bounded delta records SQLite restore, P5 local evidence, prior activation, rollback, and remaining clean-observation gates. |
+| ROADMAP.md | CURRENT | 2026-08-08 | Sole authoritative roadmap; records the Tencent v2.0 adopt/retain/defer boundary, live P5 state, and remaining clean observation gate. |
+| .planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md | CURRENT | 2026-08-08 | Executable Tencent-derived ledger; P1-P5 are implemented and active while the clean observation remains the PR gate. |
+| .planning/audits/2026-08-07-hermes-scope-skills/audit-delta.md | CURRENT | 2026-08-08 | Bounded delta records SQLite safety, exact P5 activation, rollback, and replacement observation evidence. |
 | docs/governed-skills.md | CURRENT | 2026-08-08 | Operator guide for proposal/promotion, progressive confirmed-skill recall, isolation, and staging-only export. |
 | .planning/AUTORESEARCH-PROGRAM-2026-08-03.md | CURRENT | 2026-08-04 | Completed six-phase execution overlay records retrieval, graph, capture, full-QA, OAuth quality, public release, and the sole remaining longitudinal gate. |
 | .planning/audits/2026-08-04-autoresearch-convergence/audit-delta.md | CURRENT | 2026-08-04 | Bounded convergence delta records SQLite-only tests, 40-case quality evidence, public v4.6.0 release evidence, and the remaining seven-day observation. |

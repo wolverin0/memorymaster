@@ -1,10 +1,10 @@
 # MemoryMaster roadmap
 # Covers: the authoritative post-v4.6 product sequence, Tencent-derived improvements, and explicit deferrals.
-# Key terms: v4.6.0, TencentDB Agent Memory, Hermes, governed skills, progressive recall, observation.
+# Key terms: v4.6.0, TencentDB Agent Memory, Hermes, governed skills, live P5, observation.
 # Read when: choosing release scope, accepting a feature, or deciding whether work is deferred.
 # Authority: this is the sole roadmap; `.planning/` specifications implement it and never replace it.
 # Safety: SQLite remains authoritative, candidate promotion stays steward-owned, and live upgrades stay operator-gated.
-# Updated: 2026-08-08 after TencentDB v2.0 review and local progressive-skill implementation.
+# Updated: 2026-08-08 after P5 activation and replacement of the invalid observation window.
 
 ## Shipped in v4.6.0
 
@@ -35,18 +35,16 @@ its governed-claims authority:
 
 ## Now
 
-- Complete the seven-day post-activation observation at 2026-08-06 16:06 UTC
-  (13:06 Argentina) and record queue, provider, duplicate, lease, task-result,
-  graph-support, and trusted-recall evidence without changing live state.
-- Converge and activate the Tencent-derived progressive approved-skill bundle.
-  Its public/MCP contract and both Hermes backends pass local tests; live
-  activation still requires the normal build, backup/readiness, rollback, and
-  post-install functional gates.
-- Start a fresh 24-hour native-provider observation after that activation. The
-  prior window included a VM OOM/gateway incident and cannot authorize a PR.
-  The replacement hidden check may create the PR only when scope, lineage,
-  replay, outbox, task, OAuth, gateway, and approved-skill isolation gates all
-  remain healthy. It must not tag, release, publish, deploy, or merge.
+- Observe the activated Tencent-derived P5 bundle through 2026-08-09 02:20
+  Argentina time. The Windows authority and Hermes VM now run the exact audited
+  wheels; live recall, rollback, consoleless tasks, outbox, and installed-wheel
+  skill-isolation canaries passed at activation.
+- Let the replacement hidden check close both the clean P5 24-hour window and
+  the already-due seven-day v4.6 observation. The invalid earlier window
+  included a VM OOM/gateway incident and did not contain P5.
+- Create the PR only if scope, lineage, replay, outbox, task, provider, gateway,
+  and approved-skill isolation remain healthy. The check must not tag, release,
+  publish, deploy, or merge.
 - Keep v4.6.0 operational while the post-release Obsidian opt-in and OpenCode
   OAuth capture fixes converge on `main` for a separately approved patch release.
 - Preserve governed retrieval, lifecycle authority, scope isolation, finite
@@ -59,10 +57,10 @@ its governed-claims authority:
   `.planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md`; Windows SQLite
   remains authoritative, global is never inferred, and skills require explicit
   approval. P1 session binding, P2 transport, P3 governed skills, and P5
-  progressive approved-skill reuse are implemented and locally verified.
-  Windows P4 backup/restore, candidate scheduling, and consoleless runtime
-  activation previously passed. Rebuild/reactivate P5, then complete a clean
-  24-hour observation before creating the PR.
+  progressive approved-skill reuse are implemented, verified, and active.
+  Windows snapshot/readiness gates, consoleless P5 runtime replacement, VM
+  package rollback preparation, and live functional probes passed. Complete
+  the clean 24-hour observation before creating the PR.
 - Improve personal/local backup guidance beyond the already verified disposable
   backup/restore and migration procedure.
 - Keep semantic recall optional and disabled unless a local user deliberately

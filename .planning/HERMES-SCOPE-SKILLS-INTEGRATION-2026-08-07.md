@@ -4,7 +4,7 @@
 # Read when: implementing, reviewing, activating, or rolling back the post-v4.6 companion-integration program.
 # Authority: this specification implements `ROADMAP.md`; it is not a second roadmap and cannot override lifecycle policy.
 # Safety: Windows SQLite stays authoritative, VM SQLite is fallback-only, global scope is never inferred, and skills require approval.
-# Status: P1-P3 and P5 pass locally; P5 activation and a fresh 24-hour observation remain PR gates.
+# Status: P1-P5 are implemented and active; the clean P5 24-hour observation remains the PR gate.
 
 ## 1. Outcome
 
@@ -409,9 +409,10 @@ P4 verification on 2026-08-07:
   the response-loop prefetch return p95 measured `0.032 ms`, while durable
   `sync_turn` enqueue p95 measured `1.032 ms`. The configured three-second
   authority timeout therefore does not block the Hermes response loop.
-- The 24-hour observation started at 2026-08-07 20:36 Argentina time. A hidden
-  consoleless headless Codex task is due at 2026-08-08 20:36 and may create the
-  PR only if every gate passes. No public release was created.
+- The 2026-08-07 observation is retained only as incident evidence. Its VM
+  OOM/gateway interruption and absence of P5 make it invalid as a PR gate. A
+  replacement post-P5 check is scheduled for 2026-08-09 02:20 Argentina time.
+  No public release was created.
 
 Exit: the PR contains reproducible evidence, activation and rollback commands,
 and no unresolved scope or lineage invariant.
@@ -423,8 +424,9 @@ and no unresolved scope or lineage invariant.
 - [x] Keep raw skill JSON out of ordinary claim context when projection is on.
 - [x] Opt authoritative and read-only Hermes recall into the same bundle logic.
 - [x] Prove candidate, stale, and wrong-scope skills are never injected.
-- [ ] Build and activate updated packages through the rollback-safe path.
-- [ ] Start and pass a fresh 24-hour observation before PR creation.
+- [x] Build and activate updated packages through the rollback-safe path.
+- [x] Start a fresh 24-hour observation from a clean post-P5 baseline.
+- [ ] Pass the fresh observation before PR creation.
 
 P5 local verification on 2026-08-08:
 
@@ -447,6 +449,36 @@ P5 local verification on 2026-08-08:
 - The earlier live observation is not a clean PR gate because the VM suffered
   an OOM/gateway interruption during its window. P5 activation must be followed
   by a new uninterrupted observation.
+
+P5 live activation on 2026-08-08:
+
+- A new online SQLite snapshot passed `quick_check` and foreign-key validation
+  before activation. P5 adds no schema migration, and the prior disposable
+  restore/rollback-compatibility gate remains applicable.
+- The audited wheels were installed into a side-by-side Windows runtime with a
+  clean `pip check`. Dreaming, Steward, and Hermes HTTP now use that runtime's
+  consoleless `pythonw.exe`; the prior runtime is preserved for one-action
+  rollback.
+- The same wheels and exact rollback wheels were installed in the Hermes venv
+  with `uv pip --no-deps --reinstall`. The gateway is active with zero restarts
+  after the P5 start, `ManagedOOMPreference=avoid`, established TLS sockets,
+  and a clean dependency check.
+- Five real VM-to-authority recalls were nonempty with median `0.115 s` and
+  max `1.045 s`. The provider outbox contains five completed deliveries and
+  zero pending, leased, retryable, blocked, or failed deliveries.
+- Production has zero `claim_type=skill` claims, so absence of
+  `APPROVED SKILLS` in live recall is the correct governed result. An
+  installed-wheel disposable canary
+  separately proves candidate exclusion, confirmed inclusion, scope isolation,
+  and the shared token ceiling without creating production skill content.
+- A steward transition confirmed the rollout canary after the previous worker
+  cycle. Public `improve` queued its single due graph job without promoting or
+  rewriting any claim; the 02:11 hourly worker completed it with result `0`.
+  Capture coverage is now `ok` with seven completed jobs and no missing graph,
+  expired lease, retryable, blocked, partial, or orphan anomaly.
+- The clean post-P5 observation is scheduled for 2026-08-09 02:20 Argentina
+  time. It may push and create the PR only after every longitudinal gate passes;
+  it may not tag, publish, deploy, or merge.
 
 ## 8. Acceptance gates
 
