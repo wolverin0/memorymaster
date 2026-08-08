@@ -4,7 +4,7 @@
 # Read when: implementing or verifying research-derived MemoryMaster changes after the primary-paper review.
 # Authority: subordinate to ROADMAP.md and PAPER-RADAR-REVIEW-2026-08-08.md; it does not create product scope.
 # Safety: SQLite-only, temporary/synthetic evaluation first, no live activation, automatic promotion, or public release.
-# Updated: 2026-08-08 after PPR-2 GREEN; PPR-3 through PPR-6 remain queued.
+# Updated: 2026-08-08 after PPR-3 GREEN; PPR-4 through PPR-6 remain queued.
 
 ## Execution status
 
@@ -12,7 +12,7 @@
 |---|---|---|---|
 | PPR-1 | COMPLETE | Versioned synthetic representation and active-use evaluator | Deterministic scorer, five-profile matrix contract, failure attribution, tests, and no provider calls |
 | PPR-2 | COMPLETE | Stage-level sustainability observations | Aggregate-safe timing, content-read, provider, token, cache, tier, fallback, and correctness fields |
-| PPR-3 | QUEUED | Explicit deterministic retrieval budgets | Low/balanced/high/temporal/procedural policies evaluated in shadow mode before runtime adoption |
+| PPR-3 | COMPLETE | Explicit deterministic retrieval budgets | Low/balanced/high/temporal/procedural policies evaluated in shadow mode before runtime adoption |
 | PPR-4 | QUEUED | Progressive claim-to-evidence rehydration | Scope-filtered supported paths, exact evidence map-back, bounded sufficiency checks, diagnostic fallback |
 | PPR-5 | QUEUED | Temporal and episode projections | Rebuildable occurrence/interval/current/adjacent-evidence projections with atomic citations preserved |
 | PPR-6 | QUEUED | Outcome-aware governed skills | Success/failure/ambiguous evidence without automatic confirmation, reinforcement, rewrite, or archival |
@@ -47,6 +47,9 @@
 | 2026-08-08 | PPR-2 | RED: sustainability module import failed before implementation. GREEN: 7 tests pass with 92% focused coverage; 54 evaluation/planner/packing/architecture tests pass. | Implemented and verified |
 | 2026-08-08 | PPR-2 | Disposable SQLite integration retrieves a confirmed scoped claim through `MemoryService.retrieve`, packs it with the production context packer, emits retrieval/packing stages, and records zero provider calls without query or claim text in the artifact. | Authoritative evaluation path wired |
 | 2026-08-08 | PPR-2 | Strict enums cover retrieval, graph expansion, evidence map-back, admission, packing, skill recall/review, answer generation, and judge generation; per-request observations are capped at 64. | Aggregate-safe contract complete |
+| 2026-08-08 | PPR-3 | RED: shadow policy import failed before implementation. GREEN: 6 tests pass with 99% focused coverage; 60 combined research/planner/packing/architecture tests pass. | Implemented and verified |
+| 2026-08-08 | PPR-3 | Versioned explicit low/balanced/high/temporal/procedural policies filter scope, sensitivity, and lifecycle before selection/admission, then emit content-free duplicate, near-duplicate, weak-support, conflict, and budget diagnostics. | Shadow-only policy complete |
+| 2026-08-08 | PPR-3 | Replay returns byte-equivalent reports; the shadow pass records zero provider calls and does not mutate ranking, cache, claims, evidence, or live configuration. | Runtime adoption remains gated |
 
 ## Activation and rollback
 

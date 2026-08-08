@@ -2,7 +2,7 @@
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, paper radar, ADR, vNext.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-08 after completing offline PPR-1 and PPR-2 evaluation infrastructure.
+# Updated: 2026-08-08 after completing offline PPR-1 through PPR-3 research infrastructure.
 # Verdicts: ABANDONED=9, CURRENT=103, GENERATED=3, SUPERSEDED=9.
 # Rule: CURRENT docs are trusted; never implement from SUPERSEDED or ABANDONED docs.
 

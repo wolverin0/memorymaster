@@ -4,7 +4,7 @@
 # Read when: choosing release scope, accepting a feature, or deciding whether work is deferred.
 # Authority: this is the sole roadmap; `.planning/` specifications implement it and never replace it.
 # Safety: SQLite remains authoritative, candidate promotion stays steward-owned, and live upgrades stay operator-gated.
-# Updated: 2026-08-08 after the offline PPR-2 sustainability-telemetry checkpoint.
+# Updated: 2026-08-08 after the offline PPR-3 shadow-policy checkpoint.
 
 ## Shipped in v4.6.0
 
@@ -114,7 +114,10 @@ rewriting can erase temporal, emotional, or narrative information.
   consumers, lifecycle timelines for temporal/high-stakes questions, and
   confirmed skills plus warnings for procedural tasks. The caller selects a
   versioned profile; MemoryMaster must not infer a weaker trust mode or silently
-  change lifecycle and scope rules.
+  change lifecycle and scope rules. The offline PPR-3 checkpoint now defines
+  explicit low/balanced/high/temporal/procedural policies and deterministic
+  admission diagnostics. It remains a content-free shadow evaluator and does
+  not alter the production retrieval plan.
 - **R3 - Ephemeral guidance and outcome-aware skills:** synthesize cited,
   token-budgeted task guidance from confirmed authorized skills without storing
   or promoting the synthesis. Extend skill evidence with
