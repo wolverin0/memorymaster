@@ -1,4 +1,4 @@
-<!-- doc-head: sole authoritative roadmap; PPR-5 offline checkpoint -->
+<!-- doc-head: sole authoritative roadmap; PPR-1 through PPR-6 offline complete -->
 # MemoryMaster roadmap
 # Covers: post-v4.6 sequence, Tencent-derived work, paper research, and deferrals.
 # Key terms: Hermes, governed skills, paper radar, temporal projection, sustainability.
@@ -123,7 +123,11 @@ rewriting can erase temporal, emotional, or narrative information.
   token-budgeted task guidance from confirmed authorized skills without storing
   or promoting the synthesis. Extend skill evidence with
   `success`/`failure`/`ambiguous` outcomes; failed traces may generate warnings
-  but cannot reinforce a positive procedure. Promotion remains human-only.
+  but cannot reinforce a positive procedure. Promotion remains human-only. The
+  offline PPR-6 checkpoint now validates content-free execution observations,
+  consumer/model and tool-schema snapshots, activation/termination/validation
+  results, bounded metrics, deduplication, and separate negative warnings.
+  Durable outcome persistence and runtime review wiring remain gated.
 - **R4 - Prioritized paper experiments:** start with query-budget routing
   (`BudgetMem`), progressive evidence sufficiency and source rehydration
   (`A2RAG`), generator-aligned evidence pruning (`Less is More for RAG`),

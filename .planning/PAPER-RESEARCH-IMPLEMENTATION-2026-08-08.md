@@ -1,10 +1,10 @@
-<!-- doc-head: implementation ledger; PPR-1 through PPR-5 complete -->
+<!-- doc-head: implementation ledger; PPR-1 through PPR-6 complete -->
 # MemoryMaster paper-research implementation ledger - 2026-08-08
 # Covers: executable PPR-1 through PPR-6 work derived from the governed paper radar.
 # Key terms: evaluation, telemetry, budget policy, evidence rehydration, temporal projection, skill outcomes.
 # Read when: implementing or verifying research-derived MemoryMaster changes.
 # Authority: subordinate to ROADMAP.md; SQLite-only and no live/public activation.
-# Updated: 2026-08-08 after PPR-5 GREEN; PPR-6 remains queued.
+# Updated: 2026-08-08 after PPR-6 GREEN; all offline packages are complete.
 <!-- /doc-head -->
 
 ## Execution status
@@ -16,7 +16,7 @@
 | PPR-3 | COMPLETE | Explicit deterministic retrieval budgets | Low/balanced/high/temporal/procedural policies evaluated in shadow mode before runtime adoption |
 | PPR-4 | COMPLETE | Progressive claim-to-evidence rehydration | Scope-filtered supported paths, exact evidence map-back, bounded sufficiency checks, diagnostic fallback |
 | PPR-5 | COMPLETE | Temporal and episode projections | Rebuildable occurrence/interval/current/adjacent-evidence projections with atomic citations preserved |
-| PPR-6 | QUEUED | Outcome-aware governed skills | Success/failure/ambiguous evidence without automatic confirmation, reinforcement, rewrite, or archival |
+| PPR-6 | COMPLETE | Outcome-aware governed skills | Success/failure/ambiguous evidence without automatic confirmation, reinforcement, rewrite, or archival |
 
 ## Fixed sequence
 
@@ -57,6 +57,10 @@
 | 2026-08-08 | PPR-5 | RED: temporal projection import failed before implementation. GREEN: 8 focused tests pass with 93% coverage; 51 temporal/lifecycle/lineage compatibility tests pass. | Implemented and verified |
 | 2026-08-08 | PPR-5 | Current/latest, historical interval, and occurrence-time projections preserve capture-time separation, supersession identity, and citation IDs without rewriting claims. | Rebuildable temporal projection complete |
 | 2026-08-08 | PPR-5 | Episode windows use stable source/session metadata but include only evidence already linked to authorized claims; retired, sensitive, malformed, and cross-scope rows fail closed. | No adjacency authority bypass |
+| 2026-08-08 | PPR-6 | RED: skill-outcome import failed before implementation. GREEN: 11 focused tests pass with 87% coverage; 33 governed-skill/MCP compatibility tests pass. | Implemented and verified |
+| 2026-08-08 | PPR-6 | Strict content-free observations capture outcome, consumer/model profile, tool-schema hash, activation match, termination, validation, and bounded metrics; raw payloads and secrets fail closed. | Offline evidence contract complete |
+| 2026-08-08 | PPR-6 | Success emits only a review signal; failure emits a separate warning; ambiguous remains neutral. Replays deduplicate and claim status, version, confidence, content, and timestamps remain unchanged. | No automatic lifecycle authority |
+| 2026-08-08 | PPR-1..6 | Combined research suite: 52 tests pass; evaluation modules and touched tests pass Ruff; `git diff --check` passes; full collection reports 4,588 tests. | Offline program converged |
 
 ## Activation and rollback
 

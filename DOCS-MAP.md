@@ -1,9 +1,9 @@
-<!-- doc-head: canonical documentation map; current after PPR-5 -->
+<!-- doc-head: canonical documentation map; current after PPR-6 -->
 # DOCS-MAP - memorymaster
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, paper radar, ADR.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-08 after completing offline PPR-1 through PPR-5.
+# Updated: 2026-08-08 after completing offline PPR-1 through PPR-6.
 # Rule: CURRENT docs are trusted; verdict counts remain 9/103/3/9.
 <!-- /doc-head -->
 
