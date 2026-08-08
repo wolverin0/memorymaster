@@ -1,10 +1,10 @@
-<!-- doc-head: implementation ledger; PPR-1 through PPR-4 complete -->
+<!-- doc-head: implementation ledger; PPR-1 through PPR-5 complete -->
 # MemoryMaster paper-research implementation ledger - 2026-08-08
 # Covers: executable PPR-1 through PPR-6 work derived from the governed paper radar.
 # Key terms: evaluation, telemetry, budget policy, evidence rehydration, temporal projection, skill outcomes.
 # Read when: implementing or verifying research-derived MemoryMaster changes.
 # Authority: subordinate to ROADMAP.md; SQLite-only and no live/public activation.
-# Updated: 2026-08-08 after PPR-4 GREEN; PPR-5 and PPR-6 remain queued.
+# Updated: 2026-08-08 after PPR-5 GREEN; PPR-6 remains queued.
 <!-- /doc-head -->
 
 ## Execution status
@@ -15,7 +15,7 @@
 | PPR-2 | COMPLETE | Stage-level sustainability observations | Aggregate-safe timing, content-read, provider, token, cache, tier, fallback, and correctness fields |
 | PPR-3 | COMPLETE | Explicit deterministic retrieval budgets | Low/balanced/high/temporal/procedural policies evaluated in shadow mode before runtime adoption |
 | PPR-4 | COMPLETE | Progressive claim-to-evidence rehydration | Scope-filtered supported paths, exact evidence map-back, bounded sufficiency checks, diagnostic fallback |
-| PPR-5 | QUEUED | Temporal and episode projections | Rebuildable occurrence/interval/current/adjacent-evidence projections with atomic citations preserved |
+| PPR-5 | COMPLETE | Temporal and episode projections | Rebuildable occurrence/interval/current/adjacent-evidence projections with atomic citations preserved |
 | PPR-6 | QUEUED | Outcome-aware governed skills | Success/failure/ambiguous evidence without automatic confirmation, reinforcement, rewrite, or archival |
 
 ## Fixed sequence
@@ -54,6 +54,9 @@
 | 2026-08-08 | PPR-4 | RED: evidence rehydration import failed before implementation. GREEN: 5 tests pass with 94% coverage; 27 capture/graph/lineage compatibility tests pass. | Implemented and verified |
 | 2026-08-08 | PPR-4 | Disposable SQLite maps confirmed authorized claims through active `claim_evidence_links`; graph-signal IDs are bounded and fully revalidated before exact excerpts are returned. | Governed rehydration complete |
 | 2026-08-08 | PPR-4 | Retired, cross-scope, candidate, sensitive, and unsupported evidence fails closed with explicit `no_authorized_evidence` or `insufficient_evidence` diagnostics. | No graph/evidence authority bypass |
+| 2026-08-08 | PPR-5 | RED: temporal projection import failed before implementation. GREEN: 8 focused tests pass with 93% coverage; 51 temporal/lifecycle/lineage compatibility tests pass. | Implemented and verified |
+| 2026-08-08 | PPR-5 | Current/latest, historical interval, and occurrence-time projections preserve capture-time separation, supersession identity, and citation IDs without rewriting claims. | Rebuildable temporal projection complete |
+| 2026-08-08 | PPR-5 | Episode windows use stable source/session metadata but include only evidence already linked to authorized claims; retired, sensitive, malformed, and cross-scope rows fail closed. | No adjacency authority bypass |
 
 ## Activation and rollback
 

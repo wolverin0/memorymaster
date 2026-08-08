@@ -1,7 +1,7 @@
-<!-- doc-head: sole authoritative roadmap; PPR-4 offline checkpoint -->
+<!-- doc-head: sole authoritative roadmap; PPR-5 offline checkpoint -->
 # MemoryMaster roadmap
 # Covers: post-v4.6 sequence, Tencent-derived work, paper research, and deferrals.
-# Key terms: Hermes, governed skills, paper radar, evidence rehydration, sustainability.
+# Key terms: Hermes, governed skills, paper radar, temporal projection, sustainability.
 # Read when: choosing release scope, accepting a feature, or checking deferrals.
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
 # Safety: SQLite authority, steward promotion, and operator-gated live upgrades remain fixed.
@@ -134,6 +134,12 @@ rewriting can erase temporal, emotional, or narrative information.
   PPR-4 checkpoint now provides bounded claim-to-evidence rehydration with
   active-source and scope/sensitivity revalidation; it is explicit evaluation
   functionality and is not a new default answer path.
+- **R5 - Governed temporal projection:** the offline PPR-5 checkpoint now adds
+  explicit current, latest, historical, and occurrence-time projections;
+  inclusive interval overlap; citation-complete structural durative summaries;
+  and bounded episode windows derived only from authorized linked evidence and
+  stable source/session metadata. These rebuildable projections do not change
+  schema, production ranking, or default recall.
 - **R5 - Sustainability and cost gates:** measure current-versus-superseded
   errors, early-memory survival, duplication/fragmentation, citation accuracy,
   tokens, content read, tool/provider calls, latency, and cost per correct answer
