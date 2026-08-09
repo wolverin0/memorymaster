@@ -11,17 +11,21 @@ from __future__ import annotations
 from typing import Any
 
 from memorymaster.capture.adapters import CaptureRejected, CaptureRetryable
-from memorymaster.capture.repository import graph_job_content_hash
 from memorymaster.knowledge.entity_graph import EntityGraph, EntityGraphProviderError
 
 
-def _claim_job_hash(claim: Any) -> str:
-    return graph_job_content_hash(claim.id, claim.updated_at)
+def _claim_job_hash(repository: Any, claim: Any) -> str:
+    return repository.graph_job_identity(
+        claim_id=claim.id, updated_at=claim.updated_at
+    )
 
 
 def _matching_claim(repository: Any, job: Any) -> Any | None:
     for claim in repository.claims_for_source(job.source_item_id):
-        if claim.status == "confirmed" and _claim_job_hash(claim) == job.content_hash:
+        if (
+            claim.status == "confirmed"
+            and _claim_job_hash(repository, claim) == job.content_hash
+        ):
             return claim
     return None
 

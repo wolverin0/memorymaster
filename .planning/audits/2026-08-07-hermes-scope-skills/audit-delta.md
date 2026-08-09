@@ -1,10 +1,11 @@
+<!-- doc-head: Hermes P5 graph repair verified -->
 # Hermes scope and governed-skills convergence delta
 # Covers: SQLite safety, native Hermes rollout, progressive skills, rollback, and observation gates.
 # Key terms: TencentDB Agent Memory, Hermes, session scope, personal-skill-v1, approved skills, snapshot.
 # Read when: reviewing this feature branch, operating the activated Windows tasks, or resuming the VM rollout.
-# Authority: evidence delta for `.planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md`; ROADMAP.md remains authoritative.
-# Status: P5 is active on Windows and Hermes; a clean 24-hour observation remains before the PR.
-# Updated: 2026-08-08 after rollback-safe P5 activation and replacement observation scheduling.
+# Authority & Status: ROADMAP.md remains authoritative; P5 stays active and a fresh clean observation still gates push/PR.
+# Updated: 2026-08-09 with fail-closed evidence, root cause, repair, live queue completion, and backup exception.
+<!-- /doc-head -->
 
 ## Verdict
 
@@ -195,3 +196,72 @@ replay, task, provider, latency, gateway, installed-wheel skill isolation, and
 the absence of unauthorized production skill injection. It must leave a
 failure report and skip push/PR on any failed gate. On success it may push this
 branch and create the PR; it may never tag, release, publish, deploy, or merge.
+
+## 2026-08-09 replacement observation — BLOCKED
+
+The post-P5 baseline was used; the invalid pre-P5/OOM window was not used for
+longitudinal comparison. The Windows authority was opened read-only and reported
+one missing graph job for the governed project scope. That violates the capture
+coverage invariant, so this check does not close either the P5 24-hour gate or
+the older v4.6 seven-day observation.
+
+Other redacted read-only evidence collected before the stop condition was
+healthy: the gateway remained active from the P5 activation timestamp with no
+restart or OOM-loop indicator, managed OOM avoidance stayed set, TLS remained
+established, both exact P5 wheel hashes were retained on the VM, provider
+outbox residue was zero, replica bytes did not change, production had zero
+confirmed skills, and the Windows scheduled tasks retained P5 `pythonw.exe`.
+
+No Telegram message was sent; no active database, provider configuration,
+credential, firewall, package, release, or deployment state was modified. See
+`artifacts/p4-hermes-scope-skills/observation-p5-20260808/24h-failure.md` for
+the bounded failure record. Remediate and prove the graph-job invariant, then
+start a new clean observation from a fresh baseline; do not reuse this failed
+window as a PR gate.
+
+The full `quick_check`/foreign-key scan and the remaining HTTP/authenticated
+recall, latency, duplicate, and disposable-canary confirmations were not
+accepted after the stop condition. They remain required in the replacement run.
+
+## 2026-08-09 graph-queue remediation — VERIFIED, OBSERVATION PENDING
+
+The missing item was claim `125774` (`mm-bfed`), without recording or exposing
+its claim text. Its original confirmation-time graph job had completed. Two
+subsequent confidence-only validations changed `claims.updated_at`; graph job
+identity used that mutable timestamp, so coverage expected a new graph job even
+though claim meaning had not changed. The hourly Dreaming action processed only
+existing jobs and did not first call the bounded public `improve` queueing path.
+
+The repair keeps the gate strict:
+
+- graph revision identity is the latest real transition into `confirmed`, with
+  `updated_at` retained only as the legacy fallback for rows without an event;
+- confirmed-to-confirmed confidence events do not create a new graph revision;
+- scheduled Dreaming calls `improve(max_items=25)` before leasing capture work;
+- re-confirmation from a non-confirmed state still creates a new revision;
+- the worker resolves the same stable identity before extracting.
+
+The authorized live repair queued exactly one `extract_graph` job. The worker
+leased and completed it in one attempt with zero errors, retries, blocked jobs,
+or partial output. Read-only scope coverage then returned `ok`, zero missing
+graph jobs, and no pending/retryable/leased capture job.
+
+Verification evidence:
+
+- focused scheduler/capture/public/graph matrix: 46 passed in 31.08 seconds;
+- full non-ML: 4,422 passed, 71 skipped, 97 deselected, one expected xfail,
+  15 warnings in 747.08 seconds;
+- Ruff on changed Python: passed; full collection: 4,591 tests;
+- fresh local backup: `~/.memorymaster/snapshots/memorymaster/`
+  `20260809-201437-p5-graph-queue-repair/memorymaster-pre-repair.db`;
+- backup and disposable restore were byte-identical (SHA-256
+  `178ad1334d52a3ff52286c2aa630c9351c2fb6bfd52b114282335ddddd1e2af8`),
+  with matching schema and repair-surface counts and zero relevant orphans;
+- the attempted E-drive snapshot produced a Windows CRC read error and was
+  renamed with `-INVALID-CRC`; it is not accepted as rollback evidence. The
+  previously verified pre-P5 E-drive snapshot remains the broader rollback point.
+
+This does not close the PR gate. Install the clean fixed wheel, replace and
+verify the hidden hourly action, establish a fresh baseline, and require one
+uninterrupted clean 24-hour observation before any push or PR. No tag, release,
+publish, deploy, or merge is authorized by this evidence.

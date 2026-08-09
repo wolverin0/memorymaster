@@ -1,10 +1,10 @@
-<!-- doc-head: sole authoritative roadmap; PPR-1 through PPR-6 offline complete -->
+<!-- doc-head: sole authoritative roadmap; P5 repair verified -->
 # MemoryMaster roadmap
 # Covers: post-v4.6 sequence, Tencent-derived work, paper research, and deferrals.
 # Key terms: Hermes, governed skills, paper radar, temporal projection, sustainability.
 # Read when: choosing release scope, accepting a feature, or checking deferrals.
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
-# Safety: SQLite authority, steward promotion, and operator-gated live upgrades remain fixed.
+# Safety: SQLite authority and steward promotion remain fixed; a fresh 24-hour gate is required before PR creation.
 <!-- /doc-head -->
 
 ## Shipped in v4.6.0
@@ -36,16 +36,16 @@ its governed-claims authority:
 
 ## Now
 
-- Observe the activated Tencent-derived P5 bundle through 2026-08-09 02:20
-  Argentina time. The Windows authority and Hermes VM now run the exact audited
-  wheels; live recall, rollback, consoleless tasks, outbox, and installed-wheel
-  skill-isolation canaries passed at activation.
-- Let the replacement hidden check close both the clean P5 24-hour window and
-  the already-due seven-day v4.6 observation. The invalid earlier window
-  included a VM OOM/gateway incident and did not contain P5.
-- Create the PR only if scope, lineage, replay, outbox, task, provider, gateway,
-  and approved-skill isolation remain healthy. The check must not tag, release,
-  publish, deploy, or merge.
+- The 2026-08-09 post-P5 observation failed closed on one missing graph job.
+  Root cause: confidence-only validation changed `claims.updated_at`, while graph
+  replay identity incorrectly treated every metadata update as a new revision.
+- The repair is implemented and verified: scheduled Dreaming queues due work
+  before processing, graph identity uses the latest transition into `confirmed`,
+  and the one live job completed with capture coverage returning `ok`.
+- Do not close the P5 24-hour gate or the older v4.6 seven-day observation, and
+  do not push or create a PR, until a new clean 24-hour observation passes.
+- The invalid earlier window remains incident evidence only because it included
+  a VM OOM/gateway interruption and did not contain P5.
 - Keep v4.6.0 operational while the post-release Obsidian opt-in and OpenCode
   OAuth capture fixes converge on `main` for a separately approved patch release.
 - Preserve governed retrieval, lifecycle authority, scope isolation, finite

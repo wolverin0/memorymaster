@@ -280,6 +280,40 @@ def test_graph_worker_accepts_valid_empty_graph(tmp_path: Path) -> None:
         assert extract_confirmed_claim_graph(service, repository, job) == []
 
 
+def test_graph_worker_accepts_confirmation_identity_after_confidence_update(
+    tmp_path: Path,
+) -> None:
+    service, db, workspace = _service(tmp_path)
+    receipt, claim = _captured_claim(
+        service, db, workspace, text="No named entities here.", scope="project:a"
+    )
+    repository = CaptureRepository(service.store)
+    confirmation_hash = hashlib.sha256(
+        f"claim:{claim.id}:{claim.updated_at}".encode("utf-8")
+    ).hexdigest()
+    service.store.set_confidence(claim.id, 0.8, "routine revalidation")
+    with service.store.connect() as conn:
+        conn.execute(
+            "UPDATE claims SET updated_at=? WHERE id=?",
+            ("2099-01-01T00:00:00+00:00", claim.id),
+        )
+        conn.commit()
+    repository.queue_job(
+        source_item_id=int(receipt.source_item["id"]),
+        content_hash=confirmation_hash,
+        stage="extract_graph",
+    )
+    job = repository.lease_jobs(
+        owner="test", stages=("extract_graph",), limit=1
+    )[0]
+
+    with patch(
+        "memorymaster.knowledge.entity_graph._llm_chat",
+        return_value='{"entities":[],"relations":[]}',
+    ):
+        assert extract_confirmed_claim_graph(service, repository, job) == []
+
+
 def test_custom_ontology_is_additive_and_validated(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

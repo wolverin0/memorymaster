@@ -23,16 +23,24 @@ def _run_dream(args: argparse.Namespace) -> int:
     from memorymaster.capture.worker import run_capture_worker
     from memorymaster.core.service import MemoryService
     from memorymaster.dreaming.worker import run_dream
+    from memorymaster.public.v1 import improve
 
     service = MemoryService(args.db, workspace_root=Path(args.workspace))
     service.init_db()
+    queued = improve(
+        db=args.db,
+        workspace=args.workspace,
+        max_items=25,
+        source_agent="memorymaster-dreaming",
+        platform="scheduled",
+    )
     capture = run_capture_worker(service, limit=25)
     dream = run_dream(
         args.db,
         args.workspace,
         apply_candidates=bool(args.apply_candidates),
     )
-    print({"capture": capture, "dream": dream})
+    print({"queued": queued.to_dict(), "capture": capture, "dream": dream})
     return 0 if dream.get("ok") and not dream.get("errors") else 1
 
 

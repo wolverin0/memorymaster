@@ -1,10 +1,11 @@
+<!-- doc-head: Hermes P5 graph repair verified -->
 # Tencent-derived scope, governed-skills, and Hermes integration specification
 # Covers: session binding, native Hermes memory, governed skill proposals, and progressive approved-skill reuse.
 # Key terms: TencentDB Agent Memory, SessionBinding, Hermes, durable outbox, skill candidate, approved skills.
 # Read when: implementing, reviewing, activating, or rolling back the post-v4.6 companion-integration program.
-# Authority: this specification implements `ROADMAP.md`; it is not a second roadmap and cannot override lifecycle policy.
-# Safety: Windows SQLite stays authoritative, VM SQLite is fallback-only, global scope is never inferred, and skills require approval.
-# Status: P1-P5 are implemented and active; the clean P5 24-hour observation remains the PR gate.
+# Authority & Safety: implements `ROADMAP.md`; Windows SQLite is authoritative, VM is fallback-only, and skills require approval.
+# Status: P1-P5 are active; graph-queue remediation is verified and a fresh 24-hour PR gate remains.
+<!-- /doc-head -->
 
 ## 1. Outcome
 
@@ -426,7 +427,9 @@ and no unresolved scope or lineage invariant.
 - [x] Prove candidate, stale, and wrong-scope skills are never injected.
 - [x] Build and activate updated packages through the rollback-safe path.
 - [x] Start a fresh 24-hour observation from a clean post-P5 baseline.
-- [ ] Pass the fresh observation before PR creation.
+- [x] Remediate the 2026-08-09 fail-closed graph-coverage finding without
+      weakening coverage or replay safety.
+- [ ] Pass a replacement fresh 24-hour observation before PR creation.
 
 P5 local verification on 2026-08-08:
 
@@ -479,6 +482,22 @@ P5 live activation on 2026-08-08:
 - The clean post-P5 observation is scheduled for 2026-08-09 02:20 Argentina
   time. It may push and create the PR only after every longitudinal gate passes;
   it may not tag, publish, deploy, or merge.
+
+P5 graph-queue remediation on 2026-08-09:
+
+- The missing job belonged to a confirmed claim whose graph extraction had
+  already completed; later confidence-only validation changed `updated_at` and
+  produced a false new graph revision.
+- Graph replay identity now uses the latest actual transition into `confirmed`.
+  The hourly Dreaming action queues due capture and graph work before leasing it.
+- Live repair queued and completed exactly one graph job with zero worker errors;
+  authoritative coverage returned `ok`, with no active capture jobs remaining.
+- Focused scheduler/capture/graph gate: 46 passed; full non-ML gate: 4,422
+  passed, 71 skipped, 97 deselected, one expected xfail; Ruff passed.
+- A fresh local SQLite backup and byte-identical disposable restore passed with
+  matching schema/lineage/queue state and zero relevant orphans. The attempted
+  E-drive snapshot failed a CRC read and is explicitly quarantined as invalid;
+  the older verified pre-P5 E-drive snapshot remains intact.
 
 ## 8. Acceptance gates
 

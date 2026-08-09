@@ -25,9 +25,9 @@ MAX_ATTEMPTS = 5
 MAX_RETRY_SECONDS = 6 * 60 * 60
 
 
-def graph_job_content_hash(claim_id: int, updated_at: Any) -> str:
-    """Return the single replay identity used for confirmed-claim graph work."""
-    value = f"claim:{int(claim_id)}:{updated_at}".encode("utf-8")
+def graph_job_content_hash(claim_id: int, revision: Any) -> str:
+    """Return the replay identity for one confirmed-claim graph revision."""
+    value = f"claim:{int(claim_id)}:{revision}".encode("utf-8")
     return hashlib.sha256(value).hexdigest()
 
 
@@ -518,6 +518,13 @@ class CaptureRepository:
                 rows = self._execute(
                     conn,
                     f"""SELECT c.id AS claim_id, c.updated_at,
+                               COALESCE(
+                                   (SELECT MAX(ev.created_at) FROM events ev
+                                    WHERE ev.claim_id=c.id
+                                      AND ev.to_status='confirmed'
+                                      AND (ev.from_status IS NULL OR ev.from_status<>'confirmed')),
+                                   c.updated_at
+                               ) AS graph_revision,
                                MIN(e.source_item_id) AS source_item_id
                         FROM claims c
                         JOIN claim_evidence_links cel ON cel.claim_id=c.id
@@ -534,7 +541,9 @@ class CaptureRepository:
                 cursor = int(_mapping(rows[-1])["claim_id"])
                 for row in rows:
                     data = _mapping(row)
-                    digest = graph_job_content_hash(data["claim_id"], data["updated_at"])
+                    digest = graph_job_content_hash(
+                        data["claim_id"], data["graph_revision"]
+                    )
                     exists = digest in hashes
                     results.append(
                         {**data, "job_content_hash": digest, "job_exists": exists}
@@ -543,3 +552,16 @@ class CaptureRepository:
                     if missing >= limit:
                         break
         return results
+
+    def graph_job_identity(self, *, claim_id: int, updated_at: Any) -> str:
+        """Use the latest transition into confirmed as the stable graph revision."""
+        with self._connection() as conn:
+            row = self._execute(
+                conn,
+                f"""SELECT MAX(created_at) AS confirmed_at FROM events
+                    WHERE claim_id={self.placeholder} AND to_status='confirmed'
+                      AND (from_status IS NULL OR from_status<>'confirmed')""",
+                (claim_id,),
+            ).fetchone()
+        confirmed_at = _mapping(row).get("confirmed_at") if row is not None else None
+        return graph_job_content_hash(claim_id, confirmed_at or updated_at)
