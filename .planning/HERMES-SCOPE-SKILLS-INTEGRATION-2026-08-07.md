@@ -1,10 +1,10 @@
-<!-- doc-head: Hermes P5 graph repair verified -->
+<!-- doc-head: repaired Hermes P5 observer armed -->
 # Tencent-derived scope, governed-skills, and Hermes integration specification
 # Covers: session binding, native Hermes memory, governed skill proposals, and progressive approved-skill reuse.
 # Key terms: TencentDB Agent Memory, SessionBinding, Hermes, durable outbox, skill candidate, approved skills.
 # Read when: implementing, reviewing, activating, or rolling back the post-v4.6 companion-integration program.
 # Authority & Safety: implements `ROADMAP.md`; Windows SQLite is authoritative, VM is fallback-only, and skills require approval.
-# Status: P1-P5 are active; graph-queue remediation is verified and a fresh 24-hour PR gate remains.
+# Status: P1-P5 and the graph repair are active; a headless 24-hour observer is armed for the PR gate.
 <!-- /doc-head -->
 
 ## 1. Outcome
@@ -411,9 +411,10 @@ P4 verification on 2026-08-07:
   `sync_turn` enqueue p95 measured `1.032 ms`. The configured three-second
   authority timeout therefore does not block the Hermes response loop.
 - The 2026-08-07 observation is retained only as incident evidence. Its VM
-  OOM/gateway interruption and absence of P5 make it invalid as a PR gate. A
-  replacement post-P5 check is scheduled for 2026-08-09 02:20 Argentina time.
-  No public release was created.
+  OOM/gateway interruption and absence of P5 make it invalid as a PR gate. The
+  2026-08-09 check also failed closed on the graph-identity defect; the repaired
+  replacement check is scheduled for 2026-08-10 21:20 Argentina time. No public
+  release was created.
 
 Exit: the PR contains reproducible evidence, activation and rollback commands,
 and no unresolved scope or lineage invariant.
@@ -479,7 +480,7 @@ P5 live activation on 2026-08-08:
   rewriting any claim; the 02:11 hourly worker completed it with result `0`.
   Capture coverage is now `ok` with seven completed jobs and no missing graph,
   expired lease, retryable, blocked, partial, or orphan anomaly.
-- The clean post-P5 observation is scheduled for 2026-08-09 02:20 Argentina
+- The repaired post-P5 observer is scheduled for 2026-08-10 21:20 Argentina
   time. It may push and create the PR only after every longitudinal gate passes;
   it may not tag, publish, deploy, or merge.
 
@@ -498,6 +499,13 @@ P5 graph-queue remediation on 2026-08-09:
   matching schema/lineage/queue state and zero relevant orphans. The attempted
   E-drive snapshot failed a CRC read and is explicitly quarantined as invalid;
   the older verified pre-P5 E-drive snapshot remains intact.
+- Clean repair wheel SHA-256
+  `06f78585d2b470e273748851fc1c4df5b912de52186743306af87e3042648d0f`
+  is installed in the side-by-side Windows P5 runtime with `pip check` clean.
+  A real consoleless Dreaming execution returned `0` and logged the bounded
+  queue -> capture -> dream sequence. The replacement observer preserves its
+  interactive principal, uses `pythonw.exe`, is hidden/start-when-available,
+  and has a verified 2026-08-10 21:20 ART start boundary.
 
 ## 8. Acceptance gates
 

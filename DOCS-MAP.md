@@ -1,20 +1,20 @@
-<!-- doc-head: canonical documentation map; P5 repair verified -->
+<!-- doc-head: canonical documentation map; repaired P5 observer armed -->
 # DOCS-MAP - memorymaster
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, paper radar, ADR.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-09 after graph-queue remediation and local convergence.
-# Rule: P5 and v4.6 closure still require a fresh clean 24-hour gate; do not create a PR yet.
+# Updated: 2026-08-09 after repair deployment and replacement observer registration.
+# Rule: the 2026-08-10 21:20 ART gate must pass before the authorized PR; do not publish or merge.
 <!-- /doc-head -->
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
 | CHANGELOG.md | CURRENT | 2026-08-04 | Public release history; v4.6.0 records governed universal capture, measured quality changes, security evidence, and known follow-ups. |
-| ROADMAP.md | CURRENT | 2026-08-09 | Sole authoritative roadmap; graph-queue remediation is verified and a fresh 24-hour observation remains before PR creation. |
+| ROADMAP.md | CURRENT | 2026-08-09 | Sole authoritative roadmap; graph repair is deployed and a replacement observer is armed for the remaining PR gate. |
 | .planning/PAPER-RADAR-REVIEW-2026-08-08.md | CURRENT | 2026-08-08 | Primary-paper ledger covers 57-paper triage, 18 deep reviews, exact MemoryMaster gaps, and ordered PPR-1 through PPR-6 decisions subordinate to ROADMAP.md. |
 | .planning/PAPER-RESEARCH-IMPLEMENTATION-2026-08-08.md | CURRENT | 2026-08-08 | Executable status ledger for PPR-1 through PPR-6; records acceptance criteria and evidence without competing with ROADMAP.md. |
-| .planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md | CURRENT | 2026-08-09 | Executable Tencent-derived ledger; P1-P5 remain active, graph-queue remediation is verified, and a fresh observation remains. |
-| .planning/audits/2026-08-07-hermes-scope-skills/audit-delta.md | CURRENT | 2026-08-09 | Bounded delta records fail-closed observation, root cause, repair, backup evidence, and the remaining PR gate. |
+| .planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md | CURRENT | 2026-08-09 | Executable Tencent-derived ledger; P1-P5 remain active, the graph repair is deployed, and the replacement observer is armed. |
+| .planning/audits/2026-08-07-hermes-scope-skills/audit-delta.md | CURRENT | 2026-08-09 | Bounded delta records fail-closed observation, root cause, repair, deployment, backup evidence, and the armed PR gate. |
 | docs/governed-skills.md | CURRENT | 2026-08-08 | Operator guide for proposal/promotion, progressive confirmed-skill recall, isolation, and staging-only export. |
 | .planning/AUTORESEARCH-PROGRAM-2026-08-03.md | CURRENT | 2026-08-04 | Completed six-phase execution overlay records retrieval, graph, capture, full-QA, OAuth quality, public release, and the sole remaining longitudinal gate. |
 | .planning/audits/2026-08-04-autoresearch-convergence/audit-delta.md | CURRENT | 2026-08-04 | Bounded convergence delta records SQLite-only tests, 40-case quality evidence, public v4.6.0 release evidence, and the remaining seven-day observation. |

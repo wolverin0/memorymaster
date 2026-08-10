@@ -1,10 +1,10 @@
-<!-- doc-head: sole authoritative roadmap; P5 repair verified -->
+<!-- doc-head: sole authoritative roadmap; repaired P5 observer armed -->
 # MemoryMaster roadmap
 # Covers: post-v4.6 sequence, Tencent-derived work, paper research, and deferrals.
 # Key terms: Hermes, governed skills, paper radar, temporal projection, sustainability.
 # Read when: choosing release scope, accepting a feature, or checking deferrals.
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
-# Safety: SQLite authority and steward promotion remain fixed; a fresh 24-hour gate is required before PR creation.
+# Safety: SQLite authority and steward promotion remain fixed; the armed 24-hour gate must pass before PR creation.
 <!-- /doc-head -->
 
 ## Shipped in v4.6.0
@@ -42,6 +42,10 @@ its governed-claims authority:
 - The repair is implemented and verified: scheduled Dreaming queues due work
   before processing, graph identity uses the latest transition into `confirmed`,
   and the one live job completed with capture coverage returning `ok`.
+- Clean wheel `d4d9aad` is installed in the Windows P5 runtime. A real consoleless
+  Dreaming run returned `0` with the new queue -> capture -> dream sequence.
+- The replacement headless OAuth observer is armed for 2026-08-10 21:20 ART.
+  It may push and create the PR only when every longitudinal gate passes.
 - Do not close the P5 24-hour gate or the older v4.6 seven-day observation, and
   do not push or create a PR, until a new clean 24-hour observation passes.
 - The invalid earlier window remains incident evidence only because it included

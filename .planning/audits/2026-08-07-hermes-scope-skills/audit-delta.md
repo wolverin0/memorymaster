@@ -1,10 +1,10 @@
-<!-- doc-head: Hermes P5 graph repair verified -->
+<!-- doc-head: repaired Hermes P5 observer armed -->
 # Hermes scope and governed-skills convergence delta
 # Covers: SQLite safety, native Hermes rollout, progressive skills, rollback, and observation gates.
 # Key terms: TencentDB Agent Memory, Hermes, session scope, personal-skill-v1, approved skills, snapshot.
 # Read when: reviewing this feature branch, operating the activated Windows tasks, or resuming the VM rollout.
-# Authority & Status: ROADMAP.md remains authoritative; P5 stays active and a fresh clean observation still gates push/PR.
-# Updated: 2026-08-09 with fail-closed evidence, root cause, repair, live queue completion, and backup exception.
+# Authority & Status: ROADMAP.md remains authoritative; P5 and its repair are active, with one armed observation gating PR.
+# Updated: 2026-08-09 with repair deployment, hidden scheduler proof, fresh baseline, and replacement gate time.
 <!-- /doc-head -->
 
 ## Verdict
@@ -261,7 +261,18 @@ Verification evidence:
   renamed with `-INVALID-CRC`; it is not accepted as rollback evidence. The
   previously verified pre-P5 E-drive snapshot remains the broader rollback point.
 
-This does not close the PR gate. Install the clean fixed wheel, replace and
-verify the hidden hourly action, establish a fresh baseline, and require one
-uninterrupted clean 24-hour observation before any push or PR. No tag, release,
-publish, deploy, or merge is authorized by this evidence.
+This does not close the PR gate. The clean wheel built from `d4d9aad` has
+SHA-256 `06f78585d2b470e273748851fc1c4df5b912de52186743306af87e3042648d0f`;
+it is installed in the side-by-side Windows P5 runtime and `pip check` reports
+no broken requirements. A real `MemoryMaster-Dreaming` execution used
+`pythonw.exe`, returned `0`, logged the new queue -> capture -> dream sequence,
+and left capture coverage `ok` with no active jobs.
+
+The replacement `MemoryMaster-Hermes-24h-Check` preserves its existing
+interactive principal, runs the validated headless Codex OAuth runner through
+`pythonw.exe`, is hidden and start-when-available, retains a four-hour execution
+limit, and has a verified start boundary of 2026-08-10 21:20 ART. Its new
+post-repair baseline contains no literal private endpoint, password, or secret.
+One uninterrupted clean observation is still required before push or PR. No
+tag, release, public publish, deployment, or merge is authorized by this
+evidence.
