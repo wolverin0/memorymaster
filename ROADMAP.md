@@ -1,10 +1,10 @@
-<!-- doc-head: sole authoritative roadmap; repaired P5 observer armed -->
+<!-- doc-head: sole authoritative roadmap; repaired P5 observer rearmed -->
 # MemoryMaster roadmap
 # Covers: post-v4.6 sequence, Tencent-derived work, paper research, and deferrals.
 # Key terms: Hermes, governed skills, paper radar, temporal projection, sustainability.
 # Read when: choosing release scope, accepting a feature, or checking deferrals.
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
-# Safety: SQLite authority and steward promotion remain fixed; the armed 24-hour gate must pass before PR creation.
+# Safety: SQLite authority and steward promotion remain fixed; no PR until the fresh 24-hour gate passes.
 <!-- /doc-head -->
 
 ## Shipped in v4.6.0
@@ -42,12 +42,18 @@ its governed-claims authority:
 - The repair is implemented and verified: scheduled Dreaming queues due work
   before processing, graph identity uses the latest transition into `confirmed`,
   and the one live job completed with capture coverage returning `ok`.
-- Clean wheel `d4d9aad` is installed in the Windows P5 runtime. A real consoleless
-  Dreaming run returned `0` with the new queue -> capture -> dream sequence.
-- The replacement headless OAuth observer is armed for 2026-08-10 21:20 ART.
-  It may push and create the PR only when every longitudinal gate passes.
+- Clean wheel `d4d9aad` is installed in the Windows P5 runtime. Two new
+  reproducible builds share SHA-256 `828a327b...9ddd`; their payload matches all
+  353 installed package files. A real consoleless Dreaming run returned `0`.
+- Gitleaks scanned `origin/main..HEAD` with zero findings, and authoritative
+  SQLite `quick_check` completed `ok` in 172.406 seconds. The previous runtime
+  mismatch and skill-isolation failures were invalid line-ending and duplicate-
+  fixture checks; direct wheel and distinct-fixture canaries pass.
+- The observer wrapper now fails nonzero unless Codex writes a fresh explicit
+  success marker. A new baseline and 24-hour gate are scheduled for 2026-08-11
+  23:50 ART.
 - Do not close the P5 24-hour gate or the older v4.6 seven-day observation, and
-  do not push or create a PR, until a new clean 24-hour observation passes.
+  do not push or create a PR, until the new clean observation passes.
 - The invalid earlier window remains incident evidence only because it included
   a VM OOM/gateway interruption and did not contain P5.
 - Keep v4.6.0 operational while the post-release Obsidian opt-in and OpenCode

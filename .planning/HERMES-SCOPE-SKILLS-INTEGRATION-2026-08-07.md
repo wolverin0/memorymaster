@@ -1,10 +1,10 @@
-<!-- doc-head: repaired Hermes P5 observer armed -->
+<!-- doc-head: repaired Hermes P5 observer rearmed -->
 # Tencent-derived scope, governed-skills, and Hermes integration specification
 # Covers: session binding, native Hermes memory, governed skill proposals, and progressive approved-skill reuse.
 # Key terms: TencentDB Agent Memory, SessionBinding, Hermes, durable outbox, skill candidate, approved skills.
 # Read when: implementing, reviewing, activating, or rolling back the post-v4.6 companion-integration program.
 # Authority & Safety: implements `ROADMAP.md`; Windows SQLite is authoritative, VM is fallback-only, and skills require approval.
-# Status: P1-P5 and the graph repair are active; a headless 24-hour observer is armed for the PR gate.
+# Status: P1-P5 and graph repair are active; blocker evidence is repaired and a fresh 24-hour gate is pending.
 <!-- /doc-head -->
 
 ## 1. Outcome
@@ -413,8 +413,9 @@ P4 verification on 2026-08-07:
 - The 2026-08-07 observation is retained only as incident evidence. Its VM
   OOM/gateway interruption and absence of P5 make it invalid as a PR gate. The
   2026-08-09 check also failed closed on the graph-identity defect; the repaired
-  replacement check is scheduled for 2026-08-10 21:20 Argentina time. No public
-  release was created.
+  replacement ran on 2026-08-10 and exposed evidence-runner defects now covered
+  by deterministic gates. A new check is scheduled for 2026-08-11 23:50 ART.
+  No public release was created.
 
 Exit: the PR contains reproducible evidence, activation and rollback commands,
 and no unresolved scope or lineage invariant.
@@ -430,7 +431,9 @@ and no unresolved scope or lineage invariant.
 - [x] Start a fresh 24-hour observation from a clean post-P5 baseline.
 - [x] Remediate the 2026-08-09 fail-closed graph-coverage finding without
       weakening coverage or replay safety.
-- [ ] Pass a replacement fresh 24-hour observation before PR creation.
+- [x] Remediate repair-wheel provenance, branch Gitleaks availability, the
+      line-ending-sensitive runtime comparison, and the deduplicated canary.
+- [ ] Pass the fresh 24-hour observation before PR creation.
 
 P5 local verification on 2026-08-08:
 
@@ -506,6 +509,32 @@ P5 graph-queue remediation on 2026-08-09:
   queue -> capture -> dream sequence. The replacement observer preserves its
   interactive principal, uses `pythonw.exe`, is hidden/start-when-available,
   and has a verified 2026-08-10 21:20 ART start boundary.
+
+P5 observation-gate remediation on 2026-08-10:
+
+- Two independent `d4d9aad` wheel builds used the same source epoch and
+  produced the same retained SHA-256
+  `828a327b25eafefc944485a06eca71ada5ff7d887446b9c644f28747dfdd9ddd`.
+  The wheel payload matches all 353 installed MemoryMaster files in both the
+  active and staged Windows runtimes, with zero missing or mismatched files.
+- The earlier raw worktree comparison was invalid because checkout line endings
+  differed from installed wheel contents. The original `06f785...` digest is
+  retained as historical evidence but is not used as the new provenance gate.
+- Gitleaks 8.21.2 scanned all 24 commits in `origin/main..HEAD` with zero
+  findings. Read-only SQLite `PRAGMA quick_check` completed `ok` in 172.406
+  seconds; the previous two-minute cutoff was too short for the 6.79 GB file.
+- The failed disposable skill canary had reused identical normalized claim text,
+  so ingest deduplication collapsed four intended lifecycle fixtures into one
+  claim. A corrected installed-wheel canary uses distinct fixtures and passes
+  confirmed inclusion plus candidate, stale, and wrong-scope exclusion in both
+  active and staged runtimes.
+- `scripts/run_codex_observation_gate.py` now requires a fresh explicit success
+  marker, converts a failure marker or missing success marker to a nonzero task
+  result, and preserves child failures and timeouts. Its focused suite passes
+  8/8 with 98% statement coverage.
+- A new baseline and hidden, start-when-available observer are scheduled for
+  2026-08-11 23:50 ART. This remediation did not switch a live runtime, mutate
+  SQLite, change provider configuration, push, create a PR, merge, or release.
 
 ## 8. Acceptance gates
 

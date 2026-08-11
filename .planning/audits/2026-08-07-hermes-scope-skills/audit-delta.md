@@ -1,10 +1,10 @@
-<!-- doc-head: repaired Hermes P5 observer armed -->
+<!-- doc-head: repaired Hermes P5 observer rearmed -->
 # Hermes scope and governed-skills convergence delta
 # Covers: SQLite safety, native Hermes rollout, progressive skills, rollback, and observation gates.
 # Key terms: TencentDB Agent Memory, Hermes, session scope, personal-skill-v1, approved skills, snapshot.
 # Read when: reviewing this feature branch, operating the activated Windows tasks, or resuming the VM rollout.
-# Authority & Status: ROADMAP.md remains authoritative; P5 and its repair are active, with one armed observation gating PR.
-# Updated: 2026-08-09 with repair deployment, hidden scheduler proof, fresh baseline, and replacement gate time.
+# Authority & Status: ROADMAP.md remains authoritative; blocker evidence is repaired, but a new 24-hour pass still gates PR creation.
+# Updated: 2026-08-10 with reproducible wheel, scanner, integrity, canary, and fail-closed runner evidence.
 <!-- /doc-head -->
 
 ## Verdict
@@ -14,8 +14,9 @@ is installed on both the Windows authority and Hermes VM. Rollback artifacts,
 consoleless task actions, authenticated live recall, provider outbox, and the
 installed-wheel isolation canary pass. The original 24-hour window included a
 VM OOM/gateway interruption and did not contain P5, so it cannot authorize the
-PR. A replacement check is due 2026-08-09 02:20 Argentina time. No tag, GitHub
-Release, package publication, merge, or public deployment is authorized here.
+PR. The repaired evidence blockers are closed, but the newly scheduled
+2026-08-11 23:50 ART observation must pass before a PR. No tag, GitHub Release,
+package publication, merge, or public deployment is authorized here.
 
 ## P5 progressive-skill evidence
 
@@ -276,3 +277,101 @@ post-repair baseline contains no literal private endpoint, password, or secret.
 One uninterrupted clean observation is still required before push or PR. No
 tag, release, public publish, deployment, or merge is authorized by this
 evidence.
+
+## 2026-08-10 repaired P5 observation — BLOCKED
+
+The observer used only `observation-p5-repair-20260809/baseline.json`; it did
+not reuse either invalid earlier window. Read-only evidence that passed: the
+repair commit is an ancestor of the observation head; authoritative SQLite
+foreign-key validation reported zero violations and `coverage=ok`, with zero
+missing graph/claim jobs, expired leases, retryables, blocks, partial jobs,
+orphans, duplicate source/evidence identities, implicit global Hermes claims,
+and confirmed production skills. The full read-only `quick_check` exceeded the
+two-minute observation timeout and is not accepted as passed evidence. The
+rollout canary retained one support link and one real transition to confirmed.
+Gateway status remained active/running
+with result success, zero restarts and OOM/traceback indicators since the
+baseline, OOM preference `avoid`, and six established TLS connections.
+
+The native provider remains selected/enabled, the legacy bridge remains
+disabled, and the durable VM outbox has 13 completed entries with zero
+non-completed or last-error rows. Its fallback replica opened only through
+SQLite read-only mode and its bytes did not change during that probe; its size
+is not the baseline size, so that counter is recorded rather than treated as
+read-only proof. HTTP readiness returned 200 with a healthy DB check and an
+authenticated recall returned nonempty governed context without `APPROVED
+SKILLS`, matching the zero confirmed production skills. The three Windows P5
+tasks retain `pythonw.exe`; Dreaming and Steward last completed with result 0,
+while MCP HTTP is the expected running service task.
+
+Focused capture/skills/provider/public/task tests passed 55/55 in 79.74 s;
+Ruff on the touched HTTP surface and `git diff --check` passed. The VM retains
+the exact Hermes provider wheel hash from the baseline. The E-drive snapshot
+exception remains `quarantined-invalid-crc`; the verified local restore and
+older verified E-drive rollback point remain the only accepted rollback proof.
+
+This gate is deliberately blocked. The Windows P5 runtime imports
+MemoryMaster 4.6.0, but no local repair-wheel artifact matching
+`06f78585d2b470e273748851fc1c4df5b912de52186743306af87e3042648d0f` was
+available to re-hash, and installed-package metadata does not preserve the
+wheel digest. More importantly, all four code modules changed by `d4d9aad`
+(`capture/coverage`, `capture/repository`, `knowledge/graph_extraction`, and
+`surfaces/scheduled_task`) differ byte-for-byte from the current tree; only
+documentation changed after that repair commit. The configured P5 runtime is
+therefore not accepted as the repair runtime. Also, `gitleaks` is unavailable, so the required
+`origin/main..HEAD` branch scan was not run. The required SQLite `quick_check`
+also did not complete in its bounded read-only window. Source-suite success and
+prior documentation cannot substitute for any direct gate. No push, PR, tag,
+release, publication, deployment, merge, active-database mutation, provider
+configuration change, gateway restart, or Telegram message occurred.
+
+## 2026-08-10 observation-gate remediation — READY FOR FRESH OBSERVATION
+
+The failed observation remains immutable incident evidence; this section
+corrects its blocker diagnoses with direct, separately replayable evidence.
+
+- Two clean builds from exact repair commit `d4d9aad`, both using source epoch
+  `1786319616`, produced byte-identical 969,909-byte wheels with SHA-256
+  `828a327b25eafefc944485a06eca71ada5ff7d887446b9c644f28747dfdd9ddd`.
+  Both artifacts are retained in the remediation evidence directory.
+- The retained wheel payload was compared directly with the installed package:
+  353 MemoryMaster files checked, zero missing and zero mismatches in both the
+  active runtime and a new staged side-by-side runtime. The prior raw worktree
+  check compared different checkout line endings and therefore did not prove a
+  runtime mismatch. The historical `06f785...` digest is not reused as the new
+  reproducibility claim.
+- Gitleaks 8.21.2 scanned the 24 commits in `origin/main..HEAD` with exit `0`
+  and zero findings. Its JSON report is retained with the remediation evidence.
+- The authoritative 6,792,097,792-byte SQLite file opened read-only with
+  `query_only=ON`; `PRAGMA quick_check` completed `ok` in 172.406 seconds. The
+  failed observer's two-minute limit was not a valid integrity threshold.
+- The earlier disposable skill canary accidentally gave all four fixtures the
+  same normalized claim text. Ingest deduplication returned one claim ID, so
+  its mixed lifecycle transitions made the assertions contradictory. A fixed
+  installed-wheel canary uses distinct titles and markers. Active and staged
+  runtimes each pass all nine checks: one confirmed authorized skill included;
+  candidate, stale, and wrong-scope skills excluded; ordinary claims clean;
+  token budget bounded; and fixture IDs distinct.
+- The scheduled wrapper previously returned the Codex child exit `0` even after
+  Codex wrote a failure report. A deterministic runner now requires fresh marker
+  paths and an explicit success marker. A failure marker returns `21`, missing
+  success returns `22`, child failures are preserved, and timeout returns `124`.
+  Eight focused tests pass with 98% statement coverage.
+- The related capture, scheduled-runtime, ontology-graph, and runner matrix
+  passes 25/25 in 6.90 seconds. Ruff passes on the new runner and tests and on
+  the repaired package modules; both installed runtimes pass `pip check` and
+  CLI/scheduled-task import smoke checks.
+- Fresh read-only counters remain healthy: `coverage=ok`, zero missing claim or
+  graph jobs, duplicate capture identities, expired leases, retryables, blocked
+  jobs, partial jobs, orphans, implicit-global Hermes rows, or confirmed
+  production skills. The canary remains confirmed at version 2 with one support
+  link and one real confirmed transition.
+
+The existing live runtime was not switched because direct wheel-payload proof
+showed it already contains the exact repaired code. A fresh baseline and the
+hidden, start-when-available observation task are scheduled for 2026-08-11
+23:50 ART with a four-hour limit. The runner's task result can no longer be
+green without its success artifact. No active database, provider, credential,
+firewall, package, gateway, release, or deployment state was changed; no push,
+PR, merge, publication, or operator message occurred. The new 24-hour result is
+still required before any PR.
