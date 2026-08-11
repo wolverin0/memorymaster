@@ -534,7 +534,10 @@ P5 observation-gate remediation on 2026-08-10:
   8/8 with 98% statement coverage.
 - A new baseline and hidden, start-when-available observer are scheduled for
   2026-08-11 23:50 ART. This remediation did not switch a live runtime, mutate
-  SQLite, change provider configuration, push, create a PR, merge, or release.
+  rollout lifecycle data, change provider configuration, push, create a PR,
+  merge, or release. The mandatory agent-memory checkpoint added four bounded,
+  non-sensitive project governance claims; the observer baseline was refreshed
+  after that normal governed write.
 
 ## 8. Acceptance gates
 

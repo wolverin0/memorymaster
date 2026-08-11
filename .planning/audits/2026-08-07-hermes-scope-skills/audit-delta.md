@@ -371,7 +371,15 @@ The existing live runtime was not switched because direct wheel-payload proof
 showed it already contains the exact repaired code. A fresh baseline and the
 hidden, start-when-available observation task are scheduled for 2026-08-11
 23:50 ART with a four-hour limit. The runner's task result can no longer be
-green without its success artifact. No active database, provider, credential,
+green without its success artifact. No rollout lifecycle, provider, credential,
 firewall, package, gateway, release, or deployment state was changed; no push,
-PR, merge, publication, or operator message occurred. The new 24-hour result is
-still required before any PR.
+PR, merge, publication, or operator message occurred. The new 24-hour result
+is still required before any PR.
+
+After remediation evidence completed, the mandatory agent-memory checkpoint
+added four non-sensitive `project:memorymaster` governance claims documenting
+the discovered gate constraints and root causes. It did not change rollout
+canary lifecycle, source/evidence capture, graph support, or production skill
+state. A fresh read-only baseline taken afterward records 126,864 claims,
+129,473 citations, 2,197,734 events, `coverage=ok`, and zero capture anomalies.
+This bounded governed write is not presented as live-rollout verification.
