@@ -70,6 +70,7 @@ def test_plugin_install_refuses_to_overwrite_unowned_changes(tmp_path: Path) -> 
     assert target.read_text(encoding="utf-8") == "operator-owned change"
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows registry behavior")
 def test_windows_launcher_loads_missing_team_environment_from_user_registry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -99,6 +100,7 @@ def test_windows_launcher_loads_missing_team_environment_from_user_registry(
     assert {name: os.environ[name] for name in values} == values
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows registry behavior")
 def test_windows_launcher_never_overwrites_explicit_process_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
