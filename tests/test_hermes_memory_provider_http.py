@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -19,8 +20,10 @@ if str(PLUGIN_SRC) not in sys.path:
 
 from hermes_memorymaster.backend import (  # noqa: E402
     BackendAuthError,
+    BackendPayloadError,
     MCPHttpBackend,
     ReadOnlyReplicaBackend,
+    _classify_message,
 )
 from hermes_memorymaster.config import ProviderConfig  # noqa: E402
 from hermes_memorymaster.provider import MemoryMasterProvider  # noqa: E402
@@ -203,6 +206,96 @@ def test_mcp_http_rejects_wrong_token_as_permanent_auth_error(mcp_http_server) -
     backend = MCPHttpBackend(endpoint, "wrong-token", timeout_seconds=2.0)
     with pytest.raises(BackendAuthError):
         backend.recall("fixture", scope="user", session_id="a" * 64)
+
+
+def test_mcp_http_uses_longer_timeout_for_durable_delivery(monkeypatch) -> None:
+    backend = MCPHttpBackend(
+        "https://memory.invalid/mcp",
+        "fixture-token",
+        timeout_seconds=0.35,
+        delivery_timeout_seconds=5.0,
+    )
+    seen = []
+
+    async def fake_call(tool_name, arguments, *, timeout_seconds):
+        seen.append((tool_name, timeout_seconds))
+        return {"output": "context"}
+
+    monkeypatch.setattr(backend, "_call_async", fake_call)
+    backend.recall("fixture", scope="user", session_id="a" * 64)
+    backend.remember(
+        {
+            "payload": {"text": "fixture", "scope": "user"},
+            "identity": {
+                "source_agent": "fixture",
+                "session_hash": "a" * 64,
+                "external_id": "fixture",
+                "content_hash": "b" * 64,
+                "turn_id": "1",
+            },
+        }
+    )
+    backend.improve(scope="user", max_items=1)
+
+    assert seen == [("recall", 0.35), ("remember", 5.0), ("improve", 5.0)]
+
+
+def test_mcp_http_uses_one_bounded_stateless_jsonrpc_post(monkeypatch) -> None:
+    seen = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self):
+            return {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"structuredContent": {"ok": True}},
+            }
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            seen["client"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args) -> None:
+            return None
+
+        async def post(self, endpoint, *, json):
+            seen["post"] = (endpoint, json)
+            return FakeResponse()
+
+    monkeypatch.setattr("httpx.AsyncClient", FakeClient)
+    backend = MCPHttpBackend(
+        "https://memory.invalid/mcp",
+        "fixture-token",
+        timeout_seconds=0.35,
+    )
+
+    result = asyncio.run(
+        backend._call_async("recall", {"query": "fixture"}, timeout_seconds=0.35)
+    )
+
+    assert result == {"ok": True}
+    assert seen["client"]["timeout"].read == 0.35
+    assert seen["post"][0] == "https://memory.invalid/mcp"
+    assert seen["post"][1]["method"] == "tools/call"
+    assert seen["post"][1]["params"] == {
+        "name": "recall",
+        "arguments": {"query": "fixture"},
+    }
+
+
+def test_unsafe_persisted_data_is_a_permanent_payload_rejection() -> None:
+    error = _classify_message(
+        "Error executing tool remember: Source item contains unsafe persisted data."
+    )
+
+    assert isinstance(error, BackendPayloadError)
+    assert error.code == "unsafe_persisted_data"
 
 
 def test_replica_recall_leaves_sqlite_bytes_unchanged(tmp_path: Path) -> None:

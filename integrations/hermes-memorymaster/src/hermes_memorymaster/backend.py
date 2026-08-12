@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -26,6 +25,10 @@ class BackendAuthError(BackendError):
 
 class BackendScopeError(BackendError):
     """Permanent authorization/scope failure."""
+
+
+class BackendPayloadError(BackendError):
+    """Permanent payload rejection that must never be retried."""
 
 
 class MemoryMasterBackend(Protocol):
@@ -52,10 +55,18 @@ class MemoryMasterBackend(Protocol):
 
 
 class MCPHttpBackend:
-    def __init__(self, endpoint: str, token: str, *, timeout_seconds: float = 0.35) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        token: str,
+        *,
+        timeout_seconds: float = 0.35,
+        delivery_timeout_seconds: float | None = None,
+    ) -> None:
         self.endpoint = endpoint
         self.token = token
         self.timeout_seconds = timeout_seconds
+        self.delivery_timeout_seconds = delivery_timeout_seconds or timeout_seconds
 
     def remember(self, envelope: dict[str, Any]) -> dict[str, Any]:
         payload = envelope["payload"]
@@ -77,6 +88,7 @@ class MCPHttpBackend:
                 "producer_turn_id": identity["turn_id"],
                 "producer_metadata_json": json.dumps(metadata, sort_keys=True),
             },
+            timeout_seconds=self.delivery_timeout_seconds,
         )
 
     def recall(self, query: str, *, scope: str, session_id: str) -> str:
@@ -122,32 +134,68 @@ class MCPHttpBackend:
         )
 
     def improve(self, *, scope: str, max_items: int = 200) -> dict[str, Any]:
-        return self._call("improve", {"scope": scope, "max_items": max_items})
+        return self._call(
+            "improve",
+            {"scope": scope, "max_items": max_items},
+            timeout_seconds=self.delivery_timeout_seconds,
+        )
 
-    def _call(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _call(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
         server_arguments = {"db": "", "workspace": "", **arguments}
+        effective_timeout = timeout_seconds or self.timeout_seconds
         try:
-            return asyncio.run(self._call_async(tool_name, server_arguments))
-        except (BackendAuthError, BackendScopeError, BackendTransientError):
+            return asyncio.run(
+                self._call_async(
+                    tool_name,
+                    server_arguments,
+                    timeout_seconds=effective_timeout,
+                )
+            )
+        except (
+            BackendAuthError,
+            BackendScopeError,
+            BackendPayloadError,
+            BackendTransientError,
+        ):
             raise
         except Exception as exc:
             raise _classify_transport_error(exc) from exc
 
-    async def _call_async(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def _call_async(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
         import httpx
-        from mcp import ClientSession
-        from mcp.client.streamable_http import streamable_http_client
 
-        timeout = httpx.Timeout(self.timeout_seconds)
-        headers = {"Authorization": f"Bearer {self.token}"}
+        timeout = httpx.Timeout(timeout_seconds)
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Accept": "application/json, text/event-stream",
+        }
+        request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": arguments},
+        }
         async with httpx.AsyncClient(headers=headers, timeout=timeout) as client:
-            async with streamable_http_client(self.endpoint, http_client=client) as streams:
-                async with ClientSession(
-                    streams[0], streams[1], read_timeout_seconds=timedelta(seconds=self.timeout_seconds)
-                ) as session:
-                    await session.initialize()
-                    result = await session.call_tool(tool_name, arguments)
-        return _result_dict(result)
+            response = await client.post(self.endpoint, json=request)
+            response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise BackendTransientError("authority_response_invalid")
+        if "error" in payload:
+            raise _classify_message(json.dumps(payload["error"], sort_keys=True))
+        return _result_dict(payload.get("result", {}))
 
 
 class ReadOnlyReplicaBackend:
@@ -177,22 +225,37 @@ class ReadOnlyReplicaBackend:
 
 
 def _result_dict(result: Any) -> dict[str, Any]:
-    if bool(getattr(result, "isError", False)):
-        detail = " ".join(str(getattr(item, "text", "")) for item in result.content)
+    if isinstance(result, dict):
+        is_error = bool(result.get("isError", False))
+        content = result.get("content", [])
+        structured = result.get("structuredContent")
+    else:
+        is_error = bool(getattr(result, "isError", False))
+        content = getattr(result, "content", [])
+        structured = getattr(result, "structuredContent", None)
+    if is_error:
+        detail = " ".join(_content_text(item) for item in content)
         raise _classify_message(detail)
-    structured = getattr(result, "structuredContent", None)
     if isinstance(structured, dict):
         return structured
-    for item in getattr(result, "content", []):
-        text = getattr(item, "text", "")
+    for item in content:
+        text = _content_text(item)
         if text:
             parsed = json.loads(text)
             return parsed if isinstance(parsed, dict) else {"result": parsed}
     return {}
 
 
+def _content_text(item: Any) -> str:
+    if isinstance(item, dict):
+        return str(item.get("text", ""))
+    return str(getattr(item, "text", ""))
+
+
 def _classify_message(message: str) -> BackendError:
     lowered = message.lower()
+    if "unsafe persisted data" in lowered:
+        return BackendPayloadError("unsafe_persisted_data")
     if "unauthorized" in lowered or "401" in lowered or "token" in lowered:
         return BackendAuthError("unauthorized", detail=message)
     if "scope" in lowered or "permission" in lowered or "forbidden" in lowered or "403" in lowered:

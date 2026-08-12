@@ -13,11 +13,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from memorymaster.core.security import redact_text
-
 from ._compat import HERMES_ABI_AVAILABLE, MemoryProvider
 from .backend import (
     BackendAuthError,
+    BackendPayloadError,
     BackendScopeError,
     BackendTransientError,
     MCPHttpBackend,
@@ -26,6 +25,7 @@ from .backend import (
 )
 from .config import CONFIG_NAME, ProviderConfig
 from .outbox import DurableOutbox, OutboxEntry
+from .security import sanitize_outbox_text
 
 
 logger = logging.getLogger(__name__)
@@ -88,6 +88,7 @@ class MemoryMasterProvider(MemoryProvider):
             self.config.endpoint,
             self.config.token,
             timeout_seconds=self.config.request_timeout_seconds,
+            delivery_timeout_seconds=self.config.delivery_timeout_seconds,
         )
         if self.replica_backend is None and self.config.replica_db_path:
             self.replica_backend = ReadOnlyReplicaBackend(
@@ -230,7 +231,12 @@ class MemoryMasterProvider(MemoryProvider):
         try:
             result = self._dispatch_tool(tool_name, args)
             return json.dumps(result, sort_keys=True)
-        except (BackendAuthError, BackendScopeError, BackendTransientError) as exc:
+        except (
+            BackendAuthError,
+            BackendPayloadError,
+            BackendScopeError,
+            BackendTransientError,
+        ) as exc:
             return json.dumps({"ok": False, "error": exc.code}, sort_keys=True)
         except (KeyError, TypeError, ValueError) as exc:
             return json.dumps({"ok": False, "error": type(exc).__name__}, sort_keys=True)
@@ -304,15 +310,15 @@ class MemoryMasterProvider(MemoryProvider):
             self.outbox = None
 
     def _queue_text(self, text: str, *, origin: str) -> dict[str, Any]:
-        sanitized, findings = redact_text(text)
+        sanitized, findings = sanitize_outbox_text(text)
         content_hash = hashlib.sha256(sanitized.encode("utf-8")).hexdigest()
         turn_id = self.turn_id or content_hash[:16]
         external_id = f"hermes:{self.session_hash}:{turn_id}"
         metadata = {
             "agent_context": self.agent_context,
-            "findings": sorted(set(findings)),
             "origin": _safe_label(origin, "turn"),
             "platform": self.platform,
+            "redacted": bool(findings),
         }
         if self.session_lineage:
             metadata["session_lineage"] = self.session_lineage
@@ -388,7 +394,7 @@ class MemoryMasterProvider(MemoryProvider):
             else:
                 self.outbox.block(entry.id, "unsupported_operation")
                 return
-        except (BackendAuthError, BackendScopeError) as exc:
+        except (BackendAuthError, BackendPayloadError, BackendScopeError) as exc:
             self.outbox.block(entry.id, exc.code)
             return
         except BackendTransientError as exc:

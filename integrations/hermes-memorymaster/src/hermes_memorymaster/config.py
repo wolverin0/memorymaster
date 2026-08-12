@@ -40,6 +40,7 @@ class ProviderConfig:
     replica_workspace: Path | None = None
     default_scope: str = "user"
     request_timeout_seconds: float = 0.35
+    delivery_timeout_seconds: float = 5.0
     max_pending: int = 1000
     max_pending_bytes: int = 16 * 1024 * 1024
     max_attempts: int = 5
@@ -71,6 +72,9 @@ class ProviderConfig:
             replica_workspace=workspace,
             default_scope=_scope(raw.get("default_scope")),
             request_timeout_seconds=_positive_number(raw.get("request_timeout_seconds"), 0.35),
+            delivery_timeout_seconds=_positive_number(
+                raw.get("delivery_timeout_seconds"), 5.0
+            ),
             max_pending=_positive_int(raw.get("max_pending"), 1000),
             max_pending_bytes=_positive_int(raw.get("max_pending_bytes"), 16 * 1024 * 1024),
             shutdown_drain_seconds=_positive_number(raw.get("shutdown_drain_seconds"), 2.0),
@@ -84,6 +88,7 @@ class ProviderConfig:
             "replica_workspace": str(self.replica_workspace) if self.replica_workspace else "",
             "default_scope": self.default_scope,
             "request_timeout_seconds": self.request_timeout_seconds,
+            "delivery_timeout_seconds": self.delivery_timeout_seconds,
             "max_pending": self.max_pending,
             "max_pending_bytes": self.max_pending_bytes,
             "shutdown_drain_seconds": self.shutdown_drain_seconds,

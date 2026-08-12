@@ -17,6 +17,7 @@ from hermes_memorymaster.config import ProviderConfig  # noqa: E402
 def test_provider_config_defaults_to_live_injection_timeout(tmp_path: Path) -> None:
     config = ProviderConfig.load(tmp_path)
     assert config.request_timeout_seconds == 0.35
+    assert config.delivery_timeout_seconds == 5.0
 
 
 @pytest.mark.parametrize(

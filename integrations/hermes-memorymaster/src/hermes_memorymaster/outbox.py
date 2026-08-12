@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from .security import scan_outbox_value
+
 
 ACTIVE_STATES = ("pending", "leased", "retryable", "blocked")
 
@@ -130,6 +132,29 @@ class DurableOutbox:
 
     def block(self, entry_id: int, error_code: str) -> None:
         self._set_terminal(entry_id, "blocked", error_code)
+
+    def purge_unsafe(self, entry_id: int) -> bool:
+        """Delete one terminal unsafe envelope and compact its SQLite bytes."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT status, envelope_json FROM outbox_entries WHERE id=?",
+                (entry_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            if str(row["status"]) not in {"blocked", "cancelled"}:
+                raise ValueError("unsafe purge requires a terminal rejected entry")
+            envelope = json.loads(str(row["envelope_json"]))
+            if not scan_outbox_value(envelope):
+                raise ValueError("unsafe purge requires sensitivity findings")
+            self._connection.execute("PRAGMA secure_delete=ON")
+            with self._connection:
+                self._connection.execute(
+                    "DELETE FROM outbox_entries WHERE id=?", (entry_id,)
+                )
+            self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self._connection.execute("VACUUM")
+            return True
 
     def retry(self, entry_id: int, *, error_code: str, delay_seconds: float) -> None:
         with self._lock, self._connection:

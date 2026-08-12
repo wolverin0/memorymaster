@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import statistics
@@ -10,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+from memorymaster.core.security import scan_persisted_value
 
 
 PLUGIN_SRC = Path(__file__).parents[1] / "integrations" / "hermes-memorymaster" / "src"
@@ -85,6 +88,15 @@ class FakeReplica:
         return self.result
 
 
+def _encoded_credential_fixture() -> str:
+    key_name = "_".join(("api", "key"))
+    token_prefix = "-".join(("sk", "proj"))
+    token_body = "".join(("abcdefghijklmnopqrstuvwxyz", "123456"))
+    return base64.b64encode(
+        f"{key_name}={token_prefix}-{token_body}".encode()
+    ).decode()
+
+
 @pytest.fixture
 def config(tmp_path: Path) -> ProviderConfig:
     return ProviderConfig(
@@ -131,6 +143,53 @@ def test_sync_turn_persists_before_return_without_calling_backend(config: Provid
     payload = config.outbox_path.read_bytes()
     assert b"raw-hermes-session" not in payload
     assert b"super-secret-value" not in payload
+
+
+def test_encoded_secret_is_neutralized_before_outbox_persistence(
+    config: ProviderConfig,
+) -> None:
+    backend = FakeBackend()
+    provider = _provider(config, backend)
+    encoded = _encoded_credential_fixture()
+
+    provider.sync_turn(encoded, "Recorded.")
+
+    entry = provider.outbox.peek_for_test()
+    assert entry is not None
+    assert encoded not in config.outbox_path.read_text(errors="ignore")
+    assert "[REDACTED:encoded_secret]" in entry.envelope["payload"]["text"]
+    metadata = entry.envelope["payload"]["metadata"]
+    assert metadata["redacted"] is True
+    assert "findings" not in metadata
+    derived_payload = {
+        "producer_external_id_hash": "a" * 64,
+        "producer_session_hash": "b" * 64,
+        "producer_metadata": metadata,
+    }
+    assert scan_persisted_value(json.dumps(derived_payload, sort_keys=True)) == []
+    assert provider.drain_once() is True
+    assert provider.status()["completed"] == 1
+
+
+def test_encoded_secret_guard_does_not_depend_on_host_scanner(
+    config: ProviderConfig,
+    monkeypatch,
+) -> None:
+    def literal_only(text: str):
+        if "api_key=sk-" in text:
+            return "[REDACTED:token_assignment]", ["token_assignment"]
+        return text, []
+
+    monkeypatch.setattr("hermes_memorymaster.security._upstream_sanitize", literal_only)
+    monkeypatch.setattr("hermes_memorymaster.security._upstream_scan", lambda _value: [])
+    encoded = _encoded_credential_fixture()
+    provider = _provider(config, FakeBackend())
+
+    provider.sync_turn(encoded, "Recorded.")
+
+    entry = provider.outbox.peek_for_test()
+    assert entry is not None
+    assert entry.envelope["payload"]["text"] == "[REDACTED:encoded_secret]"
 
 
 def test_sync_turn_enqueue_p95_is_below_fifty_milliseconds(config: ProviderConfig) -> None:
@@ -196,6 +255,122 @@ def test_expired_lease_becomes_retryable_without_process_reopen(
     assert recovered is not None
     assert recovered.id == first.id
     assert recovered.attempts == 2
+    outbox.close()
+
+
+def test_unsafe_terminal_envelope_can_be_purged_by_exact_id(config: ProviderConfig) -> None:
+    outbox = DurableOutbox(
+        config.outbox_path,
+        max_pending=config.max_pending,
+        max_pending_bytes=config.max_pending_bytes,
+    )
+    encoded = _encoded_credential_fixture()
+    entry, _ = outbox.enqueue(
+        "unsafe-replay-key",
+        {"operation": "remember", "payload": {"text": encoded}},
+    )
+    outbox.block(entry.id, "unsafe_persisted_data")
+
+    assert outbox.purge_unsafe(entry.id) is True
+    assert outbox.counts()["blocked"] == 0
+    assert encoded not in config.outbox_path.read_text(errors="ignore")
+    outbox.close()
+
+
+def test_unsafe_purge_does_not_depend_on_host_scanner(
+    config: ProviderConfig,
+    monkeypatch,
+) -> None:
+    def literal_only(text: str):
+        if "api_key=sk-" in text:
+            return "[REDACTED:token_assignment]", ["token_assignment"]
+        return text, []
+
+    monkeypatch.setattr("hermes_memorymaster.security._upstream_sanitize", literal_only)
+    monkeypatch.setattr("hermes_memorymaster.security._upstream_scan", lambda _value: [])
+    encoded = _encoded_credential_fixture()
+    outbox = DurableOutbox(
+        config.outbox_path,
+        max_pending=config.max_pending,
+        max_pending_bytes=config.max_pending_bytes,
+    )
+    entry, _ = outbox.enqueue(
+        "legacy-host-unsafe-key",
+        {"operation": "remember", "payload": {"text": encoded}},
+    )
+    outbox.block(entry.id, "unsafe_persisted_data")
+
+    assert outbox.purge_unsafe(entry.id) is True
+    assert outbox.counts()["blocked"] == 0
+    outbox.close()
+
+
+def test_authority_rejected_contextual_envelope_can_be_purged(
+    config: ProviderConfig,
+) -> None:
+    outbox = DurableOutbox(
+        config.outbox_path,
+        max_pending=config.max_pending,
+        max_pending_bytes=config.max_pending_bytes,
+    )
+    entry, _ = outbox.enqueue(
+        "contextual-unsafe-key",
+        {
+            "identity": {
+                "content_hash": "a" * 64,
+                "session_hash": "b" * 64,
+            },
+            "operation": "remember",
+            "payload": {"metadata": {"findings": ["token_assignment"]}},
+        },
+    )
+    outbox.block(entry.id, "unsafe_persisted_data")
+
+    assert outbox.purge_unsafe(entry.id) is True
+    assert outbox.counts()["blocked"] == 0
+    outbox.close()
+
+
+def test_safe_terminal_envelope_cannot_be_purged(config: ProviderConfig) -> None:
+    outbox = DurableOutbox(
+        config.outbox_path,
+        max_pending=config.max_pending,
+        max_pending_bytes=config.max_pending_bytes,
+    )
+    entry, _ = outbox.enqueue(
+        "safe-replay-key",
+        {"operation": "remember", "payload": {"text": "safe value"}},
+    )
+    outbox.block(entry.id, "manual_review")
+
+    with pytest.raises(ValueError, match="sensitivity findings"):
+        outbox.purge_unsafe(entry.id)
+    assert outbox.counts()["blocked"] == 1
+    outbox.close()
+
+
+def test_noncredential_legacy_metadata_cannot_be_purged(config: ProviderConfig) -> None:
+    outbox = DurableOutbox(
+        config.outbox_path,
+        max_pending=config.max_pending,
+        max_pending_bytes=config.max_pending_bytes,
+    )
+    entry, _ = outbox.enqueue(
+        "noncredential-legacy-key",
+        {
+            "identity": {
+                "content_hash": "a" * 64,
+                "session_hash": "b" * 64,
+            },
+            "operation": "remember",
+            "payload": {"metadata": {"findings": ["home_path_windows"]}},
+        },
+    )
+    outbox.block(entry.id, "manual_review")
+
+    with pytest.raises(ValueError, match="sensitivity findings"):
+        outbox.purge_unsafe(entry.id)
+    assert outbox.counts()["blocked"] == 1
     outbox.close()
 
 
