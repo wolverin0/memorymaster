@@ -1,11 +1,11 @@
 {
   "schema_version": "memorymaster.p5-repair5-verifier.v1",
-  "status": "passed_pr_pending",
+  "status": "passed_pr_created",
   "elapsed_baseline_reused": true,
   "new_wait_required": false,
   "git": {
     "branch": "feat/hermes-scope-skills",
-    "head": "fcbb92b5701fd65fb5addf8af0953abb069b88ee",
+    "head": "fb7e5d82e601465db0517a6636f2d0e2003d381b",
     "required_ancestors_present": true,
     "product_changes_after_provider_evidence": false
   },
@@ -52,6 +52,6 @@
     "evidence": "same-day repair4 retained live provider/gateway/outbox/replica/rollback proof; product source unchanged and current task wiring rechecked",
     "decision": "pass"
   },
-  "pr_url": null,
-  "terminal_marker_written": false
+  "pr_url": "https://github.com/wolverin0/memorymaster/pull/189",
+  "terminal_marker_written": true
 }

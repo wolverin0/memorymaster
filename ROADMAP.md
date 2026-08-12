@@ -1,10 +1,10 @@
-<!-- doc-head: sole authoritative roadmap; P5 verifier passed, PR pending -->
+<!-- doc-head: sole authoritative roadmap; P5 verifier passed, PR #189 open -->
 # MemoryMaster roadmap
 # Covers: post-v4.6 sequence, Tencent-derived work, paper research, and deferrals.
 # Key terms: Hermes, governed skills, paper radar, temporal projection, sustainability.
 # Read when: choosing release scope, accepting a feature, or checking deferrals.
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
-# Safety: SQLite authority and steward promotion remain fixed; repair5 authorizes PR creation only, never merge, release, deployment, or PPR-7.
+# Safety: SQLite authority and steward promotion remain fixed; PR #189 is open, never authorizing merge, release, deployment, or PPR-7.
 <!-- /doc-head -->
 
 ## Shipped in v4.6.0
@@ -59,8 +59,8 @@ its governed-claims authority:
 - The pinned Gemini Flash Lite plus GLM 5.2 scheduled replay passes: exit 0,
   eight extraction/consolidation/application decisions, zero errors, and one
   stale crash run recovered. Repair5 independently replays the bounded gate
-  against the elapsed baseline and passes; PR creation is pending, while merge,
-  release, deployment, and PPR-7 remain prohibited.
+  against the elapsed baseline and passes; [PR #189](https://github.com/wolverin0/memorymaster/pull/189)
+  is open, while merge, release, deployment, and PPR-7 remain prohibited.
 - The invalid earlier window remains incident evidence only because it included
   a VM OOM/gateway interruption and did not contain P5.
 - Keep v4.6.0 operational while the post-release Obsidian opt-in and OpenCode

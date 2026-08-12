@@ -1,10 +1,10 @@
-<!-- doc-head: Hermes P5 repair5 verifier passed; PR pending -->
+<!-- doc-head: Hermes P5 repair5 verifier passed; PR #189 open -->
 # Hermes scope and governed-skills convergence delta
 # Covers: SQLite safety, native Hermes rollout, progressive skills, rollback, and observation gates.
 # Key terms: TencentDB Agent Memory, Hermes, session scope, personal-skill-v1, approved skills, snapshot.
 # Read when: reviewing this feature branch, operating the activated Windows tasks, or resuming the VM rollout.
-# Authority & Status: ROADMAP.md remains authoritative; repair5 passes the elapsed interval and pinned Gemini+GLM verifier.
-# Updated: 2026-08-12 after repair5 direct verification; PR creation is pending and all broader actions remain blocked.
+# Authority & Status: ROADMAP.md remains authoritative; repair5 passes the elapsed interval and PR #189 is open without merge authority.
+# Updated: 2026-08-12 after repair5 direct verification and PR #189 creation; all broader actions remain blocked.
 <!-- /doc-head -->
 
 ## Verdict
@@ -501,3 +501,7 @@ unchanged product source; current Windows runtime/task wiring was rechecked.
 This pass authorizes a feature-branch push and PR creation only. It does not
 authorize merging, release, publication, deployment, runtime/provider change,
 or PPR-7 work.
+
+[PR #189](https://github.com/wolverin0/memorymaster/pull/189) was created from
+`feat/hermes-scope-skills` to `main` after the evidence commits were pushed.
+It is deliberately unmerged.

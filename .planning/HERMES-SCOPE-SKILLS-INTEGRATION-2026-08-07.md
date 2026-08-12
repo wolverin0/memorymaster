@@ -1,10 +1,10 @@
-<!-- doc-head: Hermes P5 repair5 verifier passed; PR pending -->
+<!-- doc-head: Hermes P5 repair5 verifier passed; PR #189 open -->
 # Tencent-derived scope, governed-skills, and Hermes integration specification
 # Covers: session binding, native Hermes memory, governed skill proposals, and progressive approved-skill reuse.
 # Key terms: TencentDB Agent Memory, SessionBinding, Hermes, durable outbox, skill candidate, approved skills.
 # Read when: implementing, reviewing, activating, or rolling back the post-v4.6 companion-integration program.
 # Authority & Safety: implements `ROADMAP.md`; Windows SQLite is authoritative, VM is fallback-only, and skills require approval.
-# Status: P1-P5 are active; repair5 passes the elapsed-baseline verifier and authorizes PR creation only.
+# Status: P1-P5 are active; repair5 passed and PR #189 is open without merge or PPR-7 authority.
 <!-- /doc-head -->
 
 ## 1. Outcome
@@ -472,6 +472,8 @@ P5 repair5 verification on 2026-08-12:
   capture, while current task wiring and the active runtime were rechecked.
 - This is PR-only evidence. It does not authorize merge, release, deployment,
   provider changes, or PPR-7 implementation.
+- [PR #189](https://github.com/wolverin0/memorymaster/pull/189) was created
+  from `feat/hermes-scope-skills` to `main`; it remains unmerged.
 
 P5 local verification on 2026-08-08:
 
