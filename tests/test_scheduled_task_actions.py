@@ -24,8 +24,43 @@ def test_windows_dream_action_uses_pythonw(monkeypatch, tmp_path: Path) -> None:
     assert setup_hooks.setup_dream_schedule(tmp_path / "memory.db", apply_candidates=True) == "configured"
     action = calls[0][calls[0].index("/tr") + 1]
     assert "pythonw.exe" in action
+    assert " -I -m memorymaster.surfaces.scheduled_task dream" in action
     assert "memorymaster.surfaces.scheduled_task dream" in action
     assert "--apply-candidates" in action
+    assert "--extract-provider gemini" in action
+    assert "--extract-model gemini-3.5-flash" in action
+    assert "--consolidate-model zai-coding-plan/glm-5.2" in action
+    assert "--clear-provider-variants" in action
+
+
+def test_windows_dream_schedule_uses_native_fallback_for_long_action(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    python = tmp_path / "python.exe"
+    pythonw = tmp_path / "pythonw.exe"
+    python.write_bytes(b"")
+    pythonw.write_bytes(b"")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        if command[0] == "schtasks":
+            raise subprocess.CalledProcessError(1, command, stderr="action too long")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(setup_hooks, "IS_WINDOWS", True)
+    monkeypatch.setattr(setup_hooks, "PYTHON_EXE", str(python))
+    monkeypatch.setattr(setup_hooks, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(setup_hooks.subprocess, "run", fake_run)
+
+    result = setup_hooks.setup_dream_schedule(
+        tmp_path / "memory.db", apply_candidates=True,
+    )
+
+    assert result == "configured"
+    assert len(calls) == 2
+    assert calls[1][0][0].lower().endswith("powershell.exe")
+    assert "New-ScheduledTaskAction" in calls[1][0][-1]
 
 
 def test_verify_reports_action_last_result_queue_and_provider(monkeypatch, tmp_path: Path) -> None:

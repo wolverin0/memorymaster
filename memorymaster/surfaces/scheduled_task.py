@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import os
 import runpy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,10 +17,41 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--script", default="")
     parser.add_argument("--apply-candidates", action="store_true")
+    parser.add_argument("--extract-provider", default="")
+    parser.add_argument("--extract-model", default="")
+    parser.add_argument("--extract-variant", default="")
+    parser.add_argument("--consolidate-model", default="")
+    parser.add_argument("--consolidate-variant", default="")
+    parser.add_argument("--clear-provider-variants", action="store_true")
     return parser
 
 
+def _apply_dream_provider_contract(args: argparse.Namespace) -> None:
+    values = {
+        "MEMORYMASTER_DREAM_EXTRACT_PROVIDER": getattr(args, "extract_provider", ""),
+        "MEMORYMASTER_DREAM_EXTRACT_MODEL": getattr(args, "extract_model", ""),
+        "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL": getattr(args, "consolidate_model", ""),
+    }
+    if getattr(args, "clear_provider_variants", False):
+        os.environ.pop("MEMORYMASTER_DREAM_EXTRACT_VARIANT", None)
+        os.environ.pop("MEMORYMASTER_DREAM_CONSOLIDATE_VARIANT", None)
+    values.update({
+        "MEMORYMASTER_DREAM_EXTRACT_VARIANT": getattr(args, "extract_variant", ""),
+        "MEMORYMASTER_DREAM_CONSOLIDATE_VARIANT": getattr(args, "consolidate_variant", ""),
+    })
+    for name, value in values.items():
+        if value:
+            os.environ[name] = value
+
+
+def _capture_error_count(capture: object) -> int:
+    if isinstance(capture, dict):
+        return int(capture.get("errors", 0) or 0)
+    return int(getattr(capture, "errors", 0) or 0)
+
+
 def _run_dream(args: argparse.Namespace) -> int:
+    _apply_dream_provider_contract(args)
     from memorymaster.capture.worker import run_capture_worker
     from memorymaster.core.service import MemoryService
     from memorymaster.dreaming.worker import run_dream
@@ -41,7 +73,8 @@ def _run_dream(args: argparse.Namespace) -> int:
         apply_candidates=bool(args.apply_candidates),
     )
     print({"queued": queued.to_dict(), "capture": capture, "dream": dream})
-    return 0 if dream.get("ok") and not dream.get("errors") else 1
+    passed = dream.get("ok") and not dream.get("errors") and not _capture_error_count(capture)
+    return 0 if passed else 1
 
 
 def _run_steward(args: argparse.Namespace) -> int:
