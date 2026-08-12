@@ -121,6 +121,7 @@ def test_authenticated_mcp_http_delivers_disposable_capture(
             endpoint,
             token,
             timeout_seconds=config.request_timeout_seconds,
+            delivery_timeout_seconds=config.delivery_timeout_seconds,
         ),
     )
     provider.initialize(
