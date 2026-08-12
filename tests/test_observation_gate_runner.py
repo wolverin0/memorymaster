@@ -112,6 +112,30 @@ def test_success_marker_and_clean_child_return_zero(
     assert exit_code == 0
 
 
+def test_non_ascii_prompt_is_sent_to_child_as_utf8(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _load_runner()
+    paths = _paths(tmp_path)
+
+    def fake_run(*args, **kwargs):
+        paths["success_marker"].write_text("{}", encoding="utf-8")
+        assert kwargs["input"] == "wheel payload—not checkout bytes"
+        assert kwargs["encoding"] == "utf-8"
+        return subprocess.CompletedProcess(args[0], 0)
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    exit_code = runner.run_gate(
+        command=["fake-codex"],
+        prompt="wheel payload—not checkout bytes",
+        cwd=tmp_path,
+        timeout_seconds=10,
+        **paths,
+    )
+
+    assert exit_code == 0
+
+
 def test_child_failure_code_is_preserved(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

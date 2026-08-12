@@ -75,6 +75,7 @@ def run_gate(
                 cwd=cwd,
                 input=prompt,
                 text=True,
+                encoding="utf-8",
                 stdout=stream,
                 stderr=subprocess.STDOUT,
                 timeout=timeout_seconds,
