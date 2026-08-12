@@ -1,10 +1,10 @@
-<!-- doc-head: Hermes P5 provider replay passed; verifier pending -->
+<!-- doc-head: Hermes P5 repair5 verifier passed; PR pending -->
 # Tencent-derived scope, governed-skills, and Hermes integration specification
 # Covers: session binding, native Hermes memory, governed skill proposals, and progressive approved-skill reuse.
 # Key terms: TencentDB Agent Memory, SessionBinding, Hermes, durable outbox, skill candidate, approved skills.
 # Read when: implementing, reviewing, activating, or rolling back the post-v4.6 companion-integration program.
 # Authority & Safety: implements `ROADMAP.md`; Windows SQLite is authoritative, VM is fallback-only, and skills require approval.
-# Status: P1-P5 are active; the interval elapsed, Gemini+GLM replay passes, and the verifier remains.
+# Status: P1-P5 are active; repair5 passes the elapsed-baseline verifier and authorizes PR creation only.
 <!-- /doc-head -->
 
 ## 1. Outcome
@@ -434,7 +434,7 @@ and no unresolved scope or lineage invariant.
 - [x] Remediate repair-wheel provenance, branch Gitleaks availability, the
       line-ending-sensitive runtime comparison, and the deduplicated canary.
 - [x] Pass pinned Gemini+GLM Dreaming after normal crash-lease recovery.
-- [ ] Pass the bounded verifier replay before PR creation.
+- [x] Pass the bounded verifier replay before PR creation.
 
 P5 immediate repair4 on 2026-08-12:
 
@@ -460,6 +460,18 @@ P5 immediate repair4 on 2026-08-12:
   ended with zero errors and Scheduler exit 0. The final non-ML suite passes
   with 4,445 tests, 72 skips, 97 deselections, and one expected failure. Only
   the bounded verifier remains; no new 24-hour wait is required.
+
+P5 repair5 verification on 2026-08-12:
+
+- The elapsed August 10 baseline was reused without a new wait. The direct
+  verifier passes branch ancestry, Gitleaks, active and staged wheel/canary
+  isolation, read-only SQLite integrity and exact-scope coverage, fresh pinned
+  Dreaming and Steward results, focused tests, Ruff, and diff checks.
+- The retained same-day native Hermes gateway/provider/outbox/replica and
+  rollback evidence remains applicable: no product code changed after its
+  capture, while current task wiring and the active runtime were rechecked.
+- This is PR-only evidence. It does not authorize merge, release, deployment,
+  provider changes, or PPR-7 implementation.
 
 P5 local verification on 2026-08-08:
 

@@ -1,10 +1,10 @@
-<!-- doc-head: sole authoritative roadmap; P5 provider replay passed -->
+<!-- doc-head: sole authoritative roadmap; P5 verifier passed, PR pending -->
 # MemoryMaster roadmap
 # Covers: post-v4.6 sequence, Tencent-derived work, paper research, and deferrals.
 # Key terms: Hermes, governed skills, paper radar, temporal projection, sustainability.
 # Read when: choosing release scope, accepting a feature, or checking deferrals.
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
-# Safety: SQLite authority and steward promotion remain fixed; no PR until the bounded verifier succeeds.
+# Safety: SQLite authority and steward promotion remain fixed; repair5 authorizes PR creation only, never merge, release, deployment, or PPR-7.
 <!-- /doc-head -->
 
 ## Shipped in v4.6.0
@@ -58,8 +58,9 @@ its governed-claims authority:
   OpenAI models; task-bound provider arguments now prevent recurrence.
 - The pinned Gemini Flash Lite plus GLM 5.2 scheduled replay passes: exit 0,
   eight extraction/consolidation/application decisions, zero errors, and one
-  stale crash run recovered. Do not close P5, push, or create a PR until the
-  bounded verifier passes against the already elapsed baseline.
+  stale crash run recovered. Repair5 independently replays the bounded gate
+  against the elapsed baseline and passes; PR creation is pending, while merge,
+  release, deployment, and PPR-7 remain prohibited.
 - The invalid earlier window remains incident evidence only because it included
   a VM OOM/gateway interruption and did not contain P5.
 - Keep v4.6.0 operational while the post-release Obsidian opt-in and OpenCode
@@ -76,8 +77,8 @@ its governed-claims authority:
   approval. P1 session binding, P2 transport, P3 governed skills, and P5
   progressive approved-skill reuse are implemented, verified, and active.
   Windows snapshot/readiness gates, consoleless P5 runtime replacement, VM
-  package rollback preparation, and live functional probes passed. Complete
-  the bounded verifier replay before the PR; the pinned Gemini+GLM task passes.
+  package rollback preparation, and live functional probes passed. The repair5
+  bounded verifier now passes; create a PR only, with no merge or follow-on PPR-7 work.
 - Improve personal/local backup guidance beyond the already verified disposable
   backup/restore and migration procedure.
 - Keep semantic recall optional and disabled unless a local user deliberately

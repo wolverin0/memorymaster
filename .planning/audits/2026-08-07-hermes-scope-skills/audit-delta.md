@@ -1,10 +1,10 @@
-<!-- doc-head: Hermes P5 provider replay passed; verifier pending -->
+<!-- doc-head: Hermes P5 repair5 verifier passed; PR pending -->
 # Hermes scope and governed-skills convergence delta
 # Covers: SQLite safety, native Hermes rollout, progressive skills, rollback, and observation gates.
 # Key terms: TencentDB Agent Memory, Hermes, session scope, personal-skill-v1, approved skills, snapshot.
 # Read when: reviewing this feature branch, operating the activated Windows tasks, or resuming the VM rollout.
-# Authority & Status: ROADMAP.md remains authoritative; the elapsed interval and pinned Gemini+GLM replay pass.
-# Updated: 2026-08-12 after provider enforcement, live replay, and fresh non-ML verification.
+# Authority & Status: ROADMAP.md remains authoritative; repair5 passes the elapsed interval and pinned Gemini+GLM verifier.
+# Updated: 2026-08-12 after repair5 direct verification; PR creation is pending and all broader actions remain blocked.
 <!-- /doc-head -->
 
 ## Verdict
@@ -474,3 +474,30 @@ authoritative SQLite probe returned `quick_check=ok`, zero foreign-key rows,
 and unchanged database size/timestamp in 150.57 seconds. The bounded verifier
 remains before PR creation. Do not push, create the PR, merge, release, or start
 PPR-7 before its fresh success evidence.
+
+## 2026-08-12 repair5 bounded verifier - PASS, PR pending
+
+Repair5 reused the elapsed August 10 baseline and wrote new evidence only in
+its own artifact directory. All required repair commits are ancestors of HEAD.
+The branch-range Gitleaks replay found zero findings across 36 commits. The
+active retained wheel has 353 checked payload files with zero missing or
+mismatched files and `pip check` is clean; the retained staged `d4d9aad` wheel
+and corrected governed-skill canary also pass.
+
+The fresh scheduled Dreaming task exited 0 with Gemini Flash Lite extraction
+and GLM 5.2 consolidation, zero run errors, and no Dreaming lease. The fresh
+Steward task exited 0. A read-only SQLite probe completed `quick_check=ok` in
+106.562 seconds with zero foreign-key violations and unchanged metadata. Exact
+`project:memorymaster` coverage is `ok` with zero anomalies; all-scope expired
+leases and due retryables are zero. The rollout canary lineage remains one
+confirmed version-2 support-linked transition. Focused P5 coverage passed
+154 tests with 15 known warnings; Ruff and `git diff --check` pass. The fresh
+4,445-test non-ML evidence remains valid because source changes since it are
+documentation and GitNexus metadata only.
+
+Same-day native Hermes provider, gateway, outbox, replica, authenticated
+recall, and rollback proof from repair4 was independently retained against
+unchanged product source; current Windows runtime/task wiring was rechecked.
+This pass authorizes a feature-branch push and PR creation only. It does not
+authorize merging, release, publication, deployment, runtime/provider change,
+or PPR-7 work.
