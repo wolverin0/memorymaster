@@ -1,22 +1,22 @@
-<!-- doc-head: repaired Hermes P5 observer rearmed -->
+<!-- doc-head: Hermes P5 elapsed observation repaired; OAuth blocks closure -->
 # Hermes scope and governed-skills convergence delta
 # Covers: SQLite safety, native Hermes rollout, progressive skills, rollback, and observation gates.
 # Key terms: TencentDB Agent Memory, Hermes, session scope, personal-skill-v1, approved skills, snapshot.
 # Read when: reviewing this feature branch, operating the activated Windows tasks, or resuming the VM rollout.
-# Authority & Status: ROADMAP.md remains authoritative; blocker evidence is repaired, but a new 24-hour pass still gates PR creation.
-# Updated: 2026-08-10 with reproducible wheel, scanner, integrity, canary, and fail-closed runner evidence.
+# Authority & Status: ROADMAP.md remains authoritative; the interval elapsed, but OpenCode OAuth 401 blocks PR closure.
+# Updated: 2026-08-12 after repair4 live transport, queue, security, and provider remediation.
 <!-- /doc-head -->
 
 ## Verdict
 
-The Tencent-derived P5 progressive approved-skill path now passes locally and
-is installed on both the Windows authority and Hermes VM. Rollback artifacts,
-consoleless task actions, authenticated live recall, provider outbox, and the
-installed-wheel isolation canary pass. The original 24-hour window included a
-VM OOM/gateway interruption and did not contain P5, so it cannot authorize the
-PR. The repaired evidence blockers are closed, but the newly scheduled
-2026-08-11 23:50 ART observation must pass before a PR. No tag, GitHub Release,
-package publication, merge, or public deployment is authorized here.
+The required August 10-12 observation interval has elapsed; repair4 replays
+that evidence and does not start another arbitrary 24-hour clock. Exact project
+coverage, SQLite integrity, native Hermes transport, the bounded outbox, and
+the installed provider now pass. The current scheduled Dreaming action still
+fails because its configured OpenCode OpenAI OAuth credential returns a
+non-retryable HTTP 401. P5 therefore remains blocked before PR creation and
+PPR-7 remains unstarted. No tag, release, publication, merge, or public
+deployment is authorized here.
 
 ## P5 progressive-skill evidence
 
@@ -383,3 +383,70 @@ canary lifecycle, source/evidence capture, graph support, or production skill
 state. A fresh read-only baseline taken afterward records 126,864 claims,
 129,473 citations, 2,197,734 events, `coverage=ok`, and zero capture anomalies.
 This bounded governed write is not presented as live-rollout verification.
+
+## 2026-08-12 repair3 immediate verification — BLOCKED
+
+The August 10 baseline had already elapsed the required 24-hour interval, so
+repair3 replayed it instead of fabricating a new clock. The full current
+`origin/main..HEAD` range contained 29 commits; Gitleaks 8.21.2 completed with
+exit 0 and zero findings. Isolated imports confirmed both installed runtimes,
+and the active runtime passed `pip check`.
+
+The authoritative SQLite probe was strictly read-only (`mode=ro`,
+`query_only=ON`) and left database bytes unchanged. Foreign-key validation had
+zero violations, but capture coverage was `broken`: 17 missing graph jobs, 19
+blocked jobs, and 8 partial completed jobs. This violates the strict P5
+coverage invariant. The verification stopped at that substantive failure;
+remaining live checks were not accepted as a pass. No push, PR, merge, tag,
+release, publication, deployment, runtime/provider/gateway/task change, or
+PPR-7 work occurred. See
+`artifacts/p4-hermes-scope-skills/observation-p5-repair3-20260812/verify-failure.md`
+and `verify-result.json` for the bounded record.
+
+## 2026-08-12 repair4 immediate remediation - OAUTH BLOCKED
+
+Repair4 used the already elapsed August 10 baseline instead of restarting the
+observation clock. It corrected the verifier's all-scope aggregation. Before
+the provider diagnostic, exact `project:memorymaster` coverage was `ok`, with
+zero missing claim/graph jobs, blocked or due-retryable work, expired leases,
+partial completions, orphans, or foreign-key violations. The historical `user`
+backlog was reconciled through public queue/worker APIs without rewriting
+immutable diagnostics. The later scheduled Dreaming replay left seven
+`user`-scope jobs in retryable state because of the OAuth failure described
+below; exact `project:memorymaster` coverage remains `ok` with zero anomalies.
+
+Two runtime defects were repaired with adversarial tests. Capture workers now
+lease one job only when ready to process it, preventing five-minute batch
+leases from expiring behind slow provider calls. The Hermes provider now uses
+one bounded stateless JSON-RPC POST against the stateless MCP authority, keeps
+short recall and longer durable-delivery timeouts separate, classifies
+authority payload rejection as permanent, and sanitizes content before durable
+enqueue independently of the host MemoryMaster version.
+
+The blocked outbox row was not a leaked credential. Its legacy metadata stored
+redaction finding labels beside producer identity hashes; the authority's
+derived payload scan rejected that combination as `hex_token_ctx`. New rows
+store a boolean redaction marker instead. An exact-ID purge API accepts only
+terminal credential-context legacy envelopes, refuses safe and non-credential
+rows, enables SQLite secure deletion, checkpoints WAL, and vacuums. Live row
+21 was removed, its serialized bytes are absent from DB/WAL/SHM, and four exact
+repair-backup files were deleted and are not recoverable. Sixty completed audit
+rows remain intact; the outbox has zero noncompleted rows and `quick_check=ok`.
+
+The VM installed provider matches all 12 files in the retained wheel, live
+authenticated recall is nonempty in 0.251 seconds, the gateway is
+active/success with zero automatic restarts, `ManagedOOMPreference=avoid`,
+zero post-start traceback/OOM indicators, and 11 established TLS connections.
+Gitleaks scanned the full branch range after the local unpushed test-fixture
+history cleanup and found zero leaks.
+
+The final non-ML suite passes with 4,441 tests, 72 skips, 97 deselections, one
+expected failure, and 15 dependency deprecation warnings in 814.58 seconds.
+The remaining blocker is precise and external to the repaired queue/transport:
+the scheduled runtime's OpenCode version probe passes, but a synthetic
+`openai/gpt-5.4-mini` OAuth call returns structured `APIError` HTTP 401 with
+`isRetryable=false`. The exact Dreaming action reproduces exit 1, leaving seven
+`user`-scope capture jobs retryable and six dream calls deferred. Reauthenticate
+OpenCode, then rerun Dreaming and the observation verifier against this same
+elapsed baseline. Do not push, create the PR, merge, release, or start PPR-7
+before that fresh success evidence exists.

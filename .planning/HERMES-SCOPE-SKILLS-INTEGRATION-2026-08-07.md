@@ -1,10 +1,10 @@
-<!-- doc-head: repaired Hermes P5 observer rearmed -->
+<!-- doc-head: Hermes P5 repair4 complete except OpenCode OAuth -->
 # Tencent-derived scope, governed-skills, and Hermes integration specification
 # Covers: session binding, native Hermes memory, governed skill proposals, and progressive approved-skill reuse.
 # Key terms: TencentDB Agent Memory, SessionBinding, Hermes, durable outbox, skill candidate, approved skills.
 # Read when: implementing, reviewing, activating, or rolling back the post-v4.6 companion-integration program.
 # Authority & Safety: implements `ROADMAP.md`; Windows SQLite is authoritative, VM is fallback-only, and skills require approval.
-# Status: P1-P5 and graph repair are active; blocker evidence is repaired and a fresh 24-hour gate is pending.
+# Status: P1-P5 are active; the interval elapsed and repair4 passes except scheduled OpenCode OAuth 401.
 <!-- /doc-head -->
 
 ## 1. Outcome
@@ -433,7 +433,28 @@ and no unresolved scope or lineage invariant.
       weakening coverage or replay safety.
 - [x] Remediate repair-wheel provenance, branch Gitleaks availability, the
       line-ending-sensitive runtime comparison, and the deduplicated canary.
-- [ ] Pass the fresh 24-hour observation before PR creation.
+- [ ] Pass Dreaming and the bounded verifier replay before PR creation.
+
+P5 immediate repair4 on 2026-08-12:
+
+- The August 10 baseline had already exceeded 24 hours. Repair4 reused that
+  interval; it did not restart a clock.
+- Exact `project:memorymaster` coverage and foreign keys are clean. Capture jobs
+  lease just in time, preventing slow sequential provider calls from expiring a
+  pre-leased batch.
+- Hermes durable delivery now uses bounded stateless JSON-RPC, permanent
+  payload rejection, host-version-independent sanitization, safe legacy
+  metadata, and an exact terminal-only secure purge. Live authenticated recall
+  returns nonempty context in 0.251 seconds; outbox integrity is `ok` with zero
+  noncompleted rows.
+- The exact legacy rejected row and four repair-backup files were removed; 60
+  completed audit rows remain. Gitleaks reports zero findings across the full
+  branch range.
+- Scheduled Dreaming still reproduces exit 1 because the configured OpenCode
+  OpenAI OAuth credential returns non-retryable HTTP 401. Reauthenticate, rerun
+  Dreaming, then replay the verifier. The final non-ML suite passes with 4,441
+  tests, 72 skips, 97 deselections, and one expected failure. No new 24-hour
+  wait is required, but the checkbox remains open until the live commands pass.
 
 P5 local verification on 2026-08-08:
 

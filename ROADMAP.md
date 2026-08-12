@@ -1,10 +1,10 @@
-<!-- doc-head: sole authoritative roadmap; repaired P5 observer rearmed -->
+<!-- doc-head: sole authoritative roadmap; P5 repaired, OAuth blocked -->
 # MemoryMaster roadmap
 # Covers: post-v4.6 sequence, Tencent-derived work, paper research, and deferrals.
 # Key terms: Hermes, governed skills, paper radar, temporal projection, sustainability.
 # Read when: choosing release scope, accepting a feature, or checking deferrals.
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
-# Safety: SQLite authority and steward promotion remain fixed; no PR until the fresh 24-hour gate passes.
+# Safety: SQLite authority and steward promotion remain fixed; no PR until OpenCode reauth and verifier success.
 <!-- /doc-head -->
 
 ## Shipped in v4.6.0
@@ -49,11 +49,14 @@ its governed-claims authority:
   SQLite `quick_check` completed `ok` in 172.406 seconds. The previous runtime
   mismatch and skill-isolation failures were invalid line-ending and duplicate-
   fixture checks; direct wheel and distinct-fixture canaries pass.
-- The observer wrapper now fails nonzero unless Codex writes a fresh explicit
-  success marker. A new baseline and 24-hour gate are scheduled for 2026-08-11
-  23:50 ART.
-- Do not close the P5 24-hour gate or the older v4.6 seven-day observation, and
-  do not push or create a PR, until the new clean observation passes.
+- The observer wrapper fails nonzero unless Codex writes a fresh explicit
+  success marker. The August 10 baseline interval has elapsed; no additional
+  24-hour wait is required after repair4.
+- Repair4 closed scope aggregation, capture lease, Hermes stateless transport,
+  durable metadata, exact terminal cleanup, and live recall defects. Scheduled
+  Dreaming remains red because OpenCode OpenAI OAuth returns HTTP 401.
+- Do not close P5, push, or create a PR until OpenCode is reauthenticated and
+  Dreaming plus the verifier pass against the already elapsed baseline.
 - The invalid earlier window remains incident evidence only because it included
   a VM OOM/gateway interruption and did not contain P5.
 - Keep v4.6.0 operational while the post-release Obsidian opt-in and OpenCode
@@ -71,7 +74,7 @@ its governed-claims authority:
   progressive approved-skill reuse are implemented, verified, and active.
   Windows snapshot/readiness gates, consoleless P5 runtime replacement, VM
   package rollback preparation, and live functional probes passed. Complete
-  the clean 24-hour observation before creating the PR.
+  OpenCode reauthentication and the bounded verifier replay before the PR.
 - Improve personal/local backup guidance beyond the already verified disposable
   backup/restore and migration procedure.
 - Keep semantic recall optional and disabled unless a local user deliberately
