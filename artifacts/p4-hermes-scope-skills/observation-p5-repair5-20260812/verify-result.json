@@ -1,57 +1,7 @@
 {
-  "schema_version": "memorymaster.p5-repair5-verifier.v1",
-  "status": "passed_pr_created",
-  "elapsed_baseline_reused": true,
-  "new_wait_required": false,
-  "git": {
-    "branch": "feat/hermes-scope-skills",
-    "head": "fb7e5d82e601465db0517a6636f2d0e2003d381b",
-    "required_ancestors_present": true,
-    "product_changes_after_provider_evidence": false
-  },
-  "dreaming": {
-    "scheduler_exit_code": 0,
-    "extractor_model": "gemini-3.5-flash-lite",
-    "consolidator_model": "zai-coding-plan/glm-5.2",
-    "errors": 0,
-    "active_leases": 0
-  },
-  "steward": {"scheduler_exit_code": 0},
-  "integrity": {
-    "read_only": true,
-    "quick_check": "ok",
-    "foreign_key_violations": 0,
-    "database_unchanged": true,
-    "duration_seconds": 106.562
-  },
-  "coverage": {
-    "scope": "project:memorymaster",
-    "status": "ok",
-    "project_anomalies": 0,
-    "all_scope_expired_leases": 0,
-    "all_scope_due_retryable": 0
-  },
-  "runtime": {
-    "active_wheel_payload_files": 353,
-    "active_wheel_missing": 0,
-    "active_wheel_mismatched": 0,
-    "active_pip_check": "pass",
-    "active_skill_canary": "pass",
-    "staged_skill_canary": "pass"
-  },
-  "quality": {
-    "gitleaks_commits": 36,
-    "gitleaks_findings": 0,
-    "focused_tests_passed": 154,
-    "focused_test_warnings": 15,
-    "ruff": "pass",
-    "diff_check": "pass",
-    "full_non_ml": "verified recorded 4445 passed, 72 skipped, 97 deselected, 1 xfailed, 15 warnings"
-  },
-  "live_hermes": {
-    "evidence": "same-day repair4 retained live provider/gateway/outbox/replica/rollback proof; product source unchanged and current task wiring rechecked",
-    "decision": "pass"
-  },
-  "pr_url": "https://github.com/wolverin0/memorymaster/pull/189",
-  "terminal_marker_written": true
+  "started_at": "2026-08-12T20:30:18.998006+00:00",
+  "finished_at": "2026-08-12T20:49:11.505560+00:00",
+  "child_exit_code": 0,
+  "gate_exit_code": 0,
+  "status": "passed"
 }
