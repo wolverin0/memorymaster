@@ -125,6 +125,43 @@ def test_sequential_jobs_extract_their_exact_evidence(worker_env, monkeypatch) -
     ]
 
 
+def test_worker_leases_each_job_only_when_ready_to_process(monkeypatch) -> None:
+    events = []
+    pending = [SimpleNamespace(id=1), SimpleNamespace(id=2)]
+
+    class FakeRepository:
+        def __init__(self, _store) -> None:
+            pass
+
+        def lease_jobs(self, *, owner, limit):
+            events.append(("lease", owner, limit))
+            leased = pending[:limit]
+            del pending[:limit]
+            return leased
+
+        def finish_job(self, job_id, *, status, error_code=None, error_detail=None):
+            events.append(("finish", job_id, status))
+            return SimpleNamespace(status=status)
+
+    def fake_process(_service, _repository, job):
+        events.append(("process", job.id))
+
+    monkeypatch.setattr("memorymaster.capture.worker.CaptureRepository", FakeRepository)
+    monkeypatch.setattr("memorymaster.capture.worker._process_job", fake_process)
+
+    result = run_capture_worker(SimpleNamespace(store=object()), owner="fixture", limit=2)
+
+    assert result.leased == result.completed == 2
+    assert events == [
+        ("lease", "fixture", 1),
+        ("process", 1),
+        ("finish", 1, "completed"),
+        ("lease", "fixture", 1),
+        ("process", 2),
+        ("finish", 2, "completed"),
+    ]
+
+
 def test_provider_absence_blocks_media_with_actionable_code(worker_env) -> None:
     service, db, workspace = worker_env
     image = workspace / "image.png"
