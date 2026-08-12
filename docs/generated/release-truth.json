@@ -96,7 +96,13 @@
     "run-dashboard",
     "run-operator",
     "run-steward",
+    "session-scope",
     "sessions",
+    "skill-export",
+    "skill-inputs",
+    "skill-propose",
+    "skill-recall",
+    "skill-review",
     "snapshot",
     "snapshots",
     "stealth-status",
@@ -124,11 +130,11 @@
     "memorymaster-steward"
   ],
   "counts": {
-    "cli_commands": 112,
+    "cli_commands": 118,
     "console_entrypoints": 8,
-    "mcp_tools": 41,
+    "mcp_tools": 50,
     "ops_cli_commands": 5,
-    "pytest_test_functions": 3628
+    "pytest_test_functions": 3767
   },
   "feature_profile_matrix": {
     "capture_hook": [
@@ -175,6 +181,7 @@
     "federated_query",
     "find_related_claims",
     "forget",
+    "forget_preview",
     "get_usage_rollup",
     "improve",
     "ingest_claim",
@@ -205,6 +212,14 @@
     "run_cycle",
     "run_steward",
     "search_verbatim",
+    "session_scope_bind",
+    "session_scope_clear",
+    "session_scope_show",
+    "skill_export",
+    "skill_inputs",
+    "skill_propose",
+    "skill_recall",
+    "skill_review",
     "volunteer_context"
   ],
   "ops_cli_commands": [

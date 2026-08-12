@@ -19,6 +19,7 @@ EXPECTED_TOOLS = {
     "federated_query",
     "find_related_claims",
     "forget",
+    "forget_preview",
     "get_usage_rollup",
     "ingest_claim",
     "ingest_rule",
@@ -49,6 +50,14 @@ EXPECTED_TOOLS = {
     "run_cycle",
     "run_steward",
     "search_verbatim",
+    "session_scope_bind",
+    "session_scope_clear",
+    "session_scope_show",
+    "skill_export",
+    "skill_inputs",
+    "skill_propose",
+    "skill_recall",
+    "skill_review",
     "volunteer_context",
 }
 

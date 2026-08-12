@@ -107,6 +107,7 @@ def run(
             "superseded": 0,
             "archived_duplicates": 0,
             "pending": 0,
+            "skill_pending_approval": 0,
             "staled": 0,
             "revalidated_healthy": 0,
         }
@@ -132,6 +133,7 @@ def run(
     superseded = 0
     archived_duplicates = 0
     pending = 0
+    skill_pending_approval = 0
     staled = 0
     revalidated_healthy = 0
 
@@ -145,6 +147,16 @@ def run(
     for claim in claims:
         is_revalidation = claim.status in {"confirmed", "stale", "conflicted"}
         citation_count = citation_counts.get(claim.id, 0)
+        if claim.status == "candidate" and (claim.claim_type or "").strip().lower() == "skill":
+            store.record_event(
+                claim_id=claim.id,
+                event_type="validator",
+                details="skill_requires_explicit_approval",
+                payload={"score": claim.confidence, "citation_count": citation_count},
+            )
+            pending += 1
+            skill_pending_approval += 1
+            continue
         score = validation_score(claim, citation_count, prior_confidence=claim.confidence)
         store.set_confidence(claim.id, score, details=f"validator_score={score:.3f};citations={citation_count}")
 
@@ -276,6 +288,7 @@ def run(
         "superseded": superseded,
         "archived_duplicates": archived_duplicates,
         "pending": pending,
+        "skill_pending_approval": skill_pending_approval,
         "staled": staled,
         "revalidated_healthy": revalidated_healthy,
     }

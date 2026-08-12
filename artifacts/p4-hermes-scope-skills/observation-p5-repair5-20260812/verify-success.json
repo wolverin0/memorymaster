@@ -1,0 +1,16 @@
+{
+  "schema_version": "memorymaster.p5-repair5-success.v1",
+  "status": "passed",
+  "baseline": "observation-p5-repair2-20260810",
+  "elapsed_baseline_reused": true,
+  "gate_result": "verify-result.json",
+  "verifier_evidence": "verify-evidence.json",
+  "pr_url": "https://github.com/wolverin0/memorymaster/pull/189",
+  "authorization": {
+    "pr_created": true,
+    "merged": false,
+    "release": false,
+    "deployment": false,
+    "ppr7_started": false
+  }
+}

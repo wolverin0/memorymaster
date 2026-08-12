@@ -108,6 +108,16 @@ class TestJsonFlagEnvelope:
         assert result["ok"] is True
         assert "query_ms" in result["meta"]
 
+    @pytest.mark.parametrize("mode", [[], ["--list"], ["--status"]])
+    def test_migrate_json(self, tmp_db: Path, capsys, mode: list[str]) -> None:
+        result = _capture(
+            capsys,
+            ["--json", "--db", str(tmp_db), "migrate", *mode],
+        )
+        assert result["rc"] == 0
+        assert result["ok"] is True
+        assert result["meta"]["query_ms"] >= 0
+
 
 class TestJsonFlagDefault:
     """Verify that omitting --json keeps human-readable output."""

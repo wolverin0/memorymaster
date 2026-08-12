@@ -90,7 +90,13 @@ def _source_and_evidence(conn: Any, scope: str | None) -> tuple[int, int, list[i
 
 def _graph_coverage(conn: Any, scope: str | None) -> tuple[int, list[int]]:
     rows = conn.execute(
-        """SELECT c.id AS claim_id, c.updated_at, c.scope
+        """SELECT c.id AS claim_id, c.updated_at, c.scope,
+                  COALESCE(
+                      (SELECT MAX(ev.created_at) FROM events ev
+                       WHERE ev.claim_id=c.id AND ev.to_status='confirmed'
+                         AND (ev.from_status IS NULL OR ev.from_status<>'confirmed')),
+                      c.updated_at
+                  ) AS graph_revision
            FROM claims c
            JOIN claim_evidence_links cel ON cel.claim_id=c.id
            JOIN evidence_items e ON e.id=cel.evidence_item_id
@@ -108,7 +114,7 @@ def _graph_coverage(conn: Any, scope: str | None) -> tuple[int, list[int]]:
     missing = [
         int(row["claim_id"])
         for row in scoped
-        if graph_job_content_hash(row["claim_id"], row["updated_at"]) not in hashes
+        if graph_job_content_hash(row["claim_id"], row["graph_revision"]) not in hashes
     ]
     return len(scoped), missing
 

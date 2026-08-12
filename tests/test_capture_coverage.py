@@ -123,6 +123,58 @@ def test_confirmed_claim_requires_current_graph_job(tmp_path: Path) -> None:
     assert complete["status"] == "ok"
 
 
+def test_confidence_update_does_not_invalidate_completed_graph_job(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    item, evidence = _evidence(service, scope="project:wanted")
+    repository = CaptureRepository(service.store)
+    _complete_claim_job(repository, item.id)
+    claim = service.ingest(
+        "Alice uses Atlas.",
+        [CitationInput(source="fixture", locator=f"evidence:{evidence.id}")],
+        scope="project:wanted",
+    )
+    repository.link_claim_evidence(claim_id=claim.id, evidence_item_id=evidence.id)
+    claim = service.store.apply_status_transition(
+        claim,
+        to_status="confirmed",
+        reason="coverage fixture",
+        event_type="validator",
+    )
+    confirmation_hash = graph_job_content_hash(claim.id, claim.updated_at)
+    job, _ = repository.queue_job(
+        source_item_id=item.id,
+        content_hash=confirmation_hash,
+        stage="extract_graph",
+    )
+    leased = repository.lease_jobs(
+        owner="coverage", stages=("extract_graph",), limit=1
+    )[0]
+    repository.finish_job(leased.id, status="completed")
+    service.store.set_confidence(claim.id, 0.8, "routine revalidation")
+    with service.store.connect() as conn:
+        conn.execute(
+            "UPDATE claims SET updated_at=? WHERE id=?",
+            ("2099-01-01T00:00:00+00:00", claim.id),
+        )
+        conn.commit()
+
+    report = capture_coverage(service, scope="project:wanted")
+    due = repository.due_confirmed_graph_claims(
+        scope="project:wanted", limit=10
+    )
+
+    assert job.id == leased.id
+    assert report["status"] == "ok"
+    assert report["anomalies"]["missing_graph_jobs"]["count"] == 0
+    assert len(due) == 1
+    assert due[0]["updated_at"] == "2099-01-01T00:00:00+00:00"
+    assert due[0]["graph_revision"] == claim.updated_at
+    assert due[0]["job_content_hash"] == confirmation_hash
+    assert due[0]["job_exists"] is True
+
+
 def test_expired_lease_is_broken_and_partial_completion_needs_attention(
     tmp_path: Path,
 ) -> None:

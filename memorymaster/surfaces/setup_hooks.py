@@ -17,6 +17,7 @@ Interactive prompts for:
     - Obsidian skills installation
 """
 import argparse
+import base64
 import gc
 import json
 import os
@@ -497,12 +498,28 @@ def install_dream_hooks(*, install_claude: bool, install_codex: bool) -> dict[st
 
 def setup_dream_schedule(db_path: str | Path, *, apply_candidates: bool) -> str:
     """Create the hourly Windows task; other platforms get a manual command."""
-    command = (
-        f'"{_hidden_python_exe()}" -m memorymaster.surfaces.scheduled_task dream '
-        f'--db "{db_path}" --workspace "{PROJECT_ROOT}"'
-    )
+    provider = os.environ.get("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "gemini").strip()
+    default_model = "gemini-3.5-flash" if provider in {"gemini", "google"} else "openai/gpt-5.4-mini"
+    parts = [
+        _hidden_python_exe(), "-I", "-m", "memorymaster.surfaces.scheduled_task", "dream",
+        "--db", str(db_path), "--workspace", str(PROJECT_ROOT),
+        "--extract-provider", provider,
+        "--extract-model", os.environ.get("MEMORYMASTER_DREAM_EXTRACT_MODEL", default_model).strip(),
+        "--consolidate-model", os.environ.get(
+            "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL", "zai-coding-plan/glm-5.2",
+        ).strip(),
+        "--clear-provider-variants",
+    ]
+    extract_variant = os.environ.get("MEMORYMASTER_DREAM_EXTRACT_VARIANT", "").strip()
+    consolidate_variant = os.environ.get("MEMORYMASTER_DREAM_CONSOLIDATE_VARIANT", "").strip()
+    if extract_variant:
+        parts.extend(["--extract-variant", extract_variant])
+    if consolidate_variant:
+        parts.extend(["--consolidate-variant", consolidate_variant])
     if apply_candidates:
-        command += " --apply-candidates"
+        parts.append("--apply-candidates")
+    command = subprocess.list2cmdline(parts)
+    arguments = subprocess.list2cmdline(parts[1:])
     if not IS_WINDOWS:
         print(f"  Add to cron hourly: {command}")
         return "manual"
@@ -518,7 +535,38 @@ def setup_dream_schedule(db_path: str | Path, *, apply_candidates: bool) -> str:
         )
         return "configured"
     except (OSError, subprocess.CalledProcessError):
-        return "manual"
+        return (
+            "configured"
+            if _setup_dream_schedule_powershell(parts[0], arguments)
+            else "manual"
+        )
+
+
+def _setup_dream_schedule_powershell(executable: str, arguments: str) -> bool:
+    payload = base64.b64encode(json.dumps({
+        "execute": executable, "arguments": arguments,
+    }).encode("utf-8")).decode("ascii")
+    script = (
+        "$ErrorActionPreference='Stop';"
+        f"$raw=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{payload}'));"
+        "$p=$raw|ConvertFrom-Json;"
+        "$a=New-ScheduledTaskAction -Execute $p.execute -Argument $p.arguments;"
+        "$old=Get-ScheduledTask -TaskName 'MemoryMaster-Dreaming' -ErrorAction SilentlyContinue;"
+        "if($null -ne $old){Set-ScheduledTask -TaskName 'MemoryMaster-Dreaming' -Action $a|Out-Null}"
+        "else{$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddHours(1) "
+        "-RepetitionInterval (New-TimeSpan -Hours 1);"
+        "$s=New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew;"
+        "Register-ScheduledTask -TaskName 'MemoryMaster-Dreaming' -Action $a "
+        "-Trigger $t -Settings $s|Out-Null}"
+    )
+    try:
+        subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+            check=True, capture_output=True, text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return False
+    return True
 
 
 def _hidden_python_exe() -> str:

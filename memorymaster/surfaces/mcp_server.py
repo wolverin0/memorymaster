@@ -690,11 +690,12 @@ MCP_TOOL_POLICIES: dict[str, McpToolPolicy] = {
     "extract_entities": McpToolPolicy("ingest"),
     "federated_query": McpToolPolicy("query"),
     "forget": McpToolPolicy("delete"),
+    "forget_preview": McpToolPolicy("query", team_enabled=True),
     "find_related_claims": McpToolPolicy("configure"),
     "get_usage_rollup": McpToolPolicy("query"),
     "ingest_claim": McpToolPolicy("ingest", team_enabled=True),
     "ingest_rule": McpToolPolicy("ingest"),
-    "improve": McpToolPolicy("steward"),
+    "improve": McpToolPolicy("ingest", team_enabled=True),
     "init_db": McpToolPolicy("configure"),
     "list_claims": McpToolPolicy("query", team_enabled=True),
     "list_events": McpToolPolicy("query"),
@@ -721,6 +722,14 @@ MCP_TOOL_POLICIES: dict[str, McpToolPolicy] = {
     "run_cycle": McpToolPolicy("steward"),
     "run_steward": McpToolPolicy("steward"),
     "search_verbatim": McpToolPolicy("export"),
+    "session_scope_bind": McpToolPolicy("ingest", team_enabled=True),
+    "session_scope_clear": McpToolPolicy("ingest", team_enabled=True),
+    "session_scope_show": McpToolPolicy("query", team_enabled=True),
+    "skill_export": McpToolPolicy("export"),
+    "skill_inputs": McpToolPolicy("query", team_enabled=True),
+    "skill_propose": McpToolPolicy("ingest", team_enabled=True),
+    "skill_recall": McpToolPolicy("query", team_enabled=True),
+    "skill_review": McpToolPolicy("steward"),
     "volunteer_context": McpToolPolicy("query"),
 }
 
@@ -860,6 +869,14 @@ if FastMCP is not None:
         source_uri: str = "",
         scope: str = "",
         source_agent: str = "",
+        session_id: str = "",
+        platform: str = "mcp",
+        producer: str = "",
+        producer_external_id: str = "",
+        producer_content_hash: str = "",
+        producer_session_hash: str = "",
+        producer_turn_id: str = "",
+        producer_metadata_json: str = "",
         db: str = "memorymaster.db",
         workspace: str = ".",
     ) -> dict[str, Any]:
@@ -869,12 +886,23 @@ if FastMCP is not None:
             raise PermissionError("Client-supplied local paths are disabled in team mode.")
         from memorymaster.public.v1 import remember as public_remember
 
+        metadata = json.loads(producer_metadata_json) if producer_metadata_json else None
+        if metadata is not None and not isinstance(metadata, dict):
+            raise ValueError("producer_metadata_json must contain an object")
         receipt = public_remember(
             text=text or None,
             path=path or None,
             source_uri=source_uri or None,
             scope=scope or None,
             source_agent=source_agent or "memorymaster-mcp",
+            session_id=session_id or None,
+            platform=platform,
+            producer=producer or None,
+            producer_external_id=producer_external_id or None,
+            producer_content_hash=producer_content_hash or None,
+            producer_session_hash=producer_session_hash or None,
+            producer_turn_id=producer_turn_id or None,
+            producer_metadata=metadata,
             db=db,
             workspace=workspace,
         )
@@ -886,6 +914,12 @@ if FastMCP is not None:
         scope_allowlist: str = "",
         token_budget: int = 4000,
         trust_mode: str = "trusted",
+        retrieval_mode: str = "hybrid",
+        include_skills: bool = False,
+        skill_limit: int = 3,
+        session_id: str = "",
+        source_agent: str = "",
+        platform: str = "mcp",
         db: str = "memorymaster.db",
         workspace: str = ".",
     ) -> dict[str, Any]:
@@ -898,6 +932,12 @@ if FastMCP is not None:
             scope_allowlist=scopes,
             token_budget=_bounded_limit(token_budget, maximum=32_000),
             trust_mode=trust_mode,
+            retrieval_mode=retrieval_mode,
+            include_skills=include_skills,
+            skill_limit=_bounded_limit(skill_limit, maximum=10),
+            session_id=session_id or None,
+            source_agent=source_agent or "memorymaster-mcp",
+            platform=platform,
             db=db,
             workspace=workspace,
         )
@@ -927,6 +967,9 @@ if FastMCP is not None:
     def improve(
         scope: str = "",
         max_items: int = 200,
+        session_id: str = "",
+        source_agent: str = "",
+        platform: str = "mcp",
         db: str = "memorymaster.db",
         workspace: str = ".",
     ) -> dict[str, Any]:
@@ -936,10 +979,109 @@ if FastMCP is not None:
         receipt = public_improve(
             scope=scope or None,
             max_items=max_items,
+            session_id=session_id or None,
+            source_agent=source_agent or "memorymaster-mcp",
+            platform=platform,
             db=db,
             workspace=workspace,
         )
         return {"ok": True, **asdict(receipt)}
+
+    @mcp.tool()
+    def forget_preview(
+        claim_id: int = 0,
+        source_item_id: int = 0,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Preview logical retirement without exposing an apply capability."""
+        from memorymaster.public.v1 import forget as public_forget
+
+        receipt = public_forget(
+            claim_id=claim_id or None,
+            source_item_id=source_item_id or None,
+            apply=False,
+            db=db,
+            workspace=workspace,
+        )
+        return {"ok": True, **asdict(receipt)}
+
+    @mcp.tool()
+    def session_scope_show(
+        session_id: str = "",
+        source_agent: str = "",
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Show bounded session-scope metadata without exposing raw session IDs."""
+        from memorymaster.core.session_scope import SessionScopeRepository
+
+        service = _service(db, workspace)
+        repository = SessionScopeRepository(service.store.db_path)
+        if session_id:
+            items = repository.history(session_id)
+            if source_agent:
+                items = [item for item in items if item.source_agent == source_agent]
+        else:
+            items = repository.list_active()
+            if source_agent:
+                items = [item for item in items if item.source_agent == source_agent]
+        return {
+            "ok": True,
+            "rows": len(items),
+            "items": [item.to_dict() for item in items],
+        }
+
+    @mcp.tool()
+    def session_scope_bind(
+        session_id: str,
+        scope: str,
+        source_agent: str = "",
+        platform: str = "mcp",
+        task_label: str = "",
+        ttl_seconds: int = 604800,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Bind one authenticated session to user or project scope."""
+        from memorymaster.core.session_scope import SessionScopeRepository, validate_scope
+
+        service = _service(db, workspace)
+        context = current_request_context()
+        if context is None or context.mode is not AuthMode.TEAM:
+            service.init_db()
+        workspace_path = Path(_resolve_workspace(workspace))
+        binding = SessionScopeRepository(service.store.db_path).bind(
+            session_id,
+            scope=validate_scope(scope, allow_global=False),
+            source_agent=source_agent or "memorymaster-mcp",
+            platform=platform,
+            binding_source="explicit",
+            workspace_slug=workspace_path.name if workspace_path.is_dir() else None,
+            task_label=task_label or None,
+            ttl_seconds=_bounded_limit(ttl_seconds, maximum=2592000),
+            replace=True,
+        )
+        return {"ok": True, **binding.to_dict()}
+
+    @mcp.tool()
+    def session_scope_clear(
+        session_id: str,
+        source_agent: str = "",
+        platform: str = "",
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Logically end the authenticated session's active scope binding."""
+        from memorymaster.core.session_scope import SessionScopeRepository
+
+        service = _service(db, workspace)
+        ended = SessionScopeRepository(service.store.db_path).end(
+            session_id,
+            source_agent=source_agent or None,
+            platform=platform or None,
+        )
+        return {"ok": True, "ended": ended}
 
     @mcp.tool()
     def ingest_claim(
@@ -2090,6 +2232,113 @@ if FastMCP is not None:
             allow_sensitive=allow_sensitive,
         )
         return {"ok": True, "rows": len(rows), "rules": rows}
+
+    @mcp.tool()
+    def skill_inputs(
+        scope: str = "",
+        min_corrections: int = 2,
+        limit: int = 20,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """List recurring rule evidence eligible for bounded skill review."""
+        from memorymaster.knowledge.skills import collect_skill_proposal_inputs
+
+        effective_scope = _effective_ingest_scope(scope, workspace)
+        rows = collect_skill_proposal_inputs(
+            _read_service(db, workspace),
+            scope=effective_scope,
+            min_corrections=max(2, min(min_corrections, 100)),
+            limit=_bounded_limit(limit, maximum=100),
+        )
+        return {"ok": True, "rows": len(rows), "inputs": rows}
+
+    @mcp.tool()
+    def skill_propose(
+        payload_json: str,
+        supporting_claim_ids: list[int],
+        scope: str = "",
+        source_agent: str = "skill-reviewer-mcp",
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Create a governed skill candidate; this can never confirm it."""
+        from memorymaster.knowledge.skills import propose_skill
+
+        rate_limit_error = _check_ingest_rate_limit(source_agent)
+        if rate_limit_error is not None:
+            return rate_limit_error
+        payload = json.loads(payload_json)
+        if not isinstance(payload, dict):
+            return _structured_error("payload_json must contain an object", "VALIDATION_ERROR", "payload_json")
+        return propose_skill(
+            _service(db, workspace),
+            payload=payload,
+            supporting_claim_ids=supporting_claim_ids,
+            scope=_effective_ingest_scope(scope, workspace),
+            source_agent=source_agent,
+        )
+
+    @mcp.tool()
+    def skill_review(
+        claim_id: int,
+        action: str,
+        actor: str = "operator-mcp",
+        reason: str = "",
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Explicitly approve or reject a skill candidate with an audit event."""
+        from memorymaster.knowledge.skills import approve_skill_candidate, reject_skill_candidate
+
+        normalized = action.strip().lower()
+        if normalized == "approve":
+            return approve_skill_candidate(_service(db, workspace), claim_id, actor=actor)
+        if normalized == "reject":
+            return reject_skill_candidate(
+                _service(db, workspace),
+                claim_id,
+                actor=actor,
+                reason=reason or "operator rejected candidate",
+            )
+        return _structured_error("action must be approve or reject", "VALIDATION_ERROR", "action")
+
+    @mcp.tool()
+    def skill_recall(
+        query: str,
+        scope_allowlist: str = "",
+        limit: int = 10,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Recall confirmed, active, authorized personal skills only."""
+        from memorymaster.knowledge.skills import recall_skills
+
+        rows = recall_skills(
+            _read_service(db, workspace),
+            query,
+            scope_allowlist=_effective_scope_allowlist(scope_allowlist, workspace),
+            limit=_bounded_limit(limit, maximum=100),
+        )
+        return {"ok": True, "rows": len(rows), "skills": rows}
+
+    @mcp.tool()
+    def skill_export(
+        staging_root: str = "",
+        scope_allowlist: str = "",
+        limit: int = 200,
+        db: str = "memorymaster.db",
+        workspace: str = ".",
+    ) -> dict[str, Any]:
+        """Render confirmed skills under MemoryMaster staging; never activate them."""
+        from memorymaster.knowledge.skills import export_confirmed_skills
+
+        return export_confirmed_skills(
+            _read_service(db, workspace),
+            staging_root=staging_root or None,
+            scope_allowlist=_effective_scope_allowlist(scope_allowlist, workspace),
+            limit=_bounded_limit(limit, maximum=1000),
+        )
 
     @mcp.tool()
     def redact_claim_payload(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -7,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from memorymaster.capture import CaptureRejected
 from memorymaster.capture.producers import ProducerItem, normalize_producer_item
 from memorymaster.capture.worker import run_capture_worker
 from memorymaster.core.service import MemoryService
@@ -123,6 +125,43 @@ def test_sequential_jobs_extract_their_exact_evidence(worker_env, monkeypatch) -
     ]
 
 
+def test_worker_leases_each_job_only_when_ready_to_process(monkeypatch) -> None:
+    events = []
+    pending = [SimpleNamespace(id=1), SimpleNamespace(id=2)]
+
+    class FakeRepository:
+        def __init__(self, _store) -> None:
+            pass
+
+        def lease_jobs(self, *, owner, limit):
+            events.append(("lease", owner, limit))
+            leased = pending[:limit]
+            del pending[:limit]
+            return leased
+
+        def finish_job(self, job_id, *, status, error_code=None, error_detail=None):
+            events.append(("finish", job_id, status))
+            return SimpleNamespace(status=status)
+
+    def fake_process(_service, _repository, job):
+        events.append(("process", job.id))
+
+    monkeypatch.setattr("memorymaster.capture.worker.CaptureRepository", FakeRepository)
+    monkeypatch.setattr("memorymaster.capture.worker._process_job", fake_process)
+
+    result = run_capture_worker(SimpleNamespace(store=object()), owner="fixture", limit=2)
+
+    assert result.leased == result.completed == 2
+    assert events == [
+        ("lease", "fixture", 1),
+        ("process", 1),
+        ("finish", 1, "completed"),
+        ("lease", "fixture", 1),
+        ("process", 2),
+        ("finish", 2, "completed"),
+    ]
+
+
 def test_provider_absence_blocks_media_with_actionable_code(worker_env) -> None:
     service, db, workspace = worker_env
     image = workspace / "image.png"
@@ -214,15 +253,54 @@ def test_unusable_claim_output_retries_with_stable_code(worker_env, monkeypatch)
     ["hermes", "whatsapp", "obsidian-clipper", "agent"],
 )
 def test_producer_contracts_normalize_without_fetching(producer: str) -> None:
+    text = "Producer note token=secret-value"
     envelope = normalize_producer_item(
         producer,
         ProducerItem(
             external_id="fixture",
-            text="Producer note token=secret-value",
+            text=text,
             source_uri="https://example.com/note",
-            content_hash="b" * 64,
+            content_hash=None,
+            session_hash="a" * 64,
+            turn_id="turn-7",
+            metadata={"platform": "telegram", "agent_identity": "otacon"},
         ),
     )
     assert envelope.source_kind == producer
-    assert envelope.content_hash == "b" * 64
+    assert envelope.content_hash == hashlib.sha256(text.encode()).hexdigest()
     assert "secret-value" not in (envelope.text or "")
+    assert envelope.producer_external_id_hash == hashlib.sha256(b"fixture").hexdigest()
+    assert envelope.producer_session_hash == "a" * 64
+    assert envelope.producer_turn_id == "turn-7"
+    assert dict(envelope.producer_metadata) == {
+        "agent_identity": "otacon",
+        "platform": "telegram",
+    }
+
+
+def test_producer_contract_rejects_mismatched_claimed_hash() -> None:
+    with pytest.raises(CaptureRejected) as caught:
+        normalize_producer_item(
+            "hermes",
+            ProducerItem(
+                external_id="fixture",
+                text="content",
+                content_hash="b" * 64,
+            ),
+        )
+    assert caught.value.code == "producer_hash_mismatch"
+
+
+def test_producer_contract_rejects_sensitive_metadata_without_echoing_value() -> None:
+    secret = "sk-abcdefghijklmnopqrstuvwxyz"
+    with pytest.raises(CaptureRejected) as caught:
+        normalize_producer_item(
+            "hermes",
+            ProducerItem(
+                external_id="fixture",
+                text="content",
+                metadata={"task_label": secret},
+            ),
+        )
+    assert caught.value.code == "producer_metadata_sensitive"
+    assert secret not in str(caught.value)

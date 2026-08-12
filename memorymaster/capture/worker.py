@@ -188,7 +188,7 @@ def run_capture_worker(
 ) -> CaptureWorkerResult:
     """Drain a bounded batch; no job can exceed repository retry limits."""
     repository = CaptureRepository(service.store)
-    jobs = repository.lease_jobs(owner=owner or f"capture-{uuid.uuid4().hex}", limit=limit)
+    lease_owner = owner or f"capture-{uuid.uuid4().hex}"
     counts = {
         "completed": 0,
         "retryable": 0,
@@ -196,7 +196,13 @@ def run_capture_worker(
         "errors": 0,
         "partial": 0,
     }
-    for job in jobs:
+    leased = 0
+    for _ in range(max(0, limit)):
+        jobs = repository.lease_jobs(owner=lease_owner, limit=1)
+        if not jobs:
+            break
+        job = jobs[0]
+        leased += 1
         try:
             completion = _process_job(service, repository, job)
             repository.finish_job(
@@ -230,4 +236,4 @@ def run_capture_worker(
             )
             counts[finished.status] += 1
             counts["errors"] += 1
-    return CaptureWorkerResult(leased=len(jobs), **counts)
+    return CaptureWorkerResult(leased=leased, **counts)

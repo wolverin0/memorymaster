@@ -12,7 +12,7 @@ from memorymaster.public.demo import run_disposable_demo
 
 def _emit(payload: object, *, json_output: bool) -> None:
     if json_output:
-        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        print(json.dumps(payload, ensure_ascii=True, sort_keys=True))
 
 
 def handle_remember(
@@ -24,6 +24,8 @@ def handle_remember(
         source_uri=args.url or args.source_uri,
         scope=args.scope,
         source_agent=args.source_agent,
+        session_id=args.session_id,
+        platform=args.platform,
         db=effective_db,
         workspace=args.workspace,
     )
@@ -50,6 +52,9 @@ def handle_recall(
         token_budget=args.budget,
         trust_mode=args.trust_mode,
         output_format=args.output_format,
+        session_id=args.session_id,
+        source_agent=args.source_agent,
+        platform=args.platform,
         db=effective_db,
         workspace=args.workspace,
     )
@@ -86,6 +91,9 @@ def handle_improve(
     receipt = improve(
         scope=args.scope,
         max_items=args.max_items,
+        session_id=args.session_id,
+        source_agent=args.source_agent,
+        platform=args.platform,
         db=effective_db,
         workspace=args.workspace,
     )

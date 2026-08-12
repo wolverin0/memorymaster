@@ -1,10 +1,11 @@
+<!-- doc-head: native Dreaming contract; Gemini extraction and GLM consolidation -->
 # MemoryMaster Native Dreaming V1
-> Covers: quiet transcript capture, asynchronous LLM consolidation, governed candidate writes, rollout, measurement, and rollback.
-> Key terms: Codex, Claude, OpenCode OAuth, GPT-5.6 Terra, exact evidence spans, capture ledger, candidate-first.
-> Read this before enabling Dreaming hooks, scheduling the worker, changing provider models, or activating candidate writes.
-> Default safety posture: disabled until explicitly installed; shadow processing before activation; never auto-confirms claims.
-> Authority: the claims store remains authoritative; the auxiliary capture ledger is replay state, not a second memory database.
-> Status: CURRENT implementation and stabilization contract; replacement 24-hour observation passed.
+# Covers: quiet capture, asynchronous consolidation, governed writes, rollout, measurement, and rollback.
+# Key terms: Gemini, GLM, exact evidence spans, capture ledger, candidate-first, task-bound providers.
+# Read when: enabling Dreaming, scheduling the worker, changing provider models, or activating writes.
+# Authority: claims remain authoritative; the auxiliary capture ledger is replay state, not a memory database.
+# Status: CURRENT; task-bound providers prevent ambient configuration drift and false-success results.
+<!-- /doc-head -->
 
 ## Intent
 
@@ -82,20 +83,19 @@ including schema-rejection paths, so hourly runs do not accumulate a second
 transcript archive. OpenCode credentials remain owned by OpenCode and are never
 read, copied, logged, or persisted by MemoryMaster.
 
-The local vNext stabilization uses ChatGPT OAuth for both stages:
-`openai/gpt-5.6-terra` at medium effort extracts typed evidence-linked
-candidates, while `openai/gpt-5.6-luna` at low effort performs the harder
-lifecycle comparison. GPT-5.4 Mini was removed from the local extraction
-configuration after live runs reproduced exit failures, malformed JSON, and
-low exact-evidence yield. Terra remains separate from Luna so model-specific
-stage budgets cannot consume one another. These are local activation choices;
-the portable extractor default remains Gemini.
+The active local configuration uses `gemini-3.5-flash-lite` for typed,
+evidence-linked extraction and `zai-coding-plan/glm-5.2` for lifecycle
+comparison. The scheduled action embeds both selections, clears stale variants,
+and runs Python in isolated mode, so ambient user variables cannot silently
+replace the chosen pair. Capture errors make the task fail nonzero even if the
+separate Dreaming phase has no errors. The portable extractor default remains
+Gemini and the portable consolidator default remains GLM.
 
 Verify account readiness without exposing credentials:
 
 ```powershell
 opencode auth list
-opencode models openai | Select-String 'openai/gpt-5.6-luna'
+opencode models zai-coding-plan | Select-String 'zai-coding-plan/glm-5.2'
 ```
 
 The scheduled task must run as the same Windows user that authenticated OpenCode. Missing CLI/account/model availability produces an actionable, retryable failure; it never silently switches providers.

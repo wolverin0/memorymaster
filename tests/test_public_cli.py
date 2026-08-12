@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 
 import pytest
 
 from memorymaster.surfaces.cli import main
+from memorymaster.surfaces.cli_handlers_public import _emit
 
 
 @pytest.fixture
@@ -65,3 +67,31 @@ def test_cli_url_capture_is_awaiting_evidence(cli_env, capsys) -> None:
     ) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["warnings"] == ["awaiting_evidence"]
+
+
+def test_public_json_output_is_safe_for_windows_legacy_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream = _LegacyWindowsStream()
+    monkeypatch.setattr(sys, "stdout", stream)
+
+    _emit({"comparison": "candidate score ≥ threshold"}, json_output=True)
+
+    assert json.loads(stream.text)["comparison"].endswith("≥ threshold")
+
+
+class _LegacyWindowsStream:
+    def __init__(self) -> None:
+        self.fragments: list[str] = []
+
+    @property
+    def text(self) -> str:
+        return "".join(self.fragments)
+
+    def write(self, value: str) -> int:
+        value.encode("cp1252", errors="strict")
+        self.fragments.append(value)
+        return len(value)
+
+    def flush(self) -> None:
+        return None

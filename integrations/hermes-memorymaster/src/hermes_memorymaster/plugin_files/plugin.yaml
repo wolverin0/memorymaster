@@ -1,0 +1,9 @@
+name: memorymaster
+kind: exclusive
+version: 0.1.0
+description: "Governed, scoped MemoryMaster recall and durable queued capture."
+hooks:
+  - on_session_end
+  - on_session_switch
+  - on_pre_compress
+  - on_memory_write

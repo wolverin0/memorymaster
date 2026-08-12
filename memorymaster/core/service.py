@@ -39,7 +39,7 @@ from memorymaster.core.intake_policy import (
     evaluate_intake,
 )
 from memorymaster.core.temporal_policy import claim_is_temporally_current
-from memorymaster.govern import ingest_governance
+from memorymaster.govern import ingest_governance, skill_review_phase
 from memorymaster.core.services.integration import IntegrationService
 from memorymaster.stores.claim_identity import (
     normalize_claim_identity,
@@ -53,7 +53,6 @@ import contextlib
 logger = logging.getLogger(__name__)
 
 RetrievalWeights = tuple[float, float, float, float]
-
 # Rule-mining steward phase (P3). DEFAULT OFF: run_cycle only mines verbatim
 # corrections into rule candidates when MEMORYMASTER_STEWARD_RULE_MINING is
 # explicitly enabled. When unset/off, run_cycle makes ZERO rule-mining LLM
@@ -929,6 +928,7 @@ class MemoryService(IntegrationService):
                 except Exception as exc:
                     logger.warning("rule mining phase failed: %s", exc)
                     result["rule_mining"] = {"enabled": True, "error": str(exc)}
+                result["skill_review"] = skill_review_phase.run(self)
                 budget_snapshot = budget.snapshot()
         except llm_budget.LLMBudgetExceeded as exc:
             current = llm_budget.get_current()

@@ -104,6 +104,7 @@ def test_http_mcp_initialize_handshake_accepts_valid_bearer(tmp_path: Path, monk
 
     db = tmp_path / "ready.db"
     MemoryService(db, workspace_root=tmp_path).init_db()
+    monkeypatch.delenv("MEMORYMASTER_MCP_HTTP_ALLOWED_HOSTS", raising=False)
     monkeypatch.setenv("MEMORYMASTER_MCP_AUTH_MODE", "local-trusted")
     app = mcp_http.create_http_app(token=TOKEN, db_target=str(db), workspace=str(tmp_path))
     request = json.dumps(

@@ -7,10 +7,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from memorymaster.capture import CaptureRepository, capture_input
+from memorymaster.capture import CaptureEnvelope, CaptureRepository, capture_input
+from memorymaster.capture.producers import ProducerItem, normalize_producer_item
 from memorymaster.core.models import Claim, EvidenceItem, SourceItem
 from memorymaster.core.scope_utils import scope_from_cwd
+from memorymaster.core.session_scope import ResolvedScope, SessionScopeResolver
 from memorymaster.core.service import MemoryService
+from memorymaster.knowledge.context_bundle import query_context_bundle
 
 API_VERSION = "memorymaster.public.v1"
 
@@ -23,6 +26,8 @@ class RememberReceipt:
     job_ids: tuple[int, ...]
     deduplicated: bool
     warnings: tuple[str, ...]
+    scope: str = "user"
+    scope_source: str = "default_user"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -37,6 +42,9 @@ class RecallReceipt:
     tokens_used: int
     trust_mode: str
     output_format: str
+    skills: tuple[dict[str, Any], ...] = ()
+    scope: str = "user"
+    scope_source: str = "default_user"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -62,6 +70,7 @@ class ImproveReceipt:
     queued: dict[str, int]
     already_pending: dict[str, int]
     steward_review_due: int
+    scope_source: str = "default_user"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -92,6 +101,24 @@ def _service(db: str | Path | None, workspace: Path | None) -> MemoryService:
     service = MemoryService(target, workspace_root=workspace or Path.cwd())
     service.init_db()
     return service
+
+
+def _resolve_scope(
+    service: MemoryService,
+    *,
+    scope: str | None,
+    workspace: Path | None,
+    session_id: str | None,
+    source_agent: str,
+    platform: str,
+) -> ResolvedScope:
+    return SessionScopeResolver(service.store.db_path).resolve(
+        session_id=session_id,
+        explicit_scope=scope,
+        workspace=workspace,
+        source_agent=source_agent,
+        platform=platform,
+    )
 
 
 def _source_dict(source: SourceItem) -> dict[str, Any]:
@@ -129,7 +156,13 @@ def _persist_capture(
         display_name="MemoryMaster Capture",
         config_json={"contract": API_VERSION},
     )
-    source_key = envelope.locator if envelope.source_kind != "inline" else envelope.content_hash
+    producer = getattr(envelope, "producer", None)
+    external_hash = getattr(envelope, "producer_external_id_hash", None)
+    source_key = (
+        f"producer:{producer}:{external_hash}"
+        if producer and external_hash
+        else envelope.locator if envelope.source_kind != "inline" else envelope.content_hash
+    )
     existing_source = service.get_source_item(
         source_id=source.id, source_item_id=source_key
     )
@@ -145,6 +178,11 @@ def _persist_capture(
             "scope": scope,
             "source_agent": source_agent,
             "provider_kind": envelope.provider_kind,
+            "producer": producer,
+            "producer_external_id_hash": external_hash,
+            "producer_session_hash": getattr(envelope, "producer_session_hash", None),
+            "producer_turn_id": getattr(envelope, "producer_turn_id", None),
+            "producer_metadata": dict(getattr(envelope, "producer_metadata", ())),
         },
         content_hash=envelope.content_hash,
     )
@@ -162,7 +200,15 @@ def _persist_capture(
             text=envelope.text,
             provider="memorymaster-capture",
             confidence=1.0,
-            payload_json={"locator": envelope.locator, "mime_type": envelope.mime_type},
+            payload_json={
+                "locator": envelope.locator,
+                "mime_type": envelope.mime_type,
+                "producer": producer,
+                "producer_external_id_hash": external_hash,
+                "producer_session_hash": getattr(envelope, "producer_session_hash", None),
+                "producer_turn_id": getattr(envelope, "producer_turn_id", None),
+                "producer_metadata": dict(getattr(envelope, "producer_metadata", ())),
+            },
             content_hash=envelope.content_hash,
         )
     return item, evidence, deduplicated
@@ -208,18 +254,43 @@ def remember(
     source_uri: str | None = None,
     scope: str | None = None,
     source_agent: str = "memorymaster-public",
+    session_id: str | None = None,
+    platform: str = "local",
+    producer: str | None = None,
+    producer_external_id: str | None = None,
+    producer_content_hash: str | None = None,
+    producer_session_hash: str | None = None,
+    producer_turn_id: str | None = None,
+    producer_metadata: dict[str, Any] | None = None,
     db: str | Path | None = None,
     workspace: str | Path | None = None,
 ) -> RememberReceipt:
     """Persist evidence synchronously and queue governed extraction work."""
     workspace_path = _workspace_path(workspace)
-    resolved_scope = _scope(scope, workspace_path)
-    envelope = capture_input(text=text, path=path, source_uri=source_uri)
+    envelope = _remember_envelope(
+        text=text,
+        path=path,
+        source_uri=source_uri,
+        producer=producer,
+        producer_external_id=producer_external_id,
+        producer_content_hash=producer_content_hash,
+        producer_session_hash=producer_session_hash,
+        producer_turn_id=producer_turn_id,
+        producer_metadata=producer_metadata,
+    )
     service = _service(db, workspace_path)
+    resolved = _resolve_scope(
+        service,
+        scope=scope,
+        workspace=workspace_path,
+        session_id=session_id,
+        source_agent=source_agent,
+        platform=platform,
+    )
     item, evidence, evidence_duplicate = _persist_capture(
         service,
         envelope=envelope,
-        scope=resolved_scope,
+        scope=resolved.scope,
         source_agent=source_agent,
     )
     jobs, jobs_duplicate = _queue_capture_jobs(
@@ -241,6 +312,38 @@ def remember(
         job_ids=jobs,
         deduplicated=evidence_duplicate and jobs_duplicate,
         warnings=warnings,
+        scope=resolved.scope,
+        scope_source=resolved.scope_source,
+    )
+
+
+def _remember_envelope(
+    *,
+    text: str | None,
+    path: str | Path | None,
+    source_uri: str | None,
+    producer: str | None,
+    producer_external_id: str | None,
+    producer_content_hash: str | None,
+    producer_session_hash: str | None,
+    producer_turn_id: str | None,
+    producer_metadata: dict[str, Any] | None,
+) -> CaptureEnvelope:
+    if not producer:
+        return capture_input(text=text, path=path, source_uri=source_uri)
+    if text is None or path is not None or not producer_external_id:
+        raise ValueError("Producer capture requires text and producer_external_id; paths are forbidden.")
+    return normalize_producer_item(
+        producer,
+        ProducerItem(
+            external_id=producer_external_id,
+            text=text,
+            source_uri=source_uri,
+            content_hash=producer_content_hash,
+            session_hash=producer_session_hash,
+            turn_id=producer_turn_id,
+            metadata=producer_metadata,
+        ),
     )
 
 
@@ -276,20 +379,44 @@ def recall(
     token_budget: int = 4000,
     trust_mode: str = "trusted",
     output_format: str = "text",
+    retrieval_mode: str = "hybrid",
+    include_skills: bool = False,
+    skill_limit: int = 3,
+    session_id: str | None = None,
+    source_agent: str = "memorymaster-public",
+    platform: str = "local",
     db: str | Path | None = None,
     workspace: str | Path | None = None,
 ) -> RecallReceipt:
     """Return governed context and structured lifecycle/citation details."""
     workspace_path = _workspace_path(workspace)
     service = _service(db, workspace_path)
-    scopes = list(scope_allowlist) if scope_allowlist else [_scope(None, workspace_path)]
-    result = service.query_for_context(
-        query=query,
+    if scope_allowlist:
+        scopes = list(scope_allowlist)
+        receipt_scope = scopes[0] if len(scopes) == 1 else "multiple"
+        scope_source = "scope_allowlist"
+    else:
+        resolved = _resolve_scope(
+            service,
+            scope=None,
+            workspace=workspace_path,
+            session_id=session_id,
+            source_agent=source_agent,
+            platform=platform,
+        )
+        scopes = [resolved.scope]
+        receipt_scope = resolved.scope
+        scope_source = resolved.scope_source
+    result = query_context_bundle(
+        service,
+        query,
+        scope_allowlist=scopes,
         token_budget=token_budget,
         output_format=output_format,
-        retrieval_mode="hybrid",
+        retrieval_mode=retrieval_mode,
         trust_mode=trust_mode,
-        scope_allowlist=scopes,
+        include_skills=include_skills,
+        skill_limit=skill_limit,
     )
     claims = tuple(_recall_claim(row) for row in result.rows)
     return RecallReceipt(
@@ -299,7 +426,10 @@ def recall(
         token_budget=result.token_budget,
         tokens_used=result.tokens_used,
         trust_mode=trust_mode,
-        output_format=result.format,
+        output_format=result.output_format,
+        skills=result.skills,
+        scope=receipt_scope,
+        scope_source=scope_source,
     )
 
 
@@ -444,6 +574,9 @@ def improve(
     *,
     scope: str | None = None,
     max_items: int = 200,
+    session_id: str | None = None,
+    source_agent: str = "memorymaster-public",
+    platform: str = "local",
     db: str | Path | None = None,
     workspace: str | Path | None = None,
 ) -> ImproveReceipt:
@@ -451,8 +584,16 @@ def improve(
     if not 1 <= max_items <= 200:
         raise ValueError("max_items must be between 1 and 200.")
     workspace_path = _workspace_path(workspace)
-    resolved_scope = _scope(scope, workspace_path)
     service = _service(db, workspace_path)
+    resolved = _resolve_scope(
+        service,
+        scope=scope,
+        workspace=workspace_path,
+        session_id=session_id,
+        source_agent=source_agent,
+        platform=platform,
+    )
+    resolved_scope = resolved.scope
     repository = CaptureRepository(service.store)
     claim_queued, claim_existing = _queue_due_evidence(
         repository, scope=resolved_scope, limit=max_items
@@ -472,4 +613,5 @@ def improve(
         queued={"extract_claims": claim_queued, "extract_graph": graph_queued},
         already_pending={"extract_claims": claim_existing, "extract_graph": graph_existing},
         steward_review_due=len(candidates),
+        scope_source=resolved.scope_source,
     )
