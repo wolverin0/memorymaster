@@ -1,20 +1,20 @@
-<!-- doc-head: canonical documentation map; P5 repair4 OAuth blocked -->
+<!-- doc-head: canonical documentation map; P5 provider replay passed -->
 # DOCS-MAP - memorymaster
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, paper radar, ADR.
 # Read when: locating authoritative project documentation before reading doc bodies.
 # Updated: 2026-08-12 after repair4 transport, queue, metadata, and live cleanup evidence.
-# Rule: no push, PR, publish, merge, or PPR-7 until OpenCode reauth and bounded verifier replay pass.
+# Rule: no push, PR, publish, merge, or PPR-7 until the bounded verifier replay passes.
 <!-- /doc-head -->
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
 | CHANGELOG.md | CURRENT | 2026-08-04 | Public release history; v4.6.0 records governed universal capture, measured quality changes, security evidence, and known follow-ups. |
-| ROADMAP.md | CURRENT | 2026-08-12 | Sole authoritative roadmap; the interval elapsed and repair4 is complete except scheduled OpenCode OAuth 401. |
+| ROADMAP.md | CURRENT | 2026-08-12 | Sole authoritative roadmap; the interval elapsed, pinned Gemini+GLM replay passes, and the bounded verifier remains. |
 | .planning/PAPER-RADAR-REVIEW-2026-08-08.md | CURRENT | 2026-08-08 | Primary-paper ledger covers 57-paper triage, 18 deep reviews, exact MemoryMaster gaps, and ordered PPR-1 through PPR-6 decisions subordinate to ROADMAP.md. |
 | .planning/PAPER-RESEARCH-IMPLEMENTATION-2026-08-08.md | CURRENT | 2026-08-08 | Executable status ledger for PPR-1 through PPR-6; records acceptance criteria and evidence without competing with ROADMAP.md. |
-| .planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md | CURRENT | 2026-08-12 | Executable Tencent-derived ledger; repair4 closes queue/transport/cleanup defects and records the OpenCode reauth blocker. |
-| .planning/audits/2026-08-07-hermes-scope-skills/audit-delta.md | CURRENT | 2026-08-12 | Bounded delta preserves failed runs and records repair4 scope, lease, stateless transport, exact cleanup, live recall, and OAuth evidence. |
+| .planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md | CURRENT | 2026-08-12 | Executable Tencent-derived ledger; repair4 closes queue/transport defects and binds the selected Gemini+GLM task pair. |
+| .planning/audits/2026-08-07-hermes-scope-skills/audit-delta.md | CURRENT | 2026-08-12 | Bounded delta preserves failed runs and records repair4 plus provider-drift root cause and enforcement. |
 | docs/governed-skills.md | CURRENT | 2026-08-08 | Operator guide for proposal/promotion, progressive confirmed-skill recall, isolation, and staging-only export. |
 | .planning/AUTORESEARCH-PROGRAM-2026-08-03.md | CURRENT | 2026-08-04 | Completed six-phase execution overlay records retrieval, graph, capture, full-QA, OAuth quality, public release, and the sole remaining longitudinal gate. |
 | .planning/audits/2026-08-04-autoresearch-convergence/audit-delta.md | CURRENT | 2026-08-04 | Bounded convergence delta records SQLite-only tests, 40-case quality evidence, public v4.6.0 release evidence, and the remaining seven-day observation. |
@@ -36,7 +36,7 @@
 | docs/archive/AUDIT-2026-04-09.md | ABANDONED | 2026-06-20 | The doc is a dated audit from April 2026 with a specific 30-day fix plan for temporary issues (hardcoded paths, missing auth, failing tests) that implies a transient state of the codebase rather than permanent reference material.  |
 | .planning/audits/2026-07-13-phase2-budget-delta/pr-draft.md | ABANDONED | 2026-07-14 | The file is a draft PR from 2026 that describes Phase 2 core convergence as not yet deployed and requiring specific external evidence, suggesting a temporary plan that was either superseded or discarded.  |
 | .planning/P1-RELIABILITY-SPEC.md | CURRENT | 2026-06-10 | This is the approved, active specification for the v3.29 reliability build, with detailed implementation tasks and migration steps based on recent evidence.  |
-| .planning/MEMORYMASTER-DREAMING-V1.md | CURRENT | 2026-08-04 | Canonical contract for quiet capture, exact-span OpenCode extraction, provider/model variants, completed activation evidence, and rollback. |
+| .planning/MEMORYMASTER-DREAMING-V1.md | CURRENT | 2026-08-12 | Canonical contract for quiet capture, pinned Gemini extraction, GLM consolidation, fail-closed task status, and rollback. |
 | .planning/codebase/STRUCTURE.md | CURRENT | 2026-07-14 | The document accurately reflects the project's current directory layout, module boundaries, and file organization logic (e.g., 800 LOC limits), confirmed by specific references to existing paths and integration patterns.  |
 | .planning/audits/2026-07-13-phase2-budget-delta/audit-delta.md | CURRENT | 2026-07-14 | This document serves as the authoritative audit record for Phase 2 convergence, referencing specific completed milestones (e.g., P2-A through P2-F) and remaining external blockers, with no indication of being superseded or abandoned.  |
 | .planning/REMEDIATION-OPTIMIZATION-PLAN-2026-07-10.md | CURRENT | 2026-07-14 | The document is a dated 2026 remediation plan with proposed status and clear work packages that align with the project's scope, and no signals indicate it has been executed or superseded.  |

@@ -1,10 +1,10 @@
-<!-- doc-head: sole authoritative roadmap; P5 repaired, OAuth blocked -->
+<!-- doc-head: sole authoritative roadmap; P5 provider replay passed -->
 # MemoryMaster roadmap
 # Covers: post-v4.6 sequence, Tencent-derived work, paper research, and deferrals.
 # Key terms: Hermes, governed skills, paper radar, temporal projection, sustainability.
 # Read when: choosing release scope, accepting a feature, or checking deferrals.
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
-# Safety: SQLite authority and steward promotion remain fixed; no PR until OpenCode reauth and verifier success.
+# Safety: SQLite authority and steward promotion remain fixed; no PR until the bounded verifier succeeds.
 <!-- /doc-head -->
 
 ## Shipped in v4.6.0
@@ -53,10 +53,13 @@ its governed-claims authority:
   success marker. The August 10 baseline interval has elapsed; no additional
   24-hour wait is required after repair4.
 - Repair4 closed scope aggregation, capture lease, Hermes stateless transport,
-  durable metadata, exact terminal cleanup, and live recall defects. Scheduled
-  Dreaming remains red because OpenCode OpenAI OAuth returns HTTP 401.
-- Do not close P5, push, or create a PR until OpenCode is reauthenticated and
-  Dreaming plus the verifier pass against the already elapsed baseline.
+  durable metadata, exact terminal cleanup, and live recall defects. A stale
+  user environment had overridden the selected Gemini+GLM Dreaming pair with
+  OpenAI models; task-bound provider arguments now prevent recurrence.
+- The pinned Gemini Flash Lite plus GLM 5.2 scheduled replay passes: exit 0,
+  eight extraction/consolidation/application decisions, zero errors, and one
+  stale crash run recovered. Do not close P5, push, or create a PR until the
+  bounded verifier passes against the already elapsed baseline.
 - The invalid earlier window remains incident evidence only because it included
   a VM OOM/gateway interruption and did not contain P5.
 - Keep v4.6.0 operational while the post-release Obsidian opt-in and OpenCode
@@ -74,7 +77,7 @@ its governed-claims authority:
   progressive approved-skill reuse are implemented, verified, and active.
   Windows snapshot/readiness gates, consoleless P5 runtime replacement, VM
   package rollback preparation, and live functional probes passed. Complete
-  OpenCode reauthentication and the bounded verifier replay before the PR.
+  the bounded verifier replay before the PR; the pinned Gemini+GLM task passes.
 - Improve personal/local backup guidance beyond the already verified disposable
   backup/restore and migration procedure.
 - Keep semantic recall optional and disabled unless a local user deliberately

@@ -1,10 +1,10 @@
-<!-- doc-head: Hermes P5 repair4 complete except OpenCode OAuth -->
+<!-- doc-head: Hermes P5 provider replay passed; verifier pending -->
 # Tencent-derived scope, governed-skills, and Hermes integration specification
 # Covers: session binding, native Hermes memory, governed skill proposals, and progressive approved-skill reuse.
 # Key terms: TencentDB Agent Memory, SessionBinding, Hermes, durable outbox, skill candidate, approved skills.
 # Read when: implementing, reviewing, activating, or rolling back the post-v4.6 companion-integration program.
 # Authority & Safety: implements `ROADMAP.md`; Windows SQLite is authoritative, VM is fallback-only, and skills require approval.
-# Status: P1-P5 are active; the interval elapsed and repair4 passes except scheduled OpenCode OAuth 401.
+# Status: P1-P5 are active; the interval elapsed, Gemini+GLM replay passes, and the verifier remains.
 <!-- /doc-head -->
 
 ## 1. Outcome
@@ -433,7 +433,8 @@ and no unresolved scope or lineage invariant.
       weakening coverage or replay safety.
 - [x] Remediate repair-wheel provenance, branch Gitleaks availability, the
       line-ending-sensitive runtime comparison, and the deduplicated canary.
-- [ ] Pass Dreaming and the bounded verifier replay before PR creation.
+- [x] Pass pinned Gemini+GLM Dreaming after normal crash-lease recovery.
+- [ ] Pass the bounded verifier replay before PR creation.
 
 P5 immediate repair4 on 2026-08-12:
 
@@ -450,11 +451,15 @@ P5 immediate repair4 on 2026-08-12:
 - The exact legacy rejected row and four repair-backup files were removed; 60
   completed audit rows remain. Gitleaks reports zero findings across the full
   branch range.
-- Scheduled Dreaming still reproduces exit 1 because the configured OpenCode
-  OpenAI OAuth credential returns non-retryable HTTP 401. Reauthenticate, rerun
-  Dreaming, then replay the verifier. The final non-ML suite passes with 4,441
-  tests, 72 skips, 97 deselections, and one expected failure. No new 24-hour
-  wait is required, but the checkbox remains open until the live commands pass.
+- The HTTP 401 diagnosis was configuration drift, not the selected architecture:
+  user-level variables had replaced Gemini+GLM with OpenAI Terra/Luna. The task
+  now embeds Gemini Flash Lite and `zai-coding-plan/glm-5.2`, clears stale
+  variants, runs isolated, and fails nonzero on capture errors. The pinned
+  capture retry and full scheduled task pass. The fresh run used Gemini Flash
+  Lite plus GLM 5.2, recovered one stale run, processed eight decisions, and
+  ended with zero errors and Scheduler exit 0. The final non-ML suite passes
+  with 4,445 tests, 72 skips, 97 deselections, and one expected failure. Only
+  the bounded verifier remains; no new 24-hour wait is required.
 
 P5 local verification on 2026-08-08:
 

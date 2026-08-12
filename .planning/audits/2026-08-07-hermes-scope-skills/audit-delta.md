@@ -1,10 +1,10 @@
-<!-- doc-head: Hermes P5 elapsed observation repaired; OAuth blocks closure -->
+<!-- doc-head: Hermes P5 provider replay passed; verifier pending -->
 # Hermes scope and governed-skills convergence delta
 # Covers: SQLite safety, native Hermes rollout, progressive skills, rollback, and observation gates.
 # Key terms: TencentDB Agent Memory, Hermes, session scope, personal-skill-v1, approved skills, snapshot.
 # Read when: reviewing this feature branch, operating the activated Windows tasks, or resuming the VM rollout.
-# Authority & Status: ROADMAP.md remains authoritative; the interval elapsed, but OpenCode OAuth 401 blocks PR closure.
-# Updated: 2026-08-12 after repair4 live transport, queue, security, and provider remediation.
+# Authority & Status: ROADMAP.md remains authoritative; the elapsed interval and pinned Gemini+GLM replay pass.
+# Updated: 2026-08-12 after provider enforcement, live replay, and fresh non-ML verification.
 <!-- /doc-head -->
 
 ## Verdict
@@ -12,11 +12,13 @@
 The required August 10-12 observation interval has elapsed; repair4 replays
 that evidence and does not start another arbitrary 24-hour clock. Exact project
 coverage, SQLite integrity, native Hermes transport, the bounded outbox, and
-the installed provider now pass. The current scheduled Dreaming action still
-fails because its configured OpenCode OpenAI OAuth credential returns a
-non-retryable HTTP 401. P5 therefore remains blocked before PR creation and
-PPR-7 remains unstarted. No tag, release, publication, merge, or public
-deployment is authorized here.
+the installed provider now pass. The scheduled Dreaming failure came from
+stale user-level variables overriding the selected Gemini+GLM pair with OpenAI,
+not from an intended OpenAI dependency. The task is now pinned to Gemini Flash
+Lite plus GLM 5.2 and its full scheduled replay passes; the bounded verifier
+remains. P5 therefore remains open before PR creation and PPR-7 remains
+unstarted. No tag, release, publication, merge, or public deployment is
+authorized here.
 
 ## P5 progressive-skill evidence
 
@@ -403,7 +405,7 @@ PPR-7 work occurred. See
 `artifacts/p4-hermes-scope-skills/observation-p5-repair3-20260812/verify-failure.md`
 and `verify-result.json` for the bounded record.
 
-## 2026-08-12 repair4 immediate remediation - OAUTH BLOCKED
+## 2026-08-12 repair4 and provider-binding remediation
 
 Repair4 used the already elapsed August 10 baseline instead of restarting the
 observation clock. It corrected the verifier's all-scope aggregation. Before
@@ -412,8 +414,8 @@ zero missing claim/graph jobs, blocked or due-retryable work, expired leases,
 partial completions, orphans, or foreign-key violations. The historical `user`
 backlog was reconciled through public queue/worker APIs without rewriting
 immutable diagnostics. The later scheduled Dreaming replay left seven
-`user`-scope jobs in retryable state because of the OAuth failure described
-below; exact `project:memorymaster` coverage remains `ok` with zero anomalies.
+`user`-scope jobs retryable under the stale OpenAI override described below;
+exact `project:memorymaster` coverage remains `ok` with zero anomalies.
 
 Two runtime defects were repaired with adversarial tests. Capture workers now
 lease one job only when ready to process it, preventing five-minute batch
@@ -440,13 +442,35 @@ zero post-start traceback/OOM indicators, and 11 established TLS connections.
 Gitleaks scanned the full branch range after the local unpushed test-fixture
 history cleanup and found zero leaks.
 
-The final non-ML suite passes with 4,441 tests, 72 skips, 97 deselections, one
-expected failure, and 15 dependency deprecation warnings in 814.58 seconds.
-The remaining blocker is precise and external to the repaired queue/transport:
-the scheduled runtime's OpenCode version probe passes, but a synthetic
-`openai/gpt-5.4-mini` OAuth call returns structured `APIError` HTTP 401 with
-`isRetryable=false`. The exact Dreaming action reproduces exit 1, leaving seven
-`user`-scope capture jobs retryable and six dream calls deferred. Reauthenticate
-OpenCode, then rerun Dreaming and the observation verifier against this same
-elapsed baseline. Do not push, create the PR, merge, release, or start PPR-7
-before that fresh success evidence exists.
+The fresh non-ML suite passes with 4,445 tests, 72 skips, 97 deselections, one
+expected failure, and 15 dependency deprecation warnings in 1,266.95 seconds.
+The HTTP 401 probe diagnosed the active override but not the intended provider
+contract. Follow-up inspection found user-level `MEMORYMASTER_DREAM_*` values
+selecting OpenAI Terra/Luna even though portable defaults and the operator's
+choice were Gemini extraction plus GLM consolidation. Task Scheduler had also
+cached those ambient values, and the runner returned exit 0 when capture work
+failed if the separate Dreaming phase reported no errors.
+
+Commit `36db18d` makes this correction executable: task registration embeds the
+chosen provider/models, clears stale variants, adds isolated `-I` execution,
+falls back to the native Task Scheduler API when `schtasks /tr` is too long,
+and returns nonzero for capture errors. Ten focused scheduling tests pass; the
+scheduled-runner subset has 84 percent coverage. The registered action is now
+pinned to `gemini-3.5-flash-lite` and `zai-coding-plan/glm-5.2`. A bounded API
+probe returned HTTP 200 in 2.452 seconds, and the single due capture retry then
+completed through the normal worker. After the stopped high-demand run's
+15-minute lease expired, concurrent Steward work caused three fail-closed
+`database is locked` results. Steward completed normally with exit 0; the next
+exact task replay then completed with Scheduler exit 0 using Gemini Flash Lite
+and GLM 5.2. It extracted, consolidated, and applied eight decisions with zero
+errors, recovered the stale run, and left no Dreaming lease. Exact
+`project:memorymaster` capture coverage remains `ok` with zero anomalies.
+
+Fresh follow-up gates pass: 60 provider/capture/scheduling tests, 10 focused
+scheduling tests, 4,445 non-ML tests, 4,615 collected tests, Ruff, branch-range
+Gitleaks across 34 commits, active and staged installed-skill canaries, active
+wheel payload parity across 353 files, and `pip check`. A strictly read-only
+authoritative SQLite probe returned `quick_check=ok`, zero foreign-key rows,
+and unchanged database size/timestamp in 150.57 seconds. The bounded verifier
+remains before PR creation. Do not push, create the PR, merge, release, or start
+PPR-7 before its fresh success evidence.
