@@ -23,6 +23,14 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+try:
+    sys.path.remove(str(REPO_ROOT))
+except ValueError:
+    pass
+sys.path.insert(0, str(REPO_ROOT))
+
+
 EXPECTED_VERSION = "4.7.0"
 TARGET_HUMAN_ID = "mm-8aef"
 TARGET_QUERY = "why does wezterm cli time out from Node but not from bash"

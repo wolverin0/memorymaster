@@ -40,6 +40,12 @@ def test_exit_codes_are_fail_closed() -> None:
     assert module.exit_code([passed, pending, failed]) == 1
 
 
+def test_gate_binds_imports_to_its_repository() -> None:
+    module = _module()
+
+    assert Path(module.sys.path[0]).resolve() == module.REPO_ROOT
+
+
 def test_checkpoint_is_pending_until_due_then_fails_without_receipt() -> None:
     module = _module()
     state = {
