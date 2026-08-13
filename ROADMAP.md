@@ -1,10 +1,10 @@
-<!-- doc-head: sole authoritative roadmap; P5 verifier passed, PR #189 open -->
+<!-- doc-head: sole authoritative roadmap; P5 merged/deployed, PPR-7 active -->
 # MemoryMaster roadmap
 # Covers: post-v4.6 sequence, Tencent-derived work, paper research, and deferrals.
 # Key terms: Hermes, governed skills, paper radar, temporal projection, sustainability.
 # Read when: choosing release scope, accepting a feature, or checking deferrals.
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
-# Safety: SQLite authority and steward promotion remain fixed; PR #189 is open, never authorizing merge, release, deployment, or PPR-7.
+# Safety: SQLite authority and steward promotion remain fixed; PPR-7 stays additive, opt-in, and unreleased pending its own evidence.
 <!-- /doc-head -->
 
 ## Shipped in v4.6.0
@@ -59,8 +59,15 @@ its governed-claims authority:
 - The pinned Gemini Flash Lite plus GLM 5.2 scheduled replay passes: exit 0,
   eight extraction/consolidation/application decisions, zero errors, and one
   stale crash run recovered. Repair5 independently replays the bounded gate
-  against the elapsed baseline and passes; [PR #189](https://github.com/wolverin0/memorymaster/pull/189)
-  is open, while merge, release, deployment, and PPR-7 remain prohibited.
+  against the elapsed baseline and passes. [PR #189](https://github.com/wolverin0/memorymaster/pull/189)
+  merged as `d34b80c` and its clean wheel is active in the governed local
+  runtime with healthy MCP HTTP probes; the scheduled Dreaming pair remains
+  Gemini Flash Lite plus GLM 5.2.
+- PPR-7 governed graph observations are implemented and locally verified on an
+  isolated feature branch. Implementation is additive, candidate-first, and
+  opt-in; its separate PR/CI, feature-off deployment, and rollout evidence are
+  still required before activation. No public release or automatic
+  ordinary-recall inclusion is implied.
 - The invalid earlier window remains incident evidence only because it included
   a VM OOM/gateway interruption and did not contain P5.
 - Keep v4.6.0 operational while the post-release Obsidian opt-in and OpenCode
@@ -78,7 +85,12 @@ its governed-claims authority:
   progressive approved-skill reuse are implemented, verified, and active.
   Windows snapshot/readiness gates, consoleless P5 runtime replacement, VM
   package rollback preparation, and live functional probes passed. The repair5
-  bounded verifier now passes; create a PR only, with no merge or follow-on PPR-7 work.
+  bounded verifier passed, PR #189 merged, and the governed local runtime was
+  upgraded with a clean wheel and healthy post-restart probe.
+- Review and integrate PPR-7 according to `.planning/GRAPH-OBSERVATIONS-V1.md`;
+  exact support signatures, deterministic discovery, candidate-only synthesis,
+  observation-specific steward validation, and explicit recall inclusion are
+  implemented with local evidence, while PR/CI and feature-off rollout remain.
 - Improve personal/local backup guidance beyond the already verified disposable
   backup/restore and migration procedure.
 - Keep semantic recall optional and disabled unless a local user deliberately

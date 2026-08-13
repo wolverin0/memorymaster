@@ -35,10 +35,15 @@ def test_public_mcp_contract_round_trip(mcp_env) -> None:
     assert remembered["api_version"] == "memorymaster.public.v1"
 
     recalled = mcp_server.recall(
-        query="MCP public capture", db=db, workspace=workspace
+        query="MCP public capture",
+        include_observations=True,
+        observation_limit=5,
+        db=db,
+        workspace=workspace,
     )
     assert recalled["ok"] is True
     assert recalled["trust_mode"] == "trusted"
+    assert recalled["observations"] == ()
 
     preview = mcp_server.forget(
         source_item_id=remembered["source_item"]["id"],

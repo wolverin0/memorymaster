@@ -552,6 +552,23 @@ def run_steward(
 
     Returns summary stats dict.
     """
+    from memorymaster.govern.jobs.deterministic import open_store
+    from memorymaster.knowledge.graph_observation_engine import (
+        review_observation_candidates,
+    )
+
+    effective_store = store or open_store(db_path)
+    try:
+        observation_review = review_observation_candidates(
+            effective_store,
+            scope=scope,
+            limit=limit,
+            apply=not dry_run,
+        )
+    except Exception as exc:  # noqa: BLE001 - observations never fall through to classifier
+        log.warning("Observation steward gate failed closed: %s", exc)
+        observation_review = {"checked": 0, "confirmed": 0, "archived": 0, "errors": 1}
+
     # Build key rotator if multiple keys available
     effective_keys = api_keys if api_keys else [api_key] if api_key else [""]
     key_rotator: KeyRotator | None = None
@@ -575,12 +592,14 @@ def run_steward(
     if scope is not None:
         candidates = conn.execute(
             "SELECT id, text, scope, version FROM claims WHERE status = 'candidate' "
+            "AND COALESCE(claim_type, '') <> 'observation' "
             "AND text IS NOT NULL AND scope = ? ORDER BY id LIMIT ?",
             (scope, limit),
         ).fetchall()
     else:
         candidates = conn.execute(
             "SELECT id, text, scope, version FROM claims WHERE status = 'candidate' "
+            "AND COALESCE(claim_type, '') <> 'observation' "
             "AND text IS NOT NULL ORDER BY id LIMIT ?",
             (limit,),
         ).fetchall()
@@ -614,6 +633,7 @@ def run_steward(
         "dedupe_score_sum": 0.0,
         "dedupe_score_count": 0,
         "results": [],
+        "observation_review": observation_review,
     }
 
     for row in candidates:
@@ -882,7 +902,7 @@ def run_steward(
         try:
             unique_ids = list(dict.fromkeys(confirmed_claim_ids))
             validation_stats = _auto_validate_claims(
-                db_path, unique_ids, workspace_root, store=store,
+                db_path, unique_ids, workspace_root, store=effective_store,
             )
             stats["auto_validation"] = validation_stats
         except Exception as e:

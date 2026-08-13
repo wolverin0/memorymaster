@@ -31,10 +31,20 @@ def test_cli_remember_recall_forget_improve_contract(cli_env, capsys) -> None:
     assert remembered["api_version"] == "memorymaster.public.v1"
     source_id = remembered["source_item"]["id"]
 
-    assert main([*_base(db, workspace), "recall", "Captured CLI note."]) == 0
+    assert main(
+        [
+            *_base(db, workspace),
+            "recall",
+            "Captured CLI note.",
+            "--include-observations",
+            "--observation-limit",
+            "5",
+        ]
+    ) == 0
     recalled = json.loads(capsys.readouterr().out)
     assert recalled["api_version"] == "memorymaster.public.v1"
     assert recalled["trust_mode"] == "trusted"
+    assert recalled["observations"] == []
 
     assert main(
         [*_base(db, workspace), "forget", "--source-item-id", str(source_id)]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,10 @@ from memorymaster.core.scope_utils import scope_from_cwd
 from memorymaster.core.session_scope import ResolvedScope, SessionScopeResolver
 from memorymaster.core.service import MemoryService
 from memorymaster.knowledge.context_bundle import query_context_bundle
+from memorymaster.knowledge.graph_observation_repository import (
+    GraphObservationRepository,
+)
+from memorymaster.knowledge.ontology import load_ontology
 
 API_VERSION = "memorymaster.public.v1"
 
@@ -43,6 +48,7 @@ class RecallReceipt:
     trust_mode: str
     output_format: str
     skills: tuple[dict[str, Any], ...] = ()
+    observations: tuple[dict[str, Any], ...] = ()
     scope: str = "user"
     scope_source: str = "default_user"
 
@@ -91,13 +97,19 @@ def _scope(scope: str | None, workspace: Path | None) -> str:
     return derived if derived != "global" else "user"
 
 
-def _service(db: str | Path | None, workspace: Path | None) -> MemoryService:
+def _service(
+    db: str | Path | None,
+    workspace: Path | None,
+    *,
+    tenant_id: str | None = None,
+) -> MemoryService:
     target = str(
         db
         or os.environ.get("MEMORYMASTER_DB", "").strip()
         or os.environ.get("MEMORYMASTER_DEFAULT_DB", "").strip()
         or "memorymaster.db"
     )
+    del tenant_id  # Observation filtering is explicit; preserve facade compatibility.
     service = MemoryService(target, workspace_root=workspace or Path.cwd())
     service.init_db()
     return service
@@ -382,6 +394,9 @@ def recall(
     retrieval_mode: str = "hybrid",
     include_skills: bool = False,
     skill_limit: int = 3,
+    include_observations: bool = False,
+    observation_limit: int = 2,
+    tenant_id: str | None = None,
     session_id: str | None = None,
     source_agent: str = "memorymaster-public",
     platform: str = "local",
@@ -390,7 +405,7 @@ def recall(
 ) -> RecallReceipt:
     """Return governed context and structured lifecycle/citation details."""
     workspace_path = _workspace_path(workspace)
-    service = _service(db, workspace_path)
+    service = _service(db, workspace_path, tenant_id=tenant_id)
     if scope_allowlist:
         scopes = list(scope_allowlist)
         receipt_scope = scopes[0] if len(scopes) == 1 else "multiple"
@@ -417,6 +432,9 @@ def recall(
         trust_mode=trust_mode,
         include_skills=include_skills,
         skill_limit=skill_limit,
+        include_observations=include_observations,
+        observation_limit=observation_limit,
+        observation_tenant_id=tenant_id,
     )
     claims = tuple(_recall_claim(row) for row in result.rows)
     return RecallReceipt(
@@ -428,6 +446,7 @@ def recall(
         trust_mode=trust_mode,
         output_format=result.output_format,
         skills=result.skills,
+        observations=result.observations,
         scope=receipt_scope,
         scope_source=scope_source,
     )
@@ -570,6 +589,19 @@ def _queue_due_graph(
     return queued, existing
 
 
+def _queue_observation_discovery(
+    service: MemoryService, *, scope: str, tenant_id: str | None
+) -> tuple[int, int]:
+    repository = GraphObservationRepository(service.store)
+    _job, created = repository.queue_discovery(
+        tenant_id=tenant_id,
+        scope=scope,
+        ontology_version=load_ontology().version,
+        cycle_hour=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H"),
+    )
+    return int(created), int(not created)
+
+
 def improve(
     *,
     scope: str | None = None,
@@ -579,12 +611,13 @@ def improve(
     platform: str = "local",
     db: str | Path | None = None,
     workspace: str | Path | None = None,
+    tenant_id: str | None = None,
 ) -> ImproveReceipt:
     """Queue due work without directly confirming or rewriting claims."""
     if not 1 <= max_items <= 200:
         raise ValueError("max_items must be between 1 and 200.")
     workspace_path = _workspace_path(workspace)
-    service = _service(db, workspace_path)
+    service = _service(db, workspace_path, tenant_id=tenant_id)
     resolved = _resolve_scope(
         service,
         scope=scope,
@@ -601,6 +634,9 @@ def improve(
     graph_queued, graph_existing = _queue_due_graph(
         repository, scope=resolved_scope, limit=max_items
     )
+    observation_queued, observation_existing = _queue_observation_discovery(
+        service, scope=resolved_scope, tenant_id=tenant_id
+    )
     candidates = service.store.list_claims(
         status="candidate",
         limit=max_items,
@@ -610,8 +646,18 @@ def improve(
     return ImproveReceipt(
         api_version=API_VERSION,
         scope=resolved_scope,
-        queued={"extract_claims": claim_queued, "extract_graph": graph_queued},
-        already_pending={"extract_claims": claim_existing, "extract_graph": graph_existing},
+        queued={
+            "extract_claims": claim_queued,
+            "extract_graph": graph_queued,
+            "observation_discover": observation_queued,
+            "observation_synthesize": 0,
+        },
+        already_pending={
+            "extract_claims": claim_existing,
+            "extract_graph": graph_existing,
+            "observation_discover": observation_existing,
+            "observation_synthesize": 0,
+        },
         steward_review_due=len(candidates),
         scope_source=resolved.scope_source,
     )
