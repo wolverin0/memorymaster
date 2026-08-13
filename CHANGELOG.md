@@ -1,12 +1,32 @@
+<!-- doc-head: public MemoryMaster release history through v4.7.1 -->
+Covers user-visible changes, migrations, governance boundaries, and operational fixes for each release.
+Key terms: graph observations, compiled profile, governed capture, recall, sensitivity, lineage.
+Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
+<!-- /doc-head -->
+
 # Changelog
-# Covers: public MemoryMaster releases and their user-visible changes.
-# Key terms: graph observations, compiled profile, governed capture, recall, lineage.
-# Read when: upgrading MemoryMaster or preparing release notes and migrations.
-# Current release: 4.7.0, governed graph observations and compiled user profile.
-# Format: Keep a Changelog with Semantic Versioning.
-# Updated: 2026-08-13 for graph observations, compiled profile, and activation fixes.
 
 ## [Unreleased]
+
+## [4.7.1] - 2026-08-13
+
+### Fixed
+
+- Fast natural-language recall now ranks conversational questions by meaningful
+  lexical relevance without adding an embedding, Qdrant, or provider call.
+- The v4.7 operational-acceptance gate distinguishes pass, fail, and
+  not-yet-due checks and evaluates the source artifact under test.
+- Governed claim intake redacts bare RFC1918 topology and absolute Windows or
+  UNC paths across text, structured fields, and citation excerpts while
+  preserving following prose, repo-relative paths, and the intentional raw
+  source/evidence boundary.
+
+### Security
+
+- A read-only integrity audit separates historical credential/code residue
+  from ongoing private-context intake and records count-only support-lineage
+  evidence without rewriting existing claim history.
+- No schema migration or historical data mutation is included in this patch.
 
 ## [4.7.0] - 2026-08-13
 
