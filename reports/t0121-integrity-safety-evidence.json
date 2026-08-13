@@ -102,7 +102,24 @@
       "human_ids": ["mm-cab6", "mm-a188", "mm-52ae", "mm-2fa2", "mm-e836", "mm-7c1f~2", "mm-ccf2~2", "mm-d323", "mm-7466"]
     },
     "live_secret_count": null,
-    "live_secret_count_reason": "No credential was tested; detector hits and credential-bearing historical context are not proof of current validity."
+    "live_secret_count_reason": "No credential was tested; detector hits and credential-bearing historical context are not proof of current validity.",
+    "identity_analysis": {
+      "credential_bearing_context_rows": 20,
+      "distinct_credential_identities": 18,
+      "method": "in-memory SHA-256 grouping of detector-extracted values; values and hashes were not emitted or persisted",
+      "declined_reference_identities": 3,
+      "declined_reference_fingerprints_available": false,
+      "exact_declined_matches": null,
+      "exact_declined_matches_reason": "The accepted-risk decision identifies provider categories but supplies no safe identity fingerprints for comparison.",
+      "possible_declined_match_range": [0, 3],
+      "different_identity_range": [15, 18],
+      "context_labels_only": {
+        "supabase": 6,
+        "dashscope_family": 0,
+        "neither_named": 12,
+        "identity_proof": false
+      }
+    }
   },
   "structural_integrity": {
     "sqlite_foreign_key_violations": 0,

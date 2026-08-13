@@ -42,7 +42,9 @@ Redacted manual context review classified the 65 as:
 | Non-secret context | 36 | False positive or a fixture, variable name, identifier, code example, or secret-file reference |
 | Unresolved | 9 | Redaction removed too much context for a truthful classification |
 
-The live-secret count remains unknown. Evidence and exact human-ID sets: `reports/t0121-integrity-safety-evidence.json:86-105`.
+The live-secret count remains unknown. Evidence and exact human-ID sets: `reports/t0121-integrity-safety-evidence.json:86-122`.
+
+Value-safe identity grouping found **18 distinct credential identities across the 20 credential-bearing rows**. Exact comparison with the three previously accepted-risk credentials cannot be established safely because that decision supplies provider categories, not value fingerprints. The defensible result is therefore 0-3 possible matches and **15-18 different identities**. Context labels alone associate six identities with Supabase, none with the DashScope family, and twelve with neither; those labels are not identity proof. Values and hashes were neither emitted nor persisted.
 
 The current ingestion path does reject or classify sensitive claim content before graph extraction: `memorymaster/knowledge/entity_graph.py:182-199`. This finding is corpus residue, not evidence that the current graph-observation synthesizer accepted sensitive support.
 
@@ -79,7 +81,7 @@ All checked counts were zero:
 - Entity-graph supports backed by non-confirmed, sensitive, observation-generated, or cross-claim-scope claims.
 - Compiled-profile support session mismatches.
 
-Evidence: `reports/t0121-integrity-safety-evidence.json:107-153`.
+Evidence: `reports/t0121-integrity-safety-evidence.json:124-170`.
 
 Graph-observation-specific support tables currently contain zero observations and zero support rows, so their orphan result is a valid empty-state check—not proof of live observation lineage. Entity-edge support has 268 rows, all attached to confirmed, non-sensitive, non-observation claims with exact claim/support scope.
 
