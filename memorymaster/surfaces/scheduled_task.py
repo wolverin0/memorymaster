@@ -50,6 +50,15 @@ def _capture_error_count(capture: object) -> int:
     return int(getattr(capture, "errors", 0) or 0)
 
 
+def _compiled_profile_enabled() -> bool:
+    return os.environ.get("MEMORYMASTER_COMPILED_PROFILE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _run_dream(args: argparse.Namespace) -> int:
     _apply_dream_provider_contract(args)
     from memorymaster.capture.worker import run_capture_worker
@@ -72,8 +81,25 @@ def _run_dream(args: argparse.Namespace) -> int:
         args.workspace,
         apply_candidates=bool(args.apply_candidates),
     )
-    print({"queued": queued.to_dict(), "capture": capture, "dream": dream})
-    passed = dream.get("ok") and not dream.get("errors") and not _capture_error_count(capture)
+    profile = {"ok": True, "status": "disabled"}
+    if _compiled_profile_enabled():
+        from memorymaster.profile.engine import run_compiled_profile
+
+        profile = run_compiled_profile(args.db)
+    print(
+        {
+            "queued": queued.to_dict(),
+            "capture": capture,
+            "dream": dream,
+            "compiled_profile": profile,
+        }
+    )
+    passed = (
+        dream.get("ok")
+        and not dream.get("errors")
+        and not _capture_error_count(capture)
+        and profile.get("ok")
+    )
     return 0 if passed else 1
 
 
