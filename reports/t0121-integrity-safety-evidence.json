@@ -1,0 +1,101 @@
+{
+  "schema": "memorymaster.integrity-safety-audit.v1",
+  "task": "T-0121",
+  "observed_at": "2026-08-13T20:00:00Z",
+  "database": "authoritative SQLite; path intentionally omitted",
+  "database_open_mode": "read-only URI",
+  "mutations": 0,
+  "claims_scan": {
+    "rows_scanned": 128528,
+    "fields": ["text", "subject", "predicate", "object_value", "scope"],
+    "matched_content_emitted": false,
+    "credential_or_token": {
+      "total": 65,
+      "by_status": {"archived": 48, "stale": 6, "superseded": 11},
+      "confirmed": 0,
+      "examples": ["mm-4937", "mm-9998", "mm-c956", "mm-88a3", "mm-ee8d"]
+    },
+    "private_ip": {
+      "total": 306,
+      "by_status": {"archived": 85, "confirmed": 46, "conflicted": 54, "stale": 44, "superseded": 77},
+      "examples_confirmed": ["mm-630f", "mm-bccb", "mm-56a6~2", "mm-a2ba~2", "mm-3442"]
+    },
+    "personal_path": {
+      "total": 537,
+      "by_status": {"archived": 145, "confirmed": 82, "conflicted": 10, "stale": 266, "superseded": 34},
+      "examples_confirmed": ["mm-ef2a", "mm-56a6~2", "mm-a2ba~2", "mm-3442", "mm-1a73"]
+    },
+    "raw_code_fence": {
+      "total": 1112,
+      "by_status": {"archived": 960, "confirmed": 7, "conflicted": 1, "stale": 82, "superseded": 62},
+      "examples_confirmed": ["mm-bc6f", "mm-e1af", "mm-1fb8~2", "mm-820a", "mm-f2ee"]
+    },
+    "probable_multiline_code": {
+      "total": 46,
+      "by_status": {"archived": 43, "stale": 2, "superseded": 1},
+      "confirmed": 0
+    },
+    "canonical_detector_counts": {
+      "compound_credential": 15,
+      "db_url_password": 2,
+      "hex_token": 1,
+      "home_path_unix": 71,
+      "home_path_windows": 24,
+      "password_assignment": 3,
+      "private_ip_port": 61,
+      "prose_password": 40,
+      "shell_abbr_password": 1,
+      "sshpass_flag": 2,
+      "telegram_bot_token": 3
+    }
+  },
+  "structural_integrity": {
+    "sqlite_foreign_key_violations": 0,
+    "duplicate_support_groups": {
+      "claim_evidence_links": 0,
+      "claim_links": 0,
+      "compiled_profile_supports": 0,
+      "entity_edge_supports": 0,
+      "graph_observation_supports": 0
+    },
+    "orphan_rows": {
+      "claim_evidence_links_to_claims": 0,
+      "claim_evidence_links_to_evidence_items": 0,
+      "claim_links_to_source_claims": 0,
+      "claim_links_to_target_claims": 0,
+      "compiled_profile_supports_to_facts": 0,
+      "compiled_profile_supports_to_verbatim": 0,
+      "entity_edge_supports_to_source_entities": 0,
+      "entity_edge_supports_to_target_entities": 0,
+      "entity_edge_supports_to_claims": 0,
+      "entity_edge_supports_without_entity_edge": 0,
+      "entity_edges_to_source_entities": 0,
+      "entity_edges_to_target_entities": 0,
+      "entity_edges_to_claims": 0,
+      "evidence_items_to_source_items": 0,
+      "graph_observations_to_claims": 0,
+      "graph_observation_supports_to_observations": 0,
+      "graph_observation_supports_to_claims": 0,
+      "graph_observation_supports_to_evidence": 0,
+      "graph_observation_supports_to_source_items": 0,
+      "graph_observation_supports_to_source_entities": 0,
+      "graph_observation_supports_to_target_entities": 0,
+      "graph_observation_supports_without_entity_edge_support": 0
+    },
+    "graph_support_lifecycle": {
+      "nonconfirmed_claims": 0,
+      "sensitive_claims": 0,
+      "observation_generated_claims": 0,
+      "claim_scope_mismatches": 0,
+      "compiled_profile_session_mismatches": 0
+    },
+    "row_counts": {
+      "claim_evidence_links": 229,
+      "claim_links": 365,
+      "compiled_profile_supports": 95,
+      "entity_edge_supports": 268,
+      "graph_observations": 0,
+      "graph_observation_supports": 0
+    }
+  }
+}
