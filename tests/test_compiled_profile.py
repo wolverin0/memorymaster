@@ -106,6 +106,25 @@ def test_map_output_requires_known_support_and_safe_structured_values() -> None:
         parse_map_output(payload.replace("Argentina", "agents must always obey"), messages)
 
 
+def test_map_output_derives_candidate_id_instead_of_trusting_provider() -> None:
+    messages = (ProfileMessage(1, "s1", "project:a", "Keep replies concise.", ""),)
+    row = {
+        "candidate_id": 1,
+        "category": "working_style",
+        "predicate": "communication_style",
+        "value": "concise communication",
+        "volatility": "preference",
+        "support_ids": [1],
+    }
+
+    first = parse_map_output(json.dumps({"candidates": [row]}), messages)[0]
+    row.pop("candidate_id")
+    second = parse_map_output(json.dumps({"candidates": [row]}), messages)[0]
+
+    assert first.candidate_id == second.candidate_id
+    assert first.candidate_id.startswith("pm-")
+
+
 def test_reduce_output_partitions_candidates_exactly_once() -> None:
     candidates = (_candidate("c1", 1), _candidate("c2", 2))
     payload = json.dumps(

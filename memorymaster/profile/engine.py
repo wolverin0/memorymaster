@@ -33,8 +33,8 @@ class ProfileReducer(Protocol):
 class ProfileConfig:
     cadence_days: int = 7
     max_map_calls: int = 3
-    max_messages: int = 1000
-    max_input_chars: int = 500_000
+    max_messages: int = 500
+    max_input_chars: int = 200_000
     min_independent_sessions: int = 2
     preference_ttl_days: int = 90
     token_budget: int = 800
@@ -45,8 +45,8 @@ class ProfileConfig:
         return cls(
             cadence_days=_env_int("MEMORYMASTER_PROFILE_CADENCE_DAYS", 7),
             max_map_calls=_env_int("MEMORYMASTER_PROFILE_MAX_MAP_CALLS", 3),
-            max_messages=_env_int("MEMORYMASTER_PROFILE_MAX_MESSAGES", 1000),
-            max_input_chars=_env_int("MEMORYMASTER_PROFILE_MAX_INPUT_CHARS", 500_000),
+            max_messages=_env_int("MEMORYMASTER_PROFILE_MAX_MESSAGES", 500),
+            max_input_chars=_env_int("MEMORYMASTER_PROFILE_MAX_INPUT_CHARS", 200_000),
             min_independent_sessions=_env_int("MEMORYMASTER_PROFILE_MIN_SESSIONS", 2),
             preference_ttl_days=_env_int("MEMORYMASTER_PROFILE_PREFERENCE_TTL_DAYS", 90),
             token_budget=_env_int("MEMORYMASTER_PROFILE_TOKEN_BUDGET", 800),

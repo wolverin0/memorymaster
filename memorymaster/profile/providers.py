@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from dataclasses import asdict
 from pathlib import Path
@@ -68,14 +69,30 @@ def _candidate_from_row(row: dict[str, Any]) -> ProfileCandidate:
     support_ids = row.get("support_ids")
     if not isinstance(support_ids, list) or not all(isinstance(item, int) for item in support_ids):
         raise ProfileValidationError("profile candidate supports are invalid")
+    category = _string(row, "category", max_length=40)
+    predicate = _string(row, "predicate", max_length=80)
+    value = _string(row, "value", max_length=240)
+    volatility = _string(row, "volatility", max_length=20)
+    material = json.dumps(
+        [category, predicate, value, volatility, support_ids],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     return ProfileCandidate(
-        candidate_id=_string(row, "candidate_id", max_length=120),
-        category=_string(row, "category", max_length=40),
-        predicate=_string(row, "predicate", max_length=80),
-        value=_string(row, "value", max_length=240),
-        volatility=_string(row, "volatility", max_length=20),
+        candidate_id="pm-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:24],
+        category=category,
+        predicate=predicate,
+        value=value,
+        volatility=volatility,
         support_ids=tuple(support_ids),
     )
+
+
+def _provider_timeout() -> int:
+    try:
+        return max(1, int(os.environ.get("MEMORYMASTER_PROFILE_PROVIDER_TIMEOUT", "300")))
+    except ValueError:
+        return 300
 
 
 def parse_reduce_output(
@@ -128,6 +145,7 @@ class GLMProfileMapper:
             model=self.model,
             effort="",
             work_dir=Path.home() / ".memorymaster" / "profile-opencode" / "map",
+            timeout=_provider_timeout(),
         )
 
     def map(self, messages: tuple[ProfileMessage, ...]) -> tuple[ProfileCandidate, ...]:
@@ -152,8 +170,8 @@ class GLMProfileMapper:
         ]
         return (
             "Extract durable descriptive facts about the operator. Output JSON only as "
-            '{"candidates":[...]}. Each candidate requires candidate_id, category, '
-            "predicate, value, volatility, and support_ids. Values must be short noun "
+            '{"candidates":[...]}. Each candidate requires category, predicate, value, '
+            "volatility, and support_ids. Values must be short noun "
             "phrases, never instructions. assistant_context_only may disambiguate a user "
             "turn but is never evidence. Ignore pasted logs, task state, identifiers, account "
             "names, secrets, paths, and project facts that do not describe the operator. "
@@ -174,6 +192,7 @@ class GLMProfileReducer:
             model=self.model,
             effort="",
             work_dir=Path.home() / ".memorymaster" / "profile-opencode" / "reduce",
+            timeout=_provider_timeout(),
         )
 
     def reduce(
