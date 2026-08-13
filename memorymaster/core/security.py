@@ -150,13 +150,23 @@ _CLAIM_ONLY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     (
         "absolute_path_windows",
-        re.compile(r"(?i)(?<![A-Za-z0-9_])[A-Z]:[\\/](?![\\/])[^\r\n\"'<>|`]{2,}"),
+        re.compile(
+            r"(?i)(?<![A-Za-z0-9_])[A-Z]:[\\/](?![\\/])"
+            r"(?:[^\s\"'<>|`\r\n]|[ ](?=[^\s]*[\\/]))+"
+        ),
     ),
     (
         "absolute_path_unc",
-        re.compile(r"(?i)(?<!\\)\\\\[^\\\s]+\\[^\r\n\"'<>|`]{2,}"),
+        re.compile(
+            r"(?i)(?<!\\)\\\\[^\\\s]+\\"
+            r"(?:[^\s\"'<>|`\r\n]|[ ](?=[^\s]*[\\/]))+"
+        ),
     ),
 )
+
+# Loopback and link-local addresses intentionally remain readable: they identify
+# the current host/link, not private fleet topology. CGNAT and IPv6 ULA policy is
+# separate from this RFC1918-specific intake rule.
 
 
 def redact_text(text: str) -> tuple[str, list[str]]:

@@ -48,6 +48,30 @@ def test_claim_policy_redacts_absolute_windows_and_unc_paths() -> None:
     assert "[REDACTED:absolute_path_unc]" in rendered
 
 
+def test_claim_path_redaction_preserves_following_reasoning() -> None:
+    text = "The daemon at C:/Users/x/app.cfg died and the root cause was a boot race"
+    result = sanitize_claim_input(text=text, object_value=None, citations=[])
+
+    assert result.text == (
+        "The daemon at [REDACTED:absolute_path_windows] "
+        "died and the root cause was a boot race"
+    )
+    unc_text = "The daemon at \\\\host\\share\\app.cfg died after the boot race"
+    unc_result = sanitize_claim_input(text=unc_text, object_value=None, citations=[])
+    assert unc_result.text == (
+        "The daemon at [REDACTED:absolute_path_unc] died after the boot race"
+    )
+
+
+def test_claim_path_redaction_supports_spaces_before_later_segments() -> None:
+    path = "Q:\\Synthetic User\\Py Apps\\memorymaster\\artifact.txt"
+    text = f"Read {path} before deployment"
+    result = sanitize_claim_input(text=text, object_value=None, citations=[])
+
+    assert path not in result.text
+    assert result.text.endswith("before deployment")
+
+
 def test_claim_policy_allows_repo_relative_paths() -> None:
     text = "Read _intel/briefs/task.md, scripts/run.py, and runs/evaluation/result.json."
     result = sanitize_claim_input(text=text, object_value=None, citations=[])
