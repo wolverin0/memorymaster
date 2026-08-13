@@ -1320,9 +1320,7 @@ class MemoryService(IntegrationService):
         """Query using legacy retrieval mode."""
         conversational = " OR " in query_text
         candidate_limit = max(limit * 12, 60) if conversational else limit
-        legacy = self._legacy_candidates(
-            query_text, candidate_limit, statuses, normalized_scopes
-        )
+        legacy = self._legacy_candidates(query_text, candidate_limit, statuses, normalized_scopes)
         if not include_sensitive:
             legacy = [claim for claim in legacy if not is_sensitive_claim(claim)]
         # Visibility: filter out private claims from other agents
@@ -1330,10 +1328,6 @@ class MemoryService(IntegrationService):
         ranked_rows = rank_claim_rows(
             query_text,
             legacy,
-            # Broad planner queries need relevance ordering after their
-            # per-token candidate lists are merged. The hybrid scorer with no
-            # vector hook is a bounded lexical scorer; it never loads an
-            # embedding model or reads Qdrant.
             mode="hybrid" if conversational else "legacy",
             limit=limit,
             vector_hook=None,
