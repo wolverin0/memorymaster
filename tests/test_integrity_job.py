@@ -344,3 +344,20 @@ def test_snapshot_dir_default_outside_db_tree(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("MEMORYMASTER_SNAPSHOT_DIR", str(Path("X:/custom/snaps")))
     assert snapshot.default_vacuum_dir() == Path("X:/custom/snaps")
     assert os.environ["MEMORYMASTER_SNAPSHOT_DIR"]  # guard against typo'd env name
+
+
+def test_vacuum_dir_isolated_for_same_named_databases(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Same DB filename in different roots must never share rotation state."""
+    monkeypatch.setenv("MEMORYMASTER_SNAPSHOT_DIR", str(tmp_path / "snapshots"))
+    authoritative = tmp_path / "authoritative" / "memorymaster.db"
+    disposable = tmp_path / "disposable" / "memorymaster.db"
+
+    authoritative_dir = snapshot.vacuum_dir_for(authoritative)
+    disposable_dir = snapshot.vacuum_dir_for(disposable)
+
+    assert authoritative_dir != disposable_dir
+    assert authoritative_dir.name.startswith("memorymaster-")
+    assert disposable_dir.name.startswith("memorymaster-")
+    assert authoritative_dir.parent == disposable_dir.parent == tmp_path / "snapshots"
