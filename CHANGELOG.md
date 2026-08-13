@@ -1,12 +1,30 @@
 # Changelog
 # Covers: public MemoryMaster releases and their user-visible changes.
-# Key terms: governed capture, recall, lineage, ontology, Docker, LongMemEval.
+# Key terms: graph observations, compiled profile, governed capture, recall, lineage.
 # Read when: upgrading MemoryMaster or preparing release notes and migrations.
-# Current release: 4.6.0, personal-first governed universal capture.
+# Current release: 4.7.0, governed graph observations and compiled user profile.
 # Format: Keep a Changelog with Semantic Versioning.
-# Updated: 2026-08-04 for post-v4.6.0 OAuth capture and Obsidian fixes.
+# Updated: 2026-08-13 for graph observations, compiled profile, and activation fixes.
 
 ## [Unreleased]
+
+## [4.7.0] - 2026-08-13
+
+MemoryMaster 4.7 adds deterministic, evidence-supported graph observations and
+an evidence-bound compiled user-profile projection. Observations remain opt-in
+for recall, generated profile text remains a disposable view, SQLite remains
+authoritative, and Gemini plus GLM are the activated provider path.
+
+### Added
+
+- Deterministic graph-component discovery, bounded observation synthesis,
+  immutable support manifests, steward promotion, lifecycle staleness, and
+  opt-in Python/CLI/MCP recall with a separate token-budgeted section.
+- A resumable GLM map/reduce compiled profile with exact transcript supports,
+  independent-session gating, bounded generated output, and SessionStart
+  injection that never treats profile facts as agent instructions.
+- Additive SQLite migrations 20 and 21, dashboard visibility, queue diagnostics,
+  disposable lifecycle demonstrations, and scheduled Dreaming integration.
 
 ### Fixed
 
@@ -18,6 +36,9 @@
 - MCP claim ingestion no longer creates or updates an Obsidian vault unless
   `MEMORYMASTER_WIKI_ABSORB=1`; explicit opt-in logging and synthesis now share
   the configured vault path.
+- Compiled-profile mapping derives transient IDs deterministically when GLM
+  emits numeric IDs, uses bounded prompts and provider timeouts, and no longer
+  exits silently while logging the SessionStart candidate count.
 
 ## [4.6.0] - 2026-08-04
 
