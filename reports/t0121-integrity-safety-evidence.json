@@ -1,7 +1,7 @@
 {
   "schema": "memorymaster.integrity-safety-audit.v1",
   "task": "T-0121",
-  "observed_at": "2026-08-13T20:00:00Z",
+  "observed_at": "2026-08-13T20:05:00Z",
   "database": "authoritative SQLite; path intentionally omitted",
   "database_open_mode": "read-only URI",
   "mutations": 0,
@@ -48,6 +48,61 @@
       "sshpass_flag": 2,
       "telegram_bot_token": 3
     }
+  },
+  "temporal_analysis": {
+    "basis": "immutable claims.created_at",
+    "window": "2026-07-14T20:05:00Z through 2026-08-13T20:05:00Z",
+    "credential_or_token": {
+      "last_30_days": 0,
+      "latest_created_at": "2026-04-22T22:16:01Z",
+      "latest_human_id": "mm-766b"
+    },
+    "private_ip": {
+      "last_30_days": 61,
+      "last_30_days_confirmed": 22,
+      "by_source_agent": {"claude-session": 45, "dream-worker": 9, "llm-stop-hook": 4, "atlas-llm-extractor": 2, "codex-session": 1}
+    },
+    "personal_path": {
+      "last_30_days": 50,
+      "last_30_days_confirmed": 32,
+      "by_source_agent": {"claude-session": 46, "codex-session": 2, "dream-worker": 1, "atlas-llm-extractor": 1}
+    },
+    "raw_code_fence": {
+      "last_30_days": 0,
+      "latest_created_at": "2026-05-12T12:59:20Z",
+      "latest_human_id": "mm-7a4c"
+    },
+    "today_claude_session": {
+      "day": "2026-08-13 America/Argentina/Buenos_Aires",
+      "claims": 67,
+      "credential_or_token": 0,
+      "private_ip": 1,
+      "personal_path": 0,
+      "raw_code_fence": 0,
+      "hit_human_ids": ["mm-b33d"],
+      "hit_statuses": ["conflicted"]
+    }
+  },
+  "credential_triage": {
+    "detector_hits": 65,
+    "method": "manual context review after detector values, IPs, paths, emails and long identifiers were redacted",
+    "credential_bearing_context": {
+      "count": 20,
+      "meaning": "context contains credential material; current validity was not tested and these are not confirmed live secrets",
+      "human_ids": ["mm-4937", "mm-573b", "mm-c956", "mm-88a3", "mm-5c09", "mm-7693", "mm-ae83", "mm-cbbe", "mm-c52c", "mm-1823", "mm-84f7", "mm-b51c~2", "mm-0908", "mm-e6fe", "mm-36bd", "mm-7846", "mm-9879", "mm-f4f2", "mm-d0fd~5", "mm-21b4~2"]
+    },
+    "non_secret_context": {
+      "count": 36,
+      "meaning": "detector false positive or non-secret fixture, variable name, code example, identifier, or secret-file reference",
+      "human_ids": ["mm-9998", "mm-f7c6", "mm-8f06", "mm-a900~2", "mm-7ae6", "mm-c0cc", "mm-b4ac", "mm-fcd8~3", "mm-b6e4", "mm-2db0", "mm-aa79", "mm-7440", "mm-014e", "mm-3095", "mm-2858", "mm-4f6a", "mm-1c63", "mm-808b", "mm-364a", "mm-543f", "mm-6819", "mm-0b57", "mm-5dc1", "mm-d7fb", "mm-ee8d", "mm-68bc", "mm-9932", "mm-0f1b", "mm-7307", "mm-6ad1", "mm-f2f1", "mm-b154~2", "mm-d754", "mm-ace4", "mm-f7d5", "mm-766b"]
+    },
+    "unresolved": {
+      "count": 9,
+      "meaning": "redaction removed enough context that truth cannot be established without a separate value-aware human review",
+      "human_ids": ["mm-cab6", "mm-a188", "mm-52ae", "mm-2fa2", "mm-e836", "mm-7c1f~2", "mm-ccf2~2", "mm-d323", "mm-7466"]
+    },
+    "live_secret_count": null,
+    "live_secret_count_reason": "No credential was tested; detector hits and credential-bearing historical context are not proof of current validity."
   },
   "structural_integrity": {
     "sqlite_foreign_key_violations": 0,

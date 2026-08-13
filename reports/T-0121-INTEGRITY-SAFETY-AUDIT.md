@@ -6,7 +6,7 @@ Read this before any manual curation; it reports IDs and counts only and perform
 
 # T-0121 integrity safety audit
 
-Observed 2026-08-13. Verdict: **FAIL sanitization; PASS structural lineage**.
+Observed 2026-08-13. Verdict: **FAIL sanitization; PASS structural lineage**. The failure is split: credentials and fenced code are historical, while private-IP and personal-path intake is ongoing.
 
 ## Scope and method
 
@@ -32,9 +32,40 @@ The required zero-residue criterion is not met:
 
 Evidence: `reports/t0121-integrity-safety-evidence.json:9-49`.
 
-The 65 credential/token findings are not confirmed claims, which limits ordinary trusted recall exposure, but they remain at rest and are labeled `public`, not `sensitive`. Redacted review of representative rows showed detector classes including credential assignments, embedded database passwords, SSH password flags, token-shaped values, and a Telegram bot-token shape. Current validity was not tested, so live credential usability is `UNKNOWN`.
+The 65 credential/token detector hits are not confirmed claims, which limits ordinary trusted recall exposure, but they remain at rest and are labeled `public`, not `sensitive`. They are **not 65 confirmed secrets**.
+
+Redacted manual context review classified the 65 as:
+
+| Triage class | Count | Meaning |
+|---|---:|---|
+| Credential-bearing context | 20 | Historical context contains credential material; current validity was not tested |
+| Non-secret context | 36 | False positive or a fixture, variable name, identifier, code example, or secret-file reference |
+| Unresolved | 9 | Redaction removed too much context for a truthful classification |
+
+The live-secret count remains unknown. Evidence and exact human-ID sets: `reports/t0121-integrity-safety-evidence.json:86-105`.
 
 The current ingestion path does reject or classify sensitive claim content before graph extraction: `memorymaster/knowledge/entity_graph.py:182-199`. This finding is corpus residue, not evidence that the current graph-observation synthesizer accepted sensitive support.
+
+## Finding S-02 — recency separates historical residue from ongoing intake
+
+Severity: Medium. Exploitability: `BAD-PRACTICE`; this is a governance/intake-policy gap, not a demonstrated remote exploit.
+
+The 30-day window uses immutable `claims.created_at`, from 2026-07-14 20:05 UTC through 2026-08-13 20:05 UTC:
+
+| Category | Last 30 days | Confirmed in window | Latest hit |
+|---|---:|---:|---|
+| Credential or token detector | 0 | 0 | 2026-04-22 |
+| Bare private IP | 61 | 22 | 2026-08-13 |
+| Personal path | 50 | 32 | 2026-08-12 |
+| Fenced code | 0 | 0 | 2026-05-12 |
+
+This makes credential and fenced-code residue historical. Private-IP and personal-path intake is ongoing and includes claims served by trusted recall.
+
+Recent private-IP hits by source agent: `claude-session=45`, `dream-worker=9`, `llm-stop-hook=4`, `atlas-llm-extractor=2`, `codex-session=1`. Recent personal-path hits: `claude-session=46`, `codex-session=2`, `dream-worker=1`, `atlas-llm-extractor=1`.
+
+For 2026-08-13 in Argentina, `claude-session` created 67 claims. It produced zero credential/token, personal-path, or fenced-code hits. It produced one private-IP hit, `mm-b33d`, currently conflicted. Value-redacted review confirms this is an actual NFS topology address, not a repo-relative-path false positive.
+
+Evidence: `reports/t0121-integrity-safety-evidence.json:52-83`. The production scanner intentionally excludes bare private IPv4 at ingest (`memorymaster/core/security.py:55-60`), which explains how the current operator rule can be violated without triggering the shared credential detector.
 
 ## Finding I-01 — support lineage is structurally clean
 
@@ -48,7 +79,7 @@ All checked counts were zero:
 - Entity-graph supports backed by non-confirmed, sensitive, observation-generated, or cross-claim-scope claims.
 - Compiled-profile support session mismatches.
 
-Evidence: `reports/t0121-integrity-safety-evidence.json:52-99`.
+Evidence: `reports/t0121-integrity-safety-evidence.json:107-153`.
 
 Graph-observation-specific support tables currently contain zero observations and zero support rows, so their orphan result is a valid empty-state check—not proof of live observation lineage. Entity-edge support has 268 rows, all attached to confirmed, non-sensitive, non-observation claims with exact claim/support scope.
 
@@ -58,6 +89,11 @@ Entity records can retain the scope in which a canonical alias was first created
 
 No claim, citation, support, event, or database row was deleted, rewritten, archived, or reclassified. This report and its count-only evidence artifact are the only changes.
 
-Recommended next action: create a separately authorized, dry-run-first remediation task. Review the 65 inactive credential/token hits first, then decide policy for confirmed private IPs, personal paths, and fenced code. Do not bulk-redact from pattern matches alone.
+Remediation remains operator-gated. The proposed sequence is:
+
+1. Fix intake before cleanup through T-0127: reject bare private IPs and absolute personal paths on every claim-ingest surface while allowing repo-relative paths.
+2. Add positive and negative enforcement tests for bare private IP, absolute personal path, repo-relative path, and fenced code.
+3. Have a value-authorized human resolve the nine indeterminate credential hits; never convert the 20 credential-bearing contexts into “live secrets” without validity evidence.
+4. Only after explicit operator approval, produce a no-write dry-run manifest separated into active served rows and historical at-rest rows. No bulk action should be inferred from detector matches.
 
 [SECTION COMPLETE: T-0121 safety subset]
