@@ -132,6 +132,42 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     )),
 ]
 
+# Claim memory has a stricter contract than user-selected raw source/evidence:
+# local topology and machine-specific absolute paths are not durable memories.
+# Keep these out of _SECRET_PATTERNS so ADR-0006 raw source preservation stays
+# unchanged while every SQLite/Postgres/service/spool claim writer is covered
+# by sanitize_claim_input.
+_CLAIM_ONLY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "private_ipv4",
+        re.compile(
+            r"\b(?:"
+            r"10\.(?:\d{1,3}\.){2}\d{1,3}"
+            r"|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+            r"|192\.168\.\d{1,3}\.\d{1,3}"
+            r")\b"
+        ),
+    ),
+    (
+        "absolute_path_windows",
+        re.compile(
+            r"(?i)(?<![A-Za-z0-9_])[A-Z]:[\\/](?![\\/])"
+            r"(?:[^\s\"'<>|`\r\n]|[ ](?=[^\s]*[\\/]))+"
+        ),
+    ),
+    (
+        "absolute_path_unc",
+        re.compile(
+            r"(?i)(?<!\\)\\\\[^\\\s]+\\"
+            r"(?:[^\s\"'<>|`\r\n]|[ ](?=[^\s]*[\\/]))+"
+        ),
+    ),
+)
+
+# Loopback and link-local addresses intentionally remain readable: they identify
+# the current host/link, not private fleet topology. CGNAT and IPv6 ULA policy is
+# separate from this RFC1918-specific intake rule.
+
 
 def redact_text(text: str) -> tuple[str, list[str]]:
     """Public API: redact secrets from arbitrary text.
@@ -533,6 +569,17 @@ def sanitize_persisted_text(text: str) -> tuple[str, list[str]]:
     return redacted, findings
 
 
+def _sanitize_memory_claim_text(text: str) -> tuple[str, list[str]]:
+    """Apply generic secret filtering plus the stricter claim-memory policy."""
+    redacted, findings = sanitize_persisted_text(text)
+    for name, pattern in _CLAIM_ONLY_PATTERNS:
+        if pattern.search(redacted) is None:
+            continue
+        redacted = pattern.sub(f"[REDACTED:{name}]", redacted)
+        findings.append(name)
+    return redacted, sorted(set(findings))
+
+
 def _structured_context_findings(value: str, context_keys: tuple[str, ...]) -> list[str]:
     independent_findings = scan_persisted_value(value)
     findings: list[str] = []
@@ -600,9 +647,9 @@ def sanitize_claim_structure_input(
     object_value: str | None,
 ) -> SanitizedClaimStructureInput:
     validate_persisted_metadata({"claim_type": claim_type})
-    sanitized_subject, subject_findings = _sanitize_optional_claim_text(subject)
-    sanitized_predicate, predicate_findings = _sanitize_optional_claim_text(predicate)
-    sanitized_object, object_findings = _sanitize_optional_claim_text(object_value)
+    sanitized_subject, subject_findings = _sanitize_optional_memory_claim_text(subject)
+    sanitized_predicate, predicate_findings = _sanitize_optional_memory_claim_text(predicate)
+    sanitized_object, object_findings = _sanitize_optional_memory_claim_text(object_value)
     findings = sorted(set(subject_findings + predicate_findings + object_findings))
     return SanitizedClaimStructureInput(
         claim_type=claim_type,
@@ -669,13 +716,21 @@ def _sanitize_optional_claim_text(value: str | None) -> tuple[str | None, list[s
     return sanitize_persisted_text(value)
 
 
+def _sanitize_optional_memory_claim_text(
+    value: str | None,
+) -> tuple[str | None, list[str]]:
+    if value is None:
+        return None, []
+    return _sanitize_memory_claim_text(value)
+
+
 def _sanitize_claim_citations(
     citations: list[CitationInput],
 ) -> tuple[list[CitationInput], list[str]]:
     sanitized: list[CitationInput] = []
     findings: list[str] = []
     for citation in citations:
-        excerpt, excerpt_findings = _sanitize_optional_claim_text(citation.excerpt)
+        excerpt, excerpt_findings = _sanitize_optional_memory_claim_text(citation.excerpt)
         findings.extend(excerpt_findings)
         sanitized.append(CitationInput(citation.source, citation.locator, excerpt))
     return sanitized, findings
@@ -722,10 +777,10 @@ def sanitize_claim_input(
         "tenant_id": tenant_id,
         **citation_metadata,
     })
-    redacted_text, findings = sanitize_persisted_text(text)
-    redacted_object, object_findings = _sanitize_optional_claim_text(object_value)
-    redacted_subject, subject_findings = _sanitize_optional_claim_text(subject)
-    redacted_predicate, predicate_findings = _sanitize_optional_claim_text(predicate)
+    redacted_text, findings = _sanitize_memory_claim_text(text)
+    redacted_object, object_findings = _sanitize_optional_memory_claim_text(object_value)
+    redacted_subject, subject_findings = _sanitize_optional_memory_claim_text(subject)
+    redacted_predicate, predicate_findings = _sanitize_optional_memory_claim_text(predicate)
     sanitized_citations, citation_findings = _sanitize_claim_citations(citations)
     findings.extend(object_findings + subject_findings + predicate_findings + citation_findings)
     dedup_findings = sorted(set(findings))

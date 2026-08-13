@@ -33,7 +33,7 @@ def test_deterministic_validator_accepts_richer_valid_predicates() -> None:
     service.init_db()
 
     _ingest(service, predicate="ipv6", object_value="2001:db8::1")
-    _ingest(service, predicate="cidr", object_value="10.20.0.0/16")
+    _ingest(service, predicate="cidr", object_value="203.0.113.0/24")
     _ingest(service, predicate="uuid", object_value="123e4567-e89b-42d3-a456-426614174000")
     _ingest(service, predicate="phone_number", object_value="+14155550100")
     _ingest(service, predicate="country_code", object_value="US")
