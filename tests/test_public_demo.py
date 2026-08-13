@@ -17,12 +17,15 @@ def test_disposable_demo_covers_public_lifecycle() -> None:
     report = run_disposable_demo()
 
     assert report["temporary_database_disposed"] is True
-    assert report["captures"] == 2
-    assert report["fixture_jobs_completed"] == 2
-    assert report["candidate_claims_created"] == 2
+    assert report["captures"] == 3
+    assert report["fixture_jobs_completed"] == 3
+    assert report["candidate_claims_created"] == 3
     assert report["promoted_claim_id"] in report["recall_claim_ids"]
     assert report["recall_citations"]
     assert report["graph_paths"][0]["relation"] == "participates_in"
+    assert report["observation_recall"][0]["claim_id"] == report["observation_claim_id"]
+    assert len(report["observation_supports"]) >= 4
+    assert report["observation_status_after_retirement"] == "stale"
 
 
 def test_demo_cli_emits_versioned_json(capsys) -> None:

@@ -917,6 +917,8 @@ if FastMCP is not None:
         retrieval_mode: str = "hybrid",
         include_skills: bool = False,
         skill_limit: int = 3,
+        include_observations: bool = False,
+        observation_limit: int = 2,
         session_id: str = "",
         source_agent: str = "",
         platform: str = "mcp",
@@ -935,11 +937,14 @@ if FastMCP is not None:
             retrieval_mode=retrieval_mode,
             include_skills=include_skills,
             skill_limit=_bounded_limit(skill_limit, maximum=10),
+            include_observations=include_observations,
+            observation_limit=_bounded_limit(observation_limit, maximum=5),
             session_id=session_id or None,
             source_agent=source_agent or "memorymaster-mcp",
             platform=platform,
             db=db,
             workspace=workspace,
+            tenant_id=(current_request_context().tenant_id if current_request_context() else None),
         )
         return {"ok": True, **asdict(receipt)}
 
@@ -984,6 +989,7 @@ if FastMCP is not None:
             platform=platform,
             db=db,
             workspace=workspace,
+            tenant_id=(current_request_context().tenant_id if current_request_context() else None),
         )
         return {"ok": True, **asdict(receipt)}
 

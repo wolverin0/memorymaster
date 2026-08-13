@@ -680,6 +680,17 @@ def build_parser() -> argparse.ArgumentParser:
     recall_cmd.add_argument("--session-id", default=None, help="Optional producer session ID")
     recall_cmd.add_argument("--source-agent", default="memorymaster-cli")
     recall_cmd.add_argument("--platform", default="cli")
+    recall_cmd.add_argument(
+        "--include-observations",
+        action="store_true",
+        help="Include separately labeled, evidence-bound graph observations",
+    )
+    recall_cmd.add_argument(
+        "--observation-limit",
+        type=int,
+        default=2,
+        help="Maximum observations (default 2, bounded to 5)",
+    )
 
     forget_cmd = sub.add_parser("forget", help="Preview or apply logical retirement")
     forget_target = forget_cmd.add_mutually_exclusive_group(required=True)

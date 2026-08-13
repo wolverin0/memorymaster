@@ -49,6 +49,13 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True, slots=True)
 class DreamConfig:
     idle_minutes: int = 30
@@ -63,6 +70,7 @@ class DreamConfig:
     lease_ttl_seconds: int = 900
     retain_days: int = 7
     max_capture_bytes: int = 256 * 1024 * 1024
+    enable_graph_observations: bool = False
 
     @classmethod
     def from_env(cls) -> "DreamConfig":
@@ -81,6 +89,9 @@ class DreamConfig:
             lease_ttl_seconds=_env_int("MEMORYMASTER_DREAM_LEASE_TTL_SECONDS", 900),
             retain_days=_env_int("MEMORYMASTER_DREAM_CAPTURE_RETAIN_DAYS", 7),
             max_capture_bytes=_env_int("MEMORYMASTER_DREAM_CAPTURE_MAX_BYTES", 256 * 1024 * 1024),
+            enable_graph_observations=_env_bool(
+                "MEMORYMASTER_GRAPH_OBSERVATIONS", False
+            ),
         )
 
 
@@ -121,6 +132,12 @@ class DreamWorker:
             if apply_candidates:
                 pending = self.ledger.consolidated(max_sessions=limit, scope=scope)
                 self._apply(run_id, pending, summary)
+            if self.config.enable_graph_observations:
+                summary["graph_observations"] = self._run_graph_observations(
+                    owner=owner,
+                    scope=scope,
+                    synthesize=apply_candidates,
+                )
             self.ledger.prune(retain_days=self.config.retain_days, max_bytes=self.config.max_capture_bytes, now=self.now())
             self.ledger.finish_run(run_id, "ok" if not summary["errors"] else "partial", summary, now=self.now())
             return summary
@@ -130,6 +147,61 @@ class DreamWorker:
             return summary
         finally:
             self.ledger.release_lease("dream-worker", owner)
+
+    def _observation_scope_pairs(self, scope: str | None) -> list[tuple[str, str | None]]:
+        params: tuple[Any, ...] = () if scope is None else (scope,)
+        clause = "" if scope is None else "AND scope=?"
+        with self.service.store.connect() as conn:
+            rows = conn.execute(
+                f"""SELECT DISTINCT scope, tenant_id FROM claims
+                    WHERE status='confirmed'
+                      AND COALESCE(claim_type, '') NOT IN
+                          ('observation','skill','summary')
+                      {clause} ORDER BY scope, tenant_id""",
+                params,
+            ).fetchall()
+        return [(str(row["scope"]), row["tenant_id"]) for row in rows]
+
+    def _observation_llm(self, system: str, prompt: str) -> str:
+        from memorymaster.core.llm_provider import call_llm, use_call_scoped_env
+
+        with use_call_scoped_env(
+            {
+                "MEMORYMASTER_LLM_PROVIDER": "opencode",
+                "MEMORYMASTER_LLM_MODEL": self.consolidator.model,
+            }
+        ):
+            return call_llm(system, prompt)
+
+    def _run_graph_observations(
+        self, *, owner: str, scope: str | None, synthesize: bool
+    ) -> dict[str, int]:
+        from memorymaster.knowledge.graph_observation_engine import (
+            GraphObservationEngine,
+        )
+        from memorymaster.knowledge.ontology import load_ontology
+
+        engine = GraphObservationEngine(self.service.store, llm_call=self._observation_llm)
+        totals = {"discovery_queued": 0, "synthesis_queued": 0, "emitted": 0, "failed": 0}
+        cycle_hour = self.now().astimezone(timezone.utc).strftime("%Y-%m-%dT%H")
+        scope_pairs = self._observation_scope_pairs(scope)
+        for target_scope, tenant_id in scope_pairs:
+            _job, created = engine.repo.queue_discovery(
+                tenant_id=tenant_id,
+                scope=target_scope,
+                ontology_version=load_ontology().version,
+                cycle_hour=cycle_hour,
+            )
+            totals["discovery_queued"] += int(created)
+        for target_scope in sorted({item[0] for item in scope_pairs}):
+            discovered = engine.process_discovery(owner=owner, scope=target_scope)
+            totals["synthesis_queued"] += discovered.synthesis_queued
+            totals["failed"] += discovered.failed
+            if synthesize:
+                synthesized = engine.process_synthesis(owner=owner, scope=target_scope)
+                totals["emitted"] += synthesized.emitted
+                totals["failed"] += synthesized.failed
+        return totals
 
     def _extract(self, run_id: str, scope: str | None, limit: int, summary: dict[str, Any]) -> list[dict[str, Any]]:
         rows = self.ledger.eligible(idle_minutes=self.config.idle_minutes, max_sessions=limit, scope=scope, now=self.now())

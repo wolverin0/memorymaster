@@ -377,7 +377,20 @@ class CaptureRepository:
         if not reason:
             raise ValueError("retirement reason is required")
         stamp = _iso(_now())
+        observation_scopes: list[tuple[str, str | None]] = []
         with self._connection() as conn:
+            if not self.postgres:
+                observation_scopes = [
+                    (str(row["scope"]), row["tenant_id"])
+                    for row in conn.execute(
+                        """SELECT DISTINCT go.scope, go.tenant_id
+                           FROM graph_observation_supports gos
+                           JOIN graph_observations go
+                             ON go.observation_claim_id=gos.observation_claim_id
+                           WHERE gos.source_item_id=?""",
+                        (source_item_id,),
+                    ).fetchall()
+                ]
             cur = self._execute(
                 conn,
                 f"""UPDATE source_items SET retired_at={self.placeholder},
@@ -394,6 +407,22 @@ class CaptureRepository:
                 (stamp, source_item_id),
             )
             self._commit(conn)
+        if changed and observation_scopes:
+            from memorymaster.knowledge.graph_observation_engine import (
+                invalidate_changed_observations,
+            )
+            from memorymaster.knowledge.graph_observation_repository import (
+                GraphObservationRepository,
+            )
+
+            observations = GraphObservationRepository(self.store)
+            for scope, tenant_id in observation_scopes:
+                invalidate_changed_observations(
+                    self.store,
+                    observations,
+                    scope=scope,
+                    tenant_id=tenant_id,
+                )
         return changed
 
     def status_counts(self) -> dict[str, int]:
@@ -531,6 +560,10 @@ class CaptureRepository:
                         JOIN evidence_items e ON e.id=cel.evidence_item_id
                         JOIN source_items s ON s.id=e.source_item_id
                         WHERE c.id>{self.placeholder} AND c.status='confirmed'
+                          AND COALESCE(c.claim_type, '') NOT IN
+                              ('observation','skill','summary')
+                          AND COALESCE(c.source_agent, '')<>
+                              'memorymaster-graph-observer'
                           AND c.scope={self.placeholder} AND s.retired_at IS NULL
                         GROUP BY c.id, c.updated_at
                         ORDER BY c.id LIMIT {self.placeholder}""",

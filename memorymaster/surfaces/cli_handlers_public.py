@@ -55,6 +55,9 @@ def handle_recall(
         session_id=args.session_id,
         source_agent=args.source_agent,
         platform=args.platform,
+        include_observations=args.include_observations,
+        observation_limit=args.observation_limit,
+        tenant_id=getattr(service, "tenant_id", None),
         db=effective_db,
         workspace=args.workspace,
     )
@@ -94,6 +97,7 @@ def handle_improve(
         session_id=args.session_id,
         source_agent=args.source_agent,
         platform=args.platform,
+        tenant_id=getattr(service, "tenant_id", None),
         db=effective_db,
         workspace=args.workspace,
     )
@@ -103,6 +107,7 @@ def handle_improve(
         print(
             f"improve queued: claims={receipt.queued['extract_claims']} "
             f"graph={receipt.queued['extract_graph']} "
+            f"observations={receipt.queued['observation_discover']} "
             f"steward_review_due={receipt.steward_review_due}"
         )
     return 0

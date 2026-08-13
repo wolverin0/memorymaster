@@ -1,16 +1,17 @@
-<!-- doc-head: canonical documentation map; P5 verifier passed, PR #189 open -->
+<!-- doc-head: canonical documentation map; P5 integrated, PPR-7 active -->
 # DOCS-MAP - memorymaster
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, paper radar, ADR.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-12 after repair5 verifier replay and PR #189 creation.
-# Rule: PR #189 is open; merge, release, deploy, and PPR-7 remain blocked pending separate review and integration.
+# Updated: 2026-08-12 after PR #189 merge, governed runtime deploy, and PPR-7 authorization.
+# Rule: PPR-7 is isolated and opt-in; public release and automatic recall remain separately gated.
 <!-- /doc-head -->
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
 | CHANGELOG.md | CURRENT | 2026-08-04 | Public release history; v4.6.0 records governed universal capture, measured quality changes, security evidence, and known follow-ups. |
-| ROADMAP.md | CURRENT | 2026-08-12 | Sole authoritative roadmap; elapsed P5 evidence, pinned Gemini+GLM replay, repair5 verifier pass, and PR #189 open. |
+| ROADMAP.md | CURRENT | 2026-08-12 | Sole authoritative roadmap; P5 is merged and locally deployed, while isolated PPR-7 implementation is active. |
+| .planning/GRAPH-OBSERVATIONS-V1.md | CURRENT | 2026-08-12 | Bounded PPR-7 implementation ledger for deterministic supported components, governed synthesis, lifecycle, opt-in recall, and verification. |
 | .planning/PAPER-RADAR-REVIEW-2026-08-08.md | CURRENT | 2026-08-08 | Primary-paper ledger covers 57-paper triage, 18 deep reviews, exact MemoryMaster gaps, and ordered PPR-1 through PPR-6 decisions subordinate to ROADMAP.md. |
 | .planning/PAPER-RESEARCH-IMPLEMENTATION-2026-08-08.md | CURRENT | 2026-08-08 | Executable status ledger for PPR-1 through PPR-6; records acceptance criteria and evidence without competing with ROADMAP.md. |
 | .planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md | CURRENT | 2026-08-12 | Executable Tencent-derived ledger; repair5 passed and PR #189 is open without merge authority. |
@@ -24,7 +25,7 @@
 | .planning/VNEXT-GOVERNED-CAPTURE-SPEC.md | CURRENT | 2026-07-27 | Bounded implementation specification that explicitly implements, and does not compete with, ROADMAP.md. |
 | .planning/VNEXT-BASELINE-2026-07-27.md | CURRENT | 2026-07-27 | Reproducible pre-change retrieval, test, latency, package, capture, graph, and scheduler baseline at d33a268. |
 | docs/adr/0015-governed-universal-capture-lineage.md | CURRENT | 2026-07-27 | Accepted data-flow decision fixing producer-to-source-to-evidence-to-claim-to-supported-graph lineage and retirement semantics. |
-| docs/public-v1.md | CURRENT | 2026-08-08 | Stable facade, capture boundary, additive approved-skill recall, retirement semantics, dashboard inbox, and demo. |
+| docs/public-v1.md | CURRENT | 2026-08-12 | Stable facade, capture boundary, opt-in approved skills and observations, retirement semantics, dashboard panels, and demo. |
 | .planning/audits/2026-07-27-vnext-governed-capture/audit-delta.md | CURRENT | 2026-08-04 | SQLite activation, LifeAgent retirement, OAuth capture quality, public v4.6.0 release, rollback evidence, and the final seven-day observation gate. |
 | docs/archive/IMPROVEMENT_PLAN.md | ABANDONED | 2026-06-20 | The doc serves as a generated audit and roadmap from March 2026 but is not referenced by any current docs; it contains specific version claims and 'P0' bugs that likely represent a historical snapshot rather than a living plan.  |
 | docs/archive/v315-experiments/E02-results.md | ABANDONED | 2026-06-20 | This is a negative result experiment from a past version (v315) where the code was explicitly reverted and not retained.  |

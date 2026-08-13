@@ -13,6 +13,13 @@ from typing import Any
 
 from memorymaster.knowledge.skill_schema import is_skill
 from memorymaster.knowledge.skills import recall_skills
+from memorymaster.knowledge.graph_observation_recall import (
+    pack_observations,
+    recall_observations,
+)
+from memorymaster.knowledge.graph_observation_repository import (
+    GraphObservationRepository,
+)
 from memorymaster.recall.context_optimizer import estimate_tokens, pack_context
 
 
@@ -32,6 +39,7 @@ class ContextBundle:
     tokens_used: int
     token_budget: int
     output_format: str
+    observations: tuple[dict[str, Any], ...] = ()
 
 
 def _lines(label: str, values: list[str], *, numbered: bool = False) -> list[str]:
@@ -92,36 +100,71 @@ def query_context_bundle(
     retrieval_mode: str = "hybrid",
     include_skills: bool = False,
     skill_limit: int = 3,
+    include_observations: bool = False,
+    observation_limit: int = 2,
+    observation_tenant_id: str | None = None,
 ) -> ContextBundle:
     """Query governed claims and optionally append confirmed scoped skills."""
     if token_budget <= 0:
         raise ValueError("token_budget must be positive.")
-    if include_skills and output_format != "text":
-        raise ValueError("Approved skill bundles require text output format.")
+    if (include_skills or include_observations) and output_format != "text":
+        raise ValueError("Derived recall sections require text output format.")
+    observation_text = ""
+    observations: tuple[dict[str, Any], ...] = ()
+    if include_observations:
+        observation_budget = min(800, max(1, token_budget // 4))
+        candidates = recall_observations(
+            service,
+            query,
+            scopes=scope_allowlist,
+            trust_mode=trust_mode,
+            limit=max(1, min(int(observation_limit), 5)),
+            tenant_id=observation_tenant_id,
+        )
+        observation_text, observations = pack_observations(
+            candidates, token_budget=observation_budget
+        )
+    observation_reserved = estimate_tokens(observation_text) + 1 if observation_text else 0
     skill_text, skills = _selected_skill_text(
         service,
         query,
         scopes=scope_allowlist,
-        total_budget=token_budget,
+        total_budget=max(1, token_budget - observation_reserved),
         include_skills=include_skills,
         skill_limit=skill_limit,
     )
-    reserved = estimate_tokens(skill_text) + 1 if skill_text else 0
+    skill_reserved = estimate_tokens(skill_text) + 1 if skill_text else 0
+    reserved = observation_reserved + skill_reserved
+    observation_count = sum(
+        len(
+            GraphObservationRepository(service.store).scope_observations(
+                scope=scope, tenant_id=observation_tenant_id
+            )
+        )
+        for scope in scope_allowlist
+    )
     result = service.query_for_context(
         query=query,
         token_budget=max(1, token_budget - reserved),
+        limit=100 + min(observation_count, 400),
         output_format=output_format,
         retrieval_mode=retrieval_mode,
         trust_mode=trust_mode,
         scope_allowlist=scope_allowlist,
     )
+    ordinary_rows = [
+        row for row in result.rows if getattr(row["claim"], "claim_type", None) != "observation"
+    ][:100]
     if include_skills:
+        ordinary_rows = [row for row in ordinary_rows if not is_skill(row["claim"])]
+    if len(ordinary_rows) != len(result.rows):
         result = pack_context(
-            [row for row in result.rows if not is_skill(row["claim"])],
+            ordinary_rows,
             token_budget=max(1, token_budget - reserved),
             output_format=output_format,
         )
-    output = f"{result.output}\n\n{skill_text}" if skill_text else result.output
+    sections = [text for text in (result.output, observation_text, skill_text) if text]
+    output = "\n\n".join(sections)
     return ContextBundle(
         output=output,
         rows=result.rows,
@@ -129,6 +172,7 @@ def query_context_bundle(
         tokens_used=result.tokens_used + reserved,
         token_budget=token_budget,
         output_format=result.format,
+        observations=observations,
     )
 
 
