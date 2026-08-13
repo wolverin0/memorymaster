@@ -33,34 +33,34 @@ def test_sqlite_cycle_and_hybrid_retrieval():
     service.init_db()
 
     service.ingest(
-        text="Server IP is 10.0.0.1",
+        text="Server IP is 203.0.113.10",
         citations=[CitationInput(source="session://chat", locator="turn-1", excerpt="first ip")],
         subject="server",
         predicate="ip_address",
-        object_value="10.0.0.1",
+        object_value="203.0.113.10",
         volatility="high",
     )
     service.ingest(
-        text="Server IP is 10.0.0.2",
+        text="Server IP is 203.0.113.11",
         citations=[CitationInput(source="session://chat", locator="turn-2", excerpt="corrected ip")],
         subject="server",
         predicate="ip_address",
-        object_value="10.0.0.2",
+        object_value="203.0.113.11",
         volatility="high",
     )
     service.ingest(
-        text="Credentials file path is C:\\secrets\\prod.env",
+        text="Credentials file path is config/prod.env",
         citations=[CitationInput(source="session://chat", locator="turn-3", excerpt="credential path")],
         subject="workspace",
         predicate="path",
-        object_value="C:\\secrets\\prod.env",
+        object_value="config/prod.env",
     )
 
     result = service.run_cycle(policy_mode="legacy", min_citations=1, min_score=0.5)
     assert result["validator"]["processed"] >= 3
 
     rows = service.query("server ip", retrieval_mode="hybrid", limit=10, allow_sensitive=True)
-    assert any("10.0.0.2" in row.text for row in rows)
+    assert any("203.0.113.11" in row.text for row in rows)
     assert all("Credentials file path" not in row.text for row in rows[:2])
 
 
