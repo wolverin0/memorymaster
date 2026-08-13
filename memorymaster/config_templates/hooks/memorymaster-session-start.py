@@ -273,7 +273,7 @@ def main():
         _log("skip", reason="empty", scope=scope)
         sys.exit(0)
 
-    _log("injected", scope=scope, claims=len(claims), candidates=len(candidates), articles=len(articles))
+    _log("injected", scope=scope, claims=len(claims), candidates=candidates, articles=len(articles))
 
     context = _format_context(scope, claims, cycle, candidates, articles, profile)
     output = {
