@@ -1318,9 +1318,9 @@ class MemoryService(IntegrationService):
 
     def _query_legacy_mode(self, query_text: str, limit: int, statuses: list[str], normalized_scopes: list[str] | None, include_sensitive: bool, requesting_agent: str | None, record_accesses: bool = True) -> list[dict[str, Any]]:
         """Query using legacy retrieval mode."""
-        legacy = self._legacy_candidates(
-            query_text, limit, statuses, normalized_scopes
-        )
+        conversational = " OR " in query_text
+        candidate_limit = max(limit * 12, 60) if conversational else limit
+        legacy = self._legacy_candidates(query_text, candidate_limit, statuses, normalized_scopes)
         if not include_sensitive:
             legacy = [claim for claim in legacy if not is_sensitive_claim(claim)]
         # Visibility: filter out private claims from other agents
@@ -1328,7 +1328,7 @@ class MemoryService(IntegrationService):
         ranked_rows = rank_claim_rows(
             query_text,
             legacy,
-            mode="legacy",
+            mode="hybrid" if conversational else "legacy",
             limit=limit,
             vector_hook=None,
         )
