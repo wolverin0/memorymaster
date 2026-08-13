@@ -1,10 +1,10 @@
-<!-- doc-head: canonical documentation map; P5 integrated, PPR-7 active -->
+<!-- doc-head: canonical map; PPR-7 integrated, compiled profile in development -->
 # DOCS-MAP - memorymaster
 # Covers: trust verdicts and replacements for every canonical documentation surface.
-# Key terms: CURRENT, SUPERSEDED, ABANDONED, GENERATED, roadmap, paper radar, ADR.
+# Key terms: CURRENT, SUPERSEDED, compiled user profile, roadmap, ADR.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-12 after PR #189 merge, governed runtime deploy, and PPR-7 authorization.
-# Rule: PPR-7 is isolated and opt-in; public release and automatic recall remain separately gated.
+# Updated: 2026-08-12 for the evidence-bound compiled user-profile implementation.
+# Rule: generated profiles are disposable projections; MemoryMaster remains authority.
 <!-- /doc-head -->
 
 | File | Verdict | Last change | Reason |
@@ -12,6 +12,7 @@
 | CHANGELOG.md | CURRENT | 2026-08-04 | Public release history; v4.6.0 records governed universal capture, measured quality changes, security evidence, and known follow-ups. |
 | ROADMAP.md | CURRENT | 2026-08-12 | Sole authoritative roadmap; P5 is merged and locally deployed, while isolated PPR-7 implementation is active. |
 | .planning/GRAPH-OBSERVATIONS-V1.md | CURRENT | 2026-08-12 | Bounded PPR-7 implementation ledger for deterministic supported components, governed synthesis, lifecycle, opt-in recall, and verification. |
+| .planning/COMPILED-USER-PROFILE-V1.md | CURRENT | 2026-08-12 | Implementation contract for the zero-curation, evidence-bound user profile projection and weekly GLM map/reduce job. |
 | .planning/PAPER-RADAR-REVIEW-2026-08-08.md | CURRENT | 2026-08-08 | Primary-paper ledger covers 57-paper triage, 18 deep reviews, exact MemoryMaster gaps, and ordered PPR-1 through PPR-6 decisions subordinate to ROADMAP.md. |
 | .planning/PAPER-RESEARCH-IMPLEMENTATION-2026-08-08.md | CURRENT | 2026-08-08 | Executable status ledger for PPR-1 through PPR-6; records acceptance criteria and evidence without competing with ROADMAP.md. |
 | .planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md | CURRENT | 2026-08-12 | Executable Tencent-derived ledger; repair5 passed and PR #189 is open without merge authority. |

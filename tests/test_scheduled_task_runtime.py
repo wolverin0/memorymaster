@@ -123,6 +123,72 @@ def test_scheduled_dream_fails_when_capture_provider_errors(
     assert _run_dream(args) == 1
 
 
+def test_scheduled_dream_runs_enabled_compiled_profile(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setenv("MEMORYMASTER_COMPILED_PROFILE", "1")
+    monkeypatch.setattr(
+        "memorymaster.public.v1.improve",
+        lambda **_kwargs: SimpleNamespace(to_dict=dict),
+    )
+    monkeypatch.setattr(
+        "memorymaster.capture.worker.run_capture_worker",
+        lambda *_args, **_kwargs: {"errors": 0},
+    )
+    monkeypatch.setattr(
+        "memorymaster.dreaming.worker.run_dream",
+        lambda *_args, **_kwargs: {"ok": True, "errors": 0},
+    )
+
+    def fake_profile(db, **kwargs):
+        calls.append((db, kwargs))
+        return {"ok": True, "status": "mapping"}
+
+    monkeypatch.setattr("memorymaster.profile.engine.run_compiled_profile", fake_profile)
+    workspace = tmp_path / "memorymaster"
+    workspace.mkdir()
+    args = Namespace(
+        db=str(tmp_path / "scheduled.db"),
+        workspace=str(workspace),
+        apply_candidates=True,
+    )
+
+    assert _run_dream(args) == 0
+    assert calls == [(args.db, {})]
+
+
+def test_scheduled_dream_fails_closed_on_enabled_profile_error(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.setenv("MEMORYMASTER_COMPILED_PROFILE", "1")
+    monkeypatch.setattr(
+        "memorymaster.public.v1.improve",
+        lambda **_kwargs: SimpleNamespace(to_dict=dict),
+    )
+    monkeypatch.setattr(
+        "memorymaster.capture.worker.run_capture_worker",
+        lambda *_args, **_kwargs: {"errors": 0},
+    )
+    monkeypatch.setattr(
+        "memorymaster.dreaming.worker.run_dream",
+        lambda *_args, **_kwargs: {"ok": True, "errors": 0},
+    )
+    monkeypatch.setattr(
+        "memorymaster.profile.engine.run_compiled_profile",
+        lambda *_args, **_kwargs: {"ok": False, "status": "mapping"},
+    )
+    workspace = tmp_path / "memorymaster"
+    workspace.mkdir()
+    args = Namespace(
+        db=str(tmp_path / "scheduled.db"),
+        workspace=str(workspace),
+        apply_candidates=True,
+    )
+
+    assert _run_dream(args) == 1
+
+
 def test_scheduled_main_logs_bound_dream_execution(tmp_path: Path, monkeypatch) -> None:
     log_path = tmp_path / "dream.log"
     seen: list[str] = []

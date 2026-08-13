@@ -1,10 +1,10 @@
-<!-- doc-head: sole authoritative roadmap; P5 merged/deployed, PPR-7 active -->
+<!-- doc-head: sole roadmap; PPR-7 integrated, compiled profile in development -->
 # MemoryMaster roadmap
-# Covers: post-v4.6 sequence, Tencent-derived work, paper research, and deferrals.
-# Key terms: Hermes, governed skills, paper radar, temporal projection, sustainability.
+# Covers: post-v4.6 sequence, governed observations, compiled profile, and deferrals.
+# Key terms: Hermes, governed skills, graph observations, user profile, sustainability.
 # Read when: choosing release scope, accepting a feature, or checking deferrals.
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
-# Safety: SQLite authority and steward promotion remain fixed; PPR-7 stays additive, opt-in, and unreleased pending its own evidence.
+# Safety: SQLite remains authority; generated user.md is disposable and feature-off by default.
 <!-- /doc-head -->
 
 ## Shipped in v4.6.0
@@ -68,6 +68,10 @@ its governed-claims authority:
   opt-in; its separate PR/CI, feature-off deployment, and rollout evidence are
   still required before activation. No public release or automatic
   ordinary-recall inclusion is implied.
+- The compiled user profile is being implemented as a disposable projection of
+  sanitized transcript evidence. Weekly bounded GLM map/reduce work stores
+  exact supports in SQLite; deterministic rendering produces `user.md` for
+  SessionStart injection. The feature remains off until explicitly enabled.
 - The invalid earlier window remains incident evidence only because it included
   a VM OOM/gateway interruption and did not contain P5.
 - Keep v4.6.0 operational while the post-release Obsidian opt-in and OpenCode
@@ -91,6 +95,9 @@ its governed-claims authority:
   exact support signatures, deterministic discovery, candidate-only synthesis,
   observation-specific steward validation, and explicit recall inclusion are
   implemented with local evidence, while PR/CI and feature-off rollout remain.
+- Integrate the bounded compiled-profile implementation described in
+  `.planning/COMPILED-USER-PROFILE-V1.md`; then perform a one-time local run on
+  existing sanitized transcript rows before enabling its weekly task.
 - Improve personal/local backup guidance beyond the already verified disposable
   backup/restore and migration procedure.
 - Keep semantic recall optional and disabled unless a local user deliberately

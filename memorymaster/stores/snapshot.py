@@ -1,6 +1,7 @@
 """Git-backed DB versioning: snapshot, list, rollback, diff."""
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 import subprocess
@@ -163,13 +164,15 @@ def default_vacuum_dir() -> Path:
 
 
 def vacuum_dir_for(db_path: str | Path) -> Path:
-    """Per-DB snapshot dir: ``<base>/<db-stem>/``.
+    """Per-DB snapshot dir: ``<base>/<db-stem>-<path-hash>/``.
 
-    Namespaced by DB filename (mirroring the spool's ``spool/<db-name>/``
-    layout, spec §2.2) so two DBs sharing the base dir cannot evict each
-    other's ``mm-YYYYMMDD.db`` rotations.
+    The resolved source path participates in the namespace so disposable and
+    authoritative databases with the same filename cannot rotate each other's
+    recovery artifacts.
     """
-    return default_vacuum_dir() / Path(db_path).stem
+    resolved = str(Path(db_path).resolve()).casefold()
+    suffix = hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:12]
+    return default_vacuum_dir() / f"{Path(db_path).stem}-{suffix}"
 
 
 def vacuum_into(
