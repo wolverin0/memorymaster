@@ -1,10 +1,11 @@
 <!-- doc-head: MemoryMaster 4.7 governed memory, observations, profiles, and operations -->
-# MemoryMaster
-# Covers: installation, governed capture and recall, graph observations, compiled profile, scheduling, and safety.
-# Key terms: claims, citations, steward, graph observations, compiled profile, Gemini, GLM, SQLite, MCP.
-# Read when: evaluating, installing, operating, or upgrading MemoryMaster.
-# Default: private local SQLite; observations and generated views never bypass claim governance.
+<!-- Covers: installation, governed capture and recall, graph observations, compiled profile, scheduling, and safety. -->
+<!-- Key terms: claims, citations, steward, graph observations, compiled profile, Gemini, GLM, SQLite, MCP. -->
+<!-- Read when: evaluating, installing, operating, or upgrading MemoryMaster. -->
+<!-- Default: private local SQLite; observations and generated views never bypass claim governance. -->
 <!-- /doc-head -->
+
+# MemoryMaster
 
 [![CI](https://github.com/wolverin0/memorymaster/actions/workflows/ci.yml/badge.svg)](https://github.com/wolverin0/memorymaster/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/memorymaster.svg)](https://pypi.org/project/memorymaster/)
