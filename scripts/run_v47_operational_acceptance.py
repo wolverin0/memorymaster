@@ -31,7 +31,7 @@ except ValueError:
 sys.path.insert(0, str(REPO_ROOT))
 
 
-EXPECTED_VERSION = "4.7.3"
+EXPECTED_VERSION = "4.7.4"
 TARGET_HUMAN_ID = "mm-8aef"
 TARGET_QUERY = "why does wezterm cli time out from Node but not from bash"
 ACTIVE_OBSERVATION_STATES = ("pending", "leased", "retryable", "blocked")
