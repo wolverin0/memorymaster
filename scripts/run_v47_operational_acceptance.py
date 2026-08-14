@@ -31,7 +31,7 @@ except ValueError:
 sys.path.insert(0, str(REPO_ROOT))
 
 
-EXPECTED_VERSION = "4.7.2"
+EXPECTED_VERSION = "4.7.3"
 TARGET_HUMAN_ID = "mm-8aef"
 TARGET_QUERY = "why does wezterm cli time out from Node but not from bash"
 ACTIVE_OBSERVATION_STATES = ("pending", "leased", "retryable", "blocked")
@@ -189,7 +189,7 @@ def _graph_lineage_errors(connection: sqlite3.Connection) -> int:
     return int(connection.execute(query).fetchone()[0])
 
 
-def _current_graph_diagnostics(db: Path) -> tuple[int, int, int]:
+def _current_graph_diagnostics(db: Path) -> tuple[int, int, int, int]:
     from collections import defaultdict
 
     from memorymaster.knowledge.graph_observation_repository import _observation_support
@@ -203,6 +203,16 @@ def _current_graph_diagnostics(db: Path) -> tuple[int, int, int]:
         scope_count = int(connection.execute(
             "SELECT COUNT(DISTINCT scope) FROM entity_edge_supports"
         ).fetchone()[0])
+        unknown_sensitivity = int(connection.execute("""
+            SELECT COUNT(*)
+            FROM entity_edge_supports ees
+            LEFT JOIN claims c ON c.id=ees.supporting_claim_id
+            LEFT JOIN claim_evidence_links cel ON cel.claim_id=c.id
+            LEFT JOIN evidence_items e ON e.id=cel.evidence_item_id
+            LEFT JOIN source_items s ON s.id=e.source_item_id
+            WHERE cel.claim_id IS NULL OR e.id IS NULL OR s.id IS NULL
+               OR e.sensitivity IS NULL OR s.sensitivity IS NULL
+        """).fetchone()[0])
         rows = connection.execute(f"""
             SELECT ees.supporting_claim_id AS claim_id,
                    cel.evidence_item_id AS evidence_id,
@@ -233,7 +243,7 @@ def _current_graph_diagnostics(db: Path) -> tuple[int, int, int]:
         result = discover_components(supports, scope=scope, tenant_id=tenant_id)
         components += len(result.components)
         diagnostics += len(result.diagnostics)
-    return scope_count, components, diagnostics
+    return scope_count, components, diagnostics, unknown_sensitivity
 
 
 def check_graph_observations(config: GateConfig) -> CheckResult:
@@ -249,15 +259,21 @@ def check_graph_observations(config: GateConfig) -> CheckResult:
             ).fetchone()[0])
             observations = int(connection.execute("SELECT COUNT(*) FROM graph_observations").fetchone()[0])
             lineage_errors = _graph_lineage_errors(connection)
-        scopes, eligible, diagnostics = _current_graph_diagnostics(config.db)
+        scopes, eligible, diagnostics, unknown_sensitivity = _current_graph_diagnostics(config.db)
     except (OSError, sqlite3.Error, RuntimeError, ValueError) as exc:
         return CheckResult("condition_2_graph_observations", Verdict.FAIL, f"probe_error={type(exc).__name__}")
     empty_proven = observations > 0 or (completed > 0 and scopes > 0 and eligible == 0)
-    ok = backlog == 0 and lineage_errors == 0 and empty_proven
+    ok = (
+        backlog == 0
+        and lineage_errors == 0
+        and unknown_sensitivity == 0
+        and empty_proven
+    )
     detail = (
         f"backlog={backlog} completed_discovery={completed} observations={observations} "
         f"current_scopes={scopes} eligible_components={eligible} diagnostics={diagnostics} "
-        f"lineage_errors={lineage_errors} empty_proven={str(empty_proven).lower()}"
+        f"unknown_sensitivity_rows={unknown_sensitivity} lineage_errors={lineage_errors} "
+        f"empty_proven={str(empty_proven).lower()}"
     )
     return CheckResult("condition_2_graph_observations", Verdict.PASS if ok else Verdict.FAIL, detail)
 

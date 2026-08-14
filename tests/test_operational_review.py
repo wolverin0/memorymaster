@@ -16,6 +16,10 @@ def _db(path: Path) -> Path:
         );
         INSERT INTO graph_observation_jobs VALUES ('discover', 'completed', NULL);
         CREATE TABLE graph_observations(observation_claim_id INTEGER);
+        CREATE TABLE entity_edge_supports(supporting_claim_id INTEGER);
+        CREATE TABLE claim_evidence_links(claim_id INTEGER, evidence_item_id INTEGER);
+        CREATE TABLE evidence_items(id INTEGER, source_item_id INTEGER, sensitivity TEXT);
+        CREATE TABLE source_items(id INTEGER, sensitivity TEXT);
         CREATE TABLE compiled_profile_runs(status TEXT);
         INSERT INTO compiled_profile_runs VALUES ('completed');
         CREATE TABLE compiled_profile_facts(
@@ -82,6 +86,23 @@ def test_private_context_and_blocked_job_fail(tmp_path: Path) -> None:
     assert intake.verdict is review.Verdict.FAIL
     assert intake.human_ids == ("mm-private",)
     assert review.exit_code([graph, intake]) == 1
+
+
+def test_unknown_graph_support_sensitivity_fails(tmp_path: Path) -> None:
+    db = _db(tmp_path / "memory.db")
+    connection = sqlite3.connect(db)
+    connection.execute("INSERT INTO entity_edge_supports VALUES (1)")
+    connection.execute("INSERT INTO claim_evidence_links VALUES (1, 1)")
+    connection.execute("INSERT INTO evidence_items VALUES (1, 1, NULL)")
+    connection.execute("INSERT INTO source_items VALUES (1, NULL)")
+    connection.commit()
+    connection.close()
+
+    graph = review.check_graph_observations(review.ReviewConfig(db=db))
+
+    assert graph.verdict is review.Verdict.FAIL
+    assert graph.counts is not None
+    assert graph.counts["unknown_sensitivity_rows"] == 1
 
 
 def test_missing_canary_and_disabled_features_warn(tmp_path: Path, monkeypatch) -> None:

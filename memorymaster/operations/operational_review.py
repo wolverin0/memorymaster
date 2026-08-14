@@ -116,6 +116,21 @@ def check_graph_observations(config: ReviewConfig) -> ReviewResult:
             counts["observations"] = int(connection.execute(
                 "SELECT COUNT(*) FROM graph_observations"
             ).fetchone()[0])
+            support_row = connection.execute("""
+                SELECT COUNT(*) edge_support_rows,
+                       SUM(CASE WHEN cel.claim_id IS NULL OR e.id IS NULL OR s.id IS NULL
+                                     OR e.sensitivity IS NULL OR s.sensitivity IS NULL
+                                THEN 1 ELSE 0 END) unknown_sensitivity_rows
+                FROM entity_edge_supports ees
+                LEFT JOIN claim_evidence_links cel
+                    ON cel.claim_id=ees.supporting_claim_id
+                LEFT JOIN evidence_items e ON e.id=cel.evidence_item_id
+                LEFT JOIN source_items s ON s.id=e.source_item_id
+            """).fetchone()
+            counts["edge_support_rows"] = int(support_row["edge_support_rows"] or 0)
+            counts["unknown_sensitivity_rows"] = int(
+                support_row["unknown_sensitivity_rows"] or 0
+            )
             expired_leases = int(connection.execute(
                 "SELECT COUNT(*) FROM graph_observation_jobs WHERE status='leased' "
                 "AND lease_expires_at IS NOT NULL AND datetime(lease_expires_at)<=datetime('now')"
@@ -123,7 +138,7 @@ def check_graph_observations(config: ReviewConfig) -> ReviewResult:
             counts["expired_leases"] = expired_leases
     except (OSError, sqlite3.Error) as exc:
         return ReviewResult("graph_observations", Verdict.FAIL, f"probe_error={type(exc).__name__}")
-    if counts["blocked"] or expired_leases:
+    if counts["blocked"] or expired_leases or counts["unknown_sensitivity_rows"]:
         verdict = Verdict.FAIL
     elif counts["retryable"] or counts["pending"] > 100:
         verdict = Verdict.WARN
@@ -132,7 +147,7 @@ def check_graph_observations(config: ReviewConfig) -> ReviewResult:
     return ReviewResult(
         "graph_observations",
         verdict,
-        "zero observations is valid when no eligible evidence component exists",
+        "every graph support requires explicit source and evidence sensitivity",
         counts,
     )
 
