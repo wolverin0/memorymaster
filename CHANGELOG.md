@@ -1,4 +1,4 @@
-<!-- doc-head: public MemoryMaster release history through v4.7.1 -->
+<!-- doc-head: public MemoryMaster release history through v4.7.2 -->
 Covers user-visible changes, migrations, governance boundaries, and operational fixes for each release.
 Key terms: graph observations, compiled profile, governed capture, recall, sensitivity, lineage.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
@@ -7,6 +7,26 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 # Changelog
 
 ## [Unreleased]
+
+## [4.7.2] - 2026-08-13
+
+### Changed
+
+- Rebuilt the README around the shipped 4.7 product: governed graph
+  observations, the evidence-bound compiled profile, Gemini plus GLM provider
+  activation, safe lifecycle semantics, and the real restart boundary.
+- Release and activation no longer depend on a 24-hour calendar window. That
+  window is documented only as optional post-release operational evidence.
+
+### Added
+
+- A read-only operational reviewer and bounded Windows scheduled-task installer.
+  The default six-hour review records package/database integrity, observation
+  queues, compiled-profile support, recent private-context residue, and a
+  natural-language recall canary with distinct PASS/WARN/FAIL exits.
+- Review artifacts explicitly record that work occurred and that database
+  mutations remained zero; scheduler transport never creates a feature-success
+  receipt or watermark.
 
 ## [4.7.1] - 2026-08-13
 

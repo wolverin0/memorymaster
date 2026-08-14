@@ -1,221 +1,232 @@
+<!-- doc-head: MemoryMaster 4.7 governed memory, observations, profiles, and operations -->
 # MemoryMaster
-# Covers: personal-first governed memory capture, recall, retirement, and improvement.
-# Key terms: remember, recall, forget, improve, evidence lineage, trusted claims.
-# Read when: installing MemoryMaster, evaluating its posture, or finding deeper docs.
-# Default: local SQLite and private MCP; team/cloud operation is deferred.
-# Safety: captures become candidates; only the steward confirms claims.
-# Updated: 2026-07-30 after retiring a named legacy consumer integration.
+# Covers: installation, governed capture and recall, graph observations, compiled profile, scheduling, and safety.
+# Key terms: claims, citations, steward, graph observations, compiled profile, Gemini, GLM, SQLite, MCP.
+# Read when: evaluating, installing, operating, or upgrading MemoryMaster.
+# Default: private local SQLite; observations and generated views never bypass claim governance.
+<!-- /doc-head -->
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-3200%2B-green.svg)]()
-[![Release truth](https://img.shields.io/badge/release%20truth-generated-purple.svg)](docs/generated/release-truth.md)
-[![CLI Commands](https://img.shields.io/badge/CLI%20commands-106-orange.svg)]()
+[![CI](https://github.com/wolverin0/memorymaster/actions/workflows/ci.yml/badge.svg)](https://github.com/wolverin0/memorymaster/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/memorymaster.svg)](https://pypi.org/project/memorymaster/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-MemoryMaster prevents the #1 problem with agent memory: **drift, stale assumptions, and unsafe disclosure**. It gives Claude Code, Codex, and any MCP-compatible agent persistent, verifiable memory with a full claim lifecycle, citation tracking, conflict detection, and human-in-the-loop governance.
+MemoryMaster is persistent memory for coding agents where every durable fact is
+a governed claim—not an opaque chunk that silently lives forever.
 
-> **Product posture:** MemoryMaster is primarily a personal/local application.
-> The default profile uses one SQLite database and a private stdio MCP process.
-> Postgres/team operation is a deferred optional capability, and Qdrant is an
-> optional semantic index—not a dependency or source of truth.
+It captures evidence, extracts candidate claims, preserves citations, detects
+conflicts, promotes trustworthy claims through a steward, and retires facts when
+their support stops being current. Claude Code, Codex, Gemini-powered workers,
+Hermes, and any MCP client can share the same local memory without surrendering
+authority to a vector database or generated summary.
 
-### How it's different
+```text
+evidence -> candidate claim -> steward -> confirmed claim -> governed recall
+                                      \-> supported graph
+                                           \-> candidate observation
+                                                \-> steward -> opt-in recall
+```
 
-Agent-memory systems (mem0, Letta/MemGPT, Zep, cognee) have largely converged on strong **retrieval** — hybrid search, temporal and graph reasoning, ontologies. MemoryMaster competes on a different axis: **governance**. The wedge is **curation over accumulation** — every memory is a lifecycle-managed *claim* (status, citations, decay, conflict arbitration), not an opaque embedding that lingers until overwritten. Tellingly, the market moved the other way: mem0's 2026 model is explicitly *add-only with no conflict resolution* — the opposite of a steward.
+## What shipped in 4.7
 
-| | mem0 / Letta / Zep | **MemoryMaster** |
+| Capability | What it does | Default |
 |---|---|---|
-| Unit of memory | text chunk / summary | **claim** with status, tier, citations, bitemporal validity |
-| Stale / wrong facts | linger until overwritten | **decay → `stale`**, **conflict detection**, **supersession** |
-| Contradictions | silently coexist | surfaced as **`conflicted`**, auto-resolved (5-tier) or queued for review |
-| Provenance | usually none | **citation per claim** + per-agent provenance |
-| Secret leakage | your problem | **sensitivity filter at ingest** (JWT/AWS/Bearer/SSH redaction) |
-| Operator control | API only | **steward governance** + a **dashboard** you can *see* |
+| Governed graph observations | Derives supported dependencies, constraints, recurring patterns and root causes from confirmed evidence | Generation enabled explicitly; recall opt-in |
+| Compiled user profile | Builds a disposable, cited projection from multiple independent sessions | Explicitly enabled; never an instruction source |
+| Fast conversational recall | Finds relevant claims on the local lexical path without an embedding, Qdrant or provider call | On |
+| Private-context intake guard | Redacts RFC1918 topology and absolute Windows/UNC paths from durable claim fields while preserving useful prose | On |
+| Governed skills | Stores reviewed reusable procedures separately from ordinary facts | Recall opt-in |
+| Hermes integration | Provides exact session/project scoping, local HTTP/stdio compatibility and replay-safe outbox behavior | Optional integration |
+| Operational review | Performs a read-only six-hour integrity, queue, profile, intake and retrieval review | Optional Windows task |
 
-If you want an agent that recalls more, any vector store works. If you want an agent that recalls *correctly* — and can prove where a fact came from and retire it when it goes stale — that's the gap MemoryMaster fills.
+MemoryMaster 4.7 uses the configured **Gemini extraction + GLM consolidation**
+path for this installation. OpenAI and Anthropic remain optional provider
+adapters; neither is required for graph-observation discovery or ordinary recall.
 
----
+## Why MemoryMaster exists
 
-## Architecture
+Typical memory stacks optimize retrieval while leaving correctness and retirement
+to the caller. MemoryMaster makes those properties explicit:
 
-MemoryMaster is layered around MCP/CLI entry points, the `MemoryService` facade, authoritative
-SQLite storage, an optional deferred Postgres/team backend, an optional Qdrant index, scheduled jobs, and an **optional** Obsidian wiki/vault
-layer (opt-in, off by default — see below). The canonical capture path is:
+- Every claim has lifecycle state, scope, provenance, confidence and validity.
+- Trusted recall returns confirmed, authorized, non-sensitive claims only.
+- Contradictions become visible conflicts instead of silently coexisting.
+- Citations and support tables make derived output traceable back to evidence.
+- `forget` previews logical retirement; it never implies an unsafe hard delete.
+- SQLite is authoritative. Qdrant is optional and may only propose IDs that are
+  rehydrated and re-authorized from SQLite.
+- Generated observations, profiles, skills and wiki pages never recursively
+  reinforce the claims that produced them.
+
+## Quick start
+
+Install the private local MCP profile:
+
+```powershell
+python -m pip install "memorymaster[mcp,capture,security]"
+memorymaster-setup --yes --profile minimal --no-full-stack --json
+```
+
+Restart the agent session once so its long-lived MCP process loads the installed
+package, then verify:
 
 ```text
-producer -> source item -> evidence -> candidate claim -> steward -> confirmed claim -> supported graph
+query_memory("What decisions have we made about storage?")
 ```
 
-The query path is:
+Try the complete lifecycle in a disposable database:
 
-```text
-query_memory -> MemoryService.query -> authorized SQLite rows -> lexical/local-hybrid ranking -> context
-```
-
-Qdrant candidate retrieval is disabled by default. When a user deliberately
-enables the governed semantic profile, Qdrant may return only candidate IDs,
-content hashes, and scores. Every candidate is rehydrated from the authoritative
-store and rechecked for lifecycle, tenant, scope, visibility, sensitivity, and
-exact content hash. The semantic profile remains unproven for production until
-the separately documented authenticated/TLS gate passes.
-
-See [docs/architecture.md](docs/architecture.md) for the current module map, data-flow details,
-recent PR status, and sensitivity-filter invariants.
-
-## Key features
-
-- **6-state lifecycle**: `candidate` → `confirmed` → `stale` → `superseded` → `conflicted` → `archived`
-- **Universal governed capture**: inline text, URL references, Markdown, HTML,
-  optional PDF/DOCX, and explicit OCR/transcription providers through one
-  replay-safe source/evidence/job contract
-- **Friendly public facade**: synchronous `remember`, governed `recall`,
-  preview-first `forget`, and budgeted `improve` across Python, CLI, and MCP
-- **Citation tracking** with provenance for every claim
-- **Hybrid retrieval**: authoritative SQLite claim rows ranked with FTS5, local/primary-store embedding signals, freshness, and confidence; governed Qdrant candidates are explicit and optional
-- **Context optimizer**: `query_for_context(budget=4000)` returns auto-curated memory that fits your token budget
-- **Entity graph** with typed relationships and alias resolution
-- **Rule-shaped claims** (new in v3.21.0): prescriptive `when <trigger>, do <action> because <rationale>` claims (`ingest_rule` / `query_rules`) — the shape an agent needs to actually change behaviour next time, not just recall a fact
-- **Correction mining** (new in v3.21.0): `mine-rules` scans the verbatim transcript archive for user corrections and distills them into rule claims; the Stop hook also mines each session's latest correction automatically
-- **Versioned schema migrations** (new in v3.20.0): `migrate` applies SQLite/Postgres migrations with sha256 drift detection; incremental `export-delta` ships small claim deltas for cheap cross-machine sync
-- **Retrieval quality** (new in v3.22.0): floor-ratio boost gate (`MEMORYMASTER_BOOST_FLOOR_RATIO`) stops fresh-but-wrong claims outranking the true match; `query --explain` shows per-stage score attribution; an opt-in correctness-safe query cache (`MEMORYMASTER_QUERY_CACHE`) with a generation gate
-- **Semantic contradiction probe** (new in v3.22.0, wired as a steward phase in v3.23.0): `detect-contradictions` finds claims that genuinely contradict each other (beyond the deterministic same-subject conflict check) via an LLM judge with a Wilson-CI rate and verdict cache; in v3.23 the same probe runs inside `run-steward` and emits paste-ready `conflicted` proposals
-- **Verbatim archive cleanup** (new in v3.23.0): `verbatim-cleanup` dedups the raw-transcript table and optionally purges pre-#128 junk rows, with a dry-run default and FTS5 mirror sync
-- **Steward governance**: multi-probe validators (filesystem, format, citation, semantic, tool) with proposal review
-- **Conflict resolution**: 5-tier auto (confidence > freshness > citations > LLM > manual)
-- **Auto-redaction** at ingest: JWT, GitHub tokens, Bearer, AWS keys, SSH keys, custom patterns
-- **LLM Wiki** *(opt-in, off by default — set `MEMORYMASTER_WIKI_ABSORB=1`)*: compiled-truth + append-only timeline articles with progressive-disclosure frontmatter, `explored: true|false` operator-review marker, and inline `> [!contradiction]` Obsidian callouts. A redundant human-browsable **view** of the claims DB — the DB + recall is the memory system; the Markdown wiki does not scale past a few hundred pages (Karpathy LLM-Wiki pattern) so it stays off unless you want to browse it
-- **Atlas Inbox V1** (new in v3.13.0): WhatsApp ingestion → source/evidence/action proposal lifecycle → Super-Productivity export. Versioned API/CLI contract for external capture producers — see [`docs/atlas-api-contract-v1.md`](docs/atlas-api-contract-v1.md). Real provider adapters (`OpenAIWhisperTranscriptionProvider`, `TesseractOcrProvider`) behind `Protocol`s; mock providers stay default.
-- **Optional local-path resolution** (new in v4.1.0): `resolve-project` / `local-search` (CLI + MCP) turn a fuzzy project/file name into its real on-disk path. Most useful for agents **without** strong native file search (e.g. Codex on Windows) and for cross-session "where was project X?" — for clients that already have a good file-glob this is marginal. Backed by [Everything](https://www.voidtools.com/)'s read-only `ES.exe` CLI via a backend-agnostic `LocalSearchProvider` Protocol (`memorymaster/bridges/local_search/`; `plocate`/`fd`/`mdfind` can drop in later). Resolution is read-only by default; use `resolve-project --remember` (or MCP `remember=true`) to persist only matches at the calibrated `0.85` confidence threshold. Use `local-search --exact` for whole-name lookup. **Requires Everything + the ES CLI with `MEMORYMASTER_EVERYTHING_ES_PATH` set; degrades to a no-op when absent.** Setup mirrors an existing configured ES path into generated Claude/Codex MCP environments. Paths are redacted to root-relative tokens, and usage telemetry stores only tool/status/latency — never queries or paths.
-- **LLM typed-entity Atlas extractor** (new in v4.1.0): turns ingested evidence (WhatsApp / email / notes) into *typed*, cited life-knowledge claims (`person`/`project`/`commitment`/`decision`/`event`/…) via an LLM with strict subject/type validation — replacing the deterministic keyword matcher. The `subject` is always the real named entity, never the source app.
-- **Bitemporal write-time guard** (new in v4.2.0): rejects malformed ISO-8601 and inverted `valid_until < valid_from` at ingest, so a durable-but-invisible claim can never be written.
-- **`archive_by_source` + `checkpoint`** (new in v4.2.0): lifecycle-safe bulk source cleanup (archive, never hard-delete; dry-run default) and one-round-trip batch ingest through the same sensitivity filter.
-- **Intent-aware ranking** (new in v4.2.0, opt-in): `retrieval_profile="auto"` routes query intent to a weight profile; RRF fusion (`MEMORYMASTER_RECALL_FUSION`) is available but `linear` stays default after A/B measurement.
-- **Usage telemetry** (new in v4.2.0): per-agent recall counters + a `get_usage_rollup` MCP tool.
-- **Guarded fuzzy entity resolver** (new in v4.2.0, opt-in `MEMORYMASTER_ENTITY_FUZZY_RESOLVE`): refuses ambiguous alias matches (anti-hallucination) instead of fragmenting entities.
-- **Hebbian/Ebbinghaus entity edges** (new in v4.2.0, opt-in `MEMORYMASTER_HEBBIAN_DECAY`): usage strengthens, time decays entity-graph edge weights.
-- **Proactive + tool-triggered recall** (new in v4.2.0): a `volunteer_context` MCP tool (confidence-gated, zero-LLM) and an opt-in PreToolUse hook (`MEMORYMASTER_PRETOOLUSE_RECALL`) that injects memory as `additionalContext` on Grep/Glob.
-- **Belief `holder`** (new in v4.2.0): nullable per-claim `holder` for multi-holder beliefs (take/fact/bet/hunch reuse `claim_type`); SQLite+Postgres, ranking-neutral by default.
-- **SQLite-first backend**: SQLite for the primary personal/local product; PostgreSQL team support is retained but deferred until a real multi-user use case and its external evidence exist
-- **Dream Bridge** for bidirectional sync with Claude Code's Auto Dream
-- **Hook stack**: recall, classify, validate-wiki, session-start, auto-ingest, precompact (settings.json) + steward-cycle (cron/schtasks) + opt-in `--pretooluse` grep/glob recall-inject
-
-Full feature index lives in [`docs/handbook.md`](docs/handbook.md).
-
-## Benchmarks
-
-The current committed LongMemEval-S retrieval result covers all 500 questions:
-
-| Metric | Current reproducible result |
-|---|---:|
-| Recall@5 | 0.9660 |
-| Recall@10 | 0.9840 |
-| MRR | 0.9021 |
-
-Reproduce with `python tests/bench_longmemeval.py --retrieval-only`. There is
-no comparable current full-QA result: an OAuth-backed judge must be run before
-and after a release candidate before making a QA-regression claim. See the
-[benchmark record](docs/archive/longmemeval-results.md).
-
-## Prerequisites
-
-**Required (the package won't function without these)**
-
-- Python **3.10+** with `pip`
-- Claude Code, Codex, or any MCP-compatible agent
-- **An LLM provider** — pick one: Claude Code OAuth (free if you're a subscriber, set `MEMORYMASTER_LLM_PROVIDER=claude_cli`), a free Gemini API key from [aistudio.google.com](https://aistudio.google.com), OpenAI, Anthropic API, or local Ollama. The steward and auto-ingest cycles need an LLM — without one, claims pile up as `candidate` and never get validated or deduped. (The opt-in `wiki-absorb` needs one too, if you enable it.)
-
-**Strongly recommended (you'll lose ~80% of the value without these)**
-
-- **Node.js 18+** for [graphify](https://github.com/wolverin0/graphify) and [GitNexus](https://github.com/wolverin0/gitnexus) — these are the cached intelligence layers that make MemoryMaster cheap to query. Without them, every "what does this codebase do?" question burns tokens cold-exploring files the graph already mapped. The `intelligence-first` workflow in `CLAUDE.md` assumes both are installed.
-- **Obsidian 1.6+** with the [Bases](https://help.obsidian.md/Plugins/Bases) core plugin — **only if you opt into the Markdown wiki** (`MEMORYMASTER_WIKI_ABSORB=1`, off by default). The claims DB + recall is the memory system and needs no editor; if you turn `wiki-absorb` on, Obsidian's backlinks/graph/Bases are how you'd browse that (redundant) view. Not needed for normal use.
-
-**Optional (nice to have)**
-
-- **Docker** only if you deliberately want local Ollama or the optional governed Qdrant semantic profile. SQLite remains authoritative and requires neither Docker nor Qdrant.
-
-## Quickstart: remember, recall, forget, improve
-
-**1. Install**
-
-```bash
-pip install "memorymaster[mcp,capture]"
-```
-
-Try the complete disposable flow without touching your active database:
-
-```bash
+```powershell
 memorymaster --json demo
 ```
 
-Use the four public operations:
+## Four public operations
 
-```bash
-memorymaster --workspace . remember --text "Project Atlas uses SQLite WAL."
-memorymaster --workspace . recall "What does Project Atlas use?"
+The stable Python, CLI and MCP interface is intentionally small:
+
+```powershell
+memorymaster --workspace . remember --text "Atlas uses SQLite WAL."
+memorymaster --workspace . recall "What does Atlas use?"
 memorymaster --workspace . forget --source-item-id 1
-memorymaster --workspace . improve
+memorymaster --workspace . improve --scope project:atlas
 ```
-
-`forget` previews by default; add `--apply` only after reviewing its lifecycle
-effects. `improve` queues extraction and review work but never confirms a claim
-inside the request.
-
-The same contract is available in Python:
 
 ```python
 from memorymaster import forget, improve, recall, remember
 
-receipt = remember(text="Project Atlas uses SQLite WAL.", scope="project:atlas")
+receipt = remember(text="Atlas uses SQLite WAL.", scope="project:atlas")
 context = recall("What does Atlas use?", scope_allowlist=["project:atlas"])
 preview = forget(source_item_id=receipt.source_item["id"])
 queued = improve(scope="project:atlas")
 ```
 
-For file capture, configure `MEMORYMASTER_CAPTURE_ROOTS` and use local-trusted
-mode; URL-only capture stores a visible reference and waits for producer-supplied
-evidence. See [the public v1 guide](docs/public-v1.md).
+- `remember` stores source/evidence lineage and queues governed extraction.
+- `recall` is confirmed-only in trusted mode.
+- `forget` previews by default; `--apply` performs lifecycle retirement.
+- `improve` queues bounded work. It does not confirm or rewrite claims inside
+  the request.
 
-**2. Let your agent configure MCP and hooks**
+See [Public v1](docs/public-v1.md) for receipts and full parameter contracts.
 
-Paste the contents of [`docs/AGENT-INSTALL.md`](docs/AGENT-INSTALL.md) into Claude Code or Codex. The agent will:
-- run `memorymaster-setup --yes --profile minimal --no-full-stack --json` (wires the SQLite database and private MCP without starting Postgres, Qdrant, or Ollama)
-- report what was wired, what was reused (brownfield), and what degraded
-- run `memorymaster-setup --verify-only` and show the round-trip result
+## Graph observations (PPR-7)
 
-**3. Restart your session**
+Graph observations answer questions that individual facts cannot, such as:
 
-Hooks and MCP load on session start. Restart Claude Code / Codex once.
+- Which three blockers form one dependency chain?
+- What recurring pattern is supported by several independent episodes?
+- Which root cause is cited by multiple confirmed claims?
+- Which observation became stale when its supporting evidence was retired?
 
-**4. Verify**
+Component membership is deterministic. Exact canonical graph signatures and
+union-find decide which evidence belongs together; an LLM may summarize an
+eligible component but cannot choose membership, invent support, promote its own
+output, or feed the result back into graph extraction.
 
-After restart, run in your agent:
+Recall remains explicit:
 
+```powershell
+memorymaster --workspace . recall "What dependencies keep recurring?" --include-observations
 ```
-query_memory("test")
+
+```python
+result = recall(
+    "What dependencies keep recurring?",
+    include_observations=True,
+    observation_limit=2,
+)
 ```
 
-You should get a recall response from the MCP server. Done.
+Trusted mode revalidates support at read time and returns confirmed observations
+only. Exploratory mode can label candidates or stale observations. Ordinary
+recall remains unchanged while `include_observations` is off.
 
----
+## Evidence-bound compiled profile
 
-For manual setup, advanced flags (`--provider`, `--db`, `--no-cron`, `--no-full-stack`, `--verify-only`, `--json`, and more), Docker, Helm, and Postgres, see [INSTALLATION.md](INSTALLATION.md).
+The compiled profile turns repeated, independently supported transcript facts
+into a bounded session-start briefing. It is a disposable projection:
 
-## Pick your LLM provider
+- SQLite transcript/support rows remain authoritative.
+- New or replacement facts need at least two independent sessions.
+- Unknown support IDs, sensitive output, instructions and malformed provider
+  output fail closed.
+- The injected profile is context about the user—not permission and not an
+  instruction hierarchy.
 
-| Provider | Env vars | Default model | Cost |
-|----------|----------|---------------|------|
-| **Claude Code OAuth** (recommended for subscribers) | `MEMORYMASTER_LLM_PROVIDER=claude_cli` (requires `claude` CLI on PATH) | `claude-haiku-4-5-20251001` | included in Claude Code plan |
-| Google Gemini (default) | `MEMORYMASTER_LLM_PROVIDER=google` + `GEMINI_API_KEY=...` | `gemini-3.1-flash-lite-preview` | ~free |
-| OpenAI | `MEMORYMASTER_LLM_PROVIDER=openai` + `OPENAI_API_KEY=...` | `gpt-4o-mini` | ~$0.001/call |
-| Anthropic API | `MEMORYMASTER_LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY=...` | `claude-haiku-4-5-20251001` | ~$0.001/call |
-| Ollama (local) | `MEMORYMASTER_LLM_PROVIDER=ollama` + `OLLAMA_URL=http://localhost:11434` | `llama3.2:3b` | free |
+Enable both 4.7 features for new processes:
 
-The `claude_cli` provider shells out to your local `claude --print` binary, so it inherits the OAuth session you're already logged into in Claude Code — no API key, no rotator, no quota juggling. **Caveat**: cold-start adds 3-15s per call (subprocess spawn), so it's ideal for batched/cron paths (steward, wiki-absorb) and not for latency-sensitive recall. Override with `MEMORYMASTER_CLAUDE_CLI_BIN` and `MEMORYMASTER_CLAUDE_CLI_TIMEOUT`. On VM installs the OAuth token expires ~24h, so pair with `MEMORYMASTER_LLM_FALLBACK_PROVIDER=ollama`; desktop tokens don't expire.
+```powershell
+[Environment]::SetEnvironmentVariable("MEMORYMASTER_GRAPH_OBSERVATIONS", "1", "User")
+[Environment]::SetEnvironmentVariable("MEMORYMASTER_COMPILED_PROFILE", "1", "User")
+```
 
-For zero-cost offline use, install [Ollama](https://ollama.com), `ollama pull llama3.2:3b`, and set `MEMORYMASTER_LLM_PROVIDER=ollama`.
+Hooks are re-read on every event and update immediately. MCP servers and other
+long-lived daemons must be restarted to load newly installed package code or new
+environment variables.
 
-## MCP server
+## Scheduled operation—release first, review afterward
+
+There is **no 24-hour implementation or release prerequisite**. A long observation
+window is useful only as later evidence about queue health, cost and lifecycle.
+It must never keep working code out of `main` merely because the clock has not
+elapsed.
+
+On Windows, install the bounded read-only review task after installing the
+release:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows-operational-review.ps1 `
+  -PythonExe "<runtime-python.exe>" `
+  -Database "<memorymaster.db>" `
+  -ExpectedVersion "4.7.2" `
+  -EveryHours 6
+```
+
+`MemoryMaster-Operational-Review` then checks:
+
+- installed version, schema, SQLite `quick_check` and foreign keys;
+- observation backlog, blocked jobs and expired leases;
+- compiled-profile runs, facts and exact support counts;
+- recent claim fields for private topology or absolute-path residue;
+- the configured natural-language retrieval canary.
+
+It writes `latest.json` and append-only execution history under the user's local
+application-data directory. The review opens SQLite read-only, performs no claim
+or job mutation, and never turns task transport into a false success receipt.
+Exit codes are `0=PASS`, `1=FAIL`, and `3=WARN`.
+
+## Architecture and governance
+
+```text
+producer
+  -> source_items
+  -> evidence_items
+  -> candidate claims
+  -> steward proposals / lifecycle events
+  -> confirmed claims
+  -> FTS5 recall + supported entity graph
+  -> optional observations / skills / compiled profile
+```
+
+The default product is one private local SQLite database in WAL mode plus a
+stdio MCP server. No new database, cloud service or vector server is required.
+PostgreSQL team operation remains explicitly deferred; Qdrant remains an
+optional semantic accelerator rather than a source of truth.
+
+Important boundaries:
+
+- Claim fields pass through the shared sensitivity filter on every ingest path.
+- Raw user-selected source/evidence remains governed by the separate preservation
+  boundary described in [ADR-0006](docs/adr/0006-sensitivity-filter-boundary.md).
+- Generated observations cannot support future observations.
+- Trusted graph traversal requires active, authorized support in the same scope
+  and tenant.
+- Schema changes use immutable checksum-verified migrations.
+- The Obsidian wiki is an opt-in human view, not the read layer.
+
+See [Architecture](docs/architecture.md), [Operations](docs/operations.md), and
+the [Graph Observations ledger](.planning/GRAPH-OBSERVATIONS-V1.md).
+
+## MCP configuration
 
 ```json
 {
@@ -223,8 +234,8 @@ For zero-cost offline use, install [Ollama](https://ollama.com), `ollama pull ll
     "memorymaster": {
       "command": "memorymaster-mcp",
       "env": {
-        "MEMORYMASTER_DEFAULT_DB": "/path/to/memorymaster.db",
-        "MEMORYMASTER_WORKSPACE": "/path/to/your/project",
+        "MEMORYMASTER_DEFAULT_DB": "<path-to-memorymaster.db>",
+        "MEMORYMASTER_WORKSPACE": "<project-root>",
         "MEMORYMASTER_MCP_AUTH_MODE": "local-trusted"
       }
     }
@@ -232,103 +243,76 @@ For zero-cost offline use, install [Ollama](https://ollama.com), `ollama pull ll
 }
 ```
 
-MCP authorization mode is mandatory. Use `local-trusted` only with SQLite in a
-private stdio process controlled by one OS user. PostgreSQL application runtime
-is team-only and requires an operator-configured principal, tenant, non-owner
-application DSN, workspace, and explicit scope allowlist. Schema initialization
-uses a distinct migrator DSN/role; never give that role to the MCP runtime.
-Unverified host-wide and maintenance tools fail closed. Existing brownfield MCP
-entries must add the mode or be regenerated with setup `--force`.
+`local-trusted` is only for a private SQLite stdio process controlled by one OS
+user. Regenerate old brownfield entries that do not declare an authorization
+mode. The full tool inventory is generated from code in
+[release truth](docs/generated/release-truth.md); operational examples are in
+[MCP tools](docs/MCP-TOOLS.md).
 
-MemoryMaster exposes `remember`, `recall`, `forget`, and `improve` plus advanced
-setup, lifecycle, retrieval, graph, and governance tools. The
-[generated release truth](docs/generated/release-truth.md) is the authoritative
-inventory and count.
+## Providers
 
-See [`docs/MCP-TOOLS.md`](docs/MCP-TOOLS.md) for the grouped reference (one line per tool), and [`.mcp.json.example`](.mcp.json.example) for the full config template.
+Provider calls are for extraction, consolidation and selected steward phases—
+not for ordinary local recall.
 
-## Backends
+| Provider | Configuration | Typical use |
+|---|---|---|
+| Gemini | `MEMORYMASTER_LLM_PROVIDER=google` plus configured Google credentials | Activated extraction path |
+| GLM through authenticated OpenCode | configured consolidation model | Activated Dreaming/profile consolidation path |
+| Claude CLI OAuth | `MEMORYMASTER_LLM_PROVIDER=claude_cli` | Optional batch/steward path |
+| Ollama | `MEMORYMASTER_LLM_PROVIDER=ollama` | Optional local provider |
+| OpenAI / Anthropic APIs | corresponding provider and environment credential | Supported optional adapters |
 
-| Backend | Install | Use case |
-|---------|---------|----------|
-| **SQLite** | Built-in | **Primary profile:** personal/local, private, zero-config |
-| **Postgres 16.x** | `pip install "memorymaster[postgres]"` | **Deferred:** future authenticated team deployment with isolated app/migrator roles |
+Never put credentials in claims, repository files, task arguments, logs or
+generated profiles.
 
-Postgres is not required for normal MemoryMaster use and is not currently a
-release target. The detailed contract below is retained so the dormant profile
-fails closed and can be revisited safely if a genuine shared-service use case
-appears.
+## Useful commands
 
-PostgreSQL v0011 enables and forces row-level security. Reads are tenant/scope
-bounded and expose public claims or the principal's own private claims; writes
-are owner-only, require a nonblank `source_agent` on every team claim, and are
-limited to public/private rows. Migration v0012 makes public claim identities
-tenant + exact-scope local; non-public idempotency keys, human IDs, and
-confirmed tuples additionally include exact visibility and principal. A
-tenant-derived hash-only function preserves the event chain across private
-principals/scopes without exposing payloads. The application role must read and
-append events but cannot update any event column or delete events. Unscoped
-human-ID/idempotency-key reads fail when an identifier is ambiguous across
-scopes. The supersession guard denies self- and cross-tenant/scope/visibility/
-principal links; the canonical lifecycle locks both claims and commits reciprocal
-pointers plus one event atomically. Startup rejects drift in exact policy,
-function, trigger, privilege, and identity-index catalogs. Brownfield
-owner/duplicate/unsafe-supersession repair requires a reviewed external
-maintenance action. Team action proposals and raw merge/sync paths remain disabled.
-See [INSTALLATION.md](INSTALLATION.md#postgresql-team-runtime-security-boundary)
-and [deployment profiles](docs/deployment_profiles.md) before enabling this
-backend. Real PostgreSQL verification requires two distinct DSNs targeting a
-disposable database; repository tests do not constitute a production proof.
+```powershell
+# Trusted recall with score explanation
+memorymaster query "topic" --explain
 
-## Docker Compose
+# One bounded steward cycle
+python -m memorymaster --db memorymaster.db run-cycle
 
-For an explicit experimental semantic profile, run the optional Qdrant index
-and Ollama stack with:
+# Database checks
+memorymaster --db memorymaster.db --json integrity --quick-check --fk-check
 
-```bash
-docker compose up -d
+# Dashboard
+memorymaster-dashboard --db memorymaster.db
+
+# Validate generated release inventory
+python scripts/generate_release_truth.py --check
 ```
 
-Starting Qdrant alone does not enable governed retrieval. The minimal local
-profile should not start this stack.
+## Upgrade and rollback
 
-See [INSTALLATION.md](INSTALLATION.md) for Kubernetes / Helm.
+Upgrade the package, then restart long-lived MCP/daemon processes:
 
-## Development
-
-```bash
-# Install with dev dependencies
-pip install -e ".[dev,mcp,security,embeddings,qdrant]"
-
-# Run tests
-pytest tests/ -q
-
-# Lint and format
-ruff check memorymaster/ && ruff format memorymaster/
-
-# Performance benchmarks
-python benchmarks/perf_smoke.py
+```powershell
+python -m pip install --upgrade "memorymaster[mcp,capture,security]"
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
+Feature rollback does not delete history:
 
-## Documentation
+```powershell
+[Environment]::SetEnvironmentVariable("MEMORYMASTER_GRAPH_OBSERVATIONS", "0", "User")
+[Environment]::SetEnvironmentVariable("MEMORYMASTER_COMPILED_PROFILE", "0", "User")
+```
 
-| Document | Description |
-|----------|-------------|
-| [docs/README.md](docs/README.md) | Documentation index — where to find each living doc |
-| [docs/handbook.md](docs/handbook.md) | Full operator handbook — hooks, dashboard, steward, dream bridge, troubleshooting, one-prompt install |
-| [docs/MCP-TOOLS.md](docs/MCP-TOOLS.md) | MCP usage guide; generated inventory and counts are linked from the document |
-| [docs/INTEGRATING.md](docs/INTEGRATING.md) | Integration guide for embedding MemoryMaster in your agent |
-| [docs/public-v1.md](docs/public-v1.md) | Stable remember/recall/forget/improve contract, capture limits, and trust boundary |
-| [INSTALLATION.md](INSTALLATION.md) | Setup guide: pip, Docker, Helm, MCP config |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Dev setup, testing, PR workflow |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | System design and subsystem details |
-| [USER_GUIDE.md](USER_GUIDE.md) | Usage, MCP integration, troubleshooting |
-| [CHANGELOG.md](CHANGELOG.md) | Version history and release notes |
-| [ROADMAP.md](ROADMAP.md) | Release plan and future tracks |
-| [docs/enabling-v2-systems.md](docs/enabling-v2-systems.md) | v3 statistical classifier + cadence policy opt-in |
+Disabling generation/recall leaves additive tables and audit history intact.
+Candidates can be archived and confirmed generated observations made stale only
+through the governed lifecycle—not by deleting database rows.
 
-## License
+## Project status and documentation
 
-[MIT](LICENSE) — Built by [wolverin0](https://github.com/wolverin0)
+- Stable release history: [CHANGELOG](CHANGELOG.md)
+- Canonical documentation verdicts: [DOCS-MAP](DOCS-MAP.md)
+- Install and agent wiring: [AGENT-INSTALL](docs/AGENT-INSTALL.md)
+- Public API: [Public v1](docs/public-v1.md)
+- Operational procedures: [Operations](docs/operations.md)
+- Security and supply chain: [Security](docs/security_supply_chain.md)
+- Full feature handbook: [Handbook](docs/handbook.md)
+
+MemoryMaster is MIT licensed. Contributions should preserve SQLite authority,
+claim governance, exact support lineage, privacy boundaries and opt-in derived
+recall.
