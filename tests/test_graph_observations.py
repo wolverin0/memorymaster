@@ -13,11 +13,11 @@ from memorymaster.core.service import MemoryService
 from memorymaster.core.lifecycle import transition_claim
 from memorymaster.core.models import CitationInput
 from memorymaster.dreaming.worker import DreamWorker
+from memorymaster.govern.jobs import validator
 from memorymaster.evaluation.graph_observation_evaluator import evaluate_corpus
 from memorymaster.capture.repository import CaptureRepository
 from memorymaster.knowledge.graph_observation_engine import (
     GraphObservationEngine,
-    review_observation_candidates,
 )
 from memorymaster.knowledge.graph_observation_repository import (
     GraphObservationRepository,
@@ -351,7 +351,7 @@ def test_candidate_steward_promotion_and_retirement_staleness(tmp_path) -> None:
     discovery = engine.process_discovery(owner="observer", scope="project:test")
     synthesis = engine.process_synthesis(owner="observer", scope="project:test")
     candidates = engine.repo.scope_observations(scope="project:test", tenant_id=None)
-    review = review_observation_candidates(service.store, scope="project:test")
+    review = validator.run(service.store, min_citations=1, min_score=0.0)
     observation_id = int(candidates[0]["observation_claim_id"])
     ordinary = public_recall(
         "blocker dependency",
@@ -375,7 +375,8 @@ def test_candidate_steward_promotion_and_retirement_staleness(tmp_path) -> None:
 
     assert discovery.synthesis_queued == 1
     assert synthesis.emitted == 1
-    assert review["confirmed"] == 1
+    assert review["observation_confirmed"] == 1
+    assert review["confirmed"] == 0
     assert ordinary.output == baseline.output
     assert ordinary.observations == ()
     assert observation_id not in {int(row["claim_id"]) for row in ordinary.claims}
@@ -385,6 +386,9 @@ def test_candidate_steward_promotion_and_retirement_staleness(tmp_path) -> None:
     assert dashboard["observations"][0]["observation_type"] == "dependency"
     assert len(dashboard["observations"][0]["supports"]) == 4
     assert dashboard["observations"][0]["lifecycle"]
+    events = service.store.list_events(claim_id=observation_id, limit=20)
+    assert any(event.event_type == "deterministic_validator" for event in events)
+    assert not any(event.event_type == "validator" for event in events)
     assert service.store.get_claim(observation_id).status == "stale"
 
 

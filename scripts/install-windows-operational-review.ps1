@@ -3,7 +3,7 @@ param(
     [string]$PythonExe,
     [Parameter(Mandatory = $true)]
     [string]$Database,
-    [string]$ExpectedVersion = "4.7.3",
+    [string]$ExpectedVersion = "4.7.4",
     [int]$EveryHours = 6,
     [int]$LookbackHours = 8,
     [string]$CanaryQuery = "why does wezterm cli time out from Node but not from bash",

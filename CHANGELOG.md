@@ -1,4 +1,4 @@
-<!-- doc-head: public MemoryMaster release history through v4.7.3 -->
+<!-- doc-head: public MemoryMaster release history through v4.7.4 -->
 Covers user-visible changes, migrations, governance boundaries, and operational fixes for each release.
 Key terms: graph observations, compiled profile, governed capture, recall, sensitivity, lineage.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
@@ -7,6 +7,14 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 # Changelog
 
 ## [Unreleased]
+
+## [4.7.4] - 2026-08-14
+
+### Fixed
+
+- The regular steward now routes observation candidates through their
+  deterministic support gate before processing ordinary candidates. Generated
+  observations can no longer fall through to the generic claim validator.
 
 ## [4.7.3] - 2026-08-14
 

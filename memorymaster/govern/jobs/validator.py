@@ -82,6 +82,25 @@ def _retire_duplicate(store, claim: Claim, duplicate: Claim) -> str:
     return "archived"
 
 
+def _review_observations(store, limit: int) -> dict[str, int]:
+    """Run the deterministic observation gate; never fall through to classifier."""
+    try:
+        from memorymaster.knowledge.graph_observation_engine import (
+            review_observation_candidates,
+        )
+
+        result = review_observation_candidates(store, limit=limit)
+        return {**result, "errors": 0}
+    except Exception:  # noqa: BLE001 - observation promotion fails closed
+        return {
+            "checked": 0,
+            "confirmed": 0,
+            "archived": 0,
+            "would_confirm": 0,
+            "errors": 1,
+        }
+
+
 def run(
     store,
     limit: int = 200,
@@ -110,12 +129,21 @@ def run(
             "skill_pending_approval": 0,
             "staled": 0,
             "revalidated_healthy": 0,
+            "observation_checked": 0,
+            "observation_confirmed": 0,
+            "observation_archived": 0,
+            "observation_errors": 0,
         }
+    observation_review = _review_observations(store, limit)
     cfg = get_config()
     if min_score is None:
         min_score = cfg.validation_threshold
     candidate_claims = sorted(
-        store.find_by_status("candidate", limit=limit),
+        (
+            claim
+            for claim in store.find_by_status("candidate", limit=limit)
+            if (claim.claim_type or "").strip().lower() != "observation"
+        ),
         key=_candidate_recency_key,
         reverse=True,
     )
@@ -291,4 +319,8 @@ def run(
         "skill_pending_approval": skill_pending_approval,
         "staled": staled,
         "revalidated_healthy": revalidated_healthy,
+        "observation_checked": observation_review["checked"],
+        "observation_confirmed": observation_review["confirmed"],
+        "observation_archived": observation_review["archived"],
+        "observation_errors": observation_review["errors"],
     }
