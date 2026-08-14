@@ -1,4 +1,4 @@
-<!-- doc-head: public MemoryMaster release history through v4.7.2 -->
+<!-- doc-head: public MemoryMaster release history through v4.7.3 -->
 Covers user-visible changes, migrations, governance boundaries, and operational fixes for each release.
 Key terms: graph observations, compiled profile, governed capture, recall, sensitivity, lineage.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
@@ -7,6 +7,15 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 # Changelog
 
 ## [Unreleased]
+
+## [4.7.3] - 2026-08-14
+
+### Fixed
+
+- Operational observation checks now fail closed when graph support rows lack
+  explicit source or evidence sensitivity metadata. An empty observation queue
+  can no longer be reported as healthy when eligible support was silently
+  excluded by the governance boundary.
 
 ## [4.7.2] - 2026-08-13
 
