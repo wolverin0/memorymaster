@@ -136,17 +136,20 @@ def invalidate_changed_observations(
         }
     changed = 0
     for row in repo.scope_observations(scope=scope, tenant_id=tenant_id):
-        if row["support_hash"] in current_hashes:
-            continue
         status = str(row["status"])
-        target = "archived" if status == "candidate" else "stale"
         if status not in {"candidate", "confirmed"}:
             continue
+        reason = "support_fingerprint_changed"
+        if row["support_hash"] in current_hashes:
+            eligible, reason = repo.observation_gate(int(row["observation_claim_id"]))
+            if eligible:
+                continue
+        target = "archived" if status == "candidate" else "stale"
         transition_claim(
             store,
             int(row["observation_claim_id"]),
             target,
-            "graph-observation support fingerprint changed",
+            f"graph-observation support gate failed: {reason}",
             event_type="staleness",
         )
         changed += 1

@@ -134,7 +134,7 @@
     "console_entrypoints": 8,
     "mcp_tools": 50,
     "ops_cli_commands": 5,
-    "pytest_test_functions": 3819
+    "pytest_test_functions": 3821
   },
   "feature_profile_matrix": {
     "capture_hook": [
@@ -255,5 +255,5 @@
       "mcp"
     ]
   },
-  "version": "4.7.5"
+  "version": "4.7.6"
 }
