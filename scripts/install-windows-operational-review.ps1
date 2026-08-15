@@ -40,7 +40,7 @@ $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $actionArg
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) `
     -RepetitionInterval (New-TimeSpan -Hours $EveryHours)
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
-    -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 15) -StartWhenAvailable
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
 
 [pscustomobject]@{
