@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+from memorymaster.capture import CaptureRepository
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
 from memorymaster.knowledge.entity_graph import EntityGraph, EntityGraphNotReady
@@ -18,6 +19,26 @@ from memorymaster.surfaces import mcp_server
 def _table_columns(db_path: Path, table: str) -> set[str]:
     with sqlite3.connect(db_path) as conn:
         return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _attach_safe_support(service: MemoryService, claim_id: int, key: str) -> None:
+    external = service.upsert_external_source(
+        source_type="entity-schema-fixture", display_name="governed graph"
+    )
+    source = service.upsert_source_item(
+        source_id=external.id,
+        source_item_id=key,
+        item_type="text",
+        sensitivity="none",
+    )
+    evidence = service.add_evidence_item(
+        source_item_id=source.id,
+        evidence_type="text",
+        sensitivity="none",
+    )
+    CaptureRepository(service.store).link_claim_evidence(
+        claim_id=claim_id, evidence_item_id=evidence.id
+    )
 
 
 def _create_legacy_graph_first(db_path: Path) -> None:
@@ -205,6 +226,7 @@ def test_init_extract_stats_related_and_enriched_recall(tmp_path: Path) -> None:
         reason="trusted graph fixture",
         event_type="validator",
     )
+    _attach_safe_support(service, bob.id, "bob")
     payload = (
         '{"entities":[{"name":"Alice","type":"person","aliases":[]},'
         '{"name":"Bob","type":"person","aliases":[]}],'
@@ -255,6 +277,8 @@ def test_entity_enrichment_reserves_governed_graph_slots(tmp_path: Path) -> None
 
     support = confirmed("Mira coordinates Operations Atlas.")
     target = confirmed("The shift review is on Thursday.", confidence=0.2)
+    _attach_safe_support(service, support.id, "mira-support")
+    _attach_safe_support(service, target.id, "mira-target")
     graph = EntityGraph(str(db_path))
     with patch("memorymaster.knowledge.entity_graph._llm_chat") as extract:
         extract.return_value = (

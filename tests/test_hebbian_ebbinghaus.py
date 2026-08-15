@@ -48,6 +48,30 @@ def graph(db_path):
             "VALUES (?, 'hebbian test', 'project:test', 'confirmed', ?, ?)",
             [(claim_id, now, now) for claim_id in (1, 2, 10, 11, 99, 100, 200)],
         )
+        conn.execute(
+            "INSERT INTO external_sources "
+            "(id, source_type, display_name, created_at, updated_at) "
+            "VALUES (1, 'hebbian-fixture', 'governed graph', ?, ?)",
+            (now, now),
+        )
+        conn.executemany(
+            "INSERT INTO source_items "
+            "(id, source_id, source_item_id, item_type, sensitivity, created_at, updated_at) "
+            "VALUES (?, 1, ?, 'text', 'none', ?, ?)",
+            [(claim_id, f"claim:{claim_id}", now, now) for claim_id in (1, 2, 10, 11, 99, 100, 200)],
+        )
+        conn.executemany(
+            "INSERT INTO evidence_items "
+            "(id, source_item_id, evidence_type, sensitivity, created_at) "
+            "VALUES (?, ?, 'text', 'none', ?)",
+            [(claim_id, claim_id, now) for claim_id in (1, 2, 10, 11, 99, 100, 200)],
+        )
+        conn.executemany(
+            "INSERT INTO claim_evidence_links "
+            "(claim_id, evidence_item_id, role, created_at) "
+            "VALUES (?, ?, 'support', ?)",
+            [(claim_id, claim_id, now) for claim_id in (1, 2, 10, 11, 99, 100, 200)],
+        )
         conn.commit()
     finally:
         conn.close()

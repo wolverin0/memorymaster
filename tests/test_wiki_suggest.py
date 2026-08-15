@@ -7,13 +7,15 @@ from pathlib import Path
 from memorymaster.surfaces.cli import main
 import pytest
 
+from memorymaster.capture import CaptureRepository
 from memorymaster.core.service import MemoryService
 from memorymaster.knowledge.entity_graph import EntityGraphNotReady
 from memorymaster.knowledge.wiki_suggest import suggest_wikilinks
 
 
 def _seed_graph(db_path: Path) -> None:
-    MemoryService(db_path, workspace_root=db_path.parent).init_db()
+    service = MemoryService(db_path, workspace_root=db_path.parent)
+    service.init_db()
     conn = sqlite3.connect(db_path)
     try:
         now = "2026-01-01T00:00:00Z"
@@ -75,6 +77,25 @@ def _seed_graph(db_path: Path) -> None:
         conn.commit()
     finally:
         conn.close()
+    external = service.upsert_external_source(
+        source_type="wiki-suggest-fixture", display_name="governed graph"
+    )
+    repository = CaptureRepository(service.store)
+    for claim_id in range(1, 5):
+        source = service.upsert_source_item(
+            source_id=external.id,
+            source_item_id=f"claim:{claim_id}",
+            item_type="text",
+            sensitivity="none",
+        )
+        evidence = service.add_evidence_item(
+            source_item_id=source.id,
+            evidence_type="text",
+            sensitivity="none",
+        )
+        repository.link_claim_evidence(
+            claim_id=claim_id, evidence_item_id=evidence.id
+        )
 
 
 def _seed_wiki(root: Path) -> None:
