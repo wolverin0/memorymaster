@@ -23,10 +23,34 @@ def _seed_claims(graph: EntityGraph, *claim_ids: int) -> None:
     now = "2026-01-01T00:00:00+00:00"
     conn = graph._connect()
     try:
+        conn.execute(
+            "INSERT INTO external_sources "
+            "(id, source_type, display_name, created_at, updated_at) "
+            "VALUES (1, 'fixture', 'entity graph fixture', ?, ?)",
+            (now, now),
+        )
         conn.executemany(
             "INSERT INTO claims (id, text, scope, status, created_at, updated_at) "
             "VALUES (?, 'entity graph test', 'project:test', 'confirmed', ?, ?)",
             [(claim_id, now, now) for claim_id in claim_ids],
+        )
+        conn.executemany(
+            "INSERT INTO source_items "
+            "(id, source_id, source_item_id, item_type, sensitivity, created_at, updated_at) "
+            "VALUES (?, 1, ?, 'text', 'none', ?, ?)",
+            [(claim_id, f'fixture:{claim_id}', now, now) for claim_id in claim_ids],
+        )
+        conn.executemany(
+            "INSERT INTO evidence_items "
+            "(id, source_item_id, evidence_type, sensitivity, created_at) "
+            "VALUES (?, ?, 'text', 'none', ?)",
+            [(claim_id, claim_id, now) for claim_id in claim_ids],
+        )
+        conn.executemany(
+            "INSERT INTO claim_evidence_links "
+            "(claim_id, evidence_item_id, role, created_at) "
+            "VALUES (?, ?, 'support', ?)",
+            [(claim_id, claim_id, now) for claim_id in claim_ids],
         )
         conn.commit()
     finally:
@@ -125,6 +149,26 @@ class TestEntityGraph:
         with pytest.raises(EntityGraphProviderError) as exc:
             graph.extract_and_link(claim_id=1, text="test text")
         assert exc.value.code == "provider_empty_response"
+
+    @patch("memorymaster.knowledge.entity_graph._llm_chat")
+    def test_extract_and_link_requires_governed_evidence(self, mock_llm, graph):
+        graph.ensure_tables()
+        now = "2026-01-01T00:00:00+00:00"
+        conn = graph._connect()
+        try:
+            conn.execute(
+                "INSERT INTO claims "
+                "(id, text, scope, status, created_at, updated_at) "
+                "VALUES (1, 'unsupported claim', 'project:test', 'confirmed', ?, ?)",
+                (now, now),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        assert graph.extract_and_link(1, "unsupported claim") == []
+        assert graph.last_diagnostics == ["claim_evidence_missing"]
+        mock_llm.assert_not_called()
 
     @patch("memorymaster.knowledge.entity_graph._llm_chat")
     def test_extract_and_link_with_entities(self, mock_llm, graph):

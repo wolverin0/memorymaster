@@ -72,6 +72,8 @@ def _fixture(tmp_path: Path):
     service = MemoryService(db, workspace_root=workspace)
     service.init_db()
     evidence_id = int(receipt.evidence["id"])
+    service.set_source_item_sensitivity(int(receipt.source_item["id"]), "none")
+    service.set_evidence_item_sensitivity(evidence_id, "none")
     claim = service.ingest(
         "Alice participates in Project Atlas.",
         [CitationInput(source="fixture", locator=f"evidence:{evidence_id}")],

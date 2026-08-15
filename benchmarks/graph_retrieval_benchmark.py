@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from memorymaster.core.models import CitationInput  # noqa: E402
+from memorymaster.capture import CaptureRepository  # noqa: E402
 from memorymaster.core.service import MemoryService  # noqa: E402
 from memorymaster.knowledge.entity_graph import EntityGraph  # noqa: E402
 from memorymaster.recall.embeddings import EmbeddingProvider  # noqa: E402
@@ -58,6 +59,23 @@ def _confirm(
         scope=scope,
         confidence=confidence,
         source_agent=source_agent,
+    )
+    external = service.upsert_external_source(
+        source_type="graph-benchmark", display_name="governed graph benchmark"
+    )
+    source = service.upsert_source_item(
+        source_id=external.id,
+        source_item_id=f"claim:{claim.id}",
+        item_type="text",
+        sensitivity="none",
+    )
+    evidence = service.add_evidence_item(
+        source_item_id=source.id,
+        evidence_type="text",
+        sensitivity="none",
+    )
+    CaptureRepository(service.store).link_claim_evidence(
+        claim_id=claim.id, evidence_item_id=evidence.id
     )
     return service.store.apply_status_transition(
         claim,
