@@ -122,6 +122,7 @@ def test_powershell_scheduler_contract_is_bounded() -> None:
 
     assert "RepetitionInterval" in installer
     assert "ExecutionTimeLimit" in installer
+    assert "New-TimeSpan -Minutes 15" in installer
     assert "MultipleInstances IgnoreNew" in installer
     assert "review_performed = $true" in runner
     assert "work-receipt" not in runner.lower()
