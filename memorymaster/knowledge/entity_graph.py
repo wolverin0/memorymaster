@@ -196,6 +196,27 @@ class EntityGraph:
         if sensitive:
             self.last_diagnostics.append("sensitive_claim")
             return str(row["scope"]), False
+        support = conn.execute(
+            """SELECT
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN si.retired_at IS NULL
+                                  AND ei.sensitivity='none'
+                                  AND si.sensitivity='none'
+                            THEN 1 ELSE 0 END) AS eligible
+               FROM claim_evidence_links cel
+               JOIN evidence_items ei ON ei.id=cel.evidence_item_id
+               JOIN source_items si ON si.id=ei.source_item_id
+               WHERE cel.claim_id=?""",
+            (claim_id,),
+        ).fetchone()
+        total = int(support["total"] or 0)
+        eligible = int(support["eligible"] or 0)
+        if total == 0:
+            self.last_diagnostics.append("claim_evidence_missing")
+            return str(row["scope"]), False
+        if eligible != total:
+            self.last_diagnostics.append("claim_support_ineligible")
+            return str(row["scope"]), False
         return str(row["scope"]), True
 
     def _validated_relations(self, data: dict) -> list[dict]:
@@ -369,14 +390,20 @@ class EntityGraph:
             "(c.valid_until IS NULL OR julianday(c.valid_until) > julianday('now'))",
             "COALESCE(c.visibility, 'public') <> 'sensitive'",
             """(
-                NOT EXISTS (SELECT 1 FROM claim_evidence_links cel WHERE cel.claim_id=c.id)
-                OR EXISTS (
+                EXISTS (
                     SELECT 1 FROM claim_evidence_links cel
                     JOIN evidence_items ei ON ei.id=cel.evidence_item_id
                     JOIN source_items si ON si.id=ei.source_item_id
                     WHERE cel.claim_id=c.id AND si.retired_at IS NULL
-                      AND COALESCE(ei.sensitivity, 'none') NOT IN ('high','redacted')
-                      AND COALESCE(si.sensitivity, 'none') NOT IN ('high','redacted'))
+                      AND ei.sensitivity='none' AND si.sensitivity='none')
+                AND NOT EXISTS (
+                    SELECT 1 FROM claim_evidence_links cel
+                    JOIN evidence_items ei ON ei.id=cel.evidence_item_id
+                    JOIN source_items si ON si.id=ei.source_item_id
+                    WHERE cel.claim_id=c.id
+                      AND (si.retired_at IS NOT NULL
+                           OR ei.sensitivity IS NULL OR ei.sensitivity<>'none'
+                           OR si.sensitivity IS NULL OR si.sensitivity<>'none'))
             )""",
         ]
         params: list[object] = []
@@ -442,14 +469,20 @@ class EntityGraph:
             "(c.valid_until IS NULL OR julianday(c.valid_until) > julianday('now'))",
             "COALESCE(c.visibility, 'public') <> 'sensitive'",
             """(
-                NOT EXISTS (SELECT 1 FROM claim_evidence_links cel WHERE cel.claim_id=c.id)
-                OR EXISTS (
+                EXISTS (
                     SELECT 1 FROM claim_evidence_links cel
                     JOIN evidence_items ei ON ei.id=cel.evidence_item_id
                     JOIN source_items si ON si.id=ei.source_item_id
                     WHERE cel.claim_id=c.id AND si.retired_at IS NULL
-                      AND COALESCE(ei.sensitivity, 'none') NOT IN ('high','redacted')
-                      AND COALESCE(si.sensitivity, 'none') NOT IN ('high','redacted'))
+                      AND ei.sensitivity='none' AND si.sensitivity='none')
+                AND NOT EXISTS (
+                    SELECT 1 FROM claim_evidence_links cel
+                    JOIN evidence_items ei ON ei.id=cel.evidence_item_id
+                    JOIN source_items si ON si.id=ei.source_item_id
+                    WHERE cel.claim_id=c.id
+                      AND (si.retired_at IS NOT NULL
+                           OR ei.sensitivity IS NULL OR ei.sensitivity<>'none'
+                           OR si.sensitivity IS NULL OR si.sensitivity<>'none'))
             )""",
         ]
         params: list[object] = list(reached)

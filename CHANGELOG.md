@@ -1,4 +1,4 @@
-<!-- doc-head: public MemoryMaster release history through v4.7.4 -->
+<!-- doc-head: public MemoryMaster release history through v4.7.5 -->
 Covers user-visible changes, migrations, governance boundaries, and operational fixes for each release.
 Key terms: graph observations, compiled profile, governed capture, recall, sensitivity, lineage.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
@@ -7,6 +7,15 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 # Changelog
 
 ## [Unreleased]
+
+## [4.7.5] - 2026-08-14
+
+### Fixed
+
+- Entity graph extraction and trusted traversal now require every linked source
+  and evidence item to carry the explicit safe sensitivity label `none`.
+  Unreviewed, retired, low, medium, high, or redacted support can no longer
+  create or expose graph edges that PPR-7 must reject later.
 
 ## [4.7.4] - 2026-08-14
 

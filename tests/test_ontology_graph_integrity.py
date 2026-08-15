@@ -44,6 +44,9 @@ def _captured_claim(
 ):
     receipt = remember(text=text, scope=scope, db=db, workspace=workspace)
     evidence_id = int(receipt.evidence["id"])
+    source_id = int(receipt.source_item["id"])
+    service.set_source_item_sensitivity(source_id, "none")
+    service.set_evidence_item_sensitivity(evidence_id, "none")
     claim = service.ingest(
         text,
         [CitationInput(source="fixture", locator=f"evidence:{evidence_id}")],
@@ -100,6 +103,79 @@ def test_replaying_claim_does_not_reinforce_edge_twice(tmp_path: Path) -> None:
         supports = conn.execute("SELECT COUNT(*) FROM entity_edge_supports").fetchone()
     assert edge["weight"] == pytest.approx(1.0)
     assert supports[0] == 1
+
+
+@pytest.mark.parametrize(
+    ("support_kind", "sensitivity"),
+    [
+        ("source", None),
+        ("source", "medium"),
+        ("evidence", None),
+        ("evidence", "medium"),
+    ],
+)
+def test_graph_extraction_requires_explicit_none_support_sensitivity(
+    tmp_path: Path, support_kind: str, sensitivity: str | None
+) -> None:
+    service, db, workspace = _service(tmp_path)
+    receipt, claim = _captured_claim(
+        service,
+        db,
+        workspace,
+        text="Alice participates in Project Atlas.",
+        scope="project:a",
+    )
+    source_id = int(receipt.source_item["id"])
+    evidence_id = int(receipt.evidence["id"])
+    if support_kind == "source":
+        service.set_source_item_sensitivity(source_id, sensitivity)
+    else:
+        service.set_evidence_item_sensitivity(evidence_id, sensitivity)
+
+    graph = EntityGraph(str(db))
+    assert _extract(graph, claim, _relationship("Alice", "Project Atlas")) == []
+    assert graph.last_diagnostics == ["claim_support_ineligible"]
+
+    with service.store.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM entity_edge_supports").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    ("support_kind", "sensitivity"),
+    [
+        ("source", None),
+        ("source", "medium"),
+        ("evidence", None),
+        ("evidence", "medium"),
+    ],
+)
+def test_trusted_graph_excludes_existing_support_without_explicit_none_sensitivity(
+    tmp_path: Path, support_kind: str, sensitivity: str | None
+) -> None:
+    service, db, workspace = _service(tmp_path)
+    receipt, claim = _captured_claim(
+        service,
+        db,
+        workspace,
+        text="Alice participates in Project Atlas.",
+        scope="project:a",
+    )
+    graph = EntityGraph(str(db))
+    assert _extract(graph, claim, _relationship("Alice", "Project Atlas"))
+    assert claim.id in graph.find_related_claims(
+        ["Alice"], scope_allowlist=["project:a"]
+    )
+
+    source_id = int(receipt.source_item["id"])
+    evidence_id = int(receipt.evidence["id"])
+    if support_kind == "source":
+        service.set_source_item_sensitivity(source_id, sensitivity)
+    else:
+        service.set_evidence_item_sensitivity(evidence_id, sensitivity)
+
+    assert claim.id not in graph.find_related_claims(
+        ["Alice"], scope_allowlist=["project:a"]
+    )
 
 
 def test_new_supporting_claim_reinforces_existing_edge(tmp_path: Path) -> None:

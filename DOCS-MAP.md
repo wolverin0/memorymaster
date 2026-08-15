@@ -1,15 +1,15 @@
-<!-- doc-head: canonical map through v4.7.4 deterministic observation stewardship -->
+<!-- doc-head: canonical map through v4.7.5 fail-closed graph support extraction -->
 # DOCS-MAP - memorymaster
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, compiled user profile, roadmap, ADR.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-14 for deterministic observation stewardship and sensitivity diagnostics.
+# Updated: 2026-08-14 for explicit-safe graph extraction and trusted traversal.
 # Rule: generated profiles are disposable projections; MemoryMaster remains authority.
 <!-- /doc-head -->
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
-| CHANGELOG.md | CURRENT | 2026-08-14 | Public release history through v4.7.4, including deterministic observation stewardship and fail-closed sensitivity diagnostics. |
+| CHANGELOG.md | CURRENT | 2026-08-14 | Public release history through v4.7.5, including fail-closed graph extraction and deterministic observation stewardship. |
 | README.md | CURRENT | 2026-08-13 | Primary product overview and setup for governed claims, PPR-7 observations, compiled profile, Gemini plus GLM, and release-first scheduled review. |
 | ROADMAP.md | CURRENT | 2026-08-12 | Sole authoritative roadmap; P5 is merged and locally deployed, while isolated PPR-7 implementation is active. |
 | .planning/GRAPH-OBSERVATIONS-V1.md | CURRENT | 2026-08-12 | Bounded PPR-7 implementation ledger for deterministic supported components, governed synthesis, lifecycle, opt-in recall, and verification. |
