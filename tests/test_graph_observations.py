@@ -18,6 +18,7 @@ from memorymaster.evaluation.graph_observation_evaluator import evaluate_corpus
 from memorymaster.capture.repository import CaptureRepository
 from memorymaster.knowledge.graph_observation_engine import (
     GraphObservationEngine,
+    invalidate_changed_observations,
 )
 from memorymaster.knowledge.graph_observation_repository import (
     GraphObservationRepository,
@@ -390,6 +391,58 @@ def test_candidate_steward_promotion_and_retirement_staleness(tmp_path) -> None:
     assert any(event.event_type == "deterministic_validator" for event in events)
     assert not any(event.event_type == "validator" for event in events)
     assert service.store.get_claim(observation_id).status == "stale"
+
+
+def test_confirmed_observation_stales_when_support_confidence_drops(tmp_path) -> None:
+    service, _capture, _sources = _graph_fixture(tmp_path)
+    raw = json.dumps(
+        {
+            "decision": "emit",
+            "name": "Shared blocker chain",
+            "observation_type": "dependency",
+            "summary": "Three blockers share a two-step dependency chain.",
+            "assertions": [
+                {
+                    "text": "All blockers are in the supplied chain.",
+                    "supporting_claim_ids": [1, 2, 3],
+                }
+            ],
+        }
+    )
+    engine = GraphObservationEngine(service.store, llm_call=lambda _system, _prompt: raw)
+    engine.repo.queue_discovery(
+        tenant_id=None,
+        scope="project:test",
+        ontology_version="personal-v1",
+        cycle_hour="2026-08-12T20",
+    )
+    engine.process_discovery(owner="observer", scope="project:test")
+    engine.process_synthesis(owner="observer", scope="project:test")
+    validator.run(service.store, min_citations=1, min_score=0.0)
+    observation = engine.repo.scope_observations(scope="project:test", tenant_id=None)[0]
+    observation_id = int(observation["observation_claim_id"])
+
+    with service.store.connect() as connection:
+        connection.execute("UPDATE claims SET confidence=0.64 WHERE id=1")
+        connection.commit()
+    changed = invalidate_changed_observations(
+        service.store,
+        engine.repo,
+        scope="project:test",
+        tenant_id=None,
+    )
+
+    assert changed == 1
+    assert service.store.get_claim(observation_id).status == "stale"
+    recalled = public_recall(
+        "blocker dependency",
+        scope_allowlist=["project:test"],
+        retrieval_mode="legacy",
+        include_observations=True,
+        db=service.store.db_path,
+        workspace=tmp_path,
+    )
+    assert recalled.observations == ()
 
 
 def test_dashboard_hydration_adds_observation_panel_and_scripts() -> None:

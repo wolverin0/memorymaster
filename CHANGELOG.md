@@ -1,4 +1,4 @@
-<!-- doc-head: public MemoryMaster release history through v4.7.5 -->
+<!-- doc-head: public MemoryMaster release history through v4.7.6 -->
 Covers user-visible changes, migrations, governance boundaries, and operational fixes for each release.
 Key terms: graph observations, compiled profile, governed capture, recall, sensitivity, lineage.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
@@ -7,6 +7,15 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 # Changelog
 
 ## [Unreleased]
+
+## [4.7.6] - 2026-08-15
+
+### Fixed
+
+- Confirmed graph observations now transition to stale when their current
+  deterministic support gate fails, including when supporting confidence drops
+  below 0.65 without changing the support fingerprint. The operational review
+  also fails closed while any such confirmed observation remains ineligible.
 
 ## [4.7.5] - 2026-08-14
 
