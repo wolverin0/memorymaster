@@ -18,7 +18,7 @@ from memorymaster.core.models import ActionProposal, CitationInput, Claim, Claim
 from memorymaster.core.policy import select_revalidation_candidates
 from memorymaster.recall.context_optimizer import ContextResult, pack_context
 from memorymaster.core.config import get_config
-from memorymaster.recall.retrieval import VectorSearchHook, _tier_bonus, rank_claim_rows
+from memorymaster.recall.retrieval import VectorSearchHook, _tier_bonus, pending_supersession_ids, rank_claim_rows
 from memorymaster.recall.planner import (
     RetrievalPlan,
     RetrievalRequest,
@@ -1330,7 +1330,7 @@ class MemoryService(IntegrationService):
             legacy,
             mode="hybrid" if conversational else "legacy",
             limit=limit,
-            vector_hook=None,
+            vector_hook=None, pending_supersession_ids=pending_supersession_ids(self),
         )
         results = [
             {
@@ -1518,7 +1518,7 @@ class MemoryService(IntegrationService):
             limit=rank_limit,
             vector_hook=vector_hook,
             semantic_vectors=semantic,
-            query_type=query_type,
+            query_type=query_type, pending_supersession_ids=pending_supersession_ids(self),
         )
         ranked_rows = _rerank_with_profile(
             ranked_rows,
