@@ -147,6 +147,88 @@ def _tier_bonus(claim: Claim) -> float:
     return _TIER_BONUS.get(tier, 0.0)
 
 
+# Declaring `supersedes_claim_id` at ingest does not retire the outdated claim:
+# it files a `steward_proposal:superseded_candidate` for human review. Until
+# that review happens the superseded claim keeps FULL score and still outranks
+# the correction that replaces it -- the exact failure an infra audit caught on
+# 2026-08-17 (a false "fstrim reclaims the space" claim beating its own
+# correction). Review is not a mitigation you can lean on: 0 of 249 proposals
+# had ever been resolved, the oldest pending for ~4 months. This penalty makes
+# the demotion take effect when the supersession is PROPOSED, so a correction
+# wins immediately and approval only confirms what recall already does.
+#
+# Sized to overcome the `core` tier bonus (+0.15) plus a normal confidence edge;
+# a demotion, never a deletion -- the claim stays retrievable.
+_SUPERSEDED_PENDING_PENALTY = -0.40
+
+
+_PENDING_SUPERSESSION_TTL_SECONDS = 300.0
+
+
+def pending_supersession_ids(service: object) -> frozenset[int]:
+    """Claim ids whose supersession is PROPOSED but not applied.
+
+    Declaring ``supersedes_claim_id`` files a
+    ``steward_proposal:superseded_candidate`` for review instead of retiring the
+    claim, so the outdated claim keeps full score until a human approves. That
+    approval could not be relied on (0 of 249 proposals resolved, oldest ~4
+    months), so ranking reads the proposals directly.
+
+    Cached per service for ``_PENDING_SUPERSESSION_TTL_SECONDS`` -- the set
+    turns over on steward cadence, not per query. Never raises: on any fault it
+    returns an empty set, which is exactly "rank as before".
+    """
+    import json
+    import time
+
+    now = time.monotonic()
+    cached = getattr(service, "_pending_supersession_cache", None)
+    if cached is not None and (now - cached[0]) < _PENDING_SUPERSESSION_TTL_SECONDS:
+        return cached[1]
+
+    ids: set[int] = set()
+    try:
+        list_events = service.list_events  # type: ignore[attr-defined]
+        resolved: set[int] = set()
+        for event in list_events(event_type="audit", limit=2000):
+            if str(getattr(event, "details", "") or "") not in {
+                "steward_proposal_approved",
+                "steward_proposal_rejected",
+            }:
+                continue
+            try:
+                payload = json.loads(getattr(event, "payload_json", None) or "{}")
+            except (ValueError, TypeError):
+                continue
+            proposal_event_id = payload.get("proposal_event_id") if isinstance(payload, dict) else None
+            if isinstance(proposal_event_id, int):
+                resolved.add(proposal_event_id)
+        for event in list_events(event_type="policy_decision", limit=2000):
+            if str(getattr(event, "details", "") or "") != "steward_proposal:superseded_candidate":
+                continue
+            if int(event.id) in resolved:
+                continue
+            claim_id = getattr(event, "claim_id", None)
+            if isinstance(claim_id, int) and claim_id > 0:
+                ids.add(claim_id)
+    except Exception:  # noqa: BLE001 - retrieval must survive a bookkeeping fault
+        ids = set()
+
+    result = frozenset(ids)
+    try:
+        service._pending_supersession_cache = (now, result)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - a read-only service just skips caching
+        pass
+    return result
+
+
+def _pending_supersession_penalty(claim: Claim, pending_ids: frozenset[int] | None) -> float:
+    """Penalty for a claim whose supersession is proposed but not yet applied."""
+    if not pending_ids:
+        return 0.0
+    return _SUPERSEDED_PENDING_PENALTY if claim.id in pending_ids else 0.0
+
+
 def rank_claims(
     query_text: str,
     claims: list[Claim],
@@ -179,6 +261,7 @@ def _compute_score_parts(
     vector: float,
     vector_enabled: bool,
     query_type: str | None = None,
+    pending_supersession_ids: frozenset[int] | None = None,
 ) -> _ScoreParts:
     """Decompose a claim's score into query-relevance and metadata boosts.
 
@@ -205,7 +288,8 @@ def _compute_score_parts(
     fresh_term = w_f * freshness
     pinned_term = cfg.pinned_bonus if claim.pinned else 0.0
     tier_term = _tier_bonus(claim)
-    boosts = conf_term + fresh_term + pinned_term + tier_term
+    superseded_term = _pending_supersession_penalty(claim, pending_supersession_ids)
+    boosts = conf_term + fresh_term + pinned_term + tier_term + superseded_term
     return _ScoreParts(
         relevance=relevance,
         boosts=boosts,
@@ -215,6 +299,7 @@ def _compute_score_parts(
             "freshness": fresh_term,
             "pinned": pinned_term,
             "tier": tier_term,
+            "pending_supersession": superseded_term,
         },
     )
 
@@ -428,6 +513,7 @@ def rank_claim_rows(
     vector_hook: VectorSearchHook | None = None,
     semantic_vectors: bool = False,
     query_type: str | None = None,
+    pending_supersession_ids: frozenset[int] | None = None,
 ) -> list[RankedClaim]:
     if mode not in RETRIEVAL_MODES:
         raise ValueError(f"Unknown retrieval mode: {mode}")
@@ -439,7 +525,12 @@ def rank_claim_rows(
             lexical = _lexical_score(query_text, claim) if query_text.strip() else 0.0
             confidence = max(0.0, min(1.0, claim.confidence))
             freshness = _freshness_score(claim)
-            score = confidence + (get_config().pinned_bonus if claim.pinned else 0.0) + _tier_bonus(claim)
+            score = (
+                confidence
+                + (get_config().pinned_bonus if claim.pinned else 0.0)
+                + _tier_bonus(claim)
+                + _pending_supersession_penalty(claim, pending_supersession_ids)
+            )
             rows.append(
                 RankedClaim(
                     claim=claim,
@@ -468,7 +559,8 @@ def rank_claim_rows(
         freshness = _freshness_score(claim)
         vector = max(0.0, min(1.0, float(vector_scores.get(claim.id, 0.0))))
         parts = _compute_score_parts(
-            claim, lexical, confidence, freshness, vector, vector_enabled, query_type
+            claim, lexical, confidence, freshness, vector, vector_enabled, query_type,
+            pending_supersession_ids=pending_supersession_ids,
         )
         scored.append((claim, lexical, confidence, freshness, vector, parts))
 

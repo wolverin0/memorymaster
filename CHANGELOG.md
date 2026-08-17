@@ -8,6 +8,22 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 ## [Unreleased]
 
+### Fixed
+
+- **A corrected claim no longer outranks its own correction.** Declaring
+  `supersedes_claim_id` at ingest does not retire the outdated claim: it files a
+  `steward_proposal:superseded_candidate` for human review, and until that review
+  happens the superseded claim keeps FULL retrieval score. An infra audit on
+  2026-08-17 caught the consequence live — a false claim ("fstrim reclaims the
+  space") ranking above the correction that replaced it, with neither flagged as
+  conflicted. Review turned out not to be a mitigation anyone could rely on:
+  **0 of 249 proposals had ever been resolved**, the oldest pending ~4 months.
+  Ranking now applies a demotion when a supersession is *proposed*, so the
+  correction wins immediately and approval only confirms what recall already
+  does. The outdated claim is demoted, never hidden — it stays retrievable so
+  provenance survives. No effect on claims without a pending proposal: with an
+  empty pending set the ranking is byte-identical to before.
+
 ## [4.7.6] - 2026-08-15
 
 ### Fixed
