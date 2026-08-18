@@ -233,6 +233,25 @@ shipped inert.
 
 ---
 
+## Standing policy (from the R6 fix)
+
+- **The derived-override guard stays allowlist-free.** `test_r6_postgres_silent_droppers.py`
+  asserts 14/14 `_LifecycleMixin` methods are dialect-correct on `PostgresStore`
+  with **no exemptions**. When a future change makes one legitimately
+  unreachable on Postgres, the tempting move is to add an exemption list — and
+  that quietly reopens this entire bug class, which is how four sites survived
+  after the first one was fixed. Prove unreachability by deleting the method or
+  overriding it, not by exempting it.
+- **Unproven-in-anger, carried forward:** the Postgres dialect fixes are covered
+  by a psycopg-shaped double (rejects `?`, returns mapping rows), but **no live
+  Postgres ran here**. Unverified against a real server: `TIMESTAMPTZ` accepting
+  a native datetime, `= ANY(%s)` with a Python list, and whether the app role
+  holds grants on `entities`/`entity_aliases` under RLS. CI with a DSN is the
+  first real execution. The durable half of the fix is independent of this:
+  `claim_access_write_failed_total` now fires on failure, so a wrong statement
+  is loud rather than silent.
+
+
 ## Out of scope (recorded, deliberately not fixed here)
 
 - **Graph evidence-link thinness** — 0.23% of claims carry an evidence link and
