@@ -541,6 +541,21 @@ def rank_claim_rows(
                     vector_score=0.0,
                 )
             )
+        # The legacy branch deliberately keeps the store's bm25 ordering instead
+        # of sorting by `score` -- so a penalty folded into `score` above changes
+        # the number and NOT what the caller sees. That made the supersession
+        # demotion inert on the default path (`query_memory` defaults to legacy
+        # and the recall hook hardcodes it), which is the very "computed and
+        # discarded" failure the penalty exists to fix.
+        #
+        # Rather than sort the whole list by score -- which would silently
+        # re-rank every legacy query -- push ONLY the demoted claims to the back,
+        # stably. Relative order of everything else is untouched, so healthy
+        # results keep their bm25 ranking exactly.
+        if pending_supersession_ids:
+            rows = [r for r in rows if r.claim.id not in pending_supersession_ids] + [
+                r for r in rows if r.claim.id in pending_supersession_ids
+            ]
         return apply_session_diversity_cap(rows, get_config().session_diversity_cap)[:limit]
 
     vector_scores: Mapping[int, float] = {}
