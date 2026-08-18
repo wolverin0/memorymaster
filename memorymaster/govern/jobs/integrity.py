@@ -57,7 +57,13 @@ MARKER_CHECK_FAILED = "integrity_check_failed"
 MARKER_WAL_OVERSIZE = "integrity_wal_oversize"
 MARKER_METRICS = "integrity_metrics"
 
+MARKER_FTS_DRIFT = "integrity_fts_drift"
+MARKER_FTS_DRIFT_FOUND = "integrity_fts_drift_found"
+
+FTS_REBUILD_SQL = "INSERT INTO claims_fts(claims_fts) VALUES('rebuild')"
+
 QUICK_CHECK_INTERVAL_HOURS = 24
+FTS_DRIFT_INTERVAL_HOURS = 24
 FK_CHECK_INTERVAL_HOURS = 24
 VACUUM_INTERVAL_HOURS = 24 * 7
 
@@ -188,6 +194,68 @@ def quick_check(
     return {"ok": ok, "rows": rows[:10]}
 
 
+def fts_drift(
+    store,
+    db_path: str | Path,
+    *,
+    now: datetime | None = None,
+    force: bool = False,
+) -> dict[str, object]:
+    """Daily check that ``claims_fts`` still agrees with ``claims``.
+
+    ``claims_fts`` is an external-content FTS5 index kept in step by triggers.
+    The update trigger removes a row's OLD terms before inserting the new ones,
+    which only works while the index already holds those OLD terms — so once an
+    entry drifts, every later edit preserves the stale term instead of clearing
+    it. Drift therefore accumulates and never self-corrects.
+
+    Nothing surfaces it, either: a stale entry does not corrupt the database or
+    fail ``quick_check``. It just makes the index claim a word appears in a
+    claim that no longer contains it, so recall returns confident-looking
+    matches with no relevance. Measured on a production database in 2026-08,
+    roughly 45% of matches for common terms were stale before a rebuild.
+
+    Unlike :func:`quick_check` this never freezes promotions: the stored claims
+    are intact and readable, only the search index is behind. The repair is
+    ``INSERT INTO claims_fts(claims_fts) VALUES('rebuild')``, which took about
+    three seconds on a 131k-claim database.
+    """
+    if not force and not _due(db_path, MARKER_FTS_DRIFT, hours=FTS_DRIFT_INTERVAL_HOURS, now=now):
+        return {"skipped": "throttled"}
+
+    detail: str | None = None
+    try:
+        with closing(open_conn(db_path)) as conn:
+            has_fts = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='claims_fts'"
+            ).fetchone()
+            if has_fts is None:
+                return {"skipped": "no_fts_table"}
+            # FTS5 reports a mismatch between index and content table as a
+            # DatabaseError worded like disk corruption. Here it means the
+            # index is stale, not that the file is damaged.
+            conn.execute("INSERT INTO claims_fts(claims_fts, rank) VALUES('integrity-check', 1)")
+            drifted = False
+    except sqlite3.DatabaseError as exc:
+        drifted = True
+        detail = str(exc)
+    except sqlite3.Error as exc:  # pragma: no cover - connection-level failure
+        _record(store, MARKER_FTS_DRIFT, {"error": str(exc)})
+        return {"error": str(exc)}
+
+    if drifted:
+        _record(store, MARKER_FTS_DRIFT_FOUND, {"detail": detail})
+        logger.error(
+            "claims_fts is out of step with claims for %s (%s). Recall will return "
+            "matches with no relevance until the index is rebuilt: "
+            "INSERT INTO claims_fts(claims_fts) VALUES('rebuild')",
+            db_path,
+            detail,
+        )
+    _record(store, MARKER_FTS_DRIFT, {"drifted": drifted})
+    return {"drifted": drifted, "detail": detail, "repair": FTS_REBUILD_SQL if drifted else None}
+
+
 def fk_check(
     store,
     db_path: str | Path,
@@ -275,6 +343,7 @@ def run(
     phases = (
         ("checkpoint", lambda: checkpoint(store, db_path)),
         ("quick_check", lambda: quick_check(store, db_path, now=now)),
+        ("fts_drift", lambda: fts_drift(store, db_path, now=now)),
         ("fk_check", lambda: fk_check(store, db_path, now=now)),
         ("vacuum_snapshot", lambda: vacuum_snapshot(store, db_path, now=now)),
     )

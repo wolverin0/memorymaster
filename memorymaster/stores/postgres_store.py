@@ -2030,8 +2030,10 @@ class PostgresStore(SQLiteStore):
         Returns ``[]`` for a single term or when no term appears at all, so an
         unrelated query stays empty instead of degrading into noise.
         """
-        tokens = text_query.split()
-        if len(tokens) < 2:
+        from memorymaster.stores._storage_read import _relaxation_terms
+
+        tokens = _relaxation_terms(text_query)
+        if not tokens:
             return []
 
         present: list[str] = []

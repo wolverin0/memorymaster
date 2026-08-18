@@ -576,10 +576,23 @@ def rank_claim_rows(
         # and the recall hook hardcodes it), which is the very "computed and
         # discarded" failure the penalty exists to fix.
         #
-        # Rather than sort the whole list by score -- which would silently
-        # re-rank every legacy query -- push ONLY the demoted claims to the back,
-        # stably. Relative order of everything else is untouched, so healthy
-        # results keep their bm25 ranking exactly.
+        # Order by how well each claim answers the query. Leaving this out was
+        # safe only while the store returned strict AND matches: every candidate
+        # was relevant and bm25 already ordered them. Once the zero-hit
+        # relaxation widens the candidate set, bm25 order across a mixed set is
+        # meaningless, and a claim with no lexical overlap at all can arrive
+        # first -- which is what buried real answers behind arbitrary ones.
+        #
+        # Sorting on `lexical_score` alone, stably, is the smallest rule that
+        # fixes it: rows of equal relevance keep the store's bm25 order
+        # untouched, so a row only moves when relevance genuinely differs.
+        # Deliberately NOT sorting by `score`, which is confidence plus bonuses
+        # and would re-rank every legacy query by trust rather than by answer.
+        rows.sort(key=lambda row: row.lexical_score, reverse=True)
+
+        # Demoted claims go last regardless of relevance. Applied after the
+        # relevance sort so a superseded claim cannot climb back on a strong
+        # lexical match.
         if pending_supersession_ids:
             rows = [r for r in rows if r.claim.id not in pending_supersession_ids] + [
                 r for r in rows if r.claim.id in pending_supersession_ids
