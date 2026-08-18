@@ -238,6 +238,89 @@ class _ReadMixin:
 
 
     @staticmethod
+    def _fts_sql(
+        clauses: list[str], params: list[object], fts_expr: str, limit: int
+    ) -> tuple[str, list[object]]:
+        """Build the bm25-ranked FTS select for ``fts_expr``.
+
+        Kept separate so the relaxed retry reuses the exact same shape as the
+        strict pass instead of drifting from it.
+        """
+        all_clauses = clauses + [
+            "c.id IN (SELECT rowid FROM claims_fts WHERE claims_fts MATCH ?)"
+        ]
+        all_params = params + [fts_expr]
+        where_sql = f"WHERE {' AND '.join(all_clauses)}"
+        sql = f"""
+                    SELECT c.*, bm25(claims_fts) AS _fts_rank
+                    FROM claims c
+                    JOIN claims_fts ON claims_fts.rowid = c.id
+                    {where_sql}
+                    AND claims_fts MATCH ?
+                    ORDER BY _fts_rank ASC, c.pinned DESC, c.confidence DESC, c.updated_at DESC, c.id DESC
+                    LIMIT ?
+                """
+        return sql, all_params + [fts_expr, limit]
+
+    def _fts_relaxed_rows(
+        self,
+        conn: sqlite3.Connection,
+        clauses: list[str],
+        params: list[object],
+        text_query: str,
+        limit: int,
+        relaxed_out: dict[str, object] | None,
+    ) -> list[object]:
+        """Re-run a multi-term query as OR over its in-vocabulary terms.
+
+        The caller appends these *after* the strict hits, never in place of
+        them, so a query cannot lose results just because some claim entered
+        the corpus vocabulary — including a claim the caller will go on to
+        filter out of what it shows.
+
+        Returns ``[]`` — leaving the strict verdict intact — for a single term,
+        or when no term appears in the corpus at all. Relaxing those would turn
+        an unrelated query into noise instead of recovering a real match.
+        """
+        tokens = text_query.split()
+        if len(tokens) < 2:
+            return []
+
+        present: list[str] = []
+        dropped: list[str] = []
+        for token in tokens:
+            escaped = '"' + token.replace('"', '""') + '"'
+            try:
+                hit = conn.execute(
+                    "SELECT 1 FROM claims_fts WHERE claims_fts MATCH ? LIMIT 1", (escaped,)
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return []
+            (present if hit else dropped).append(token)
+
+        if not present:
+            return []
+
+        expr = " OR ".join('"' + t.replace('"', '""') + '"' for t in present)
+        sql, sql_params = self._fts_sql(clauses, params, expr, limit)
+        try:
+            rows = conn.execute(sql, sql_params).fetchall()
+        except sqlite3.OperationalError:
+            return []
+
+        if rows and relaxed_out is not None:
+            relaxed_out["relaxed"] = True
+            relaxed_out["dropped_terms"] = dropped
+            relaxed_out["matched_terms"] = present
+        if rows:
+            logger.info(
+                "FTS relaxed to OR for %r (dropped out-of-vocabulary terms: %s)",
+                text_query,
+                dropped or "none",
+            )
+        return rows
+
+    @staticmethod
     def _has_fts5_table(conn: sqlite3.Connection) -> bool:
         """Check if the claims_fts virtual table exists."""
         row = conn.execute(
@@ -329,6 +412,7 @@ class _ReadMixin:
         scope_allowlist: list[str] | None = None,
         tenant_id: str | None = None,
         holder: str | None = None,
+        relaxed_out: dict[str, object] | None = None,
     ) -> list[Claim]:
         clauses, params = self._build_list_clauses(status, status_in, include_archived, scope_allowlist, tenant_id, holder)
 
@@ -336,23 +420,16 @@ class _ReadMixin:
         if text_query:
             fts_query = self._escape_fts5_query(text_query)
 
+        fts_active = False
+        base_clauses: list[str] = []
+        base_params: list[object] = []
+
         with self.connect() as conn:
             if text_query and self._has_fts5_table(conn):
-                clauses.append("c.id IN (SELECT rowid FROM claims_fts WHERE claims_fts MATCH ?)")
-                params.append(fts_query)
-
-                where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-                sql = f"""
-                    SELECT c.*, bm25(claims_fts) AS _fts_rank
-                    FROM claims c
-                    JOIN claims_fts ON claims_fts.rowid = c.id
-                    {where_sql}
-                    AND claims_fts MATCH ?
-                    ORDER BY _fts_rank ASC, c.pinned DESC, c.confidence DESC, c.updated_at DESC, c.id DESC
-                    LIMIT ?
-                """
-                params.append(fts_query)
-                params.append(limit)
+                fts_active = True
+                base_clauses = list(clauses)
+                base_params = list(params)
+                sql, params = self._fts_sql(base_clauses, base_params, fts_query, limit)
             else:
                 if text_query:
                     clauses.append("(LOWER(text) LIKE ? OR LOWER(COALESCE(normalized_text, '')) LIKE ?)")
@@ -392,6 +469,29 @@ class _ReadMixin:
                         logger.warning(f"Database has {table_count} tables but claims missing, returning empty: {exc}")
                         return []
                 raise
+
+            # FTS5 joins tokens with AND, so one out-of-vocabulary word
+            # ("purpose", "why") empties an otherwise-perfect query and the
+            # caller cannot tell that apart from an empty database. Fill the
+            # unused slots with OR matches over the terms that do exist.
+            # Supplementing rather than substituting keeps this decision
+            # independent of the rest of the corpus: a strict hit always ranks
+            # ahead, and no result disappears because some unrelated claim
+            # taught the index a new word.
+            if fts_active and len(rows) < limit:
+                seen = {row["id"] for row in rows}
+                extra = [
+                    row
+                    for row in self._fts_relaxed_rows(
+                        conn, base_clauses, base_params, text_query or "", limit, relaxed_out
+                    )
+                    if row["id"] not in seen
+                ]
+                appended = extra[: limit - len(rows)]
+                rows = list(rows) + appended
+                if not appended and relaxed_out is not None:
+                    # Nothing was actually added; do not claim a relaxation.
+                    relaxed_out.pop("relaxed", None)
 
         claims = [self._row_to_claim(row) for row in rows]
         if include_citations and claims:

@@ -2002,6 +2002,73 @@ class PostgresStore(SQLiteStore):
             rows = cur.fetchall()
         return [int(row["id"]) for row in rows]
 
+    @staticmethod
+    def _like_sql(
+        clauses: list[str], params: list[object], limit: int
+    ) -> tuple[str, list[object]]:
+        """Build the claims select for ``clauses``; shared by both search passes."""
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"""
+            SELECT * FROM claims
+            {where_sql}
+            ORDER BY pinned DESC, confidence DESC, updated_at DESC, id DESC
+            LIMIT %s
+        """
+        return sql, params + [limit]
+
+    def _like_relaxed_rows(
+        self,
+        cur: Any,
+        clauses: list[str],
+        params: list[object],
+        text_query: str,
+        limit: int,
+        relaxed_out: dict[str, object] | None,
+    ) -> list[Any]:
+        """Re-run a zero-hit multi-word query as OR over its known terms.
+
+        Returns ``[]`` for a single term or when no term appears at all, so an
+        unrelated query stays empty instead of degrading into noise.
+        """
+        tokens = text_query.split()
+        if len(tokens) < 2:
+            return []
+
+        present: list[str] = []
+        dropped: list[str] = []
+        for token in tokens:
+            needle = f"%{token.lower()}%"
+            cur.execute(
+                "SELECT 1 FROM claims WHERE LOWER(text) LIKE %s "
+                "OR LOWER(COALESCE(normalized_text, '')) LIKE %s LIMIT 1",
+                (needle, needle),
+            )
+            (present if cur.fetchone() else dropped).append(token)
+
+        if not present:
+            return []
+
+        or_parts: list[str] = []
+        or_params: list[object] = []
+        for token in present:
+            needle = f"%{token.lower()}%"
+            or_parts.append(
+                "(LOWER(text) LIKE %s OR LOWER(COALESCE(normalized_text, '')) LIKE %s)"
+            )
+            or_params.extend([needle, needle])
+
+        sql, sql_params = self._like_sql(
+            clauses + ["(" + " OR ".join(or_parts) + ")"], params + or_params, limit
+        )
+        cur.execute(sql, sql_params)
+        rows = cur.fetchall()
+
+        if rows and relaxed_out is not None:
+            relaxed_out["relaxed"] = True
+            relaxed_out["dropped_terms"] = dropped
+            relaxed_out["matched_terms"] = present
+        return rows
+
     def list_claims(
         self,
         *,
@@ -2014,6 +2081,7 @@ class PostgresStore(SQLiteStore):
         scope_allowlist: list[str] | None = None,
         tenant_id: str | None = None,
         holder: str | None = None,
+        relaxed_out: dict[str, object] | None = None,
     ) -> list[Claim]:
         clauses: list[str] = []
         params: list[object] = []
@@ -2038,10 +2106,6 @@ class PostgresStore(SQLiteStore):
         if not include_archived and status != "archived":
             clauses.append("status <> 'archived'")
 
-        if text_query:
-            clauses.append("(LOWER(text) LIKE %s OR LOWER(COALESCE(normalized_text, '')) LIKE %s)")
-            needle = f"%{text_query.lower()}%"
-            params.extend([needle, needle])
 
         if scope_allowlist:
             normalized_scopes = [scope.strip() for scope in scope_allowlist if scope and scope.strip()]
@@ -2050,18 +2114,40 @@ class PostgresStore(SQLiteStore):
                 clauses.append(f"scope IN ({placeholders})")
                 params.extend(normalized_scopes)
 
-        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        sql = f"""
-            SELECT * FROM claims
-            {where_sql}
-            ORDER BY pinned DESC, confidence DESC, updated_at DESC, id DESC
-            LIMIT %s
-        """
-        params.append(limit)
+        # The text filter goes last so the relaxed retry below can swap just this
+        # clause without disturbing the positional parameters of the others.
+        base_clauses = list(clauses)
+        base_params = list(params)
+        if text_query:
+            clauses.append("(LOWER(text) LIKE %s OR LOWER(COALESCE(normalized_text, '')) LIKE %s)")
+            needle = f"%{text_query.lower()}%"
+            params.extend([needle, needle])
+
+        sql, params = self._like_sql(clauses, params, limit)
 
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(sql, params)
             rows = cur.fetchall()
+
+            # A whole-phrase LIKE misses whenever the words are not contiguous,
+            # which a natural-language question rarely guarantees. Fill the
+            # unused slots with per-term matches rather than reporting silence.
+            # Supplementing rather than substituting keeps the outcome
+            # independent of claims the caller never shows. Mirrors the SQLite
+            # relaxation in _storage_read.py.
+            if text_query and len(rows) < limit:
+                seen = {row["id"] for row in rows}
+                extra = [
+                    row
+                    for row in self._like_relaxed_rows(
+                        cur, base_clauses, base_params, text_query, limit, relaxed_out
+                    )
+                    if row["id"] not in seen
+                ]
+                appended = extra[: limit - len(rows)]
+                rows = list(rows) + appended
+                if not appended and relaxed_out is not None:
+                    relaxed_out.pop("relaxed", None)
 
         claims = [self._row_to_claim(row) for row in rows]
         if include_citations:
