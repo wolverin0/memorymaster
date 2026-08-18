@@ -6,7 +6,24 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 # Changelog
 
-## [Unreleased]
+## [4.8.0] - 2026-08-18
+
+Remediates the **inert-signal** class: a value or mechanism that reads like it
+works while doing nothing. Ten findings, each quantified against a production
+database (131k claims / 2.4M events) and each shipped with a regression test
+verified to FAIL without its fix.
+
+Headline effects: the operational health check examined **13.9 minutes** of
+history and reported healthy — it now scans a declared 24h window and states
+what it covered; a failed supersession apply used to latch permanently
+(unrecoverable through the API) and now stays retryable; **39.4% of the event
+log** recorded the absence of an effect and that write volume is down ~55%;
+and `core/service.py` *shrank* 83 lines because three fixes were delivered by
+extraction rather than accretion.
+
+See `.planning/INERT-SIGNALS-ROADMAP.md` for the full findings, the evidence
+per item, and the follow-ups deliberately left open.
+
 
 ### Fixed
 
