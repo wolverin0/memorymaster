@@ -10,6 +10,21 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 ### Fixed
 
+- **The supersession demotion now fires on the default retrieval path.** The
+  previous fix folded the penalty into `score`, but the `legacy` branch of
+  `rank_claim_rows` never sorts by `score` -- it returns the store's bm25 order
+  untouched. Legacy is the default everywhere that matters (`query_memory`
+  defaults to it, the recall hook hardcodes it, and `_query_legacy_mode` only
+  escapes to hybrid when the query contains `" OR "`), so the demotion was
+  computed and discarded on exactly the path agents read memory through: the
+  same "looks applied, does nothing" failure it was written to fix. Demoted
+  claims are now stably moved to the back of the legacy result instead of the
+  whole list being re-sorted, so healthy results keep their bm25 ranking
+  byte-identically. Regression tests run through the default path and fail
+  without the fix.
+
+### Fixed
+
 - **A corrected claim no longer outranks its own correction.** Declaring
   `supersedes_claim_id` at ingest does not retire the outdated claim: it files a
   `steward_proposal:superseded_candidate` for human review, and until that review
