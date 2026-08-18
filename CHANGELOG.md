@@ -1,10 +1,34 @@
-<!-- doc-head: public MemoryMaster release history through v4.7.6 -->
+<!-- doc-head: public MemoryMaster release history through v4.8.1 -->
 Covers user-visible changes, migrations, governance boundaries, and operational fixes for each release.
 Key terms: graph observations, compiled profile, governed capture, recall, sensitivity, lineage.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
 <!-- /doc-head -->
 
 # Changelog
+
+## [4.8.1] - 2026-08-18
+
+Fixes a recall failure that was indistinguishable from an empty database.
+
+- **One absent word no longer empties a query.** FTS5 joins tokens with
+  implicit AND, so a single word missing from the corpus — "purpose", "why",
+  "explain" — dropped an otherwise-perfect match to zero rows. Callers could
+  not tell that apart from having nothing stored, so an agent concluded it had
+  no memory on the subject and proceeded without it. Three real queries against
+  a 131k-claim production database returned nothing before and return four or
+  five results each now.
+- The relaxed OR pass **supplements** the strict hits rather than replacing
+  them. Substituting tied the decision to the vocabulary of the whole corpus:
+  a claim the caller filters out of its own output could still satisfy the
+  strict AND, suppress the relaxation, and leave that caller with nothing.
+  Supplementing keeps a strict hit ranked first and makes the outcome
+  independent of claims the caller never sees.
+- A query whose terms are all absent still returns nothing, so unrelated
+  queries do not degrade into noise.
+- **Backend parity.** Postgres matched the whole query as a single `LIKE`
+  substring, so it additionally missed whenever the words were not contiguous,
+  and it did not accept the new keyword argument at all. Both backends now
+  behave the same.
 
 ## [4.8.0] - 2026-08-18
 
