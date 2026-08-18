@@ -19,7 +19,8 @@ RETRIEVAL_MODES = ("legacy", "hybrid")
 VectorSearchHook = Callable[[str, list[Claim]], Mapping[int, float]]
 
 _TOKEN_RE = re.compile(r"[a-z0-9_]+")
-_STOPWORDS = {
+
+_RANKER_EXTRA_STOPWORDS = {
     "a",
     "an",
     "and",
@@ -55,6 +56,26 @@ _STOPWORDS = {
     "will",
     "with",
 }
+
+
+def _shared_stopwords() -> frozenset[str]:
+    """The stopword list ``recall_tokenizer`` already applies to the same text.
+
+    The ranker used to keep its own 34-entry English-only list while the recall
+    hook filtered the very same prompts through a 250-entry list covering
+    English and Spanish. Because ``_lexical_score`` divides the overlap by the
+    number of query tokens, every filler word the ranker failed to discard
+    diluted the terms that carried the query — and Spanish prompts, whose
+    filler was recognised nowhere, scored under half of their English
+    equivalents. Sharing one list keeps the two layers from disagreeing about
+    what a term is.
+    """
+    from memorymaster.recall.recall_tokenizer import _STOP
+
+    return frozenset(_STOP) | _RANKER_EXTRA_STOPWORDS
+
+
+_STOPWORDS = _shared_stopwords()
 
 
 @dataclass(slots=True)
