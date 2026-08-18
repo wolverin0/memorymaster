@@ -8,9 +8,10 @@ from typing import Any, Iterable
 import logging
 import os
 
-from memorymaster.core import observability
+from memorymaster.core import access_recording, observability
 from memorymaster.core import llm_budget
 from memorymaster.govern import candidate_dedupe
+from memorymaster.knowledge import entity_ingest
 from memorymaster.recall import query_cache
 from memorymaster.recall.embeddings import EmbeddingProvider, create_best_provider
 from memorymaster.govern.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, integrity, qdrant_reconcile, spool_drain, validator
@@ -267,7 +268,7 @@ def _llm_rerank_enabled() -> bool:
 
         return not rerank_temporarily_disabled()
     except Exception:
-        return True
+        return False  # R8: fail CLOSED — an unreadable breaker is not "healthy"
 
 
 def _recall_weights_snapshot(query_type: str | None) -> dict[str, Any]:
@@ -708,47 +709,15 @@ class MemoryService(IntegrationService):
             }
         )
         # Resolve subject → canonical entity (GBrain-inspired entity registry)
-        # and mine text for pattern-based entities (#127 Wave 3).
-        entity_id = 0
-        if subject or sanitized.text:
-            try:
-                from memorymaster.knowledge.entity_registry import (
-                    add_alias,
-                    resolve_or_create,
-                )
-                from memorymaster.knowledge.entity_extractor import extract_patterns
-
-                with self.store.connect() as _conn:
-                    if subject:
-                        entity_id = resolve_or_create(
-                            _conn, subject,
-                            entity_type=claim_type or "unknown",
-                            scope=scope,
-                        )
-                    # Layer 1: mine the claim text for deterministic patterns.
-                    # Strategy: resolve the canonical_hint via the alias
-                    # index (reuses existing entity if present). Register
-                    # BOTH the raw surface AND a kind-tagged alias so every
-                    # extracted entity gains ≥2 aliases (canonical + tag),
-                    # plus any distinct surface variants.
-                    for ent in extract_patterns(sanitized.text):
-                        eid = resolve_or_create(
-                            _conn,
-                            ent.canonical_hint,
-                            entity_type=f"text_entity:{ent.kind}",
-                            scope=scope,
-                        )
-                        if eid <= 0:
-                            continue
-                        if ent.surface and ent.surface != ent.canonical_hint:
-                            add_alias(_conn, eid, ent.surface)
-                        # Kind-tagged stable alias — guarantees a second
-                        # alias row so avg_aliases_per_entity ≥ 2 after
-                        # backfill even when surface == canonical.
-                        add_alias(_conn, eid, f"{ent.kind}:{ent.canonical_hint}")
-                    _conn.commit()
-            except Exception:
-                pass  # entity resolution is best-effort, never block ingest
+        # and mine text for pattern-based entities (#127 Wave 3). Backend-
+        # neutral and failure-reporting since R6 — see knowledge/entity_ingest.
+        entity_id = entity_ingest.resolve_claim_entities(
+            self.store,
+            subject=subject,
+            text=sanitized.text,
+            claim_type=claim_type,
+            scope=scope,
+        )
 
         claim = self.store.create_claim(
             text=sanitized.text,
@@ -774,17 +743,9 @@ class MemoryService(IntegrationService):
             self.store, claim, intake_governance, confidence
         )
 
-        # Set entity_id on the claim (best-effort, don't fail ingest)
-        if entity_id > 0:
-            try:
-                with self.store.connect() as _conn:
-                    _conn.execute(
-                        "UPDATE claims SET entity_id = ? WHERE id = ?",
-                        (entity_id, claim.id),
-                    )
-                    _conn.commit()
-            except Exception:
-                pass
+        # Set entity_id on the claim (best-effort, don't fail ingest — but a
+        # dropped write is counted now, not swallowed).
+        entity_ingest.link_claim_entity(self.store, claim.id, entity_id)
         if redaction_findings:
             observability.bump_claim_filtered_findings(redaction_findings)
             if sanitized.encrypted_payload:
@@ -1753,15 +1714,9 @@ class MemoryService(IntegrationService):
             self._spool_accesses(claim_ids, query_text)
             return
 
-        # Batch record accesses in a single transaction if possible
-        if claim_ids and hasattr(self.store, "record_accesses_batch"):
-            with contextlib.suppress(Exception):
-                self.store.record_accesses_batch(claim_ids)
-        elif claim_ids and hasattr(self.store, "record_access"):
-            # Fallback to individual calls if batch method not available
-            for cid in claim_ids:
-                with contextlib.suppress(Exception):
-                    self.store.record_access(cid)
+        # Batch record accesses in a single transaction if possible. Still
+        # best-effort, but a dropped write now bumps a counter (R6).
+        access_recording.record_accesses(self.store, claim_ids)
 
         # Record retrieval feedback for quality scoring
         if claim_ids and query_text:
@@ -1793,7 +1748,7 @@ class MemoryService(IntegrationService):
             db_path = str(getattr(self.store, "db_path", "") or "")
             if db_path:
                 with contextlib.suppress(Exception):
-                    from memorymaster.surfaces.session_tracker import SessionTracker
+                    from memorymaster.core.session_tracker import SessionTracker
 
                     SessionTracker(db_path).record_activity(sid, "query")
 

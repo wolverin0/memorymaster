@@ -40,6 +40,25 @@ def test_core_layers_do_not_import_optional_companions() -> None:
     assert offenders == []
 
 
+def test_core_layers_do_not_import_user_facing_surfaces() -> None:
+    """R7: ``surfaces/__init__.py`` asserts zero internal fan-in — enforce it.
+
+    Until this test existed the invariant was a docstring only, and
+    ``core/service.py`` recall telemetry lazily imported
+    ``surfaces.session_tracker``. The sweep is AST-based so a function-local
+    import (the shape the violation actually had) is still caught. Deprecated
+    top-level shims are intentionally out of scope: re-exporting FROM surfaces
+    is exactly what those modules exist to do.
+    """
+    offenders: list[str] = []
+    for tree_name in CORE_TREES:
+        for path in (PACKAGE / tree_name).rglob("*.py"):
+            for imported in _imports(path):
+                if imported.startswith("memorymaster.surfaces"):
+                    offenders.append(f"{path.relative_to(REPO)} -> {imported}")
+    assert offenders == []
+
+
 def test_core_service_import_does_not_load_or_register_companions() -> None:
     code = r'''
         import importlib.abc
