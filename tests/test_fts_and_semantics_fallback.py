@@ -135,6 +135,41 @@ def test_a_later_unrelated_claim_does_not_suppress_results(store_with_claim):
     assert after, "a claim outside the caller's scope must not empty the result"
 
 
+def test_widening_ignores_words_the_ranker_discards(store_with_claim):
+    """Common words must not be used to widen the search.
+
+    FTS5 matches "what", "should" and "a" across most of the corpus while the
+    ranker discards them as noise and scores every such hit at zero relevance.
+    Widening on them therefore buries the real answer under arbitrary claims.
+    Both layers must agree on what counts as a term.
+    """
+    svc = store_with_claim
+    svc.ingest(
+        text="A note about what a system should do when things follow an order.",
+        citations=[CitationInput(source="test", locator="l9", excerpt="e9")],
+        scope="project:test",
+        source_agent="pytest",
+    )
+    rows = svc.store.list_claims(
+        text_query="what should a quokka do", limit=10, status_in=["candidate"]
+    )
+    assert rows, "the salient term 'quokka' should still carry the query"
+    assert all("quokka" in c.text.lower() for c in rows), (
+        "a claim matching only the common words was pulled in as if relevant"
+    )
+
+
+def test_query_of_only_common_words_is_not_widened(store_with_claim):
+    """Fewer than two salient terms means the strict verdict stands."""
+    svc = store_with_claim
+    assert (
+        svc.store.list_claims(
+            text_query="what should a", limit=10, status_in=["candidate"]
+        )
+        == []
+    )
+
+
 def test_end_to_end_query_surfaces_the_claim(store_with_claim):
     """The user-visible path, not just the store."""
     svc = store_with_claim

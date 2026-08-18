@@ -25,6 +25,32 @@ from memorymaster.stores.claim_identity import (
 logger = logging.getLogger(__name__)
 
 
+def _relaxation_terms(text_query: str) -> list[str]:
+    """Salient terms to widen a zero-hit query with, in query order.
+
+    FTS5 matches every token, including ones the ranker discards as noise —
+    "what", "should", "a". Widening on those matches most of the corpus and
+    then scores every hit at zero relevance, which buries the real answer.
+    ``_candidate_tokens`` applies the same stopword and minimum-length rules
+    the ranker uses, so both agree on what counts as a term.
+
+    Returns ``[]`` when widening would be pointless or harmful: a query with
+    no salient term at all ("what should a"), and a single-term query that is
+    already exactly its own salient form ("xyzzy" — there is nothing to drop,
+    so the strict miss is the honest answer). One salient term surrounded by
+    filler is still worth widening on: "what should a quokka do" reduces to
+    "quokka", which is precisely the useful query.
+    """
+    from memorymaster.recall.recall_tokenizer import _candidate_tokens
+
+    salient = _candidate_tokens(text_query)
+    if not salient:
+        return []
+    if len(salient) < 2 and salient == [t.lower() for t in text_query.split()]:
+        return []
+    return salient
+
+
 
 class _ReadMixin:
     if TYPE_CHECKING:
@@ -282,8 +308,8 @@ class _ReadMixin:
         or when no term appears in the corpus at all. Relaxing those would turn
         an unrelated query into noise instead of recovering a real match.
         """
-        tokens = text_query.split()
-        if len(tokens) < 2:
+        tokens = _relaxation_terms(text_query)
+        if not tokens:
             return []
 
         present: list[str] = []
