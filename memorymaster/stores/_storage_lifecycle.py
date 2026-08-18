@@ -724,6 +724,22 @@ class _LifecycleMixin:
             conn.commit()
 
 
+    def set_claim_entity_id(self, claim_id: int, entity_id: int) -> bool:
+        """Point a claim at its canonical entity. Returns True if a row changed.
+
+        Owned by the store so the statement has a per-backend dialect: this
+        UPDATE used to be issued raw from ``core/service.py`` with sqlite ``?``
+        placeholders, which psycopg rejects. See the PostgresStore override.
+        """
+        with self.connect() as conn:
+            cur = conn.execute(
+                "UPDATE claims SET entity_id = ? WHERE id = ?",
+                (entity_id, claim_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+
     def record_access(self, claim_id: int) -> None:
         """Increment access_count and set last_accessed for a claim."""
         now = utc_now()

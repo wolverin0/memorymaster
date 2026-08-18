@@ -88,7 +88,7 @@ shipped inert.
   **Fix:** distinct terminal state for "nothing found", store diagnostic codes
   as text.
 
-- [ ] **R6 — Postgres: four sites of one silent-dropper, fixed once** · MED
+- [x] **R6 — Postgres: four sites of one silent-dropper, fixed once** · MED · ✅ done
   `PostgresStore(SQLiteStore)` inherits `?`-placeholder SQL that psycopg
   rejects, and every caller suppresses the exception. The project already fixed
   this once — `postgres_store.py:2471-2478` documents it verbatim for
@@ -100,21 +100,54 @@ shipped inert.
   *Compounding:* `recompute_tiers`, now fixed, runs on permanently-zero
   `access_count` and confidently demotes the aging corpus to `peripheral`.
   **Only bites Postgres deployments** (this operator runs SQLite).
-  **Fix:** small per site + one test that pins the pattern.
+  **Fixed:** all four sites, plus the seam that let them accumulate.
+  `record_access` / `record_accesses_batch` gained Postgres overrides
+  (`%s`, native `TIMESTAMPTZ`, `= ANY(%s)` instead of an `IN (?,…)` list).
+  The raw service-layer `UPDATE claims SET entity_id` became a store method,
+  `set_claim_entity_id`, with a Postgres override — the service layer no
+  longer writes SQL. `entity_registry`'s ingest-path functions
+  (`resolve_or_create`, `add_alias`, `_create_entity`, `_fuzzy_match_entity`)
+  gained a dialect seam: `?`→`%s`, `INSERT OR IGNORE`→`ON CONFLICT DO NOTHING
+  RETURNING`, and a row accessor that reads psycopg `dict_row` mappings — the
+  positional `row[0]` was a *second*, independent break on that backend. The
+  two suppressing callers moved out of `core/service.py` into
+  `core/access_recording.py` and `knowledge/entity_ingest.py`, still
+  best-effort but now counting: `claim_access_write_failed_total`,
+  `entity_resolution_failed_total`, `entity_link_failed_total`.
+  **The pattern is pinned, not the instances:** the regression test *derives*
+  the set of `_LifecycleMixin` methods whose SQL uses `?` and asserts
+  `PostgresStore` overrides every one — currently 14 of 14, zero gaps, so a
+  new inherited sqlite-dialect write fails the suite on arrival. The dialect
+  tests run everywhere via a psycopg-shaped wrapper over SQLite that rejects
+  `?` and returns mapping rows; real-Postgres assertions are in
+  `test_backend_parity.py` and skip without a DSN. 9 tests + 4 parity tests;
+  verified failing without the fix.
 
-- [ ] **R7 — `surfaces` boundary is a docstring, not a guard** · LOW · one line
+- [x] **R7 — `surfaces` boundary is a docstring, not a guard** · LOW · ✅ done
   `surfaces/__init__.py:4-6` asserts zero internal fan-in; `core/service.py:1796`
   lazily imports `surfaces.session_tracker`. **Correction to an earlier
   framing:** `tests/test_extension_boundaries.py` is *not* a guard with a hole —
   it is scoped to optional companions and never claimed `surfaces`. The defect
   is an invariant with no enforcement anywhere. Milder than the rest: nothing
   reports success while doing nothing.
-  **Fix:** drop the import or extend the boundary test to cover `surfaces`.
+  **Fixed:** both halves. `SessionTracker` is not a user-facing surface at all
+  (a small SQLite-backed tracker), so it moved to `core/session_tracker.py`
+  and `surfaces/session_tracker.py` became a re-export shim — which keeps
+  `surfaces.mcp_server`, `surfaces.cli_handlers_curation` and the deprecated
+  top-level shim working unchanged. `test_extension_boundaries.py` now sweeps
+  `core`/`govern`/`recall`/`stores` for any `memorymaster.surfaces` import;
+  the sweep is AST-based, so a function-local import — the shape the
+  violation actually had — is still caught. 1 test, verified failing without
+  the fix (it reports the exact offending edge).
 
-- [ ] **R8 — `_llm_rerank_enabled` fails OPEN** · LOW
+- [x] **R8 — `_llm_rerank_enabled` fails OPEN** · LOW · ✅ done
   `core/service.py:262-270`: `except Exception: return True` reports the feature
   enabled when the import fails. Every other gate in that function fails closed.
-  **Fix:** fail closed, one line.
+  **Fixed:** `return False`. The import being read is the LLM reranker's
+  circuit breaker; an unreadable breaker is the strongest reason not to call a
+  paid provider, not a reason to assume health. 2 tests — one pins the closed
+  failure, one pins that the gate did not become a constant `False`; the first
+  verified failing without the fix.
 
 - [ ] **R9 — 488k events recording that nothing changed** · MED · *(new)*
   `deterministic_adjust=+0.000` accounts for **487,927** of 2.41M events — ~20%

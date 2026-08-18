@@ -2474,6 +2474,61 @@ class PostgresStore(SQLiteStore):
             raise RuntimeError("Failed to load claim after transition.")
         return updated
 
+    def record_access(self, claim_id: int) -> None:
+        """Postgres override of the SQLite access counter — same effect.
+
+        Same silent-dropper as ``recompute_tiers`` below: the inherited
+        ``_LifecycleMixin.record_access`` uses sqlite ``?`` placeholders and a
+        TEXT timestamp. psycopg rejects the ``?`` outright, and the recall
+        caller wrapped the call in ``contextlib.suppress(Exception)`` with no
+        counter — so on Postgres ``access_count`` never left 0 and nothing
+        reported it. ``last_accessed`` is TIMESTAMPTZ here, so pass a native
+        datetime rather than an ISO string.
+        """
+        now = utc_now()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE claims SET access_count = access_count + 1, last_accessed = %s "
+                "WHERE id = %s",
+                (now, claim_id),
+            )
+            conn.commit()
+
+    def record_accesses_batch(self, claim_ids: list[int]) -> None:
+        """Postgres override of the batched access counter — same effect.
+
+        The inherited version builds an ``IN (?, ?, …)`` list; Postgres takes
+        the whole id list as a single ``= ANY(%s)`` array parameter, which also
+        sidesteps the parameter-count ceiling on a large recall.
+        """
+        if not claim_ids:
+            return
+        now = utc_now()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE claims SET access_count = access_count + 1, last_accessed = %s "
+                "WHERE id = ANY(%s)",
+                (now, [int(claim_id) for claim_id in claim_ids]),
+            )
+            conn.commit()
+
+    def set_claim_entity_id(self, claim_id: int, entity_id: int) -> bool:
+        """Postgres override of the claim→entity link — same effect.
+
+        Third instance of the same shape: the statement was issued raw from
+        ``core/service.py`` with ``?`` placeholders under
+        ``except Exception: pass``, so ``claims.entity_id`` stayed NULL on
+        every Postgres deployment.
+        """
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE claims SET entity_id = %s WHERE id = %s",
+                (entity_id, claim_id),
+            )
+            changed = cur.rowcount > 0
+            conn.commit()
+        return changed
+
     def recompute_tiers(self) -> dict[str, int]:
         """Postgres override of the SQLite tier recompute — same rules.
 
