@@ -200,7 +200,14 @@ def pending_supersession_ids(service: object) -> frozenset[int]:
                 payload = json.loads(getattr(event, "payload_json", None) or "{}")
             except (ValueError, TypeError):
                 continue
-            proposal_event_id = payload.get("proposal_event_id") if isinstance(payload, dict) else None
+            if not isinstance(payload, dict):
+                continue
+            # Same guard as the steward queue: an approval that failed to apply
+            # must not lift the demotion. Otherwise the claim is left live AND
+            # un-penalised -- strictly worse than never approving it.
+            if str(getattr(event, "details", "")).endswith("approved") and payload.get("applied") is False:
+                continue
+            proposal_event_id = payload.get("proposal_event_id")
             if isinstance(proposal_event_id, int):
                 resolved.add(proposal_event_id)
         for event in list_events(event_type="policy_decision", limit=2000):

@@ -6,7 +6,6 @@ identity-bound replacement proposals, and auditable volatility overrides.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -158,16 +157,16 @@ def queue_supersession_proposal(
     """Queue steward review; direct ingest never rewrites confirmed truth."""
     if target is None:
         return
+    # Dedup on the TARGET, not on the (target, replacement) pair. A claim can
+    # only be superseded once: whichever replacement is approved first retires
+    # it, and every further proposal against the same target is then guaranteed
+    # to fail with "already superseded". Two dream-worker proposals filed one
+    # second apart against claim 123737 is exactly how that happened, and the
+    # failure used to latch into an unrecoverable state.
     for event in store.list_events(
         claim_id=target.id, event_type="policy_decision", limit=100
     ):
-        if event.details != "steward_proposal:superseded_candidate":
-            continue
-        try:
-            payload = json.loads(event.payload_json or "{}")
-        except json.JSONDecodeError:
-            continue
-        if payload.get("replaced_by_claim_id") == replacement.id:
+        if event.details == "steward_proposal:superseded_candidate":
             return
     store.record_event(
         claim_id=target.id,

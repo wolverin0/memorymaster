@@ -1256,6 +1256,12 @@ def list_steward_proposals(
         if details not in {"steward_proposal_approved", "steward_proposal_rejected"}:
             continue
         payload = _parse_payload_json(event.payload_json)
+        # An approval whose apply failed does NOT resolve the proposal. New
+        # failures record `steward_proposal_apply_failed` and never reach here,
+        # but rows written before that fix are already in the log claiming an
+        # approval that never took effect -- honour their own `applied` flag.
+        if details.endswith("approved") and payload.get("applied") is False:
+            continue
         proposal_event_id = payload.get("proposal_event_id")
         if isinstance(proposal_event_id, int):
             resolution_by_proposal_event_id[proposal_event_id] = {
@@ -1404,7 +1410,19 @@ def resolve_steward_proposal(
             service, target_claim_id, decision, proposed_status, replaced_by_claim_id
         )
 
-    audit_details = "steward_proposal_approved" if action == "approve" else "steward_proposal_rejected"
+    # A failed apply must NOT be recorded as an approval. Writing
+    # `steward_proposal_approved` regardless of `applied` latched the worst
+    # possible state: the claim was never superseded, its ranking demotion was
+    # lifted (consumers treat "approved exists" as resolved), the proposal left
+    # the operator queue, and the `already_resolved` short-circuit below then
+    # REFUSED the retry -- unrecoverable through this API. A distinct terminal
+    # detail keeps the proposal pending and retryable.
+    if action == "approve" and apply_on_approve and not applied:
+        audit_details = "steward_proposal_apply_failed"
+    elif action == "approve":
+        audit_details = "steward_proposal_approved"
+    else:
+        audit_details = "steward_proposal_rejected"
     audit_payload: dict[str, Any] = {
         "source": "human_override",
         "proposal_event_id": int(target["proposal_event_id"]),
@@ -1421,15 +1439,19 @@ def resolve_steward_proposal(
         payload=audit_payload,
     )
 
+    resolved = not (action == "approve" and apply_on_approve and not applied)
     return {
         "ok": True,
-        "resolved": True,
+        "resolved": resolved,
         "action": action,
         "proposal_event_id": int(target["proposal_event_id"]),
         "claim_id": target_claim_id,
         "applied": applied,
         "apply_error": apply_error,
-        "status": ("approved" if action == "approve" else "rejected"),
+        "status": (
+            "apply_failed" if not resolved
+            else ("approved" if action == "approve" else "rejected")
+        ),
     }
 
 

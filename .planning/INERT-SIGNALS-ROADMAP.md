@@ -34,7 +34,7 @@ shipped inert.
   the count could never have fired regardless of window. Recorded under R10.
   4 tests, verified failing without the fix.
 
-- [ ] **R2 — A failed apply is latched permanently** · HIGH · small
+- [x] **R2 — A failed apply is latched permanently** · HIGH · ✅ done
   `govern/steward.py:1407-1421` writes `steward_proposal_approved` regardless of
   `applied`. Three consumers read "an approved event exists" as resolved and
   none reads `payload["applied"]`: `list_steward_proposals:1259-1264` (drops it
@@ -46,9 +46,14 @@ shipped inert.
   *(target, replacement)* pair, not per target, so N replacements against one
   target file N proposals and N−1 fail by construction. 1 real case today
   (claim 123737, two dream-worker proposals 1s apart).
-  **Fix:** only record approval when applied (or a distinct
-  `steward_proposal_apply_failed`), teach the three consumers to read `applied`,
-  make the dedup target-scoped.
+  **Fixed:** a failed apply now records `steward_proposal_apply_failed` instead
+  of an approval, and returns `resolved: False` / `status: "apply_failed"`, so
+  the proposal stays in the queue and the retry is allowed. Both consumers also
+  honour `applied: False` on pre-existing rows — one such row is already in
+  production (claim 123737), written before this fix. The generator is closed
+  too: dedup is now per TARGET, since a claim can only be superseded once and
+  every further proposal against it was doomed by construction.
+  4 tests, verified failing without the fix. 1,205 tests green in the tranche.
 
 - [ ] **R3 — The validator promotes claims that are pending supersession** · MED
   The proposal is a `policy_decision` event; the validator never reads it, so a
