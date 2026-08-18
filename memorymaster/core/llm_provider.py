@@ -20,6 +20,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from memorymaster.core import llm_budget
+from memorymaster.core.provider_health import record_provider_failure
 
 
 # Per-call env overrides. Threaded via contextvars so concurrent callers
@@ -146,7 +147,7 @@ def _call_google_with_env_rotation(model: str, payload: dict[str, Any]) -> str |
         # batch, cool ALL keys and make get_key falsely sleep on "all keys
         # rate-limited"). audit: env-rotation-empty200-cools-healthy-key
         status_sink: dict[str, int | None] = {"http_status": None}
-        result = _http_post(url, payload, _extract_google, status_sink=status_sink)
+        result = _http_post(url, payload, _extract_google, status_sink=status_sink, provider="google")
         if result:
             rotator.clear_cooldown(api_key)
             return result
@@ -210,7 +211,7 @@ def _call_google(prompt: str, text: str) -> str:
                 break
             label, key = pair
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
-            result = _http_post(url, payload, _extract_google, rotator_label=label, rotator=rotator)
+            result = _http_post(url, payload, _extract_google, rotator_label=label, rotator=rotator, provider="google")
             if result:
                 return result
         return ""
@@ -219,7 +220,7 @@ def _call_google(prompt: str, text: str) -> str:
     if not api_key:
         return ""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-    return _http_post(url, payload, _extract_google)
+    return _http_post(url, payload, _extract_google, provider="google")
 
 
 def _call_openai(prompt: str, text: str) -> str:
@@ -247,7 +248,7 @@ def _call_openai(prompt: str, text: str) -> str:
         "Content-Type": "application/json",
     }
 
-    return _http_post(url, payload, _extract_openai, extra_headers=headers)
+    return _http_post(url, payload, _extract_openai, extra_headers=headers, provider="openai")
 
 
 def _call_anthropic(prompt: str, text: str) -> str:
@@ -272,7 +273,7 @@ def _call_anthropic(prompt: str, text: str) -> str:
         "Content-Type": "application/json",
     }
 
-    return _http_post(url, payload, _extract_anthropic, extra_headers=headers)
+    return _http_post(url, payload, _extract_anthropic, extra_headers=headers, provider="anthropic")
 
 
 def _call_ollama(prompt: str, text: str) -> str:
@@ -288,7 +289,7 @@ def _call_ollama(prompt: str, text: str) -> str:
         "options": {"temperature": 0.1, "num_predict": 1500, "num_ctx": 8192},
     }
 
-    return _http_post(url, payload, _extract_ollama, timeout=60)
+    return _http_post(url, payload, _extract_ollama, timeout=60, provider="ollama")
 
 
 _OPENCODE_CLIENTS: dict[tuple[str, str, str, int], Any] = {}
@@ -328,6 +329,7 @@ def _call_opencode(prompt: str, text: str) -> str:
         return client.complete(f"{prompt}\n\n{text}").text
     except OpenCodeClientError as exc:
         logging.getLogger(__name__).warning("opencode: provider call failed code=%s", exc.code)
+        record_provider_failure("opencode", "client_error", detail=str(exc.code))
         return ""
 
 
@@ -410,6 +412,7 @@ def _call_claude_cli(prompt: str, text: str) -> str:
     bin_path = _resolve_claude_bin()
     if not bin_path:
         log.warning("claude_cli: binary not found on PATH (set MEMORYMASTER_CLAUDE_CLI_BIN)")
+        record_provider_failure("claude_cli", "binary_not_found")
         return ""
     # NOTE: we do NOT capability-probe here on the hot path — the generate call's
     # own failure branches below already log loudly (exit/stderr/timeout), and
@@ -462,9 +465,11 @@ def _call_claude_cli(prompt: str, text: str) -> str:
         )
     except subprocess.TimeoutExpired:
         log.warning("claude_cli: timed out after %ds", timeout_s)
+        record_provider_failure("claude_cli", "timeout", detail=f"{timeout_s}s")
         return ""
     except OSError as exc:
         log.warning("claude_cli: subprocess failed: %s", exc)
+        record_provider_failure("claude_cli", "subprocess_error", detail=type(exc).__name__)
         return ""
 
     if result.returncode != 0:
@@ -473,6 +478,7 @@ def _call_claude_cli(prompt: str, text: str) -> str:
             result.returncode,
             (result.stderr or "")[:200],
         )
+        record_provider_failure("claude_cli", "nonzero_exit", detail=f"exit={result.returncode}")
         return ""
     return (result.stdout or "").strip()
 
@@ -559,6 +565,7 @@ def _http_post(
     rotator_label: str | None = None,
     rotator: Any = None,
     status_sink: dict[str, int | None] | None = None,
+    provider: str | None = None,
 ) -> str:
     """POST JSON, return extracted text or "" on failure.
 
@@ -566,6 +573,10 @@ def _http_post(
     HTTP status code is written to ``status_sink["http_status"]`` so callers
     (e.g. the env-key rotator) can distinguish a real 429 from an empty-200
     success and avoid cooling a healthy key.
+
+    ``provider``: name to attribute failures to. Both failure branches below
+    used to log a warning and return "" -- queryable by nobody. They now also
+    emit a durable provider-failure signal (inert-signals R10).
     """
     headers = {"Content-Type": "application/json"}
     if extra_headers:
@@ -595,6 +606,7 @@ def _http_post(
             "LLM call failed (%s) label=%s: HTTP %s %s",
             url[:60], rotator_label or "-", exc.code, body[:500],
         )
+        record_provider_failure(provider, f"http_{exc.code}", detail=f"HTTP {exc.code}")
         if rotator is not None and rotator_label and exc.code in (429, 403):
             retry_after = _parse_retry_after(body, exc.headers)
             status = _extract_google_status(body)
@@ -605,6 +617,7 @@ def _http_post(
         return ""
     except Exception as exc:
         log.warning("LLM call failed (%s) label=%s: %s", url[:60], rotator_label or "-", exc)
+        record_provider_failure(provider, "transport_error", detail=type(exc).__name__)
         return ""
 
 

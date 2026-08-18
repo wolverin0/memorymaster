@@ -17,6 +17,12 @@ Resolution flow (on ingest):
 
 The claim.subject column stays as free-text for display; entity_id is the
 canonical FK used for grouping and traversal.
+
+Backends (R6): the ingest-path functions — :func:`resolve_or_create` and
+:func:`add_alias` — are backend-neutral and run on SQLite *and* Postgres. The
+maintenance helpers below them (:func:`merge_entities`, :func:`list_entities`,
+:func:`ensure_entity_schema`, traversal) are still SQLite-only by design; they
+are reached from CLI/maintenance paths, not from ``MemoryService.ingest``.
 """
 from __future__ import annotations
 
@@ -25,9 +31,42 @@ import logging
 import os
 import re
 import sqlite3
+from collections.abc import Mapping
 from datetime import datetime, timezone
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# --- Backend dialect seam (R6) --------------------------------------------
+# ``PostgresStore`` subclasses ``SQLiteStore``, so this module was reached with
+# a psycopg connection while every signature said ``sqlite3.Connection`` and
+# every statement used ``?`` placeholders. psycopg rejects ``?`` outright, and
+# the only ingest caller wrapped the whole block in ``except Exception: pass``
+# — so on Postgres entity resolution raised on its FIRST statement, every
+# time, and reported nothing at all. Net effect on a Postgres deployment:
+# ``entities`` and ``entity_aliases`` permanently empty and ``claims.entity_id``
+# permanently NULL, with no error, no counter and no log line.
+#
+# One implementation of the resolution logic; only the SQL dialect and the row
+# accessor vary. (Postgres rows arrive as ``dict_row`` mappings, so positional
+# ``row[0]`` indexing is a second, independent break on that backend.)
+ConnectionLike = Any
+
+
+def _is_sqlite(conn: ConnectionLike) -> bool:
+    return isinstance(conn, sqlite3.Connection)
+
+
+def _q(conn: ConnectionLike, sql: str) -> str:
+    """Rewrite sqlite ``?`` placeholders to psycopg ``%s`` off the sqlite path."""
+    return sql if _is_sqlite(conn) else sql.replace("?", "%s")
+
+
+def _cell(row: Any, index: int, key: str) -> Any:
+    """Read one column from a sqlite3.Row/tuple OR a psycopg ``dict_row`` map."""
+    if isinstance(row, Mapping):
+        return row[key]
+    return row[index]
 
 _NORMALIZE_RE = re.compile(r"[\s_\-\.]+")
 
@@ -62,7 +101,7 @@ def _fuzzy_resolve_enabled() -> bool:
 _FUZZY_REFUSE = -1
 
 
-def _fuzzy_match_entity(conn: sqlite3.Connection, alias: str) -> int:
+def _fuzzy_match_entity(conn: ConnectionLike, alias: str) -> int:
     """Resolve ``alias`` (a normalized form) against existing entity aliases.
 
     Returns:
@@ -92,7 +131,9 @@ def _fuzzy_match_entity(conn: sqlite3.Connection, alias: str) -> int:
     matcher.set_seq2(alias)
 
     best_by_entity: dict[int, float] = {}
-    for entity_id, candidate in rows:
+    for row in rows:
+        entity_id = _cell(row, 0, "entity_id")
+        candidate = _cell(row, 1, "alias")
         if not candidate:
             continue
         matcher.set_seq1(candidate)
@@ -167,34 +208,79 @@ def _utc_now() -> str:
 
 
 def _create_entity(
-    conn: sqlite3.Connection,
+    conn: ConnectionLike,
     display: str,
     entity_type: str,
     scope: str,
     now: str,
 ) -> int:
-    """Insert a new canonical entity (INSERT OR IGNORE on canonical_name) and
-    return its id. On a (paranoid) name collision, look the existing row up.
+    """Insert a new canonical entity (idempotent on canonical_name) and return
+    its id. On a (paranoid) name collision, look the existing row up.
 
     Concurrency-safe: under SQLite serialization the INSERT OR IGNORE +
     fallback SELECT collapse 10 racing creators onto a single entity row.
+    Postgres has the same shape via ``ON CONFLICT … DO NOTHING RETURNING id``
+    — the losing racer gets no row back and falls through to the same SELECT.
     """
-    cur = conn.execute(
-        """INSERT OR IGNORE INTO entities
-               (canonical_name, entity_type, scope, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?)""",
-        (display, entity_type, scope, now, now),
-    )
-    if cur.lastrowid and cur.rowcount > 0:
-        return cur.lastrowid
+    params = (display, entity_type, scope, now, now)
+    if _is_sqlite(conn):
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO entities
+                   (canonical_name, entity_type, scope, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            params,
+        )
+        if cur.lastrowid and cur.rowcount > 0:
+            return cur.lastrowid
+    else:
+        created = conn.execute(
+            """INSERT INTO entities
+                   (canonical_name, entity_type, scope, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s)
+               ON CONFLICT (canonical_name) DO NOTHING
+               RETURNING id""",
+            params,
+        ).fetchone()
+        if created is not None:
+            return int(_cell(created, 0, "id"))
     existing = conn.execute(
-        "SELECT id FROM entities WHERE canonical_name = ?", (display,)
+        _q(conn, "SELECT id FROM entities WHERE canonical_name = ?"), (display,)
     ).fetchone()
-    return existing[0] if existing else 0
+    return int(_cell(existing, 0, "id")) if existing else 0
+
+
+def _insert_alias_row(
+    conn: ConnectionLike,
+    entity_id: int,
+    alias: str,
+    variant: str,
+    original_form: str,
+    now: str,
+) -> bool:
+    """Write one alias row, deduped by the ``(entity_id, variant_key)`` UNIQUE
+    constraint. Returns True when a row was actually inserted.
+    """
+    params = (entity_id, alias, variant, original_form, now)
+    if _is_sqlite(conn):
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO entity_aliases
+                   (entity_id, alias, variant_key, original_form, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            params,
+        )
+    else:
+        cur = conn.execute(
+            """INSERT INTO entity_aliases
+                   (entity_id, alias, variant_key, original_form, created_at)
+               VALUES (%s, %s, %s, %s, %s)
+               ON CONFLICT (entity_id, variant_key) DO NOTHING""",
+            params,
+        )
+    return cur.rowcount > 0
 
 
 def resolve_or_create(
-    conn: sqlite3.Connection,
+    conn: ConnectionLike,
     subject: str,
     *,
     entity_type: str = "unknown",
@@ -218,11 +304,11 @@ def resolve_or_create(
 
     # Step 1: resolve entity_id — existing row with this normalized alias wins.
     row = conn.execute(
-        "SELECT entity_id FROM entity_aliases WHERE alias = ? LIMIT 1",
+        _q(conn, "SELECT entity_id FROM entity_aliases WHERE alias = ? LIMIT 1"),
         (alias,),
     ).fetchone()
     if row:
-        entity_id = row[0]
+        entity_id = int(_cell(row, 0, "entity_id"))
     elif _fuzzy_resolve_enabled():
         # Guarded fuzzy path (opt-in). The exact-alias lookup missed, so try
         # to collapse a near-miss onto an existing entity — but only if the
@@ -247,12 +333,7 @@ def resolve_or_create(
     # resolve_or_create repeatedly with the same input is a no-op, but
     # each fresh case/separator variant adds an alias row.
     if entity_id > 0:
-        conn.execute(
-            """INSERT OR IGNORE INTO entity_aliases
-                   (entity_id, alias, variant_key, original_form, created_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (entity_id, alias, variant, display, now),
-        )
+        _insert_alias_row(conn, entity_id, alias, variant, display, now)
 
     return entity_id
 
@@ -304,22 +385,16 @@ def merge_entities(
     return {"merged_aliases": merged_aliases, "updated_claims": updated_claims}
 
 
-def add_alias(conn: sqlite3.Connection, entity_id: int, alias_text: str) -> bool:
+def add_alias(conn: ConnectionLike, entity_id: int, alias_text: str) -> bool:
     """Register an additional alias variant for an entity. Returns True if added
     (False if this variant was already recorded for this entity).
     """
     alias = normalize_alias(alias_text)
     if not alias:
         return False
-    variant = _variant_key(alias_text)
-    now = _utc_now()
-    cur = conn.execute(
-        """INSERT OR IGNORE INTO entity_aliases
-               (entity_id, alias, variant_key, original_form, created_at)
-           VALUES (?, ?, ?, ?, ?)""",
-        (entity_id, alias, variant, alias_text.strip(), now),
+    return _insert_alias_row(
+        conn, entity_id, alias, _variant_key(alias_text), alias_text.strip(), _utc_now()
     )
-    return cur.rowcount > 0
 
 
 def list_entities(

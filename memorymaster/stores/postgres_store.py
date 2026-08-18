@@ -40,11 +40,14 @@ from memorymaster.core.security import (
     sanitize_persisted_text,
     validate_persisted_metadata,
 )
+from memorymaster.core.observability import bump_counter
 from memorymaster.stores._storage_shared import (
     ConcurrentModificationError,
     EVENT_HASH_ALGO,
     TENANT_EVENT_HASH_ALGO,
     compute_tenant_event_hash,
+    confidence_changed,
+    details_writer,
     generate_top_level_human_id,
 )
 from memorymaster.stores._storage_pagination import _decode_cursor, _encode_cursor
@@ -2080,7 +2083,10 @@ class PostgresStore(SQLiteStore):
         claim_id: int | None = None,
         limit: int = 100,
         event_type: str | None = None,
+        since: str | None = None,
     ) -> list[Event]:
+        """List events, newest first. See SQLiteStore.list_events for why
+        ``since`` exists -- a row cap is not a time window."""
         clauses: list[str] = []
         params: list[object] = []
 
@@ -2094,6 +2100,9 @@ class PostgresStore(SQLiteStore):
         if event_type is not None:
             clauses.append("event_type = %s")
             params.append(event_type)
+        if since is not None:
+            clauses.append("created_at >= %s")
+            params.append(since)
 
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         sql = f"SELECT * FROM events {where_sql} ORDER BY created_at DESC, id DESC LIMIT %s"
@@ -2391,14 +2400,24 @@ class PostgresStore(SQLiteStore):
         bounded = max(0.0, min(1.0, confidence))
         now = utc_now()
         with self.connect() as conn, conn.cursor() as cur:
+            # Read the pre-update row first: the event is only worth writing if
+            # the value actually moves. See the SQLite twin in
+            # `_storage_write_claims.set_confidence` -- a no-op adjustment row
+            # says only "I looked and changed nothing", and 489,927 of them were
+            # 20% of the production event log.
+            current_status = None
+            changed = True
+            if details:
+                cur.execute("SELECT status, confidence FROM claims WHERE id = %s", (claim_id,))
+                status_row = cur.fetchone()
+                if status_row is not None:
+                    current_status = str(status_row["status"])
+                    changed = confidence_changed(status_row["confidence"], bounded)
             cur.execute(
                 "UPDATE claims SET confidence = %s, updated_at = %s WHERE id = %s",
                 (bounded, now, claim_id),
             )
-            if details:
-                cur.execute("SELECT status FROM claims WHERE id = %s", (claim_id,))
-                status_row = cur.fetchone()
-                current_status = str(status_row["status"]) if status_row else None
+            if details and changed:
                 self._insert_event_row(
                     conn,
                     claim_id=claim_id,
@@ -2409,6 +2428,8 @@ class PostgresStore(SQLiteStore):
                     payload=None,
                     created_at=now,
                 )
+            elif details:
+                bump_counter("claim_confidence_noop_total", writer=details_writer(details))
 
     def set_pinned(self, claim_id: int, pinned: bool, reason: str) -> None:
         now = utc_now()
@@ -2467,6 +2488,61 @@ class PostgresStore(SQLiteStore):
         if updated is None:
             raise RuntimeError("Failed to load claim after transition.")
         return updated
+
+    def record_access(self, claim_id: int) -> None:
+        """Postgres override of the SQLite access counter — same effect.
+
+        Same silent-dropper as ``recompute_tiers`` below: the inherited
+        ``_LifecycleMixin.record_access`` uses sqlite ``?`` placeholders and a
+        TEXT timestamp. psycopg rejects the ``?`` outright, and the recall
+        caller wrapped the call in ``contextlib.suppress(Exception)`` with no
+        counter — so on Postgres ``access_count`` never left 0 and nothing
+        reported it. ``last_accessed`` is TIMESTAMPTZ here, so pass a native
+        datetime rather than an ISO string.
+        """
+        now = utc_now()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE claims SET access_count = access_count + 1, last_accessed = %s "
+                "WHERE id = %s",
+                (now, claim_id),
+            )
+            conn.commit()
+
+    def record_accesses_batch(self, claim_ids: list[int]) -> None:
+        """Postgres override of the batched access counter — same effect.
+
+        The inherited version builds an ``IN (?, ?, …)`` list; Postgres takes
+        the whole id list as a single ``= ANY(%s)`` array parameter, which also
+        sidesteps the parameter-count ceiling on a large recall.
+        """
+        if not claim_ids:
+            return
+        now = utc_now()
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE claims SET access_count = access_count + 1, last_accessed = %s "
+                "WHERE id = ANY(%s)",
+                (now, [int(claim_id) for claim_id in claim_ids]),
+            )
+            conn.commit()
+
+    def set_claim_entity_id(self, claim_id: int, entity_id: int) -> bool:
+        """Postgres override of the claim→entity link — same effect.
+
+        Third instance of the same shape: the statement was issued raw from
+        ``core/service.py`` with ``?`` placeholders under
+        ``except Exception: pass``, so ``claims.entity_id`` stayed NULL on
+        every Postgres deployment.
+        """
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE claims SET entity_id = %s WHERE id = %s",
+                (entity_id, claim_id),
+            )
+            changed = cur.rowcount > 0
+            conn.commit()
+        return changed
 
     def recompute_tiers(self) -> dict[str, int]:
         """Postgres override of the SQLite tier recompute — same rules.

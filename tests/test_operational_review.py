@@ -12,9 +12,10 @@ def _db(path: Path) -> Path:
         CREATE TABLE schema_versions(version INTEGER);
         INSERT INTO schema_versions VALUES (21);
         CREATE TABLE graph_observation_jobs(
-            stage TEXT, status TEXT, lease_expires_at TEXT
+            stage TEXT, status TEXT, lease_expires_at TEXT, outcome TEXT
         );
-        INSERT INTO graph_observation_jobs VALUES ('discover', 'completed', NULL);
+        INSERT INTO graph_observation_jobs
+            VALUES ('discover', 'completed', NULL, 'components_found');
         CREATE TABLE graph_observations(observation_claim_id INTEGER);
         CREATE TABLE graph_observation_supports(
             observation_claim_id INTEGER, supporting_claim_id INTEGER,
@@ -76,7 +77,9 @@ def test_clean_review_checks_pass(tmp_path: Path, monkeypatch) -> None:
 def test_private_context_and_blocked_job_fail(tmp_path: Path) -> None:
     db = _db(tmp_path / "memory.db")
     connection = sqlite3.connect(db)
-    connection.execute("INSERT INTO graph_observation_jobs VALUES ('synthesize', 'blocked', NULL)")
+    connection.execute(
+        "INSERT INTO graph_observation_jobs VALUES ('synthesize', 'blocked', NULL, NULL)"
+    )
     connection.execute(
         "INSERT INTO claims(id, human_id, text, claim_type, scope, status, confidence, "
         "subject, predicate, object_value, created_at) "
@@ -171,3 +174,22 @@ def test_powershell_scheduler_contract_is_bounded() -> None:
     assert "MultipleInstances IgnoreNew" in installer
     assert "review_performed = $true" in runner
     assert "work-receipt" not in runner.lower()
+
+
+def test_review_reports_why_completed_discovery_found_nothing(tmp_path: Path) -> None:
+    """3,146 completed discovery jobs read as success; only the split says otherwise."""
+    db = _db(tmp_path / "memory.db")
+    connection = sqlite3.connect(db)
+    connection.executemany(
+        "INSERT INTO graph_observation_jobs VALUES ('discover', 'completed', NULL, ?)",
+        [("no_supports",), ("no_supports",), ("no_components",)],
+    )
+    connection.commit()
+    connection.close()
+
+    graph = review.check_graph_observations(review.ReviewConfig(db=db))
+
+    assert graph.counts["completed_discovery"] == 4
+    assert graph.counts["discovery_no_supports"] == 2
+    assert graph.counts["discovery_no_components"] == 1
+    assert graph.counts["discovery_components_found"] == 1

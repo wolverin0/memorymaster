@@ -165,3 +165,76 @@ def test_parity_status_filter_excludes_other_states(parametrize_backends):
     assert "parity still-candidate claim" not in confirmed_texts, (
         f"{backend}: candidate leaked into confirmed filter"
     )
+
+
+# ---------------------------------------------------------------------------
+# R6 — writes that only ever failed on Postgres
+#
+# These are the parity assertions the silent-dropper class defeated: each one
+# passed on SQLite and failed invisibly on Postgres because the inherited
+# `?`-placeholder SQL was rejected and the caller suppressed the exception.
+# ---------------------------------------------------------------------------
+
+
+def test_parity_recall_records_access_count(parametrize_backends):
+    backend, svc = parametrize_backends
+    claim = _ingest(svc, "parity access counter claim")
+
+    svc._record_accesses([{"claim": claim}], query_text="access counter")
+
+    reloaded = svc.store.get_claim(claim.id)
+    assert reloaded.access_count == 1, (
+        f"{backend}: access_count stayed {reloaded.access_count} — "
+        "recompute_tiers will read this as 'never accessed'"
+    )
+    assert reloaded.last_accessed, f"{backend}: last_accessed was not stamped"
+
+
+def test_parity_batched_recall_records_every_claim(parametrize_backends):
+    backend, svc = parametrize_backends
+    first = _ingest(svc, "parity batch access alpha")
+    second = _ingest(svc, "parity batch access beta")
+
+    svc.store.record_accesses_batch([first.id, second.id])
+
+    counts = [svc.store.get_claim(cid).access_count for cid in (first.id, second.id)]
+    assert counts == [1, 1], f"{backend}: batched access write dropped rows {counts}"
+
+
+def _claim_entity_id(store, claim_id):
+    """Read ``claims.entity_id`` in whichever dialect the store speaks."""
+    if type(store).__name__ == "PostgresStore":
+        with store.connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT entity_id FROM claims WHERE id = %s", (claim_id,))
+            row = cur.fetchone()
+            return None if row is None else row["entity_id"]
+    with store.connect() as conn:
+        row = conn.execute(
+            "SELECT entity_id FROM claims WHERE id = ?", (claim_id,)
+        ).fetchone()
+        return None if row is None else row[0]
+
+
+def test_parity_ingest_links_claim_to_canonical_entity(parametrize_backends):
+    backend, svc = parametrize_backends
+    claim = _ingest(svc, "Qdrant is the vector index", subject="Qdrant")
+
+    assert _claim_entity_id(svc.store, claim.id), (
+        f"{backend}: claim was not linked to a canonical entity"
+    )
+
+
+def test_parity_entity_registry_resolves_on_both_backends(parametrize_backends):
+    from memorymaster.knowledge.entity_registry import add_alias, resolve_or_create
+
+    backend, svc = parametrize_backends
+    with svc.store.connect() as conn:
+        entity_id = resolve_or_create(
+            conn, "MemoryMaster", entity_type="project", scope="project:mm"
+        )
+        assert entity_id > 0, f"{backend}: entity was not created"
+        assert add_alias(conn, entity_id, "mm") is True, f"{backend}: alias not written"
+        assert add_alias(conn, entity_id, "mm") is False, f"{backend}: alias not deduped"
+        same = resolve_or_create(conn, "MemoryMaster", scope="project:mm")
+        assert same == entity_id, f"{backend}: alias lookup did not resolve"
+        conn.commit()

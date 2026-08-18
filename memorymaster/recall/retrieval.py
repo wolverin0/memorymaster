@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import re
 from dataclasses import dataclass
@@ -7,8 +8,11 @@ from datetime import datetime, timezone
 from typing import Callable, Mapping
 
 from memorymaster.core.config import get_config
+from memorymaster.core.event_scan import scan_proposal_events
 from memorymaster.core.models import Claim
 from memorymaster.recall.recall_fusion import RRF_K_DEFAULT, rrf_fuse
+
+_LOG = logging.getLogger(__name__)
 
 RETRIEVAL_MODES = ("legacy", "hybrid")
 
@@ -165,7 +169,7 @@ _SUPERSEDED_PENDING_PENALTY = -0.40
 _PENDING_SUPERSESSION_TTL_SECONDS = 300.0
 
 
-def pending_supersession_ids(service: object) -> frozenset[int]:
+def pending_supersession_ids(service: object, *, use_cache: bool = True) -> frozenset[int]:
     """Claim ids whose supersession is PROPOSED but not applied.
 
     Declaring ``supersedes_claim_id`` files a
@@ -174,23 +178,36 @@ def pending_supersession_ids(service: object) -> frozenset[int]:
     approval could not be relied on (0 of 249 proposals resolved, oldest ~4
     months), so ranking reads the proposals directly.
 
+    ``service`` is anything exposing ``list_events`` -- a ``MemoryService`` on
+    the recall path, a store on the validator path.
+
     Cached per service for ``_PENDING_SUPERSESSION_TTL_SECONDS`` -- the set
-    turns over on steward cadence, not per query. Never raises: on any fault it
-    returns an empty set, which is exactly "rank as before".
+    turns over on steward cadence, not per query. Pass ``use_cache=False`` for
+    a correctness gate that must see a proposal filed seconds ago rather than
+    up to five minutes late.
+
+    Never raises: on any fault it returns an empty set, which is exactly "rank
+    as before". A fault is LOGGED and NOT cached, so it does not masquerade as
+    "nothing pending" for the next five minutes.
     """
     import json
     import time
 
     now = time.monotonic()
-    cached = getattr(service, "_pending_supersession_cache", None)
-    if cached is not None and (now - cached[0]) < _PENDING_SUPERSESSION_TTL_SECONDS:
-        return cached[1]
+    if use_cache:
+        cached = getattr(service, "_pending_supersession_cache", None)
+        if cached is not None and (now - cached[0]) < _PENDING_SUPERSESSION_TTL_SECONDS:
+            return cached[1]
 
     ids: set[int] = set()
     try:
-        list_events = service.list_events  # type: ignore[attr-defined]
+        # Time-bounded, not row-capped: at limit=2000 an unrelated burst of
+        # bookkeeping events could push the oldest pending proposals out of the
+        # scan, and losing a proposal here silently RESTORES full score to the
+        # claim someone declared outdated. See core.event_scan.
+        scan = scan_proposal_events(service)
         resolved: set[int] = set()
-        for event in list_events(event_type="audit", limit=2000):
+        for event in scan.resolutions:
             if str(getattr(event, "details", "") or "") not in {
                 "steward_proposal_approved",
                 "steward_proposal_rejected",
@@ -200,10 +217,17 @@ def pending_supersession_ids(service: object) -> frozenset[int]:
                 payload = json.loads(getattr(event, "payload_json", None) or "{}")
             except (ValueError, TypeError):
                 continue
-            proposal_event_id = payload.get("proposal_event_id") if isinstance(payload, dict) else None
+            if not isinstance(payload, dict):
+                continue
+            # Same guard as the steward queue: an approval that failed to apply
+            # must not lift the demotion. Otherwise the claim is left live AND
+            # un-penalised -- strictly worse than never approving it.
+            if str(getattr(event, "details", "")).endswith("approved") and payload.get("applied") is False:
+                continue
+            proposal_event_id = payload.get("proposal_event_id")
             if isinstance(proposal_event_id, int):
                 resolved.add(proposal_event_id)
-        for event in list_events(event_type="policy_decision", limit=2000):
+        for event in scan.proposals:
             if str(getattr(event, "details", "") or "") != "steward_proposal:superseded_candidate":
                 continue
             if int(event.id) in resolved:
@@ -212,7 +236,11 @@ def pending_supersession_ids(service: object) -> frozenset[int]:
             if isinstance(claim_id, int) and claim_id > 0:
                 ids.add(claim_id)
     except Exception:  # noqa: BLE001 - retrieval must survive a bookkeeping fault
-        ids = set()
+        _LOG.warning(
+            "pending supersession scan failed; ranking WITHOUT the demotion this call",
+            exc_info=True,
+        )
+        return frozenset()
 
     result = frozenset(ids)
     try:

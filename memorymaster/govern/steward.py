@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from memorymaster.core import observability
 from memorymaster.core import llm_budget
+from memorymaster.core.event_scan import scan_proposal_events
 from memorymaster.core.lifecycle import transition_claim
 from memorymaster.core.security import is_sensitive_claim, sanitize_persisted_json
 from memorymaster.core.service import MemoryService
@@ -1246,9 +1247,16 @@ def list_steward_proposals(
 ) -> list[dict[str, Any]]:
     if limit <= 0:
         return []
-    proposal_scan_limit = max(limit * 6, 500)
-    proposals_raw = service.list_events(event_type="policy_decision", limit=proposal_scan_limit)
-    audit_raw = service.list_events(event_type="audit", limit=max(limit * 8, 800))
+    # Bounded by TIME, not by `max(limit * 6, 500)` rows. `list_events` returns
+    # newest first, so the row cap dropped the OLDEST proposals -- the ones
+    # waiting longest for review -- and dropped them silently: an unresolved
+    # proposal simply stopped appearing in the queue. The cap was at 362 of 600
+    # in production and rising. The audit side had the mirror failure: a
+    # resolution falling off made a resolved proposal read as pending again,
+    # and re-approving it is exactly the latch R2 fixed. See core.event_scan.
+    scan = scan_proposal_events(service)
+    proposals_raw = scan.proposals
+    audit_raw = scan.resolutions
 
     resolution_by_proposal_event_id: dict[int, dict[str, Any]] = {}
     for event in audit_raw:
@@ -1256,6 +1264,12 @@ def list_steward_proposals(
         if details not in {"steward_proposal_approved", "steward_proposal_rejected"}:
             continue
         payload = _parse_payload_json(event.payload_json)
+        # An approval whose apply failed does NOT resolve the proposal. New
+        # failures record `steward_proposal_apply_failed` and never reach here,
+        # but rows written before that fix are already in the log claiming an
+        # approval that never took effect -- honour their own `applied` flag.
+        if details.endswith("approved") and payload.get("applied") is False:
+            continue
         proposal_event_id = payload.get("proposal_event_id")
         if isinstance(proposal_event_id, int):
             resolution_by_proposal_event_id[proposal_event_id] = {
@@ -1404,7 +1418,19 @@ def resolve_steward_proposal(
             service, target_claim_id, decision, proposed_status, replaced_by_claim_id
         )
 
-    audit_details = "steward_proposal_approved" if action == "approve" else "steward_proposal_rejected"
+    # A failed apply must NOT be recorded as an approval. Writing
+    # `steward_proposal_approved` regardless of `applied` latched the worst
+    # possible state: the claim was never superseded, its ranking demotion was
+    # lifted (consumers treat "approved exists" as resolved), the proposal left
+    # the operator queue, and the `already_resolved` short-circuit below then
+    # REFUSED the retry -- unrecoverable through this API. A distinct terminal
+    # detail keeps the proposal pending and retryable.
+    if action == "approve" and apply_on_approve and not applied:
+        audit_details = "steward_proposal_apply_failed"
+    elif action == "approve":
+        audit_details = "steward_proposal_approved"
+    else:
+        audit_details = "steward_proposal_rejected"
     audit_payload: dict[str, Any] = {
         "source": "human_override",
         "proposal_event_id": int(target["proposal_event_id"]),
@@ -1421,15 +1447,19 @@ def resolve_steward_proposal(
         payload=audit_payload,
     )
 
+    resolved = not (action == "approve" and apply_on_approve and not applied)
     return {
         "ok": True,
-        "resolved": True,
+        "resolved": resolved,
         "action": action,
         "proposal_event_id": int(target["proposal_event_id"]),
         "claim_id": target_claim_id,
         "applied": applied,
         "apply_error": apply_error,
-        "status": ("approved" if action == "approve" else "rejected"),
+        "status": (
+            "apply_failed" if not resolved
+            else ("approved" if action == "approve" else "rejected")
+        ),
     }
 
 

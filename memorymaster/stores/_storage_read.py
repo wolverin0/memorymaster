@@ -441,7 +441,18 @@ class _ReadMixin:
         claim_id: int | None = None,
         limit: int = 100,
         event_type: str | None = None,
+        since: str | None = None,
     ) -> list[Event]:
+        """List events, newest first.
+
+        ``since`` bounds the scan by TIME instead of relying on ``limit`` alone.
+        A row cap is not a time window: the events table is dominated by
+        high-frequency bookkeeping (487k `deterministic_adjust=+0.000` rows of
+        2.4M), so a global ``LIMIT`` covers minutes, not the period a caller
+        believes it is inspecting. Callers looking for rare events MUST pass
+        ``since`` or an ``event_type``, or they are sampling the last few
+        minutes and reading the empty result as "nothing happened".
+        """
         clauses: list[str] = []
         params: list[object] = []
 
@@ -451,6 +462,9 @@ class _ReadMixin:
         if event_type is not None:
             clauses.append("event_type = ?")
             params.append(event_type)
+        if since is not None:
+            clauses.append("created_at >= ?")
+            params.append(since)
 
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         sql = f"SELECT * FROM events {where_sql} ORDER BY created_at DESC, id DESC LIMIT ?"

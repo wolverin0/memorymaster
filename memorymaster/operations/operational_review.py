@@ -158,6 +158,30 @@ def _graph_support_counts(connection: sqlite3.Connection) -> dict[str, int]:
     }
 
 
+def _discovery_outcome_counts(connection: sqlite3.Connection) -> dict[str, int]:
+    """Split completed discovery jobs by what they concluded.
+
+    ``completed_discovery`` on its own says the machine ran. Production showed
+    3,146 of them against 2 observations, and nothing in this report said so.
+    """
+    columns = {
+        str(row[1])
+        for row in connection.execute("PRAGMA table_info(graph_observation_jobs)")
+    }
+    if "outcome" not in columns:
+        return {"discovery_outcomes_recorded": 0}
+    rows = connection.execute(
+        """SELECT COALESCE(outcome, 'unrecorded') outcome, COUNT(*) count
+           FROM graph_observation_jobs
+           WHERE stage='discover' AND status='completed' GROUP BY outcome"""
+    ).fetchall()
+    counts = {f"discovery_{str(row['outcome'])}": int(row["count"]) for row in rows}
+    counts["discovery_outcomes_recorded"] = sum(
+        value for key, value in counts.items() if key != "discovery_unrecorded"
+    )
+    return counts
+
+
 def check_graph_observations(config: ReviewConfig) -> ReviewResult:
     marks = ",".join("?" for _ in ACTIVE_JOB_STATES)
     try:
@@ -172,6 +196,7 @@ def check_graph_observations(config: ReviewConfig) -> ReviewResult:
             counts["completed_discovery"] = int(connection.execute(
                 "SELECT COUNT(*) FROM graph_observation_jobs WHERE stage='discover' AND status='completed'"
             ).fetchone()[0])
+            counts.update(_discovery_outcome_counts(connection))
             counts["observations"] = int(connection.execute(
                 "SELECT COUNT(*) FROM graph_observations"
             ).fetchone()[0])

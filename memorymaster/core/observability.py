@@ -223,4 +223,25 @@ def metrics_text() -> str:
             "Decay runs grouped by status.",
         )
     )
+    lines.extend(
+        _counter_family_lines(
+            "llm_provider_failures_total",
+            "LLM provider call failures grouped by provider and reason.",
+        )
+    )
+    # The two counters below are the surviving half of writes that no longer
+    # produce an event row (inert-signals R9). The work still happened; only the
+    # row saying it changed nothing was dropped, so the volume stays observable.
+    lines.extend(
+        _counter_family_lines(
+            "claim_confidence_noop_total",
+            "set_confidence calls that left the value unchanged, grouped by writing job.",
+        )
+    )
+    lines.extend(
+        _counter_family_lines(
+            "deterministic_check_no_signal_total",
+            "Deterministic checks that produced no predicate result at all.",
+        )
+    )
     return "\n".join(lines) + "\n"

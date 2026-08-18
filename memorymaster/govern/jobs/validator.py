@@ -46,6 +46,30 @@ def _classifier_promote_decision(store, claim: Claim, citation_count: int) -> bo
     return proba >= _CLF_THRESHOLD and citation_count >= 1
 
 
+def _pending_supersession(store) -> frozenset[int]:
+    """Claims with a supersession proposed but not yet resolved.
+
+    WHY THE VALIDATOR CARES: declaring ``supersedes_claim_id`` does not retire
+    the old claim, it files a `steward_proposal:superseded_candidate` for
+    review. The validator never read that proposal, so it went on scoring the
+    claim on its own evidence and promoting it to `confirmed` -- a claim
+    somebody had explicitly declared outdated coming back stamped as verified
+    truth. 21 of 59 production proposals were followed by exactly that
+    promotion; claim 130542 sat at `confirmed` for ~11 hours after being
+    declared superseded.
+
+    ``use_cache=False``: the recall path tolerates a five-minute-old set
+    because it only shifts ranking, but promotion is a state change that
+    outlives the cycle. A proposal filed a minute ago must block this run.
+
+    Never raises (the helper swallows and logs); an empty set means "promote as
+    before", which is the pre-existing behaviour.
+    """
+    from memorymaster.recall.retrieval import pending_supersession_ids
+
+    return pending_supersession_ids(store, use_cache=False)
+
+
 def _merge_claims(primary: list[Claim], secondary: list[Claim]) -> list[Claim]:
     seen: set[int] = set()
     merged: list[Claim] = []
@@ -127,6 +151,7 @@ def run(
             "archived_duplicates": 0,
             "pending": 0,
             "skill_pending_approval": 0,
+            "blocked_pending_supersession": 0,
             "staled": 0,
             "revalidated_healthy": 0,
             "observation_checked": 0,
@@ -156,7 +181,9 @@ def run(
         ]
 
     claims = _merge_claims(candidate_claims, due_revalidation_claims)
+    pending_supersession = _pending_supersession(store)
     confirmed = 0
+    blocked_pending_supersession = 0
     conflicted = 0
     superseded = 0
     archived_duplicates = 0
@@ -187,6 +214,21 @@ def run(
             continue
         score = validation_score(claim, citation_count, prior_confidence=claim.confidence)
         store.set_confidence(claim.id, score, details=f"validator_score={score:.3f};citations={citation_count}")
+
+        if claim.id in pending_supersession:
+            # Somebody declared this claim outdated and the steward has not
+            # ruled yet. Promoting it now would confirm a claim that is queued
+            # for retirement; leave its status exactly as it is until the
+            # proposal is resolved either way.
+            store.record_event(
+                claim_id=claim.id,
+                event_type="validator",
+                details="promotion_blocked_pending_supersession",
+                payload={"score": score, "citation_count": citation_count, "claim_status": claim.status},
+            )
+            pending += 1
+            blocked_pending_supersession += 1
+            continue
 
         related = store.find_confirmed_by_tuple(
             subject=claim.subject,
@@ -317,6 +359,7 @@ def run(
         "archived_duplicates": archived_duplicates,
         "pending": pending,
         "skill_pending_approval": skill_pending_approval,
+        "blocked_pending_supersession": blocked_pending_supersession,
         "staled": staled,
         "revalidated_healthy": revalidated_healthy,
         "observation_checked": observation_review["checked"],
