@@ -69,6 +69,24 @@ jobs:
       - name: Check generated release truth
         run: python scripts/generate_release_truth.py --check
 
+  branch-freshness:
+    # A head branch far behind its base means the diff under review is not the
+    # diff that will land, and any patch built on it applies to code that has
+    # since moved.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check branch is not stale
+        run: |
+          git fetch --quiet origin "${{ github.base_ref }}"
+          python scripts/check_branch_freshness.py --base "origin/${{ github.base_ref }}"
+
   eval:
     runs-on: ubuntu-latest
     needs: test

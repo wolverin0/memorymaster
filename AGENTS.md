@@ -61,6 +61,12 @@ Production-grade memory reliability system for AI coding agents. Provides lifecy
 
 ## Verification
 
+**Before starting work**, confirm the checkout is not stale:
+`python scripts/check_branch_freshness.py`. The primary working directory is
+often left on an old feature branch, and nothing reports that on its own — the
+files look normal and the tests pass just as well. CI runs the same check on
+every pull request.
+
 After any change, verify:
 1. `python -m pytest tests/ -q --tb=short` — tests pass
 2. `ruff check memorymaster/` — no lint errors
