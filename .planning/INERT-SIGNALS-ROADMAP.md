@@ -116,23 +116,65 @@ shipped inert.
   enabled when the import fails. Every other gate in that function fails closed.
   **Fix:** fail closed, one line.
 
-- [ ] **R9 — 488k events recording that nothing changed** · MED · *(new)*
-  `deterministic_adjust=+0.000` accounts for **487,927** of 2.41M events — ~20%
+- [x] **R9 — 488k events recording that nothing changed** · MED · ✅ done
+  `deterministic_adjust=+0.000` accounts for **489,927** of 2.42M events — ~20%
   of the entire log is "I looked and changed nothing", written ~15k/day. This is
   the flood that collapses R1's and R4's windows, and it is itself the pattern:
   a write whose content is the absence of an effect.
-  **Fix:** don't record a no-op adjustment (keep the counter, drop the row), or
-  record it at a coarser granularity.
+  **Fixed:** `set_confidence` now reads the stored value first and writes the
+  `confidence` row only when it actually moves — on BOTH backends (SQLite +
+  the Postgres override, which had the same silent-dropper shape as R6). The
+  suppressed volume survives as `claim_confidence_noop_total`, labelled by
+  writing job, on the metrics endpoint.
+  **A second flood of the same shape, found here and fixed with it:**
+  `deterministic_validator` / `deterministic_checks_completed` carries payload
+  `{}` in **461,257 of 494,454** rows — a claim we have no predicate for, looked
+  at, and did nothing to. The two together are **39.4% of the entire event log**
+  and **54.8% of the last 7 days**. The empty-payload row is now written only
+  when it carries something: a predicate/workspace result, a hard fail, or the
+  claim's FIRST deterministic check — which is exactly what
+  `dashboard._validation_latency_metric`'s `MIN(created_at)` reads, so that
+  metric is bit-for-bit unaffected. `deterministic.run` reports `unchanged` and
+  `no_signal` so the dropped rows are accounted for rather than merely absent.
+  Measured 40 claims × 10 repeat passes: **80 events/pass → 0**; production
+  steady-state projects **32,652 → 14,760 events/day (−55%)**.
+  *Reach beyond the measured figure:* the fix is in `set_confidence`, so it also
+  catches the other two writers. 262,565 of 377,188 `validator_score` rows
+  (69.6%) and 22,101 of 438,980 `decay_rate` rows repeat the previous value for
+  the same claim — a proxy for no-op, since those details record the score
+  rather than the delta. Counting those, the suppressed share of the log is
+  ~51% rather than the 39.4% quantified exactly.
+  6 tests; the 4 that pin R9 verified failing without the fix (the other 2 bound
+  the fix — they must pass either way or the fix could delete a real audit trail).
 
-- [ ] **R10 — The provider-failure signal has no producer** · MED · *(found while fixing R1)*
+- [x] **R10 — The provider-failure signal has no producer** · MED · ✅ done
   A repo-wide sweep finds **no `record_event` anywhere** that writes a
   provider failure; `core/llm_provider.py` only logs warnings on timeout,
   non-zero exit and OS error, leaving no queryable trace. So R1's check was
   doubly inert — wrong window *and* nothing to find. Only 4 events in 2.4M
   match the pattern at all, and they are `transition` rows.
-  **Fix:** record the failure where it happens. `llm_provider` has no store
-  handle, so either surface it through `observability.bump_counter` (in-process,
-  exposed on the metrics endpoint) or have the calling layer record an event.
+  **Fixed:** new `core/provider_health.py` carries the signal across the process
+  boundary that made this hard. A counter alone could not work — `_COUNTERS` is
+  an in-memory module global and the health check runs in a different process
+  from the steward — so the counter is only half: `record_provider_failure`
+  always bumps `llm_provider_failures_total` **and** pushes to a durable sink
+  that `stores/store_factory.create_store` registers for any writable store.
+  That covers all ~25 `call_llm` call sites at once without threading a handle
+  through them, and read-only stores are deliberately left unregistered.
+  Producers wired at the sites the audit named: `_http_post` (HTTP status,
+  transport error), `_call_claude_cli` (binary missing, timeout, non-zero exit,
+  OSError) and `_call_opencode`, each attributed to its provider.
+  **The fix is throttled so it cannot become R9.** A misconfigured provider
+  fails on every call; at most one row per (provider, reason) per 300s
+  (`MEMORYMASTER_PROVIDER_FAILURE_EVENT_INTERVAL_SECONDS`) is written, carrying
+  `occurrences` — the first failure after a quiet period still lands
+  immediately.
+  `_provider_failure_count` now also returns `by_provider`, `structured_events`,
+  and `producers`: per CONFIGURED provider, `observed` (the log has carried this
+  signal, so a 0 is evidence) or `unproven` (it never has, so a 0 is the absence
+  of evidence). Free-text matching is retained, so pre-R10 rows and other
+  subsystems still count. 6 tests; the 4 that pin R10 verified failing without
+  the fix.
 
 ---
 

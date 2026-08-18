@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from memorymaster.core.models import Claim
 from memorymaster.core.lifecycle import transition_claim
+from memorymaster.core.observability import bump_counter
 
 
 def open_store(db_path: str):
@@ -265,6 +266,23 @@ def _validate_claim_predicate(claim, object_value: str) -> tuple[dict[str, objec
     return payload, confidence_delta, hard_fail
 
 
+def _is_first_deterministic_check(store, claim_id: int) -> bool:
+    """True when this claim has no ``deterministic_validator`` event yet.
+
+    Indexed lookup (``idx_events_claim_id``), one per claim whose check produced
+    no signal. Keeps the first row per claim so the dashboard's validation-latency
+    metric -- ``MIN(created_at)`` over validator events -- reads exactly what it
+    read before. Any failure to answer returns ``True``: never drop a row because
+    a check errored.
+    """
+    try:
+        return not store.list_events(
+            claim_id=claim_id, event_type="deterministic_validator", limit=1
+        )
+    except Exception:  # noqa: BLE001 - a bookkeeping optimisation must not fail the job
+        return True
+
+
 def _update_predicate_checks(claim, predicate_checks: dict[str, int]) -> None:
     """Update predicate_checks counters for validated predicates."""
     counter_key = _PREDICATE_CHECK_COUNTERS.get(claim.predicate)
@@ -289,6 +307,8 @@ def run(
             "checked": 0,
             "boosted": 0,
             "dropped": 0,
+            "unchanged": 0,
+            "no_signal": 0,
             "hard_conflicted": 0,
             "revalidation_checked": 0,
             "predicate_checks": {},
@@ -317,6 +337,8 @@ def run(
     checked = 0
     boosts = 0
     drops = 0
+    unchanged = 0
+    no_signal = 0
     hard_conflicts = 0
     revalidation_checked = 0
     predicate_checks: dict[str, int] = {
@@ -374,15 +396,35 @@ def run(
             boosts += 1
         elif next_conf < claim.confidence:
             drops += 1
+        else:
+            unchanged += 1
         store.set_confidence(claim.id, next_conf, details=f"deterministic_adjust={next_conf - claim.confidence:+.3f}")
-        store.record_event(
-            claim_id=claim.id,
-            event_type="deterministic_validator",
-            from_status=claim.status,
-            to_status=claim.status,
-            details="deterministic_checks_completed",
-            payload=payload,
-        )
+
+        # A `deterministic_validator` row with an EMPTY payload records that we
+        # looked at a claim we have no predicate for and did nothing -- the same
+        # shape as the no-op confidence row above, and 461,257 of the 494,454
+        # such rows in production (19% of the whole event log). Write it only
+        # when it carries something: a predicate/workspace result, a hard fail,
+        # or the claim's FIRST deterministic check (which is what
+        # dashboard._validation_latency_metric's `MIN(created_at)` reads, so
+        # that metric is bit-for-bit unaffected).
+        if payload or hard_fail or _is_first_deterministic_check(store, claim.id):
+            store.record_event(
+                claim_id=claim.id,
+                event_type="deterministic_validator",
+                from_status=claim.status,
+                to_status=claim.status,
+                details="deterministic_checks_completed",
+                payload=payload,
+            )
+        else:
+            no_signal += 1
+            # No predicate label on purpose: production carries 43,840 distinct
+            # predicate values, and _COUNTERS is an unbounded in-memory dict
+            # scraped as Prometheus text. Labelling by predicate would trade a
+            # row flood for a label flood -- and the value is uninformative here
+            # anyway, since "no signal" means the predicate matched no checker.
+            bump_counter("deterministic_check_no_signal_total")
 
         if hard_fail:
             transition_claim(
@@ -398,6 +440,11 @@ def run(
         "checked": checked,
         "boosted": boosts,
         "dropped": drops,
+        # Suppressed-write accounting. `checked` is still the truth about how
+        # much work ran; these two say how much of it changed nothing, so the
+        # dropped rows are reported rather than merely missing.
+        "unchanged": unchanged,
+        "no_signal": no_signal,
         "hard_conflicted": hard_conflicts,
         "revalidation_checked": revalidation_checked,
         "predicate_checks": predicate_checks,

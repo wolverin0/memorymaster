@@ -23,7 +23,10 @@ from memorymaster.core.security import (
     sanitize_persisted_text,
     validate_persisted_metadata,
 )
+from memorymaster.core.observability import bump_counter
 from memorymaster.stores._storage_shared import (
+    confidence_changed,
+    details_writer,
     utc_now,
 )
 from memorymaster.stores.claim_identity import normalize_claim_identity
@@ -464,16 +467,23 @@ class _WriteClaimsMixin:
         bounded = max(0.0, min(1.0, confidence))
         now = utc_now()
         with self.connect() as conn:
-            # Read status BEFORE update to avoid race condition in event audit trail
+            # Read status AND the current confidence BEFORE the update: status to
+            # avoid a race in the event audit trail, confidence to decide whether
+            # there is anything worth recording at all.
             current_status = None
+            changed = True
             if details:
-                status_row = conn.execute("SELECT status FROM claims WHERE id = ?", (claim_id,)).fetchone()
-                current_status = str(status_row["status"]) if status_row else None
+                row = conn.execute(
+                    "SELECT status, confidence FROM claims WHERE id = ?", (claim_id,)
+                ).fetchone()
+                if row is not None:
+                    current_status = str(row["status"])
+                    changed = confidence_changed(row["confidence"], bounded)
             conn.execute(
                 "UPDATE claims SET confidence = ?, updated_at = ? WHERE id = ?",
                 (bounded, now, claim_id),
             )
-            if details:
+            if details and changed:
                 self._insert_event_row(
                     conn,
                     claim_id=claim_id,
@@ -484,6 +494,13 @@ class _WriteClaimsMixin:
                     payload_json=None,
                     created_at=now,
                 )
+            elif details:
+                # No-op adjustment: the row's entire content would be "I looked
+                # and changed nothing". 489,927 such rows (`deterministic_adjust=
+                # +0.000`) were 20% of a 2.4M-row production log, written ~15k/day
+                # -- the flood that collapsed the health check's scan window to
+                # 13.9 minutes. Keep the metric, drop the row.
+                bump_counter("claim_confidence_noop_total", writer=details_writer(details))
             conn.commit()
 
 

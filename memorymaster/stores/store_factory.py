@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
+from memorymaster.core.provider_health import register_store_sink
 from memorymaster.stores.storage import SQLiteStore
 
 
@@ -32,11 +33,23 @@ def create_store(
     if is_postgres_dsn(target):
         from memorymaster.stores.postgres_store import PostgresStore
 
-        return PostgresStore(
+        store = PostgresStore(
             target.strip(),
             tenant_id=tenant_id,
             require_tenant=require_tenant,
             principal=principal,
             allowed_scopes=allowed_scopes,
         )
-    return SQLiteStore(Path(target), read_only=read_only)
+    else:
+        store = SQLiteStore(Path(target), read_only=read_only)
+
+    if not read_only:
+        # Give this process a durable producer for LLM provider failures
+        # (inert-signals R10). `llm_provider` holds no store handle, and
+        # observability counters are in-memory only, so without a sink the
+        # operational health check -- which usually runs in a DIFFERENT process
+        # -- has nothing to find and reports 0 forever. Registering here covers
+        # every LLM caller at once instead of threading a handle through ~25
+        # call sites. Read-only stores cannot write and are left unregistered.
+        register_store_sink(store)
+    return store

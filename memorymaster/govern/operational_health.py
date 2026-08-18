@@ -12,6 +12,11 @@ from typing import Any
 
 from memorymaster.capture.coverage import capture_coverage
 from memorymaster.core.audit_envelope import build_audit_envelope
+from memorymaster.core.provider_health import (
+    PROVIDER_FAILURE_EVENT_TYPE,
+    configured_providers,
+    parse_provider_failure,
+)
 from memorymaster.govern.recovery import backup_status
 
 
@@ -73,30 +78,82 @@ def _provider_failure_count(service: Any, *, window_hours: int = PROVIDER_FAILUR
     structurally invisible and the check reported healthy. That is the failure
     this module exists to catch, happening inside the check itself.
 
-    Two changes make the signal honest:
+    Three changes make the signal honest:
       * bound by ``since`` so the window is the period a reader assumes;
-      * return the window actually covered and whether any producer was seen,
-        so "0" can be distinguished from "nothing here can ever be observed".
-        No code path currently records a provider-failure event, so a bare 0
-        was indistinguishable from a check that cannot fire.
+      * return the window actually covered, so "0" can be distinguished from
+        "the check saw almost nothing";
+      * report, per CONFIGURED provider, whether the log has ever contained a
+        failure from it (``producers``). R10 fixed the missing producer, but a
+        producer only exists in a process that holds a writable store -- so a
+        `0` still has to say whether it is evidence or an absence of evidence.
     """
     since = (datetime.now(timezone.utc) - timedelta(hours=max(1, int(window_hours)))).isoformat()
+
+    # Producer evidence FIRST, so the broad windowed scan below is the last call
+    # on `service.list_events` -- tests/test_inert_signals_r1_health_window.py
+    # spies on that call to pin the time bound and the row cap.
+    producers = _provider_producer_evidence(service)
+
     count = 0
     scanned = 0
     oldest: str | None = None
+    by_provider: dict[str, int] = {}
+    typed = 0
     for event in service.list_events(limit=100_000, since=since):
         scanned += 1
         created = str(getattr(event, "created_at", "") or "")
         if created and (oldest is None or created < oldest):
             oldest = created
+        parsed = parse_provider_failure(event)
+        if parsed is not None:
+            typed += 1
+            count += 1
+            by_provider[parsed["provider"]] = by_provider.get(parsed["provider"], 0) + parsed["occurrences"]
+            continue
+        # Free-text fallback: rows written by other subsystems (and every row
+        # predating R10) describe provider trouble in prose, not in a payload.
         detail = str(event.details or "").lower()
         if "provider" in detail and any(marker in detail for marker in ("fail", "error", "unavailable")):
             count += 1
+            by_provider["unattributed"] = by_provider.get("unattributed", 0) + 1
     return {
         "count": count,
         "window_hours": int(window_hours),
         "events_scanned": scanned,
         "oldest_event_examined": oldest,
+        "structured_events": typed,
+        "by_provider": by_provider,
+        "producers": producers,
+    }
+
+
+def _provider_producer_evidence(service: Any) -> dict[str, str]:
+    """Per configured provider: has this log EVER carried a failure from it?
+
+    ``observed`` -- a 0 in the window is a real all-clear for that provider.
+    ``unproven`` -- nothing has ever recorded a failure for it here, so a 0 may
+    simply mean no process with a writable store ever called it. This is the
+    distinction R1's fix could not make and R10's producer makes possible;
+    reporting it is what stops a fresh `provider_failures: 0` from being read as
+    proof of health.
+
+    Scans only ``system`` events (491 of 2.4M rows in production, and the type
+    is indexed), so it is bounded by construction.
+    """
+    seen: set[str] = set()
+    try:
+        events = service.list_events(
+            event_type=PROVIDER_FAILURE_EVENT_TYPE, limit=100_000, since=None,
+        )
+    except Exception:  # noqa: BLE001 - diagnostics must not break the health check
+        return {name: "unknown" for name in configured_providers()}
+    for event in events:
+        parsed = parse_provider_failure(event)
+        if parsed is not None:
+            seen.add(parsed["provider"])
+    return {
+        name: ("observed" if name in seen else "unproven")
+        for name in configured_providers()
     }
 
 

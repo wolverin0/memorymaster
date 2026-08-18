@@ -40,11 +40,14 @@ from memorymaster.core.security import (
     sanitize_persisted_text,
     validate_persisted_metadata,
 )
+from memorymaster.core.observability import bump_counter
 from memorymaster.stores._storage_shared import (
     ConcurrentModificationError,
     EVENT_HASH_ALGO,
     TENANT_EVENT_HASH_ALGO,
     compute_tenant_event_hash,
+    confidence_changed,
+    details_writer,
     generate_top_level_human_id,
 )
 from memorymaster.stores._storage_pagination import _decode_cursor, _encode_cursor
@@ -2397,14 +2400,24 @@ class PostgresStore(SQLiteStore):
         bounded = max(0.0, min(1.0, confidence))
         now = utc_now()
         with self.connect() as conn, conn.cursor() as cur:
+            # Read the pre-update row first: the event is only worth writing if
+            # the value actually moves. See the SQLite twin in
+            # `_storage_write_claims.set_confidence` -- a no-op adjustment row
+            # says only "I looked and changed nothing", and 489,927 of them were
+            # 20% of the production event log.
+            current_status = None
+            changed = True
+            if details:
+                cur.execute("SELECT status, confidence FROM claims WHERE id = %s", (claim_id,))
+                status_row = cur.fetchone()
+                if status_row is not None:
+                    current_status = str(status_row["status"])
+                    changed = confidence_changed(status_row["confidence"], bounded)
             cur.execute(
                 "UPDATE claims SET confidence = %s, updated_at = %s WHERE id = %s",
                 (bounded, now, claim_id),
             )
-            if details:
-                cur.execute("SELECT status FROM claims WHERE id = %s", (claim_id,))
-                status_row = cur.fetchone()
-                current_status = str(status_row["status"]) if status_row else None
+            if details and changed:
                 self._insert_event_row(
                     conn,
                     claim_id=claim_id,
@@ -2415,6 +2428,8 @@ class PostgresStore(SQLiteStore):
                     payload=None,
                     created_at=now,
                 )
+            elif details:
+                bump_counter("claim_confidence_noop_total", writer=details_writer(details))
 
     def set_pinned(self, claim_id: int, pinned: bool, reason: str) -> None:
         now = utc_now()

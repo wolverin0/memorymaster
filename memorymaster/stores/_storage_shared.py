@@ -65,6 +65,48 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+# Float noise guard only. This is deliberately NOT a "close enough" threshold:
+# any adjustment a caller actually made must still be recorded. It exists so a
+# round-trip through SQLite REAL / psycopg numeric cannot make an unchanged
+# value look changed.
+CONFIDENCE_EPSILON = 1e-9
+
+
+def confidence_changed(previous: object, bounded: float) -> bool:
+    """True when a ``set_confidence`` call actually moves the stored value.
+
+    Callers write a ``confidence`` event on every call, including the ones that
+    change nothing. In production that produced 489,927 rows reading
+    ``deterministic_adjust=+0.000`` -- 20% of a 2,410,028-row event log, at
+    ~15k/day -- whose entire content is the ABSENCE of an effect. That flood is
+    what collapsed the operational health check's scan to a 13.9-minute window.
+
+    An unreadable previous value returns ``True``: when in doubt, record.
+    """
+    try:
+        return abs(float(previous) - float(bounded)) > CONFIDENCE_EPSILON
+    except (TypeError, ValueError):
+        return True
+
+
+def details_writer(details: str | None) -> str:
+    """Label a confidence-event ``details`` string by its writing job.
+
+    Keeps the suppressed-write counter attributable (`deterministic` / `decay` /
+    `validator`) without putting the free-text detail -- which can carry claim
+    content -- into a metric label.
+    """
+    text = str(details or "")
+    for prefix, label in (
+        ("deterministic_adjust", "deterministic"),
+        ("decay_rate", "decay"),
+        ("validator_score", "validator"),
+    ):
+        if text.startswith(prefix):
+            return label
+    return "other"
+
+
 DEFAULT_BUSY_TIMEOUT_MS = 15000
 DEFAULT_RO_BUSY_TIMEOUT_MS = 2000
 
