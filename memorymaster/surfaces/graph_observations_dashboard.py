@@ -16,7 +16,7 @@ GRAPH_OBSERVATIONS_SECTION_HTML = """<section class="wide">
 </section>"""
 
 GRAPH_OBSERVATIONS_FUNCTIONS_JS = """
-function fillGraphObservations(d){const rows=Array.isArray(d.observations)?d.observations:[];const jobs=d.jobs||{};const diagnostics=Array.isArray(d.diagnostics)?d.diagnostics:[];const box=document.getElementById('graph-observations');document.getElementById('graph-observation-status').textContent='Observations '+rows.length+'; jobs '+JSON.stringify(jobs);const obs=rows.map(o=>{const supports=Array.isArray(o.supports)?o.supports:[];const claims=[...new Set(supports.map(s=>s.supporting_claim_id))];const evidence=[...new Set(supports.map(s=>s.evidence_item_id))];const rels=[...new Set(supports.map(s=>String(s.source_entity_id)+' '+String(s.relation)+' '+String(s.target_entity_id)))];const history=(o.lifecycle||[]).map(e=>'<div class="mono muted">'+esc(e.created_at||'-')+' '+esc(e.event_type||'-')+' '+esc(e.from_status||'')+' &#8594; '+esc(e.to_status||'')+'</div>').join('')||'<div class="muted">no lifecycle events</div>';return '<div class="card"><div class="card-head">'+statusBadge(o.status)+' <strong>'+esc(o.name||o.text||'-')+'</strong> <span class="badge">'+esc(o.observation_type||'-')+'</span> <span class="mono">#'+esc(o.observation_claim_id)+'</span></div><div class="card-row"><strong>Evidence window:</strong> '+esc(o.evidence_window_start||'-')+' &#8594; '+esc(o.evidence_window_end||'-')+'</div><div class="card-row"><strong>Supporting claims:</strong> '+esc(claims.join(', ')||'-')+'</div><div class="card-row"><strong>Evidence:</strong> '+esc(evidence.join(', ')||'-')+'</div><div class="card-row"><strong>Relationships:</strong><div class="mono">'+esc(rels.join(' | ')||'-')+'</div></div><details><summary>Lifecycle history</summary>'+history+'</details></div>';}).join('');const diag=diagnostics.length?'<div class="card"><div class="card-head"><strong>Diagnostics</strong></div>'+diagnostics.map(x=>'<div class="card-row"><span class="badge badge-stale">'+esc(x.stage||'job')+'</span> '+esc(x.error_code||'diagnostic')+' <span class="mono muted">'+esc(x.scope||'-')+' '+esc(x.updated_at||'-')+'</span></div>').join('')+'</div>':'';box.innerHTML=obs+diag||'<div class="empty">No graph observations or diagnostics</div>';}
+function fillGraphObservations(d){const rows=Array.isArray(d.observations)?d.observations:[];const jobs=d.jobs||{};const outcomes=d.job_outcomes||{};const diagnostics=Array.isArray(d.diagnostics)?d.diagnostics:[];const box=document.getElementById('graph-observations');document.getElementById('graph-observation-status').textContent='Observations '+rows.length+'; jobs '+JSON.stringify(jobs)+'; completed jobs by outcome '+JSON.stringify(outcomes);const obs=rows.map(o=>{const supports=Array.isArray(o.supports)?o.supports:[];const claims=[...new Set(supports.map(s=>s.supporting_claim_id))];const evidence=[...new Set(supports.map(s=>s.evidence_item_id))];const rels=[...new Set(supports.map(s=>String(s.source_entity_id)+' '+String(s.relation)+' '+String(s.target_entity_id)))];const history=(o.lifecycle||[]).map(e=>'<div class="mono muted">'+esc(e.created_at||'-')+' '+esc(e.event_type||'-')+' '+esc(e.from_status||'')+' &#8594; '+esc(e.to_status||'')+'</div>').join('')||'<div class="muted">no lifecycle events</div>';return '<div class="card"><div class="card-head">'+statusBadge(o.status)+' <strong>'+esc(o.name||o.text||'-')+'</strong> <span class="badge">'+esc(o.observation_type||'-')+'</span> <span class="mono">#'+esc(o.observation_claim_id)+'</span></div><div class="card-row"><strong>Evidence window:</strong> '+esc(o.evidence_window_start||'-')+' &#8594; '+esc(o.evidence_window_end||'-')+'</div><div class="card-row"><strong>Supporting claims:</strong> '+esc(claims.join(', ')||'-')+'</div><div class="card-row"><strong>Evidence:</strong> '+esc(evidence.join(', ')||'-')+'</div><div class="card-row"><strong>Relationships:</strong><div class="mono">'+esc(rels.join(' | ')||'-')+'</div></div><details><summary>Lifecycle history</summary>'+history+'</details></div>';}).join('');const diag=diagnostics.length?'<div class="card"><div class="card-head"><strong>Diagnostics</strong></div>'+diagnostics.map(x=>'<div class="card-row"><span class="badge badge-stale">'+esc(x.stage||'job')+'</span> '+esc(x.error_code||x.outcome||'diagnostic')+' <span class="mono">'+esc(x.diagnostic_codes||'')+'</span> <span class="mono muted">'+esc(x.scope||'-')+' '+esc(x.updated_at||'-')+'</span></div>').join('')+'</div>':'';box.innerHTML=obs+diag||'<div class="empty">No graph observations or diagnostics</div>';}
 async function refreshGraphObservations(){const scope=document.getElementById('graph-observation-scope').value||'';fillGraphObservations(await jget('/api/graph-observations?limit=30&scope='+encodeURIComponent(scope)));}
 """
 
@@ -52,9 +52,10 @@ def _diagnostic_rows(conn: Any, *, tenant_id: str | None, scope: str | None) -> 
     scope_sql = " AND scope=?" if scope else ""
     params = (tenant_id, scope) if scope else (tenant_id,)
     return _rows(conn.execute(
-        f"""SELECT id, scope, stage, status, attempts, error_code,
-                   diagnostic_hash, updated_at FROM graph_observation_jobs
-            WHERE tenant_id IS ?{scope_sql} AND error_code IS NOT NULL
+        f"""SELECT id, scope, stage, status, attempts, error_code, outcome,
+                   diagnostic_codes, updated_at FROM graph_observation_jobs
+            WHERE tenant_id IS ?{scope_sql}
+              AND (error_code IS NOT NULL OR diagnostic_codes IS NOT NULL)
             ORDER BY id DESC LIMIT 30""", params))
 
 
@@ -79,6 +80,7 @@ def graph_observations_payload(
         "observation_claim_ids": claim_ids,
         "diagnostics": diagnostics,
         "jobs": repository.status_counts(tenant_id=tenant_id, scope=scope),
+        "job_outcomes": repository.outcome_counts(tenant_id=tenant_id, scope=scope),
     }
 
 

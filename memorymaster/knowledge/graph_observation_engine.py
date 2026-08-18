@@ -14,6 +14,8 @@ from memorymaster.knowledge.graph_observation_repository import (
     ObservationJob,
 )
 from memorymaster.knowledge.graph_observations import (
+    NO_ELIGIBLE_SUPPORTS,
+    DiscoveryResult,
     ObservationComponent,
     ObservationDraft,
     discover_components,
@@ -40,6 +42,20 @@ class ObservationCycleResult:
     no_signal: int = 0
     invalidated: int = 0
     failed: int = 0
+    # ``discovery_completed`` counts jobs that terminated cleanly, which is not
+    # the same as work having happened. These three say what they concluded.
+    components_found: int = 0
+    discovery_no_supports: int = 0
+    discovery_no_components: int = 0
+
+
+def discovery_outcome(result: DiscoveryResult) -> str:
+    """Name what a discovery pass concluded, so "nothing" cannot read as "done"."""
+    if result.components:
+        return "components_found"
+    if any(item.code == NO_ELIGIBLE_SUPPORTS for item in result.diagnostics):
+        return "no_supports"
+    return "no_components"
 
 
 def _component_from_job(
@@ -169,6 +185,8 @@ class GraphObservationEngine:
 
     def process_discovery(self, *, owner: str, scope: str, limit: int = 10) -> ObservationCycleResult:
         completed = queued = invalidated = failed = 0
+        outcomes: dict[str, int] = {}
+        components_found = 0
         jobs = self.repo.lease_jobs(
             owner=owner, limit=limit, stages=("discover",), scope=scope
         )
@@ -192,12 +210,25 @@ class GraphObservationEngine:
                     if self._queue_component(job, component):
                         queued += 1
                 codes = [item.code for item in result.diagnostics]
-                self.repo.complete_job(job.id, owner=owner, diagnostic_codes=codes)
+                outcome = discovery_outcome(result)
+                outcomes[outcome] = outcomes.get(outcome, 0) + 1
+                components_found += len(result.components)
+                self.repo.complete_job(
+                    job.id, owner=owner, outcome=outcome, diagnostic_codes=codes
+                )
                 completed += 1
             except Exception:  # noqa: BLE001 - typed retry boundary persisted below
                 self.repo.fail_job(job.id, owner=owner, error_code="discovery_failed")
                 failed += 1
-        return ObservationCycleResult(completed, queued, invalidated=invalidated, failed=failed)
+        return ObservationCycleResult(
+            discovery_completed=completed,
+            synthesis_queued=queued,
+            invalidated=invalidated,
+            failed=failed,
+            components_found=components_found,
+            discovery_no_supports=outcomes.get("no_supports", 0),
+            discovery_no_components=outcomes.get("no_components", 0),
+        )
 
     def _queue_component(self, job: ObservationJob, component: ObservationComponent) -> bool:
         if self.repo.observation_for_support(
@@ -237,9 +268,11 @@ class GraphObservationEngine:
                 if draft.decision == "emit":
                     _create_candidate(self.store, self.repo, draft, component)
                     emitted += 1
+                    outcome = "observation_emitted"
                 else:
                     no_signal += 1
-                self.repo.complete_job(job.id, owner=owner)
+                    outcome = "no_signal"
+                self.repo.complete_job(job.id, owner=owner, outcome=outcome)
                 completed += 1
             except Exception:  # noqa: BLE001 - fail closed and retry from IDs
                 self.repo.fail_job(job.id, owner=owner, error_code="synthesis_failed")

@@ -27,6 +27,17 @@ JOB_STATUSES = frozenset(
     {"pending", "leased", "retryable", "blocked", "completed", "cancelled"}
 )
 JOB_STAGES = frozenset({"discover", "synthesize"})
+# A completed job MUST declare which of these it reached. ``status='completed'``
+# alone answers "did the machine run", never "did any work happen".
+JOB_OUTCOMES = frozenset(
+    {
+        "components_found",
+        "no_supports",
+        "no_components",
+        "observation_emitted",
+        "no_signal",
+    }
+)
 
 
 def _now() -> datetime:
@@ -92,6 +103,8 @@ class ObservationJob:
     lease_expires_at: str | None
     error_code: str | None
     diagnostic_hash: str | None
+    outcome: str | None
+    diagnostic_codes: str | None
     created_at: str
     updated_at: str
     completed_at: str | None
@@ -255,18 +268,34 @@ class GraphObservationRepository:
         job_id: int,
         *,
         owner: str,
+        outcome: str,
         diagnostic_codes: Iterable[str] = (),
     ) -> bool:
+        """Complete a job with the outcome it actually reached.
+
+        ``outcome`` is required: a caller that cannot say what the job concluded
+        has no business marking it completed. The diagnostic codes are stored
+        verbatim — hashing them destroyed the "why" at write time.
+        """
+        if outcome not in JOB_OUTCOMES:
+            raise ValueError(f"unknown graph observation job outcome: {outcome!r}")
         stamp = _iso(_now())
         codes = sorted(set(str(code) for code in diagnostic_codes))
-        diagnostic_hash = _digest(codes) if codes else None
         with self._connection() as conn:
             cur = conn.execute(
                 """UPDATE graph_observation_jobs
                    SET status='completed', completed_at=?, updated_at=?,
-                       lease_owner=NULL, lease_expires_at=NULL, diagnostic_hash=?
+                       lease_owner=NULL, lease_expires_at=NULL,
+                       outcome=?, diagnostic_codes=?
                    WHERE id=? AND status='leased' AND lease_owner=?""",
-                (stamp, stamp, diagnostic_hash, job_id, owner),
+                (
+                    stamp,
+                    stamp,
+                    outcome,
+                    json.dumps(codes, separators=(",", ":")) if codes else None,
+                    job_id,
+                    owner,
+                ),
             )
             conn.commit()
         return cur.rowcount > 0
@@ -553,4 +582,35 @@ class GraphObservationRepository:
             ).fetchall()
         for row in rows:
             counts[str(row["stage"])][str(row["status"])] = int(row["count"])
+        return counts
+
+    def outcome_counts(
+        self, *, tenant_id: str | None = None, scope: str | None = None
+    ) -> dict[str, dict[str, int]]:
+        """Break completed jobs down by what they concluded.
+
+        ``status_counts`` alone reports 3,146 completed discovery jobs against 2
+        observations and reads as success. This is the companion that says how
+        many of those completions found anything.
+        """
+        counts = {
+            stage: {outcome: 0 for outcome in sorted(JOB_OUTCOMES)} | {"unrecorded": 0}
+            for stage in JOB_STAGES
+        }
+        params: list[Any] = [tenant_id]
+        scope_sql = ""
+        if scope:
+            scope_sql = " AND scope=?"
+            params.append(scope)
+        with self._connection() as conn:
+            rows = conn.execute(
+                f"""SELECT stage, outcome, COUNT(*) AS count
+                    FROM graph_observation_jobs
+                    WHERE tenant_id IS ?{scope_sql} AND status='completed'
+                    GROUP BY stage, outcome""",
+                tuple(params),
+            ).fetchall()
+        for row in rows:
+            outcome = str(row["outcome"]) if row["outcome"] else "unrecorded"
+            counts[str(row["stage"])][outcome] = int(row["count"])
         return counts
