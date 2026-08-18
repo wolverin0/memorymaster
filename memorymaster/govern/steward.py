@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from memorymaster.core import observability
 from memorymaster.core import llm_budget
+from memorymaster.core.event_scan import scan_proposal_events
 from memorymaster.core.lifecycle import transition_claim
 from memorymaster.core.security import is_sensitive_claim, sanitize_persisted_json
 from memorymaster.core.service import MemoryService
@@ -1246,9 +1247,16 @@ def list_steward_proposals(
 ) -> list[dict[str, Any]]:
     if limit <= 0:
         return []
-    proposal_scan_limit = max(limit * 6, 500)
-    proposals_raw = service.list_events(event_type="policy_decision", limit=proposal_scan_limit)
-    audit_raw = service.list_events(event_type="audit", limit=max(limit * 8, 800))
+    # Bounded by TIME, not by `max(limit * 6, 500)` rows. `list_events` returns
+    # newest first, so the row cap dropped the OLDEST proposals -- the ones
+    # waiting longest for review -- and dropped them silently: an unresolved
+    # proposal simply stopped appearing in the queue. The cap was at 362 of 600
+    # in production and rising. The audit side had the mirror failure: a
+    # resolution falling off made a resolved proposal read as pending again,
+    # and re-approving it is exactly the latch R2 fixed. See core.event_scan.
+    scan = scan_proposal_events(service)
+    proposals_raw = scan.proposals
+    audit_raw = scan.resolutions
 
     resolution_by_proposal_event_id: dict[int, dict[str, Any]] = {}
     for event in audit_raw:

@@ -110,12 +110,17 @@ class FakeService:
         claim_id: int | None = None,
         limit: int = 100,
         event_type: str | None = None,
+        since: str | None = None,
     ) -> list[FakeEvent]:
+        # `since` is part of the store API and readers of the proposal queue
+        # depend on it; a fake that ignores it would let a time-bounded scan
+        # pass here while returning the wrong rows against a real store.
         rows = [
             event
             for event in self.events
             if (claim_id is None or event.claim_id == claim_id)
             and (event_type is None or event.event_type == event_type)
+            and (since is None or event.created_at >= since)
         ]
         return rows[:limit]
 

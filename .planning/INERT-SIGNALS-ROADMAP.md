@@ -55,14 +55,25 @@ shipped inert.
   every further proposal against it was doomed by construction.
   4 tests, verified failing without the fix. 1,205 tests green in the tranche.
 
-- [ ] **R3 — The validator promotes claims that are pending supersession** · MED
+- [x] **R3 — The validator promotes claims that are pending supersession** · MED · ✅ done
   The proposal is a `policy_decision` event; the validator never reads it, so a
   claim declared outdated gets independently promoted to `confirmed`.
   **21 of 59** proposals were followed by exactly that. Claim 130542 spent ~11h
   at `confirmed` *after* being declared superseded.
-  **Fix:** check for an unresolved `superseded_candidate` before promoting.
+  **Fixed:** `govern/jobs/validator.py` now reads the queue before it judges.
+  A claim with an unresolved `superseded_candidate` is skipped entirely —
+  status untouched, `promotion_blocked_pending_supersession` recorded, counted
+  as `blocked_pending_supersession` in the run result so the skip is visible
+  rather than inferred from an absence. It reuses
+  `recall.retrieval.pending_supersession_ids` (no second query shape to drift)
+  with **`use_cache=False`**: recall tolerates the 5-minute cache because it
+  only shifts ranking, but promotion is a state change that outlives the cycle,
+  so a proposal filed seconds ago must block *this* run. The gate is a hold,
+  not a freeze — once the proposal is resolved either way the claim promotes
+  normally, pinned by its own test. 4 tests, each verified failing with the
+  gate disabled.
 
-- [ ] **R4 — `limit=`-bounded event scans, a family** · MED · shared helper
+- [x] **R4 — `limit=`-bounded event scans, a family** · MED · shared helper · ✅ done
   Same shape as R1, three more sites. `govern/steward.py:1250-1251` is the
   tightest: `policy_decision` is at **362 of 600 — 60% consumed**. When it
   overflows the **oldest** pending proposals vanish first (the ones most needing
@@ -71,8 +82,21 @@ shipped inert.
   `recall/retrieval.py:193,206` (limit=2000) is safe today but fails in both
   directions, and its `except Exception: ids = set()` makes a fault
   indistinguishable from "nothing pending".
-  `core/lifecycle.py:46` is correctly bounded — **leave it alone.**
-  **Fix:** one shared helper: filter by type + time bound, no global row cap.
+  `core/lifecycle.py:46` is correctly bounded — **left alone.**
+  **Fixed:** one shared helper, `core/event_scan.py:scan_proposal_events`, used
+  by both readers. It bounds by `since` (400-day window) with a 50k row ceiling
+  that is a memory guard, not a window — and hitting it now logs a warning
+  instead of passing off a truncated tail as the whole queue. A window is a
+  declared policy that means the same thing next month; a row cap silently
+  means less every day the log grows. Scanning proposals and resolutions with
+  the SAME `since` is sound because a resolution can never predate the proposal
+  it resolves. `pending_supersession_ids`'s blanket `except` no longer caches
+  its own failure: a fault is logged and returns empty for that call only,
+  instead of reading as "nothing pending" for the next five minutes.
+  5 tests, verified failing under BOTH pre-fix cap regimes (600/800 and
+  2000/2000). No store change was needed — `since` already reaches both
+  backends from R1, and psycopg3 dumps `str` as OID 0 (unknown), so Postgres
+  infers `timestamptz` and the comparison is well-typed there too.
 
 - [ ] **R5 — 2,856 discovery jobs "completed", 2 observations ever** · MED
   `knowledge/graph_observations.py:247-248` returns an empty result with no
