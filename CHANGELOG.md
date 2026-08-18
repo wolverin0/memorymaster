@@ -1,10 +1,38 @@
-<!-- doc-head: public MemoryMaster release history through v4.8.1 -->
+<!-- doc-head: public MemoryMaster release history through v4.8.2 -->
 Covers user-visible changes, migrations, governance boundaries, and operational fixes for each release.
 Key terms: graph observations, compiled profile, governed capture, recall, sensitivity, lineage.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
 <!-- /doc-head -->
 
 # Changelog
+
+## [4.8.2] - 2026-08-18
+
+Recall returned confident-looking claims with nothing to do with the query.
+Three causes, one of them in the data rather than the code.
+
+- **`claims_fts` rots and never self-corrects.** It is an external-content FTS5
+  index maintained by triggers, and the update trigger clears a row's OLD terms
+  before writing the new ones — which only works while the index still holds
+  those OLD terms. Once an entry drifts, every later edit preserves the stale
+  term instead of clearing it. On a production database 40–52% of matches for
+  common terms pointed at claims that no longer contained the word. Nothing
+  surfaced it: the claims were intact and `quick_check` passed. **A daily drift
+  check now runs in the steward integrity job** and logs the repair
+  (`INSERT INTO claims_fts(claims_fts) VALUES('rebuild')`, about three seconds
+  on 131k claims). It deliberately does not freeze promotions — a stale index
+  is a search problem, not corruption.
+- **The zero-hit relaxation widened on every token**, including ones the ranker
+  discards as noise. Widening on "what", "should" and "a" matches most of the
+  corpus and scores every hit at zero relevance. It now uses the same salient
+  term rule the ranker uses, so both layers agree on what counts as a term, and
+  a query left with no salient term is not widened at all.
+- **Legacy retrieval never ranked by relevance.** It computed each claim's
+  lexical score, displayed it, and then ranked purely on confidence plus
+  bonuses, so the number shown as `score` encoded how *trusted* a claim was
+  rather than how well it answered the question. Sorting on lexical score
+  alone, stably, keeps equally-relevant rows in their existing bm25 order so a
+  row moves only when relevance genuinely differs.
 
 ## [4.8.1] - 2026-08-18
 
