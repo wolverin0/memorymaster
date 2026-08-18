@@ -517,7 +517,13 @@ def test_dream_cycle_enforces_one_three_call_batch_per_scope(monkeypatch) -> Non
 
         def process_discovery(self, *, owner, scope):
             calls.append(("discover", scope))
-            return SimpleNamespace(synthesis_queued=4, failed=0)
+            return SimpleNamespace(
+                synthesis_queued=4,
+                failed=0,
+                components_found=4,
+                discovery_no_supports=0,
+                discovery_no_components=0,
+            )
 
         def process_synthesis(self, *, owner, scope):
             calls.append(("synthesize", scope))
@@ -543,5 +549,159 @@ def test_dream_cycle_enforces_one_three_call_batch_per_scope(monkeypatch) -> Non
 
     assert calls.count(("discover", "project:test")) == 1
     assert calls.count(("synthesize", "project:test")) == 1
-    assert result["discovery_queued"] == 2
+    assert result["discovery_jobs_enqueued"] == 2
+    assert result["components_found"] == 4
     assert result["emitted"] == 3
+
+
+# --- R5: "completed" must say what the job concluded --------------------------
+# 3,146 discovery jobs reached status='completed' against 2 observations ever,
+# and nothing in the job row, the worker totals, or the operational review said
+# that 3,132 of them had found nothing at all.
+
+
+def _completed_discovery_rows(service) -> list[tuple[str, str | None, str | None]]:
+    with service.store.connect() as conn:
+        return [
+            (str(row["status"]), row["outcome"], row["diagnostic_codes"])
+            for row in conn.execute(
+                """SELECT status, outcome, diagnostic_codes
+                   FROM graph_observation_jobs WHERE stage='discover' ORDER BY id"""
+            )
+        ]
+
+
+def test_empty_scope_discovery_reports_why_it_found_nothing() -> None:
+    result = discover_components((), scope="project:empty", tenant_id=None)
+
+    assert result.components == ()
+    assert [item.code for item in result.diagnostics] == ["scope_has_no_eligible_supports"]
+
+
+def test_discovery_over_an_empty_scope_completes_as_no_supports(tmp_path) -> None:
+    service = MemoryService(tmp_path / "empty.db", workspace_root=tmp_path)
+    service.init_db()
+    engine = GraphObservationEngine(service.store, llm_call=lambda _s, _p: "")
+    engine.repo.queue_discovery(
+        tenant_id=None,
+        scope="project:empty",
+        ontology_version="personal-v1",
+        cycle_hour="2026-08-18T10",
+    )
+
+    discovery = engine.process_discovery(owner="observer", scope="project:empty")
+
+    assert discovery.discovery_completed == 1
+    assert discovery.components_found == 0
+    assert discovery.discovery_no_supports == 1
+    assert _completed_discovery_rows(service) == [
+        ("completed", "no_supports", '["scope_has_no_eligible_supports"]')
+    ]
+
+
+def test_discovery_distinguishes_no_supports_from_no_components(tmp_path) -> None:
+    service, _capture, _sources = _graph_fixture(tmp_path)
+    with service.store.connect() as conn:
+        ids = [
+            int(row["id"])
+            for row in conn.execute(
+                "SELECT id FROM claims WHERE claim_type='fact' ORDER BY id"
+            )
+        ]
+    for claim_id in ids[1:]:
+        transition_claim(service.store, claim_id, "stale", "fixture: shrink component")
+    engine = GraphObservationEngine(service.store, llm_call=lambda _s, _p: "")
+    engine.repo.queue_discovery(
+        tenant_id=None,
+        scope="project:test",
+        ontology_version="personal-v1",
+        cycle_hour="2026-08-18T11",
+    )
+
+    discovery = engine.process_discovery(owner="observer", scope="project:test")
+
+    assert discovery.discovery_completed == 1
+    assert discovery.components_found == 0
+    assert discovery.discovery_no_supports == 0
+    assert discovery.discovery_no_components == 1
+    status, outcome, codes = _completed_discovery_rows(service)[0]
+    assert (status, outcome) == ("completed", "no_components")
+    assert json.loads(codes) == ["below_eligibility_threshold"]
+
+
+def test_discovery_that_found_components_is_marked_apart(tmp_path) -> None:
+    service, _capture, _sources = _graph_fixture(tmp_path)
+    engine = GraphObservationEngine(service.store, llm_call=lambda _s, _p: "")
+    engine.repo.queue_discovery(
+        tenant_id=None,
+        scope="project:test",
+        ontology_version="personal-v1",
+        cycle_hour="2026-08-18T12",
+    )
+
+    discovery = engine.process_discovery(owner="observer", scope="project:test")
+
+    assert discovery.components_found == 1
+    assert (discovery.discovery_no_supports, discovery.discovery_no_components) == (0, 0)
+    assert _completed_discovery_rows(service) == [("completed", "components_found", None)]
+
+
+def test_synthesis_no_signal_is_distinguishable_from_an_emitted_observation(tmp_path) -> None:
+    service, _capture, _sources = _graph_fixture(tmp_path)
+    engine = GraphObservationEngine(
+        service.store, llm_call=lambda _s, _p: json.dumps({"decision": "no_signal"})
+    )
+    engine.repo.queue_discovery(
+        tenant_id=None,
+        scope="project:test",
+        ontology_version="personal-v1",
+        cycle_hour="2026-08-18T13",
+    )
+    engine.process_discovery(owner="observer", scope="project:test")
+
+    synthesis = engine.process_synthesis(owner="observer", scope="project:test")
+    with service.store.connect() as conn:
+        row = conn.execute(
+            "SELECT status, outcome FROM graph_observation_jobs WHERE stage='synthesize'"
+        ).fetchone()
+
+    assert (synthesis.no_signal, synthesis.emitted) == (1, 0)
+    assert (str(row["status"]), row["outcome"]) == ("completed", "no_signal")
+
+
+def test_completing_a_job_requires_a_declared_outcome(tmp_path) -> None:
+    service = MemoryService(tmp_path / "outcome.db", workspace_root=tmp_path)
+    service.init_db()
+    repo = GraphObservationRepository(service.store)
+    job, _created = repo.queue_discovery(
+        tenant_id=None,
+        scope="project:test",
+        ontology_version="personal-v1",
+        cycle_hour="2026-08-18T14",
+    )
+    repo.lease_jobs(owner="observer", limit=1)
+
+    with pytest.raises(TypeError):
+        repo.complete_job(job.id, owner="observer")
+    with pytest.raises(ValueError, match="unknown graph observation job outcome"):
+        repo.complete_job(job.id, owner="observer", outcome="done")
+
+
+def test_dashboard_splits_completed_jobs_by_outcome(tmp_path) -> None:
+    service, _capture, _sources = _graph_fixture(tmp_path)
+    engine = GraphObservationEngine(service.store, llm_call=lambda _s, _p: "")
+    for hour, scope in (("2026-08-18T15", "project:test"), ("2026-08-18T15", "project:empty")):
+        engine.repo.queue_discovery(
+            tenant_id=None,
+            scope=scope,
+            ontology_version="personal-v1",
+            cycle_hour=hour,
+        )
+        engine.process_discovery(owner="observer", scope=scope)
+
+    payload = graph_observations_payload(service)
+
+    assert payload["jobs"]["discover"]["completed"] == 2
+    assert payload["job_outcomes"]["discover"]["components_found"] == 1
+    assert payload["job_outcomes"]["discover"]["no_supports"] == 1
+    assert payload["job_outcomes"]["discover"]["unrecorded"] == 0

@@ -182,7 +182,18 @@ class DreamWorker:
         from memorymaster.knowledge.ontology import load_ontology
 
         engine = GraphObservationEngine(self.service.store, llm_call=self._observation_llm)
-        totals = {"discovery_queued": 0, "synthesis_queued": 0, "emitted": 0, "failed": 0}
+        # "discovery_jobs_enqueued" counts jobs PUT ON THE QUEUE. It was named
+        # discovery_queued and read as discoveries; the components/no-support
+        # counters below are the ones that say whether anything was found.
+        totals = {
+            "discovery_jobs_enqueued": 0,
+            "components_found": 0,
+            "discovery_no_supports": 0,
+            "discovery_no_components": 0,
+            "synthesis_queued": 0,
+            "emitted": 0,
+            "failed": 0,
+        }
         cycle_hour = self.now().astimezone(timezone.utc).strftime("%Y-%m-%dT%H")
         scope_pairs = self._observation_scope_pairs(scope)
         for target_scope, tenant_id in scope_pairs:
@@ -192,10 +203,13 @@ class DreamWorker:
                 ontology_version=load_ontology().version,
                 cycle_hour=cycle_hour,
             )
-            totals["discovery_queued"] += int(created)
+            totals["discovery_jobs_enqueued"] += int(created)
         for target_scope in sorted({item[0] for item in scope_pairs}):
             discovered = engine.process_discovery(owner=owner, scope=target_scope)
             totals["synthesis_queued"] += discovered.synthesis_queued
+            totals["components_found"] += discovered.components_found
+            totals["discovery_no_supports"] += discovered.discovery_no_supports
+            totals["discovery_no_components"] += discovered.discovery_no_components
             totals["failed"] += discovered.failed
             if synthesize:
                 synthesized = engine.process_synthesis(owner=owner, scope=target_scope)

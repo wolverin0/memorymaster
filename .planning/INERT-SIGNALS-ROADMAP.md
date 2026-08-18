@@ -74,7 +74,7 @@ shipped inert.
   `core/lifecycle.py:46` is correctly bounded — **leave it alone.**
   **Fix:** one shared helper: filter by type + time bound, no global row cap.
 
-- [ ] **R5 — 2,856 discovery jobs "completed", 2 observations ever** · MED
+- [x] **R5 — 2,856 discovery jobs "completed", 2 observations ever** · MED · ✅ done
   `knowledge/graph_observations.py:247-248` returns an empty result with no
   diagnostics for an empty scope, and `graph_observation_engine.py:191-196`
   calls `complete_job` regardless — `completed` collapses "synthesized" and
@@ -85,8 +85,30 @@ shipped inert.
   supports; 308 of 131,113 claims carry an evidence link; the
   `ontology_version` filter excludes half the edges) is **structural and out of
   scope here** — this item fixes the *signal*, so the thinness becomes visible.
-  **Fix:** distinct terminal state for "nothing found", store diagnostic codes
-  as text.
+  **Fixed:** a completed job now records **what it concluded**. Migration
+  `0022` adds `outcome` (`components_found` / `no_supports` / `no_components` /
+  `observation_emitted` / `no_signal`) and `diagnostic_codes` as readable text;
+  `complete_job` takes `outcome` as a **required** keyword, so a caller that
+  cannot say what happened can no longer mark a job completed. An empty scope
+  now emits the `scope_has_no_eligible_supports` diagnostic instead of a silent
+  empty tuple. `status` is untouched, so every existing job-state consumer
+  keeps working — the split is reported *alongside* it by
+  `outcome_counts()` (dashboard `job_outcomes`) and by the operational review
+  (`discovery_no_supports` etc.). The worker's `discovery_queued` — which
+  counted jobs *enqueued* and read as discoveries — is now
+  `discovery_jobs_enqueued`, joined by `components_found`,
+  `discovery_no_supports` and `discovery_no_components`.
+  *Also found and fixed:* the **synthesize** stage had the identical collapse —
+  `emit` and `no_signal` both wrote a bare `completed`. And `diagnostic_hash`
+  was doubly inert: written only on completed jobs, read only on rows with
+  `error_code IS NOT NULL`, so in practice never displayed at all.
+  Verified on a copy of the production DB: migration applies to all 3,148
+  existing rows (integrity ok, historical rows left `unrecorded` rather than
+  guessed), and a real discovery cycle records `no_supports` for
+  `project:memorymaster` and `components_found` for `user` — two outcomes that
+  were an identical bare `completed` before.
+  8 tests, all verified failing without the fix (one with the migration still
+  applied, proving the tests pin the logic and not the schema).
 
 - [ ] **R6 — Postgres: four sites of one silent-dropper, fixed once** · MED
   `PostgresStore(SQLiteStore)` inherits `?`-placeholder SQL that psycopg

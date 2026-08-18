@@ -29,6 +29,11 @@ MAX_EVIDENCE = 20
 MAX_EDGES = 40
 MAX_HUB_EPISODES = 20
 
+# Emitted when a scope has no eligible support rows at all. Without it, an
+# empty scope and a scope whose components were all rejected produced the same
+# empty result, and "found nothing" was indistinguishable from "synthesized".
+NO_ELIGIBLE_SUPPORTS = "scope_has_no_eligible_supports"
+
 Signature = tuple[int, str, int, str]
 
 
@@ -245,7 +250,7 @@ def discover_components(
         row for row in supports if row.scope == scope and row.tenant_id == tenant_id
     )
     if not rows:
-        return DiscoveryResult((), ())
+        return DiscoveryResult((), (DiscoveryDiagnostic(NO_ELIGIBLE_SUPPORTS),))
     episodes = _episode_signatures(rows)
     groups, hubs = _component_groups(episodes)
     diagnostics = [
