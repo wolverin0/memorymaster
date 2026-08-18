@@ -2080,7 +2080,10 @@ class PostgresStore(SQLiteStore):
         claim_id: int | None = None,
         limit: int = 100,
         event_type: str | None = None,
+        since: str | None = None,
     ) -> list[Event]:
+        """List events, newest first. See SQLiteStore.list_events for why
+        ``since`` exists -- a row cap is not a time window."""
         clauses: list[str] = []
         params: list[object] = []
 
@@ -2094,6 +2097,9 @@ class PostgresStore(SQLiteStore):
         if event_type is not None:
             clauses.append("event_type = %s")
             params.append(event_type)
+        if since is not None:
+            clauses.append("created_at >= %s")
+            params.append(since)
 
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         sql = f"SELECT * FROM events {where_sql} ORDER BY created_at DESC, id DESC LIMIT %s"

@@ -2246,11 +2246,10 @@ class MemoryService(IntegrationService):
         claim_id: int | None = None,
         limit: int = 100,
         event_type: str | None = None,
+        since: str | None = None,
     ) -> list[Event]:
         return self.store.list_events(
-            claim_id=claim_id,
-            limit=limit,
-            event_type=event_type,
+            claim_id=claim_id, limit=limit, event_type=event_type, since=since,
         )
 
     def list_events_page(

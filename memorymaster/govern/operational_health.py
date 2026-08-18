@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from memorymaster.capture.coverage import capture_coverage
@@ -59,13 +60,44 @@ def _database_signals(service: Any) -> dict[str, Any]:
     }
 
 
-def _provider_failure_count(service: Any) -> int:
+PROVIDER_FAILURE_WINDOW_HOURS = 24
+
+
+def _provider_failure_count(service: Any, *, window_hours: int = PROVIDER_FAILURE_WINDOW_HOURS) -> dict[str, Any]:
+    """Count provider failures over a TIME window, and say what was examined.
+
+    This used to scan ``list_events(limit=1000)`` with no filter. A row cap is
+    not a time window: bookkeeping events dominate the log (487k
+    `deterministic_adjust=+0.000` rows out of 2.4M in production), so those 1000
+    rows spanned **13.9 minutes** -- an outage twenty minutes old was
+    structurally invisible and the check reported healthy. That is the failure
+    this module exists to catch, happening inside the check itself.
+
+    Two changes make the signal honest:
+      * bound by ``since`` so the window is the period a reader assumes;
+      * return the window actually covered and whether any producer was seen,
+        so "0" can be distinguished from "nothing here can ever be observed".
+        No code path currently records a provider-failure event, so a bare 0
+        was indistinguishable from a check that cannot fire.
+    """
+    since = (datetime.now(timezone.utc) - timedelta(hours=max(1, int(window_hours)))).isoformat()
     count = 0
-    for event in service.list_events(limit=1000):
+    scanned = 0
+    oldest: str | None = None
+    for event in service.list_events(limit=100_000, since=since):
+        scanned += 1
+        created = str(getattr(event, "created_at", "") or "")
+        if created and (oldest is None or created < oldest):
+            oldest = created
         detail = str(event.details or "").lower()
         if "provider" in detail and any(marker in detail for marker in ("fail", "error", "unavailable")):
             count += 1
-    return count
+    return {
+        "count": count,
+        "window_hours": int(window_hours),
+        "events_scanned": scanned,
+        "oldest_event_examined": oldest,
+    }
 
 
 def evaluate_operational_health(
@@ -92,7 +124,8 @@ def evaluate_operational_health(
         alerts.append({"code": "wal_size_high", "value": database["wal_bytes"], "threshold": wal_max_bytes})
     if database["disk_percent"] > max(1.0, float(disk_max_percent)):
         alerts.append({"code": "disk_usage_high", "value": database["disk_percent"], "threshold": disk_max_percent})
-    provider_failures = _provider_failure_count(service)
+    provider_health = _provider_failure_count(service)
+    provider_failures = int(provider_health["count"])
     if provider_failures > max(0, int(provider_failure_threshold)):
         alerts.append({"code": "provider_failures", "value": provider_failures})
     capture = capture_coverage(service)
@@ -108,6 +141,8 @@ def evaluate_operational_health(
         "media_retry": retry_counts,
         "database": database,
         "provider_failures": provider_failures,
+        # What the count actually covers -- a bare 0 hid a 14-minute window.
+        "provider_failure_scan": provider_health,
         "capture": capture,
         "otel": otel_status(),
         "error_tracking": error_tracking_status(),
