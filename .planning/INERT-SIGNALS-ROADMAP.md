@@ -285,6 +285,17 @@ shipped inert.
   `miner_state`, `contradiction_verdicts`, `action_proposals`,
   `qdrant_sync_state`. `rule_stats` is notable: its bootstrap is default-ON yet
   empty. Each needs its own trace before anyone claims it is broken.
+- **The operator queue is newest-first with a page cap** — `list_steward_proposals`
+  breaks at the caller's `limit`. That is a page size, not a hidden scan cap
+  (R4 fixed the scan), and it is pre-existing. But if pending proposals ever
+  exceed `limit`, the **oldest are still the ones the operator never sees** —
+  the same asymmetry R4 was about, one layer up. Turning the queue oldest-first
+  changes the operator surface, so it was deliberately not folded into a fix
+  commit. Worth its own item.
+- **Playwright browsers are not installed on this machine** — the suite's one
+  failure (`test_dashboard_governance_ux`) wants chromium build **1148**; the box
+  has **1217**. Environmental, reproduced identically on a clean tree. Fix with
+  `playwright install`, a machine-level change nobody folded into a code PR.
 - **Qdrant is a write-only index** — reads raise `PermissionError`
   (`qdrant_backend.py:442`, `qdrant_recall_fallback.py:242`) while every write
   path still runs. Cost paid continuously, zero retrieval benefit. A product
