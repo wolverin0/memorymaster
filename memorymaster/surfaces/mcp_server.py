@@ -693,6 +693,7 @@ MCP_TOOL_POLICIES: dict[str, McpToolPolicy] = {
     "forget_preview": McpToolPolicy("query", team_enabled=True),
     "find_related_claims": McpToolPolicy("configure"),
     "get_usage_rollup": McpToolPolicy("query"),
+    "recall_stats": McpToolPolicy("query"),
     "ingest_claim": McpToolPolicy("ingest", team_enabled=True),
     "ingest_rule": McpToolPolicy("ingest"),
     "improve": McpToolPolicy("ingest", team_enabled=True),
@@ -2467,6 +2468,24 @@ if FastMCP is not None:
         counters and session metadata — never claim text.
         """
         return _usage_rollup(db)
+
+    @mcp.tool()
+    def recall_stats() -> dict[str, Any]:
+        """Aggregate recall counters over REAL traffic, for this server process.
+
+        Complements the frozen-cohort scoreboard rather than duplicating it: the
+        cohort answers "when I search for something I know is stored, does it come
+        up?", this answers "when the operator searches, do they get anything?".
+        ``zero_result_rate`` rising while cohort relevance also rises means the
+        exam improved and the system did not.
+
+        Read ``sample`` before the rates — a rate over three queries is not a rate.
+        Counters are in-memory and reset when the server restarts; nothing is
+        persisted and no claim text is exposed.
+        """
+        from memorymaster.recall.retrieval_stats import get_stats
+
+        return {"ok": True, **get_stats().snapshot()}
 
     @mcp.tool()
     def dream_status() -> dict[str, Any]:

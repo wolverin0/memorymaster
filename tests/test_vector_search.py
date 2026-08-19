@@ -341,8 +341,28 @@ class TestHybridRetrieval:
         assert row.vector_score == pytest.approx(0.8)
         assert row.lexical_score > 0
         assert row.confidence_score == pytest.approx(0.9)
-        # With semantic weights: 0.30*lex + 0.20*conf + 0.10*fresh + 0.40*vec
-        expected = (0.30 * row.lexical_score) + (0.20 * 0.9) + (0.10 * row.freshness_score) + (0.40 * 0.8)
+
+        # El termino vectorial NO entra crudo: entra reescalado sobre el piso de
+        # ruido. Dos textos sin relacion dan coseno ~0,5, asi que un 0,5 crudo
+        # aportaria señal siendo ruido puro; VECTOR_RELEVANCE_FLOOR=0,65 mapea el
+        # tramo util [0,65..1] a [0..1] y anula todo lo de abajo.
+        #
+        # Este assert se escribia con `0.40 * 0.8` y quedo desactualizado cuando el
+        # piso se agrego en el PR #223 — el contrato cambio y su documentacion no.
+        # Nadie lo vio porque el archivo esta marcado `ml` y CI corre -m "not ml".
+        from memorymaster.recall.retrieval import _vector_above_floor
+
+        vec_component = _vector_above_floor(0.8)
+        assert vec_component < 0.8, (
+            "el piso tiene que ATENUAR el vector crudo; si no, este test no esta "
+            "verificando el reescalado sino la formula vieja"
+        )
+        expected = (
+            (0.30 * row.lexical_score)
+            + (0.20 * 0.9)
+            + (0.10 * row.freshness_score)
+            + (0.40 * vec_component)
+        )
         assert row.score == pytest.approx(expected, abs=0.01)
 
     def test_legacy_mode_ignores_vector(self) -> None:

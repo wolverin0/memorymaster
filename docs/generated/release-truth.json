@@ -132,9 +132,9 @@
   "counts": {
     "cli_commands": 118,
     "console_entrypoints": 8,
-    "mcp_tools": 50,
+    "mcp_tools": 51,
     "ops_cli_commands": 5,
-    "pytest_test_functions": 3943
+    "pytest_test_functions": 3949
   },
   "feature_profile_matrix": {
     "capture_hook": [
@@ -203,6 +203,7 @@
     "read_active_tasks",
     "recall",
     "recall_analysis",
+    "recall_stats",
     "recompute_tiers",
     "redact_claim_payload",
     "remember",

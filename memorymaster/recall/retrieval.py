@@ -682,7 +682,14 @@ def rank_claim_rows(
         # se apagaba justo cuando ningun candidato servia — el caso en que devolver
         # algo es peor que no devolver nada. Un match parcial (relevancia baja pero
         # no nula) sigue pasando; lo que se descarta es el cero.
-        if parts.relevance <= 0.0:
+        # EXCEPCION: una claim PINEADA sobrevive igual. Pinear es una accion
+        # explicita del operador que significa "esto se queda siempre", y este
+        # filtro la descartaba: dos reglas correctas en conflicto, y la que expresa
+        # una intencion declarada gana sobre la que infiere relevancia. El filtro
+        # se defiende de basura que nadie pidio, no de algo que el operador fijo a
+        # mano. Regresion real introducida en el PR #223 y detectada por
+        # test_pinned_claims_always_survive, que CI no corria por estar marcado ml.
+        if parts.relevance <= 0.0 and not claim.pinned:
             continue
 
         gated = floor_ratio > 0.0 and max_relevance > 0.0 and parts.relevance < floor
