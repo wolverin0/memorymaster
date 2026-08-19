@@ -111,6 +111,20 @@ def test_unrelated_changes_pass(repo: pathlib.Path):
     assert _guard(repo).returncode == 0
 
 
+def test_renaming_a_frozen_probe_fails(repo: pathlib.Path):
+    """Mover no es tocar, pero saca el archivo de la jurisdiccion del guarda igual.
+
+    Con deteccion de renames, `git diff --name-only` lista solo el destino, asi que
+    `git mv scripts/probes/goals.json libre.json` daba exit 0 y "marcador intacto".
+    """
+    _run_git(repo, "mv", "scripts/probes/goals.json", "goals_reubicado.json")
+    _run_git(repo, "commit", "-qm", "reubicar la meta fuera del alcance")
+
+    out = _guard(repo)
+    assert out.returncode == 1, "renombrar una sonda congelada tiene que romper CI"
+    assert "goals.json" in out.stderr
+
+
 def test_first_addition_is_allowed(repo: pathlib.Path):
     """El alta inicial pasa; si no, el guarda bloquearia el PR que lo introduce."""
     (repo / "scripts" / "probes" / "cohort.json").write_text("[]\n", encoding="utf-8")

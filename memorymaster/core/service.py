@@ -1295,8 +1295,15 @@ class MemoryService(IntegrationService):
         # fijado por test (test_short_keyword_path_keeps_legacy_candidate_bound) y
         # mi primera version lo atropello — el par de tests declaraba una decision
         # de diseño deliberada, no un comportamiento heredado sin dueño.
+        # SON DOS CASOS, NO TRES. Escribi esto como `conversational or multi_term`
+        # creyendo que cubria un tercer caso, y una revision por mutacion mostro que
+        # `conversational` ahi no decide nada: toda consulta con " OR " tiene al menos
+        # tres tokens, asi que conversational implica multi_term y el `or` nunca
+        # cambia el resultado. Sacarlo dejaba los tests igual de verdes — la marca de
+        # una rama que no se puede alcanzar. `conversational` sigue vivo mas abajo,
+        # donde si decide algo: elegir modo hibrido.
         multi_term = len(query_text.split()) > 1
-        candidate_limit = max(limit * 12, 60) if (conversational or multi_term) else limit
+        candidate_limit = max(limit * 12, 60) if multi_term else limit
         legacy = self._legacy_candidates(query_text, candidate_limit, statuses, normalized_scopes)
         if not include_sensitive:
             legacy = [claim for claim in legacy if not is_sensitive_claim(claim)]

@@ -59,8 +59,8 @@
       "baseline": 14.3,
       "priority": 5,
       "counter_metric": "self_retrieval.found_top5_pct",
-      "counter_rule": "gte:83.0",
-      "note": "Linea base re-basada 13,0 -> 14,3 y contra-metrica 86,0 -> 83,0 por el regimen de sobre-traida (pane-0, 2026-08-19). Margen -4pp = 5,7x el ruido. Complementa G1 sin ser lo mismo: G1 mide salir PRIMERA, esta mide aparecer. Contra-metrica: la union del top-5 no baja de su base de 87,3%. Contra-metrica bajada de 87,0 a 86,0 por pane-0: 87,0 daba margen 0,3 contra ruido 0,7 y habria titilado sola."
+      "counter_rule": "gte:86.0",
+      "note": "Complementa G1 sin ser lo mismo: G1 mide salir PRIMERA, esta mide aparecer. Margen 14,3 -> 9,0 = 5,3pp = 7,6x el ruido de 0,7. CONTRA-METRICA: la cobertura top-5 no baja de 86,0 — no se gana bajando inhallables a costa de dejar de mostrar. REGISTRO DE UN AFLOJE QUE NO SE REGISTRO EN SU MOMENTO: nacio en gte:86,0 (a6a9612) y YO la baje a gte:83,0 dentro de 54e00b4, el commit del re-base, sin dejar el motivo — un PR cuya tesis es que las contra-metricas frenan el gaming aflojando una contra-metrica en silencio. Revertida a 86,0 por ser el unico valor con procedencia. CONSECUENCIA ASUMIDA: con la cobertura medida hoy en 85,0 esta contra-metrica FALLA, y debe fallar — 85,7 de base menos la caida del regimen de sobre-traida es informacion, no un numero a esconder. Elegir un umbral nuevo (p.ej. base 85,7 menos margen) es evaluator-edit y lo decide el operador, NO quien persigue la meta."
     }
   ],
   "_rebase": "Re-basada sobre el regimen con sobre-traida en legacy. Los valores de la ronda anterior quedan abajo en previous_round con el motivo: sin eso, re-basar es indistinguible de blanquear un defecto. Criterio de pane-0: re-basar legitimo es que el REGIMEN cambio por una razon de sistema y el numero viejo midio otro regimen; blanquear es re-congelar para que un defecto desaparezca de la medicion.",

@@ -73,14 +73,36 @@ def test_legacy_results_are_ordered_by_relevance(mixed):
 
 
 def test_confidence_still_breaks_ties_among_equally_relevant_claims(tmp_path):
-    """Relevance leads, but the confidence signal must not be discarded."""
+    """Relevance leads, but the confidence signal must not be discarded.
+
+    ESTE TEST ERA VACUO y lo detecto una revision adversarial por mutacion: pasaba
+    igual con el desempate removido (`key=lexical_score` a secas). La razon es que
+    tomaba las candidatas de `list_claims`, que YA las devuelve por confianza
+    descendente — la de 0,90 llegaba primera y un sort estable la dejaba ahi. El
+    test observaba el orden del store y se lo atribuia al ranker.
+
+    Por eso ahora la lista entra INVERTIDA y explicita: es la unica forma de que la
+    unica cosa capaz de mover la de 0,90 al frente sea el desempate bajo prueba.
+    """
     svc = _svc(tmp_path)
-    _ingest(svc, "Startup sequence must follow a strict order. Variant low.", 0.20)
     _ingest(svc, "Startup sequence must follow a strict order. Variant high.", 0.90)
-    ranked = rank_claim_rows(
-        "startup sequence order", _candidates(svc), mode="legacy", limit=5
+    _ingest(svc, "Startup sequence must follow a strict order. Variant low.", 0.20)
+
+    # Orden adverso: la floja primero, para que el sort tenga que moverla.
+    adverse = list(reversed(_candidates(svc)))
+    assert "low" in adverse[0].text, "la precondicion del test se rompio"
+
+    ranked = rank_claim_rows("startup sequence order", adverse, mode="legacy", limit=5)
+
+    lex = [row.lexical_score for row in ranked]
+    assert lex[0] == pytest.approx(lex[1]), (
+        f"las dos claims tienen que EMPATAR en relevancia o el test no prueba el "
+        f"desempate: {lex}"
     )
-    assert "high" in ranked[0].claim.text
+    assert "high" in ranked[0].claim.text, (
+        "con relevancia empatada, la de mayor confianza tiene que quedar primera; "
+        "si no, el orden lo decide como vinieron las filas, o sea el azar"
+    )
 
 
 def test_order_is_preserved_when_nothing_is_relevant(tmp_path):

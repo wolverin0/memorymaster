@@ -67,7 +67,12 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     try:
-        changed = [p for p in _git("diff", "--name-only", f"{args.base}...HEAD").splitlines() if p]
+        # --no-renames: con deteccion de renames git lista SOLO el path destino, asi
+        # que `git mv scripts/probes/goals.json otro.json` salia "marcador intacto".
+        # Sin ella, el rename aparece como borrado del path congelado + alta del nuevo.
+        changed = [
+            p for p in _git("diff", "--no-renames", "--name-only", f"{args.base}...HEAD").splitlines() if p
+        ]
     except subprocess.CalledProcessError as exc:
         print(f"no se pudo comparar contra {args.base}: {exc.stderr.strip() or exc}", file=sys.stderr)
         print(f"probar: git fetch origin {args.base.split('/')[-1]}", file=sys.stderr)

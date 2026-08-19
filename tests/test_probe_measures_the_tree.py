@@ -23,9 +23,36 @@ from __future__ import annotations
 import pathlib
 import subprocess
 import sys
+import tempfile
+
+import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 PROBE = REPO / "scripts" / "probe_suite.py"
+
+
+def _installed_editable() -> bool:
+    """True si `pip install -e` hace que memorymaster resuelva SIEMPRE al arbol.
+
+    CI instala editable; esta maquina lo tiene instalado normal. Bajo editable no
+    existe ninguna copia en site-packages, asi que los dos casos de abajo que
+    EXIGEN site-packages no tienen nada que exigir: su premisa desaparece.
+
+    Se consulta desde un cwd neutro a proposito. Preguntandolo parado en el repo
+    la respuesta seria siempre "el arbol" por precedencia de cwd, que es la misma
+    confusion que este archivo entero existe para evitar.
+    """
+    out = subprocess.run(
+        [sys.executable, "-c", "import memorymaster; print(memorymaster.__file__)"],
+        cwd=tempfile.gettempdir(), capture_output=True, text=True, check=False,
+    )
+    return out.returncode == 0 and str(REPO) in out.stdout
+
+
+needs_non_editable = pytest.mark.skipif(
+    _installed_editable(),
+    reason="instalacion editable: no hay copia en site-packages contra la cual contrastar",
+)
 
 
 def _resolved_package(*extra: str) -> str:
@@ -58,6 +85,7 @@ def test_probe_imports_the_repository_not_site_packages():
     assert "site-packages" not in str(resolved)
 
 
+@needs_non_editable
 def test_the_installed_escape_hatch_still_works():
     """La salida explicita para cuando SI se quiere medir lo publicado."""
     resolved = _resolved_package("--installed")
@@ -67,10 +95,18 @@ def test_the_installed_escape_hatch_still_works():
     )
 
 
+@needs_non_editable
 def test_the_guard_would_notice_the_bug_it_guards_against():
     """Probar el instrumento: sin la insercion de sys.path, esto debe resolver a site-packages.
 
     Un guard que nunca vio fallar el caso que vigila no esta probado.
+
+    SKIPEADO BAJO EDITABLE, y hay que decir por que sin adornarlo: bajo editable el
+    bug que este guard vigila NO PUEDE OCURRIR — no hay copia en site-packages a la
+    cual irse — asi que no queda nada que demostrar. La cobertura que se pierde es
+    real y la corrida no-editable de esta maquina es la que la aporta. La escrbi
+    asumiendo mi entorno y en CI fallo: el propio archivo que existe para que el
+    instrumento no mida otro artefacto, midio el mio.
     """
     code = (
         "import sys; import memorymaster; print(memorymaster.__file__)"
