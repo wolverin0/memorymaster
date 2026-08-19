@@ -1,0 +1,39 @@
+{
+  "generated_at_epoch": 1787144713,
+  "db": "G:/_OneDrive/OneDrive/Desktop/Py Apps/memorymaster/memorymaster.db",
+  "scope": "project:memorymaster",
+  "seed": 20260819,
+  "probes": {
+    "self_retrieval": {
+      "sample": 60,
+      "skipped_no_salient_terms": 0,
+      "found_first_pct": 83.3,
+      "found_top5_pct": 93.3,
+      "missed_pct": 6.7
+    },
+    "nonsense_query": {
+      "results_per_mode": {
+        "legacy": 0,
+        "hybrid": 5
+      },
+      "sample": 1
+    },
+    "index_false_positives": {
+      "sample": 1200,
+      "pct": 0.0,
+      "predicate_only_matches": 38,
+      "per_term_pct": {
+        "deploy": 0.0,
+        "release": 0.0,
+        "backup": 0.0,
+        "sensitivity": 0.0
+      }
+    },
+    "top1_relevance": {
+      "sample": 60,
+      "median_lex": 0.714,
+      "zero_lex_pct": 0.0
+    }
+  },
+  "elapsed_seconds": 9.0
+}
