@@ -43,7 +43,8 @@ test para que digan lo que el código hace.
 
 ### 3. HUECO ESTRUCTURAL: CI no corre NINGUNO de los 97 tests `ml`
 **Estado:** CERRADO (`55787c6`) — job `ml` en ci.yml. Corrida: 97/97 pasan
-**Seguimiento abierto:** `TestHybridRetrieval` no toca ML (su hook vectorial es un dict); el marcador a nivel de módulo exilió tests de ranking puro. Separarlos queda pendiente · **Severidad:** alta — es la causa de que 1 y 2 se mergearan
+**Seguimiento CERRADO (`35fec68`):** los 7 tests de ranking puro viven en `tests/test_hybrid_ranking_contract.py` sin marcador y corren en la matriz completa. Evidencia: `-m "not ml"` 4658 passed · `-m ml` 90 passed.
+**El marcador `ml` del resto SE QUEDA:** el motivo real (pytest.ini) es SIGSEGV/cuelgue al MEZCLAR en la corrida completa sobre Windows, no dependencias ausentes. Que pasen con torch bloqueado no lo refuta — ese experimento corre la configuración segura · **Severidad:** alta — es la causa de que 1 y 2 se mergearan
 
 `.github/workflows/ci.yml:28` corre `pytest tests/ -m "not ml"`. Hay **97 tests**
 marcados `ml` (embeddings/vector/Qdrant) y **ninguno** se ejecuta en ningún job.
