@@ -192,7 +192,27 @@ def test_encoded_secret_guard_does_not_depend_on_host_scanner(
     assert entry.envelope["payload"]["text"] == "[REDACTED:encoded_secret]"
 
 
-def test_sync_turn_enqueue_p95_is_below_fifty_milliseconds(config: ProviderConfig) -> None:
+def test_sync_turn_enqueue_does_not_blow_up_in_wall_clock(config: ProviderConfig) -> None:
+    """Catastrophic-regression backstop only. The real guarantee is elsewhere.
+
+    Calibration, measured 2026-08-19:
+
+        local, healthy code        3.8 ms p95
+        windows CI, healthy code   102-148 ms p95
+        previous threshold         50 ms
+
+    The old bound sat *between* those, tighter than the noise floor of the
+    slowest environment it runs in, so it failed a commit that changed only a
+    version string and a changelog. A threshold below the runner's own variance
+    measures the runner.
+
+    Raising it costs little here because it was never the real guarantee: a
+    bound loose enough never to false-fire is also loose enough to pass a
+    regression that matters. Cost per enqueue is asserted deterministically, by
+    counting work rather than time, in
+    tests/test_outbox_enqueue_cost_is_constant.py. This one only catches a
+    blow-up so large that no environment could explain it.
+    """
     p95_trials: tuple[float, ...] = ()
     for trial in range(3):
         trial_path = config.outbox_path.with_name(f"outbox-benchmark-{trial}.db")
@@ -207,7 +227,7 @@ def test_sync_turn_enqueue_p95_is_below_fifty_milliseconds(config: ProviderConfi
         provider.close_outbox()
         p95_trials += (statistics.quantiles(durations, n=20)[18],)
 
-    assert min(p95_trials) < 0.05, p95_trials
+    assert min(p95_trials) < 1.0, p95_trials
 
 
 def test_drain_replays_exactly_once_and_duplicate_enqueue_is_idempotent(
