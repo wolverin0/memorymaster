@@ -246,21 +246,43 @@ def test_supersession_intent_queues_review_without_rewriting_truth(service) -> N
     assert json.loads(proposal.payload_json)["replaced_by_claim_id"] == replacement.id
 
 
-@pytest.mark.parametrize("target", [999999, "other_scope"])
-def test_supersession_intent_rejects_unknown_or_cross_scope_target(
-    service, target
-) -> None:
-    target_id = target
-    if target == "other_scope":
-        target_id = _ingest(
-            service,
-            "Other project policy.",
-            scope="project:other",
-        ).id
-
+def test_supersession_intent_rejects_unknown_target(service) -> None:
+    """Existence is still enforced; only the identity check was relaxed."""
     with pytest.raises(ValueError, match="supersession target"):
         _ingest(
             service,
-            "Replacement cannot cross the identity boundary.",
-            supersedes_claim_id=int(target_id),
+            "Replacement of a claim that does not exist.",
+            supersedes_claim_id=999999,
         )
+
+
+def test_supersession_intent_across_scopes_is_proposed_not_rejected(service) -> None:
+    """This asserted a rejection until 2026-08-19.
+
+    Rejecting failed the whole ingest, so a correction aimed at another scope
+    was discarded rather than recorded — and a claim written at scope ``global``
+    by an automated worker could never be corrected by anyone, because
+    source_agent can never match. The check protected nothing that the steward
+    proposal does not already protect: neither path retires the target, both
+    leave the decision to a human. See
+    tests/test_cross_identity_supersession_proposal.py.
+    """
+    target = _ingest(service, "Other project policy.", scope="project:other")
+
+    replacement = _ingest(
+        service,
+        "Replacement filed from a different scope.",
+        supersedes_claim_id=target.id,
+    )
+
+    assert service.store.get_claim(target.id).status == target.status
+    events = service.list_events(
+        claim_id=target.id, event_type="policy_decision", limit=20
+    )
+    proposal = next(
+        event for event in events
+        if event.details == "steward_proposal:superseded_candidate"
+    )
+    payload = json.loads(proposal.payload_json)
+    assert payload["cross_identity"] is True
+    assert payload["replaced_by_claim_id"] == replacement.id

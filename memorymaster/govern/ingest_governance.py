@@ -22,6 +22,7 @@ class IngestGovernanceDecision:
     mutable_state: MutableStateDecision
     supersession_target: Claim | None
     requested_volatility: str
+    cross_identity: bool = False
 
 
 def prepare_ingest_governance(
@@ -44,7 +45,7 @@ def prepare_ingest_governance(
         volatility=volatility,
         valid_until=valid_until,
     )
-    target = resolve_supersession_target(
+    target, cross_identity = resolve_supersession_target(
         store,
         supersedes_claim_id,
         tenant_id=tenant_id,
@@ -52,7 +53,7 @@ def prepare_ingest_governance(
         visibility=visibility,
         source_agent=source_agent,
     )
-    return IngestGovernanceDecision(mutable_state, target, volatility)
+    return IngestGovernanceDecision(mutable_state, target, volatility, cross_identity)
 
 
 def govern_mutable_state(
@@ -88,23 +89,39 @@ def resolve_supersession_target(
     visibility: str,
     source_agent: str | None,
 ) -> Claim | None:
-    """Resolve a proposed replacement without crossing identity boundaries."""
+    """Resolve a proposed replacement, flagging one from another identity.
+
+    Returns ``(target, cross_identity)``. A mismatch on scope, visibility or
+    source_agent used to raise, which failed the whole ingest and discarded the
+    correction. That check protected nothing: same-identity supersession does
+    not retire the target either — it files a proposal and a human decides — so
+    nobody could unilaterally retire another agent's claim with or without it.
+    All it decided was whether a correction was recorded or thrown away.
+
+    The cost of throwing it away was a class of uncorrectable claims. A false
+    claim written at scope ``global`` by an automated worker can never be
+    matched by a session agent's source_agent, so no correction could ever be
+    filed against it. On the production database in 2026-08 that was 26 of the
+    133 confirmed claims at ``global``.
+
+    Existence and liveness are still enforced: an unknown or already-retired
+    target raises, whoever asks.
+    """
     if claim_id is None:
-        return None
+        return None, False
     if isinstance(claim_id, bool) or not isinstance(claim_id, int) or claim_id <= 0:
         raise ValueError("supersession target must be a positive claim id")
     target = store.get_claim(claim_id, include_citations=False)
     if target is None or (tenant_id is not None and target.tenant_id != tenant_id):
         raise ValueError(f"supersession target {claim_id} does not exist")
-    if (target.scope, target.visibility, target.source_agent) != (
+    if target.status in {"archived", "superseded"}:
+        raise ValueError("supersession target is not active")
+    cross_identity = (target.scope, target.visibility, target.source_agent) != (
         scope,
         visibility,
         source_agent,
-    ):
-        raise ValueError("supersession target is outside the claim identity boundary")
-    if target.status in {"archived", "superseded"}:
-        raise ValueError("supersession target is not active")
-    return target
+    )
+    return target, cross_identity
 
 
 def record_mutable_override(
@@ -145,6 +162,7 @@ def apply_post_ingest_governance(
         decision.supersession_target,
         claim,
         confidence,
+        cross_identity=decision.cross_identity,
     )
 
 
@@ -153,8 +171,21 @@ def queue_supersession_proposal(
     target: Claim | None,
     replacement: Claim,
     confidence: float,
+    *,
+    cross_identity: bool = False,
 ) -> None:
-    """Queue steward review; direct ingest never rewrites confirmed truth."""
+    """Queue steward review; direct ingest never rewrites confirmed truth.
+
+    ``cross_identity`` marks a correction filed against a claim belonging to
+    another scope, visibility or agent. It changes nothing about what happens
+    here — the same proposal, the same human decision — but a reviewer needs to
+    see it, since the reviewer cannot otherwise tell the correction came from
+    somewhere with no standing over the target.
+
+    Recording a proposal is not the same as it being acted on. When this was
+    written the queue held 220 unresolved proposals, the oldest from
+    2026-04-22, and the only resolutions on record came from one manual batch.
+    """
     if target is None:
         return
     # Dedup on the TARGET, not on the (target, replacement) pair. A claim can
@@ -181,10 +212,27 @@ def queue_supersession_proposal(
             "proposed_status": "superseded",
             "priority": confidence,
             "apply_requested": False,
-            "reasons": [{
-                "code": "explicit_supersession_intent",
-                "detail": "Caller identified this candidate as a replacement.",
-            }],
+            "cross_identity": cross_identity,
+            "reasons": [
+                {
+                    "code": "explicit_supersession_intent",
+                    "detail": "Caller identified this candidate as a replacement.",
+                },
+                *(
+                    [{
+                        "code": "cross_identity_supersession",
+                        "detail": (
+                            f"Filed from scope {replacement.scope!r} by "
+                            f"{replacement.source_agent!r} against a target in "
+                            f"{target.scope!r} by {target.source_agent!r}. The "
+                            "filer has no standing over the target; a reviewer "
+                            "decides."
+                        ),
+                    }]
+                    if cross_identity
+                    else []
+                ),
+            ],
             "replaced_by_claim_id": replacement.id,
             "candidate_id": f"ingest:{replacement.id}",
         },
