@@ -1,15 +1,15 @@
 {
-  "generated_at_epoch": 1787144713,
+  "generated_at_epoch": 1787148069,
   "db": "G:/_OneDrive/OneDrive/Desktop/Py Apps/memorymaster/memorymaster.db",
   "scope": "project:memorymaster",
-  "seed": 20260819,
   "probes": {
     "self_retrieval": {
-      "sample": 60,
+      "sample": 300,
       "skipped_no_salient_terms": 0,
-      "found_first_pct": 83.3,
-      "found_top5_pct": 93.3,
-      "missed_pct": 6.7
+      "cohort_claims_gone": 0,
+      "found_first_pct": 60.7,
+      "found_top5_pct": 87.0,
+      "missed_pct": 13.0
     },
     "nonsense_query": {
       "results_per_mode": {
@@ -30,10 +30,18 @@
       }
     },
     "top1_relevance": {
-      "sample": 60,
-      "median_lex": 0.714,
+      "sample": 300,
+      "median_lex": 0.614,
       "zero_lex_pct": 0.0
     }
   },
-  "elapsed_seconds": 9.0
+  "elapsed_seconds": 11.4,
+  "measured_noise": {
+    "self_retrieval.found_first_pct": 0.7,
+    "self_retrieval.missed_pct": 0.7,
+    "index_false_positives.pct": 0.7,
+    "top1_relevance.median_lex": 0.01
+  },
+  "noise_runs": 3,
+  "noise_floor_applied": 0.7
 }

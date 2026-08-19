@@ -1,0 +1,64 @@
+{
+  "_head": "Metas de la ronda, fijadas por pane-0 el 2026-08-19 contra la linea base de cohorte fija. Formato legible por probe_suite.py --goals: el criterio de salida del loop es exit 0 de ese comando. RUIDO DECLARADO 0,7pp, medido en corridas ESPACIADAS — los umbrales lo superan entre 5,7x y 7,6x. La primera version de estas metas quedo VOID porque se fijaron sobre una base con 15pp de ruido: se habrian cumplido eligiendo semilla. Este archivo esta CONGELADO junto al marcador; moverlo es kind evaluator-edit y nace bloqueado en el ledger. Sin meta de velocidad esta ronda, decidido: commits por hora mide gasto, no progreso.",
+  "round": "2026-08-19-r2",
+  "baseline_ref": "scripts/probes/baseline.json",
+  "declared_noise_pp": 0.7,
+  "goals": [
+    {
+      "id": "G2-honestidad",
+      "metric": "nonsense_query.results_per_mode.hybrid",
+      "direction": "eq",
+      "target": 0,
+      "baseline": 5,
+      "priority": 1,
+      "counter_metric": "nonsense_query.results_per_mode.legacy",
+      "counter_rule": "lte:0",
+      "note": "BINARIA y ya falla; no depende del ruido. Hybrid devuelve 5 claims con lex=0.000 y score 0,68 porque confianza y frescura dominan la suma ponderada. Contra-metrica: legacy sigue en 0 — no se gana rompiendo el modo que ya estaba bien."
+    },
+    {
+      "id": "G1-alcanzabilidad",
+      "metric": "self_retrieval.found_first_pct",
+      "direction": "gte",
+      "target": 66.0,
+      "baseline": 60.7,
+      "priority": 2,
+      "counter_metric": "self_retrieval.sample",
+      "counter_rule": "gte:300",
+      "note": "Margen +5,3pp = 7,6x el ruido declarado. Contra-metrica: la cohorte sigue en 300; el camino barato a este numero es medir menos claims."
+    },
+    {
+      "id": "G3-relevancia",
+      "metric": "top1_relevance.median_lex",
+      "direction": "gte",
+      "target": 0.68,
+      "baseline": 0.614,
+      "priority": 3,
+      "counter_metric": "top1_relevance.zero_lex_pct",
+      "counter_rule": "lte:0.0",
+      "note": "Contra-metrica dura: CERO primeros resultados con relevancia lexica nula. Subir la mediana devolviendo menos resultados no cuenta."
+    },
+    {
+      "id": "G4-indice",
+      "metric": "index_false_positives.pct",
+      "direction": "lte",
+      "target": 0.0,
+      "baseline": 0.0,
+      "priority": 4,
+      "counter_metric": "index_false_positives.sample",
+      "counter_rule": "gte:200",
+      "note": "Piso duro y absoluto, sin margen. Ya esta en su valor bueno tras reconstruir el indice el 2026-08-19; venia de 40-52%. La meta es SOSTENERLO. Exenta de la regla de ruido por ser direccion lte con objetivo 0. DECLARADA hold: la exencion de la regla de ruido exige esta bandera explicita, no se infiere de que target y base empaten — inferirla seria la puerta de atras para cualquier meta que casualmente coincida.",
+      "hold": true
+    },
+    {
+      "id": "G5-inhallables",
+      "metric": "self_retrieval.missed_pct",
+      "direction": "lte",
+      "target": 9.0,
+      "baseline": 13.0,
+      "priority": 5,
+      "counter_metric": "self_retrieval.found_top5_pct",
+      "counter_rule": "gte:86.0",
+      "note": "Margen -4pp = 5,7x el ruido. Complementa G1 sin ser lo mismo: G1 mide salir PRIMERA, esta mide aparecer. Contra-metrica: la union del top-5 no baja de su base de 87,3%. Contra-metrica bajada de 87,0 a 86,0 por pane-0: 87,0 daba margen 0,3 contra ruido 0,7 y habria titilado sola."
+    }
+  ]
+}

@@ -302,6 +302,25 @@ def rank_claims(
     ]
 
 
+# El coseno entre dos textos SIN RELACION no es cero: es el piso natural del
+# modelo. Medido el 2026-08-19 sobre este proveedor, consultas deliberadamente
+# ajenas al corpus dieron 0,475-0,536, y consultas legitimas 0,841-0,858. Usar el
+# coseno crudo como relevancia hacia que toda claim pareciera medio relevante para
+# cualquier consulta: una consulta de tokens inexistentes devolvia cinco claims con
+# relevancia lexica 0,000 sostenidas enteramente por ese piso.
+#
+# Solo cuenta el EXCESO sobre el piso, reescalado a 0-1. Un match semantico real
+# conserva casi todo su valor (0,85 -> 0,57); el ruido de fondo pasa a cero.
+VECTOR_RELEVANCE_FLOOR = 0.65
+
+
+def _vector_above_floor(vector: float) -> float:
+    """Excedente del coseno sobre el piso del modelo, reescalado a 0-1."""
+    if vector <= VECTOR_RELEVANCE_FLOOR:
+        return 0.0
+    return (vector - VECTOR_RELEVANCE_FLOOR) / (1.0 - VECTOR_RELEVANCE_FLOOR)
+
+
 def _compute_score_parts(
     claim: Claim,
     lexical: float,
@@ -328,7 +347,7 @@ def _compute_score_parts(
     if vector_enabled:
         profile = cfg.retrieval_profile(query_type) if query_type else None
         w_l, w_c, w_f, w_v = profile if profile is not None else cfg.retrieval_weights
-        relevance = (w_l * lexical) + (w_v * vector)
+        relevance = (w_l * lexical) + (w_v * _vector_above_floor(vector))
     else:
         w_l, w_c, w_f = cfg.retrieval_weights_no_vector
         w_v = 0.0
@@ -649,6 +668,19 @@ def rank_claim_rows(
 
     ranked: list[RankedClaim] = []
     for claim, lexical, confidence, freshness, vector, parts in scored:
+        # Relevancia CERO no es un resultado. Confianza y frescura son razones para
+        # creerle a una claim, no razones para creer que responde la pregunta, y
+        # sumadas alcanzaban solas para pasar el corte: una consulta de tokens
+        # inexistentes devolvia cinco claims con lexical 0.000 y score 0,68.
+        #
+        # El floor gate de abajo no lo cubria, porque es RELATIVO al mejor
+        # candidato: con max_relevance == 0 su propia condicion lo desactiva, o sea
+        # se apagaba justo cuando ningun candidato servia — el caso en que devolver
+        # algo es peor que no devolver nada. Un match parcial (relevancia baja pero
+        # no nula) sigue pasando; lo que se descarta es el cero.
+        if parts.relevance <= 0.0:
+            continue
+
         gated = floor_ratio > 0.0 and max_relevance > 0.0 and parts.relevance < floor
         score = parts.relevance + (0.0 if gated else parts.boosts)
         ranked.append(
