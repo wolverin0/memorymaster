@@ -1,10 +1,31 @@
-<!-- doc-head: public MemoryMaster release history through v4.8.3 -->
+<!-- doc-head: public MemoryMaster release history through v4.8.4 -->
 Covers user-visible changes, migrations, governance boundaries, and operational fixes for each release.
 Key terms: graph observations, compiled profile, governed capture, recall, sensitivity, lineage.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
 <!-- /doc-head -->
 
 # Changelog
+
+## [4.8.4] - 2026-08-19
+
+- **A correction aimed at another agent's claim is recorded instead of
+  discarded.** `resolve_supersession_target` raised when the replacement and its
+  target differed in scope, visibility or source_agent, which failed the whole
+  ingest. That check protected nothing: same-identity supersession does not
+  retire the target either — it files a proposal and a human decides — so nobody
+  could unilaterally retire another agent's claim with or without it. All it
+  decided was whether a correction was kept or thrown away, and the cost was a
+  class of uncorrectable claims: a false claim written at scope `global` by an
+  automated worker can never be matched by a session agent's `source_agent`.
+- Cross-identity now files the same proposal carrying `cross_identity` and a
+  reason naming the filing scope and agent and stating the filer has no standing
+  over the target, since a reviewer cannot otherwise tell.
+- Unchanged: unknown and already-retired targets still raise, the target is
+  never modified, dedup stays per target so the queue cannot be flooded, and
+  same-identity behaviour is identical.
+- This records a correction; it does not ensure one is acted on. The steward
+  queue held 220 unresolved proposals when this shipped, the oldest from
+  2026-04-22.
 
 ## [4.8.3] - 2026-08-19
 
