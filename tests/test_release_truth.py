@@ -57,10 +57,31 @@ def test_install_probe_survives_a_clean_process_without_importlib_util_attribute
 
 
 def test_generated_release_truth_is_committed_and_current() -> None:
+    """The generated files must match the repository, not merely exist.
+
+    This asserted only ``is_file()`` on both paths until 2026-08-18, so it
+    passed against a release-truth generated six months earlier and reported
+    "current" while saying nothing about currency. The gap was not theoretical:
+    a change adding four test functions ran the full local suite green and was
+    then rejected by CI, which runs the real check. Now both run the same one.
+    """
     script = ROOT / "scripts/generate_release_truth.py"
     generated = ROOT / "docs/generated/release-truth.md"
     assert script.is_file()
     assert generated.is_file()
+
+    result = subprocess.run(
+        [sys.executable, str(script), "--check"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        "generated release truth is stale — run "
+        "`python scripts/generate_release_truth.py`\n"
+        f"{result.stdout}{result.stderr}"
+    )
 
 
 def test_release_truth_test_inventory_is_platform_independent(tmp_path: Path) -> None:
