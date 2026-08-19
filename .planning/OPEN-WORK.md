@@ -63,8 +63,8 @@ subsistema vectorial queda sin red.
 |---|---|---|
 | 4 | Restaurar el arnés LongMemEval | **HECHO** — PR #224, corrido sobre 500 preguntas |
 | 5 | Acumulador `zero_result_rate` sobre tráfico real | **HECHO** (`55787c6`) — tool MCP `recall_stats`, 6 tests, verificado por mutación |
-| 6 | Adaptador LoCoMo (segundo benchmark) | pendiente |
-| 7 | Trayectoria de retrieval pegada al resultado | a evaluar |
+| 6 | Adaptador LoCoMo (segundo benchmark) | pendiente — **gate**: necesita bajar otro dataset; la autorización previa era para LongMemEval y no se extiende |
+| 7 | Trayectoria de retrieval pegada al resultado | **HECHO** (`5b289cb`) — `drop_trace`: razón canónica por descarte, apagado por defecto. 6 tests, mutación verificada |
 | — | Capas L0/L1/L2, `viking://`, redacción reversible, hotness sigmoidea | RECHAZADOS con motivo |
 
 ---
