@@ -17,7 +17,7 @@ contra-métrica, evaluator-edit, tests `ml`, LongMemEval, `zero_result_rate`.
 ## P0 — Regresiones que YO metí en `main` y que CI no puede ver
 
 ### 1. Una claim PINEADA se descarta por el filtro de relevancia cero
-**Estado:** ABIERTO · **Origen:** PR #223 (`50f54fc`) · **Severidad:** alta
+**Estado:** CERRADO (`55787c6`) — exenta del filtro; 12 tests del guard siguen verdes · **Origen:** PR #223 (`50f54fc`) · **Severidad:** alta
 
 `tests/test_vector_search.py::TestHybridRetrieval::test_pinned_claims_always_survive`
 falla en `main`. Pinear es una acción explícita del operador que significa *esto se
@@ -31,7 +31,7 @@ explícito que el sistema dejó de honrar.
 **Verificación:** el test pasa en `50f54fc~1` y falla en `origin/main`.
 
 ### 2. El contrato de pesos del score híbrido cambió sin actualizar su documentación
-**Estado:** ABIERTO · **Origen:** PR #223 · **Severidad:** media
+**Estado:** CERRADO (`55787c6`) — el assert deriva de `_vector_above_floor` y verifica la atenuación · **Origen:** PR #223 · **Severidad:** media
 
 `test_hybrid_score_components` documenta la fórmula `0.30*lex + 0.20*conf +
 0.10*fresh + 0.40*vec`. El floor vectorial (`VECTOR_RELEVANCE_FLOOR = 0.65`) reescala
@@ -42,7 +42,8 @@ El cambio es intencional y defendible; lo que falta es actualizar el contrato y 
 test para que digan lo que el código hace.
 
 ### 3. HUECO ESTRUCTURAL: CI no corre NINGUNO de los 97 tests `ml`
-**Estado:** ABIERTO · **Severidad:** alta — es la causa de que 1 y 2 se mergearan
+**Estado:** CERRADO (`55787c6`) — job `ml` en ci.yml. Corrida: 97/97 pasan
+**Seguimiento abierto:** `TestHybridRetrieval` no toca ML (su hook vectorial es un dict); el marcador a nivel de módulo exilió tests de ranking puro. Separarlos queda pendiente · **Severidad:** alta — es la causa de que 1 y 2 se mergearan
 
 `.github/workflows/ci.yml:28` corre `pytest tests/ -m "not ml"`. Hay **97 tests**
 marcados `ml` (embeddings/vector/Qdrant) y **ninguno** se ejecuta en ningún job.
@@ -60,7 +61,7 @@ subsistema vectorial queda sin red.
 | # | Ítem | Estado |
 |---|---|---|
 | 4 | Restaurar el arnés LongMemEval | **HECHO** — PR #224, corrido sobre 500 preguntas |
-| 5 | Acumulador `zero_result_rate` sobre tráfico real | **HECHO** — sin commitear al escribir esto |
+| 5 | Acumulador `zero_result_rate` sobre tráfico real | **HECHO** (`55787c6`) — tool MCP `recall_stats`, 6 tests, verificado por mutación |
 | 6 | Adaptador LoCoMo (segundo benchmark) | pendiente |
 | 7 | Trayectoria de retrieval pegada al resultado | a evaluar |
 | — | Capas L0/L1/L2, `viking://`, redacción reversible, hotness sigmoidea | RECHAZADOS con motivo |
@@ -105,7 +106,7 @@ Diez señales inertes: `graph.json` sin lector · el marcador midiendo `site-pac
 el floor gate apagándose solo · `check_probes_frozen.py` sin caller en CI · ese mismo
 guarda neutralizable desde el PR · bypass por rename · el test del desempate vacuo ·
 el arnés de LongMemEval fuera de `main` · el arnés sembrando cero y reportando 0,000 ·
-y los 97 tests `ml` que CI nunca corre (ítem 3, abierto).
+y los 97 tests `ml` que CI nunca corría (ítem 3, ya cerrado).
 
 **El patrón:** un mecanismo que se lee como si funcionara y calla. Su ausencia de
 señal es indistinguible de que todo anda bien, y por eso ninguno se detectó solo.
