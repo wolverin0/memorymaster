@@ -47,6 +47,7 @@ import sys
 import time
 import urllib.request
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
@@ -103,6 +104,11 @@ CONFIGS = {
 
 logger = logging.getLogger("longmemeval")
 
+# Cuantas veces cada feature opcional APORTO algo. Una config que activa una
+# feature y termina con cero aportes no midio esa feature: midio el baseline
+# con otro nombre, y sus numeros son indistinguibles de A por construccion.
+FEATURE_FIRED = {"entity_fanout": 0}
+
 
 # ---------------------------------------------------------------------------
 # Dataset
@@ -147,6 +153,30 @@ def _chunk(text: str, size: int = _CHUNK_CHARS) -> list[str]:
     return out
 
 
+def _iso_date(raw: str) -> str | None:
+    """LongMemEval fecha ('2023/05/20 (Sat) 02:21') -> ISO-8601.
+
+    POR QUE EXISTE ESTA FUNCION. MemoryMaster endurecio la validacion de
+    event_time a ISO-8601 estricto despues de que se escribio este arnes. El
+    formato del dataset dejo de ser aceptable, TODOS los ingest empezaron a
+    lanzar, el `except Exception` de seed_question los tragaba a nivel debug, y
+    el arnes reportaba hit@1=0.000 con la base vacia — sin un solo error a la
+    vista. Corria, imprimia numeros, y no medía nada.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    for fmt in ("%Y/%m/%d (%a) %H:%M", "%Y/%m/%d %H:%M", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(raw, fmt).isoformat()
+        except ValueError:
+            continue
+    try:  # ya venia en ISO
+        return datetime.fromisoformat(raw).isoformat()
+    except ValueError:
+        return None
+
+
 def _serialize_session(session_turns: list[dict]) -> str:
     """Flatten a LongMemEval session into a single transcript string."""
     parts: list[str] = []
@@ -186,7 +216,7 @@ def seed_question(
 
     for idx, session_turns in enumerate(sessions):
         sid = ids[idx] if idx < len(ids) else f"{qid}_s{idx}"
-        sdate = dates[idx] if idx < len(dates) else ""
+        sdate = _iso_date(dates[idx] if idx < len(dates) else "")
         scope = f"{scope_prefix}:{sid}"
         transcript = _serialize_session(session_turns)
         if not transcript:
@@ -204,12 +234,15 @@ def seed_question(
                     subject=subject,
                     scope=scope,
                     confidence=0.8,
-                    event_time=sdate or None,
+                    event_time=sdate,
                     source_agent="longmemeval-harness",
                 )
                 stats["claims"] += 1
             except Exception as exc:
-                logger.debug("ingest failed for %s chunk %d: %s", sid, chunk_idx, exc)
+                # WARNING, no debug. En debug este mismo except escondio que el
+                # 100% de los ingest fallaba por validacion de event_time, y la
+                # corrida reporto 0.000 como si fuera un resultado.
+                logger.warning("ingest failed for %s chunk %d: %s", sid, chunk_idx, exc)
                 stats["skipped"] += 1
 
         if seed_verbatim:
@@ -226,7 +259,7 @@ def seed_question(
                         content=content,
                         scope=scope,
                         source_agent="longmemeval-harness",
-                        timestamp=sdate or None,
+                        timestamp=sdate,
                     )
                     if row_id:
                         stats["verbatim_rows"] += 1
@@ -320,6 +353,7 @@ def recall_with_ranked_ids(query: str, db_path: str, *, top_k: int = _TOPK) -> R
             if is_sensitive_claim(claim):
                 continue
             rows.append(ch._row_for_claim(claim))
+            FEATURE_FIRED["entity_fanout"] += 1
 
     rows = ch._apply_vector_fallback(svc, query, rows, seen_ids)
 
@@ -528,6 +562,9 @@ def run_worker(config_key: str, limit: int) -> None:
     questions = load_questions(limit=limit)
     out_path = ART_DIR / f"results-{config_key}.jsonl"
 
+    n_seeded = 0
+    n_verbatim = 0
+    n_skipped = 0
     n_hits_1 = 0
     n_hits_5 = 0
     mrr_sum = 0.0
@@ -585,10 +622,48 @@ def run_worker(config_key: str, limit: int) -> None:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
             fh.flush()
             n += 1
+            n_seeded += seed_stats["claims"]
+            n_verbatim += seed_stats["verbatim_rows"]
+            n_skipped += seed_stats["skipped"]
             n_hits_1 += scores["hit_at_1"]
             n_hits_5 += scores["hit_at_5"]
             mrr_sum += scores["mrr"]
             latency_total += result.latency_ms
+
+    # UN CERO SOBRE UNA BASE VACIA NO ES UN RESULTADO, ES UNA CORRIDA ROTA.
+    # Esto ya paso: la validacion de event_time se endurecio, todos los ingest
+    # lanzaron, el except los trago, y la corrida reporto hit@1=0.000 con
+    # aspecto de medicion legitima. Un arnes que no distingue "el sistema no
+    # encontro nada" de "no habia nada que encontrar" mide su propia rotura.
+    # UNA CONFIG QUE ENCIENDE UNA FEATURE SIN DARLE NADA QUE HACER NO LA MIDE.
+    # Historia: en abril las configs B, C y D dieron numeros IDENTICOS a A hasta
+    # el tercer decimal y se leyo como "las tres perillas no sirven". Era al
+    # reves: el arnes no le daba materia prima a ninguna. El fanout de entidades
+    # devuelve 0 porque aca los subjects son 'session:<id>' sinteticos y no
+    # entidades; el stream verbatim no tenia filas porque el sembrado no las
+    # crea. Un instrumento ciego a una feature no emite un veredicto sobre ella,
+    # y confundir las dos cosas es peor que no medir: cierra la pregunta.
+    env = cfg.get("env", {})
+    if float(env.get("MEMORYMASTER_RECALL_W_ENTITY", 0) or 0) > 0 and not FEATURE_FIRED["entity_fanout"]:
+        raise RuntimeError(
+            f"config {config_key}: W_ENTITY>0 pero el fanout de entidades no aporto "
+            f"NI UNA fila en {n} preguntas. Esta corrida es el baseline con otro "
+            f"nombre; no reportarla como evidencia sobre entity fanout."
+        )
+    if env.get("MEMORYMASTER_RECALL_VERBATIM") == "1" and n_verbatim == 0:
+        raise RuntimeError(
+            f"config {config_key}: verbatim activado pero se sembraron CERO filas "
+            f"verbatim en {n} preguntas. No hay stream que leer; estos numeros no "
+            f"dicen nada sobre la feature."
+        )
+
+    if n and n_seeded == 0:
+        raise RuntimeError(
+            f"config {config_key}: {n} preguntas y CERO claims sembradas "
+            f"({n_skipped} ingest fallaron). No hay nada en la base, asi que "
+            f"cualquier hit@k seria 0 por construccion. Revisar los WARNING de "
+            f"ingest de arriba antes de creerle un numero a esta corrida."
+        )
 
     dt_run = time.perf_counter() - t_run
     summary = {
