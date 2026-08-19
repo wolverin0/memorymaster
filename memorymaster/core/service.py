@@ -1280,15 +1280,23 @@ class MemoryService(IntegrationService):
     def _query_legacy_mode(self, query_text: str, limit: int, statuses: list[str], normalized_scopes: list[str] | None, include_sensitive: bool, requesting_agent: str | None, record_accesses: bool = True) -> list[dict[str, Any]]:
         """Query using legacy retrieval mode."""
         conversational = " OR " in query_text
-        # Sobre-traer SIEMPRE, no solo en consultas conversacionales. Con
-        # candidate_limit == limit el store devuelve exactamente las filas pedidas
-        # en orden bm25 y el ranking solo puede reordenarlas: no puede rescatar la
-        # claim que bm25 dejo en el puesto siguiente. Medido el 2026-08-19 sobre la
-        # cohorte del marcador, la claim de la que salio la consulta perdia el 40%
-        # de las veces, y la ganadora matcheaba PEOR (lex 0,625 contra 0,831 de la
-        # correcta) — sintoma de seleccion pobre, no de mal orden. El camino hibrido
-        # ya sobre-traia por este mismo motivo.
-        candidate_limit = max(limit * 12, 60)
+        # Sobre-traer cuando hay MAS DE UN termino, no solo en consultas
+        # conversacionales. Con candidate_limit == limit el store devuelve
+        # exactamente las filas pedidas en orden bm25 y el ranking solo puede
+        # reordenarlas: no puede rescatar la claim que bm25 dejo en el puesto
+        # siguiente. Medido el 2026-08-19 sobre la cohorte del marcador, con dos
+        # terminos la claim de la que salio la consulta perdia el 40% de las veces
+        # y la ganadora matcheaba PEOR (0,625 contra 0,831) — seleccion pobre, no
+        # mal orden. Sobre-traer subio la relevancia mediana del #1 de 0,614 a 0,833.
+        #
+        # UNA SOLA PALABRA SIGUE ACOTADA, y no es un detalle heredado: con un unico
+        # termino bm25 ya ordena por lo mismo que el ranker mediria, asi que traer
+        # sesenta filas con sus citas no compra nada y cuesta. Ese limite estaba
+        # fijado por test (test_short_keyword_path_keeps_legacy_candidate_bound) y
+        # mi primera version lo atropello — el par de tests declaraba una decision
+        # de diseño deliberada, no un comportamiento heredado sin dueño.
+        multi_term = len(query_text.split()) > 1
+        candidate_limit = max(limit * 12, 60) if (conversational or multi_term) else limit
         legacy = self._legacy_candidates(query_text, candidate_limit, statuses, normalized_scopes)
         if not include_sensitive:
             legacy = [claim for claim in legacy if not is_sensitive_claim(claim)]
