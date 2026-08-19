@@ -425,6 +425,8 @@ def main(argv=None) -> int:
     ap.add_argument("--scope", default=DEFAULT_SCOPE)
     ap.add_argument("--check", action="store_true", help="compara contra la linea base; exit 1 si empeoro")
     ap.add_argument("--freeze", action="store_true", help="escribe la linea base")
+    ap.add_argument("--reason", default="",
+                    help="obligatorio al re-congelar: por que cambio el regimen medido")
     ap.add_argument("--installed", action="store_true",
                     help="medir el paquete instalado en vez del codigo de este repo")
     ap.add_argument("--goals", action="store_true",
@@ -434,6 +436,22 @@ def main(argv=None) -> int:
     scoreboard = measure(args.db, args.scope)
 
     if args.freeze:
+        # RE-CONGELAR EXIGE MOTIVO. Blanquear es re-congelar para que un defecto
+        # desaparezca de la medicion; re-basar legitimo es que el REGIMEN cambio
+        # por una razon de sistema, el numero viejo midio otro regimen, y queda
+        # registrado al lado del nuevo. La unica diferencia observable entre
+        # ambos es si el valor anterior sobrevive con su motivo — asi que el
+        # motivo se exige y el anterior se conserva, en vez de confiar en que
+        # alguien se acuerde.
+        prior = None
+        if BASELINE.exists():
+            if not args.reason.strip():
+                print("re-congelar exige --reason: sin el motivo registrado, "
+                      "re-basar es indistinguible de blanquear un defecto",
+                      file=sys.stderr)
+                return 1
+            prior = json.loads(BASELINE.read_text(encoding="utf-8"))
+
         # Congelar NO es medir una vez. El ruido entre corridas es parte de la linea
         # base: sin el no se puede distinguir una meta de un azar. El 2026-08-19 la
         # sonda tenia 15 puntos de ruido contra una meta que pedia subir 5,3.
@@ -450,6 +468,18 @@ def main(argv=None) -> int:
             for k, v in series.items()
             if all(x is not None for x in v)
         }
+        if prior is not None:
+            history = prior.pop("previous_baselines", [])
+            history.append({
+                "frozen_at_epoch": prior.get("generated_at_epoch"),
+                "reason_superseded": args.reason.strip(),
+                "metrics": {k: _dig(prior, k) for k in (
+                    "self_retrieval.found_first_pct", "self_retrieval.found_top5_pct",
+                    "self_retrieval.missed_pct", "top1_relevance.median_lex",
+                    "index_false_positives.pct",
+                    "nonsense_query.results_per_mode.hybrid")},
+            })
+            scoreboard["previous_baselines"] = history
         scoreboard["noise_gap_seconds"] = NOISE_RUN_GAP_SECONDS
         scoreboard["noise_floor_applied"] = NOISE_FLOOR
         scoreboard["noise_runs"] = 3

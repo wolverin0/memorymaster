@@ -90,28 +90,48 @@ def _vector_hook(scores: dict[int, float]):
 
 
 def test_blend_higher_vector_weight_raises_score():
-    """The vector signal must actually move the final score through its
-    configured weight. With the default profile (w_vec=0.40) a vector-strong
-    claim outscores its no-vector baseline by exactly w_vec * vector — proving
-    the blend is a weighted sum, not a pass-through of lexical only."""
+    """The vector signal must actually move the final score through its weight.
+
+    The intent is unchanged from the original test: the blend is a weighted sum,
+    not a pass-through of lexical only. What changed on 2026-08-19 is the
+    encoding. The original compared vectors of 0.5 and 0.0 and expected a delta
+    of w_vec * 0.5, which assumes raw cosine is the signal. It is not: measured
+    on this provider, deliberately unrelated text scores 0.475 to 0.536, so 0.5
+    is the model's noise floor rather than half a match. Only the excess above
+    that floor counts now, so the comparison uses two values above it.
+    """
     claim = _claim(1)
-    with_vector = rank_claim_rows(
-        "alpha beta",
-        [claim],
-        mode="hybrid",
-        limit=1,
-        vector_hook=_vector_hook({1: 0.5}),
+    strong = rank_claim_rows(
+        "alpha beta", [claim], mode="hybrid", limit=1,
+        vector_hook=_vector_hook({1: 0.90}),
     )[0]
-    without_vector = rank_claim_rows(
-        "alpha beta",
-        [claim],
-        mode="hybrid",
-        limit=1,
+    weak = rank_claim_rows(
+        "alpha beta", [claim], mode="hybrid", limit=1,
+        vector_hook=_vector_hook({1: 0.70}),
+    )[0]
+    # Excedente sobre el piso, reescalado: (0,90-0,65)/0,35 y (0,70-0,65)/0,35.
+    expected = 0.40 * ((0.25 / 0.35) - (0.05 / 0.35))
+    assert strong.score - weak.score == pytest.approx(expected)
+
+
+def test_vector_below_the_model_floor_does_not_move_the_score():
+    """La garantia nueva que acompaña al cambio de la anterior.
+
+    Un coseno por debajo del piso del modelo es ruido de fondo, no evidencia:
+    dos textos sin ninguna relacion puntuan ahi. Si moviera el score, bastaria
+    para sostener resultados sin relevancia alguna — que es exactamente como una
+    consulta de tokens inventados devolvia cinco claims con lexical 0,000.
+    """
+    claim = _claim(1)
+    at_noise = rank_claim_rows(
+        "alpha beta", [claim], mode="hybrid", limit=1,
+        vector_hook=_vector_hook({1: 0.50}),
+    )[0]
+    none_at_all = rank_claim_rows(
+        "alpha beta", [claim], mode="hybrid", limit=1,
         vector_hook=_vector_hook({1: 0.0}),
     )[0]
-    # vector_enabled is True in both calls (hook returns a dict); only the
-    # magnitude differs, so the delta is purely w_vec * 0.5.
-    assert with_vector.score - without_vector.score == pytest.approx(0.40 * 0.5)
+    assert at_noise.score == pytest.approx(none_at_all.score)
 
 
 def test_blend_no_vector_path_ignores_vector_weight():

@@ -1280,7 +1280,15 @@ class MemoryService(IntegrationService):
     def _query_legacy_mode(self, query_text: str, limit: int, statuses: list[str], normalized_scopes: list[str] | None, include_sensitive: bool, requesting_agent: str | None, record_accesses: bool = True) -> list[dict[str, Any]]:
         """Query using legacy retrieval mode."""
         conversational = " OR " in query_text
-        candidate_limit = max(limit * 12, 60) if conversational else limit
+        # Sobre-traer SIEMPRE, no solo en consultas conversacionales. Con
+        # candidate_limit == limit el store devuelve exactamente las filas pedidas
+        # en orden bm25 y el ranking solo puede reordenarlas: no puede rescatar la
+        # claim que bm25 dejo en el puesto siguiente. Medido el 2026-08-19 sobre la
+        # cohorte del marcador, la claim de la que salio la consulta perdia el 40%
+        # de las veces, y la ganadora matcheaba PEOR (lex 0,625 contra 0,831 de la
+        # correcta) — sintoma de seleccion pobre, no de mal orden. El camino hibrido
+        # ya sobre-traia por este mismo motivo.
+        candidate_limit = max(limit * 12, 60)
         legacy = self._legacy_candidates(query_text, candidate_limit, statuses, normalized_scopes)
         if not include_sensitive:
             legacy = [claim for claim in legacy if not is_sensitive_claim(claim)]

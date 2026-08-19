@@ -628,7 +628,12 @@ def rank_claim_rows(
         # untouched, so a row only moves when relevance genuinely differs.
         # Deliberately NOT sorting by `score`, which is confidence plus bonuses
         # and would re-rank every legacy query by trust rather than by answer.
-        rows.sort(key=lambda row: row.lexical_score, reverse=True)
+        # Relevancia primero; los empates se rompen por el score (confianza,
+        # frescura, tier), no por el orden en que vino el store. Medido el
+        # 2026-08-19: con consultas de dos terminos genericos decenas de claims
+        # puntuan dentro de 0,02 entre si, y sin desempate declarado cual entra
+        # al top-5 lo decide bm25 sobre un conjunto mezclado, o sea el azar.
+        rows.sort(key=lambda row: (row.lexical_score, row.score), reverse=True)
 
         # Demoted claims go last regardless of relevance. Applied after the
         # relevance sort so a superseded claim cannot climb back on a strong

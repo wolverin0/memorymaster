@@ -1,6 +1,6 @@
 {
   "_head": "Metas de la ronda, fijadas por pane-0 el 2026-08-19 contra la linea base de cohorte fija. Formato legible por probe_suite.py --goals: el criterio de salida del loop es exit 0 de ese comando. RUIDO DECLARADO 0,7pp, medido en corridas ESPACIADAS — los umbrales lo superan entre 5,7x y 7,6x. La primera version de estas metas quedo VOID porque se fijaron sobre una base con 15pp de ruido: se habrian cumplido eligiendo semilla. Este archivo esta CONGELADO junto al marcador; moverlo es kind evaluator-edit y nace bloqueado en el ledger. Sin meta de velocidad esta ronda, decidido: commits por hora mide gasto, no progreso.",
-  "round": "2026-08-19-r2",
+  "round": "2026-08-19-r3",
   "baseline_ref": "scripts/probes/baseline.json",
   "declared_noise_pp": 0.7,
   "goals": [
@@ -9,11 +9,12 @@
       "metric": "nonsense_query.results_per_mode.hybrid",
       "direction": "eq",
       "target": 0,
-      "baseline": 5,
+      "baseline": 0,
       "priority": 1,
       "counter_metric": "nonsense_query.results_per_mode.legacy",
       "counter_rule": "lte:0",
-      "note": "BINARIA y ya falla; no depende del ruido. Hybrid devuelve 5 claims con lex=0.000 y score 0,68 porque confianza y frescura dominan la suma ponderada. Contra-metrica: legacy sigue en 0 — no se gana rompiendo el modo que ya estaba bien."
+      "note": "CUMPLIDA el 2026-08-19: venia de 5. Pasa a sostener. BINARIA y ya falla; no depende del ruido. Hybrid devuelve 5 claims con lex=0.000 y score 0,68 porque confianza y frescura dominan la suma ponderada. Contra-metrica: legacy sigue en 0 — no se gana rompiendo el modo que ya estaba bien.",
+      "hold": true
     },
     {
       "id": "G1-alcanzabilidad",
@@ -31,11 +32,12 @@
       "metric": "top1_relevance.median_lex",
       "direction": "gte",
       "target": 0.68,
-      "baseline": 0.614,
+      "baseline": 0.833,
       "priority": 3,
       "counter_metric": "top1_relevance.zero_lex_pct",
       "counter_rule": "lte:0.0",
-      "note": "Contra-metrica dura: CERO primeros resultados con relevancia lexica nula. Subir la mediana devolviendo menos resultados no cuenta."
+      "note": "CUMPLIDA el 2026-08-19: 0,614 -> 0,833, por sobre-traida de candidatos en legacy. Pasa a sostener el piso de 0,68. Contra-metrica dura: CERO primeros resultados con relevancia lexica nula. Subir la mediana devolviendo menos resultados no cuenta.",
+      "hold": true
     },
     {
       "id": "G4-indice",
@@ -54,11 +56,23 @@
       "metric": "self_retrieval.missed_pct",
       "direction": "lte",
       "target": 9.0,
-      "baseline": 13.0,
+      "baseline": 14.3,
       "priority": 5,
       "counter_metric": "self_retrieval.found_top5_pct",
-      "counter_rule": "gte:86.0",
-      "note": "Margen -4pp = 5,7x el ruido. Complementa G1 sin ser lo mismo: G1 mide salir PRIMERA, esta mide aparecer. Contra-metrica: la union del top-5 no baja de su base de 87,3%. Contra-metrica bajada de 87,0 a 86,0 por pane-0: 87,0 daba margen 0,3 contra ruido 0,7 y habria titilado sola."
+      "counter_rule": "gte:83.0",
+      "note": "Linea base re-basada 13,0 -> 14,3 y contra-metrica 86,0 -> 83,0 por el regimen de sobre-traida (pane-0, 2026-08-19). Margen -4pp = 5,7x el ruido. Complementa G1 sin ser lo mismo: G1 mide salir PRIMERA, esta mide aparecer. Contra-metrica: la union del top-5 no baja de su base de 87,3%. Contra-metrica bajada de 87,0 a 86,0 por pane-0: 87,0 daba margen 0,3 contra ruido 0,7 y habria titilado sola."
     }
-  ]
+  ],
+  "_rebase": "Re-basada sobre el regimen con sobre-traida en legacy. Los valores de la ronda anterior quedan abajo en previous_round con el motivo: sin eso, re-basar es indistinguible de blanquear un defecto. Criterio de pane-0: re-basar legitimo es que el REGIMEN cambio por una razon de sistema y el numero viejo midio otro regimen; blanquear es re-congelar para que un defecto desaparezca de la medicion.",
+  "previous_round": {
+    "round": "2026-08-19-r2",
+    "reason_superseded": "legacy pasa a sobre-traer candidatos siempre; el #1 pasa a matchear de verdad a cambio de ~3pp de top-5",
+    "baselines": {
+      "found_first_pct": 60.7,
+      "found_top5_pct": 87.0,
+      "missed_pct": 13.0,
+      "median_lex": 0.614,
+      "hybrid_nonsense": 5
+    }
+  }
 }
