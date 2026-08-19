@@ -1,0 +1,67 @@
+{
+  "generated_at_epoch": 1787149304,
+  "db": "G:/_OneDrive/OneDrive/Desktop/Py Apps/memorymaster/memorymaster.db",
+  "scope": "project:memorymaster",
+  "probes": {
+    "self_retrieval": {
+      "sample": 300,
+      "skipped_no_salient_terms": 0,
+      "cohort_claims_gone": 0,
+      "found_first_pct": 60.7,
+      "found_top5_pct": 85.7,
+      "missed_pct": 14.3
+    },
+    "nonsense_query": {
+      "results_per_mode": {
+        "legacy": 0,
+        "hybrid": 0
+      },
+      "sample": 1
+    },
+    "index_false_positives": {
+      "sample": 1200,
+      "pct": 0.0,
+      "predicate_only_matches": 38,
+      "per_term_pct": {
+        "deploy": 0.0,
+        "release": 0.0,
+        "backup": 0.0,
+        "sensitivity": 0.0
+      }
+    },
+    "top1_relevance": {
+      "sample": 300,
+      "median_lex": 0.833,
+      "zero_lex_pct": 0.0
+    }
+  },
+  "elapsed_seconds": 20.1,
+  "measured_noise": {
+    "self_retrieval.found_first_pct": 0.7,
+    "self_retrieval.missed_pct": 0.7,
+    "top1_relevance.median_lex": 0.01,
+    "index_false_positives.pct": 0.7
+  },
+  "previous_baselines": [
+    {
+      "frozen_at_epoch": 1787148069,
+      "reason_superseded": "Regimen nuevo: legacy pasa a sobre-traer candidatos SIEMPRE (candidate_limit = max(limit*12, 60)), no solo en consultas conversacionales. Antes traia exactamente limit filas en orden bm25 y el ranking solo podia reordenar lo que bm25 habia elegido. Consecuencia entendida y verificada con barrido de factores 2/4/6/12: el resultado #1 pasa a matchear de verdad (lex 0,614 -> 0,833) a cambio de ~3pp de cobertura top-5 y ~2pp mas de inhallables, porque la claim correcta ahora compite contra 60 candidatas en vez de 5. Decision de pane-0: el trade vale porque los agentes actuan sobre lo que se les inyecta, y lo que se inyecta es el TOPE de la lista \u2014 un #1 semi-aleatorio con la respuesta en el puesto 4 es el modo de falla que causo que una claim falsa ganara el tope y su correccion nunca apareciera.",
+      "metrics": {
+        "self_retrieval.found_first_pct": 60.7,
+        "self_retrieval.found_top5_pct": 87.0,
+        "self_retrieval.missed_pct": 13.0,
+        "top1_relevance.median_lex": 0.614,
+        "index_false_positives.pct": 0.0,
+        "nonsense_query.results_per_mode.hybrid": 5
+      }
+    }
+  ],
+  "noise_gap_seconds": 60,
+  "noise_floor_applied": {
+    "self_retrieval.found_first_pct": 0.7,
+    "self_retrieval.missed_pct": 0.7,
+    "index_false_positives.pct": 0.7,
+    "top1_relevance.median_lex": 0.01
+  },
+  "noise_runs": 3
+}

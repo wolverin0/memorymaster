@@ -302,6 +302,25 @@ def rank_claims(
     ]
 
 
+# El coseno entre dos textos SIN RELACION no es cero: es el piso natural del
+# modelo. Medido el 2026-08-19 sobre este proveedor, consultas deliberadamente
+# ajenas al corpus dieron 0,475-0,536, y consultas legitimas 0,841-0,858. Usar el
+# coseno crudo como relevancia hacia que toda claim pareciera medio relevante para
+# cualquier consulta: una consulta de tokens inexistentes devolvia cinco claims con
+# relevancia lexica 0,000 sostenidas enteramente por ese piso.
+#
+# Solo cuenta el EXCESO sobre el piso, reescalado a 0-1. Un match semantico real
+# conserva casi todo su valor (0,85 -> 0,57); el ruido de fondo pasa a cero.
+VECTOR_RELEVANCE_FLOOR = 0.65
+
+
+def _vector_above_floor(vector: float) -> float:
+    """Excedente del coseno sobre el piso del modelo, reescalado a 0-1."""
+    if vector <= VECTOR_RELEVANCE_FLOOR:
+        return 0.0
+    return (vector - VECTOR_RELEVANCE_FLOOR) / (1.0 - VECTOR_RELEVANCE_FLOOR)
+
+
 def _compute_score_parts(
     claim: Claim,
     lexical: float,
@@ -328,7 +347,7 @@ def _compute_score_parts(
     if vector_enabled:
         profile = cfg.retrieval_profile(query_type) if query_type else None
         w_l, w_c, w_f, w_v = profile if profile is not None else cfg.retrieval_weights
-        relevance = (w_l * lexical) + (w_v * vector)
+        relevance = (w_l * lexical) + (w_v * _vector_above_floor(vector))
     else:
         w_l, w_c, w_f = cfg.retrieval_weights_no_vector
         w_v = 0.0
@@ -604,12 +623,16 @@ def rank_claim_rows(
         # meaningless, and a claim with no lexical overlap at all can arrive
         # first -- which is what buried real answers behind arbitrary ones.
         #
-        # Sorting on `lexical_score` alone, stably, is the smallest rule that
-        # fixes it: rows of equal relevance keep the store's bm25 order
-        # untouched, so a row only moves when relevance genuinely differs.
-        # Deliberately NOT sorting by `score`, which is confidence plus bonuses
-        # and would re-rank every legacy query by trust rather than by answer.
-        rows.sort(key=lambda row: row.lexical_score, reverse=True)
+        # Relevance is the PRIMARY key and `score` only ever breaks ties -- it is
+        # confidence plus bonuses, so promoting it to primary would re-rank every
+        # legacy query by trust rather than by answer. (An earlier revision of this
+        # comment said we deliberately did NOT sort by `score` at all; that was
+        # true of the first version and the sentence outlived it. Ties then fell to
+        # the store's order.) Medido el
+        # 2026-08-19: con consultas de dos terminos genericos decenas de claims
+        # puntuan dentro de 0,02 entre si, y sin desempate declarado cual entra
+        # al top-5 lo decide bm25 sobre un conjunto mezclado, o sea el azar.
+        rows.sort(key=lambda row: (row.lexical_score, row.score), reverse=True)
 
         # Demoted claims go last regardless of relevance. Applied after the
         # relevance sort so a superseded claim cannot climb back on a strong
@@ -649,6 +672,19 @@ def rank_claim_rows(
 
     ranked: list[RankedClaim] = []
     for claim, lexical, confidence, freshness, vector, parts in scored:
+        # Relevancia CERO no es un resultado. Confianza y frescura son razones para
+        # creerle a una claim, no razones para creer que responde la pregunta, y
+        # sumadas alcanzaban solas para pasar el corte: una consulta de tokens
+        # inexistentes devolvia cinco claims con lexical 0.000 y score 0,68.
+        #
+        # El floor gate de abajo no lo cubria, porque es RELATIVO al mejor
+        # candidato: con max_relevance == 0 su propia condicion lo desactiva, o sea
+        # se apagaba justo cuando ningun candidato servia — el caso en que devolver
+        # algo es peor que no devolver nada. Un match parcial (relevancia baja pero
+        # no nula) sigue pasando; lo que se descarta es el cero.
+        if parts.relevance <= 0.0:
+            continue
+
         gated = floor_ratio > 0.0 and max_relevance > 0.0 and parts.relevance < floor
         score = parts.relevance + (0.0 if gated else parts.boosts)
         ranked.append(
