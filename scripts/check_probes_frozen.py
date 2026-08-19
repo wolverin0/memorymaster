@@ -23,6 +23,14 @@ SIN ESCAPE HATCH a proposito. No hay marcador de aprobacion en el mensaje del
 commit ni etiqueta que lo saltee, porque cualquiera de esos los puede escribir el
 agente que quiere saltearlo. Si hay que tocar una sonda, lo hace el operador.
 
+CI TIENE QUE CORRER LA COPIA DE LA RAMA BASE, no la que trae el PR. El job hace
+`git show origin/<base>:scripts/check_probes_frozen.py` y ejecuta ESO. Cablearlo
+de la forma obvia — `python scripts/check_probes_frozen.py` sobre el checkout del
+PR — deja que una rama reemplace este archivo por `sys.exit(0)` y que la version
+neutralizada certifique su propio cambio, con lo cual la entrada de FROZEN que
+dice "el guarda se congela a si mismo" no frena nada. El caso esta fijado en
+tests/test_probes_frozen_guard_fires.py.
+
 AGUJERO RESIDUAL, declarado en vez de tapado mal: alguien puede borrar el job de
 CI que llama a este script. Queda visible en el diff del PR. No lo cierro con mas
 codigo porque el codigo tambien seria borrable; se cierra mirando el diff.
