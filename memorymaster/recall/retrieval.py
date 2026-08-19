@@ -10,6 +10,7 @@ from typing import Callable, Mapping
 from memorymaster.core.config import get_config
 from memorymaster.core.event_scan import scan_proposal_events
 from memorymaster.core.models import Claim
+from memorymaster.recall import drop_trace
 from memorymaster.recall.recall_fusion import RRF_K_DEFAULT, rrf_fuse
 
 _LOG = logging.getLogger(__name__)
@@ -495,10 +496,33 @@ def apply_session_diversity_cap(ranked: list[RankedClaim], cap: int) -> list[Ran
         source_session = _source_session_key(row)
         count = counts.get(source_session, 0)
         if count >= cap:
+            drop_trace.record(
+                row.claim.id, drop_trace.SESSION_DIVERSITY_CAP,
+                session=source_session, cap=cap,
+            )
             continue
         counts[source_session] = count + 1
         result.append(row)
     return result
+
+
+def _truncate(rows: list[RankedClaim], limit: int) -> list[RankedClaim]:
+    """Corta a `limit` dejando rastro de lo que quedo afuera.
+
+    La truncacion es el descarte mas facil de malinterpretar: la claim SI matcheo
+    y SI sobrevivio los filtros, y aun asi no aparece. Sin este registro se ve
+    identica a "no matcheo nada", que lleva a buscar el problema en el lugar
+    equivocado.
+    """
+    if limit >= len(rows):
+        return rows
+    if drop_trace.is_recording():
+        for position, row in enumerate(rows[limit:], start=limit + 1):
+            drop_trace.record(
+                row.claim.id, drop_trace.LIMIT_TRUNCATION,
+                position=position, limit=limit,
+            )
+    return rows[:limit]
 
 
 def _component_rankings(rows: list[RankedClaim]) -> dict[str, list[int]]:
@@ -641,7 +665,8 @@ def rank_claim_rows(
             rows = [r for r in rows if r.claim.id not in pending_supersession_ids] + [
                 r for r in rows if r.claim.id in pending_supersession_ids
             ]
-        return apply_session_diversity_cap(rows, get_config().session_diversity_cap)[:limit]
+        capped = apply_session_diversity_cap(rows, get_config().session_diversity_cap)
+        return _truncate(capped, limit)
 
     vector_scores: Mapping[int, float] = {}
     if vector_hook is not None:
@@ -690,6 +715,7 @@ def rank_claim_rows(
         # mano. Regresion real introducida en el PR #223 y detectada por
         # test_pinned_claims_always_survive, que CI no corria por estar marcado ml.
         if parts.relevance <= 0.0 and not claim.pinned:
+            drop_trace.record(claim.id, drop_trace.ZERO_RELEVANCE, relevance=parts.relevance)
             continue
 
         gated = floor_ratio > 0.0 and max_relevance > 0.0 and parts.relevance < floor
@@ -746,4 +772,4 @@ def rank_claim_rows(
         enabled=cfg.rrf_tiebreaker_enabled,
     )
     ranked = apply_session_diversity_cap(ranked, get_config().session_diversity_cap)
-    return ranked[:limit]
+    return _truncate(ranked, limit)
