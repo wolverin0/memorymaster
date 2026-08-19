@@ -1,10 +1,27 @@
-<!-- doc-head: public MemoryMaster release history through v4.8.2 -->
+<!-- doc-head: public MemoryMaster release history through v4.8.3 -->
 Covers user-visible changes, migrations, governance boundaries, and operational fixes for each release.
 Key terms: graph observations, compiled profile, governed capture, recall, sensitivity, lineage.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
 <!-- /doc-head -->
 
 # Changelog
+
+## [4.8.3] - 2026-08-19
+
+- **Spanish prompts no longer score under half their English equivalent.** The
+  ranker carried its own 34-entry English-only stopword list while
+  `recall_tokenizer` — which filters the very same prompts on the recall-hook
+  path — already carried 250 covering both languages. Because the lexical score
+  divides the overlap by the number of query tokens, every filler word the
+  ranker failed to discard diluted the terms that carried the meaning: "que pasa
+  con los backups" scored 0.135 against 0.300 for "what happens with the
+  backups". The ranker now shares that list. This hit the everyday path rather
+  than an edge case, since the recall hook turns each prompt into a query.
+- **`test_generated_release_truth_is_committed_and_current` now checks
+  currency.** It asserted only that the two files exist, so it passed against a
+  document generated months earlier while its name promised otherwise — and a
+  change that added four test functions ran the full local suite green before
+  CI rejected it. Local and CI now run the same check.
 
 ## [4.8.2] - 2026-08-18
 
