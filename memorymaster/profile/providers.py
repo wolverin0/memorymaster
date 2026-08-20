@@ -6,10 +6,8 @@ import json
 import hashlib
 import os
 from dataclasses import asdict
-from pathlib import Path
 from typing import Any
 
-from memorymaster.core.opencode_client import OpenCodeClient
 from memorymaster.profile.models import (
     PREDICATE_CATEGORY,
     PROFILE_CATEGORIES,
@@ -134,18 +132,25 @@ def _decision_from_row(row: Any, known_facts: set[int]) -> ProfileDecision:
     )
 
 
-class GLMProfileMapper:
-    """Extract evidence-bound profile candidates from sanitized user turns."""
+class ProfileMapper:
+    """Extract evidence-bound profile candidates from sanitized user turns.
 
-    def __init__(self, *, client: OpenCodeClient | None = None) -> None:
-        self.model = os.environ.get(
-            "MEMORYMASTER_PROFILE_MAP_MODEL", "zai-coding-plan/glm-5-turbo"
+    Se llamaba GLMProfileMapper. El nombre se saco al migrar a Gemini el
+    2026-08-20: una clase que dice GLM y habla con Gemini es la misma clase de
+    artefacto que declara un mundo distinto del real que este repo estuvo
+    limpiando toda la semana. El proveedor es inyectable, asi que el nombre no
+    deberia haber tenido marca de proveedor nunca.
+    """
+
+    def __init__(self, *, client: Any | None = None) -> None:
+        from memorymaster.core.antigravity_client import (
+            DEFAULT_MODEL,
+            AntigravityClient,
         )
-        self.client = client or OpenCodeClient(
-            model=self.model,
-            effort="",
-            work_dir=Path.home() / ".memorymaster" / "profile-opencode" / "map",
-            timeout=_provider_timeout(),
+
+        self.model = os.environ.get("MEMORYMASTER_PROFILE_MAP_MODEL", DEFAULT_MODEL)
+        self.client = client or AntigravityClient(
+            model=self.model, timeout=_provider_timeout()
         )
 
     def map(self, messages: tuple[ProfileMessage, ...]) -> tuple[ProfileCandidate, ...]:
@@ -181,18 +186,18 @@ class GLMProfileMapper:
         )
 
 
-class GLMProfileReducer:
+class ProfileReducer:
     """Consolidate candidates without deciding their deterministic eligibility."""
 
-    def __init__(self, *, client: OpenCodeClient | None = None) -> None:
-        self.model = os.environ.get(
-            "MEMORYMASTER_PROFILE_REDUCE_MODEL", "zai-coding-plan/glm-5.2"
+    def __init__(self, *, client: Any | None = None) -> None:
+        from memorymaster.core.antigravity_client import (
+            DEFAULT_MODEL,
+            AntigravityClient,
         )
-        self.client = client or OpenCodeClient(
-            model=self.model,
-            effort="",
-            work_dir=Path.home() / ".memorymaster" / "profile-opencode" / "reduce",
-            timeout=_provider_timeout(),
+
+        self.model = os.environ.get("MEMORYMASTER_PROFILE_REDUCE_MODEL", DEFAULT_MODEL)
+        self.client = client or AntigravityClient(
+            model=self.model, timeout=_provider_timeout()
         )
 
     def reduce(
@@ -223,8 +228,8 @@ class GLMProfileReducer:
 
 
 __all__ = [
-    "GLMProfileMapper",
-    "GLMProfileReducer",
+    "ProfileMapper",
+    "ProfileReducer",
     "parse_map_output",
     "parse_reduce_output",
 ]

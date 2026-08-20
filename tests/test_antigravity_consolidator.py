@@ -149,3 +149,33 @@ def test_an_unknown_provider_raises_instead_of_defaulting(monkeypatch):
     monkeypatch.setenv("MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER", "typo-provider")
     with pytest.raises(ProviderCallError, match="must be antigravity or glm"):
         create_dream_consolidator()
+
+
+def test_a_leftover_glm_model_string_does_not_reach_agy(monkeypatch, caplog):
+    """El riesgo real de la migracion, encontrado en el entorno del operador.
+
+    MEMORYMASTER_DREAM_CONSOLIDATE_MODEL la compartian ambos consolidadores y las
+    instalaciones existentes la tienen con prefijo de proveedor. Pasarsela a `agy`
+    lo hace salir con "unknown model" y rompe el dreaming apenas cambia el default.
+
+    Se ignora con WARNING, no en silencio: el valor pertenece a un proveedor dado
+    de baja, no es un nombre mal escrito, y el operador ya pidio Gemini.
+    """
+    import logging
+
+    monkeypatch.setenv("MEMORYMASTER_DREAM_CONSOLIDATE_MODEL", "zai-coding-plan/glm-5.2")
+    with caplog.at_level(logging.WARNING):
+        con = AntigravityConsolidator(client=_FakeClient(_decisions("c0")))
+
+    assert "/" not in con.model, "un modelo con prefijo de proveedor llego al cliente de agy"
+    assert con.model == "gemini-3.7-flash-low"
+    assert any("MEMORYMASTER_DREAM_CONSOLIDATE_MODEL" in r.message for r in caplog.records), (
+        "se ignoro la variable sin avisar; eso la vuelve indistinguible de una que funciono"
+    )
+
+
+def test_an_explicit_agy_model_is_respected(monkeypatch):
+    """Contra-caso: no se pisa una eleccion legitima."""
+    monkeypatch.setenv("MEMORYMASTER_DREAM_CONSOLIDATE_MODEL", "gemini-3.6-flash-low")
+    con = AntigravityConsolidator(client=_FakeClient(_decisions("c0")))
+    assert con.model == "gemini-3.6-flash-low"

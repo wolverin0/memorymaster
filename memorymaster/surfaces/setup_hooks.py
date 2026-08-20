@@ -39,6 +39,10 @@ except ImportError:  # pragma: no cover - Python < 3.9
 
 from memorymaster.surfaces.setup_detect import Detected, detect_environment, format_plan
 
+from memorymaster.core.antigravity_client import (
+    DEFAULT_MODEL as _ANTIGRAVITY_DEFAULT_MODEL,
+)
+
 # Templates are shipped inside the package as importable resources.
 TEMPLATES_DIR = Path(str(_resource_files("memorymaster") / "config_templates"))
 
@@ -505,8 +509,10 @@ def setup_dream_schedule(db_path: str | Path, *, apply_candidates: bool) -> str:
         "--db", str(db_path), "--workspace", str(PROJECT_ROOT),
         "--extract-provider", provider,
         "--extract-model", os.environ.get("MEMORYMASTER_DREAM_EXTRACT_MODEL", default_model).strip(),
+        # Default migrado de zai-coding-plan/glm-5.2 a Gemini el 2026-08-20: el
+        # instalador configuraba cada instalacion nueva contra un plan dado de baja.
         "--consolidate-model", os.environ.get(
-            "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL", "zai-coding-plan/glm-5.2",
+            "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL", _ANTIGRAVITY_DEFAULT_MODEL,
         ).strip(),
         "--clear-provider-variants",
     ]

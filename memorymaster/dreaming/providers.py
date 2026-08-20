@@ -625,9 +625,29 @@ class AntigravityConsolidator:
             AntigravityClient,
         )
 
-        self.model = model or os.environ.get(
+        configured = model or os.environ.get(
             "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL", DEFAULT_MODEL
         )
+        # MEMORYMASTER_DREAM_CONSOLIDATE_MODEL la compartian los dos consolidadores,
+        # y en la era de OpenCode su valor llevaba prefijo de proveedor
+        # ("zai-coding-plan/glm-5.2"). Las instalaciones existentes la tienen asi
+        # seteada AHORA: pasarsela a `agy` lo haria salir con "unknown model" y
+        # romperia el dreaming apenas cambia el default.
+        #
+        # Un modelo de agy nunca lleva "/", asi que ese prefijo identifica config
+        # vieja sin ambiguedad. Se ignora con un WARNING nombrando la variable — no
+        # en silencio: la diferencia con enmascarar un error de tipeo es que aca el
+        # valor es de un proveedor dado de baja, no un nombre mal escrito, y el
+        # operador ya declaro que quiere Gemini.
+        if "/" in configured:
+            LOGGER.warning(
+                "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL=%s tiene prefijo de proveedor "
+                "(config de la era GLM) y no es un modelo de agy; se usa %s. "
+                "Limpiar la variable o fijarle un modelo de agy para silenciar esto.",
+                configured, DEFAULT_MODEL,
+            )
+            configured = DEFAULT_MODEL
+        self.model = configured
         self.client = client or AntigravityClient(model=self.model, timeout=timeout)
 
     def consolidate(
