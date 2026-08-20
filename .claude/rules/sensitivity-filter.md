@@ -6,12 +6,34 @@ MemoryMaster ingests ambient data from LLM transcripts, dream bridge, and MCP ca
 
 - API keys, tokens, bearer headers, auth cookies — regardless of provider
 - Passwords, PINs, OTP codes
-- Private IP addresses (10.*, 172.16-31.*, 192.168.*, link-local)
 - Personal home directory paths that expose usernames
 - Raw code snippets longer than ~3 lines (use symbol references instead)
 - Database connection strings with credentials
 - Email addresses of third parties (user's own email is OK if explicitly opted in)
 - Payment card data, SSN, national ID numbers
+
+## IP privadas: se ingieren a propósito, se redactan al exportar
+
+**No están en la lista de arriba y no es un olvido.** Una IP privada se guarda en
+ingest y se redacta recién al exportar a memoria externa. La decisión está en
+`core/security.py` con su motivo —una claim de infraestructura sin la IP es
+inútil, "el servidor está en algún lado" no sirve para nada— y está fijada por
+`tests/test_security_patterns.py::TestPrivateIPv4NotRedactedAtIngest`.
+
+El control compensatorio existe y funciona: `dream_bridge.py` las redacta al
+sembrar hacia afuera, incluida la IP suelta en prosa, no sólo `IP:puerto`
+(verificado el 2026-08-20 contra los cuatro casos).
+
+**Por qué se aclara acá:** esta regla decía "nunca ingerir IP privadas" mientras
+el código deliberadamente lo hacía. Esa contradicción costó una investigación
+completa de un no-problema: 229 claims con IP privada se leyeron como fuga activa,
+llegando a "agujero abierto, prioridad máxima", antes de encontrar la decisión
+documentada. Una regla que el código contradice a propósito no protege nada —
+entrena a ignorar las reglas, o a redescubrir la misma decisión cada pocos meses.
+
+Si en algún momento se decide que las IP privadas tampoco deben ingerirse, el
+cambio va en `security.py` y en su test, y esta sección se borra. Lo que no puede
+volver a pasar es que el documento y el código digan cosas distintas.
 
 ## Where the filter applies
 
