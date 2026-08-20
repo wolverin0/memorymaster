@@ -314,6 +314,32 @@ def _candidate_with_safe_scope(
 
 
 class GeminiExtractor:
+    """Extraccion contra la API de Gemini con GEMINI_API_KEY.
+
+    SE QUEDA EN CLAVE PAGA A PROPOSITO, decidido el 2026-08-20 al migrar todo lo
+    demas a OAuth via `agy`. Ya es Gemini: lo unico en discusion era el metodo de
+    autenticacion, y medido sobre el ledger de produccion la respuesta es no.
+
+        extractor hoy (gemini-3.5-flash-lite, 133 llamadas reales)
+            latencia mediana  3,0s   p90 7,0s
+            entrada mediana   8.636 tokens/llamada
+
+        el mismo trabajo sobre agy
+            latencia          12-31s medidos
+            entrada           ~20.000 tokens/llamada (piso fijo, no baja)
+
+    O sea 4,5x mas lento y 2,3x mas tokens, en el camino MAS CALIENTE del sistema
+    — corre una vez por captura. El piso de andamiaje de `agy` lo vuelve el
+    transporte equivocado para prompts chicos y frecuentes; es el correcto para
+    lotes grandes, que es donde se lo puso (consolidacion y map/reduce del perfil).
+
+    El costo en dolares de la clave es real pero chico a este volumen (2,3M tokens
+    de entrada en ocho dias sobre un modelo lite). Si algun dia el volumen sube o
+    se quiere cero costo variable, la conversacion se reabre CON MEDICION, no por
+    consistencia: mover esto a OAuth para que "todo use OAuth" haria el sistema
+    peor a cambio de una simetria que a nadie le sirve.
+    """
+
     provider = "google"
 
     def __init__(self, *, api_key: str | None = None, model: str | None = None, transport: Transport = _default_transport, sleep: Callable[[float], None] = time.sleep) -> None:
