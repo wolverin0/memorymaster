@@ -77,9 +77,22 @@ subsistema vectorial queda sin red.
 | **G5 inhallables** | contra-métrica en ROJO a 84,7 vs 86,0 — **gate del operador** |
 | **G1 alcanzabilidad** | 60,7 vs 66,0; falta decidir si es techo de la cohorte o defecto |
 
-**Sobre G1:** LongMemEval subió `hit@1` de 0,342 a 0,506 y `hit@5` de 0,430 a 0,646
-mientras G1 no se movió. Esa divergencia sugiere que el techo es una propiedad de la
-cohorte, no del recuperador — pero **hay que medirlo, no deducirlo**.
+**Sobre G1 — MEDIDO (`scripts/diagnose_g1_ceiling.py`), ya no deducido:**
+
+De 116 fallos, **67 son ambigüedad legítima**: el ganador contiene los dos tokens de
+la consulta tan bien como la claim buscada, así que ninguna elección es incorrecta.
+Con una consulta de 2 tokens raros sobre 24.821 claims eso es inherente a la sonda,
+no un defecto del recuperador. **Techo alcanzable ≈ 84-89%**, o sea que el objetivo
+de 66 SÍ es alcanzable.
+
+Dos hipótesis mías que la medición **refutó**:
+- *"El `session_diversity_cap` se come 44 objetivos"* → desactivándolo: 61,3 → **61,0**,
+  dentro del ruido de 0,7. Esas claims ya venían perdiendo; el descarte era corriente
+  abajo, no la causa.
+- *"Son claims duplicadas"* → los duplicados exactos son 213 claims, **0,9% de la base**.
+  No explican 85 fallos. Vi un ejemplo y generalicé.
+
+Lo que queda arreglable son ~30 casos de orden/truncación, no un defecto estructural.
 
 ---
 
