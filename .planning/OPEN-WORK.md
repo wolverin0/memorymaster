@@ -100,9 +100,9 @@ Lo que queda arreglable son ~30 casos de orden/truncación, no un defecto estruc
 
 | PR | Qué | Estado |
 |---|---|---|
-| #224 | Arnés LongMemEval, cableado y fijado | ubuntu verde, windows corriendo |
-| #219 | `CODEBASE_REVIEW.md` (auditoría Gemini/Jules) | sin revisar |
-| #168 | `CREDITS.md` + watchlist de prior art | 51 días abierto; **bloquea el plan de relevamiento** |
+| #224 | Arnés LongMemEval + 2 regresiones de main + hueco de CI | 9/10 verdes; falta un job de windows |
+| #219 | `CODEBASE_REVIEW.md` (auditoría Gemini/Jules) | **revisado** — cifras verificadas y correctas; falla como auditoría: cuenta cobertura sin verificar que los tests corran. Mergeable como documentación con advertencia |
+| #168 | `CREDITS.md` + watchlist de prior art | **revisado** — CI verde pero **206 commits detrás de main**; necesita rebase, agregar OpenViking, y actualizar la línea de LongMemEval con el número real |
 | #185 | Seguridad fase 1 | borrador de 30.893 líneas, 37 días parado |
 
 ---
