@@ -33,6 +33,7 @@ EXPECTED_TOOLS = {
     "pin_claim",
     "quality_scores",
     "recall",
+    "recall_stats",
     "query_claim_paths",
     "query_for_context",
     "query_for_task",

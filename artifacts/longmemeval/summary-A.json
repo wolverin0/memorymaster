@@ -1,11 +1,11 @@
 {
   "config": "A",
   "description": "baseline (default env)",
-  "n_questions": 500,
-  "hit_at_1": 0.342,
-  "hit_at_5": 0.43,
-  "mrr": 0.3769,
-  "mean_latency_ms": 76.25,
-  "total_runtime_s": 164.5,
+  "n_questions": 10,
+  "hit_at_1": 0.9,
+  "hit_at_5": 1.0,
+  "mrr": 0.95,
+  "mean_latency_ms": 114.47,
+  "total_runtime_s": 4.8,
   "env_applied": {}
 }

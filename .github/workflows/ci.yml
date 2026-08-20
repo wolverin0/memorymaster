@@ -29,6 +29,28 @@ jobs:
         env:
           MEMORYMASTER_ALLOW_SENSITIVE_BYPASS: "1"
 
+  ml:
+    # Los 97 tests marcados `ml` no corrian en NINGUN job: el unico paso de tests
+    # usa -m "not ml". Se leia como cobertura y no era ninguna. Dos regresiones de
+    # scoring del PR #223 mergearon en verde por eso — una de ellas descartaba una
+    # claim pineada, que es una intencion explicita del operador.
+    #
+    # Corre en un solo SO y una sola version de Python a proposito: las
+    # dependencias son pesadas y el objetivo es que la categoria deje de ser
+    # invisible, no multiplicarla por la matriz.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -e ".[dev,mcp,security,postgres]"
+      - name: Run ML/vector tests
+        run: pytest tests/ -m ml -q --tb=short
+        env:
+          MEMORYMASTER_ALLOW_SENSITIVE_BYPASS: "1"
+
   perf:
     runs-on: ubuntu-latest
     needs: test

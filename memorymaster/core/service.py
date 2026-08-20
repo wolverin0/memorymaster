@@ -19,6 +19,7 @@ from memorymaster.core.models import ActionProposal, CitationInput, Claim, Claim
 from memorymaster.core.policy import select_revalidation_candidates
 from memorymaster.recall.context_optimizer import ContextResult, pack_context
 from memorymaster.core.config import get_config
+from memorymaster.recall.retrieval_stats import observed
 from memorymaster.recall.retrieval import VectorSearchHook, _tier_bonus, pending_supersession_ids, rank_claim_rows
 from memorymaster.recall.planner import (
     RetrievalPlan,
@@ -1362,6 +1363,7 @@ class MemoryService(IntegrationService):
                 merged.setdefault(claim.id, claim)
         return list(merged.values())[:limit]
 
+    @observed()
     def query_rows(
         self,
         query_text: str,
