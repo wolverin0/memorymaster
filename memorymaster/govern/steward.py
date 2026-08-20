@@ -1291,6 +1291,18 @@ def list_steward_proposals(
         resolution = resolution_by_proposal_event_id.get(int(event.id))
         if resolution is not None:
             proposal_status = str(resolution["status"])
+        elif _outcome_already_reached(service, event.claim_id, payload):
+            # LA PROPUESTA SE CUMPLIO SOLA. La claim ya esta en el estado que
+            # pedia, o desaparecio: no hay nada que decidir y anotarlo no
+            # cambiaria nada.
+            #
+            # Sin esto el contador solo SUMA. Nunca restaba las propuestas que
+            # el decay, la dedup o una supersesion posterior cumplian por su
+            # cuenta, asi que crecia para siempre: al 2026-08-20 declaraba 254
+            # pendientes cuando las decisiones reales eran 45. Un numero falso
+            # HACIA ARRIBA es peor que ninguno — manda a buscar trabajo donde no
+            # hay, y entierra las 45 que importan debajo de 209 que no.
+            proposal_status = "settled"
         if not include_resolved and proposal_status != "pending":
             continue
         out.append(
@@ -1311,6 +1323,38 @@ def list_steward_proposals(
         if len(out) >= limit:
             break
     return out
+
+
+def _outcome_already_reached(service: MemoryService, claim_id: Any, payload: dict[str, Any]) -> bool:
+    """La claim ya esta donde la propuesta queria dejarla?
+
+    Deliberadamente NO escribe nada. La alternativa —cerrar cada propuesta
+    saldada con un evento de resolucion— se intento el 2026-08-20 y no sirve por
+    dos motivos, los dos instructivos:
+
+    - Con ``apply_on_approve=False`` la aprobacion queda con ``applied: False``, y
+      el emparejador de arriba la descarta a proposito (una aprobacion que no se
+      aplico no resuelve nada). Se escribieron 213 eventos que no resolvian: una
+      señal inerte fabricada al intentar limpiar señales inertes.
+    - Con ``apply_on_approve=True`` se re-aplica la transicion sobre claims que ya
+      estan en su estado final. Para las 86 ya ARCHIVADAS eso las sacaria de un
+      estado terminal: resucitar claims archivadas para arreglar un contador.
+
+    Un estado que ya es el pedido se lee, no se re-escribe.
+    """
+    if not isinstance(claim_id, int) or claim_id <= 0:
+        return False
+    proposed = str(payload.get("proposed_status") or "").strip().lower()
+    try:
+        claim = service.store.get_claim(claim_id, include_citations=False)
+    except Exception:
+        return False  # ante la duda queda pendiente: nunca esconder una decision real
+    if claim is None:
+        return True  # la claim ya no existe; no queda nada que decidir
+    status = str(getattr(claim, "status", "") or "").lower()
+    if proposed and status == proposed:
+        return True
+    return status == "archived"  # terminal: ninguna propuesta sobrevive al archivado
 
 
 def _find_target_proposal(
