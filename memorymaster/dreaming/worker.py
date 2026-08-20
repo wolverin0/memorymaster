@@ -22,7 +22,7 @@ from memorymaster.dreaming.models import (
     ProviderUsage,
 )
 from memorymaster.dreaming.providers import (
-    GLMConsolidator,
+    create_dream_consolidator,
     ProviderCallError,
     create_dream_extractor,
 )
@@ -471,5 +471,5 @@ def run_dream(db_path: str | Path, workspace: str | Path, *, apply_candidates: b
 
     ledger = DreamLedger(ledger_path or capture_state_path())
     service = MemoryService(db_path, workspace_root=workspace)
-    worker = DreamWorker(ledger, service, create_dream_extractor(), GLMConsolidator())
+    worker = DreamWorker(ledger, service, create_dream_extractor(), create_dream_consolidator())
     return worker.run(apply_candidates=apply_candidates, scope=scope, max_sessions=max_sessions)
