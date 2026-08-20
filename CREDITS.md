@@ -69,7 +69,9 @@ Obsidian (wiki vault) · Claude Auto Dream (Dream Bridge sync) · Qdrant / SQLit
   loading (a claim already *is* an L0 — summarising a summary), the `viking://` filesystem
   namespace (scopes already address), sigmoid hotness (we already have half-life freshness by
   volatility), and **reversible redaction** — which is precisely the bypass our own
-  `sensitivity-filter.md` forbids. Full assessment: `artifacts/2026-08-19-openviking-assessment.html`.
+  `sensitivity-filter.md` forbids. Full assessment lives at `artifacts/2026-08-19-openviking-assessment.html`, which is **local-only —
+  `artifacts/` is gitignored**, so it is not in the repo and a clone will not have it. The verdict
+  above is the durable record; the file is the long form.
 
 ### Shipped since the last survey
 
