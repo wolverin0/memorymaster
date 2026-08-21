@@ -92,7 +92,34 @@ Dos hipótesis mías que la medición **refutó**:
 - *"Son claims duplicadas"* → los duplicados exactos son 213 claims, **0,9% de la base**.
   No explican 85 fallos. Vi un ejemplo y generalicé.
 
-Lo que queda arreglable son ~30 casos de orden/truncación, no un defecto estructural.
+~~Lo que queda arreglable son ~30 casos de orden/truncación, no un defecto estructural.~~
+
+**RE-MEDIDO el 2026-08-21 — esa frase era engañosa y la corrijo.** Corrida fresca sobre la
+cohorte congelada de 300, con `--db` apuntando a la base real:
+
+| | con el cap (default) | con el cap desactivado |
+|---|---|---|
+| `found_first_pct` | 61,0 | **61,7** |
+| ambigüedad legítima | 64 | 82 |
+| descartada | 48 (`session_diversity_cap`) | 26 (`limit_truncation`) |
+| orden | 5 | 7 |
+
+**Desactivar el cap mueve 61,0 → 61,7: +0,7pp, exactamente el piso de ruido declarado.**
+Segunda vez que la misma hipótesis se refuta con medición. Y el detalle que importa: los
+descartes solo **cambian de nombre**. Sacado el cap, las mismas claims caen por
+`limit_truncation`. No son casos de truncación ni de orden — son casos de **ranking**: la
+claim objetivo está por debajo de la posición que la sonda exige, y el motivo del descarte
+es corriente abajo, no la causa.
+
+**Qué haría falta para llegar a 66,0:** son 198 de 300, o sea +13 claims sobre las 185
+actuales, y los defectos arreglables son 33. Hay que convertir el 40% de ellos. No es
+inalcanzable, pero **no es una limpieza de ~30 casos sueltos** — es trabajo de ranking, y las
+dos hipótesis fáciles (el diversity cap y los duplicados) ya están refutadas por medición.
+
+**Cuidado con `techo_alcanzable_pct`:** el script lo calcula como `(primera + ambigüedad) /
+total`, o sea suponiendo que se ganan TODOS los empates ambiguos. Por definición la consulta
+no distingue esos pares, así que lo realista es la mitad. El 89,0 que imprime es una cota
+superior generosa, no un objetivo.
 
 ---
 
