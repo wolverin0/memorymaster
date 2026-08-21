@@ -61,8 +61,18 @@ its governed-claims authority:
   stale crash run recovered. Repair5 independently replays the bounded gate
   against the elapsed baseline and passes. [PR #189](https://github.com/wolverin0/memorymaster/pull/189)
   merged as `d34b80c` and its clean wheel is active in the governed local
-  runtime with healthy MCP HTTP probes; the scheduled Dreaming pair remains
-  Gemini Flash Lite plus GLM 5.2.
+  runtime with healthy MCP HTTP probes. The Gemini-plus-GLM pair recorded here
+  is historical: GLM was retired on 2026-08-21 (#226) when the paid plan ended,
+  and consolidation now runs on Gemini over the Antigravity CLI with cached
+  OAuth. GLM remains reachable through one environment variable, not a revert.
+- **Dreaming V1 is the main active workstream, and it stays in SHADOW.**
+  Operator ruling of 2026-08-21: no activation. Shadow is the default in code —
+  applying validated decisions as candidates requires the explicit
+  `--apply-candidates` flag — and nothing in the current work changes that.
+  The active track is reliability, not rollout: bounding provider failure
+  loops, hardening live extraction, and closing the first-soak gaps. Activation
+  is a separate operator decision that has not been made, so no rollout date
+  belongs here.
 - PPR-7 governed graph observations are implemented and locally verified on an
   isolated feature branch. Implementation is additive, candidate-first, and
   opt-in; its separate PR/CI, feature-off deployment, and rollout evidence are
