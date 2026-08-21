@@ -170,7 +170,17 @@ antes de endurecerlo, o el arreglo rompe a quien hoy funciona por accidente.
   el allowlist —eso cambia el recall de toda la flota—; y si se re-scopean las claims ya
   escritas. Ninguna se toca sin su palabra.
 
-- **T-0179** — cola del steward: 220 propuestas sin consumidor, la más vieja de 4 meses.
+- ~~**T-0179** — cola del steward: 220 propuestas sin consumidor, la más vieja de 4 meses.~~
+  **CERRADO el 2026-08-21: la cola quedó en 0 pendientes.** El último conflicto (129363, yolo26,
+  retención de datos biométricos) lo decidió el operador en la sesión de grill: los recortes
+  persisten, la arquitectura de sidecar queda como está, elegido a sabiendas como política y no
+  como default técnico. TTL/purga quedó como opción no ordenada.
+
+  Lo que hay que recordar del cierre: **la propuesta del steward apuntaba al revés del veredicto**
+  —proponía retirar la claim que el operador eligió conservar—, así que se rechazó y la supersesión
+  se aplicó a mano. Aprobarla habría hecho lo contrario de lo ordenado con el registro diciendo que
+  se cumplió. Verificado con huella agregada: `8171/666583530 → 8172/666713055`, delta exacto de una
+  fila. Lección en la claim 133128.
 - **Umbral de G5** — fijarlo es `evaluator-edit`; quien persigue la meta no elige el número.
 
 ---
