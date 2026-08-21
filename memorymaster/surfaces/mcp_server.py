@@ -2105,9 +2105,24 @@ if FastMCP is not None:
         include_archived: bool = False,
         allow_sensitive: bool = False,
         holder: str = "",
+        ids: list[int] | None = None,
         cursor: str = "",
     ) -> dict[str, Any]:
-        """List claims by optional status and/or belief holder (takes-vs-facts)."""
+        """List claims by optional status, belief holder (takes-vs-facts), or explicit ids.
+
+        `ids` trae claims puntuales. NO EXISTIA hasta el 2026-08-21, y esa ausencia
+        era el bug: la superficie MCP no rechaza parametros desconocidos, asi que
+        un llamador que pedia `ids=[...]` —lo primero que se intenta cuando ya se
+        tiene el id— recibia el listado SIN filtrar. Bien formado, plausible, y
+        leido como si fueran las claims pedidas.
+
+        Confirmado con control positivo y negativo: pedir un id inexistente
+        devolvia la MISMA primera fila que pedir dos ids validos. Fallaba hacia una
+        respuesta creible en vez de hacia el error, que es la peor direccion.
+
+        La respuesta ahora incluye `ids_requested` para que el llamador pueda
+        comparar lo pedido contra lo devuelto sin confiar en la palabra del server.
+        """
         resolve_allow_sensitive_access(
             allow_sensitive=allow_sensitive,
             context="mcp.list_claims",
@@ -2121,11 +2136,13 @@ if FastMCP is not None:
             include_archived=include_archived,
             allow_sensitive=allow_sensitive,
             holder=_empty_to_none(holder),
+            ids=list(ids) if ids is not None else None,
             scope_allowlist=_effective_scope_allowlist("", workspace),
             requesting_agent=_team_request_principal(),
         )
         return {
             "ok": True,
+            "ids_requested": list(ids) if ids is not None else None,
             "rows": len(claims),
             "claims": [_claim_to_dict(c) for c in claims],
             "next_cursor": next_cursor or None,
