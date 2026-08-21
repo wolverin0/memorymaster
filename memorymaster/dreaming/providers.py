@@ -314,6 +314,32 @@ def _candidate_with_safe_scope(
 
 
 class GeminiExtractor:
+    """Extraccion contra la API de Gemini con GEMINI_API_KEY.
+
+    SE QUEDA EN CLAVE PAGA A PROPOSITO, decidido el 2026-08-20 al migrar todo lo
+    demas a OAuth via `agy`. Ya es Gemini: lo unico en discusion era el metodo de
+    autenticacion, y medido sobre el ledger de produccion la respuesta es no.
+
+        extractor hoy (gemini-3.5-flash-lite, 133 llamadas reales)
+            latencia mediana  3,0s   p90 7,0s
+            entrada mediana   8.636 tokens/llamada
+
+        el mismo trabajo sobre agy
+            latencia          12-31s medidos
+            entrada           ~20.000 tokens/llamada (piso fijo, no baja)
+
+    O sea 4,5x mas lento y 2,3x mas tokens, en el camino MAS CALIENTE del sistema
+    — corre una vez por captura. El piso de andamiaje de `agy` lo vuelve el
+    transporte equivocado para prompts chicos y frecuentes; es el correcto para
+    lotes grandes, que es donde se lo puso (consolidacion y map/reduce del perfil).
+
+    El costo en dolares de la clave es real pero chico a este volumen (2,3M tokens
+    de entrada en ocho dias sobre un modelo lite). Si algun dia el volumen sube o
+    se quiere cero costo variable, la conversacion se reabre CON MEDICION, no por
+    consistencia: mover esto a OAuth para que "todo use OAuth" haria el sistema
+    peor a cambio de una simetria que a nadie le sirve.
+    """
+
     provider = "google"
 
     def __init__(self, *, api_key: str | None = None, model: str | None = None, transport: Transport = _default_transport, sleep: Callable[[float], None] = time.sleep) -> None:
@@ -552,6 +578,132 @@ class OpenCodeExtractor:
             )
 
 
+def consolidation_from_raw(
+    raw: str,
+    candidates: list[DreamCandidate],
+    *,
+    started: float,
+    input_tokens: int,
+    output_tokens: int,
+    provider: str,
+    model: str,
+) -> ConsolidationResult:
+    """Valida la respuesta cruda de un consolidador, sea cual sea el transporte.
+
+    Compartida a proposito entre el consolidador de GLM y el de Antigravity. La
+    alternativa —copiar quince lineas al proveedor nuevo— es como se desincronizan
+    dos validaciones: una recibe un arreglo nuevo y la otra no, y nadie se entera
+    hasta que la que quedo vieja acepta algo que la otra rechaza.
+
+    La regla dura es que tiene que haber EXACTAMENTE una decision por candidato.
+    Un consolidador que devuelve de menos deja candidatos sin resolver que se ven
+    igual que candidatos ignorados.
+    """
+    parsed = _json_object(_without_markdown_fence(raw))
+    rows = parsed.get("decisions", [])
+    if not isinstance(rows, list):
+        raise ProviderCallError(f"{provider} decisions must be an array")
+    valid_ids = {candidate.candidate_id for candidate in candidates}
+    decisions = tuple(
+        decision_from_payload(row, valid_ids) for row in rows if isinstance(row, dict)
+    )
+    decision_ids = [decision.candidate_id for decision in decisions]
+    if len(decision_ids) != len(valid_ids) or set(decision_ids) != valid_ids:
+        raise ProviderCallError(
+            f"{provider} must return exactly one decision per candidate"
+        )
+    usage = ProviderUsage(
+        provider,
+        model,
+        200,
+        int((time.monotonic() - started) * 1000),
+        input_tokens,
+        output_tokens,
+        True,
+    )
+    return ConsolidationResult(decisions, usage)
+
+
+class AntigravityConsolidator:
+    """Consolidacion sobre Gemini via el CLI `agy`, con OAuth y sin clave paga.
+
+    Reemplaza a GLMConsolidator tras darse de baja el plan de zai-coding-plan el
+    2026-08-20. Reusa su prompt y su validacion: lo unico que cambia es el
+    transporte, y duplicar el resto solo habria creado dos verdades.
+
+    UNA SOLA LLAMADA POR LOTE, y no es casual. Cada invocacion de `agy` arrastra
+    ~20k tokens de andamiaje fijo (medido: 20015/20011/20009), asi que consolidar
+    N candidatos de a uno costaria N*20k. El Protocol ya recibe la lista entera;
+    esta clase la manda entera.
+    """
+
+    provider = "antigravity"
+
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        client: Any | None = None,
+        timeout: int | None = None,
+    ) -> None:
+        from memorymaster.core.antigravity_client import (
+            DEFAULT_MODEL,
+            AntigravityClient,
+        )
+
+        configured = model or os.environ.get(
+            "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL", DEFAULT_MODEL
+        )
+        # MEMORYMASTER_DREAM_CONSOLIDATE_MODEL la compartian los dos consolidadores,
+        # y en la era de OpenCode su valor llevaba prefijo de proveedor
+        # ("zai-coding-plan/glm-5.2"). Las instalaciones existentes la tienen asi
+        # seteada AHORA: pasarsela a `agy` lo haria salir con "unknown model" y
+        # romperia el dreaming apenas cambia el default.
+        #
+        # Un modelo de agy nunca lleva "/", asi que ese prefijo identifica config
+        # vieja sin ambiguedad. Se ignora con un WARNING nombrando la variable — no
+        # en silencio: la diferencia con enmascarar un error de tipeo es que aca el
+        # valor es de un proveedor dado de baja, no un nombre mal escrito, y el
+        # operador ya declaro que quiere Gemini.
+        if "/" in configured:
+            LOGGER.warning(
+                "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL=%s tiene prefijo de proveedor "
+                "(config de la era GLM) y no es un modelo de agy; se usa %s. "
+                "Limpiar la variable o fijarle un modelo de agy para silenciar esto.",
+                configured, DEFAULT_MODEL,
+            )
+            configured = DEFAULT_MODEL
+        self.model = configured
+        self.client = client or AntigravityClient(model=self.model, timeout=timeout)
+
+    def consolidate(
+        self,
+        candidates: list[DreamCandidate],
+        current_claims: list[dict[str, Any]],
+        *,
+        scope: str,
+    ) -> ConsolidationResult:
+        from memorymaster.core.antigravity_client import AntigravityError
+
+        prompt = GLMConsolidator._prompt(candidates, current_claims, scope)
+        started = time.monotonic()
+        try:
+            response = self.client.complete(prompt)
+        except AntigravityError as exc:
+            # Se re-envuelve en ProviderCallError para que el worker lo trate como
+            # cualquier otra falla de proveedor: reintentable, sin observacion.
+            raise ProviderCallError(str(exc)) from exc
+        return consolidation_from_raw(
+            response.text,
+            candidates,
+            started=started,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            provider=self.provider,
+            model=self.model,
+        )
+
+
 class GLMConsolidator:
     provider = "zai-coding-plan"
 
@@ -611,25 +763,15 @@ class GLMConsolidator:
         input_tokens: int,
         output_tokens: int,
     ) -> ConsolidationResult:
-        parsed = _json_object(_without_markdown_fence(raw))
-        rows = parsed.get("decisions", [])
-        if not isinstance(rows, list):
-            raise ProviderCallError("GLM decisions must be an array")
-        valid_ids = {candidate.candidate_id for candidate in candidates}
-        decisions = tuple(decision_from_payload(row, valid_ids) for row in rows if isinstance(row, dict))
-        decision_ids = [decision.candidate_id for decision in decisions]
-        if len(decision_ids) != len(valid_ids) or set(decision_ids) != valid_ids:
-            raise ProviderCallError("GLM must return exactly one decision per candidate")
-        usage = ProviderUsage(
-            self.provider,
-            self.model,
-            200,
-            int((time.monotonic() - started) * 1000),
-            input_tokens,
-            output_tokens,
-            True,
+        return consolidation_from_raw(
+            raw,
+            candidates,
+            started=started,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            provider=self.provider,
+            model=self.model,
         )
-        return ConsolidationResult(decisions, usage)
 
     def _delete_session(
         self, executable: str, session_id: str, env: dict[str, str],
@@ -720,6 +862,30 @@ class GLMConsolidator:
         if not text_parts:
             raise ProviderCallError("OpenCode GLM response has no text event")
         return "".join(text_parts), input_tokens, output_tokens, session_id
+
+
+def create_dream_consolidator() -> AntigravityConsolidator | GLMConsolidator:
+    """Elige consolidador por configuracion. Por defecto Antigravity (Gemini sobre OAuth).
+
+    El default paso de GLM a Antigravity el 2026-08-20 al darse de baja el plan de
+    zai-coding-plan. GLM queda ELEGIBLE, no borrado: si el plan vuelve, alcanza con
+    la variable de entorno, y borrar el codigo habria hecho que volver costara un
+    commit en vez de una linea de config.
+
+    Un proveedor desconocido LEVANTA en vez de caer al default, por la misma razon
+    que `agy` sale 1 ante un modelo desconocido: un nombre mal escrito tiene que
+    fallar ruidosamente, no elegir otra cosa en silencio.
+    """
+    provider = os.environ.get(
+        "MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER", "antigravity",
+    ).strip().lower()
+    if provider in {"antigravity", "agy", "gemini", "google"}:
+        return AntigravityConsolidator()
+    if provider in {"glm", "zai", "zai-coding-plan", "opencode"}:
+        return GLMConsolidator()
+    raise ProviderCallError(
+        "MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER must be antigravity or glm"
+    )
 
 
 def create_dream_extractor() -> GeminiExtractor | OpenCodeExtractor:

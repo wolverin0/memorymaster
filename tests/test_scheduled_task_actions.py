@@ -17,6 +17,9 @@ def test_windows_dream_action_uses_pythonw(monkeypatch, tmp_path: Path) -> None:
         calls.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
+    # El entorno de desarrollo no puede decidir el resultado de este test.
+    for var in ("MEMORYMASTER_DREAM_CONSOLIDATE_MODEL", "MEMORYMASTER_DREAM_EXTRACT_MODEL"):
+        monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(setup_hooks, "IS_WINDOWS", True)
     monkeypatch.setattr(setup_hooks, "PYTHON_EXE", str(python))
     monkeypatch.setattr(setup_hooks, "PROJECT_ROOT", tmp_path)
@@ -29,7 +32,22 @@ def test_windows_dream_action_uses_pythonw(monkeypatch, tmp_path: Path) -> None:
     assert "--apply-candidates" in action
     assert "--extract-provider gemini" in action
     assert "--extract-model gemini-3.5-flash" in action
-    assert "--consolidate-model zai-coding-plan/glm-5.2" in action
+    # El default migro de zai-coding-plan/glm-5.2 a Gemini el 2026-08-20 al darse
+    # de baja el plan de GLM.
+    #
+    # ESTE TEST LEIA EL ENTORNO AMBIENTE Y POR ESO MINTIO. setup_hooks resuelve el
+    # modelo con os.environ.get(VAR, default), y las maquinas de desarrollo tienen
+    # MEMORYMASTER_DREAM_CONSOLIDATE_MODEL seteada con el valor viejo de GLM: local
+    # el assert daba contra la variable y pasaba, en CI —sin variable— caia al
+    # default y fallaba. La suite completa daba 4691 verdes en la maquina que
+    # introdujo el cambio, y el CI encontro el fallo.
+    #
+    # Ahora la variable se BORRA explicitamente: un test cuyo resultado depende de
+    # la shell de quien lo corre no prueba el codigo, prueba el ambiente.
+    assert "--consolidate-model gemini-3.7-flash-low" in action
+    assert "zai-coding-plan" not in action, (
+        "el instalador todavia configura instalaciones nuevas contra el plan dado de baja"
+    )
     assert "--clear-provider-variants" in action
 
 

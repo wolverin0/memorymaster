@@ -202,13 +202,13 @@ def run_compiled_profile(
     force: bool = False,
     max_map_calls: int | None = None,
 ) -> dict[str, Any]:
-    from memorymaster.profile.providers import GLMProfileMapper, GLMProfileReducer
+    from memorymaster.profile.providers import ProfileMapper, ProfileReducer
 
     directory = output_dir or Path.home() / ".memorymaster" / "projections"
     engine = CompiledProfileEngine(
         ProfileRepository(db_path),
-        GLMProfileMapper(),
-        GLMProfileReducer(),
+        ProfileMapper(),
+        ProfileReducer(),
         output_dir=directory,
     )
     return engine.run(force=force, max_map_calls=max_map_calls)
