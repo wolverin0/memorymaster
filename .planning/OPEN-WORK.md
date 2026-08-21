@@ -137,7 +137,50 @@ antes de endurecerlo, o el arreglo rompe a quien hoy funciona por accidente.
 
 ## P4 — Gates del operador (NO avanzar sin su palabra)
 
-- **T-0179** — cola del steward: 220 propuestas sin consumidor, la más vieja de 4 meses.
+- **Memoria de solo escritura en 9 de 10 panes.** El `CLAUDE.md` raíz de `Py Apps` manda
+  ingestar con `scope: project:py-apps` en todo el árbol, justamente contra la
+  fragmentación. Pero el allowlist de lectura se deriva del workspace, y **ningún** pane
+  anidado resuelve a `project:py-apps`: cada uno ve solo su propio slug. Medido pane por
+  pane — wezbridge, rifas, mutual, infra, yolo26, crm, frontendesigner, memorymaster,
+  whatsappbot — **9 de 10 no pueden leer lo que la instrucción les dice que escriban**.
+  Son **2974 claims vivas** en `project:py-apps` más **3901** en `project:whatsappbot-final`.
+
+  Detrás hay una asimetría real del código: `canonicalize_slug` corta sufijos de canal
+  (`-final`, `-prod`) al **leer**, pero `ingest` con `scope` explícito guarda el string
+  **crudo**. Verificado: `scope='project:whatsappbot-final'` se almacena tal cual, mientras
+  ese mismo workspace lee `project:whatsappbot`. Escribe en un lugar, lee en otro.
+
+  Y no da señal: el recall devuelve las claims del scope propio, así que se lee como si
+  funcionara. Otra inerte, la más cara hasta ahora.
+
+  **Escape verificado — no se perdió nada.** Es "solo escritura" en el camino por defecto,
+  no en absoluto. Por la herramienta MCP real, desde el workspace de whatsappbot-final:
+  `query_memory(scope_allowlist='project:py-apps', trust_mode='exploratory')` devuelve
+  `[133058, 133012, …]`. Hacen falta las **dos**: `scope_allowlist` (no `scope`, que en
+  `query_memory` no existe y se descarta) y `exploratory` (el recall confiable es
+  confirmed-only por diseño, y lo recién ingestado es `candidate`). Eso baja la urgencia sin
+  tocar la gravedad. La memoria basada en archivos (`MEMORY.md`) es independiente y funciona.
+
+  La trampa concreta detrás del tropiezo: **`search_verbatim` usa `scope` y `query_memory`
+  usa `scope_allowlist`**. Se aprende uno, se yerra el otro, y el yerro se descarta en vez
+  de fallar — el costo real de que ningún schema declare `additionalProperties: false`.
+
+  **Tres decisiones que son del operador, no mías:** cuál es el scope canónico (hoy el repo
+  dice uno y el canonicalizador otro); si el resolver debe incluir los scopes ancestros en
+  el allowlist —eso cambia el recall de toda la flota—; y si se re-scopean las claims ya
+  escritas. Ninguna se toca sin su palabra.
+
+- ~~**T-0179** — cola del steward: 220 propuestas sin consumidor, la más vieja de 4 meses.~~
+  **CERRADO el 2026-08-21: la cola quedó en 0 pendientes.** El último conflicto (129363, yolo26,
+  retención de datos biométricos) lo decidió el operador en la sesión de grill: los recortes
+  persisten, la arquitectura de sidecar queda como está, elegido a sabiendas como política y no
+  como default técnico. TTL/purga quedó como opción no ordenada.
+
+  Lo que hay que recordar del cierre: **la propuesta del steward apuntaba al revés del veredicto**
+  —proponía retirar la claim que el operador eligió conservar—, así que se rechazó y la supersesión
+  se aplicó a mano. Aprobarla habría hecho lo contrario de lo ordenado con el registro diciendo que
+  se cumplió. Verificado con huella agregada: `8171/666583530 → 8172/666713055`, delta exacto de una
+  fila. Lección en la claim 133128.
 - **Umbral de G5** — fijarlo es `evaluator-edit`; quien persigue la meta no elige el número.
 
 ---
