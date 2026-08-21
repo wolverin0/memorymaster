@@ -72,7 +72,7 @@ def _guard(repo: pathlib.Path) -> subprocess.CompletedProcess:
     base_copy = repo / ".guard-from-base.py"
     shown = subprocess.run(
         ["git", "show", "main:scripts/check_probes_frozen.py"],
-        cwd=repo, capture_output=True, text=True,
+        cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     base_copy.write_text(
         shown.stdout if shown.returncode == 0
@@ -81,7 +81,7 @@ def _guard(repo: pathlib.Path) -> subprocess.CompletedProcess:
     )
     return subprocess.run(
         [sys.executable, str(base_copy), "--base", "main"],
-        cwd=repo, capture_output=True, text=True,
+        cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
 
 

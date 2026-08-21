@@ -1,6 +1,6 @@
 <!-- doc-head: MemoryMaster 4.7 governed memory, observations, profiles, and operations -->
 <!-- Covers: installation, governed capture and recall, graph observations, compiled profile, scheduling, and safety. -->
-<!-- Key terms: claims, citations, steward, graph observations, compiled profile, Gemini, GLM, SQLite, MCP. -->
+<!-- Key terms: claims, citations, steward, graph observations, compiled profile, Gemini, Antigravity CLI, SQLite, MCP. -->
 <!-- Read when: evaluating, installing, operating, or upgrading MemoryMaster. -->
 <!-- Default: private local SQLite; observations and generated views never bypass claim governance. -->
 <!-- /doc-head -->
@@ -40,9 +40,12 @@ evidence -> candidate claim -> steward -> confirmed claim -> governed recall
 | Hermes integration | Provides exact session/project scoping, local HTTP/stdio compatibility and replay-safe outbox behavior | Optional integration |
 | Operational review | Performs a read-only six-hour integrity, queue, profile, intake and retrieval review | Optional Windows task |
 
-MemoryMaster 4.7 uses the configured **Gemini extraction + GLM consolidation**
-path for this installation. OpenAI and Anthropic remain optional provider
-adapters; neither is required for graph-observation discovery or ordinary recall.
+MemoryMaster uses the configured **Gemini extraction + Gemini consolidation**
+path for this installation. Consolidation moved off GLM on 2026-08-21 when the
+paid plan ended, and now runs on Gemini through the Antigravity CLI with cached
+OAuth. GLM stays reachable as one environment variable, not a revert. OpenAI and
+Anthropic remain optional provider adapters; neither is required for
+graph-observation discovery or ordinary recall.
 
 ## Why MemoryMaster exists
 
@@ -258,7 +261,8 @@ not for ordinary local recall.
 | Provider | Configuration | Typical use |
 |---|---|---|
 | Gemini | `MEMORYMASTER_LLM_PROVIDER=google` plus configured Google credentials | Activated extraction path |
-| GLM through authenticated OpenCode | configured consolidation model | Activated Dreaming/profile consolidation path |
+| Gemini through the Antigravity CLI | cached OAuth, no API key | Activated Dreaming/profile consolidation path |
+| GLM through authenticated OpenCode | `MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER=glm` | Retired 2026-08-21; kept reachable by configuration |
 | Claude CLI OAuth | `MEMORYMASTER_LLM_PROVIDER=claude_cli` | Optional batch/steward path |
 | Ollama | `MEMORYMASTER_LLM_PROVIDER=ollama` | Optional local provider |
 | OpenAI / Anthropic APIs | corresponding provider and environment credential | Supported optional adapters |

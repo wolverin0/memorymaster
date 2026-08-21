@@ -27,7 +27,20 @@ __all__ = [
     "cwd_from_transcript",
     "scope_from_transcript",
     "canonicalize_slug",
+    "ancestor_project_scopes",
+    "project_scope_variants",
+    "PROJECT_ROOT_MARKERS",
+    "MAX_ANCESTOR_DEPTH",
 ]
+
+# A directory carrying agent instructions IS a project root. That is the whole
+# rule for how far up the tree a scope reaches, and it is not a heuristic: the
+# marker is the thing that makes agents treat the directory as a project in the
+# first place.
+PROJECT_ROOT_MARKERS = ("CLAUDE.md", "AGENTS.md")
+# Bound the walk so a workspace on a strange mount cannot climb to the
+# filesystem root collecting scopes.
+MAX_ANCESTOR_DEPTH = 4
 
 
 _SLUG_NORMALIZER_RE = re.compile(r"\s+")
@@ -70,6 +83,86 @@ def canonicalize_slug(dirname: str) -> str:
     slug = _SCOPE_SAFE_RE.sub("-", base).strip("-._") or "workspace"
     folded = _CHANNEL_SUFFIX_RE.sub("", slug)
     return folded or slug
+
+
+def project_scope_variants(dirname: str) -> list[str]:
+    """The canonical scope for a directory, plus the pre-fold literal if different.
+
+    ``canonicalize_slug`` folds deployment-channel suffixes so that
+    ``whatsappbot-final`` and ``whatsappbot-prod`` share one scope — correct, and
+    it prevents fragmentation on the WRITE side when the scope is derived.
+
+    But ingest with an explicit ``scope`` argument stores the string verbatim,
+    and callers pass the directory name they see. That asymmetry — folded on
+    read, literal on write — left 3901 live claims in ``project:whatsappbot-final``
+    that no workspace could ever resolve to (measured 2026-08-21).
+
+    Reading both variants closes that gap without rewriting a single row. It is
+    deliberately read-only: writes still resolve to exactly one canonical scope,
+    so this does not create new fragmentation, it just stops the existing
+    fragmentation from hiding data.
+    """
+    canonical = canonicalize_slug(dirname)
+    base = (dirname or "").strip().lower()
+    prev = None
+    while prev != base:
+        prev = base
+        base = _COPY_SUFFIX_RE.sub("", base).strip()
+    literal = _SCOPE_SAFE_RE.sub("-", base).strip("-._") or "workspace"
+    scopes = [f"project:{canonical}"]
+    if literal != canonical:
+        scopes.append(f"project:{literal}")
+    return scopes
+
+
+def ancestor_project_scopes(
+    workspace: str | os.PathLike[str] | None,
+    *,
+    max_depth: int = MAX_ANCESTOR_DEPTH,
+) -> list[str]:
+    """Project scopes of the ancestor directories that are themselves projects.
+
+    A workspace nested inside a larger tree belongs to two projects at once, and
+    until 2026-08-21 recall only knew about the inner one. The reading allowlist
+    was derived from the workspace directory alone, so a session in
+    ``Py Apps/infra`` saw ``project:infra`` and nothing above it — while the
+    tree's own instructions told every session under it to INGEST into
+    ``project:py-apps``. Measured that day: 9 of 10 fleet panes could not read
+    the scope they were being told to write to, across roughly 3000 live claims.
+    Nothing failed; recall returned the pane's own scope and read as healthy.
+
+    The rule for how far up to reach is not a heuristic. A directory carrying
+    ``CLAUDE.md`` or ``AGENTS.md`` is a project root *because* that marker is
+    what makes agents treat it as one. ``Py Apps`` has the marker and stops the
+    walk; ``Desktop`` above it does not.
+
+    Returns canonical ``project:<slug>`` strings, nearest ancestor first, never
+    including the workspace itself. Unreadable or missing paths return ``[]``
+    rather than raising — this feeds a read path, and a scope lookup must not be
+    able to break a query.
+    """
+    raw = str(workspace or "").strip()
+    if not raw:
+        return []
+    try:
+        current = Path(raw).resolve()
+    except (OSError, ValueError):
+        return []
+
+    scopes: list[str] = []
+    seen: set[str] = set()
+    for parent in list(current.parents)[:max_depth]:
+        try:
+            is_root = any((parent / marker).is_file() for marker in PROJECT_ROOT_MARKERS)
+        except OSError:
+            break
+        if not is_root:
+            continue
+        scope = f"project:{canonicalize_slug(parent.name)}"
+        if scope not in seen:
+            seen.add(scope)
+            scopes.append(scope)
+    return scopes
 
 
 def scope_from_cwd(cwd: str | os.PathLike[str] | None) -> str:

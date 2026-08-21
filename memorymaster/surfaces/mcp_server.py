@@ -25,7 +25,12 @@ from memorymaster.surfaces import mcp_path_policy
 from pydantic import BaseModel, ValidationError
 
 from memorymaster.core.models import CitationInput
-from memorymaster.core.scope_utils import canonicalize_slug
+from memorymaster.surfaces.unknown_args import record_unknown_arguments
+from memorymaster.core.scope_utils import (
+    ancestor_project_scopes,
+    canonicalize_slug,
+    project_scope_variants,
+)
 from memorymaster.core.security import (
     expand_secret_scan_variants,
     redact_text,
@@ -52,6 +57,12 @@ _ENV_DEFAULT_WORKSPACE = os.environ.get("MEMORYMASTER_WORKSPACE", "").strip()
 _ENV_DEFAULT_PROJECT_SCOPE = os.environ.get("MEMORYMASTER_DEFAULT_PROJECT_SCOPE", "").strip()
 _ENV_QUERY_INCLUDE_LEGACY_PROJECT = (
     os.environ.get("MEMORYMASTER_QUERY_INCLUDE_LEGACY_PROJECT", "1").strip().lower() not in {"0", "false", "no"}
+)
+# Reads reach enclosing projects and the user scope. Default ON: off is the
+# behaviour that stranded ~3000 live claims with no symptom. Set to 0 to
+# restore the pre-2026-08-21 workspace-only allowlist.
+_ENV_RECALL_ANCESTOR_SCOPES = (
+    os.environ.get("MEMORYMASTER_RECALL_ANCESTOR_SCOPES", "1").strip().lower() not in {"0", "false", "no"}
 )
 _DEFAULT_INGEST_RATE_LIMIT_PER_MIN = 60
 _INGEST_RATE_LIMIT_ENV = "MM_INGEST_RATE_LIMIT_PER_MIN"
@@ -559,6 +570,25 @@ def _effective_scope_allowlist(raw: str, workspace: str) -> list[str] | None:
         return parsed
     else:
         scopes = [_project_scope(workspace), "global"]
+        # A nested workspace belongs to its enclosing project too, and to the
+        # user. Before 2026-08-21 this list was the workspace scope plus
+        # "global", so a pane in Py Apps/infra could not read project:py-apps —
+        # the scope the tree's own instructions tell it to write to — nor the
+        # "user" scope the instructions name for cross-project facts. Measured:
+        # 9 of 10 fleet panes blind to ~3000 live claims, with no symptom,
+        # because recall still returned the pane's own scope.
+        #
+        # This widens READS only, and only on the derived path. The TEAM branch
+        # above never reaches here, so an authenticated grant still cannot be
+        # exceeded. Ingest scope is untouched: _effective_ingest_scope still
+        # resolves to exactly one scope.
+        if _ENV_RECALL_ANCESTOR_SCOPES:
+            resolved = _resolve_workspace(workspace)
+            # Both spellings of this workspace's own scope: the canonical one
+            # and the pre-channel-fold literal that explicit ingests wrote.
+            scopes.extend(project_scope_variants(Path(resolved).name))
+            scopes.extend(ancestor_project_scopes(resolved))
+            scopes.append("user")
         if _ENV_QUERY_INCLUDE_LEGACY_PROJECT:
             scopes.append("project")
     seen: set[str] = set()
@@ -845,6 +875,26 @@ if FastMCP is not None:
                 return register(_authorized_tool_callable(func, policy))
 
             return decorator
+
+        async def call_tool(self, name: str, arguments: dict[str, Any], **kwargs: Any) -> Any:
+            """Anotar los argumentos inventados antes de que se descarten.
+
+            Ningun schema declara ``additionalProperties: false``, asi que un
+            argumento inexistente se descarta en silencio en vez de rechazarse —
+            la causa de clase detras del bug de `ids` y del de `scope`. El
+            descarte ocurre en la validacion de FastMCP, o sea ANTES del wrapper
+            de autorizacion, por eso la observacion va aca: es el ultimo punto
+            donde los argumentos crudos existen.
+
+            Se mide para poder endurecer con datos en vez de a ciegas. La
+            llamada sigue exactamente igual: observar no altera lo observado.
+            """
+            try:
+                declarados = self._tool_manager.get_tool(name).parameters.get("properties", {})
+                record_unknown_arguments(name, list(arguments or {}), list(declarados))
+            except Exception:  # noqa: BLE001 - medir jamas puede tumbar una llamada
+                pass
+            return await super().call_tool(name, arguments, **kwargs)
 
 else:  # pragma: no cover - import fallback when MCP dependency is unavailable
     AuthorizedFastMCP = None  # type: ignore[misc,assignment]
