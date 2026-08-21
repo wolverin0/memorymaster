@@ -363,10 +363,30 @@ class _ReadMixin:
         scope_allowlist: list[str] | None,
         tenant_id: str | None,
         holder: str | None = None,
+        ids: list[int] | None = None,
     ) -> tuple[list[str], list[object]]:
         """Build WHERE clauses and parameters for list_claims."""
         clauses: list[str] = []
         params: list[object] = []
+
+        # Traer por id concreto. Antes NO existia y esa ausencia se cobro cara:
+        # la superficie MCP no prohibe parametros desconocidos, asi que un llamador
+        # que pedia `ids=[...]` —lo primero que cualquiera intenta cuando ya tiene
+        # el id— recibia el listado SIN filtrar, bien formado y plausible, y lo
+        # leia como si fueran las claims pedidas. Falla hacia una respuesta creible,
+        # no hacia el error. Confirmado el 2026-08-21 por el pane whatsappbot con
+        # control positivo y negativo: pedir un id inexistente devolvia la misma
+        # primera fila que pedir dos ids validos.
+        #
+        # Una lista VACIA no es lo mismo que None: `ids=[]` significa "ninguna" y
+        # devuelve cero filas; `ids=None` significa "sin filtrar".
+        if ids is not None:
+            unique = [int(i) for i in dict.fromkeys(ids)]
+            if not unique:
+                clauses.append("1 = 0")
+            else:
+                clauses.append(f"id IN ({','.join('?' * len(unique))})")
+                params.extend(unique)
 
         if tenant_id is not None:
             clauses.append("tenant_id = ?")
@@ -438,9 +458,12 @@ class _ReadMixin:
         scope_allowlist: list[str] | None = None,
         tenant_id: str | None = None,
         holder: str | None = None,
+        ids: list[int] | None = None,
         relaxed_out: dict[str, object] | None = None,
     ) -> list[Claim]:
-        clauses, params = self._build_list_clauses(status, status_in, include_archived, scope_allowlist, tenant_id, holder)
+        clauses, params = self._build_list_clauses(
+            status, status_in, include_archived, scope_allowlist, tenant_id, holder, ids
+        )
 
         fts_query = ""
         if text_query:

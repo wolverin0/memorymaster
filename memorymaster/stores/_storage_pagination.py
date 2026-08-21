@@ -35,9 +35,10 @@ class _PaginationMixin:
         scope_allowlist: list[str] | None = None,
         tenant_id: str | None = None,
         holder: str | None = None,
+        ids: list[int] | None = None,
     ):
         clauses, params = self._build_list_clauses(
-            status, None, include_archived, scope_allowlist, tenant_id, holder
+            status, None, include_archived, scope_allowlist, tenant_id, holder, ids
         )
         after = _decode_cursor(cursor, 4)
         if after:

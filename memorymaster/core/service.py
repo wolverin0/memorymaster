@@ -2133,6 +2133,7 @@ class MemoryService(IntegrationService):
         *,
         allow_sensitive: bool = False,
         holder: str | None = None,
+        ids: list[int] | None = None,
         scope_allowlist: list[str] | None = None,
         requesting_agent: str | None = None,
     ) -> list[Claim]:
@@ -2151,6 +2152,7 @@ class MemoryService(IntegrationService):
             scope_allowlist=scope_allowlist,
             tenant_id=self.tenant_id,
             holder=holder,
+            ids=ids,
         )
         claims = _filter_agent_visibility(claims, requesting_agent)
         if not include_sensitive:
@@ -2166,6 +2168,7 @@ class MemoryService(IntegrationService):
         include_archived: bool = False,
         allow_sensitive: bool = False,
         holder: str | None = None,
+        ids: list[int] | None = None,
         scope_allowlist: list[str] | None = None,
         requesting_agent: str | None = None,
     ) -> tuple[list[Claim], str]:
@@ -2185,6 +2188,7 @@ class MemoryService(IntegrationService):
             scope_allowlist=scope_allowlist,
             tenant_id=self.tenant_id,
             holder=holder,
+            ids=ids,
         )
         claims = _filter_agent_visibility(claims, requesting_agent)
         if not include_sensitive:
