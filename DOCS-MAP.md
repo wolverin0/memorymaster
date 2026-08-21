@@ -1,17 +1,17 @@
-<!-- doc-head: canonical map through v4.7.5 fail-closed graph support extraction -->
+<!-- doc-head: canonical map through v4.8.4; Dreaming V1 stays shadow by operator ruling -->
 # DOCS-MAP - memorymaster
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, compiled user profile, roadmap, ADR.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-14 for explicit-safe graph extraction and trusted traversal.
+# Updated: 2026-08-21 for version truthing; GLM retired, Dreaming shadow-only.
 # Rule: generated profiles are disposable projections; MemoryMaster remains authority.
 <!-- /doc-head -->
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
-| CHANGELOG.md | CURRENT | 2026-08-14 | Public release history through v4.7.5, including fail-closed graph extraction and deterministic observation stewardship. |
-| README.md | CURRENT | 2026-08-13 | Primary product overview and setup for governed claims, PPR-7 observations, compiled profile, Gemini plus GLM, and release-first scheduled review. |
-| ROADMAP.md | CURRENT | 2026-08-12 | Sole authoritative roadmap; P5 is merged and locally deployed, while isolated PPR-7 implementation is active. |
+| CHANGELOG.md | CURRENT | 2026-08-19 | Public release history through v4.8.4, matching `pyproject.toml`. Earlier heads said v4.7.5; the entries were there, the verdict line was stale. |
+| README.md | CURRENT | 2026-08-13 | Primary product overview and setup for governed claims, PPR-7 observations, compiled profile, and release-first scheduled review. Its "Gemini plus GLM" wording predates the 2026-08-21 GLM retirement (#226) and needs a pass. |
+| ROADMAP.md | CURRENT | 2026-08-21 | Sole authoritative roadmap; P5 merged and locally deployed, isolated PPR-7 active, and Dreaming V1 recorded as the main active workstream held in shadow by operator ruling. |
 | .planning/GRAPH-OBSERVATIONS-V1.md | CURRENT | 2026-08-12 | Bounded PPR-7 implementation ledger for deterministic supported components, governed synthesis, lifecycle, opt-in recall, and verification. |
 | .planning/COMPILED-USER-PROFILE-V1.md | CURRENT | 2026-08-12 | Implementation contract for the zero-curation, evidence-bound user profile projection and weekly GLM map/reduce job. |
 | .planning/PAPER-RADAR-REVIEW-2026-08-08.md | CURRENT | 2026-08-08 | Primary-paper ledger covers 57-paper triage, 18 deep reviews, exact MemoryMaster gaps, and ordered PPR-1 through PPR-6 decisions subordinate to ROADMAP.md. |
