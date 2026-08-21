@@ -100,10 +100,38 @@ Lo que queda arreglable son ~30 casos de orden/truncación, no un defecto estruc
 
 | PR | Qué | Estado |
 |---|---|---|
-| #224 | Arnés LongMemEval + 2 regresiones de main + hueco de CI | 9/10 verdes; falta un job de windows |
-| #219 | `CODEBASE_REVIEW.md` (auditoría Gemini/Jules) | **revisado** — cifras verificadas y correctas; falla como auditoría: cuenta cobertura sin verificar que los tests corran. Mergeable como documentación con advertencia |
-| #168 | `CREDITS.md` + watchlist de prior art | **revisado** — CI verde pero **206 commits detrás de main**; necesita rebase, agregar OpenViking, y actualizar la línea de LongMemEval con el número real |
-| #185 | Seguridad fase 1 | borrador de 30.893 líneas, 37 días parado |
+| #227 | `list_claims` ignoraba el filtro `ids` | **abierto** — 4697 tests verdes local (`530c97d` + verdad de release regenerada); esperando CI |
+| #226 | Migración GLM → Gemini/OAuth | **mergeado** (squash) |
+| #224 | Arnés LongMemEval + 2 regresiones de main + hueco de CI | **mergeado** |
+| #219 / #168 / #185 | auditoría Jules · CREDITS · seguridad fase 1 | **cerrados** — #185 tras probar que sus 93 archivos ya estaban en main |
+
+---
+
+## P3.1 — La superficie MCP acepta parámetros inventados (abierto, rama aparte)
+
+Medido, no estimado: **51 de 51 herramientas** MCP tienen el schema sin
+`additionalProperties: false`, así que un parámetro que no existe se descarta en silencio
+en vez de rechazarse. Es la causa de clase detrás del bug de `ids` (#227): no había filtro
+que fallara, había un argumento que se evaporaba.
+
+Confirmado en `list_claims`: `scope` ni siquiera es parámetro del endpoint, y pedir un scope
+inexistente devuelve **todas** las claims. El resultado ampliado se lee como legítimo.
+
+Dónde muerde de verdad — cuando el parámetro que se evapora es el que restringe:
+
+| Tool | Param | Default | Si se evapora |
+|---|---|---|---|
+| `archive_by_source` | `dry_run` | `True` | previsualiza — dirección segura |
+| `forget` | `apply` | `False` | no aplica — dirección segura |
+| `compact_memory` | `retain_days` | `30` | pedir retener **más** retiene **menos** |
+| `resolve_steward_proposal` | `apply_on_approve` | `True` | pedir **no** aplicar **aplica** |
+
+Los dos últimos caen para el lado inseguro. Requiere que el llamador escriba mal un nombre
+declarado — que es exactamente lo que pasó con `ids`: un nombre plausible que no existía.
+
+**Cuidado al arreglarlo:** poner `additionalProperties: false` en 51 herramientas convierte
+en error lo que hoy se ignora. Hay que medir qué llamadores reales pasan parámetros de más
+antes de endurecerlo, o el arreglo rompe a quien hoy funciona por accidente.
 
 ---
 
