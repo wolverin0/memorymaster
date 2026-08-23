@@ -16,6 +16,7 @@ instrumentacion existe para deshacer.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -108,21 +109,30 @@ def test_it_can_be_turned_off(monkeypatch):
 
 # --- de punta a punta, por la superficie real ------------------------------
 
-@pytest.mark.asyncio
-async def test_the_mcp_surface_records_what_it_silently_drops(tmp_path: Path, monkeypatch):
+def test_the_mcp_surface_records_what_it_silently_drops(tmp_path: Path, monkeypatch):
     """El caso real: `scope` no existe en list_claims y se evapora.
 
     Antes de esto no quedaba ni rastro de que alguien lo hubiera intentado.
+
+    Se maneja el bucle con `asyncio.run` en vez de `@pytest.mark.asyncio` a
+    proposito: pytest-asyncio no esta en las dependencias de CI. La primera
+    version usaba el marcador, paso en local —donde el plugin SI esta— y
+    fallo en los 6 jobs con "async def functions are not natively supported".
+    Un test que depende de un plugin ausente en CI mide la maquina del que lo
+    escribio, no el codigo.
     """
     monkeypatch.setenv("MEMORYMASTER_MCP_AUTH_MODE", "local-trusted")
     monkeypatch.setenv("MEMORYMASTER_UNKNOWN_ARGS_LOG", str(tmp_path / "log.jsonl"))
     from memorymaster.surfaces import mcp_server as m
 
-    try:
+    async def _llamar():
         await m.mcp.call_tool(
             "list_claims",
             {"db": str(tmp_path / "x.db"), "workspace": str(tmp_path), "scope": "inventado"},
         )
+
+    try:
+        asyncio.run(_llamar())
     except Exception:  # noqa: BLE001 - la llamada puede fallar por otras razones
         pass
 
