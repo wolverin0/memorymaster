@@ -210,6 +210,31 @@ def _hermetic_snapshot_dir(tmp_path_factory, monkeypatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_profile_projections(tmp_path_factory, monkeypatch) -> None:
+    """Mantener el perfil compilado del operador fuera del alcance de los tests.
+
+    WHY: `scheduled_task._run_dream` llama a `run_compiled_profile(args.db)` SIN
+    output_dir, asi que la escritura cae en ~/.memorymaster/projections/. Con
+    MEMORYMASTER_COMPILED_PROFILE=1 puesta machine-wide —lo esta en esta maquina,
+    a nivel usuario— cualquier test que ejercite ese camino con una base temporal
+    VACIA renderiza cero hechos y pisa atomicamente el user.md real.
+
+    Ese archivo se inyecta en cada SessionStart, de modo que el dano no se ve como
+    un test en rojo: se ve como un agente que de golpe no sabe nada del operador.
+    Medido el 2026-08-24: 29 hechos activos en la base, 0 en el archivo, y el
+    render de esos mismos 29 da 788 tokens (cota 800) — o sea que no habia nada
+    roto en el renderer, solo un test escribiendo donde no debia.
+
+    Mismo criterio que _hermetic_snapshot_dir: los tests nunca tocan artefactos
+    de produccion del operador.
+    """
+    monkeypatch.setenv(
+        "MEMORYMASTER_PROFILE_OUTPUT_DIR",
+        str(tmp_path_factory.mktemp("mm-projections")),
+    )
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_wal_discipline(tmp_path_factory, monkeypatch) -> None:
     """Neutralize the WAL-discipline dogfood flag and redirect the spool root.
 
