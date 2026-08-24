@@ -322,6 +322,11 @@ def test_backend_failure_logs_redact_qdrant_key(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setenv("QDRANT_API_KEY", QDRANT_KEY)
+    # Las escrituras estan congeladas por defecto desde el ruling MM8 (2026-08-24),
+    # asi que hay que pedirlas explicitamente: este test comprueba que el log del
+    # FALLO de una escritura no filtra la clave, y sin escritura no hay fallo que
+    # inspeccionar. El contrato que verifica —redaccion— no cambio.
+    monkeypatch.setenv(qdrant_backend.ENV_WRITES, "1")
     _install_httpx_clients(monkeypatch, failure_secret=QDRANT_KEY)
     caplog.set_level(logging.WARNING, logger=qdrant_backend.__name__)
     backend = qdrant_backend.QdrantBackend(
