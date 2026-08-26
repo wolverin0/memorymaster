@@ -51,15 +51,54 @@ def _priority_score(*, status: str, confidence: float, updated_at: str, now: dat
     return status_weight + confidence_weight + recency_weight
 
 
-def _build_reason(status: str) -> str:
+def _build_reason(status: str, *, flagged: bool = False) -> str:
     parts: list[str] = []
-    if status == "conflicted":
-        parts.append("status=conflicted")
-    if status == "stale":
-        parts.append("status=stale")
+    if status in ("conflicted", "stale"):
+        parts.append(f"status={status}")
+    if flagged:
+        parts.append("pending steward proposal")
     if not parts:
         parts.append(f"status={status}")
     return ",".join(parts)
+
+
+def _reviewable_claims(service, *, limit: int, include_stale: bool, include_conflicted: bool, flagged_claim_ids: set[int]) -> list:
+    """Solo lo que NECESITA revision humana: stale, conflicted, o con propuesta.
+
+    La version anterior tenia el filtro INVERTIDO: escaneaba los primeros N
+    claims de CUALQUIER estado y solo permitia excluir stale/conflicted. El
+    resultado, visto por el operador el 2026-08-26 en el dashboard: una cola
+    titulada "claims that need human review" llena de claims confirmed cuya
+    "razon" era `status=confirmed` — una no-razon — mientras los 5.976
+    conflicted reales quedaban fuera del escaneo. Una cola de revision donde
+    los items no dicen por que estan es la misma familia que la senal verde
+    que no ejerce su camino: entrena a ignorar la cola.
+    """
+    store = getattr(service, "store", None)
+    finder = getattr(store, "find_by_status", None)
+    gathered: list = []
+    if finder is not None:
+        if include_stale:
+            gathered.extend(finder("stale", limit=limit, include_citations=True))
+        if include_conflicted:
+            gathered.extend(finder("conflicted", limit=limit, include_citations=True))
+        getter = getattr(store, "get_claim", None)
+        if getter is not None:
+            present = {claim.id for claim in gathered}
+            for claim_id in sorted(flagged_claim_ids - present)[:limit]:
+                claim = getter(claim_id, include_citations=True)
+                if claim is not None:
+                    gathered.append(claim)
+        return gathered
+    # Respaldo para dobles de test sin store: el escaneo viejo, pero FILTRANDO.
+    wanted = {"stale"} if include_stale else set()
+    if include_conflicted:
+        wanted.add("conflicted")
+    return [
+        claim
+        for claim in service.list_claims(include_archived=False, limit=limit, allow_sensitive=True)
+        if claim.status in wanted or claim.id in flagged_claim_ids
+    ]
 
 
 def build_review_queue(
@@ -69,19 +108,27 @@ def build_review_queue(
     include_stale: bool = True,
     include_conflicted: bool = True,
     include_sensitive: bool = False,
+    flagged_claim_ids: set[int] | None = None,
 ) -> list[ReviewItem]:
     if limit <= 0:
         return []
 
-    claims = service.list_claims(include_archived=False, limit=limit, allow_sensitive=include_sensitive)
+    flagged = flagged_claim_ids or set()
+    claims = _reviewable_claims(
+        service,
+        limit=limit,
+        include_stale=include_stale,
+        include_conflicted=include_conflicted,
+        flagged_claim_ids=flagged,
+    )
     now = datetime.now(timezone.utc)
     items: list[ReviewItem] = []
+    seen: set[int] = set()
 
     for claim in claims:
-        if claim.status == "stale" and not include_stale:
+        if claim.id in seen:
             continue
-        if claim.status == "conflicted" and not include_conflicted:
-            continue
+        seen.add(claim.id)
         if not include_sensitive and is_sensitive_claim(claim):
             continue
 
@@ -94,7 +141,7 @@ def build_review_queue(
                 object_value=claim.object_value,
                 confidence=claim.confidence,
                 updated_at=claim.updated_at,
-                reason=_build_reason(claim.status),
+                reason=_build_reason(claim.status, flagged=claim.id in flagged),
                 priority=_priority_score(
                     status=claim.status,
                     confidence=claim.confidence,

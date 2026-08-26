@@ -110,13 +110,17 @@ def review_queue_payload(
     exclude_reviewed: bool,
     exclude_suppressed: bool,
 ) -> dict[str, Any]:
+    # Las propuestas se calculan ANTES de armar la cola: una claim confirmed
+    # con propuesta pendiente ("flagged") pertenece a la cola aunque su status
+    # no sea revisable — es donde viven los botones Approve/Reject.
+    proposals = _pending_proposals_by_claim(service, limit)
     items = build_review_queue(
         service, limit=limit, include_stale=include_stale,
         include_conflicted=include_conflicted, include_sensitive=allow_sensitive,
+        flagged_claim_ids=set(proposals),
     )
     flags = triage_flags(service, max(limit * 20, 200))
     out = _apply_triage_filters(queue_to_dicts(items), flags, exclude_reviewed, exclude_suppressed)
-    proposals = _pending_proposals_by_claim(service, limit)
     out = [{**item, "proposal": proposals.get(int(item["claim_id"]))} for item in out]
     return {"ok": True, "rows": len(out), "items": out}
 
