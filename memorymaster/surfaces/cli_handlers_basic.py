@@ -1648,6 +1648,30 @@ def _handle_entity_graph_export(args: argparse.Namespace, service, parser: argpa
     return 0
 
 
+def _handle_curation_drain(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.govern.jobs import curation_drain
+
+    t0 = time.perf_counter()
+    result = curation_drain.run(service, limit=args.limit, apply=args.apply)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    else:
+        modo = "APPLY" if args.apply else "DRY RUN"
+        c, p = result["conflicts"], result["proposals"]
+        print(f"curation-drain [{modo}] en {elapsed_ms:.0f}ms")
+        print(
+            f"  conflictos: escaneados={c['scanned']} perdedores={c['resolved_lost']} "
+            f"ganadores-promovidos={c['resolved_won']} huerfanos-a-stale={c['resolved_orphan']} "
+            f"del-operador={c['kept_for_operator']} carreras={c['skipped_race']}"
+        )
+        print(
+            f"  propuestas: escaneadas={p['scanned']} aprobadas={p['approved']} "
+            f"del-operador={p['kept_for_operator']} fallidas={p['failed']}"
+        )
+    return 0
+
+
 def _handle_resolve_conflicts(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.govern.conflict_resolver import resolve_conflicts
 

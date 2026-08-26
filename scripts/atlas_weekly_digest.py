@@ -129,12 +129,40 @@ def deliver_telegram(text):
     return (r.stdout or r.stderr).strip()[:200]
 
 
+def curation_tally() -> str:
+    """Resumen de lo que la curacion automatica hizo esta semana.
+
+    Es la mitad del contrato del dren (2026-08-26): la maquina resuelve lo
+    no-operador, Y el operador recibe un resumen semanal de lo que hizo. Un
+    dren silencioso seria una maquina reescribiendo memoria sin rendir cuentas.
+    Se cuenta desde los eventos de auditoria, no desde un contador en memoria:
+    la evidencia tiene que sobrevivir al proceso.
+    """
+    try:
+        import sqlite3
+        from datetime import datetime, timedelta, timezone
+
+        db = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "memorymaster.db")
+        desde = (datetime.now(timezone.utc) - timedelta(days=DAYS)).isoformat()
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        n = con.execute(
+            "SELECT COUNT(*) FROM events WHERE details LIKE 'curation_drain%' AND created_at >= ?",
+            (desde,),
+        ).fetchone()[0]
+        con.close()
+        if not n:
+            return ""
+        return f"\n\n🧹 Curación automática: {n:,} resoluciones esta semana (auditadas; pinned y user quedaron para vos)."
+    except Exception:
+        return ""
+
+
 def main():
     rows = recent_claims()
     if not rows:
         print("no recent claims for digest"); return 0
     print(f"synthesizing digest from {len(rows)} recent claims on {MODEL}...", flush=True)
-    digest = synthesize(rows)
+    digest = synthesize(rows) + curation_tally()
     path = os.path.join(OUTDIR, f"weekly-digest-{time.strftime('%Y-%m-%d')}.md")
     with open(path, "w", encoding="utf-8") as f:
         f.write(digest)

@@ -645,6 +645,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("quality-scores", help="Recompute quality scores for all claims")
 
+    curation_drain = sub.add_parser(
+        "curation-drain",
+        help="Machine-resolve non-operator claims: conflicted losers + steward proposals (user scope and pinned stay human)",
+    )
+    curation_drain.add_argument("--limit", type=int, default=500, help="Max conflicted claims scanned")
+    curation_drain.add_argument("--apply", action="store_true", help="Apply verdicts (default: dry-run report)")
+
     resolve_cmd = sub.add_parser("auto-resolve", help="Use LLM to resolve conflicted claims")
     resolve_cmd.add_argument("--limit", type=int, default=20, help="Max conflict pairs to evaluate")
 
