@@ -1443,11 +1443,46 @@ def _handle_run_daemon(args: argparse.Namespace, service, parser: argparse.Argum
 
 
 def _handle_run_dashboard(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from pathlib import Path as _Path
+
     from memorymaster.surfaces.dashboard import create_dashboard_server
+
+    # El dashboard es una superficie de LECTURA, y una ruta relativa se resuelve
+    # contra el cwd DE QUIEN LO LANZA. Medido el 2026-08-26: lanzado desde el
+    # home con `--db memorymaster.db`, abrio una base fantasma de 31 claims de
+    # abril (C:\Users\...\memorymaster.db) y el dashboard "se lleno de errores"
+    # — no such table para tablas que la base real si tiene, y una cola con ids
+    # #12-17 en un corpus que va por 135.000. Nada decia que base estaba
+    # mirando. Mismo genero de bug que el vault huerfano de lint-vault: un
+    # recurso relativo al cwd materializado donde nadie lo pidio.
+    #
+    # Dos defensas: resolver a ABSOLUTA antes de abrir (asi el banner dice la
+    # verdad), y negarse a abrir una base inexistente — un dashboard jamas debe
+    # CREAR una base vacia y mostrarla como si fuera la memoria.
+    claims_hint = ""
+    if "://" not in str(effective_db):
+        resolved = _Path(effective_db).resolve()
+        if not resolved.is_file():
+            print(
+                f"error: la base no existe: {resolved}\n"
+                "  El dashboard no crea bases. Pasa --db con la ruta absoluta a la "
+                "memorymaster.db real, o lanza desde el directorio del proyecto."
+            )
+            return 2
+        effective_db = str(resolved)
+        try:
+            import sqlite3 as _sqlite3
+
+            with _sqlite3.connect(f"file:{resolved}?mode=ro", uri=True) as _conn:
+                _n = _conn.execute("SELECT COUNT(*) FROM claims").fetchone()[0]
+            claims_hint = f" ({_n:,} claims)"
+        except Exception:  # noqa: BLE001 - the banner hint must never block startup
+            claims_hint = " (claims: ?)"
 
     server = create_dashboard_server(db_target=effective_db, workspace_root=args.workspace,
         host=args.host, port=args.port, operator_log_jsonl=args.operator_log_jsonl)
     print(f"memorymaster dashboard listening on http://{args.host}:{args.port}/dashboard")
+    print(f"  db: {effective_db}{claims_hint}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
