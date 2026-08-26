@@ -557,6 +557,12 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_absorb.add_argument("--output", default="obsidian-vault", help="Wiki directory")
     wiki_absorb.add_argument("--scope", default="", help="Scope filter")
     wiki_absorb.add_argument("--no-bases", action="store_true", help="Skip regenerating Obsidian Bases")
+    wiki_absorb.add_argument(
+        "--pinned-only",
+        dest="pinned_only",
+        action="store_true",
+        help="Curated vault: project ONLY operator-pinned claims (the anti-2GB gate)",
+    )
 
     bases_generate = sub.add_parser("bases-generate", help="Regenerate Obsidian Bases (.base) files for the wiki")
     bases_generate.add_argument("--output", default="obsidian-vault", help="Vault root (writes to <root>/bases/)")

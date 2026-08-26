@@ -144,7 +144,12 @@ def _handle_wiki_absorb(args: argparse.Namespace, service, parser: argparse.Argu
     from memorymaster.knowledge.wiki_engine import absorb
     from memorymaster.knowledge.vault_log import log_curate
     t0 = time.perf_counter()
-    result = absorb(effective_db, wiki_dir=args.output, scope_filter=args.scope or None)
+    result = absorb(
+        effective_db,
+        wiki_dir=args.output,
+        scope_filter=args.scope or None,
+        pinned_only=getattr(args, "pinned_only", False),
+    )
     elapsed_ms = (time.perf_counter() - t0) * 1000
     log_curate(result, args.output)
 
