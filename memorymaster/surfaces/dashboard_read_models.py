@@ -136,10 +136,16 @@ def review_queue_payload(
 def _operator_facing(
     items: list[dict[str, Any]], proposals: dict[int, dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Pertenece a la vista humana: propiedad del operador, o con propuesta."""
+    """Pertenece a la vista humana: pineado, o con propuesta pendiente.
+
+    scope=user NO da membresia: esa etiqueta la asigna el extractor automatico,
+    no el operador — 70 de los 72 conflicted user-scope eran de
+    atlas-llm-extractor, con duplicados literales. El unico acto deliberado del
+    humano en el modelo de datos es el pin.
+    """
     kept: list[dict[str, Any]] = []
     for item in items:
-        owned = bool(item.get("pinned")) or str(item.get("scope") or "") == "user"
+        owned = bool(item.get("pinned"))
         flagged = int(item["claim_id"]) in proposals
         if owned or flagged:
             kept.append(item)

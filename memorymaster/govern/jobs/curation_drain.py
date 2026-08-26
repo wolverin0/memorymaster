@@ -53,7 +53,18 @@ DRAIN_DETAILS = "curation_drain"
 
 
 def _is_operator_owned(claim: Any) -> bool:
-    return bool(claim.pinned) or str(claim.scope or "") == "user"
+    """Propiedad del operador = PINNED, y nada mas.
+
+    La version del mismo dia usaba tambien scope=user como proxy de "esto es
+    del operador", y el operador la refuto leyendo su cola: de 72 conflicted
+    con scope=user, 70 los habia escrito atlas-llm-extractor — extraccion
+    automatica, con la misma claim duplicada hasta cuatro veces con distinto
+    id. La etiqueta de scope la asigna el extractor, no el humano; tratarla
+    como eleccion humana le sirvio 72 items de maquina como si fueran suyos
+    ("THERES NOT A SINGLE ONE THAT I CAN USE FOR NOTHING"). El unico acto
+    deliberado del operador en el modelo de datos es el pin.
+    """
+    return bool(claim.pinned)
 
 
 def _find_rival(service: Any, claim: Any) -> Any | None:

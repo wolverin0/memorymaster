@@ -112,19 +112,27 @@ def test_an_orphan_conflict_goes_stale_not_deleted(svc):
 # --- la regla inviolable ----------------------------------------------------
 
 def test_operator_claims_are_never_touched(svc):
-    """Pineadas y scope=user quedan intactas bajo TODOS los veredictos."""
+    """Solo lo PINEADO es del operador. scope=user NO protege.
+
+    La primera version de la exclusion trataba scope=user como propiedad del
+    operador; el operador la refuto leyendo su cola: 70 de 72 eran del
+    extractor automatico con duplicados literales. La etiqueta de scope la
+    pone la maquina; el unico acto deliberado del humano es el pin.
+    """
     pineada = _claim(svc, "claim pineada por el operador en conflicto huerfano")
     _status(svc, pineada, "conflicted")
     svc.store.pin(pineada, True) if hasattr(svc.store, "pin") else svc.pin(pineada, True)
 
-    de_user = _claim(svc, "preferencia del operador en conflicto", scope="user")
+    de_user = _claim(svc, "observacion user-scope escrita por el extractor", scope="user")
     _status(svc, de_user, "conflicted")
 
     r = curation_drain.drain_conflicts(svc, apply=True)
 
-    assert r["kept_for_operator"] == 2
-    assert _get(svc, pineada).status == "conflicted"
-    assert _get(svc, de_user).status == "conflicted"
+    assert r["kept_for_operator"] == 1
+    assert _get(svc, pineada).status == "conflicted", "toco una claim PINEADA"
+    assert _get(svc, de_user).status == "stale", (
+        "scope=user sin rival debia drenarse como huerfano; volvio el proxy falso"
+    )
 
 
 def test_dry_run_mutates_nothing(svc):
@@ -148,8 +156,9 @@ def test_dry_run_mutates_nothing(svc):
 # --- propuestas -------------------------------------------------------------
 
 def test_proposal_drain_keeps_operator_claims(svc, monkeypatch):
-    """Las propuestas sobre claims del operador no se auto-aprueban."""
-    de_user = _claim(svc, "claim de scope user con propuesta encima", scope="user")
+    """Las propuestas sobre claims PINEADAS no se auto-aprueban."""
+    de_user = _claim(svc, "claim pineada con propuesta encima")
+    svc.pin(de_user, True)
     normal = _claim(svc, "claim operativa con propuesta encima")
 
     monkeypatch.setattr(
