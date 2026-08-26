@@ -19,6 +19,11 @@ class ReviewItem:
     reason: str
     priority: float
     citations_count: int
+    # Propiedad del operador (scope=user o pinned): el dashboard filtra con
+    # esto para que la superficie HUMANA solo muestre lo suyo o lo flaggeado,
+    # mientras el CLI conserva la vista completa para las maquinas.
+    scope: str = ""
+    pinned: bool = False
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -149,6 +154,8 @@ def build_review_queue(
                     now=now,
                 ),
                 citations_count=len(claim.citations),
+                scope=str(claim.scope or ""),
+                pinned=bool(claim.pinned),
             )
         )
 

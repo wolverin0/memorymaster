@@ -110,6 +110,11 @@ def test_review_queue_triages_unresolved_risk_and_sensitive_filtering(monkeypatc
         "reason",
         "priority",
         "citations_count",
+        # 2026-08-26: el dashboard filtra la vista humana por propiedad del
+        # operador; el item lleva scope y pinned para que ese filtro no tenga
+        # que re-consultar la base.
+        "scope",
+        "pinned",
     }
 
     with_sensitive = build_review_queue(service, limit=50, include_sensitive=True)
