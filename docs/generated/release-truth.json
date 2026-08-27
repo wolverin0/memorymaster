@@ -135,7 +135,7 @@
     "console_entrypoints": 8,
     "mcp_tools": 51,
     "ops_cli_commands": 5,
-    "pytest_test_functions": 4063
+    "pytest_test_functions": 4065
   },
   "feature_profile_matrix": {
     "capture_hook": [
