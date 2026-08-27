@@ -1265,7 +1265,7 @@ class MemoryService(IntegrationService):
         """Raise ValueError if the service has a tenant_id set and the claim
         belongs to a different tenant."""
         if self.tenant_id is not None and claim.tenant_id != self.tenant_id:
-            raise ValueError(f"Claim {claim.id} does not exist.")
+            raise ValueError(f"Claim {claim.id} is outside the authorized tenant boundary (claim tenant={claim.tenant_id!r}, session tenant={self.tenant_id!r}); it exists, but cross-tenant writes are refused.")
 
     def _build_query_statuses(self, include_stale: bool, include_conflicted: bool, include_candidates: bool) -> list[str]:
         """Build list of claim statuses to include in query."""
