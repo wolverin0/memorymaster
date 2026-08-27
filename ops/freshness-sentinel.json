@@ -1,0 +1,9 @@
+{
+  "_doc": "T-0241: runner periodico ZERO-MODEL que vigila que el checkout canonico de memorymaster no quede detras de origin/main (causa raiz del split-brain 4.5.0-vs-4.8.4: se trabaja en worktrees laterales, el PR mergea en GitHub y el canonico nunca baja). Config-by-file: el nombre y horario del schtask viven ACA, no solo en el Task Scheduler (leccion _intel/templates/service-work.md). Instalar con: python scripts/install_freshness_sentinel.py",
+  "task_name": "MM-freshness-sentinel",
+  "schedule": {"type": "daily", "time": "08:37"},
+  "runner": "scripts/freshness_sentinel.py",
+  "wrapper": "scripts/freshness_sentinel.cmd",
+  "notice_surface": "_intel/rollups/<fecha>.md (linea apendeada) + exit 1 => Last Result visible en el census de schtasks del rollup diario",
+  "silent_when_fresh": true
+}
