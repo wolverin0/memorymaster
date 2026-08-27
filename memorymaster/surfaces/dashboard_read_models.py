@@ -110,15 +110,46 @@ def review_queue_payload(
     exclude_reviewed: bool,
     exclude_suppressed: bool,
 ) -> dict[str, Any]:
+    # Las propuestas se calculan ANTES de armar la cola: una claim confirmed
+    # con propuesta pendiente ("flagged") pertenece a la cola aunque su status
+    # no sea revisable — es donde viven los botones Approve/Reject.
+    proposals = _pending_proposals_by_claim(service, limit)
     items = build_review_queue(
         service, limit=limit, include_stale=include_stale,
         include_conflicted=include_conflicted, include_sensitive=allow_sensitive,
+        flagged_claim_ids=set(proposals),
     )
     flags = triage_flags(service, max(limit * 20, 200))
     out = _apply_triage_filters(queue_to_dicts(items), flags, exclude_reviewed, exclude_suppressed)
-    proposals = _pending_proposals_by_claim(service, limit)
+    # El dashboard es la superficie HUMANA: muestra solo lo del operador
+    # (scope=user o pinned) o lo flaggeado con propuesta. El resto —stale y
+    # conflicted de maquina— lo gestionan el curation drain, el decay y el
+    # archivador; mostrarselo al operador fue lo que produjo su queja literal
+    # del 2026-08-26 al abrir #38562 ("mzcopilot Burn #3", contabilidad de
+    # mayo): "this is really really bad". El CLI review-queue conserva la
+    # vista completa a proposito, porque las maquinas si la necesitan.
+    out = [item for item in _operator_facing(out, proposals)]
     out = [{**item, "proposal": proposals.get(int(item["claim_id"]))} for item in out]
     return {"ok": True, "rows": len(out), "items": out}
+
+
+def _operator_facing(
+    items: list[dict[str, Any]], proposals: dict[int, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Pertenece a la vista humana: pineado, o con propuesta pendiente.
+
+    scope=user NO da membresia: esa etiqueta la asigna el extractor automatico,
+    no el operador — 70 de los 72 conflicted user-scope eran de
+    atlas-llm-extractor, con duplicados literales. El unico acto deliberado del
+    humano en el modelo de datos es el pin.
+    """
+    kept: list[dict[str, Any]] = []
+    for item in items:
+        owned = bool(item.get("pinned"))
+        flagged = int(item["claim_id"]) in proposals
+        if owned or flagged:
+            kept.append(item)
+    return kept
 
 
 def _pending_proposals_by_claim(service: Any, limit: int) -> dict[int, dict[str, Any]]:

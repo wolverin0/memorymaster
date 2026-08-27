@@ -196,7 +196,7 @@ def test_dashboard_data_endpoints() -> None:
     service = MemoryService(db, workspace_root=Path.cwd())
     service.init_db()
 
-    service.ingest(
+    first_claim = service.ingest(
         text="Support email is old@example.com",
         citations=[CitationInput(source="session://chat", locator="turn-1", excerpt="old value")],
         subject="support",
@@ -205,7 +205,7 @@ def test_dashboard_data_endpoints() -> None:
         confidence=0.8,
     )
     service.run_cycle(policy_mode="legacy", min_citations=1, min_score=0.4)
-    service.ingest(
+    second_claim = service.ingest(
         text="Correction support email is new@example.com",
         citations=[CitationInput(source="session://chat", locator="turn-2", excerpt="new value")],
         subject="support",
@@ -263,12 +263,27 @@ def test_dashboard_data_endpoints() -> None:
         if len(first_group["claims"]) >= 2:
             assert str(first_group["claims"][0]["updated_at"]) >= str(first_group["claims"][1]["updated_at"])
 
+        # Contrato 2026-08-26 (commit 7d54eaa): la cola del dashboard es la
+        # superficie HUMANA — solo claims del operador (pinned) o flaggeadas.
+        # Sin pins, vacia A PROPOSITO aunque existan conflicted/stale: eso lo
+        # gestiona la maquina (curation-drain), no el operador.
+        review_status, _, review_payload = _get_json(f"{base_url}/api/review-queue?limit=20")
+        assert review_status == 200
+        assert int(review_payload["rows"]) == 0
+
+        # Al pinear, las mismas claims SI son del operador y entran a la cola.
+        def _claim_id(result):
+            return result["id"] if isinstance(result, dict) else result.id
+
+        service.pin(_claim_id(first_claim))
+        service.pin(_claim_id(second_claim))
         review_status, _, review_payload = _get_json(f"{base_url}/api/review-queue?limit=20")
         assert review_status == 200
         assert int(review_payload["rows"]) >= 1
         items = review_payload["items"]
         assert isinstance(items, list)
         assert any(item["status"] in {"conflicted", "stale"} for item in items)
+        assert all(item["pinned"] for item in items)
         assert {"claim_id", "priority", "reason", "citations_count"} <= set(items[0])
 
 

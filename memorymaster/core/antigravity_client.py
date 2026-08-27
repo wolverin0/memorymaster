@@ -38,6 +38,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+# Margen bajo los 32.767 de CreateProcess: el resto de la linea (ejecutable,
+# --model, --output-format, --print-timeout) tambien cuenta.
+_MAX_PROMPT_CHARS = 30_000
+
 CommandRunner = Callable[
     [list[str], str, int, Path, dict[str, str]], subprocess.CompletedProcess[str]
 ]
@@ -109,6 +113,26 @@ class AntigravityClient:
             raise AntigravityError(
                 f"el CLI '{self.command}' no esta en el PATH; "
                 "instalar Antigravity o fijar MEMORYMASTER_AGY_COMMAND"
+            )
+        # `agy` recibe el prompt como ARGUMENTO (-p), y Windows corta la linea de
+        # comandos en 32.767 caracteres. Pasado ese punto CreateProcess falla y
+        # Python levanta FileNotFoundError — que el except de abajo traducia a
+        # "no se pudo ejecutar 'agy'", mandando a buscar un CLI que si esta
+        # instalado. Medido el 2026-08-25: 32.014 caracteres pasan, 40.014 no.
+        #
+        # Costo real de ese mensaje: el perfil compilado quedo cinco dias sin
+        # avanzar con `AntigravityError` como unica pista, porque su lote por
+        # defecto era de 200.000 caracteres —seis veces el limite— y el error
+        # apuntaba al lugar equivocado.
+        #
+        # Se corta ANTES de invocar y se dice el numero, que es lo unico que
+        # permite elegir un lote nuevo sin volver a bisectar.
+        if len(prompt) > _MAX_PROMPT_CHARS:
+            raise AntigravityError(
+                f"el prompt tiene {len(prompt)} caracteres y el limite de linea de "
+                f"comandos de Windows deja pasar ~{_MAX_PROMPT_CHARS}; `agy` recibe el "
+                "prompt en -p, asi que hay que reducir el lote "
+                "(MEMORYMASTER_PROFILE_MAX_INPUT_CHARS para el perfil compilado)"
             )
         self.work_dir.mkdir(parents=True, exist_ok=True)
         command = [

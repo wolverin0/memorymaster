@@ -62,6 +62,16 @@ def test_review_queue_triages_unresolved_risk_and_sensitive_filtering(monkeypatc
     )
     service.run_cycle(policy_mode="legacy", min_citations=1, min_score=0.4)
 
+    # Desde 2026-08-26 la cola contiene SOLO revisables (stale/conflicted/
+    # con propuesta): antes el filtro invertido metia cualquier estado y la
+    # claim sensible entraba por ser candidate. Se la vuelve stale para que
+    # lo que este test verifica —el gate de sensibilidad— siga ejercitandose
+    # sobre una claim que pertenece a la cola por derecho propio.
+    from memorymaster.core.lifecycle import transition_claim
+
+    transition_claim(service.store, sensitive.id, "confirmed", reason="test: hacia revisable")
+    transition_claim(service.store, sensitive.id, "stale", reason="test: hacia revisable")
+
     claims = service.list_claims(limit=25, include_archived=True)
     status_by_id = {claim.id: claim.status for claim in claims}
     assert status_by_id[conflicting.id] == "conflicted"
@@ -100,6 +110,11 @@ def test_review_queue_triages_unresolved_risk_and_sensitive_filtering(monkeypatc
         "reason",
         "priority",
         "citations_count",
+        # 2026-08-26: el dashboard filtra la vista humana por propiedad del
+        # operador; el item lleva scope y pinned para que ese filtro no tenga
+        # que re-consultar la base.
+        "scope",
+        "pinned",
     }
 
     with_sensitive = build_review_queue(service, limit=50, include_sensitive=True)

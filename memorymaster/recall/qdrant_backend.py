@@ -44,6 +44,31 @@ EMBEDDING_DIMS = 4096
 OLLAMA_TIMEOUT = 120.0
 MAX_RETRIES = 2
 RETRY_BASE_DELAY = 0.5
+
+ENV_WRITES = "MEMORYMASTER_QDRANT_WRITES"
+
+
+def writes_enabled() -> bool:
+    """El indice esta CONGELADO por defecto: se lee, no se escribe.
+
+    Decidido por el operador el 2026-08-24 (ruling MM8) con la cobertura medida:
+    2,6% de las claims indexadas y CERO lectores. Un indice al 2,6% no responde
+    ninguna consulta de forma util, asi que cada escritura pagaba embedding y
+    trafico para alimentar algo que nadie consultaba.
+
+    El interruptor vive ACA, en el backend, y no en `service._qdrant_sync`, porque
+    hay CINCO caminos de escritura distintos —sync por claim, sync post-ciclo, el
+    job de reconciliacion, el drenaje del outbox y el archivado programado— y
+    taparlos de a uno es como se arregla el sitio 1 de 5 y el bug sigue vivo en
+    los otros cuatro. Estos dos metodos son el cuello por el que pasan todos.
+
+    Las LECTURAS quedan intactas a proposito: `search_candidates` sigue andando,
+    asi que lo ya indexado se puede seguir consultando. Congelar no es borrar.
+
+    Re-encender es `MEMORYMASTER_QDRANT_WRITES=1`, y re-indexar de cero es un
+    trabajo por lotes, no el goteo de este camino.
+    """
+    return os.environ.get(ENV_WRITES, "").strip().lower() in {"1", "true", "yes", "on"}
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 
@@ -231,11 +256,28 @@ class QdrantBackend:
     # ------------------------------------------------------------------
 
     def upsert_claim(self, claim: Claim, source: str = "memorymaster") -> bool:
-        """Embed and upsert a single claim.  Returns True on success."""
+        """Embed and upsert a single claim.  Returns True on success.
+
+        Con las escrituras apagadas devuelve True SIN escribir, y la distincion
+        importa: devolver False haria que `service._qdrant_sync` encolara cada
+        claim en el outbox, acumulando para siempre un backlog de reintentos de
+        un destino que decidimos no alimentar. True significa "no queda nada
+        pendiente", que es exactamente la verdad cuando el indice esta congelado.
+        """
         findings = scan_persisted_value(self._claim_representation(claim))
         if findings:
             logger.warning("Qdrant upsert rejected sensitive claim %d (%s)", claim.id, ",".join(findings))
             return False
+        # El guard de congelado va DESPUES del escaneo de sensibilidad, no antes.
+        # Al reves, una claim sensible devolveria True —"nada pendiente"— y se
+        # perderia el rechazo explicito que el filtro existe para dar. Que hoy no
+        # se escriba no es razon para que el sistema deje de decir que ESO no se
+        # escribe nunca: el dia que alguien encienda las escrituras, el contrato
+        # tiene que seguir siendo el mismo.
+        # El escaneo es local y barato; el costo que este guard evita es el
+        # embedding y la red, y los dos vienen despues.
+        if not writes_enabled():
+            return True
         vec = self._embed(self._claim_text(claim))
         if vec is None:
             return False
@@ -276,7 +318,13 @@ class QdrantBackend:
         return False
 
     def delete_claim(self, claim_id: int) -> bool:
-        """Delete a claim's point from Qdrant.  Returns True on success."""
+        """Delete a claim's point from Qdrant.  Returns True on success.
+
+        El borrado tambien es una escritura: con el indice congelado se omite,
+        por la misma razon que el upsert y para no dejar cola en el outbox.
+        """
+        if not writes_enabled():
+            return True
         point_id = self._point_id(claim_id)
         body = {"points": [point_id]}
         try:

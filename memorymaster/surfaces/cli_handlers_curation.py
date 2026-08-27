@@ -47,6 +47,7 @@ from memorymaster.surfaces.cli_handlers_basic import (
     _handle_recall_analysis,
     _handle_recompute_tiers,
     _handle_redact_claim,
+    _handle_curation_drain,
     _handle_resolve_action_proposal,
     _handle_resolve_conflicts,
     _handle_resolve_proposal,
@@ -144,7 +145,12 @@ def _handle_wiki_absorb(args: argparse.Namespace, service, parser: argparse.Argu
     from memorymaster.knowledge.wiki_engine import absorb
     from memorymaster.knowledge.vault_log import log_curate
     t0 = time.perf_counter()
-    result = absorb(effective_db, wiki_dir=args.output, scope_filter=args.scope or None)
+    result = absorb(
+        effective_db,
+        wiki_dir=args.output,
+        scope_filter=args.scope or None,
+        pinned_only=getattr(args, "pinned_only", False),
+    )
     elapsed_ms = (time.perf_counter() - t0) * 1000
     log_curate(result, args.output)
 
@@ -827,6 +833,7 @@ COMMAND_HANDLERS: dict[str, object] = {
     "resolve-proposal": _handle_resolve_proposal,
     "ready": _handle_ready,
     "resolve-conflicts": _handle_resolve_conflicts,
+    "curation-drain": _handle_curation_drain,
     "check-staleness": _handle_check_staleness,
     "link": _handle_link_commands,
     "unlink": _handle_link_commands,

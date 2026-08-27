@@ -204,7 +204,19 @@ def run_compiled_profile(
 ) -> dict[str, Any]:
     from memorymaster.profile.providers import ProfileMapper, ProfileReducer
 
-    directory = output_dir or Path.home() / ".memorymaster" / "projections"
+    # MEMORYMASTER_PROFILE_OUTPUT_DIR existe para que los tests puedan sacar esta
+    # escritura del HOME real, igual que MEMORYMASTER_SNAPSHOT_DIR y
+    # MEMORYMASTER_SPOOL_DIR. Sin ella no habia forma: `scheduled_task._run_dream`
+    # llama a esta funcion SIN output_dir, asi que cualquier test que ejercite ese
+    # camino con una base temporal vacia sobrescribia el perfil compilado del
+    # operador —el que se inyecta en cada sesion— dejandolo en cero hechos.
+    # Verificado el 2026-08-24: correr tests/test_scheduled_task_runtime.py
+    # cambiaba el mtime de ~/.memorymaster/projections/user.md.
+    configured = os.environ.get("MEMORYMASTER_PROFILE_OUTPUT_DIR", "").strip()
+    directory = (
+        output_dir
+        or (Path(configured) if configured else Path.home() / ".memorymaster" / "projections")
+    )
     engine = CompiledProfileEngine(
         ProfileRepository(db_path),
         ProfileMapper(),

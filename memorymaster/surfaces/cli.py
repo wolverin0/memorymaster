@@ -557,6 +557,12 @@ def build_parser() -> argparse.ArgumentParser:
     wiki_absorb.add_argument("--output", default="obsidian-vault", help="Wiki directory")
     wiki_absorb.add_argument("--scope", default="", help="Scope filter")
     wiki_absorb.add_argument("--no-bases", action="store_true", help="Skip regenerating Obsidian Bases")
+    wiki_absorb.add_argument(
+        "--pinned-only",
+        dest="pinned_only",
+        action="store_true",
+        help="Curated vault: project ONLY operator-pinned claims (the anti-2GB gate)",
+    )
 
     bases_generate = sub.add_parser("bases-generate", help="Regenerate Obsidian Bases (.base) files for the wiki")
     bases_generate.add_argument("--output", default="obsidian-vault", help="Vault root (writes to <root>/bases/)")
@@ -638,6 +644,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("feedback-stats", help="Show feedback tracking and quality score statistics")
 
     sub.add_parser("quality-scores", help="Recompute quality scores for all claims")
+
+    curation_drain = sub.add_parser(
+        "curation-drain",
+        help="Machine-resolve non-operator claims: conflicted losers + steward proposals (user scope and pinned stay human)",
+    )
+    curation_drain.add_argument("--limit", type=int, default=500, help="Max conflicted claims scanned")
+    curation_drain.add_argument("--apply", action="store_true", help="Apply verdicts (default: dry-run report)")
 
     resolve_cmd = sub.add_parser("auto-resolve", help="Use LLM to resolve conflicted claims")
     resolve_cmd.add_argument("--limit", type=int, default=20, help="Max conflict pairs to evaluate")
