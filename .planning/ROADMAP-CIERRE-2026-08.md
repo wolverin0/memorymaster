@@ -27,6 +27,17 @@
   *Falta SOLO: la corrida programada del sentinel de mañana 08:37 con Last Result 0
   — prueba que CORRE, no solo que existe, y cierra mm-b234 sin trabajo nuevo.*
 
+  **2026-08-28 — la primera corrida programada FALLÓ (y por eso el criterio era
+  el correcto).** Last Result `-2147024891` (0x80070005 ACCESS_DENIED): el schtask
+  se registró A MANO con el path sin comillas y espacios en "Py Apps", así que el
+  Scheduler ejecutaba `...\Desktop\Py`. El instalador del repo lo comilla bien —
+  el bug entró por saltearlo. Re-registrado con `install_freshness_sentinel.py` y
+  verificado con `schtasks /run`: **Last Result 0**. El mecanismo está probado;
+  la corrida PROGRAMADA en verde queda pendiente para mañana 08:37.
+  Moraleja registrada en mm-045e: la tarea figuraba "Ready" todo el día y nadie
+  se habría enterado — confirma que mm-b234 (vigilar el Last Result, no la
+  existencia) es necesario y no teórico.
+
   Camino real (para el próximo que lea): #233 necesitó 3 vueltas de CI. El rojo no
   era flake — `test_dashboard_data_endpoints` asertaba la semántica VIEJA de la cola
   (≥1 item con solo conflicted/stale), y la rama había cambiado el contrato a "cola
