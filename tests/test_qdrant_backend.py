@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 
 from memorymaster.core.models import Claim
+from memorymaster.recall import qdrant_backend
 from memorymaster.recall.qdrant_backend import QdrantBackend, EMBEDDING_DIMS
 
 import pytest
@@ -14,6 +15,25 @@ import pytest
 # ML/torch tests: loads real sentence-transformers/Qdrant paths; excluded from
 # the default run (see pytest.ini). Run in isolation with: pytest -m ml
 pytestmark = pytest.mark.ml
+
+
+@pytest.fixture(autouse=True)
+def _writes_enabled(monkeypatch):
+    """Este archivo prueba el TRANSPORTE (embedding, PUT, manejo de fallos).
+
+    Desde el ruling MM8 (2026-08-24) las escrituras a Qdrant estan congeladas
+    detras de MEMORYMASTER_QDRANT_WRITES, asi que sin la variable el backend
+    corta antes de embeber y estos casos median el interruptor en vez del
+    transporte. La POLITICA de congelamiento tiene su propio archivo
+    (test_qdrant_writes_are_frozen.py, sin marcador ml, corre en CI);
+    aca se enciende a proposito para seguir cubriendo el camino real.
+
+    Por que hizo falta: el freeze salio suponiendo que este archivo "NO se
+    ejecuta en ningun job" porque CI corre -m "not ml" — pero el workflow
+    tiene un job `ml` dedicado que lo corre igual, y main quedo en rojo
+    cuatro corridas seguidas.
+    """
+    monkeypatch.setenv(qdrant_backend.ENV_WRITES, "1")
 
 
 def _fake_claim(**overrides) -> Claim:
