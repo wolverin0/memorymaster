@@ -14,6 +14,17 @@ from memorymaster.profile.models import ProfileCandidate, ProfileDecision, Profi
 from memorymaster.profile.renderer import render_profile
 from memorymaster.profile.repository import ProfileRepository
 
+# El lote tiene que CABER en el prompt del proveedor. El default anterior era
+# 200.000 contra el tope duro de 30.000 del AntigravityClient (`agy` recibe el
+# prompt en -p y Windows corta la linea de comandos), asi que cada map call
+# moria con AntigravityError ANTES de invocar al proveedor: el run 3 quedo
+# OCHO DIAS en `mapping` y el perfil siguio sirviendo los hechos del run 2.
+# Ningun reintento podia arreglarlo porque el lote nunca se achicaba solo.
+# 20.000 esta verificado en vivo el 2026-08-28 (map_calls=1, ok) y deja
+# ~10.000 de aire para el andamiaje del prompt.
+# tests/test_profile_batch_fits_provider.py pina el acople contra el cliente.
+DEFAULT_MAX_INPUT_CHARS = 20_000
+
 
 class ProfileMapper(Protocol):
     model: str
@@ -34,7 +45,7 @@ class ProfileConfig:
     cadence_days: int = 7
     max_map_calls: int = 3
     max_messages: int = 500
-    max_input_chars: int = 200_000
+    max_input_chars: int = DEFAULT_MAX_INPUT_CHARS
     min_independent_sessions: int = 2
     preference_ttl_days: int = 90
     token_budget: int = 800
@@ -46,7 +57,9 @@ class ProfileConfig:
             cadence_days=_env_int("MEMORYMASTER_PROFILE_CADENCE_DAYS", 7),
             max_map_calls=_env_int("MEMORYMASTER_PROFILE_MAX_MAP_CALLS", 3),
             max_messages=_env_int("MEMORYMASTER_PROFILE_MAX_MESSAGES", 500),
-            max_input_chars=_env_int("MEMORYMASTER_PROFILE_MAX_INPUT_CHARS", 200_000),
+            max_input_chars=_env_int(
+                "MEMORYMASTER_PROFILE_MAX_INPUT_CHARS", DEFAULT_MAX_INPUT_CHARS
+            ),
             min_independent_sessions=_env_int("MEMORYMASTER_PROFILE_MIN_SESSIONS", 2),
             preference_ttl_days=_env_int("MEMORYMASTER_PROFILE_PREFERENCE_TTL_DAYS", 90),
             token_budget=_env_int("MEMORYMASTER_PROFILE_TOKEN_BUDGET", 800),
