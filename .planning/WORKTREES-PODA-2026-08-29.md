@@ -26,10 +26,29 @@ Esta vez se midió antes de tocar nada:
 - **Trabajo único (`rev-list origin/main..`)**: 10 ramas con commits propios.
 - De esas 10, **8 ya estaban en origin al día**. Las **2 que no**, se pushearon
   ANTES de podar:
-  - `chore/test-reliability` (1 commit — aísla los tests ML tras el marcador `ml`)
   - `worktree-agent-a74a6cfd48d80093d` (3 commits — neighbor walk sobre
     `claim_entity_links`, `recompute_tiers` en psycopg, revivir claims archivadas
-    en el dedup por content-hash)
+    en el dedup por content-hash). **Confirmado con `git cherry`: 3 no aplicados.**
+  - `chore/test-reliability` (1 commit — aísla los tests ML tras el marcador `ml`).
+    **CORRECCIÓN (mismo día):** `git cherry origin/main` da **0 no aplicados** —
+    su contenido ya estaba en main. Pushearla fue innecesario e inofensivo, pero
+    la afirmación original de que tenía trabajo en riesgo era falsa.
+
+## Por qué se preservó en vez de decidir
+
+Un pane par midió con `git cherry` (patch-id) y concluyó que sólo una rama tenía
+trabajo real. **Ese número no reprodujo**: al menos cuatro dan no-cero acá.
+
+Y el fondo es que **ninguno de los dos criterios zanja el squash-merge**:
+
+- *alcanzabilidad* (`rev-list origin/main..`) sobrecuenta porque el squash deja los
+  commits originales inalcanzables aunque su contenido esté en main;
+- *patch-id* (`git cherry`) también sobrecuenta, porque el squash combina N commits
+  en **uno solo** cuyo patch-id no coincide con ninguno de los originales.
+
+Por eso la remediación fue **preservar, no juzgar**: pushear la rama a origin cuesta
+cero y es correcta bajo cualquier criterio. Bajo incertidumbre, esa asimetría entre
+el costo de guardar y el costo de perder es toda la decisión.
 
 **Quitar un worktree no borra su rama.** Todo el trabajo sigue existiendo como rama,
 y ahora además está en GitHub.
