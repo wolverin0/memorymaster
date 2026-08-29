@@ -66,13 +66,27 @@ def _scope_dirname(scope: str) -> str:
     return _SAFE_RE.sub("-", name.lower()).strip("-") or "default"
 
 
-def _load_claims_by_topic(db_path: str, scope_filter: str | None = None) -> dict[str, list[dict]]:
+def _load_claims_by_topic(
+    db_path: str,
+    scope_filter: str | None = None,
+    *,
+    pinned_only: bool = False,
+) -> dict[str, list[dict]]:
     """Load claims grouped by subject."""
     conn = connect_ro(db_path)
     query = """SELECT id, text, claim_type, subject, predicate, object_value,
                scope, confidence, status, human_id, created_at, updated_at, event_time
                FROM claims WHERE status IN ('confirmed', 'candidate')"""
     params: list = []
+    if pinned_only:
+        # Proyeccion CURADA (2026-08-26). `pinned` es la unica senal del sistema
+        # que significa "alguien eligio esto": medido sobre la base viva, las
+        # senales automaticas no discriminan — decisiones confirmadas 5.174,
+        # tier=core 9.587, union 13.069 — o sea 65x el techo del patron llm-wiki
+        # ("cientos de paginas que entran en contexto"). El vault de 2 GB y
+        # 5.921 articulos que forzo el retiro de julio (claim 104145) fue el
+        # resultado de absorber sin este gate. Pinned confirmadas al medir: 6.
+        query += " AND pinned=1"
     if scope_filter:
         query += " AND scope LIKE ?"
         params.append(f"{scope_filter}%")
@@ -393,8 +407,12 @@ def absorb(
     wiki_dir: str | Path,
     *,
     scope_filter: str | None = None,
+    pinned_only: bool = False,
 ) -> dict[str, Any]:
     """Absorb claims into wiki articles using LLM.
+
+    With ``pinned_only=True`` only operator-pinned claims are projected — the
+    curated-vault mode (see the rationale in ``_load_claims_by_topic``).
 
     Honours per-cycle LLM budget caps from ``llm_budget`` — when a cap is
     hit mid-absorption, partial results are returned with ``aborted``
@@ -405,11 +423,15 @@ def absorb(
     from memorymaster.core import llm_budget
 
     if llm_budget.get_current() is not None:
-        return _absorb_impl(db_path, wiki_dir, scope_filter=scope_filter)
+        return _absorb_impl(
+            db_path, wiki_dir, scope_filter=scope_filter, pinned_only=pinned_only,
+        )
 
     with llm_budget.cycle_scope() as budget:
         try:
-            result = _absorb_impl(db_path, wiki_dir, scope_filter=scope_filter)
+            result = _absorb_impl(
+                db_path, wiki_dir, scope_filter=scope_filter, pinned_only=pinned_only,
+            )
         except llm_budget.LLMBudgetExceeded as exc:
             result = {
                 "subjects": 0,
@@ -433,12 +455,13 @@ def _absorb_impl(
     wiki_dir: str | Path,
     *,
     scope_filter: str | None = None,
+    pinned_only: bool = False,
 ) -> dict[str, Any]:
     """Original wiki absorption implementation, called inside a budget scope."""
     wiki = Path(wiki_dir)
     wiki.mkdir(parents=True, exist_ok=True)
 
-    by_subject = _load_claims_by_topic(db_path, scope_filter)
+    by_subject = _load_claims_by_topic(db_path, scope_filter, pinned_only=pinned_only)
     if not by_subject:
         return {"subjects": 0, "articles_written": 0, "articles_updated": 0}
 

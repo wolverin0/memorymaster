@@ -31,7 +31,7 @@ Path-scoped rules auto-load when editing matching files. Unscoped rules always l
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **memorymaster-hermes-scope-skills-20260807** (14278 symbols, 39083 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **memorymaster** (15243 symbols, 38915 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -47,7 +47,7 @@ This project is indexed by GitNexus as **memorymaster-hermes-scope-skills-202608
 
 1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
 2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/memorymaster-hermes-scope-skills-20260807/process/{processName}` — trace the full execution flow step by step
+3. `READ gitnexus://repo/memorymaster/process/{processName}` — trace the full execution flow step by step
 4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
 
 ## When Refactoring
@@ -86,10 +86,10 @@ This project is indexed by GitNexus as **memorymaster-hermes-scope-skills-202608
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/memorymaster-hermes-scope-skills-20260807/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/memorymaster-hermes-scope-skills-20260807/clusters` | All functional areas |
-| `gitnexus://repo/memorymaster-hermes-scope-skills-20260807/processes` | All execution flows |
-| `gitnexus://repo/memorymaster-hermes-scope-skills-20260807/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/memorymaster/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/memorymaster/clusters` | All functional areas |
+| `gitnexus://repo/memorymaster/processes` | All execution flows |
+| `gitnexus://repo/memorymaster/process/{name}` | Step-by-step execution trace |
 
 ## Self-Check Before Finishing
 

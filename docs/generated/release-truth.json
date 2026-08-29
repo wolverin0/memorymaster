@@ -9,6 +9,7 @@
     "compact-summaries",
     "context",
     "curate-vault",
+    "curation-drain",
     "daily-note",
     "decay",
     "dedup",
@@ -130,11 +131,11 @@
     "memorymaster-steward"
   ],
   "counts": {
-    "cli_commands": 118,
+    "cli_commands": 119,
     "console_entrypoints": 8,
     "mcp_tools": 51,
     "ops_cli_commands": 5,
-    "pytest_test_functions": 4008
+    "pytest_test_functions": 4109
   },
   "feature_profile_matrix": {
     "capture_hook": [
@@ -256,5 +257,5 @@
       "mcp"
     ]
   },
-  "version": "4.8.4"
+  "version": "4.8.5"
 }

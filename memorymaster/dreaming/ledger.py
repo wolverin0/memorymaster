@@ -336,6 +336,37 @@ class DreamLedger:
             ).fetchone()
         return int(row[0])
 
+    def provider_input_tokens_today(
+        self,
+        provider: str,
+        *,
+        model: str | None = None,
+        now: datetime | None = None,
+    ) -> int:
+        """Tokens de ENTRADA gastados hoy por ese proveedor.
+
+        Existe porque `provider_calls_today` NO acota gasto: cuenta llamadas, y el
+        costo por llamada varia por un factor grande segun el transporte. Medido
+        el 2026-08-24 sobre este mismo ledger: 527 llamadas a openai gastaron
+        9.762.549 tokens de entrada —unos 18,5k por llamada— mientras que 540 a
+        google gastaron 3.889.063, cerca de 7,2k. El mismo tope de llamadas
+        permite dos gastos que difieren en 2,5x.
+
+        Se miden los de ENTRADA porque son el volumen dominante: en el mismo
+        ledger, entrada 17,4M contra salida 344k.
+        """
+        day = (now or _utc_now()).astimezone(timezone.utc).date().isoformat()
+        model_filter = " AND model=?" if model else ""
+        params = (provider, day, model) if model else (provider, day)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(input_tokens), 0) FROM dream_provider_usage "
+                "WHERE provider=? AND substr(created_at,1,10)=?"
+                + model_filter,
+                params,
+            ).fetchone()
+        return int(row[0])
+
     def application_exists(self, application_key: str) -> bool:
         with self._connect() as conn:
             row = conn.execute("SELECT 1 FROM dream_applications WHERE application_key=?", (application_key,)).fetchone()

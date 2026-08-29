@@ -69,6 +69,21 @@ except Exception as e:
 # The claims DB + FTS5 + Qdrant + entity graph + recall IS the scalable "LLM
 # wiki"; the markdown vault is a redundant, non-scaling duplicate that grows
 # unbounded (real install hit 2 GB / 5,921 files, hung Obsidian) and its
+
+# Curation drain (2026-08-26, autorizado por el operador tras medir que solo 72
+# de 5.976 conflictos tocaban scope=user o pinned): la maquina resuelve
+# conflictos y propuestas NO-operador. Excluye pinned y scope=user SIEMPRE;
+# tres veredictos deterministas (pierde->superseded, gana->promovido,
+# huerfano->stale), todo con evento de auditoria y reversible. Relaja el
+# "nunca aplica" de MM6 con la palabra explicita del operador.
+try:
+    from memorymaster.govern.jobs import curation_drain
+
+    drain = curation_drain.run(svc, limit=1000, apply=True)
+    print(f"[MemoryMaster] curation drain: {drain}")
+except Exception as e:
+    print(f"[MemoryMaster] curation drain error: {e}", file=sys.stderr)
+
 # absorb runs the claude_cli stack in a loop — a heavy source of headless
 # session churn. Nothing in recall depends on it (the only reader, the Closets
 # stream, is default-OFF). Set MEMORYMASTER_WIKI_ABSORB=1 to enable it.

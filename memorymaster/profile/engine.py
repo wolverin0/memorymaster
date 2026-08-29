@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -13,6 +14,24 @@ from typing import Any, Callable, Protocol
 from memorymaster.profile.models import ProfileCandidate, ProfileDecision, ProfileFact, ProfileMessage
 from memorymaster.profile.renderer import render_profile
 from memorymaster.profile.repository import ProfileRepository
+
+# El lote tiene que CABER en el prompt del proveedor, y ese tope cambio.
+#
+# HISTORIA, porque explica los dos numeros: el default era 200.000 contra un
+# tope duro de 30.000 (`agy` recibia el prompt en -p y Windows corta la linea de
+# comandos), asi que cada map call moria ANTES de invocar al proveedor y el run 3
+# quedo OCHO DIAS en `mapping`. El 2026-08-28 se bajo a 20.000 para desatascarlo,
+# lo que funciono pero multiplico por doce la cantidad de llamadas: a ~17
+# mensajes por lote el run entero pasaba a necesitar ~775 llamadas, y cada
+# llamada a `agy` paga ~20.000 tokens fijos de andamiaje.
+#
+# Con el transporte por STDIN (stream-json) el tope subio a 400.000, asi que el
+# lote vuelve a 200.000: ~65 llamadas en vez de ~775.
+# tests/test_profile_batch_fits_provider.py pina el ACOPLE contra el cliente, no
+# el numero, y por eso sigue verde con los dos valores.
+DEFAULT_MAX_INPUT_CHARS = 200_000
+
+logger = logging.getLogger(__name__)
 
 
 class ProfileMapper(Protocol):
@@ -34,7 +53,7 @@ class ProfileConfig:
     cadence_days: int = 7
     max_map_calls: int = 3
     max_messages: int = 500
-    max_input_chars: int = 200_000
+    max_input_chars: int = DEFAULT_MAX_INPUT_CHARS
     min_independent_sessions: int = 2
     preference_ttl_days: int = 90
     token_budget: int = 800
@@ -46,7 +65,9 @@ class ProfileConfig:
             cadence_days=_env_int("MEMORYMASTER_PROFILE_CADENCE_DAYS", 7),
             max_map_calls=_env_int("MEMORYMASTER_PROFILE_MAX_MAP_CALLS", 3),
             max_messages=_env_int("MEMORYMASTER_PROFILE_MAX_MESSAGES", 500),
-            max_input_chars=_env_int("MEMORYMASTER_PROFILE_MAX_INPUT_CHARS", 200_000),
+            max_input_chars=_env_int(
+                "MEMORYMASTER_PROFILE_MAX_INPUT_CHARS", DEFAULT_MAX_INPUT_CHARS
+            ),
             min_independent_sessions=_env_int("MEMORYMASTER_PROFILE_MIN_SESSIONS", 2),
             preference_ttl_days=_env_int("MEMORYMASTER_PROFILE_PREFERENCE_TTL_DAYS", 90),
             token_budget=_env_int("MEMORYMASTER_PROFILE_TOKEN_BUDGET", 800),
@@ -96,8 +117,24 @@ class CompiledProfileEngine:
                 return result
             return self._reduce_and_complete(int(run["id"]), current)
         except Exception as exc:
+            # El NOMBRE de la clase no alcanza como diagnostico. Medido el
+            # 2026-08-29: el run 3 devolvia 'ProfileValidationError' y nada mas,
+            # y esa clase tiene siete causas distintas (categoria desconocida,
+            # predicado no coincidente, valor con forma de instruccion, material
+            # sensible...). Sin el mensaje hay que bisecar a mano cual de las
+            # siete fue, que es el mismo costo que ya pago AntigravityError.
+            detail = str(exc).strip()
+            logger.warning(
+                "compiled profile run %s fallo en %s: %s: %s",
+                run["id"], run["status"], type(exc).__name__, detail[:500],
+            )
             self.repo.record_error(int(run["id"]), type(exc).__name__, now=current)
-            return {"ok": False, "status": str(run["status"]), "error": type(exc).__name__}
+            return {
+                "ok": False,
+                "status": str(run["status"]),
+                "error": type(exc).__name__,
+                "detail": detail[:500],
+            }
 
     def _start_run(self, now: datetime) -> dict[str, Any] | None:
         target = self.repo.max_user_id()
@@ -204,7 +241,19 @@ def run_compiled_profile(
 ) -> dict[str, Any]:
     from memorymaster.profile.providers import ProfileMapper, ProfileReducer
 
-    directory = output_dir or Path.home() / ".memorymaster" / "projections"
+    # MEMORYMASTER_PROFILE_OUTPUT_DIR existe para que los tests puedan sacar esta
+    # escritura del HOME real, igual que MEMORYMASTER_SNAPSHOT_DIR y
+    # MEMORYMASTER_SPOOL_DIR. Sin ella no habia forma: `scheduled_task._run_dream`
+    # llama a esta funcion SIN output_dir, asi que cualquier test que ejercite ese
+    # camino con una base temporal vacia sobrescribia el perfil compilado del
+    # operador —el que se inyecta en cada sesion— dejandolo en cero hechos.
+    # Verificado el 2026-08-24: correr tests/test_scheduled_task_runtime.py
+    # cambiaba el mtime de ~/.memorymaster/projections/user.md.
+    configured = os.environ.get("MEMORYMASTER_PROFILE_OUTPUT_DIR", "").strip()
+    directory = (
+        output_dir
+        or (Path(configured) if configured else Path.home() / ".memorymaster" / "projections")
+    )
     engine = CompiledProfileEngine(
         ProfileRepository(db_path),
         ProfileMapper(),

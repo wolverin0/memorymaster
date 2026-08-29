@@ -153,6 +153,22 @@ def _compileall_cmd() -> list[str]:
     return [sys.executable, "-c", code]
 
 
+def _resolve_tmp_root(raw: str) -> Path:
+    """Ancla el tmp-root a un absoluto SIEMPRE (T-0228).
+
+    Con un valor relativo, db/inbox/log viajan como rutas relativas a ~10
+    subprocesos, y cualquier subcheck que resuelva su cwd distinto (run-operator
+    recibe ademas --workspace .) mide contra OTRO archivo: en G:\\ eso produjo
+    falsos NO_GO variables (1 critico una corrida, 5 la siguiente) que se
+    esfumaron midiendo con --tmp-root absoluto. Anclar aca arregla todos los
+    `str(db_path)` de una sola vez.
+    """
+    path = Path(raw)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path.resolve()
+
+
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = "\n".join(json.dumps(r, ensure_ascii=True) for r in rows) + "\n"
@@ -174,7 +190,7 @@ def main() -> int:
     args = parser.parse_args()
 
     out_path = Path(args.out_json)
-    tmp_root = Path(args.tmp_root)
+    tmp_root = _resolve_tmp_root(args.tmp_root)
     tmp_root.mkdir(parents=True, exist_ok=True)
     db_path = tmp_root / "release_smoke.db"
     inbox_path = tmp_root / "operator_inbox.jsonl"
@@ -401,6 +417,7 @@ def main() -> int:
         "schema_version": "release_readiness_v1",
         "generated_at": _utc_now(),
         "workspace": str(Path.cwd()),
+        "tmp_root": str(tmp_root),
         "go_no_go": go_no_go,
         "summary": {
             "checks_total": len(checks),
@@ -416,7 +433,17 @@ def main() -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(report, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
 
-    print(json.dumps({"go_no_go": go_no_go, "out_json": str(out_path), "summary": report["summary"]}, ensure_ascii=True))
+    print(
+        json.dumps(
+            {
+                "go_no_go": go_no_go,
+                "tmp_root": str(tmp_root),
+                "out_json": str(out_path),
+                "summary": report["summary"],
+            },
+            ensure_ascii=True,
+        )
+    )
     return 0 if go_no_go == "GO" else 2
 
 

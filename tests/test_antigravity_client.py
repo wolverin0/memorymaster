@@ -29,14 +29,25 @@ from memorymaster.core.antigravity_client import (
 
 
 def _envelope(*, status="SUCCESS", response="hola", inp=20011, out=42, think=7):
-    return json.dumps({
+    """Forma REAL de stream-json: eventos por linea, el ultimo es `result`.
+
+    Se emite tambien un `init` y un `step_update` antes porque el CLI real los
+    intercala: un helper que devuelva solo el resultado probaria un parser mas
+    facil que el que hace falta en produccion.
+    """
+    result = {
         "conversation_id": "abc-123",
         "status": status,
         "response": response,
         "duration_seconds": 1.5,
         "num_turns": 1,
         "usage": {"input_tokens": inp, "output_tokens": out, "thinking_tokens": think},
-    })
+    }
+    return "\n".join([
+        json.dumps({"event": "init", "conversation_id": "abc-123"}),
+        json.dumps({"event": "step_update", "step_update": {"state": "DONE"}}),
+        json.dumps({"event": "result", "result": result}),
+    ])
 
 
 def _runner(stdout="", returncode=0, stderr="", raises=None):
@@ -116,19 +127,23 @@ def test_a_successful_call_reports_usage(tmp_path: Path):
     assert r.model == "gemini-3.7-flash-low"
 
 
-def test_the_model_and_json_format_reach_the_command_line(tmp_path: Path):
+def test_the_model_and_stream_format_reach_the_command_line(tmp_path: Path):
+    """Desde la migracion a stdin (2026-08-29) el formato es stream-json en AMBOS
+    sentidos: sin `--input-format stream-json` el CLI no lee el prompt de stdin,
+    y sin `--output-format stream-json` no hay evento `result` que parsear."""
     visto = {}
 
     def run(command, prompt, timeout, cwd, env):
         visto["cmd"] = command
+        visto["stdin"] = prompt
         return subprocess.CompletedProcess(command, 0, _envelope(), "")
 
-    _client(runner=run, model="gemini-3.6-flash-low", work_dir=tmp_path).complete("x")
+    _client(runner=run, model="gemini-3.6-flash-low", work_dir=tmp_path).complete("hola")
     cmd = visto["cmd"]
     assert "--model" in cmd and cmd[cmd.index("--model") + 1] == "gemini-3.6-flash-low"
-    assert cmd[cmd.index("--output-format") + 1] == "json", (
-        "sin --output-format json no hay envelope que parsear y el status se pierde"
-    )
+    assert cmd[cmd.index("--output-format") + 1] == "stream-json"
+    assert cmd[cmd.index("--input-format") + 1] == "stream-json"
+    assert "hola" in visto["stdin"], "el prompt tiene que viajar por stdin"
 
 
 def test_the_measured_overhead_is_recorded(tmp_path: Path):

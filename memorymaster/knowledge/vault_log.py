@@ -19,16 +19,32 @@ logger = logging.getLogger(__name__)
 _DEFAULT_VAULT = None
 
 
-def _get_log_path(vault_dir: str | Path | None = None) -> Path:
-    """Get path to log.md in the vault directory."""
+def _get_log_path(vault_dir: str | Path | None = None) -> Path | None:
+    """Ruta de log.md, o None si no hay vault CONOCIDO.
+
+    NUNCA se inventa un destino relativo al cwd. Antes existia ese respaldo
+    —`Path("obsidian-vault")/"log.md"`— y su efecto medido el 2026-08-26 fue
+    que 40 carpetas de proyecto bajo Py Apps terminaron con un obsidian-vault/
+    que nadie pidio, 1,4 MB en total, y 8 de ellas con el archivo COMMITEADO a
+    su repo. Bastaba correr `lint-vault` parado en el proyecto: es un comando
+    de diagnostico, no una operacion de wiki, y aun asi materializaba un vault.
+
+    El respaldo era ademas incoherente con la politica ya declarada del lado
+    MCP —"MCP ingest must never create a cwd-relative vault unless the operator
+    explicitly enables it"—, que se resolvio guardando ESE llamador. Guardar un
+    llamador no alcanza cuando el destino equivocado lo elige la funcion
+    compartida: las ocho funciones log_* pasan por aca.
+
+    Devolver None y no escribir es correcto porque la proyeccion Obsidian es
+    OPT-IN: sin destino explicito ni MEMORYMASTER_VAULT_DIR, no hay vault que
+    registrar, y no escribir nada es la unica respuesta que no inventa uno.
+    """
     if vault_dir:
         return Path(vault_dir) / "log.md"
-    # Fallback: try to find the vault from env or default
     import os
-    default = os.environ.get("MEMORYMASTER_VAULT_DIR", "")
-    if default:
-        return Path(default) / "log.md"
-    return Path("obsidian-vault") / "log.md"
+
+    configured = os.environ.get("MEMORYMASTER_VAULT_DIR", "").strip()
+    return Path(configured) / "log.md" if configured else None
 
 
 def _ensure_log(path: Path) -> None:
@@ -57,6 +73,9 @@ def append_log(
     """
     try:
         path = _get_log_path(vault_dir)
+        if path is None:
+            logger.debug("Vault log skipped: no vault configured for %s", operation)
+            return
         _ensure_log(path)
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         entry = f"## [{now}] {operation} | {details}\n\n"

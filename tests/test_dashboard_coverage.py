@@ -304,7 +304,10 @@ def test_review_queue_route_adds_triage_flags(monkeypatch: Any, tmp_path: Path) 
 
     def fake_queue_to_dicts(items: list[object]) -> list[dict[str, Any]]:
         assert len(items) == 1
-        return [{"claim_id": 2, "status": "stale", "reason": "needs review", "priority": 0.9}]
+        # scope=user: desde 2026-08-26 la vista del dashboard filtra a lo del
+        # operador o lo flaggeado (_operator_facing); este test verifica el
+        # plumbing de triage, asi que el item debe pertenecer a la vista.
+        return [{"claim_id": 2, "status": "stale", "reason": "needs review", "priority": 0.9, "scope": "user", "pinned": True}]
 
     monkeypatch.setattr(
         "memorymaster.surfaces.dashboard_read_models.build_review_queue",

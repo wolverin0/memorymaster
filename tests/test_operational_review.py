@@ -74,7 +74,12 @@ def test_clean_review_checks_pass(tmp_path: Path, monkeypatch) -> None:
     assert {item.verdict for item in results} == {review.Verdict.PASS}
 
 
-def test_private_context_and_blocked_job_fail(tmp_path: Path) -> None:
+def test_private_context_and_blocked_job_fail(tmp_path: Path, monkeypatch) -> None:
+    # HERMETICO A PROPOSITO: estos casos ejercitan el subsistema PRENDIDO.
+    # Sin fijar la variable heredaban el entorno del que corria los tests, y
+    # el 2026-08-29 eso me engano: pasaban local (mi shell tenia =1) y
+    # fallaban en CI (sin variable => deshabilitado => el check sale temprano).
+    monkeypatch.setenv("MEMORYMASTER_GRAPH_OBSERVATIONS", "1")
     db = _db(tmp_path / "memory.db")
     connection = sqlite3.connect(db)
     connection.execute(
@@ -99,7 +104,12 @@ def test_private_context_and_blocked_job_fail(tmp_path: Path) -> None:
     assert review.exit_code([graph, intake]) == 1
 
 
-def test_unknown_graph_support_sensitivity_fails(tmp_path: Path) -> None:
+def test_unknown_graph_support_sensitivity_fails(tmp_path: Path, monkeypatch) -> None:
+    # HERMETICO A PROPOSITO: estos casos ejercitan el subsistema PRENDIDO.
+    # Sin fijar la variable heredaban el entorno del que corria los tests, y
+    # el 2026-08-29 eso me engano: pasaban local (mi shell tenia =1) y
+    # fallaban en CI (sin variable => deshabilitado => el check sale temprano).
+    monkeypatch.setenv("MEMORYMASTER_GRAPH_OBSERVATIONS", "1")
     db = _db(tmp_path / "memory.db")
     connection = sqlite3.connect(db)
     connection.execute("INSERT INTO entity_edge_supports VALUES (1)")
@@ -116,7 +126,12 @@ def test_unknown_graph_support_sensitivity_fails(tmp_path: Path) -> None:
     assert graph.counts["unknown_sensitivity_rows"] == 1
 
 
-def test_ineligible_confirmed_observation_fails_review(tmp_path: Path) -> None:
+def test_ineligible_confirmed_observation_fails_review(tmp_path: Path, monkeypatch) -> None:
+    # HERMETICO A PROPOSITO: estos casos ejercitan el subsistema PRENDIDO.
+    # Sin fijar la variable heredaban el entorno del que corria los tests, y
+    # el 2026-08-29 eso me engano: pasaban local (mi shell tenia =1) y
+    # fallaban en CI (sin variable => deshabilitado => el check sale temprano).
+    monkeypatch.setenv("MEMORYMASTER_GRAPH_OBSERVATIONS", "1")
     db = _db(tmp_path / "memory.db")
     connection = sqlite3.connect(db)
     connection.execute("INSERT INTO graph_observations VALUES (20)")
@@ -176,8 +191,13 @@ def test_powershell_scheduler_contract_is_bounded() -> None:
     assert "work-receipt" not in runner.lower()
 
 
-def test_review_reports_why_completed_discovery_found_nothing(tmp_path: Path) -> None:
+def test_review_reports_why_completed_discovery_found_nothing(tmp_path: Path, monkeypatch) -> None:
     """3,146 completed discovery jobs read as success; only the split says otherwise."""
+    # HERMETICO A PROPOSITO: estos casos ejercitan el subsistema PRENDIDO.
+    # Sin fijar la variable heredaban el entorno del que corria los tests, y
+    # el 2026-08-29 eso me engano: pasaban local (mi shell tenia =1) y
+    # fallaban en CI (sin variable => deshabilitado => el check sale temprano).
+    monkeypatch.setenv("MEMORYMASTER_GRAPH_OBSERVATIONS", "1")
     db = _db(tmp_path / "memory.db")
     connection = sqlite3.connect(db)
     connection.executemany(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import uuid
 from dataclasses import dataclass
@@ -26,6 +27,8 @@ from memorymaster.dreaming.providers import (
     ProviderCallError,
     create_dream_extractor,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 class Extractor(Protocol):
@@ -65,6 +68,14 @@ class DreamConfig:
     max_candidate_writes_daily: int = 200
     max_extract_calls_daily: int = 40
     max_consolidate_calls_daily: int = 12
+    # TOPE DE GASTO, ordenado por el operador el 2026-08-24 (ruling MM3).
+    # Los dos topes de arriba cuentan LLAMADAS, y por eso nunca acotaron el gasto:
+    # medido sobre el ledger de produccion, 527 llamadas a openai costaron 9,76M
+    # tokens de entrada y 540 a google costaron 3,89M. El mismo tope de llamadas
+    # deja pasar gastos que difieren 2,5x, asi que el tope real tiene que estar en
+    # tokens. 2M/dia por proveedor es holgado contra el consumo diario observado y
+    # aun asi corta una fuga como la de openai antes de que llegue a los 9,76M.
+    max_input_tokens_daily: int = 2_000_000
     max_consolidate_candidates: int = 5
     max_semantic_attempts: int = 2
     lease_ttl_seconds: int = 900
@@ -82,6 +93,9 @@ class DreamConfig:
             max_candidate_writes_daily=_env_int("MEMORYMASTER_DREAM_MAX_CANDIDATE_WRITES_DAILY", 200),
             max_extract_calls_daily=_env_int("MEMORYMASTER_DREAM_MAX_EXTRACT_CALLS_DAILY", 40),
             max_consolidate_calls_daily=_env_int("MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CALLS_DAILY", 12),
+            max_input_tokens_daily=_env_int(
+                "MEMORYMASTER_DREAM_MAX_INPUT_TOKENS_DAILY", 2_000_000,
+            ),
             max_consolidate_candidates=_env_int(
                 "MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CANDIDATES", 5,
             ),
@@ -228,7 +242,9 @@ class DreamWorker:
                 self.extractor.provider,
                 model=self.extractor.model,
                 now=self.now(),
-            ) >= self.config.max_extract_calls_daily:
+            ) >= self.config.max_extract_calls_daily or self._over_token_budget(
+                self.extractor.provider, self.extractor.model,
+            ):
                 summary["deferred_extract_budget"] += 1
                 continue
             try:
@@ -294,7 +310,9 @@ class DreamWorker:
                 self.consolidator.provider,
                 model=self.consolidator.model,
                 now=self.now(),
-            ) >= self.config.max_consolidate_calls_daily:
+            ) >= self.config.max_consolidate_calls_daily or self._over_token_budget(
+                self.consolidator.provider, self.consolidator.model,
+            ):
                 for capture_id in capture_ids:
                     self.ledger.defer_consolidation(capture_id, run_id)
                 deferred_captures.update(capture_ids)
@@ -451,6 +469,30 @@ class DreamWorker:
             if payload.get("source") == "dream-worker" and payload.get("candidate_id") == candidate_id and payload.get("decision") == decision:
                 return True
         return False
+
+    def _over_token_budget(self, provider: str, model: str) -> bool:
+        """Tope de gasto por proveedor y dia, en tokens de entrada.
+
+        Se consulta por PROVEEDOR ademas de por modelo: una fuga suele venir de un
+        modelo nuevo del mismo proveedor, y un tope por modelo la dejaria pasar
+        entera con el contador en cero.
+
+        Un tope de 0 o negativo lo desactiva, para que quede una salida explicita
+        y no haya que borrar el cableado si algun dia estorba.
+        """
+        limite = self.config.max_input_tokens_daily
+        if limite <= 0:
+            return False
+        gastado = self.ledger.provider_input_tokens_today(provider, now=self.now())
+        if gastado < limite:
+            return False
+        LOGGER.warning(
+            "Dreaming difiere trabajo: %s ya gasto %d tokens de entrada hoy "
+            "(tope %d, modelo %s). Subir MEMORYMASTER_DREAM_MAX_INPUT_TOKENS_DAILY "
+            "para ampliarlo.",
+            provider, gastado, limite, model,
+        )
+        return True
 
     def _record_usage(self, run_id: str, usage: ProviderUsage, outcome: str) -> None:
         self.ledger.record_provider_call(run_id, provider=usage.provider, model=usage.model,

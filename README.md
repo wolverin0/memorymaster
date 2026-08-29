@@ -1,4 +1,4 @@
-<!-- doc-head: MemoryMaster 4.7 governed memory, observations, profiles, and operations -->
+<!-- doc-head: MemoryMaster 4.8 governed memory, observations, profiles, and operations -->
 <!-- Covers: installation, governed capture and recall, graph observations, compiled profile, scheduling, and safety. -->
 <!-- Key terms: claims, citations, steward, graph observations, compiled profile, Gemini, Antigravity CLI, SQLite, MCP. -->
 <!-- Read when: evaluating, installing, operating, or upgrading MemoryMaster. -->
@@ -32,19 +32,18 @@ evidence -> candidate claim -> steward -> confirmed claim -> governed recall
 
 | Capability | What it does | Default |
 |---|---|---|
-| Governed graph observations | Derives supported dependencies, constraints, recurring patterns and root causes from confirmed evidence | Generation enabled explicitly; recall opt-in |
-| Compiled user profile | Builds a disposable, cited projection from multiple independent sessions | Explicitly enabled; never an instruction source |
+| Governed graph observations | Derives supported dependencies, constraints, recurring patterns and root causes from confirmed evidence | **Off by default** (`MEMORYMASTER_GRAPH_OBSERVATIONS=1`); recall opt-in |
+| Compiled user profile | Builds a disposable, cited projection from multiple independent sessions | **Off by default** (`MEMORYMASTER_COMPILED_PROFILE=1`); never an instruction source |
 | Fast conversational recall | Finds relevant claims on the local lexical path without an embedding, Qdrant or provider call | On |
 | Private-context intake guard | Redacts RFC1918 topology and absolute Windows/UNC paths from durable claim fields while preserving useful prose | On |
 | Governed skills | Stores reviewed reusable procedures separately from ordinary facts | Recall opt-in |
 | Hermes integration | Provides exact session/project scoping, local HTTP/stdio compatibility and replay-safe outbox behavior | Optional integration |
 | Operational review | Performs a read-only six-hour integrity, queue, profile, intake and retrieval review | Optional Windows task |
 
-MemoryMaster uses the configured **Gemini extraction + Gemini consolidation**
-path for this installation. Consolidation moved off GLM on 2026-08-21 when the
-paid plan ended, and now runs on Gemini through the Antigravity CLI with cached
-OAuth. GLM stays reachable as one environment variable, not a revert. OpenAI and
-Anthropic remain optional provider adapters; neither is required for
+MemoryMaster 4.8 uses the configured **Gemini extraction + Gemini consolidation**
+path for this installation; consolidation moved off GLM on 2026-08-20 when that
+plan was retired, and now runs through the Antigravity (`agy`) CLI over OAuth.
+OpenAI and Anthropic remain optional provider adapters; neither is required for
 graph-observation discovery or ordinary recall.
 
 ## Why MemoryMaster exists
@@ -114,6 +113,9 @@ See [Public v1](docs/public-v1.md) for receipts and full parameter contracts.
 
 ## Graph observations (PPR-7)
 
+> **Off by default.** Enable with `MEMORYMASTER_GRAPH_OBSERVATIONS=1`.
+> The claims database works fully without it; this is an optional layer on top.
+
 Graph observations answer questions that individual facts cannot, such as:
 
 - Which three blockers form one dependency chain?
@@ -145,6 +147,9 @@ only. Exploratory mode can label candidates or stale observations. Ordinary
 recall remains unchanged while `include_observations` is off.
 
 ## Evidence-bound compiled profile
+
+> **Off by default.** Enable with `MEMORYMASTER_COMPILED_PROFILE=1`.
+> Recall does not depend on it; when disabled, nothing is injected at session start.
 
 The compiled profile turns repeated, independently supported transcript facts
 into a bounded session-start briefing. It is a disposable projection:
@@ -261,8 +266,8 @@ not for ordinary local recall.
 | Provider | Configuration | Typical use |
 |---|---|---|
 | Gemini | `MEMORYMASTER_LLM_PROVIDER=google` plus configured Google credentials | Activated extraction path |
-| Gemini through the Antigravity CLI | cached OAuth, no API key | Activated Dreaming/profile consolidation path |
-| GLM through authenticated OpenCode | `MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER=glm` | Retired 2026-08-21; kept reachable by configuration |
+| Gemini through the Antigravity `agy` CLI | OAuth session cached by a prior interactive `agy` run | Activated Dreaming/profile consolidation path |
+| GLM through authenticated OpenCode | `MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER=glm` | Retired 2026-08-20; deselected, not deleted |
 | Claude CLI OAuth | `MEMORYMASTER_LLM_PROVIDER=claude_cli` | Optional batch/steward path |
 | Ollama | `MEMORYMASTER_LLM_PROVIDER=ollama` | Optional local provider |
 | OpenAI / Anthropic APIs | corresponding provider and environment credential | Supported optional adapters |
