@@ -38,9 +38,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-# Margen bajo los 32.767 de CreateProcess: el resto de la linea (ejecutable,
-# --model, --output-format, --print-timeout) tambien cuenta.
-_MAX_PROMPT_CHARS = 30_000
+# Ya NO es el limite de CreateProcess. Desde la migracion a stream-json
+# (2026-08-29) el prompt viaja por STDIN, asi que los 32.767 caracteres de la
+# linea de comandos dejaron de aplicar: medido en vivo, 61.181 caracteres pasan
+# y devuelven SUCCESS por este camino, y morian con el anterior.
+#
+# Queda un tope, mas alto, como cordura: un prompt de este tamano ya no es un
+# lote grande sino un error de armado, y fallar aca con un numero es mejor que
+# mandarlo y esperar el rechazo del modelo.
+_MAX_PROMPT_CHARS = 400_000
 
 CommandRunner = Callable[
     [list[str], str, int, Path, dict[str, str]], subprocess.CompletedProcess[str]
@@ -129,21 +135,22 @@ class AntigravityClient:
         # permite elegir un lote nuevo sin volver a bisectar.
         if len(prompt) > _MAX_PROMPT_CHARS:
             raise AntigravityError(
-                f"el prompt tiene {len(prompt)} caracteres y el limite de linea de "
-                f"comandos de Windows deja pasar ~{_MAX_PROMPT_CHARS}; `agy` recibe el "
-                "prompt en -p, asi que hay que reducir el lote "
+                f"el prompt tiene {len(prompt)} caracteres y el tope de cordura del "
+                f"cliente es {_MAX_PROMPT_CHARS}; a este tamano ya no es un lote "
+                "grande sino un error de armado, asi que hay que reducir el lote "
                 "(MEMORYMASTER_PROFILE_MAX_INPUT_CHARS para el perfil compilado)"
             )
         self.work_dir.mkdir(parents=True, exist_ok=True)
         command = [
             self.command,
-            "-p", prompt,
+            "--input-format", "stream-json",
+            "--output-format", "stream-json",
             "--model", self.model,
-            "--output-format", "json",
             "--print-timeout", f"{self.timeout}s",
         ]
+        payload = json.dumps({"event": "user", "message": {"content": prompt}}) + "\n"
         try:
-            completed = self.runner(command, "", self.timeout, self.work_dir, dict(os.environ))
+            completed = self.runner(command, payload, self.timeout, self.work_dir, dict(os.environ))
         except subprocess.TimeoutExpired as exc:
             raise AntigravityError(
                 f"`agy` no respondio en {self.timeout}s con el modelo {self.model}"
@@ -151,29 +158,49 @@ class AntigravityClient:
         except FileNotFoundError as exc:
             raise AntigravityError(f"no se pudo ejecutar '{self.command}'") from exc
 
-        if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout or "").strip()[:400]
-            # Un modelo desconocido sale 1 a proposito. Se reporta tal cual: caer a
-            # un default enmascararia un nombre mal escrito como "anduvo peor".
-            raise AntigravityError(
-                f"`agy` salio con codigo {completed.returncode} (modelo {self.model}): {detail}"
-            )
-        return self._parse(completed.stdout)
+        # El evento `result` se busca SIEMPRE, aun con returncode != 0: en
+        # stream-json `agy` sale 1 y describe el motivo adentro (p.ej. cuota
+        # agotada con el tiempo de reset). Mirar solo el returncode cambiaria un
+        # diagnostico exacto por "salio con codigo 1".
+        return self._parse(completed.stdout, completed.returncode, completed.stderr)
 
-    def _parse(self, stdout: str) -> AntigravityResponse:
+    def _parse(self, stdout: str, returncode: int = 0, stderr: str = "") -> AntigravityResponse:
         raw = (stdout or "").strip()
         if not raw:
+            detail = (stderr or "").strip()[:400]
+            if returncode != 0:
+                raise AntigravityError(
+                    f"`agy` salio con codigo {returncode} (modelo {self.model}) sin salida: {detail}"
+                )
             raise AntigravityError("`agy` no devolvio salida")
-        try:
-            payload: dict[str, Any] = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise AntigravityError(f"`agy` devolvio JSON invalido: {raw[:200]}") from exc
+
+        payload: dict[str, Any] | None = None
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # stream-json intercala lineas de progreso
+            if isinstance(event, dict) and event.get("event") == "result":
+                payload = event.get("result") or {}
+            elif isinstance(event, dict) and "status" in event and "event" not in event:
+                payload = event  # formato json plano (compatibilidad)
+
+        if payload is None:
+            detail = (stderr or raw)[:200]
+            raise AntigravityError(
+                f"`agy` no emitio evento result (codigo {returncode}): {detail}"
+            )
 
         status = str(payload.get("status") or "").upper()
         if status != "SUCCESS":
             # El codigo de salida puede ser 0 con un status no exitoso adentro. Mirar
             # solo returncode dejaria pasar una respuesta fallida como buena.
-            raise AntigravityError(f"`agy` reporto status={status or 'desconocido'}")
+            error = str(payload.get("error") or "").strip()
+            suffix = f": {error[:300]}" if error else ""
+            raise AntigravityError(f"`agy` reporto status={status or 'desconocido'}{suffix}")
 
         usage = payload.get("usage") or {}
         return AntigravityResponse(

@@ -73,7 +73,7 @@ def test_the_error_names_the_actual_problem(monkeypatch):
         cliente.complete("x" * (_MAX_PROMPT_CHARS + 1))
 
     mensaje = str(exc.value)
-    assert "linea de comandos" in mensaje, f"el mensaje no explica la causa: {mensaje}"
+    assert "reducir el lote" in mensaje, f"el mensaje no explica la causa: {mensaje}"
     assert "no se pudo ejecutar" not in mensaje, (
         "volvio el mensaje que manda a buscar un CLI que si esta instalado"
     )
@@ -108,13 +108,52 @@ def test_a_prompt_under_the_limit_still_runs(monkeypatch):
     assert len(invocaciones) == 1, "el prompt valido no llego al CLI"
 
 
-def test_the_limit_leaves_room_for_the_rest_of_the_command_line():
-    """El resto de la linea (ejecutable, --model, --output-format) tambien cuenta.
+def test_the_prompt_never_travels_on_the_command_line(monkeypatch):
+    """EL guard que reemplaza al corte de 32.767 (migracion a stdin, 2026-08-29).
 
-    32.767 es el limite duro de Windows; el corte tiene que quedar por debajo,
-    no encima, o el margen no sirve para nada.
+    El limite viejo existia porque el prompt viajaba en `-p`. Ahora va por STDIN
+    en stream-json, asi que el tope de Windows dejo de aplicar — pero eso solo es
+    cierto MIENTRAS el prompt no vuelva a la linea de comandos. Este test vigila
+    exactamente eso: si alguien reintroduce `-p`, el corte de 32.767 vuelve a
+    morder en silencio con lotes grandes y volvemos a los ocho dias de `mapping`.
     """
-    assert _MAX_PROMPT_CHARS < 32_767
-    assert _MAX_PROMPT_CHARS >= 16_000, (
-        "un limite demasiado bajo fragmentaria los lotes sin necesidad"
-    )
+    invocaciones: list = []
+    entradas: list = []
+
+    monkeypatch.setattr(AntigravityClient, "available", lambda self: True)
+
+    def _runner(command, entrada, timeout, cwd, env):  # noqa: ANN001, ANN202
+        import subprocess
+
+        invocaciones.append(command)
+        entradas.append(entrada)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            '{"event":"result","result":{"status":"SUCCESS","response":"ok",'
+            '"usage":{"input_tokens":1,"output_tokens":1}}}',
+            "",
+        )
+
+    cliente = AntigravityClient(runner=_runner)
+    prompt = "x" * 50_000  # imposible por -p, trivial por stdin
+    cliente.complete(prompt)
+
+    linea = " ".join(invocaciones[0])
+    assert "-p" not in invocaciones[0], "el prompt volvio a la linea de comandos"
+    assert prompt not in linea, "el prompt aparece en la linea de comandos"
+    assert len(linea) < 32_767, "la linea de comandos supero el limite de Windows"
+    assert prompt in entradas[0], "el prompt no llego por stdin"
+
+
+def test_the_sanity_limit_is_far_above_a_real_batch():
+    """El tope que queda es de cordura, no de transporte.
+
+    Tiene que estar MUY por encima de un lote real (el perfil compilado usa
+    200.000) o volvemos a fragmentar sin motivo; y tiene que existir, porque un
+    prompt de medio millon de caracteres es un error de armado, no un lote.
+    """
+    from memorymaster.profile.engine import DEFAULT_MAX_INPUT_CHARS
+
+    assert _MAX_PROMPT_CHARS > DEFAULT_MAX_INPUT_CHARS
+    assert _MAX_PROMPT_CHARS >= 300_000
