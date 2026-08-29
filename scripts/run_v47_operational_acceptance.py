@@ -17,7 +17,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -41,7 +41,11 @@ TASK_NAMES = (
     "MemoryMaster-MCP-HTTP-Hermes",
     "MemoryMaster-Checkpoint-Daily",
     "MemoryMaster-Checkpoint-Weekly",
+    "MM-freshness-sentinel",
 )
+# Un recibo mas viejo que esto no prueba que la tarea siga viva.
+RECEIPT_MAX_AGE_HOURS = 48
+
 CHECKPOINT_TASKS = (
     "MemoryMaster-Checkpoint-Daily",
     "MemoryMaster-Checkpoint-Weekly",
@@ -397,15 +401,44 @@ def checkpoint_result(
     last_run = _parse_time(str(state.get("last_run") or ""))
     never_ran = last_run is None or last_run.year < 2001
     due = _parse_time(str(state.get("next_run") or "")) if never_ran else last_run
-    valid = [
-        row for row in receipts
-        if row.get("task") == task_name
-        and row.get("work_performed") is True
-        and str(row.get("result", "")).lower() == "pass"
-        and _parse_time(str(row.get("completed_at") or "")) is not None
-    ]
-    if valid:
-        return CheckResult(label, Verdict.PASS, f"real_work_receipts={len(valid)}")
+    # El recibo tiene que ser RECIENTE, no solo parseable.
+    #
+    # QUE PASABA (verificado el 2026-08-29 sobre bd4f6c5): el filtro solo exigia
+    # que completed_at se pudiera parsear, sin compararlo nunca contra `now`, y
+    # el `if valid` cortocircuitaba antes de que la rama never_ran/due llegara a
+    # evaluarse. Consecuencia: una tarea que corrio UNA vez y murio despues
+    # reportaba PASS para siempre, porque ese unico recibo viejo alcanzaba. La
+    # logica de vencimiento solo actuaba mientras no hubiera ningun recibo, o
+    # sea nunca despues del primer exito.
+    #
+    # Es la clase wisp-cron un escalon peor: aquel figuraba sano por AUSENCIA de
+    # chequeo; esto figuraba sano por un chequeo que existia y miraba el campo
+    # equivocado. Un gate que no puede volverse rojo no es un gate.
+    horizon = now - timedelta(hours=RECEIPT_MAX_AGE_HOURS)
+    fresh: list[dict[str, Any]] = []
+    stale = 0
+    for row in receipts:
+        if row.get("task") != task_name:
+            continue
+        if row.get("work_performed") is not True:
+            continue
+        if str(row.get("result", "")).lower() != "pass":
+            continue
+        completed = _parse_time(str(row.get("completed_at") or ""))
+        if completed is None:
+            continue
+        if completed >= horizon:
+            fresh.append(row)
+        else:
+            stale += 1
+    if fresh:
+        return CheckResult(label, Verdict.PASS, f"real_work_receipts={len(fresh)}")
+    if stale:
+        return CheckResult(
+            label,
+            Verdict.FAIL,
+            f"only stale receipts: {stale} older than {RECEIPT_MAX_AGE_HOURS}h",
+        )
     if never_ran and due is not None and now < due:
         due_text = due.isoformat()
         return CheckResult(label, Verdict.NOT_YET_DUE, "first natural fire has not occurred", due_text)
