@@ -1,6 +1,6 @@
 <!-- doc-head: MemoryMaster 4.8 governed memory, observations, profiles, and operations -->
 <!-- Covers: installation, governed capture and recall, graph observations, compiled profile, scheduling, and safety. -->
-<!-- Key terms: claims, citations, steward, graph observations, compiled profile, Gemini, SQLite, MCP. -->
+<!-- Key terms: claims, citations, steward, graph observations, compiled profile, Gemini, Antigravity CLI, SQLite, MCP. -->
 <!-- Read when: evaluating, installing, operating, or upgrading MemoryMaster. -->
 <!-- Default: private local SQLite; observations and generated views never bypass claim governance. -->
 <!-- /doc-head -->

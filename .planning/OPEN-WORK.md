@@ -74,7 +74,7 @@ subsistema vectorial queda sin red.
 | Meta | Estado |
 |---|---|
 | G2 honestidad, G3 relevancia, G4 índice | cumplidas, en sostener |
-| **G5 inhallables** | contra-métrica en ROJO a 84,7 vs 86,0 — **gate del operador** |
+| **G5 inhallables** | **VERDE** — la contra-métrica está en 84,7 contra un umbral de 84,0. La nota anterior decía "ROJO a 84,7 vs 86,0" y estaba vieja: el umbral se re-basó de 86,0 a 84,0 el 2026-08-20, por medición y con autorización explícita. No es un gate abierto |
 | **G1 alcanzabilidad** | 60,7 vs 66,0; falta decidir si es techo de la cohorte o defecto |
 
 **Sobre G1 — MEDIDO (`scripts/diagnose_g1_ceiling.py`), ya no deducido:**
@@ -92,7 +92,34 @@ Dos hipótesis mías que la medición **refutó**:
 - *"Son claims duplicadas"* → los duplicados exactos son 213 claims, **0,9% de la base**.
   No explican 85 fallos. Vi un ejemplo y generalicé.
 
-Lo que queda arreglable son ~30 casos de orden/truncación, no un defecto estructural.
+~~Lo que queda arreglable son ~30 casos de orden/truncación, no un defecto estructural.~~
+
+**RE-MEDIDO el 2026-08-21 — esa frase era engañosa y la corrijo.** Corrida fresca sobre la
+cohorte congelada de 300, con `--db` apuntando a la base real:
+
+| | con el cap (default) | con el cap desactivado |
+|---|---|---|
+| `found_first_pct` | 61,0 | **61,7** |
+| ambigüedad legítima | 64 | 82 |
+| descartada | 48 (`session_diversity_cap`) | 26 (`limit_truncation`) |
+| orden | 5 | 7 |
+
+**Desactivar el cap mueve 61,0 → 61,7: +0,7pp, exactamente el piso de ruido declarado.**
+Segunda vez que la misma hipótesis se refuta con medición. Y el detalle que importa: los
+descartes solo **cambian de nombre**. Sacado el cap, las mismas claims caen por
+`limit_truncation`. No son casos de truncación ni de orden — son casos de **ranking**: la
+claim objetivo está por debajo de la posición que la sonda exige, y el motivo del descarte
+es corriente abajo, no la causa.
+
+**Qué haría falta para llegar a 66,0:** son 198 de 300, o sea +13 claims sobre las 185
+actuales, y los defectos arreglables son 33. Hay que convertir el 40% de ellos. No es
+inalcanzable, pero **no es una limpieza de ~30 casos sueltos** — es trabajo de ranking, y las
+dos hipótesis fáciles (el diversity cap y los duplicados) ya están refutadas por medición.
+
+**Cuidado con `techo_alcanzable_pct`:** el script lo calcula como `(primera + ambigüedad) /
+total`, o sea suponiendo que se ganan TODOS los empates ambiguos. Por definición la consulta
+no distingue esos pares, así que lo realista es la mitad. El 89,0 que imprime es una cota
+superior generosa, no un objetivo.
 
 ---
 
@@ -129,9 +156,15 @@ Dónde muerde de verdad — cuando el parámetro que se evapora es el que restri
 Los dos últimos caen para el lado inseguro. Requiere que el llamador escriba mal un nombre
 declarado — que es exactamente lo que pasó con `ids`: un nombre plausible que no existía.
 
-**Cuidado al arreglarlo:** poner `additionalProperties: false` en 51 herramientas convierte
-en error lo que hoy se ignora. Hay que medir qué llamadores reales pasan parámetros de más
-antes de endurecerlo, o el arreglo rompe a quien hoy funciona por accidente.
+**DECIDIDO el 2026-08-21 — medir primero, endurecer después.** Poner
+`additionalProperties: false` en 51 herramientas convierte en error lo que hoy se ignora, y
+rompería sin aviso a cualquier llamador que funcione por accidente, incluidos hooks y scripts
+del operador. El orden es: instrumentar qué parámetros desconocidos llegan de verdad, dejarlo
+correr sobre tráfico real, y endurecer con la lista en la mano.
+
+La instrumentación **no puede ser otra señal inerte**: si nadie lee el contador, su silencio
+se lee igual que "nadie pasa parámetros de más". Tiene que quedar consultable desde el mismo
+lugar donde se va a tomar la decisión.
 
 ---
 
@@ -165,10 +198,22 @@ antes de endurecerlo, o el arreglo rompe a quien hoy funciona por accidente.
   usa `scope_allowlist`**. Se aprende uno, se yerra el otro, y el yerro se descarta en vez
   de fallar — el costo real de que ningún schema declare `additionalProperties: false`.
 
-  **Tres decisiones que son del operador, no mías:** cuál es el scope canónico (hoy el repo
-  dice uno y el canonicalizador otro); si el resolver debe incluir los scopes ancestros en
-  el allowlist —eso cambia el recall de toda la flota—; y si se re-scopean las claims ya
-  escritas. Ninguna se toca sin su palabra.
+  **RESUELTO el 2026-08-21 — las tres decisiones, tomadas:**
+
+  1. **El resolver incluye los scopes ancestros.** Decisión del operador. Un workspace anidado
+     alcanza el proyecto que lo contiene, más `user`. El límite del ascenso no es heurístico:
+     un directorio con `CLAUDE.md` o `AGENTS.md` es una raíz de proyecto porque ese marcador
+     es lo que lo vuelve uno. `Py Apps` lo tiene y corta el ascenso; `Desktop` no.
+  2. **No se re-scopea nada.** Decisión mía, delegada explícitamente. Reescribir ~10.000
+     filas es irreversible y podría mezclar claims de proyectos hoy aislados. El defecto está
+     en la lectura, así que se arregla la lectura.
+  3. **El scope canónico no se toca.** Al alcanzar ambas grafías —la plegada y la literal
+     previa al plegado de canal— las 3901 claims de `project:whatsappbot-final` quedan
+     accesibles sin migrar ni redefinir nada.
+
+  Se ensanchan **lecturas**, nunca permisos: el guard de modo TEAM no pasa por este camino, y
+  hay un test que falla si esa separación se rompe. La ingesta sigue resolviendo a un solo
+  scope. Reversible con `MEMORYMASTER_RECALL_ANCESTOR_SCOPES=0`.
 
 - ~~**T-0179** — cola del steward: 220 propuestas sin consumidor, la más vieja de 4 meses.~~
   **CERRADO el 2026-08-21: la cola quedó en 0 pendientes.** El último conflicto (129363, yolo26,
@@ -181,7 +226,10 @@ antes de endurecerlo, o el arreglo rompe a quien hoy funciona por accidente.
   se aplicó a mano. Aprobarla habría hecho lo contrario de lo ordenado con el registro diciendo que
   se cumplió. Verificado con huella agregada: `8171/666583530 → 8172/666713055`, delta exacto de una
   fila. Lección en la claim 133128.
-- **Umbral de G5** — fijarlo es `evaluator-edit`; quien persigue la meta no elige el número.
+- ~~**Umbral de G5** — fijarlo es `evaluator-edit`.~~ **CERRADO**: re-basado 86,0 → 84,0 el
+  2026-08-20 con autorización explícita y sobre medición. La contra-métrica está en 84,7, o
+  sea en verde. La regla que lo motivó sigue en pie para el próximo: quien persigue la meta no
+  elige el número.
 
 ---
 
