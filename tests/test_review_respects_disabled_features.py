@@ -63,3 +63,21 @@ def test_enabled_subsystem_still_fails_on_the_same_blocked_job(db_con_job_bloque
     monkeypatch.setenv(FLAG, "1")
     result = check_graph_observations(ReviewConfig(db=db_con_job_bloqueado))
     assert result.verdict is Verdict.FAIL
+
+
+def test_feature_activation_informs_instead_of_warning(monkeypatch):
+    """Cuantas funciones opcionales estan prendidas es DECISION, no salud.
+
+    Antes daba WARN salvo que estuvieran las dos prendidas, asi que respetar la
+    decision del operador dejaba la revision en amarillo permanente. Un amarillo
+    que no puede volverse verde entrena a leerlo como normal.
+    """
+    from memorymaster.operations.operational_review import check_feature_activation
+
+    monkeypatch.setenv(FLAG, "0")
+    monkeypatch.setenv("MEMORYMASTER_COMPILED_PROFILE", "0")
+    result = check_feature_activation(ReviewConfig(db=Path("no-usa-la-base.db")))
+    assert result.verdict is Verdict.PASS
+    assert "0/2" in result.detail, "tiene que seguir DICIENDO cuantas hay prendidas"
+    assert "apagadas a proposito" in result.detail
+    assert result.counts == {"graph_observations": 0, "compiled_profile": 0}

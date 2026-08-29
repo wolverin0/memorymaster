@@ -91,12 +91,20 @@ def check_feature_activation(_config: ReviewConfig) -> ReviewResult:
         "compiled_profile": int(_enabled("MEMORYMASTER_COMPILED_PROFILE")),
     }
     enabled = sum(states.values())
-    return ReviewResult(
-        "feature_activation",
-        Verdict.PASS if enabled == len(states) else Verdict.WARN,
-        f"enabled={enabled}/{len(states)}",
-        states,
-    )
+    # INFORMA, no juzga. Cuantas funciones opcionales estan prendidas es una
+    # DECISION del operador, no una medida de salud: el 2026-08-29 apago las dos
+    # a proposito (PPR-7 llevaba 2 observaciones en total, ambas archivadas; el
+    # perfil compilado estuvo dos dias vacio sin que nadie lo notara) y este
+    # check pasaba a WARN permanente por haberle hecho caso.
+    #
+    # Un veredicto que no puede volverse verde mientras la configuracion elegida
+    # siga vigente no informa nada: entrena a leer WARN como estado normal, y
+    # entonces el WARN que si importa pasa desapercibido.
+    apagadas = [name for name, on in states.items() if not on]
+    detalle = f"enabled={enabled}/{len(states)}"
+    if apagadas:
+        detalle += f" (apagadas a proposito: {', '.join(sorted(apagadas))})"
+    return ReviewResult("feature_activation", Verdict.PASS, detalle, states)
 
 
 def _count_ineligible_confirmed_observations(connection: sqlite3.Connection) -> int:
