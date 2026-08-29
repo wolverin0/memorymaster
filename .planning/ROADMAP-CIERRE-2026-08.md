@@ -7,7 +7,11 @@
 
 ## Los 4 ítems que faltan para decir LISTO
 
-- [~] **1. Wiki curada viva.** HECHO el 2026-08-27: vault vaciado (backup de los 122
+- [x] **1. Wiki curada viva.** CERRADO el 2026-08-29: el operador la abrió y la dio
+  por buena ("la vi"). Los 4 ítems quedan cerrados → **el proyecto entra en MODO
+  MANTENIMIENTO**, con la cláusula de abajo en vigor desde hoy.
+
+  Detalle: HECHO el 2026-08-27: vault vaciado (backup de los 122
   viejos en `.claude/_backups/wiki-pre-clean-20260827.tgz`), subjects backfilleados
   con los temas curados (undo en scratchpad), regenerado solo-pins: 12 artículos
   temáticos + índice/bases, organizados por proyecto. 5 temas singleton quedan fuera
