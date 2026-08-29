@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -29,6 +30,8 @@ from memorymaster.profile.repository import ProfileRepository
 # tests/test_profile_batch_fits_provider.py pina el ACOPLE contra el cliente, no
 # el numero, y por eso sigue verde con los dos valores.
 DEFAULT_MAX_INPUT_CHARS = 200_000
+
+logger = logging.getLogger(__name__)
 
 
 class ProfileMapper(Protocol):
@@ -114,8 +117,24 @@ class CompiledProfileEngine:
                 return result
             return self._reduce_and_complete(int(run["id"]), current)
         except Exception as exc:
+            # El NOMBRE de la clase no alcanza como diagnostico. Medido el
+            # 2026-08-29: el run 3 devolvia 'ProfileValidationError' y nada mas,
+            # y esa clase tiene siete causas distintas (categoria desconocida,
+            # predicado no coincidente, valor con forma de instruccion, material
+            # sensible...). Sin el mensaje hay que bisecar a mano cual de las
+            # siete fue, que es el mismo costo que ya pago AntigravityError.
+            detail = str(exc).strip()
+            logger.warning(
+                "compiled profile run %s fallo en %s: %s: %s",
+                run["id"], run["status"], type(exc).__name__, detail[:500],
+            )
             self.repo.record_error(int(run["id"]), type(exc).__name__, now=current)
-            return {"ok": False, "status": str(run["status"]), "error": type(exc).__name__}
+            return {
+                "ok": False,
+                "status": str(run["status"]),
+                "error": type(exc).__name__,
+                "detail": detail[:500],
+            }
 
     def _start_run(self, now: datetime) -> dict[str, Any] | None:
         target = self.repo.max_user_id()
