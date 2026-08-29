@@ -14,16 +14,21 @@ from memorymaster.profile.models import ProfileCandidate, ProfileDecision, Profi
 from memorymaster.profile.renderer import render_profile
 from memorymaster.profile.repository import ProfileRepository
 
-# El lote tiene que CABER en el prompt del proveedor. El default anterior era
-# 200.000 contra el tope duro de 30.000 del AntigravityClient (`agy` recibe el
-# prompt en -p y Windows corta la linea de comandos), asi que cada map call
-# moria con AntigravityError ANTES de invocar al proveedor: el run 3 quedo
-# OCHO DIAS en `mapping` y el perfil siguio sirviendo los hechos del run 2.
-# Ningun reintento podia arreglarlo porque el lote nunca se achicaba solo.
-# 20.000 esta verificado en vivo el 2026-08-28 (map_calls=1, ok) y deja
-# ~10.000 de aire para el andamiaje del prompt.
-# tests/test_profile_batch_fits_provider.py pina el acople contra el cliente.
-DEFAULT_MAX_INPUT_CHARS = 20_000
+# El lote tiene que CABER en el prompt del proveedor, y ese tope cambio.
+#
+# HISTORIA, porque explica los dos numeros: el default era 200.000 contra un
+# tope duro de 30.000 (`agy` recibia el prompt en -p y Windows corta la linea de
+# comandos), asi que cada map call moria ANTES de invocar al proveedor y el run 3
+# quedo OCHO DIAS en `mapping`. El 2026-08-28 se bajo a 20.000 para desatascarlo,
+# lo que funciono pero multiplico por doce la cantidad de llamadas: a ~17
+# mensajes por lote el run entero pasaba a necesitar ~775 llamadas, y cada
+# llamada a `agy` paga ~20.000 tokens fijos de andamiaje.
+#
+# Con el transporte por STDIN (stream-json) el tope subio a 400.000, asi que el
+# lote vuelve a 200.000: ~65 llamadas en vez de ~775.
+# tests/test_profile_batch_fits_provider.py pina el ACOPLE contra el cliente, no
+# el numero, y por eso sigue verde con los dos valores.
+DEFAULT_MAX_INPUT_CHARS = 200_000
 
 
 class ProfileMapper(Protocol):
