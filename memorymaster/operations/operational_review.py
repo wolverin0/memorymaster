@@ -91,12 +91,20 @@ def check_feature_activation(_config: ReviewConfig) -> ReviewResult:
         "compiled_profile": int(_enabled("MEMORYMASTER_COMPILED_PROFILE")),
     }
     enabled = sum(states.values())
-    return ReviewResult(
-        "feature_activation",
-        Verdict.PASS if enabled == len(states) else Verdict.WARN,
-        f"enabled={enabled}/{len(states)}",
-        states,
-    )
+    # INFORMA, no juzga. Cuantas funciones opcionales estan prendidas es una
+    # DECISION del operador, no una medida de salud: el 2026-08-29 apago las dos
+    # a proposito (PPR-7 llevaba 2 observaciones en total, ambas archivadas; el
+    # perfil compilado estuvo dos dias vacio sin que nadie lo notara) y este
+    # check pasaba a WARN permanente por haberle hecho caso.
+    #
+    # Un veredicto que no puede volverse verde mientras la configuracion elegida
+    # siga vigente no informa nada: entrena a leer WARN como estado normal, y
+    # entonces el WARN que si importa pasa desapercibido.
+    apagadas = [name for name, on in states.items() if not on]
+    detalle = f"enabled={enabled}/{len(states)}"
+    if apagadas:
+        detalle += f" (apagadas a proposito: {', '.join(sorted(apagadas))})"
+    return ReviewResult("feature_activation", Verdict.PASS, detalle, states)
 
 
 def _count_ineligible_confirmed_observations(connection: sqlite3.Connection) -> int:
@@ -183,6 +191,22 @@ def _discovery_outcome_counts(connection: sqlite3.Connection) -> dict[str, int]:
 
 
 def check_graph_observations(config: ReviewConfig) -> ReviewResult:
+    # Un subsistema APAGADO no puede estar fallando: nadie va a procesar su cola,
+    # asi que un job bloqueado ahi es un resto, no un incidente. Sin esta salida
+    # temprana, apagar la funcion no silencia nada y la revision queda en FAIL
+    # PARA SIEMPRE por una fila que ya no le importa a nadie — el operador apago
+    # PPR-7 el 2026-08-29 (2 observaciones en total, ambas archivadas) y el FAIL
+    # sobrevivio al apagado.
+    #
+    # No se borra la fila ni se toca la cola: si la funcion se vuelve a prender,
+    # el estado sigue exactamente donde estaba y el FAIL vuelve a ser cierto.
+    if not _enabled("MEMORYMASTER_GRAPH_OBSERVATIONS"):
+        return ReviewResult(
+            "graph_observations",
+            Verdict.PASS,
+            "subsistema deshabilitado (MEMORYMASTER_GRAPH_OBSERVATIONS=0); "
+            "la cola no se procesa y no se evalua",
+        )
     marks = ",".join("?" for _ in ACTIVE_JOB_STATES)
     try:
         with _connect_ro(config.db) as connection:
