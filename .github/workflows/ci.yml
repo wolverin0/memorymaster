@@ -109,6 +109,25 @@ jobs:
           git fetch --quiet origin "${{ github.base_ref }}"
           python scripts/check_branch_freshness.py --base "origin/${{ github.base_ref }}"
 
+  contract-witness:
+    # Cambiar comportamiento sin abrir la carpeta de tests rompe el merge semanas
+    # despues, y el sintoma acusa al codigo nuevo en vez del testigo viejo. Tres
+    # instancias medidas el 2026-08-28/29 (cola del dashboard, freeze de Qdrant,
+    # lote del perfil); la de Qdrant dejo main en rojo cuatro corridas.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the contract has a witness
+        run: |
+          git fetch --quiet origin "${{ github.base_ref }}"
+          python scripts/check_contract_witness.py --base "origin/${{ github.base_ref }}"
+
   probes-frozen:
     # The scoreboard's rules cannot be edited by whoever is chasing its numbers.
     # This is the only layer a locally-working agent cannot skip: merging needs
