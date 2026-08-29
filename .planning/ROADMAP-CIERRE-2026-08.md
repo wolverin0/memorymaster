@@ -18,7 +18,13 @@
   del operador: bloque de testing-por-fase en `~/.claude/CLAUDE.md` (Verification) y
   dual-mode git en `~/.claude/rules/git-workflow.md`. Backups `.bak-20260827` al lado.
 
-- [~] **3. Canónico reconciliado + sentinel verde real.** HECHO el 2026-08-27: los
+- [x] **3. Canónico reconciliado + sentinel verde real.** CERRADO el 2026-08-29:
+  `MM-freshness-sentinel` corrió PROGRAMADO a las 08:37:01 con **Last Result 0**
+  y no escribió ninguna línea en el rollup. Las dos ramas del contrato probadas
+  en producción, no en test. Con eso queda demostrado que CORRE, no solo que
+  existe — que era la preocupación de mm-b234, ahora cerrada sin trabajo nuevo.
+
+  Historia previa: HECHO el 2026-08-27: los
   tres PRs mergeados con CI verde — #232 (sentinel, 2447a41), #234 (gate de tenant,
   b677091), #233 (rulings de producción, 20ba55e). Canónico en `main` al día en
   20ba55e, árbol limpio, sentinel manual verde en silencio, `--pinned-only` por fin
