@@ -183,6 +183,22 @@ def _discovery_outcome_counts(connection: sqlite3.Connection) -> dict[str, int]:
 
 
 def check_graph_observations(config: ReviewConfig) -> ReviewResult:
+    # Un subsistema APAGADO no puede estar fallando: nadie va a procesar su cola,
+    # asi que un job bloqueado ahi es un resto, no un incidente. Sin esta salida
+    # temprana, apagar la funcion no silencia nada y la revision queda en FAIL
+    # PARA SIEMPRE por una fila que ya no le importa a nadie — el operador apago
+    # PPR-7 el 2026-08-29 (2 observaciones en total, ambas archivadas) y el FAIL
+    # sobrevivio al apagado.
+    #
+    # No se borra la fila ni se toca la cola: si la funcion se vuelve a prender,
+    # el estado sigue exactamente donde estaba y el FAIL vuelve a ser cierto.
+    if not _enabled("MEMORYMASTER_GRAPH_OBSERVATIONS"):
+        return ReviewResult(
+            "graph_observations",
+            Verdict.PASS,
+            "subsistema deshabilitado (MEMORYMASTER_GRAPH_OBSERVATIONS=0); "
+            "la cola no se procesa y no se evalua",
+        )
     marks = ",".join("?" for _ in ACTIVE_JOB_STATES)
     try:
         with _connect_ro(config.db) as connection:
