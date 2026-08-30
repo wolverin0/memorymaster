@@ -217,8 +217,11 @@ class GraphObservationEngine:
                     job.id, owner=owner, outcome=outcome, diagnostic_codes=codes
                 )
                 completed += 1
-            except Exception:  # noqa: BLE001 - typed retry boundary persisted below
-                self.repo.fail_job(job.id, owner=owner, error_code="discovery_failed")
+            except Exception as exc:  # noqa: BLE001 - typed retry boundary persisted below
+                self.repo.fail_job(
+                    job.id, owner=owner, error_code="discovery_failed",
+                    detail=f"{type(exc).__name__}: {exc}",
+                )
                 failed += 1
         return ObservationCycleResult(
             discovery_completed=completed,
@@ -274,8 +277,11 @@ class GraphObservationEngine:
                     outcome = "no_signal"
                 self.repo.complete_job(job.id, owner=owner, outcome=outcome)
                 completed += 1
-            except Exception:  # noqa: BLE001 - fail closed and retry from IDs
-                self.repo.fail_job(job.id, owner=owner, error_code="synthesis_failed")
+            except Exception as exc:  # noqa: BLE001 - fail closed and retry from IDs
+                self.repo.fail_job(
+                    job.id, owner=owner, error_code="synthesis_failed",
+                    detail=f"{type(exc).__name__}: {exc}",
+                )
                 failed += 1
         return ObservationCycleResult(
             synthesis_completed=completed,

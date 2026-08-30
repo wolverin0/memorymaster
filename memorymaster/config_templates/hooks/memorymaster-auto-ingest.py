@@ -292,7 +292,10 @@ def _run_incremental_llm(ledger, transcript_path, session_id, cwd, provider, ope
             outcome="ok",
         )
         ledger.commit_cursor(chunk)
-    except Exception:
+    except Exception:  # swallow-ok: hook quiet-by-contract; `capture_usage.outcome`
+    # es vocabulario de contabilidad ('ok'/'error'), no un campo de diagnostico.
+    # Guardar la causa pide una columna nueva en capture_usage, que es otro
+    # subsistema. Deuda anotada, no escondida.
         ledger.finish_llm(reservation, input_bytes=0, output_bytes=0, outcome="error")
     finally:
         if temp_path:

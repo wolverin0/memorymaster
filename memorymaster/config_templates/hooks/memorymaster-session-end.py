@@ -48,7 +48,10 @@ def main():
             run(DB_PATH, temp_path, source_agent="session-end-hook", cwd=cwd)
             ledger.finish_llm(reservation, input_bytes=len(chunk.text.encode("utf-8")), output_bytes=0, outcome="ok")
             ledger.commit_cursor(chunk)
-        except Exception:
+        except Exception:  # swallow-ok: hook quiet-by-contract; `capture_usage.outcome`
+        # es vocabulario de contabilidad ('ok'/'error'), no un campo de diagnostico.
+        # Guardar la causa pide una columna nueva en capture_usage, que es otro
+        # subsistema. Deuda anotada, no escondida.
             ledger.finish_llm(reservation, input_bytes=len(chunk.text.encode("utf-8")), output_bytes=0, outcome="error")
         finally:
             if temp_path:
