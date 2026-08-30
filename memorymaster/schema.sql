@@ -7,6 +7,10 @@ CREATE TABLE IF NOT EXISTS claims (
     normalized_text TEXT,
     claim_type TEXT,
     subject TEXT,
+    -- tema de agrupacion para la wiki. Deliberadamente SIN restriccion de
+    -- unicidad: subject es el sujeto de una tripleta y el resolver de
+    -- conflictos lo trata como identidad, asi que el tema no puede vivir ahi.
+    topic TEXT,
     predicate TEXT,
     object_value TEXT,
     scope TEXT NOT NULL DEFAULT 'project',
@@ -198,6 +202,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_nonpublic_principal_idempotency_key
     WHERE visibility <> 'public' AND source_agent IS NOT NULL
       AND idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_claims_tuple ON claims(subject, predicate, scope);
+CREATE INDEX IF NOT EXISTS idx_claims_topic ON claims(topic);
 CREATE INDEX IF NOT EXISTS idx_claims_replaced_by ON claims(replaced_by_claim_id);
 CREATE INDEX IF NOT EXISTS idx_citations_claim_id ON citations(claim_id);
 CREATE INDEX IF NOT EXISTS idx_events_claim_id ON events(claim_id);

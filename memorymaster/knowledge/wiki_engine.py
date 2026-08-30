@@ -72,9 +72,28 @@ def _load_claims_by_topic(
     *,
     pinned_only: bool = False,
 ) -> dict[str, list[dict]]:
-    """Load claims grouped by subject."""
+    """Agrupa claims por tema, prefiriendo `topic` sobre `subject`.
+
+    `subject` NO es una etiqueta de tema: es el sujeto de una tripleta, y tres
+    mecanismos lo tratan como identidad — el indice unico
+    (tenant, subject, predicate, scope) sobre confirmadas publicas,
+    `auto_resolver` y `conflict_resolver`, que leen dos claims con el mismo
+    (subject, predicate) y distinto object_value como una CONTRADICCION y
+    superseden una. Engrosar subjects para que agrupen mejor haria que el
+    steward archivara claims no relacionadas en el siguiente ciclo.
+
+    Por eso el tema vive en su propia columna, sin restriccion de unicidad, y
+    `subject` queda como fallback para todo lo que no tiene tema asignado.
+    """
     conn = connect_ro(db_path)
-    query = """SELECT id, text, claim_type, subject, predicate, object_value,
+    # Una base sin migrar (o armada a mano, como en varios tests y en lo que
+    # llega por db_merge de OpenClaw) no tiene `topic`. Se degrada a agrupar por
+    # subject en vez de reventar: el tema es una mejora, no un requisito.
+    has_topic = any(
+        r[1] == "topic" for r in conn.execute("PRAGMA table_info(claims)")
+    )
+    topic_col = "topic" if has_topic else "NULL AS topic"
+    query = f"""SELECT id, text, claim_type, subject, {topic_col}, predicate, object_value,
                scope, confidence, status, human_id, created_at, updated_at, event_time
                FROM claims WHERE status IN ('confirmed', 'candidate')"""
     params: list = []
@@ -90,8 +109,12 @@ def _load_claims_by_topic(
     if scope_filter:
         query += " AND scope LIKE ?"
         params.append(f"{scope_filter}%")
-    query += """ ORDER BY
-               COALESCE(subject, 'general') COLLATE NOCASE ASC,
+    order_key = (
+        "COALESCE(NULLIF(topic, ''), subject, 'general')" if has_topic
+        else "COALESCE(subject, 'general')"
+    )
+    query += f""" ORDER BY
+               {order_key} COLLATE NOCASE ASC,
                confidence DESC,
                COALESCE(updated_at, created_at, event_time, '') DESC,
                id ASC"""
@@ -100,7 +123,7 @@ def _load_claims_by_topic(
 
     by_subject: dict[str, list[dict]] = {}
     for r in rows:
-        subj = r["subject"] or "general"
+        subj = (r["topic"] or "").strip() or r["subject"] or "general"
         by_subject.setdefault(subj, []).append(dict(r))
     return by_subject
 
