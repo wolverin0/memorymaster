@@ -300,7 +300,20 @@ class GraphObservationRepository:
             conn.commit()
         return cur.rowcount > 0
 
-    def fail_job(self, job_id: int, *, owner: str, error_code: str) -> bool:
+    def fail_job(
+        self, job_id: int, *, owner: str, error_code: str, detail: str | None = None
+    ) -> bool:
+        """Marca el job fallido y GUARDA la causa, no solo la etiqueta.
+
+        `error_code` clasifica ("synthesis_failed"); `detail` dice por que. Sin
+        el segundo, cinco intentos dejaban cinco veces la misma palabra y cero
+        informacion: la razon real —un proveedor dado de baja— se destruia al
+        escribir. Se apoya en `diagnostic_codes`, la columna de texto legible que
+        la migracion 0022 agrego exactamente para esto.
+
+        Se trunca a 500 chars: un traceback entero no aporta sobre la primera
+        linea y esta tabla no es un log.
+        """
         stamp_dt = _now()
         with self._connection() as conn:
             row = conn.execute(
@@ -315,12 +328,13 @@ class GraphObservationRepository:
             next_attempt = None if blocked else _iso(stamp_dt + timedelta(seconds=delay))
             cur = conn.execute(
                 """UPDATE graph_observation_jobs
-                   SET status=?, error_code=?, next_attempt_at=?, updated_at=?,
-                       lease_owner=NULL, lease_expires_at=NULL
+                   SET status=?, error_code=?, diagnostic_codes=?, next_attempt_at=?,
+                       updated_at=?, lease_owner=NULL, lease_expires_at=NULL
                    WHERE id=? AND status='leased' AND lease_owner=?""",
                 (
                     "blocked" if blocked else "retryable",
                     error_code,
+                    (detail or "")[:500] or None,
                     next_attempt,
                     _iso(stamp_dt),
                     job_id,
