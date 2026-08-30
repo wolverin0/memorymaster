@@ -18,6 +18,8 @@ from __future__ import annotations
 import importlib.metadata
 from pathlib import Path
 
+import pytest
+
 from memorymaster.operations.operational_review import (
     ReviewConfig,
     Verdict,
@@ -66,7 +68,18 @@ def test_no_reference_anywhere_does_not_invent_one(tmp_path):
 
     Inventar una expectativa aca convertiria una instalacion desde wheel en un
     FAIL permanente, que es el mismo defecto que este cambio viene a sacar.
+
+    HERMETICO A PROPOSITO: `_workspace_version` camina TODOS los padres del path
+    de la base, asi que si tmp_path colgara de un arbol con pyproject.toml este
+    test medira otra cosa sin avisar. Se verifica y se saltea en vez de dar un
+    verde que no significa nada — hoy mismo una corrida no hermetica me hizo
+    declarar un arreglo que CI despues rechazo.
     """
+    ancestro = next(
+        (d for d in [tmp_path, *tmp_path.parents] if (d / "pyproject.toml").exists()), None
+    )
+    if ancestro is not None:
+        pytest.skip(f"tmp_path cuelga de un checkout con pyproject: {ancestro}")
     db = _workspace(tmp_path, None)
     r = check_runtime(ReviewConfig(db=db))
     assert r.verdict is Verdict.PASS
