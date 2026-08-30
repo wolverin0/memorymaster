@@ -215,11 +215,22 @@ class ProfileRepository:
             )
             conn.commit()
 
-    def candidates(self, run_id: int) -> tuple[ProfileCandidate, ...]:
+    def candidates(
+        self, run_id: int, *, pending_only: bool = False
+    ) -> tuple[ProfileCandidate, ...]:
+        """Candidatos del run; con ``pending_only`` solo los aun no consumidos.
+
+        El reduce va por lotes y marca cada candidato consumido al aplicar su
+        decision, asi que un run reanudado debe ver SOLO lo que falta. Sin ese
+        filtro, reanudar volveria a aplicar lo ya aplicado.
+        """
+        where = "WHERE run_id=?" + (
+            " AND consumed_at IS NULL" if pending_only else ""
+        )
         with closing(self.connect()) as conn:
             rows = conn.execute(
-                """SELECT * FROM compiled_profile_candidates
-                   WHERE run_id=? ORDER BY candidate_id""",
+                f"""SELECT * FROM compiled_profile_candidates
+                   {where} ORDER BY candidate_id""",
                 (run_id,),
             ).fetchall()
         return tuple(
@@ -294,7 +305,8 @@ class ProfileRepository:
         min_sessions: int,
     ) -> dict[str, int]:
         candidates = {item.candidate_id: item for item in self.candidates(run_id)}
-        stats = {"applied": 0, "rejected": 0}
+        stats = {"applied": 0, "rejected": 0, "consumed": 0}
+        stamp = now.isoformat()
         with closing(self.connect()) as conn:
             for decision in decisions:
                 support_ids = self._decision_supports(decision, candidates)
@@ -302,6 +314,16 @@ class ProfileRepository:
                     conn, decision, support_ids, now=now, min_sessions=min_sessions
                 )
                 stats["applied" if applied else "rejected"] += 1
+                # Se marca DENTRO de la misma transaccion que aplico la decision.
+                # Separarlo reabre la doble aplicacion: un commit del hecho sin el
+                # marcado deja el candidato listo para volver a aplicarse.
+                for candidate_id in decision.candidate_ids:
+                    conn.execute(
+                        """UPDATE compiled_profile_candidates SET consumed_at=?
+                           WHERE run_id=? AND candidate_id=? AND consumed_at IS NULL""",
+                        (stamp, run_id, candidate_id),
+                    )
+                    stats["consumed"] += 1
             conn.commit()
         return stats
 
