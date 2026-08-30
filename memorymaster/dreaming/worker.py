@@ -177,15 +177,26 @@ class DreamWorker:
         return [(str(row["scope"]), row["tenant_id"]) for row in rows]
 
     def _observation_llm(self, system: str, prompt: str) -> str:
-        from memorymaster.core.llm_provider import call_llm, use_call_scoped_env
+        """Sintesis de observaciones por el proveedor por defecto.
 
-        with use_call_scoped_env(
-            {
-                "MEMORYMASTER_LLM_PROVIDER": "opencode",
-                "MEMORYMASTER_LLM_MODEL": self.consolidator.model,
-            }
-        ):
-            return call_llm(system, prompt)
+        Forzaba `MEMORYMASTER_LLM_PROVIDER="opencode"` — el camino GLM que se dio
+        de baja el 2026-08-20. El consolidador migro a Antigravity ese mismo dia
+        (`providers.py:build_consolidator`) y este call site quedo atras, mandando
+        un modelo de Antigravity al proveedor muerto: falla garantizada.
+
+        Se veia en produccion como `opencode: provider call failed code=call_failed`
+        dos veces por corrida de dreaming, con `graph_observations.failed=2` al
+        lado, y dejaba jobs de sintesis girando en backoff hasta agotar intentos.
+        Medido el 2026-08-30: los mismos dos jobs (#11369, #11370) corridos por el
+        proveedor por defecto arman componente, llaman y parsean sin error, y los
+        dos devuelven decision=emit.
+
+        No se fija proveedor a proposito: el default es el que sigue la migracion,
+        asi que la proxima no vuelve a dejar este call site atras.
+        """
+        from memorymaster.core.llm_provider import call_llm
+
+        return call_llm(system, prompt)
 
     def _run_graph_observations(
         self, *, owner: str, scope: str | None, synthesize: bool
