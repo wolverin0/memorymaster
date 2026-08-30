@@ -59,14 +59,63 @@ def _enabled(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in TRUE_VALUES
 
 
+def _workspace_version(db: Path) -> str | None:
+    """Version declarada en el pyproject.toml del checkout que contiene la base.
+
+    Devuelve None si no hay pyproject alcanzable: no poder leerlo es "no se"
+    y no debe convertirse en un FAIL, que es lo que arruinaria el check en una
+    instalacion desde wheel.
+    """
+    for parent in [db.resolve().parent, *db.resolve().parents]:
+        candidate = parent / "pyproject.toml"
+        if not candidate.exists():
+            continue
+        try:
+            for line in candidate.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if stripped.startswith("version") and "=" in stripped:
+                    return stripped.split("=", 1)[1].strip().strip('"').strip("'")
+        except OSError:
+            return None
+        return None
+    return None
+
+
 def check_runtime(config: ReviewConfig) -> ReviewResult:
+    """Compara el paquete INSTALADO contra la version del checkout.
+
+    POR QUE NO CONTRA UN CONFIG A MANO. `expected_version` vivia en un archivo
+    fuera del repo (AppData) que habia que actualizar en cada release, y eso
+    fallo DOS VECES: 31 corridas seguidas en FAIL con 4.7.6 contra 4.8.4
+    (2026-08-20), y de nuevo el 2026-08-29 con 4.8.4 contra 4.8.5. Bumpear la
+    version y actualizar el config eran dos actos unidos solo por la memoria de
+    alguien, y ningun test del repo podia enforzarlo porque el archivo no existe
+    en CI.
+
+    Leer el pyproject del workspace mueve la referencia SOLA con cada release y
+    ademas detecta la falla que de verdad importa en una instalacion editable:
+    bumpeaste la version y no reinstalaste, o sea que el paquete que corre no es
+    el codigo que commiteaste.
+
+    El config explicito sigue teniendo prioridad, para no romper a quien lo use
+    a proposito. Si no hay ninguno de los dos, no hay nada que comparar y se
+    reporta PASS diciendolo, en vez de inventar una expectativa.
+    """
     try:
         version = importlib.metadata.version("memorymaster")
     except importlib.metadata.PackageNotFoundError:
         return ReviewResult("runtime", Verdict.FAIL, "installed package unavailable")
-    expected = config.expected_version or version
+
+    expected = config.expected_version or _workspace_version(config.db)
+    if expected is None:
+        return ReviewResult(
+            "runtime", Verdict.PASS, f"installed={version} expected=(sin referencia)"
+        )
+    origen = "config" if config.expected_version else "pyproject"
     verdict = Verdict.PASS if version == expected else Verdict.FAIL
-    return ReviewResult("runtime", verdict, f"installed={version} expected={expected}")
+    return ReviewResult(
+        "runtime", verdict, f"installed={version} expected={expected} ({origen})"
+    )
 
 
 def check_database(config: ReviewConfig) -> ReviewResult:
