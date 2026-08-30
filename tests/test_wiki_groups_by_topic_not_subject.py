@@ -101,3 +101,30 @@ def test_topic_no_tiene_indice_unico(db: str):
     ]
     conn.close()
     assert not unicos, f"topic quedo con unicidad, que es justo lo que no puede tener: {unicos}"
+
+
+def test_una_base_sin_la_columna_sigue_funcionando(tmp_path: Path):
+    """Bases viejas, armadas a mano o llegadas por db_merge no tienen `topic`.
+
+    El tema es una mejora, no un requisito: sin la columna el motor agrupa por
+    subject como siempre. Sin esto, la wiki reventaba con
+    `OperationalError: no such column: topic` sobre cualquier base no migrada.
+    """
+    path = str(tmp_path / "vieja.db")
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE claims (id INTEGER PRIMARY KEY, text TEXT, claim_type TEXT,"
+        " subject TEXT, predicate TEXT, object_value TEXT, scope TEXT, confidence REAL,"
+        " status TEXT, human_id TEXT, created_at TEXT, updated_at TEXT, event_time TEXT,"
+        " pinned INTEGER DEFAULT 0)"
+    )
+    conn.execute(
+        "INSERT INTO claims (id, text, subject, scope, status, confidence)"
+        " VALUES (1, 'claim de una base sin migrar', 'tema-viejo', 'project:mm',"
+        " 'confirmed', 0.9)"
+    )
+    conn.commit()
+    conn.close()
+
+    temas = _load_claims_by_topic(path)
+    assert set(temas) == {"tema-viejo"}, sorted(temas)

@@ -86,7 +86,14 @@ def _load_claims_by_topic(
     `subject` queda como fallback para todo lo que no tiene tema asignado.
     """
     conn = connect_ro(db_path)
-    query = """SELECT id, text, claim_type, subject, topic, predicate, object_value,
+    # Una base sin migrar (o armada a mano, como en varios tests y en lo que
+    # llega por db_merge de OpenClaw) no tiene `topic`. Se degrada a agrupar por
+    # subject en vez de reventar: el tema es una mejora, no un requisito.
+    has_topic = any(
+        r[1] == "topic" for r in conn.execute("PRAGMA table_info(claims)")
+    )
+    topic_col = "topic" if has_topic else "NULL AS topic"
+    query = f"""SELECT id, text, claim_type, subject, {topic_col}, predicate, object_value,
                scope, confidence, status, human_id, created_at, updated_at, event_time
                FROM claims WHERE status IN ('confirmed', 'candidate')"""
     params: list = []
@@ -102,8 +109,12 @@ def _load_claims_by_topic(
     if scope_filter:
         query += " AND scope LIKE ?"
         params.append(f"{scope_filter}%")
-    query += """ ORDER BY
-               COALESCE(NULLIF(topic, ''), subject, 'general') COLLATE NOCASE ASC,
+    order_key = (
+        "COALESCE(NULLIF(topic, ''), subject, 'general')" if has_topic
+        else "COALESCE(subject, 'general')"
+    )
+    query += f""" ORDER BY
+               {order_key} COLLATE NOCASE ASC,
                confidence DESC,
                COALESCE(updated_at, created_at, event_time, '') DESC,
                id ASC"""
