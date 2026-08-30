@@ -298,6 +298,7 @@ class _SchemaMixin:
         _SchemaMixin._ensure_tenant_id_schema(conn)
         _SchemaMixin._ensure_scope_schema(conn)
         _SchemaMixin._ensure_agent_columns(conn)
+        _SchemaMixin._ensure_topic_column(conn)
         try:
             conn.execute("ALTER TABLE claims ADD COLUMN idempotency_key TEXT")
         except sqlite3.OperationalError as exc:
@@ -326,6 +327,7 @@ class _SchemaMixin:
         _SchemaMixin._ensure_tenant_id_schema(conn)
         _SchemaMixin._ensure_scope_schema(conn)
         _SchemaMixin._ensure_agent_columns(conn)
+        _SchemaMixin._ensure_topic_column(conn)
         for trigger in SQLITE_CONFIRMED_TUPLE_GUARD_TRIGGERS:
             conn.execute(f"DROP TRIGGER IF EXISTS {trigger}")
         try:
@@ -580,6 +582,7 @@ class _SchemaMixin:
         _SchemaMixin._ensure_tenant_id_schema(conn)
         _SchemaMixin._ensure_scope_schema(conn)
         _SchemaMixin._ensure_agent_columns(conn)
+        _SchemaMixin._ensure_topic_column(conn)
         try:
             conn.execute("ALTER TABLE claims ADD COLUMN human_id TEXT")
         except sqlite3.OperationalError as exc:
@@ -813,6 +816,24 @@ class _SchemaMixin:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_claims_valid_until ON claims(valid_until)"
         )
+
+
+    @staticmethod
+    def _ensure_topic_column(conn: sqlite3.Connection) -> None:
+        """Agrega `topic`, la clave de agrupacion de la wiki.
+
+        Vive aparte de `subject` a proposito: `subject` es el sujeto de una
+        tripleta y `conflict_resolver` lee dos claims con el mismo
+        (subject, predicate) y distinto object_value como contradiccion. Un tema
+        agrupa decenas de claims, asi que ponerlo en `subject` haria que el
+        steward las archivara entre si. `topic` no lleva unicidad por eso mismo.
+        """
+        try:
+            conn.execute("ALTER TABLE claims ADD COLUMN topic TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_claims_topic ON claims(topic)")
 
 
     @staticmethod

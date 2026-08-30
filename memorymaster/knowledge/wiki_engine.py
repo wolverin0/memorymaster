@@ -72,9 +72,21 @@ def _load_claims_by_topic(
     *,
     pinned_only: bool = False,
 ) -> dict[str, list[dict]]:
-    """Load claims grouped by subject."""
+    """Agrupa claims por tema, prefiriendo `topic` sobre `subject`.
+
+    `subject` NO es una etiqueta de tema: es el sujeto de una tripleta, y tres
+    mecanismos lo tratan como identidad — el indice unico
+    (tenant, subject, predicate, scope) sobre confirmadas publicas,
+    `auto_resolver` y `conflict_resolver`, que leen dos claims con el mismo
+    (subject, predicate) y distinto object_value como una CONTRADICCION y
+    superseden una. Engrosar subjects para que agrupen mejor haria que el
+    steward archivara claims no relacionadas en el siguiente ciclo.
+
+    Por eso el tema vive en su propia columna, sin restriccion de unicidad, y
+    `subject` queda como fallback para todo lo que no tiene tema asignado.
+    """
     conn = connect_ro(db_path)
-    query = """SELECT id, text, claim_type, subject, predicate, object_value,
+    query = """SELECT id, text, claim_type, subject, topic, predicate, object_value,
                scope, confidence, status, human_id, created_at, updated_at, event_time
                FROM claims WHERE status IN ('confirmed', 'candidate')"""
     params: list = []
@@ -91,7 +103,7 @@ def _load_claims_by_topic(
         query += " AND scope LIKE ?"
         params.append(f"{scope_filter}%")
     query += """ ORDER BY
-               COALESCE(subject, 'general') COLLATE NOCASE ASC,
+               COALESCE(NULLIF(topic, ''), subject, 'general') COLLATE NOCASE ASC,
                confidence DESC,
                COALESCE(updated_at, created_at, event_time, '') DESC,
                id ASC"""
@@ -100,7 +112,7 @@ def _load_claims_by_topic(
 
     by_subject: dict[str, list[dict]] = {}
     for r in rows:
-        subj = r["subject"] or "general"
+        subj = (r["topic"] or "").strip() or r["subject"] or "general"
         by_subject.setdefault(subj, []).append(dict(r))
     return by_subject
 

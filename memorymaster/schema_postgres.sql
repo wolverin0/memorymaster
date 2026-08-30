@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS claims (
     normalized_text TEXT,
     claim_type TEXT,
     subject TEXT,
+    -- tema de agrupacion para la wiki. Deliberadamente SIN restriccion de
+    -- unicidad: subject es el sujeto de una tripleta y el resolver de
+    -- conflictos lo trata como identidad, asi que el tema no puede vivir ahi.
+    topic TEXT,
     predicate TEXT,
     object_value TEXT,
     scope TEXT NOT NULL DEFAULT 'project',
