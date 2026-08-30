@@ -11,7 +11,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
-from memorymaster.profile.models import ProfileCandidate, ProfileDecision, ProfileFact, ProfileMessage
+from memorymaster.profile.models import (
+    ProfileCandidate,
+    ProfileDecision,
+    ProfileFact,
+    ProfileMessage,
+    ProfileValidationError,
+)
 from memorymaster.profile.renderer import render_profile
 from memorymaster.profile.repository import ProfileRepository
 
@@ -56,8 +62,17 @@ class ProfileConfig:
     max_input_chars: int = DEFAULT_MAX_INPUT_CHARS
     min_independent_sessions: int = 2
     preference_ttl_days: int = 90
-    token_budget: int = 800
-    max_facts: int = 40
+    # 2026-08-30: con el run 3 destrabado el corpus paso a 52 hechos y el techo
+    # viejo (800 tok / 40 hechos) cortaba 20 en silencio — la proyeccion quedaba
+    # clavada en 800/800 justo cuando los hechos NUEVOS eran los buenos
+    # (memorymaster+UNMS sup=10, WISP, Task Scheduler) y los viejos los stale.
+    # Truncar por techo no avisa, asi que el techo sube con el corpus.
+    token_budget: int = 1400
+    max_facts: int = 60
+    # 68 candidatos particionaron bien (run 2); 234 no lo lograron ni una vez en
+    # diez dias (run 3). 40 deja margen bajo el limite observado sin volver el
+    # reduce innecesariamente charlatan.
+    reduce_batch_size: int = 40
 
     @classmethod
     def from_env(cls) -> "ProfileConfig":
@@ -72,6 +87,7 @@ class ProfileConfig:
             preference_ttl_days=_env_int("MEMORYMASTER_PROFILE_PREFERENCE_TTL_DAYS", 90),
             token_budget=_env_int("MEMORYMASTER_PROFILE_TOKEN_BUDGET", 800),
             max_facts=_env_int("MEMORYMASTER_PROFILE_MAX_FACTS", 40),
+            reduce_batch_size=_env_int("MEMORYMASTER_PROFILE_REDUCE_BATCH", 40),
         )
 
 
@@ -179,15 +195,46 @@ class CompiledProfileEngine:
         return None
 
     def _reduce_and_complete(self, run_id: int, now: datetime) -> dict[str, Any]:
-        candidates = self.repo.candidates(run_id)
-        facts = self.repo.active_facts()
-        decisions = self.reducer.reduce(candidates, facts) if candidates else ()
-        stats = self.repo.apply_decisions(
-            run_id,
-            decisions,
-            now=now,
-            min_sessions=self.config.min_independent_sessions,
-        )
+        """Reduce por LOTES acotados, no de una.
+
+        El validador exige que el modelo particione el lote perfectamente: cada
+        candidate_id exactamente una vez. Eso se sostiene con decenas de
+        candidatos y no con cientos — el run 2 completo con 68, el run 3 acumulo
+        234 y quedo clavado diez dias, fallando entre "candidates must appear
+        exactly once" y JSON malformado.
+
+        La semantica se conserva releyendo `active_facts()` entre lotes: el lote
+        N+1 ve los hechos que creo el N y puede fusionar contra ellos, que es el
+        mismo mecanismo incremental que ya opera entre runs. Lo que cambia es que
+        las fusiones se deciden con visibilidad parcial, asi que dos candidatos
+        de lotes distintos pueden quedar como dos hechos donde una particion
+        unica los unia. Ese es el precio, y es preferible a no reducir nunca.
+        """
+        stats = {"applied": 0, "rejected": 0, "consumed": 0}
+        batches = 0
+        while True:
+            pending = self.repo.candidates(run_id, pending_only=True)
+            if not pending:
+                break
+            batch = pending[: self.config.reduce_batch_size]
+            facts = self.repo.active_facts()   # releido: el lote previo creo hechos
+            decisions = self.reducer.reduce(batch, facts)
+            applied = self.repo.apply_decisions(
+                run_id,
+                decisions,
+                now=now,
+                min_sessions=self.config.min_independent_sessions,
+            )
+            for key, value in applied.items():
+                stats[key] = stats.get(key, 0) + value
+            batches += 1
+            if applied.get("consumed", 0) == 0:
+                # Ningun candidato quedo marcado: reintentar seria un bucle
+                # infinito sobre el mismo lote. Se corta y el run queda en
+                # `reducing` para el proximo ciclo, que es el estado honesto.
+                raise ProfileValidationError(
+                    f"lote de {len(batch)} candidatos no consumio ninguno"
+                )
         expired = self.repo.expire_preferences(
             now=now, ttl_days=self.config.preference_ttl_days
         )
@@ -240,6 +287,7 @@ def run_compiled_profile(
     max_map_calls: int | None = None,
 ) -> dict[str, Any]:
     from memorymaster.profile.providers import ProfileMapper, ProfileReducer
+
 
     # MEMORYMASTER_PROFILE_OUTPUT_DIR existe para que los tests puedan sacar esta
     # escritura del HOME real, igual que MEMORYMASTER_SNAPSHOT_DIR y
