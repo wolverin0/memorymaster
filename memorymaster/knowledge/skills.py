@@ -18,6 +18,7 @@ from memorymaster.core import llm_budget, llm_provider
 from memorymaster.core.models import CitationInput
 from memorymaster.core.security import is_sensitive_claim, validate_persisted_metadata
 from memorymaster.knowledge.rule_miner import rule_fingerprint
+from memorymaster.knowledge.rule_observations import observation_support
 from memorymaster.knowledge.rules import is_rule, parse_rule
 from memorymaster.stores._storage_shared import ConcurrentModificationError, connect_ro, utc_now
 
@@ -290,6 +291,27 @@ def _rule_counts(db_path: str, fingerprints: set[str]) -> dict[str, int]:
     }
 
 
+def _rule_supports(
+    db_path: str, fingerprints: set[str], scope: str
+) -> dict[str, dict[str, int | bool]]:
+    """Return independent human-root support; fail closed when lineage is absent."""
+    if not fingerprints:
+        return {}
+    try:
+        conn = connect_ro(db_path)
+    except sqlite3.Error:
+        return {}
+    try:
+        return {
+            fingerprint: observation_support(conn, fingerprint, scope=scope)
+            for fingerprint in fingerprints
+        }
+    except sqlite3.Error:
+        return {}
+    finally:
+        conn.close()
+
+
 def _rule_fingerprint_for_claim(claim: Any) -> str | None:
     parsed = parse_rule(claim)
     if parsed is None:
@@ -311,14 +333,34 @@ def collect_skill_proposal_inputs(
     )
     rules = [claim for claim in claims if is_rule(claim) and claim.status in _ACTIVE_SKILL_STATUSES]
     fingerprints = {claim.id: _rule_fingerprint_for_claim(claim) for claim in rules}
-    counts = _rule_counts(_sqlite_path(service), {item for item in fingerprints.values() if item})
-    rows = [_proposal_input_row(claim, counts.get(fingerprints[claim.id] or "", 1)) for claim in rules]
-    eligible = [row for row in rows if row["correction_count"] >= max(min_corrections, 2)]
-    eligible.sort(key=lambda row: (-row["correction_count"], -row["claim_id"]))
+    db_path = _sqlite_path(service)
+    fingerprint_set = {item for item in fingerprints.values() if item}
+    counts = _rule_counts(db_path, fingerprint_set)
+    supports = _rule_supports(db_path, fingerprint_set, scope)
+    rows = [
+        _proposal_input_row(
+            claim,
+            counts.get(fingerprints[claim.id] or "", 1),
+            supports.get(fingerprints[claim.id] or "", {}),
+        )
+        for claim in rules
+    ]
+    eligible = [
+        row for row in rows
+        if row["correction_count"] >= max(min_corrections, 2)
+        and row["independent_support_eligible"]
+    ]
+    eligible.sort(
+        key=lambda row: (-row["independent_root_sessions"], -row["correction_count"], -row["claim_id"])
+    )
     return eligible[: max(1, min(limit, 100))]
 
 
-def _proposal_input_row(claim: Any, correction_count: int) -> dict[str, Any]:
+def _proposal_input_row(
+    claim: Any,
+    correction_count: int,
+    support: Mapping[str, int | bool],
+) -> dict[str, Any]:
     parsed = parse_rule(claim) or {}
     return {
         "claim_id": claim.id,
@@ -328,6 +370,9 @@ def _proposal_input_row(claim: Any, correction_count: int) -> dict[str, Any]:
         "action": parsed.get("action", ""),
         "rationale": parsed.get("rationale", ""),
         "correction_count": correction_count,
+        "independent_root_sessions": int(support.get("root_sessions", 0)),
+        "independent_projects": int(support.get("projects", 0)),
+        "independent_support_eligible": bool(support.get("eligible", False)),
         "citation_count": len(claim.citations),
     }
 
@@ -363,8 +408,15 @@ def _supporting_claims(service: Any, claim_ids: list[int], scope: str) -> list[A
 
 def _observation_count(service: Any, claims: list[Any]) -> int:
     fingerprints = {claim.id: _rule_fingerprint_for_claim(claim) for claim in claims}
-    counts = _rule_counts(_sqlite_path(service), {item for item in fingerprints.values() if item})
-    return sum(counts.get(fingerprints[claim.id] or "", 1) for claim in claims)
+    fingerprint_set = {item for item in fingerprints.values() if item}
+    if not fingerprint_set:
+        return 0
+    supports = _rule_supports(_sqlite_path(service), fingerprint_set, claims[0].scope)
+    if len(supports) != len(fingerprint_set) or not all(
+        bool(item.get("eligible")) for item in supports.values()
+    ):
+        return 0
+    return min(int(item.get("root_sessions", 0)) for item in supports.values())
 
 
 def _existing_skills(service: Any, *, slug: str, scope: str) -> list[tuple[Any, dict[str, Any]]]:
@@ -420,8 +472,10 @@ def propose_skill(
     validate_persisted_metadata({"scope": scope, "source_agent": source_agent, "skill_payload": payload})
     claims = _supporting_claims(service, supporting_claim_ids, scope)
     observations = _observation_count(service, claims)
-    if observations < 2:
-        raise SkillValidationError("skill proposals require at least two independent observations")
+    if observations < 3:
+        raise SkillValidationError(
+            "skill proposals require three independent human root sessions"
+        )
     initial = dict(payload)
     initial["supporting_claim_ids"] = sorted(set(supporting_claim_ids))
     validated = validate_skill_payload(initial)

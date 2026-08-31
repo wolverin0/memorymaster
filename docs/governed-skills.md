@@ -1,10 +1,10 @@
+<!-- doc-head: governed skills with independent human-root recurrence -->
 # Governed personal skills
-# Covers: personal-skill-v1 proposals, review, progressive recall reuse, and staging export.
-# Key terms: skill candidate, approval, supersession, include_skills, APPROVED SKILLS, SKILL.md.
-# Read when: reviewing workflows or integrating approved skills into an agent recall surface.
-# Authority: skills remain ordinary governed claims; this guide does not bypass lifecycle policy.
+# Covers: personal-skill-v1 proposals, independent-session review, recall reuse, and staging export.
+# Key terms: skill candidate, root-session lineage, approval, include_skills, SKILL.md.
+# Read when: reviewing workflows or integrating approved skills into agent recall.
 # Safety: review is default-off, promotion is human-only, and export never activates global files.
-# Updated: 2026-08-08 after progressive confirmed-skill recall and Hermes integration.
+<!-- /doc-head -->
 
 MemoryMaster can turn a recurring, reusable workflow into a governed skill
 candidate. The source of truth remains SQLite: a skill is an ordinary claim
@@ -13,8 +13,10 @@ with `claim_type=skill`, `predicate=applies_when`, and a strict
 
 ## Lifecycle
 
-1. Rule mining records corrections and their `correction_count`.
-2. A skill becomes review-eligible after at least two observations.
+1. Rule mining records activity in `rule_stats` and hashed root-session lineage
+   in `rule_observations`.
+2. A project skill becomes review-eligible after three distinct human root
+   sessions. A user/global pattern also needs two projects.
 3. The bounded reviewer classifies the evidence and may create a candidate.
 4. The generic validator leaves every skill candidate pending.
 5. An operator explicitly approves or rejects the candidate.
@@ -27,6 +29,11 @@ The reviewer is disabled unless `MEMORYMASTER_SKILL_REVIEW=1`. Its per-cycle
 limit is `MEMORYMASTER_SKILL_REVIEW_LIMIT` (default 5, hard maximum 20), and
 calls share the normal provider/cycle budget. `global` and legacy bare
 `project` scopes are never selected automatically.
+
+Repeated mining inside one root session increments diagnostic `event_count`
+but does not increase independent support. Subagent and automation observations
+cannot satisfy recurrence. Existing confirmed skills remain valid; unreviewed
+legacy counters are not silently converted into independent history.
 
 ## CLI
 

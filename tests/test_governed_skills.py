@@ -20,6 +20,7 @@ from memorymaster.capture import CaptureRepository
 from memorymaster.stores._storage_shared import ConcurrentModificationError
 from memorymaster.govern.jobs import validator
 from memorymaster.knowledge.rule_miner import rule_fingerprint
+from memorymaster.knowledge.rule_observations import record_rule_observation
 from memorymaster.knowledge.rules import build_rule_fields
 from memorymaster.knowledge.skills import (
     SkillValidationError,
@@ -75,7 +76,9 @@ def _reviewer_json(**payload_overrides) -> str:
     return json.dumps({"classification": "skill", "payload": _payload(**payload_overrides)})
 
 
-def _rule(service: MemoryService, *, correction_count: int = 2):
+def _rule(
+    service: MemoryService, *, correction_count: int = 2, root_sessions: int = 3
+):
     trigger = "preparing a MemoryMaster release"
     action = "run the reproducible release gate"
     claim = service.ingest(
@@ -97,6 +100,16 @@ def _rule(service: MemoryService, *, correction_count: int = 2):
             "(rule_fingerprint, correction_count, last_mined) VALUES (?, ?, ?)",
             (fingerprint, correction_count, "2026-08-07T00:00:00+00:00"),
         )
+        for index in range(root_sessions):
+            record_rule_observation(
+                conn,
+                rule_fingerprint=fingerprint,
+                provider="claude",
+                root_session_id=f"root-session-{index}",
+                project_scope="project:memorymaster",
+                source_ref=f"verbatim:{index}",
+                evidence_hash=f"{index + 1:064x}",
+            )
     return claim
 
 
@@ -327,9 +340,9 @@ def test_repeated_rule_evidence_creates_one_candidate_and_requires_approval(
     assert [item["claim_id"] for item in hits] == [first["claim_id"]]
 
 
-def test_rule_evidence_requires_two_observations(service: MemoryService) -> None:
-    rule = _rule(service, correction_count=1)
-    with pytest.raises(SkillValidationError, match="two independent observations"):
+def test_rule_evidence_requires_three_independent_root_sessions(service: MemoryService) -> None:
+    rule = _rule(service, correction_count=3, root_sessions=2)
+    with pytest.raises(SkillValidationError, match="three independent human root sessions"):
         propose_skill(
             service,
             payload=_payload(),

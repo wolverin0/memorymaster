@@ -34,6 +34,7 @@ from memorymaster.core import llm_budget
 from memorymaster.stores._storage_shared import open_conn
 from memorymaster.core.models import CitationInput
 from memorymaster.knowledge.rules import build_rule_fields
+from memorymaster.knowledge.rule_observations import record_rule_observation
 from memorymaster.core.security import scan_persisted_value
 
 logger = logging.getLogger(__name__)
@@ -335,19 +336,39 @@ def _bootstrapped_confidence(conn: sqlite3.Connection, rule: dict[str, str]) -> 
     return confidence
 
 
-def _transcript_confidence(service: Any, rule: dict[str, str]) -> float:
+def _transcript_confidence(
+    service: Any,
+    rule: dict[str, str],
+    *,
+    root_session_id: str,
+    scope: str,
+    provider: str,
+    source_ref: str,
+    evidence_hash: str,
+    session_kind: str,
+) -> float:
     """Bootstrap confidence for the Stop-hook path, which has a ``service`` but
     no open verbatim connection. Resolves the store's SQLite path to tally the
     event; if no SQLite path is available (e.g. Postgres store) or bootstrap is
     disabled, returns the flat legacy confidence without touching ``rule_stats``.
     """
-    if not _bootstrap_enabled():
-        return _BASE_RULE_CONFIDENCE
     db_path = str(getattr(getattr(service, "store", None), "db_path", "") or "")
     if not db_path or "://" in db_path:
         return _BASE_RULE_CONFIDENCE
     conn = _connect(db_path)
     try:
+        record_rule_observation(
+            conn,
+            rule_fingerprint=rule_fingerprint(rule["trigger"], rule["action"]),
+            provider=provider or os.environ.get("MEMORYMASTER_LLM_PROVIDER", DEFAULT_PROVIDER),
+            root_session_id=root_session_id,
+            project_scope=scope,
+            source_ref=source_ref,
+            evidence_hash=evidence_hash,
+            session_kind=session_kind,
+        )
+        if not _bootstrap_enabled():
+            return _BASE_RULE_CONFIDENCE
         return _bootstrapped_confidence(conn, rule)
     finally:
         conn.close()
@@ -412,7 +433,7 @@ def mine_rules(
             with llm_budget.cycle_scope() as budget:
                 for row in _iter_candidates(conn, start_id, batch_size, limit):
                     stats["candidates"] += 1
-                    outcome = _process_candidate(conn, service, row, stats)
+                    outcome = _process_candidate(conn, service, row, stats, provider)
                     if outcome == "aborted":
                         break
                     last_id = int(row["id"])
@@ -450,7 +471,11 @@ def _iter_candidates(
 
 
 def _process_candidate(
-    conn: sqlite3.Connection, service: Any, row: sqlite3.Row, stats: dict[str, Any]
+    conn: sqlite3.Connection,
+    service: Any,
+    row: sqlite3.Row,
+    stats: dict[str, Any],
+    provider: str,
 ) -> str:
     """Handle one candidate. Returns "aborted" if the LLM budget was hit,
     else "done". Mutates ``stats`` in place."""
@@ -494,6 +519,16 @@ def _process_candidate(
     # is a distinct event that should still raise confidence, even if the CLAIM
     # already exists and gets deduped below.
     confidence = _bootstrapped_confidence(conn, rule)
+    fingerprint = rule_fingerprint(rule["trigger"], rule["action"])
+    record_rule_observation(
+        conn,
+        rule_fingerprint=fingerprint,
+        provider=provider or DEFAULT_PROVIDER,
+        root_session_id=str(row["session_id"] or "unknown"),
+        project_scope=str(row["scope"] or "project:unknown"),
+        source_ref=f"verbatim:{int(asst['id'])}-{int(row['id'])}",
+        evidence_hash=hashlib.sha256(window.encode("utf-8", errors="replace")).hexdigest(),
+    )
 
     idem = f"rule-miner-v{int(asst['id'])}-{int(row['id'])}"
     claim_scope = row["scope"] or "project"
@@ -584,6 +619,8 @@ def mine_transcript_rules(
     scope: str = "project",
     max_windows: int = 1,
     provider: str = "",
+    session_id: str = "",
+    session_kind: str = "human",
 ) -> dict[str, Any]:
     """Mine the latest correction(s) in one session transcript into rule claims.
 
@@ -622,7 +659,21 @@ def mine_transcript_rules(
                 # claim dedups per correction. The confidence tally records this
                 # mining event regardless, climbing confidence on each re-mine.
                 idem = "rule-stop-" + rule_fingerprint(rule["trigger"], rule["action"])
-                confidence = _transcript_confidence(service, rule)
+                fingerprint = rule_fingerprint(rule["trigger"], rule["action"])
+                confidence = _transcript_confidence(
+                    service,
+                    rule,
+                    root_session_id=session_id or hashlib.sha256(
+                        str(Path(transcript_path).resolve()).encode("utf-8", errors="replace")
+                    ).hexdigest(),
+                    scope=scope,
+                    provider=provider,
+                    source_ref=f"transcript:{fingerprint}",
+                    evidence_hash=hashlib.sha256(
+                        _build_window(asst_text, user_text).encode("utf-8", errors="replace")
+                    ).hexdigest(),
+                    session_kind=session_kind,
+                )
                 store = getattr(service, "store", None)
                 if store is not None and hasattr(store, "get_claim_by_idempotency_key"):
                     if store.get_claim_by_idempotency_key(
