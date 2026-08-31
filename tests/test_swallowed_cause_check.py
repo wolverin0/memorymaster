@@ -90,11 +90,28 @@ def test_calla_ante_el_escape_declarado():
 
 
 def test_calla_si_el_codigo_no_es_constante():
-    """Un valor derivado de la excepcion ya lleva la causa adentro."""
+    """Un valor NO literal no es una etiqueta fija: lleva algo adentro.
+
+    Sin ligar la excepcion A PROPOSITO. La version anterior de este test hacia
+    `except Exception as exc` y usaba `exc` dentro del f-string, asi que salia
+    exento por la regla de "liga y usa" y nunca llegaba al chequeo de constante:
+    pasaba por el motivo equivocado. Lo encontro una prueba de mutacion — al
+    sacar el `isinstance(..., ast.Constant)` este test seguia verde y la
+    mutacion solo moria por un AttributeError incidental en otro test.
+    """
     assert _n(
         "try:\n    f()\n"
-        "except Exception as exc:\n"
-        "    repo.fail_job(1, error_code=f'failed:{type(exc).__name__}')\n"
+        "except Exception:\n"
+        "    repo.fail_job(1, error_code=codigo_calculado)\n"
+    ) == 0
+
+
+def test_calla_ante_un_codigo_construido_en_f_string():
+    """Mismo requisito, otra forma sintactica: JoinedStr en vez de Name."""
+    assert _n(
+        "try:\n    f()\n"
+        "except Exception:\n"
+        "    repo.fail_job(1, error_code=f'failed:{contexto}')\n"
     ) == 0
 
 
@@ -117,6 +134,59 @@ def test_calla_ante_palabras_parecidas_pero_no_de_causa():
 
 
 # --- el repo real -----------------------------------------------------------
+
+# --- los tres casos reales que originaron el guard, como fixtures -----------
+# No son ejemplos inventados: son la forma exacta del codigo que costo los dias.
+# Si alguien vuelve a escribir cualquiera de estas tres formas, el guard tiene
+# que verla — y este test lo prueba sin depender de que el archivo original
+# siga existiendo o siga escrito igual.
+
+CASO_1_PERFIL = (
+    "try:\n"
+    "    self._reduce_and_complete(run_id, now)\n"
+    "except AntigravityError:\n"
+    "    self.repo.fail_run(run_id, error_code='AntigravityError')\n"
+)
+
+CASO_2_SINTESIS = (
+    "try:\n"
+    "    raw = self.llm_call(SYSTEM_PROMPT, prompt)\n"
+    "except Exception:  # noqa: BLE001 - fail closed and retry from IDs\n"
+    "    self.repo.fail_job(job.id, owner=owner, error_code='synthesis_failed')\n"
+)
+
+CASO_3_DISCOVERY = (
+    "try:\n"
+    "    self.repo.complete_job(job.id, owner=owner, outcome=outcome)\n"
+    "except Exception:  # noqa: BLE001 - typed retry boundary persisted below\n"
+    "    self.repo.fail_job(job.id, owner=owner, error_code='discovery_failed')\n"
+)
+
+
+def test_atrapa_los_tres_casos_reales_que_lo_originaron():
+    for nombre, fuente in (
+        ("perfil compilado (10 dias de diagnostico equivocado)", CASO_1_PERFIL),
+        ("sintesis PPR-7 (5 intentos, misma palabra)", CASO_2_SINTESIS),
+        ("discovery PPR-7 (hermana que nadie habia visto)", CASO_3_DISCOVERY),
+    ):
+        assert _n(fuente) == 1, f"el guard NO ve el caso real: {nombre}"
+
+
+def test_los_tres_casos_reales_arreglados_ya_no_disparan():
+    """La otra mitad: el arreglo que se aplico tiene que dejar de marcar.
+
+    Un guard que sigue ladrando despues del fix no distingue el problema de la
+    solucion, y lo unico que ensena es a silenciarlo.
+    """
+    arreglado = (
+        "try:\n"
+        "    raw = self.llm_call(SYSTEM_PROMPT, prompt)\n"
+        "except Exception as exc:  # noqa: BLE001\n"
+        "    self.repo.fail_job(job.id, owner=owner, error_code='synthesis_failed',\n"
+        "                       detail=f'{type(exc).__name__}: {exc}')\n"
+    )
+    assert _n(arreglado) == 0
+
 
 def test_el_repo_pasa_el_guard():
     """Si esto se pone rojo, o hay un handler nuevo que tira la causa o el guard
