@@ -1,6 +1,6 @@
-<!-- doc-head: MemoryMaster 4.8 governed memory, observations, profiles, and operations -->
-<!-- Covers: installation, governed capture and recall, graph observations, compiled profile, scheduling, and safety. -->
-<!-- Key terms: claims, citations, steward, graph observations, compiled profile, Gemini, Antigravity CLI, SQLite, MCP. -->
+<!-- doc-head: MemoryMaster 4.8 governed memory, observations, profiles, workflow analytics, and operations -->
+<!-- Covers: installation, governed recall, graph observations, compiled profile, Workflow Intelligence, scheduling, and safety. -->
+<!-- Key terms: claims, citations, graph observations, workflow sidecar, compiled profile, Gemini, SQLite, MCP. -->
 <!-- Read when: evaluating, installing, operating, or upgrading MemoryMaster. -->
 <!-- Default: private local SQLite; observations and generated views never bypass claim governance. -->
 <!-- /doc-head -->
@@ -39,6 +39,7 @@ evidence -> candidate claim -> steward -> confirmed claim -> governed recall
 | Governed skills | Stores reviewed reusable procedures separately from ordinary facts | Recall opt-in |
 | Hermes integration | Provides exact session/project scoping, local HTTP/stdio compatibility and replay-safe outbox behavior | Optional integration |
 | Operational review | Performs a read-only six-hour integrity, queue, profile, intake and retrieval review | Optional Windows task |
+| Workflow Intelligence | Mines Claude/Codex trajectories into local redacted analytics and inert improvement candidates | On demand; separate sidecar, no automatic promotion |
 
 MemoryMaster 4.8 uses the configured **Gemini extraction + Gemini consolidation**
 path for this installation; consolidation moved off GLM on 2026-08-20 when that
@@ -110,6 +111,24 @@ queued = improve(scope="project:atlas")
   the request.
 
 See [Public v1](docs/public-v1.md) for receipts and full parameter contracts.
+
+## Workflow Intelligence
+
+The optional `workflow` command family audits retained Claude Code, Codex, and
+Wezbridge trajectories in a rebuildable local sidecar. It does not write claims,
+modify agent instructions, or treat an LLM judgment as proof of success.
+
+```powershell
+memorymaster workflow scan --deep human
+memorymaster workflow report
+memorymaster workflow candidates
+```
+
+LLM classification is a separate opt-in command. The provider-neutral
+completion receipt hook ships unregistered and defaults to `off`; advisory mode
+cannot be configured until its 14-day shadow evidence gate passes. See
+[Workflow Intelligence](docs/workflow-intelligence.md) for the schema, commands,
+redaction boundary, recurrence rules, and rollout gate.
 
 ## Graph observations (PPR-7)
 
@@ -216,8 +235,10 @@ producer
   -> optional observations / skills / compiled profile
 ```
 
-The default product is one private local SQLite database in WAL mode plus a
-stdio MCP server. No new database, cloud service or vector server is required.
+The authoritative product is one private local SQLite database in WAL mode plus
+a stdio MCP server. Optional Workflow Intelligence uses a disposable analytics
+sidecar that cannot participate in recall or lifecycle authority. No cloud
+service or vector server is required.
 PostgreSQL team operation remains explicitly deferred; Qdrant remains an
 optional semantic accelerator rather than a source of truth.
 

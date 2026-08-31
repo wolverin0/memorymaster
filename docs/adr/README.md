@@ -1,10 +1,10 @@
+<!-- doc-head: ADR index through the Workflow Intelligence sidecar decision -->
 # Architectural Decision Records
-# Covers: accepted architecture decisions and their canonical navigation order.
-# Key terms: ADR, local-first, Atlas, sensitivity, governance, capture lineage.
+# Covers: accepted architecture decisions for local-first storage, governance, capture, and workflow analytics.
+# Key terms: ADR, authority, sensitivity, capture lineage, workflow sidecar.
 # Read when: changing durable data flow, trust boundaries, storage, or public contracts.
 # Authority: accepted ADRs constrain implementation; superseding one requires a new ADR.
-# Scope: personal/local MemoryMaster unless an ADR explicitly names another profile.
-# Updated: 2026-07-27 with governed universal capture lineage.
+<!-- /doc-head -->
 
 ## Numbered ADRs
 
@@ -23,6 +23,7 @@
 13. [0013 Context Loading Is Two Phase](0013-context-loading-is-two-phase.md)
 14. [0014 Wiki Articles Auto-Promote After N Successful Validations](0014-wiki-articles-auto-promote-after-n-successful-validations.md)
 15. [0015 Governed Universal Capture Lineage](0015-governed-universal-capture-lineage.md)
+16. [0016 Workflow Analytics Uses a Disposable Sidecar](0016-workflow-analytics-uses-disposable-sidecar.md)
 
 ## Existing ADR Notes
 

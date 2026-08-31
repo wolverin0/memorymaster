@@ -1,7 +1,7 @@
-<!-- doc-head: sole roadmap; PPR-7 integrated, compiled profile in development -->
+<!-- doc-head: sole roadmap; Workflow Intelligence implemented locally and held off -->
 # MemoryMaster roadmap
-# Covers: post-v4.6 sequence, governed observations, compiled profile, and deferrals.
-# Key terms: Hermes, governed skills, graph observations, user profile, sustainability.
+# Covers: post-v4.6 sequence, workflow analytics, governed observations, compiled profile, and deferrals.
+# Key terms: Workflow Intelligence, governed skills, graph observations, user profile, sustainability.
 # Read when: choosing release scope, accepting a feature, or checking deferrals.
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
 # Safety: SQLite remains authority; generated user.md is disposable and feature-off by default.
@@ -73,6 +73,12 @@ its governed-claims authority:
   loops, hardening live extraction, and closing the first-soak gaps. Activation
   is a separate operator decision that has not been made, so no rollout date
   belongs here.
+- Workflow Intelligence v1 is implemented on an isolated feature branch: local
+  Claude/Codex/Wezbridge census, deterministic trajectory analysis, bounded
+  opt-in classification, local reports, inert candidates, independent-session
+  rule governance, and an off-by-default receipt hook. Implementation and tests
+  do not authorize installing the hook, starting its 14-day shadow window,
+  releasing 4.9.0, deploying, or promoting any candidate.
 - PPR-7 governed graph observations are implemented and locally verified on an
   isolated feature branch. Implementation is additive, candidate-first, and
   opt-in; its separate PR/CI, feature-off deployment, and rollout evidence are
@@ -90,6 +96,13 @@ its governed-claims authority:
   capture budgets, and fail-closed production evidence defaults.
 
 ## Next
+
+- Review and integrate Workflow Intelligence without activating it. After a
+  separately approved shadow installation, collect at least 14 days and 100
+  eligible receipts (20 per Claude and Codex), manually review warnings, require
+  at least 90% precision and zero read-only false positives, then request a
+  separate advisory-mode decision. Never auto-promote analytics into rules or
+  skills.
 
 - Complete the bounded session-scope, native Hermes MemoryProvider, and
   governed-skill proposal program defined by
