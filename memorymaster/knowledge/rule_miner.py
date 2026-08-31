@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import contextlib
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -336,6 +337,64 @@ def _bootstrapped_confidence(conn: sqlite3.Connection, rule: dict[str, str]) -> 
     return confidence
 
 
+def _sqlite_path(service: Any) -> str:
+    """Ruta SQLite del store, o cadena vacia si no aplica (p.ej. Postgres)."""
+    db_path = str(getattr(getattr(service, "store", None), "db_path", "") or "")
+    return "" if not db_path or "://" in db_path else db_path
+
+
+def _tally_rule_observation(
+    conn: Any,
+    rule: dict[str, str],
+    *,
+    root_session_id: str,
+    scope: str,
+    provider: str,
+    source_ref: str,
+    evidence_hash: str,
+    session_kind: str,
+) -> float:
+    """Registra el linaje y devuelve la confianza sobre una conexion YA abierta.
+
+    El gate de bootstrap NO se movio: el registro sigue ocurriendo antes, que es
+    la semantica que la rama quiso — el linaje acumula evidencia de raices
+    independientes exista o no la confianza bootstrapeada.
+    """
+    record_rule_observation(
+        conn,
+        rule_fingerprint=rule_fingerprint(rule["trigger"], rule["action"]),
+        provider=provider or os.environ.get("MEMORYMASTER_LLM_PROVIDER", DEFAULT_PROVIDER),
+        root_session_id=root_session_id,
+        project_scope=scope,
+        source_ref=source_ref,
+        evidence_hash=evidence_hash,
+        session_kind=session_kind,
+    )
+    if not _bootstrap_enabled():
+        return _BASE_RULE_CONFIDENCE
+    return _bootstrapped_confidence(conn, rule)
+
+
+@contextlib.contextmanager
+def _lineage_connection(service: Any):
+    """Cede una conexion SQLite para el lote de linaje, o None si no aplica.
+
+    Existe para izar la conexion FUERA del bucle de minado sin re-indentar el
+    cuerpo: se suma al `with` que ya estaba. Abrir y cerrar una por iteracion
+    costaba 12,6 ms por llamada (benchmarks/bench_transcript_confidence.py), y
+    ese costo entra en cycle_p95 porque `run_cycle` recorre este bucle.
+    """
+    path = _sqlite_path(service)
+    if not path:
+        yield None
+        return
+    conn = _connect(path)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
 def _transcript_confidence(
     service: Any,
     rule: dict[str, str],
@@ -346,38 +405,35 @@ def _transcript_confidence(
     source_ref: str,
     evidence_hash: str,
     session_kind: str,
+    conn: Any | None = None,
 ) -> float:
-    """Bootstrap confidence for the Stop-hook path, which has a ``service`` but
-    no open verbatim connection. Resolves the store's SQLite path to tally the
-    event; if no SQLite path is available (e.g. Postgres store) or bootstrap is
-    disabled, returns the flat legacy confidence without touching ``rule_stats``.
+    """Bootstrap confidence para el camino del Stop-hook, que tiene ``service``
+    pero ninguna conexion verbatim abierta.
+
+    Con ``conn`` provisto se reusa esa conexion y NO se cierra aca: el llamador
+    la iza fuera de su bucle. Abrir y cerrar una por iteracion costaba 12,6 ms
+    por llamada medidos con benchmarks/bench_transcript_confidence.py, y ese
+    costo entra en cycle_p95 porque `run_cycle` recorre este bucle.
+
+    Sin ``conn``, se resuelve la ruta SQLite del store y se abre/cierra como
+    antes. Si no hay ruta (Postgres), devuelve la confianza plana sin tocar
+    ``rule_stats``.
     """
-    db_path = str(getattr(getattr(service, "store", None), "db_path", "") or "")
-    if not db_path or "://" in db_path:
+    kw = dict(
+        root_session_id=root_session_id, scope=scope, provider=provider,
+        source_ref=source_ref, evidence_hash=evidence_hash,
+        session_kind=session_kind,
+    )
+    if conn is not None:
+        return _tally_rule_observation(conn, rule, **kw)
+    db_path = _sqlite_path(service)
+    if not db_path:
         return _BASE_RULE_CONFIDENCE
-    conn = _connect(db_path)
+    own = _connect(db_path)
     try:
-        record_rule_observation(
-            conn,
-            rule_fingerprint=rule_fingerprint(rule["trigger"], rule["action"]),
-            provider=provider or os.environ.get("MEMORYMASTER_LLM_PROVIDER", DEFAULT_PROVIDER),
-            root_session_id=root_session_id,
-            project_scope=scope,
-            source_ref=source_ref,
-            evidence_hash=evidence_hash,
-            session_kind=session_kind,
-        )
-        if not _bootstrap_enabled():
-            return _BASE_RULE_CONFIDENCE
-        return _bootstrapped_confidence(conn, rule)
+        return _tally_rule_observation(own, rule, **kw)
     finally:
-        conn.close()
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
+        own.close()
 
 def mine_rules(
     db_path: str,
@@ -638,7 +694,7 @@ def mine_transcript_rules(
     if provider:
         os.environ["MEMORYMASTER_LLM_PROVIDER"] = provider
     try:
-        with llm_budget.cycle_scope():
+        with llm_budget.cycle_scope(), _lineage_connection(service) as lineage_conn:
             for asst_text, user_text in windows:
                 stats["windows"] += 1
                 if _window_is_sensitive(asst_text, user_text, scope=scope):
@@ -673,6 +729,7 @@ def mine_transcript_rules(
                         _build_window(asst_text, user_text).encode("utf-8", errors="replace")
                     ).hexdigest(),
                     session_kind=session_kind,
+                    conn=lineage_conn,
                 )
                 store = getattr(service, "store", None)
                 if store is not None and hasattr(store, "get_claim_by_idempotency_key"):

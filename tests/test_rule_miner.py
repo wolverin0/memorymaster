@@ -432,3 +432,32 @@ def test_un_store_postgres_no_registra_y_devuelve_la_confianza_base(env, monkeyp
     n = conn.execute("SELECT COUNT(*) FROM rule_observations").fetchone()[0]
     conn.close()
     assert n == 0, "registro linaje contra un store que no es SQLite"
+
+
+def test_la_conexion_izada_se_reusa_y_no_se_cierra(env):
+    """El arreglo de costo: abrir una conexion por iteracion costaba 12,6 ms.
+
+    Sin este test, un refactor que vuelva a abrir por llamada pasa verde y la
+    regresion reaparece en cycle_p95 semanas despues, acusando a otro cambio.
+    """
+    db, svc, _ = env
+    rule = {"trigger": "t", "action": "a"}
+
+    with rule_miner._lineage_connection(svc) as conn:
+        assert conn is not None
+        otros = {k: v for k, v in _LINAJE.items() if k != "root_session_id"}
+        for n in range(3):
+            rule_miner._transcript_confidence(
+                svc, rule, root_session_id=f"r{n}", conn=conn, **otros
+            )
+        # sigue usable DESPUES del lote: prueba que nadie la cerro adentro
+        filas = conn.execute("SELECT COUNT(*) FROM rule_observations").fetchone()[0]
+    assert filas == 3, f"esperaba 3 raices independientes, hubo {filas}"
+
+
+def test_sin_ruta_sqlite_el_context_manager_cede_none(env, monkeypatch):
+    """Postgres: no hay conexion de linaje que izar, y el bucle debe tolerarlo."""
+    _, svc, _ = env
+    monkeypatch.setattr(svc.store, "db_path", "postgresql://x/y", raising=False)
+    with rule_miner._lineage_connection(svc) as conn:
+        assert conn is None
