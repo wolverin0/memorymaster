@@ -364,3 +364,71 @@ def test_mine_transcript_rules_caps_windows(env, tmp_path):
     assert stats["windows"] == 1
     assert stats["llm_calls"] == 1
     assert stats["ingested"] == 1
+
+
+# --- linaje de observaciones: el contrato que cambio en esta rama -----------
+# `_transcript_confidence` gano seis kwargs obligatorios de linaje y NADA lo
+# cubria: ni este testigo ni tests/test_rule_observation_lineage.py, que prueba
+# la capa de storage (`record_rule_observation`) pero no que el minero la LLAME
+# bien. Un contrato cambiado sin cobertura pasa verde y falla despues del merge
+# acusando al codigo equivocado.
+
+_LINAJE = dict(
+    root_session_id="root-abc",
+    scope="project:memorymaster",
+    provider="google",
+    source_ref="verbatim:1",
+    evidence_hash="e" * 64,
+    session_kind="human",
+)
+
+
+def test_transcript_confidence_registra_la_observacion_con_su_linaje(env):
+    db, svc, _ = env
+    rule = {"trigger": "cuando falle el deploy", "action": "revisar el log primero"}
+
+    valor = rule_miner._transcript_confidence(svc, rule, **_LINAJE)
+
+    assert isinstance(valor, float)
+    conn = sqlite3.connect(str(db))
+    filas = conn.execute(
+        "SELECT provider, project_scope, session_kind FROM rule_observations"
+    ).fetchall()
+    conn.close()
+    assert filas, "no registro ninguna observacion de linaje"
+    assert filas[0] == ("google", "project:memorymaster", "human")
+
+
+def test_la_misma_raiz_no_suma_soporte_independiente(env):
+    """El anti-gaming, medido desde el minero y no desde el storage."""
+    db, svc, _ = env
+    rule = {"trigger": "cuando falle el deploy", "action": "revisar el log primero"}
+
+    for _ in range(3):
+        rule_miner._transcript_confidence(svc, rule, **_LINAJE)
+
+    conn = sqlite3.connect(str(db))
+    filas = conn.execute("SELECT COUNT(*), MAX(event_count) FROM rule_observations").fetchall()
+    conn.close()
+    assert filas[0][0] == 1, "tres pasadas de la MISMA raiz crearon filas independientes"
+    assert filas[0][1] >= 3, "no conto la actividad repetida"
+
+
+def test_un_store_postgres_no_registra_y_devuelve_la_confianza_base(env, monkeypatch):
+    """El bail-out silencioso por DSN, que es justo el que nadie mira.
+
+    Si esto se rompe, un despliegue Postgres deja de acumular linaje sin que
+    nada falle: el minero seguiria devolviendo un numero y la tabla quedaria
+    vacia para siempre.
+    """
+    db, svc, _ = env
+    monkeypatch.setattr(svc.store, "db_path", "postgresql://x/y", raising=False)
+    rule = {"trigger": "t", "action": "a"}
+
+    valor = rule_miner._transcript_confidence(svc, rule, **_LINAJE)
+
+    assert valor == rule_miner._BASE_RULE_CONFIDENCE
+    conn = sqlite3.connect(str(db))
+    n = conn.execute("SELECT COUNT(*) FROM rule_observations").fetchone()[0]
+    conn.close()
+    assert n == 0, "registro linaje contra un store que no es SQLite"
