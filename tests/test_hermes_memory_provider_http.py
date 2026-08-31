@@ -39,6 +39,37 @@ def _free_port() -> int:
         return int(probe.getsockname()[1])
 
 
+def _wait_until_healthy(
+    health_url: str, *, budget_seconds: float = 30.0, poll_seconds: float = 0.05
+) -> bool:
+    """Espera a que el servidor responda 200, durmiendo en TODOS los caminos.
+
+    El bucle anterior dormia solo en el `except`: si el servidor aceptaba la
+    conexion pero devolvia un estado distinto de 200 —arrancando— giraba sus 100
+    vueltas en milisegundos y se rendia sin haber esperado nada. Y con 100
+    iteraciones fijas el presupuesto real dependia de si cada intento fallaba
+    rapido o agotaba su timeout, o sea que no habia presupuesto.
+
+    Ahora el limite es TIEMPO, no vueltas. Importa porque el sintoma no es un
+    error de arranque legible: el test avanza, la llamada MCP falla, y
+    `_classify_transport_error` la reporta como `authority_unavailable`, que es
+    su fallback para cualquier error de transporte sin clasificar. Cuatro caidas
+    en CI el 2026-08-31, todas en Windows, entre 1 y 1,5 h de suite cada una.
+
+    Esto NO es un reintento del test: no repite aserciones ni tolera un fallo
+    real. Solo le da al arranque el tiempo que el bucle decia darle y no daba.
+    """
+    deadline = time.monotonic() + budget_seconds
+    while time.monotonic() < deadline:
+        try:
+            if httpx.get(health_url, timeout=1.0).status_code == 200:
+                return True
+        except httpx.HTTPError:
+            pass
+        time.sleep(poll_seconds)
+    return False
+
+
 @pytest.fixture
 def mcp_http_server(tmp_path: Path):
     workspace = tmp_path / "workspace"
@@ -91,13 +122,7 @@ def mcp_http_server(tmp_path: Path):
         creationflags=flags,
     )
     health = f"http://127.0.0.1:{port}/healthz"
-    for _ in range(100):
-        try:
-            if httpx.get(health, timeout=0.2).status_code == 200:
-                break
-        except httpx.HTTPError:
-            time.sleep(0.02)
-    else:
+    if not _wait_until_healthy(health):
         raise AssertionError("disposable MemoryMaster MCP server did not start")
     yield f"http://127.0.0.1:{port}/mcp", token, db, workspace
     process.terminate()
