@@ -34,6 +34,10 @@ from memorymaster.surfaces.cli_handlers_integrity import _handle_drain_spool, _h
 from memorymaster.surfaces.dreaming_cli import handle_dream_run, handle_dream_status
 from memorymaster.surfaces.session_scope import handle_session_scope
 from memorymaster.surfaces.cli_handlers_skills import SKILL_COMMAND_HANDLERS, register_skill_parsers
+from memorymaster.surfaces.cli_handlers_workflow import (
+    WORKFLOW_COMMAND_HANDLERS,
+    register_workflow_parser,
+)
 from memorymaster.surfaces.cli_handlers_public import (
     handle_forget,
     handle_demo,
@@ -66,6 +70,7 @@ COMMAND_HANDLERS["improve"] = handle_improve
 COMMAND_HANDLERS["demo"] = handle_demo
 COMMAND_HANDLERS["session-scope"] = handle_session_scope
 COMMAND_HANDLERS.update(SKILL_COMMAND_HANDLERS)
+COMMAND_HANDLERS.update(WORKFLOW_COMMAND_HANDLERS)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -73,6 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", "-j", action="store_true", dest="json_output", help="Output machine-readable JSON instead of human-readable text")
     parser.add_argument("--db", default="memorymaster.db", help="SQLite path or Postgres DSN (postgresql://...)")
     parser.add_argument("--workspace", default=".", help="Workspace root used for deterministic codebase checks and git-triggered scheduling")
+    parser.add_argument(
+        "--workflow-db",
+        default=None,
+        help="Rebuildable Workflow Intelligence SQLite path (default: MEMORYMASTER_WORKFLOW_DB or ~/.memorymaster/workflow-intelligence.db)",
+    )
     parser.add_argument("--stealth", action="store_true", help="Use local-only stealth DB (.memorymaster-stealth.db) in the current directory")
     parser.add_argument("--tenant", default=None, help="Tenant ID for multi-tenant isolation (only claims with this tenant_id are visible)")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -811,6 +821,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("entity-backfill", help="Backfill entity_id on claims with subject but no entity")
 
     register_skill_parsers(sub)
+    register_workflow_parser(sub)
 
     return parser
 
@@ -830,6 +841,7 @@ def main(argv: list[str] | None = None) -> int:
         "export-delta",
         "qdrant-search",
         "dream-status",
+        "workflow",
     }
 
     try:

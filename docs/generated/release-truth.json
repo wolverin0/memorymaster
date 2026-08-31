@@ -118,7 +118,8 @@
     "wiki-breakdown",
     "wiki-cleanup",
     "wiki-freshness",
-    "wiki-suggest-links"
+    "wiki-suggest-links",
+    "workflow"
   ],
   "console_entrypoints": [
     "memorymaster",
@@ -128,14 +129,15 @@
     "memorymaster-ops",
     "memorymaster-session-end",
     "memorymaster-setup",
-    "memorymaster-steward"
+    "memorymaster-steward",
+    "memorymaster-workflow-hook"
   ],
   "counts": {
-    "cli_commands": 119,
-    "console_entrypoints": 8,
+    "cli_commands": 120,
+    "console_entrypoints": 9,
     "mcp_tools": 51,
     "ops_cli_commands": 5,
-    "pytest_test_functions": 4140
+    "pytest_test_functions": 4160
   },
   "feature_profile_matrix": {
     "capture_hook": [

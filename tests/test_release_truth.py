@@ -10,7 +10,7 @@ import sys
 
 import memorymaster
 from memorymaster.surfaces.dashboard import DashboardRequestHandler
-from scripts.generate_release_truth import _source_test_function_count
+from scripts.generate_release_truth import _source_console_entrypoints, _source_test_function_count
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,6 +95,12 @@ def test_release_truth_test_inventory_is_platform_independent(tmp_path: Path) ->
     (tmp_path / "helper.py").write_bytes(b"def test_not_collected():\n    pass\n")
 
     assert _source_test_function_count(tmp_path) == 3
+
+
+def test_release_truth_console_entrypoints_come_from_source_checkout() -> None:
+    entrypoints = _source_console_entrypoints()
+    assert "memorymaster-workflow-hook" in entrypoints
+    assert entrypoints == sorted(entrypoints)
 
 
 def test_only_root_roadmap_is_authoritative() -> None:

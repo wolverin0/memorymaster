@@ -60,6 +60,7 @@ memorymaster-steward = "memorymaster.govern.llm_steward:main"
 memorymaster-setup = "memorymaster.surfaces.setup_hooks:main"
 memorymaster-session-end = "memorymaster.surfaces.session_end_ingest:main"
 memorymaster-ops = "memorymaster.surfaces.operations:main"
+memorymaster-workflow-hook = "memorymaster.workflow_intelligence.hook:main"
 
 [tool.ruff]
 target-version = "py310"
