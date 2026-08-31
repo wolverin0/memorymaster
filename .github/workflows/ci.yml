@@ -79,8 +79,15 @@ jobs:
           path: artifacts/perf/perf_smoke.json
 
   release-truth:
+    # SIN `needs: test` a proposito. Colgado de `test`, este job quedaba
+    # `skipped` justo cuando importaba: la misma staleness la detecta
+    # `tests/test_release_truth.py` DENTRO de la suite, asi que `test` fallaba
+    # primero y este —que tarda ~30s— no llegaba a correr nunca.
+    # Medido el 2026-08-31: 6 jobs rojos, el de Windows 3.12 tras 1h10m, para
+    # decir lo que este decia en medio minuto. Cuarta repeticion de la misma
+    # trampa en un dia (el generador cuenta funciones de test; agregar una sin
+    # regenerar deja el archivo viejo).
     runs-on: ubuntu-latest
-    needs: test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
