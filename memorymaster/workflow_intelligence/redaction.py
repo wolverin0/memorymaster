@@ -26,4 +26,3 @@ def public_excerpt(value: object, *, limit: int = 400) -> str:
     text = _PRIVATE_IPV4.sub("[REDACTED:private_ip]", text)
     text = _WHITESPACE.sub(" ", text).strip()
     return text[: max(0, min(limit, 400))]
-

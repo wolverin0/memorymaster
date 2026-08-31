@@ -60,4 +60,3 @@ def apply_postgres(conn: Any) -> None:
            ON rule_observations(rule_fingerprint, is_independent, project_scope)"""
     )
     conn.commit()
-

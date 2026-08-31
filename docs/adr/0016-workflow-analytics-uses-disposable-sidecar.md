@@ -51,4 +51,3 @@ belongs in `memorymaster.db` with SQLite/Postgres parity.
 - LLM classification stays explicit and advisory; deterministic evidence wins.
 - Hook activation and policy promotion require separate human decisions.
 - Cross-database joins are forbidden in correctness-critical runtime paths.
-

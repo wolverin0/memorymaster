@@ -62,4 +62,3 @@ class FeedbackRecord:
     excerpt: str
     confidence: float
     user_origin: bool = True
-

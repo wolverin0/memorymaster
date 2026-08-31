@@ -99,4 +99,3 @@ def test_migration_has_postgres_parity() -> None:
     assert "CREATE TABLE IF NOT EXISTS rule_observations" in statements
     assert "root_session_hash" in statements
     assert conn.committed is True
-

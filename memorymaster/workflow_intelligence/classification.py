@@ -89,4 +89,3 @@ def classify_pending(store: WorkflowStore, *, limit: int = 50) -> dict[str, obje
 
 
 __all__ = ["classify_pending"]
-

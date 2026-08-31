@@ -166,4 +166,3 @@ V1 does not add a scheduler, web dashboard, MCP server, transcript embeddings,
 DuckDB, an observability SaaS, automatic instruction edits, automatic skill
 activation, model-weight training, or reinforcement learning. Build those only
 after local reports and the shadow gate demonstrate a concrete need.
-
