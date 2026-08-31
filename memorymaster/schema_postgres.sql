@@ -411,6 +411,26 @@ $$;
 
 CREATE INDEX IF NOT EXISTS idx_embeddings_updated_at ON claim_embeddings(updated_at);
 
+-- Independent human root-session lineage. rule_stats remains a legacy activity
+-- counter; only this table can satisfy promotion recurrence gates.
+CREATE TABLE IF NOT EXISTS rule_observations (
+    id BIGSERIAL PRIMARY KEY,
+    rule_fingerprint TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    root_session_hash TEXT NOT NULL,
+    project_scope TEXT NOT NULL,
+    session_kind TEXT NOT NULL CHECK(session_kind IN ('human','mixed','subagent','automation')),
+    is_independent INTEGER NOT NULL CHECK(is_independent IN (0,1)),
+    first_observed_at TEXT NOT NULL,
+    last_observed_at TEXT NOT NULL,
+    event_count INTEGER NOT NULL DEFAULT 1 CHECK(event_count > 0),
+    evidence_hash TEXT NOT NULL,
+    source_ref TEXT NOT NULL,
+    UNIQUE(rule_fingerprint, provider, root_session_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_rule_observations_support
+    ON rule_observations(rule_fingerprint, is_independent, project_scope);
+
 CREATE TABLE IF NOT EXISTS qdrant_sync_state (
     stream_key TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL,

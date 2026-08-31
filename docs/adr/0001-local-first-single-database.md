@@ -1,4 +1,10 @@
+<!-- doc-head: authoritative MemoryMaster data remains one local-first database -->
 # 0001 Local-First Single Database
+# Covers: the authority boundary for claims, evidence, lifecycle, and recall data.
+# Key terms: SQLite WAL, authoritative store, Postgres parity, Qdrant.
+# Read when: changing governed persistence or interpreting ADR-0016's analytics sidecar.
+# Decision: all correctness-critical MemoryMaster tables share one logical store.
+<!-- /doc-head -->
 
 Date: 2026-05-05; reaffirmed 2026-07-14
 
@@ -40,3 +46,9 @@ disabled and documented, but do not block an accurately scoped local release.
 Consumers must not create a split layout such as one database for claims and another for Atlas Inbox. A split layout creates disconnected state and silently breaks the claim/source relationship.
 
 Schema and concurrency changes must preserve WAL behavior and the all-tables-in-one-store assumption.
+
+ADR-0016 does not weaken this rule. It permits one disposable operational
+sidecar for rebuildable coding-agent trajectory analytics. That sidecar cannot
+participate in claims, recall, lifecycle, or cross-database correctness paths;
+the minimal hashed recurrence lineage that affects skill governance remains in
+the authoritative database.

@@ -1,24 +1,26 @@
-<!-- doc-head: canonical map through v4.8.4; Dreaming V1 stays shadow by operator ruling -->
+<!-- doc-head: canonical map through the unreleased Workflow Intelligence implementation -->
 # DOCS-MAP - memorymaster
 # Covers: trust verdicts and replacements for every canonical documentation surface.
-# Key terms: CURRENT, SUPERSEDED, compiled user profile, roadmap, ADR.
+# Key terms: CURRENT, SUPERSEDED, workflow intelligence, compiled user profile, roadmap, ADR.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-21 for version truthing; GLM retired, Dreaming shadow-only.
+# Updated: 2026-08-30 for Workflow Intelligence, rule lineage, and sidecar ADR.
 # Rule: generated profiles are disposable projections; MemoryMaster remains authority.
 <!-- /doc-head -->
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
 | CHANGELOG.md | CURRENT | 2026-08-19 | Public release history through v4.8.4, matching `pyproject.toml`. Earlier heads said v4.7.5; the entries were there, the verdict line was stale. |
-| README.md | CURRENT | 2026-08-13 | Primary product overview and setup for governed claims, PPR-7 observations, compiled profile, and release-first scheduled review. Its "Gemini plus GLM" wording predates the 2026-08-21 GLM retirement (#226) and needs a pass. |
-| ROADMAP.md | CURRENT | 2026-08-21 | Sole authoritative roadmap; P5 merged and locally deployed, isolated PPR-7 active, and Dreaming V1 recorded as the main active workstream held in shadow by operator ruling. |
+| README.md | CURRENT | 2026-08-30 | Primary product overview for governed claims plus the optional non-authoritative Workflow Intelligence sidecar; hook activation remains separate. |
+| ROADMAP.md | CURRENT | 2026-08-30 | Sole authoritative roadmap; records Workflow Intelligence as locally implemented but unreleased/uninstalled and preserves separate shadow/advisory decisions. |
+| docs/workflow-intelligence.md | CURRENT | 2026-08-30 | Operator and architecture contract for local trajectory analytics, deterministic evidence, inert candidates, and the off/shadow/advisory receipt gate. |
+| docs/adr/0016-workflow-analytics-uses-disposable-sidecar.md | CURRENT | 2026-08-30 | Accepted boundary: authoritative memory remains one database while rebuildable workflow analytics use a non-authoritative local sidecar. |
 | .planning/GRAPH-OBSERVATIONS-V1.md | CURRENT | 2026-08-12 | Bounded PPR-7 implementation ledger for deterministic supported components, governed synthesis, lifecycle, opt-in recall, and verification. |
 | .planning/COMPILED-USER-PROFILE-V1.md | CURRENT | 2026-08-12 | Implementation contract for the zero-curation, evidence-bound user profile projection and weekly GLM map/reduce job. |
 | .planning/PAPER-RADAR-REVIEW-2026-08-08.md | CURRENT | 2026-08-08 | Primary-paper ledger covers 57-paper triage, 18 deep reviews, exact MemoryMaster gaps, and ordered PPR-1 through PPR-6 decisions subordinate to ROADMAP.md. |
 | .planning/PAPER-RESEARCH-IMPLEMENTATION-2026-08-08.md | CURRENT | 2026-08-08 | Executable status ledger for PPR-1 through PPR-6; records acceptance criteria and evidence without competing with ROADMAP.md. |
 | .planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md | CURRENT | 2026-08-12 | Executable Tencent-derived ledger; repair5 passed and PR #189 is open without merge authority. |
 | .planning/audits/2026-08-07-hermes-scope-skills/audit-delta.md | CURRENT | 2026-08-12 | Bounded delta preserves failed runs and records repair5 pass plus PR #189 creation. |
-| docs/governed-skills.md | CURRENT | 2026-08-08 | Operator guide for proposal/promotion, progressive confirmed-skill recall, isolation, and staging-only export. |
+| docs/governed-skills.md | CURRENT | 2026-08-30 | Operator guide for three-human-root recurrence, human promotion, confirmed-skill recall, isolation, and staging-only export. |
 | .planning/AUTORESEARCH-PROGRAM-2026-08-03.md | CURRENT | 2026-08-04 | Completed six-phase execution overlay records retrieval, graph, capture, full-QA, OAuth quality, public release, and the sole remaining longitudinal gate. |
 | .planning/audits/2026-08-04-autoresearch-convergence/audit-delta.md | CURRENT | 2026-08-04 | Bounded convergence delta records SQLite-only tests, 40-case quality evidence, public v4.6.0 release evidence, and the remaining seven-day observation. |
 | COMPETITOR_ANALYSIS.md | CURRENT | 2026-07-27 | Current prior-art analysis corrects Cognee provenance, temporal, tenant, graph, and document capabilities without adopting it as a dependency. |
@@ -57,7 +59,7 @@
 | .planning/audits/2026-07-14-phase4-budget-delta/production-release-verification.md | CURRENT | 2026-07-14 | This is a stable historical verification record for the released v4.5.0 version, documenting immutable facts like commit hashes and CI status.  |
 | docs/handbook.md | CURRENT | 2026-07-14 | Strong cross-references from root files and active maintenance indicators (v4.2 changelog, changelog mentions) confirm this is the canonical operational guide.  |
 | .planning/codebase/CONVENTIONS.md | CURRENT | 2026-06-09 | The document explicitly states it was regenerated on 2026-06-09 from the current tree (v3.28.0), making it a living reference for project standards.  |
-| docs/adr/0001-local-first-single-database.md | CURRENT | 2026-07-14 | The document records a stable architectural decision (Local-First SQLite) that was reaffirmed recently (2026-07-14) and defines the core persistence model for the project.  |
+| docs/adr/0001-local-first-single-database.md | CURRENT | 2026-08-30 | Governing data stays in one logical store; ADR-0016's disposable analytics sidecar is explicitly excluded from recall and correctness paths. |
 | docs/archive/security-audit/threat-model.md | CURRENT | 2026-06-20 | The file is a specific, dated security audit report and threat model that remains an accurate snapshot of the system's architecture and potential vulnerabilities as of the last commit.  |
 | docs/atlas-inbox-v1-technical-spec.md | CURRENT | 2026-05-07 | The document serves as the authoritative implementation plan for the V1 Atlas Inbox feature, mapping PRD requirements to existing MemoryMaster primitives and defining the data model for WhatsApp ingestion and action proposals.  |
 | docs/cross-project-patterns.md | CURRENT | 2026-07-14 | The document is behavior-derived, cites specific implementation lines and lifecycle rules, and describes R1.3 features like Qdrant quarantine and scope allowlists that appear to be the active architecture.  |
@@ -78,7 +80,7 @@
 | docs/archive/security-audit-2026-05-11.md | CURRENT | 2026-06-20 | The content is a dated but highly specific and technical security audit report that remains accurate as a historical record and reference for vulnerabilities unless explicitly fixed.  |
 | .planning/REMEDIATION-EXECUTION-V3-BUDGET.md | CURRENT | 2026-07-14 | The document contains a completed execution record from 2026-07-12, finalizing Phase 1 and explicitly stopping; it serves as the controlling authority for the V3 budget mode and audit delta.  |
 | .planning/codebase/INTEGRATIONS.md | CURRENT | 2026-06-09 | The document was regenerated recently (2026-06-09) from the current tree (v3.28.0), accurately reflecting the existing architecture, file paths, and integration logic.  |
-| docs/adr/README.md | CURRENT | 2026-05-12 | This index is the canonical navigation hub for 14 numbered architectural decision records and dated notes, and is actively referenced by the project root.  |
+| docs/adr/README.md | CURRENT | 2026-08-30 | Canonical navigation for 16 numbered decisions, including the disposable workflow-sidecar boundary. |
 | docs/adr/0012-readme-stays-concise-handbook-holds-operator-depth.md | CURRENT | 2026-05-11 | This is an accepted architectural decision record (ADR) establishing a permanent documentation split strategy that remains relevant for project organization.  |
 | .planning/P2-CENSUS.md | CURRENT | 2026-06-15 | Recent (June 2026) snapshot census with actionable verdicts and specific code insights for the P2 restructure.  |
 | docs/adr/0006-sensitivity-filter-boundary.md | CURRENT | 2026-05-11 | The document establishes a stable architectural boundary between raw source storage and sanitized claims storage that remains applicable to the project's design.  |

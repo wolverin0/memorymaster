@@ -500,6 +500,77 @@ def install_dream_hooks(*, install_claude: bool, install_codex: bool) -> dict[st
     return result
 
 
+def configure_workflow_receipts(
+    *,
+    mode: str,
+    install_claude: bool,
+    install_codex: bool,
+    workflow_db: str | Path | None = None,
+) -> dict[str, str]:
+    """Install/remove the fail-soft receipt hook; never activates implicitly."""
+    if mode not in {"off", "shadow", "advisory"}:
+        raise ValueError("workflow receipt mode must be off, shadow, or advisory")
+    if mode == "advisory":
+        from memorymaster.surfaces.cli_handlers_workflow import shadow_status
+        from memorymaster.workflow_intelligence.storage import WorkflowStore
+
+        store = WorkflowStore(workflow_db)
+        try:
+            if not shadow_status(store)["ready_for_operator_approval"]:
+                raise ValueError("advisory mode requires a passing 14-day shadow gate")
+        finally:
+            store.close()
+    hook_dir = HOME / ".memorymaster" / "hooks"
+    destination = hook_dir / "memorymaster-workflow-receipt.py"
+    if mode != "off":
+        hook_dir.mkdir(parents=True, exist_ok=True)
+        template = (TEMPLATES_DIR / "hooks" / destination.name).read_text(encoding="utf-8")
+        destination.write_text(
+            template.replace("__MEMORYMASTER_PROJECT_ROOT__", str(PROJECT_ROOT).replace("\\", "/")),
+            encoding="utf-8",
+        )
+    result = {"mode": mode, "hook": str(destination), "claude": "skipped", "codex": "skipped"}
+    if install_claude:
+        _configure_receipt_client(
+            CLAUDE_DIR / "settings.json", destination, mode,
+            workflow_db=workflow_db, codex=False,
+        )
+        result["claude"] = "removed" if mode == "off" else "installed"
+    if install_codex:
+        _configure_receipt_client(
+            CODEX_DIR / "hooks.json", destination, mode,
+            workflow_db=workflow_db, codex=True,
+        )
+        result["codex"] = "removed" if mode == "off" else "installed"
+    return result
+
+
+def _configure_receipt_client(
+    path: Path,
+    hook: Path,
+    mode: str,
+    *,
+    workflow_db: str | Path | None,
+    codex: bool,
+) -> None:
+    config = _load_json_preserving(path)
+    hooks = config.setdefault("hooks", {})
+    stop = hooks.setdefault("Stop", [])
+    stop[:] = [item for item in stop if "memorymaster-workflow-receipt" not in json.dumps(item)]
+    env = config.setdefault("env", {})
+    env["MEMORYMASTER_WORKFLOW_RECEIPTS"] = mode
+    if workflow_db:
+        env["MEMORYMASTER_WORKFLOW_DB"] = str(Path(workflow_db).expanduser().resolve())
+    if mode != "off":
+        command = f'"{PYTHON_EXE}" "{hook}"'
+        command_config = {"type": "command", "command": command, "timeout": 2}
+        if codex:
+            command_config["commandWindows"] = command
+        stop.append({"hooks": [command_config]})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def setup_dream_schedule(db_path: str | Path, *, apply_candidates: bool) -> str:
     """Create the hourly Windows task; other platforms get a manual command."""
     provider = os.environ.get("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "gemini").strip()
@@ -1284,6 +1355,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="install native Dreaming capture hooks and an hourly shadow task",
     )
     p.add_argument(
+        "--workflow-receipts",
+        choices=["off", "shadow", "advisory"],
+        default=None,
+        help="configure the provider-neutral completion receipt hook (default: leave off/unconfigured)",
+    )
+    p.add_argument(
+        "--workflow-db",
+        default=None,
+        help="Workflow Intelligence sidecar used for shadow/advisory receipts",
+    )
+    p.add_argument("--dry-run", action="store_true", help="print the setup plan without writing anything")
+    p.add_argument(
         "--dream-apply-candidates",
         action="store_true",
         help="activate candidate/proposal writes for Dreaming (requires --enable-dream)",
@@ -1373,6 +1456,23 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
         if args.full_stack is None
         else bool(args.full_stack)
     )
+
+    if args.dry_run:
+        preview_root = Path(args.project_root).expanduser().resolve() if args.project_root else Path.cwd()
+        detected = detect_environment(cwd=preview_root)
+        payload = {
+            "dry_run": True,
+            "project_root": str(preview_root),
+            "planned": format_plan(detected, want_full_stack=want_full_stack),
+            "workflow_receipts": {
+                "requested": args.workflow_receipts or "off",
+                "would_modify": args.workflow_receipts is not None,
+                "activation": "never automatic",
+            },
+        }
+        if not args.json:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0, (payload if args.json else None)
 
     # --verify-only short-circuits BEFORE any project-root prompt: it only needs
     # --db (defaulting to cwd/memorymaster.db) and must never block on input.
@@ -1504,6 +1604,16 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
         applied["mcp_codex"] = "registered"
     else:
         applied["mcp_codex"] = "skipped"
+
+    if args.workflow_receipts is not None:
+        applied["workflow_receipts"] = configure_workflow_receipts(
+            mode=args.workflow_receipts,
+            install_claude=bool(detected.claude_code),
+            install_codex=bool(want_codex and detected.codex),
+            workflow_db=args.workflow_db,
+        )
+    else:
+        applied["workflow_receipts"] = "off (not configured)"
 
     # --- Native Dreaming (explicit opt-in; shadow unless activation flag) ---
     if args.enable_dream:

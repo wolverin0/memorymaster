@@ -50,6 +50,25 @@ def _source_test_function_count(tests_root: Path | None = None) -> int:
     )
 
 
+def _source_console_entrypoints(pyproject: Path | None = None) -> list[str]:
+    """Read project scripts from this checkout, independent of installed metadata."""
+    path = pyproject or ROOT / "pyproject.toml"
+    in_scripts = False
+    names: list[str] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line == "[project.scripts]":
+            in_scripts = True
+            continue
+        if in_scripts and line.startswith("["):
+            break
+        if in_scripts and line and not line.startswith("#") and "=" in line:
+            name = line.split("=", 1)[0].strip().strip("\"'")
+            if name:
+                names.append(name)
+    return sorted(names)
+
+
 def _release_truth() -> dict[str, Any]:
     import memorymaster
     from memorymaster.surfaces import mcp_server
@@ -63,8 +82,7 @@ def _release_truth() -> dict[str, Any]:
         raise RuntimeError("source, installed, and runtime package versions differ")
     profiles = {name: list(components) for name, components in sorted(SETUP_PROFILES.items())}
     components = sorted({component for values in profiles.values() for component in values})
-    distribution = importlib.metadata.distribution("memorymaster")
-    entrypoints = sorted(item.name for item in distribution.entry_points if item.group == "console_scripts")
+    entrypoints = _source_console_entrypoints()
     return {
         "version": source_version,
         "counts": {

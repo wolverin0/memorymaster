@@ -281,3 +281,23 @@ CREATE INDEX IF NOT EXISTS idx_media_retry_status ON media_retry_queue(status);
 CREATE INDEX IF NOT EXISTS idx_media_retry_next_attempt ON media_retry_queue(next_attempt_time);
 CREATE INDEX IF NOT EXISTS idx_media_retry_lease_expiry ON media_retry_queue(status, lease_expires_at);
 CREATE INDEX IF NOT EXISTS idx_media_retry_source_item ON media_retry_queue(source_item_id);
+
+-- Independent human root-session lineage. rule_stats remains a legacy activity
+-- counter; only this table can satisfy promotion recurrence gates.
+CREATE TABLE IF NOT EXISTS rule_observations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_fingerprint TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    root_session_hash TEXT NOT NULL,
+    project_scope TEXT NOT NULL,
+    session_kind TEXT NOT NULL CHECK(session_kind IN ('human','mixed','subagent','automation')),
+    is_independent INTEGER NOT NULL CHECK(is_independent IN (0,1)),
+    first_observed_at TEXT NOT NULL,
+    last_observed_at TEXT NOT NULL,
+    event_count INTEGER NOT NULL DEFAULT 1 CHECK(event_count > 0),
+    evidence_hash TEXT NOT NULL,
+    source_ref TEXT NOT NULL,
+    UNIQUE(rule_fingerprint, provider, root_session_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_rule_observations_support
+    ON rule_observations(rule_fingerprint, is_independent, project_scope);

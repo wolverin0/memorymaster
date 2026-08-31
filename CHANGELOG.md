@@ -1,10 +1,29 @@
-<!-- doc-head: public MemoryMaster release history through v4.8.4 -->
-Covers user-visible changes, migrations, governance boundaries, and operational fixes for each release.
-Key terms: graph observations, compiled profile, governed capture, recall, sensitivity, lineage.
+<!-- doc-head: public history through v4.8.4 plus unreleased Workflow Intelligence -->
+Covers user-visible changes, migrations, governance boundaries, workflow analytics, and operational fixes.
+Key terms: workflow intelligence, rule observations, graph observations, governed capture, recall, lineage.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
 <!-- /doc-head -->
 
 # Changelog
+
+## [Unreleased]
+
+- Added on-demand **Workflow Intelligence** for Claude Code, Codex, and
+  Wezbridge histories. It uses a rebuildable WAL-mode sidecar, bounded redacted
+  excerpts, deterministic trajectory signals, self-contained local reports,
+  inert candidates, and explicit human review. LLM classification is opt-in and
+  cannot establish success or recurrence.
+- Added migration `0024_rule_observation_lineage` with SQLite/Postgres parity.
+  New governed skill candidates require three distinct human root sessions;
+  user/global patterns also require two projects. Same-session retries and
+  subagent/automation activity do not inflate independent support.
+- Added a fail-soft, content-free completion receipt hook. It ships
+  unregistered and defaults to `off`; shadow setup is explicit, advisory setup
+  fails closed until the 14-day/100-receipt/provider/precision gate passes, and
+  no blocking or automatic policy promotion exists.
+- This entry is implementation evidence only. No package release, hook
+  installation, scheduler activation, deployment, or external acceptance is
+  implied.
 
 ## [4.8.4] - 2026-08-19
 

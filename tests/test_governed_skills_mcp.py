@@ -17,6 +17,7 @@ import memorymaster.surfaces.mcp_server as mcp_server
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
 from memorymaster.knowledge.rule_miner import rule_fingerprint
+from memorymaster.knowledge.rule_observations import record_rule_observation
 from memorymaster.knowledge.rules import build_rule_fields
 
 
@@ -73,6 +74,17 @@ def mcp_skill_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "INSERT INTO rule_stats(rule_fingerprint, correction_count, last_mined) VALUES (?, 2, ?)",
             (rule_fingerprint(trigger, action), "2026-08-07T00:00:00+00:00"),
         )
+        fingerprint = rule_fingerprint(trigger, action)
+        for index in range(3):
+            record_rule_observation(
+                conn,
+                rule_fingerprint=fingerprint,
+                provider="codex",
+                root_session_id=f"mcp-root-{index}",
+                project_scope="project:workspace",
+                source_ref=f"mcp:{index}",
+                evidence_hash=f"{index + 1:064x}",
+            )
     yield str(db), str(workspace), rule.id, tmp_path
     access_control._agent_roles.clear()
 
