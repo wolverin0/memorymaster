@@ -70,12 +70,20 @@ raices mas rapido por llamada.
 
 **FALSADA, y la razon importa mas que el resultado.**
 
-| Tramo | Desde id | Resultado |
-|---|---|---|
-| 1 (8%) | 815.225 | obs 184 -> ~190, raices 3 |
-| 2 (24%) | 2.445.675 | raices siguen en 3 |
-| 3 (41%) | 4.178.029 | obs 200, **raices 3, candidatos 0** |
-| 4-7 | — | cancelados: la hipotesis ya estaba muerta |
+| Tramo | Desde id | Llamadas | Ingeridas | Obs total | Raices | Candidatos | Seg |
+|---|---|---|---|---|---|---|---|
+| 1 (8%) | 815.225 | 58 | **0** | 191 | 3 | 0 | 258 |
+| 2 (24%) | 2.445.675 | 99 | **0** | 199 | 3 | 0 | 434 |
+| 3 (41%) | 4.178.029 | 99 | **0** | 200 | 3 | 0 | 371 |
+| 4-7 | — | — | — | — | — | — | cancelados |
+
+**Costo medido: 256 llamadas al modelo -> 16 observaciones nuevas -> CERO raices
+nuevas.** Ese es el numero que deberia mirar quien quiera reintentarlo.
+
+`ingeridas = 0` en los tres tramos confirma la mitad de la hipotesis que SI era
+cierta: re-minar territorio ya barrido no duplica claims (la idempotency key las
+dedupea) pero si registra linaje. Lo que fallo fue la otra mitad — el linaje
+nuevo salio de las MISMAS 3 sesiones.
 
 Por que fallo: **202 observaciones salieron de 3 sesiones**. El minado no
 reparte por sesion — toma ventanas contiguas, y una sesion larga aporta decenas
