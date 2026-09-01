@@ -59,3 +59,57 @@ El watermark persiste en la base: continua desde 9.821.662 sin repetir. Cada
 lote deja filas y watermark commiteados, asi que una interrupcion cuesta el lote
 y no el trabajo. Driver por lotes con medicion de ritmo en el scratchpad de la
 sesion (`drain_rules.py`).
+
+---
+
+## Muestreo por tramos separados — resultado (misma fecha)
+
+Hipotesis a probar: como el liston pide 3 raices INDEPENDIENTES y barrer lineal
+recorre sesiones contiguas, saltar entre tramos separados deberia diversificar
+raices mas rapido por llamada.
+
+**FALSADA, y la razon importa mas que el resultado.**
+
+| Tramo | Desde id | Resultado |
+|---|---|---|
+| 1 (8%) | 815.225 | obs 184 -> ~190, raices 3 |
+| 2 (24%) | 2.445.675 | raices siguen en 3 |
+| 3 (41%) | 4.178.029 | obs 200, **raices 3, candidatos 0** |
+| 4-7 | — | cancelados: la hipotesis ya estaba muerta |
+
+Por que fallo: **202 observaciones salieron de 3 sesiones**. El minado no
+reparte por sesion — toma ventanas contiguas, y una sesion larga aporta decenas
+de reglas. Cada tramo tambien cae dentro de pocas sesiones, asi que saltar no
+cambia nada. La diversidad de raices depende de cuantas SESIONES DISTINTAS
+atraviesa el barrido, y con 120 ventanas se atraviesa una o dos.
+
+### Una alarma que levante y era falsa
+
+Vi 3 raices / 3 scopes en correspondencia 1:1 y casi reporto que
+`root_session_hash` era constante por scope, o sea un defecto estructural que
+haria el liston inalcanzable. **Lo medi antes de reportarlo**: las filas de
+origen vienen de 3 sesiones REALES y hay 3 hashes. El linaje registra una raiz
+por sesion, como debe. La correspondencia era coincidencia — esas 3 sesiones
+pertenecen a 3 proyectos distintos.
+
+### Conclusion para el liston
+
+Conseguir 3 raices independientes por regla exige que la MISMA regla aparezca en
+sesiones distintas: repeticion del operador a lo largo del tiempo, no mas
+barrido. El gate no esta trabado; esta diciendo con precision que todavia no hay
+evidencia repetida e independiente. Eso es informacion, no un bloqueo.
+
+### Gotcha nuevo (costo real, segunda vez el mismo dia)
+
+`mine-rules` escribe el watermark al terminar SIEMPRE, incluso con `--since-id`
+(rule_miner.py:505). El muestreador lo salvaba y restauraba en un `finally`...
+que **no corre si se mata el proceso**. Tras el kill el watermark estaba en
+9.819.687; hubo que restaurarlo a mano a 9.821.662 (1 fila tocada, verificado).
+
+Y la proteccion nacio rota: la clave del watermark estaba escrita a mano como
+`rule_miner_watermark` cuando la real es `rule_miner.last_verbatim_id`. Con la
+equivocada, leer devolvia 0 y restaurar hacia UPDATE sobre una clave inexistente
+— cero filas tocadas, punto de reanudacion perdido, y el log afirmando que lo
+habia restaurado. Se detecto midiendo el baseline en vez de confiar en el propio
+codigo. Ahora la clave se IMPORTA del modulo y la restauracion revienta si no
+toca exactamente una fila.
