@@ -1,9 +1,9 @@
-<!-- doc-head: compiled user profile v1 implementation contract -->
+<!-- doc-head: compiled Gemini profile contract and scheduled-launcher activation discrepancy -->
 # Compiled User Profile V1
 # Covers: evidence input, bounded Gemini map/reduce, deterministic projection, and injection.
 # Key terms: verbatim_memories, exact supports, user.md, SessionStart, feature flag.
 # Read when: changing profile extraction, lifecycle, scheduling, rendering, or rollout.
-# Status: shipped in 4.7; generation intentionally off in the 2026-09-05 runtime artifact.
+# Status: shipped in 4.7; scheduled launcher enables generation; latest logged result is not_due.
 <!-- /doc-head -->
 
 ## Contract
@@ -46,8 +46,9 @@ python -m memorymaster.profile run --db .\disposable-profile.db --workspace .
 - Surface tests cover feature-off scheduling, fail-closed enabled scheduling,
   generated-only SessionStart loading, and CLI status/help.
 - Shipped source and runtime activation remain distinct. The September 5
-  artifact records generation off, 52 active facts and 565 supports with zero
-  mismatches. This pass does not activate generation or rebuild the profile.
+  artifact records its own process flag off, 52 active facts and 565 supports with zero
+  mismatches. The scheduled launcher overrides generation to on and logs not_due;
+  the artifact alone cannot establish worker activation. No profile rebuild is requested.
 - September 5 regression: scheduled configuration silently used 800/40 while
   direct configuration used 1400/60. The local fix reads the shared defaults;
   tests compare every field and preserve explicit overrides.

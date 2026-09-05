@@ -137,17 +137,10 @@ def test_the_default_consolidator_is_antigravity(monkeypatch):
     assert isinstance(create_dream_consolidator(), AntigravityConsolidator)
 
 
-def test_glm_stays_reachable_by_configuration(monkeypatch):
-    """No se borro: si el plan vuelve, es una linea de config y no un commit."""
-    from memorymaster.dreaming.providers import GLMConsolidator
-
-    monkeypatch.setenv("MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER", "glm")
-    assert isinstance(create_dream_consolidator(), GLMConsolidator)
-
 
 def test_an_unknown_provider_raises_instead_of_defaulting(monkeypatch):
     monkeypatch.setenv("MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER", "typo-provider")
-    with pytest.raises(ProviderCallError, match="must be antigravity or glm"):
+    with pytest.raises(ProviderCallError, match="must select Gemini"):
         create_dream_consolidator()
 
 

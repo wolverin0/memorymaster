@@ -112,7 +112,7 @@ def test_provider_readiness_uses_opencode_for_dream_extraction(monkeypatch) -> N
     readiness = setup_hooks._provider_readiness()
 
     assert readiness["dream_extractor"] is True
-    assert readiness["dream_consolidator"] is True
+    assert readiness["dream_consolidator"] is False  # OpenCode cannot prove agy readiness.
     assert readiness["claim_extractor"] is True
     assert readiness["graph_extractor"] is True
 

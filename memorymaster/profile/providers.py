@@ -1,4 +1,4 @@
-"""Structured GLM map/reduce providers for compiled profile facts."""
+"""Structured Gemini map/reduce providers for compiled profile facts."""
 
 from __future__ import annotations
 
@@ -135,11 +135,7 @@ def _decision_from_row(row: Any, known_facts: set[int]) -> ProfileDecision:
 class ProfileMapper:
     """Extract evidence-bound profile candidates from sanitized user turns.
 
-    Se llamaba GLMProfileMapper. El nombre se saco al migrar a Gemini el
-    2026-08-20: una clase que dice GLM y habla con Gemini es la misma clase de
-    artefacto que declara un mundo distinto del real que este repo estuvo
-    limpiando toda la semana. El proveedor es inyectable, asi que el nombre no
-    deberia haber tenido marca de proveedor nunca.
+    Provider-neutral naming preserves injectable fake clients for offline tests.
     """
 
     def __init__(self, *, client: Any | None = None) -> None:

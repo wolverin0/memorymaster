@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; integrated features and dated runtime status -->
+<!-- doc-head: sole roadmap; Gemini-only consolidation and corrected scheduled runtime evidence -->
 # MemoryMaster roadmap
 # Covers: post-v4.6 sequence, workflow analytics, governed observations, compiled profile, and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, sustainability.
@@ -44,8 +44,10 @@ remain separately gated. Integrated code does not imply activation.
 - The live read-only operational artifact at 2026-09-05T09:55:40Z reports
   installed 4.8.5, migration 24, database integrity passing, zero recent
   private-context matches and the retrieval canary at rank 4.
-- That artifact records graph/profile generation intentionally disabled.
-  Its overall PASS is not evidence of live synthesis precision or throughput.
+- That artifact reads graph/profile flags from its own process and reports
+  disabled. Follow-up inspection proved the scheduled launcher overrides both
+  flags to enabled. Its PASS therefore does not establish worker activation or
+  live synthesis precision. Recent worker logs show discovery with no components.
   Existing profile state contains 52 active facts and 565 exact supports,
   with zero manifest mismatches in that run.
 - The documented August 21 operator intent is SHADOW. September 5 live
@@ -60,6 +62,10 @@ remain separately gated. Integrated code does not imply activation.
 - Local 2026-09-05 improvements and their verification are recorded in
   [.planning/ENGINEERING-CONSOLIDATION-2026-09-05.md](.planning/ENGINEERING-CONSOLIDATION-2026-09-05.md).
   This is an implementation record, not a second roadmap.
+- The operator now authorizes integration/deployment and removal of GLM.
+  Gemini remains the active extraction/consolidation/profile provider.
+  Evaluate existing Dreaming history before generating more data; exact
+  citations, steward confirmation and access counts are not semantic precision.
 
 ## Next
 

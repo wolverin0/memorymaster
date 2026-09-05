@@ -1,4 +1,4 @@
-<!-- doc-head: MemoryMaster 4.8 governed memory, observations, profiles, workflow analytics, and scoped verification -->
+<!-- doc-head: MemoryMaster 4.8 governed memory with Gemini Dreaming and scoped verification -->
 <!-- Covers: installation, governed recall, graph observations, compiled profile, Workflow Intelligence, scheduling, and safety. -->
 <!-- Key terms: claims, citations, graph observations, workflow sidecar, compiled profile, Gemini, SQLite, MCP. -->
 <!-- Read when: evaluating, installing, operating, or upgrading MemoryMaster. -->
@@ -42,8 +42,8 @@ evidence -> candidate claim -> steward -> confirmed claim -> governed recall
 | Workflow Intelligence | Mines Claude/Codex trajectories into local redacted analytics and inert improvement candidates | On demand; separate sidecar, no automatic promotion |
 
 MemoryMaster 4.8 uses the configured **Gemini extraction + Gemini consolidation**
-path for this installation; consolidation moved off GLM on 2026-08-20 when that
-plan was retired, and now runs through the Antigravity (`agy`) CLI over OAuth.
+path for this installation; consolidation runs through the Antigravity (`agy`)
+CLI over OAuth. The retired GLM consolidation adapter has been removed.
 OpenAI and Anthropic remain optional provider adapters; neither is required for
 graph-observation discovery or ordinary recall.
 
@@ -293,7 +293,6 @@ not for ordinary local recall.
 |---|---|---|
 | Gemini | `MEMORYMASTER_LLM_PROVIDER=google` plus configured Google credentials | Activated extraction path |
 | Gemini through the Antigravity `agy` CLI | OAuth session cached by a prior interactive `agy` run | Activated Dreaming/profile consolidation path |
-| GLM through authenticated OpenCode | `MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER=glm` | Retired 2026-08-20; deselected, not deleted |
 | Claude CLI OAuth | `MEMORYMASTER_LLM_PROVIDER=claude_cli` | Optional batch/steward path |
 | Ollama | `MEMORYMASTER_LLM_PROVIDER=ollama` | Optional local provider |
 | OpenAI / Anthropic APIs | corresponding provider and environment credential | Supported optional adapters |

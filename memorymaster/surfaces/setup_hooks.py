@@ -775,7 +775,9 @@ def _provider_readiness() -> dict[str, bool]:
     )
     return {
         "dream_extractor": dream_extractor_ready,
-        "dream_consolidator": shutil.which("opencode") is not None,
+        "dream_consolidator": shutil.which(
+            os.environ.get("MEMORYMASTER_AGY_COMMAND", "agy")
+        ) is not None,
         "claim_extractor": capture_ready,
         "graph_extractor": capture_ready,
         "ocr": bool(os.environ.get("MEMORYMASTER_OCR_PROVIDER", "").strip()),

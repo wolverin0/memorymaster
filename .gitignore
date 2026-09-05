@@ -67,6 +67,7 @@ obsidian-vault/
 .mcp.json
 memory.db
 .memorymaster/
+.venv-review/
 cloned/
 quality_model.pkl
 autoresearch*.log

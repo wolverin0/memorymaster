@@ -13,10 +13,10 @@ from typing import Any
 
 from memorymaster.dreaming.providers import (
     CommandRunner,
-    GLMConsolidator,
     ProviderCallError,
     _default_command_runner,
     _opencode_environment,
+    opencode_response_text,
 )
 
 
@@ -60,6 +60,8 @@ class OpenCodeClient:
         work_dir: str | Path | None = None,
         timeout: int = 180,
     ) -> None:
+        if "glm" in model.lower() or model.lower().startswith(("zai", "z.ai")):
+            raise OpenCodeClientError("retired_provider", "Retired provider is disabled; use Gemini.")
         self.model = model if "/" in model else f"openai/{model}"
         self.provider = self.model.split("/", 1)[0]
         self.effort = effort.strip()
@@ -98,7 +100,7 @@ class OpenCodeClient:
     ) -> OpenCodeClientResult:
         session_id: str | None = None
         try:
-            text, input_tokens, output_tokens, session_id = GLMConsolidator._response_text(
+            text, input_tokens, output_tokens, session_id = opencode_response_text(
                 completed.stdout
             )
         except ProviderCallError as exc:

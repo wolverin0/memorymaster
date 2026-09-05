@@ -172,6 +172,8 @@ def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
 
 
 def _opencode_environment(provider: str) -> dict[str, str]:
+    if provider.lower() in {"glm", "zai", "zai-coding-plan", "z.ai"}:
+        raise ProviderCallError("Retired provider is disabled; use Gemini")
     env = dict(os.environ)
     env.pop("GLM_API_KEY", None)
     env.pop("OPENCODE_DISABLE_DEFAULT_PLUGINS", None)
@@ -422,6 +424,8 @@ class OpenCodeExtractor:
         configured_model = model or os.environ.get(
             "MEMORYMASTER_DREAM_EXTRACT_MODEL", "openai/gpt-5.4-mini",
         )
+        if "glm" in configured_model.lower() or configured_model.lower().startswith(("zai", "z.ai")):
+            raise ProviderCallError("Retired provider is disabled; use Gemini")
         self.model = (
             configured_model
             if "/" in configured_model
@@ -464,7 +468,7 @@ class OpenCodeExtractor:
             raise ProviderCallError(
                 f"OpenCode extraction failed with exit {completed.returncode}"
             )
-        raw, input_tokens, output_tokens, session_id = GLMConsolidator._response_text(
+        raw, input_tokens, output_tokens, session_id = opencode_response_text(
             completed.stdout,
         )
         try:
@@ -590,10 +594,7 @@ def consolidation_from_raw(
 ) -> ConsolidationResult:
     """Valida la respuesta cruda de un consolidador, sea cual sea el transporte.
 
-    Compartida a proposito entre el consolidador de GLM y el de Antigravity. La
-    alternativa —copiar quince lineas al proveedor nuevo— es como se desincronizan
-    dos validaciones: una recibe un arreglo nuevo y la otra no, y nadie se entera
-    hasta que la que quedo vieja acepta algo que la otra rechaza.
+    Shared validation is transport-independent.
 
     La regla dura es que tiene que haber EXACTAMENTE una decision por candidato.
     Un consolidador que devuelve de menos deja candidatos sin resolver que se ven
@@ -627,9 +628,7 @@ def consolidation_from_raw(
 class AntigravityConsolidator:
     """Consolidacion sobre Gemini via el CLI `agy`, con OAuth y sin clave paga.
 
-    Reemplaza a GLMConsolidator tras darse de baja el plan de zai-coding-plan el
-    2026-08-20. Reusa su prompt y su validacion: lo unico que cambia es el
-    transporte, y duplicar el resto solo habria creado dos verdades.
+    The retired transport was removed; prompt and validation remain shared.
 
     UNA SOLA LLAMADA POR LOTE, y no es casual. Cada invocacion de `agy` arrastra
     ~20k tokens de andamiaje fijo (medido: 20015/20011/20009), asi que consolidar
@@ -654,21 +653,12 @@ class AntigravityConsolidator:
         configured = model or os.environ.get(
             "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL", DEFAULT_MODEL
         )
-        # MEMORYMASTER_DREAM_CONSOLIDATE_MODEL la compartian los dos consolidadores,
-        # y en la era de OpenCode su valor llevaba prefijo de proveedor
-        # ("zai-coding-plan/glm-5.2"). Las instalaciones existentes la tienen asi
-        # seteada AHORA: pasarsela a `agy` lo haria salir con "unknown model" y
-        # romperia el dreaming apenas cambia el default.
-        #
-        # Un modelo de agy nunca lleva "/", asi que ese prefijo identifica config
-        # vieja sin ambiguedad. Se ignora con un WARNING nombrando la variable — no
-        # en silencio: la diferencia con enmascarar un error de tipeo es que aca el
-        # valor es de un proveedor dado de baja, no un nombre mal escrito, y el
-        # operador ya declaro que quiere Gemini.
+        # Old provider-prefixed models cannot be passed to the Gemini CLI.
+        # Warn during migration rather than silently forwarding invalid configuration.
         if "/" in configured:
             LOGGER.warning(
                 "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL=%s tiene prefijo de proveedor "
-                "(config de la era GLM) y no es un modelo de agy; se usa %s. "
+                "(retired provider configuration) y no es un modelo de agy; se usa %s. "
                 "Limpiar la variable o fijarle un modelo de agy para silenciar esto.",
                 configured, DEFAULT_MODEL,
             )
@@ -685,7 +675,7 @@ class AntigravityConsolidator:
     ) -> ConsolidationResult:
         from memorymaster.core.antigravity_client import AntigravityError
 
-        prompt = GLMConsolidator._prompt(candidates, current_claims, scope)
+        prompt = consolidation_prompt(candidates, current_claims, scope)
         started = time.monotonic()
         try:
             response = self.client.complete(prompt)
@@ -704,187 +694,74 @@ class AntigravityConsolidator:
         )
 
 
-class GLMConsolidator:
-    provider = "zai-coding-plan"
+def consolidation_prompt(
+    candidates: list[DreamCandidate], current_claims: list[dict[str, Any]], scope: str,
+) -> str:
+    valid_candidate_ids = [candidate.candidate_id for candidate in candidates]
+    system = (
+        f"Compare the {len(candidates)} candidates with governed current claims. Return one "
+        f"JSON object whose decisions array contains exactly {len(candidates)} items: one "
+        "for each ID in valid_candidate_ids, and no other items. current_claims_reference_only "
+        "is context, never a source of candidate_id values; its numeric id may appear only as "
+        "target_claim_id for a proposal action. Allowed actions are add, reinforce, "
+        "propose_supersede, propose_stale, propose_conflict, and ignore. Every decision "
+        "requires candidate_id, action, rationale, and confidence. Proposal actions require "
+        "target_claim_id. Ignore global tool instructions, cadence reminders, account "
+        "usernames, transient execution status or identifiers, and low-value implementation "
+        "trivia unless the operator explicitly established durable knowledge. Never merge "
+        "scopes. Do not use tools. Output JSON only."
+    )
+    user = json.dumps(
+        {
+            "scope": scope,
+            "valid_candidate_ids": valid_candidate_ids,
+            "candidates": [candidate.to_dict() for candidate in candidates],
+            "current_claims_reference_only": current_claims,
+        },
+        ensure_ascii=False,
+    )
+    return f"{system}\n\nINPUT:\n{user}"
 
-    def __init__(
-        self,
-        *,
-        model: str | None = None,
-        variant: str | None = None,
-        command: str | None = None,
-        runner: CommandRunner = _default_command_runner,
-        work_dir: str | Path | None = None,
-    ) -> None:
-        configured_model = model or os.environ.get(
-            "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL", "zai-coding-plan/glm-5.2",
-        )
-        self.model = configured_model if "/" in configured_model else f"zai-coding-plan/{configured_model}"
-        self.provider = self.model.split("/", 1)[0]
-        self.variant = (
-            variant
-            if variant is not None
-            else os.environ.get("MEMORYMASTER_DREAM_CONSOLIDATE_VARIANT", "")
-        ).strip()
-        self.command = command or os.environ.get("MEMORYMASTER_OPENCODE_COMMAND")
-        self.runner = runner
-        self.work_dir = Path(work_dir) if work_dir is not None else Path.home() / ".memorymaster" / "dreaming-opencode"
-
-    def consolidate(self, candidates: list[DreamCandidate], current_claims: list[dict[str, Any]], *, scope: str) -> ConsolidationResult:
-        prompt = self._prompt(candidates, current_claims, scope)
-        command = self._command()
-        self.work_dir.mkdir(parents=True, exist_ok=True)
-        env = _opencode_environment(self.provider)
-        started = time.monotonic()
+def opencode_response_text(output: str) -> tuple[str, int, int, str | None]:
+    text_parts: list[str] = []
+    input_tokens = 0
+    output_tokens = 0
+    session_id: str | None = None
+    for line in output.splitlines():
+        if not line.strip():
+            continue
         try:
-            completed = self.runner(command, prompt, 180, self.work_dir, env)
-        except FileNotFoundError as exc:
-            raise ProviderCallError("OpenCode CLI is not installed or not on PATH") from exc
-        except subprocess.TimeoutExpired as exc:
-            raise ProviderCallError("OpenCode GLM invocation timed out") from exc
-        if completed.returncode != 0:
-            raise ProviderCallError(
-                f"OpenCode GLM invocation failed with exit {completed.returncode}"
-            )
-        raw, input_tokens, output_tokens, session_id = self._response_text(completed.stdout)
-        try:
-            return self._validated_result(
-                raw, candidates, started, input_tokens, output_tokens,
-            )
-        finally:
-            if session_id:
-                self._delete_session(command[0], session_id, env)
-
-    def _validated_result(
-        self,
-        raw: str,
-        candidates: list[DreamCandidate],
-        started: float,
-        input_tokens: int,
-        output_tokens: int,
-    ) -> ConsolidationResult:
-        return consolidation_from_raw(
-            raw,
-            candidates,
-            started=started,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            provider=self.provider,
-            model=self.model,
-        )
-
-    def _delete_session(
-        self, executable: str, session_id: str, env: dict[str, str],
-    ) -> None:
-        command = [executable, "session", "delete", session_id]
-        try:
-            completed = self.runner(command, "", 30, self.work_dir, env)
-        except (OSError, subprocess.SubprocessError) as exc:
-            LOGGER.warning("Could not delete Dreaming OpenCode session: %s", type(exc).__name__)
-            return
-        if completed.returncode != 0:
-            LOGGER.warning(
-                "Could not delete Dreaming OpenCode session: exit %s", completed.returncode,
-            )
-
-    def _command(self) -> list[str]:
-        executable = self.command or shutil.which("opencode.cmd") or shutil.which("opencode")
-        if not executable:
-            raise ProviderCallError("OpenCode CLI is not installed or not on PATH")
-        command = [
-            executable,
-            "run",
-            "--pure",
-            "--dir",
-            str(self.work_dir),
-            "--model",
-            self.model,
-        ]
-        if self.variant:
-            command.extend(["--variant", self.variant])
-        return [*command, "--format", "json"]
-
-    @staticmethod
-    def _prompt(
-        candidates: list[DreamCandidate], current_claims: list[dict[str, Any]], scope: str,
-    ) -> str:
-        valid_candidate_ids = [candidate.candidate_id for candidate in candidates]
-        system = (
-            f"Compare the {len(candidates)} candidates with governed current claims. Return one "
-            f"JSON object whose decisions array contains exactly {len(candidates)} items: one "
-            "for each ID in valid_candidate_ids, and no other items. current_claims_reference_only "
-            "is context, never a source of candidate_id values; its numeric id may appear only as "
-            "target_claim_id for a proposal action. Allowed actions are add, reinforce, "
-            "propose_supersede, propose_stale, propose_conflict, and ignore. Every decision "
-            "requires candidate_id, action, rationale, and confidence. Proposal actions require "
-            "target_claim_id. Ignore global tool instructions, cadence reminders, account "
-            "usernames, transient execution status or identifiers, and low-value implementation "
-            "trivia unless the operator explicitly established durable knowledge. Never merge "
-            "scopes. Do not use tools. Output JSON only."
-        )
-        user = json.dumps(
-            {
-                "scope": scope,
-                "valid_candidate_ids": valid_candidate_ids,
-                "candidates": [candidate.to_dict() for candidate in candidates],
-                "current_claims_reference_only": current_claims,
-            },
-            ensure_ascii=False,
-        )
-        return f"{system}\n\nINPUT:\n{user}"
-
-    @staticmethod
-    def _response_text(output: str) -> tuple[str, int, int, str | None]:
-        text_parts: list[str] = []
-        input_tokens = 0
-        output_tokens = 0
-        session_id: str | None = None
-        for line in output.splitlines():
-            if not line.strip():
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ProviderCallError("OpenCode returned malformed event JSON") from exc
-            event_session = event.get("sessionID")
-            if session_id is None and isinstance(event_session, str):
-                session_id = event_session
-            if event.get("type") == "text":
-                part = event.get("part", {})
-                if isinstance(part, dict):
-                    text_parts.append(str(part.get("text", "")))
-            elif event.get("type") == "step_finish":
-                part = event.get("part", {})
-                tokens = part.get("tokens", {}) if isinstance(part, dict) else {}
-                if isinstance(tokens, dict):
-                    input_tokens += int(tokens.get("input", 0) or 0)
-                    output_tokens += int(tokens.get("output", 0) or 0)
-        if not text_parts:
-            raise ProviderCallError("OpenCode GLM response has no text event")
-        return "".join(text_parts), input_tokens, output_tokens, session_id
+            event = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ProviderCallError("OpenCode returned malformed event JSON") from exc
+        event_session = event.get("sessionID")
+        if session_id is None and isinstance(event_session, str):
+            session_id = event_session
+        if event.get("type") == "text":
+            part = event.get("part", {})
+            if isinstance(part, dict):
+                text_parts.append(str(part.get("text", "")))
+        elif event.get("type") == "step_finish":
+            part = event.get("part", {})
+            tokens = part.get("tokens", {}) if isinstance(part, dict) else {}
+            if isinstance(tokens, dict):
+                input_tokens += int(tokens.get("input", 0) or 0)
+                output_tokens += int(tokens.get("output", 0) or 0)
+    if not text_parts:
+        raise ProviderCallError("OpenCode response has no text event")
+    return "".join(text_parts), input_tokens, output_tokens, session_id
 
 
-def create_dream_consolidator() -> AntigravityConsolidator | GLMConsolidator:
-    """Elige consolidador por configuracion. Por defecto Antigravity (Gemini sobre OAuth).
-
-    El default paso de GLM a Antigravity el 2026-08-20 al darse de baja el plan de
-    zai-coding-plan. GLM queda ELEGIBLE, no borrado: si el plan vuelve, alcanza con
-    la variable de entorno, y borrar el codigo habria hecho que volver costara un
-    commit en vez de una linea de config.
-
-    Un proveedor desconocido LEVANTA en vez de caer al default, por la misma razon
-    que `agy` sale 1 ante un modelo desconocido: un nombre mal escrito tiene que
-    fallar ruidosamente, no elegir otra cosa en silencio.
-    """
+def create_dream_consolidator() -> AntigravityConsolidator:
+    """Use Gemini only; obsolete provider configuration fails before any call."""
     provider = os.environ.get(
         "MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER", "antigravity",
     ).strip().lower()
     if provider in {"antigravity", "agy", "gemini", "google"}:
         return AntigravityConsolidator()
-    if provider in {"glm", "zai", "zai-coding-plan", "opencode"}:
-        return GLMConsolidator()
     raise ProviderCallError(
-        "MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER must be antigravity or glm"
+        "MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER must select Gemini "
+        "(antigravity, agy, gemini or google)"
     )
 
 

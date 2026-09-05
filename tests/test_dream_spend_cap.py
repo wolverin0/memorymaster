@@ -145,9 +145,9 @@ def test_both_entrypoints_resolve_the_same_consolidator(monkeypatch):
     volviera a fijar un proveedor a mano dentro de la fabrica.
     """
     import memorymaster.surfaces.dreaming_cli as cli
-    from memorymaster.dreaming.providers import GLMConsolidator
+    from memorymaster.dreaming.providers import AntigravityConsolidator
 
-    monkeypatch.setenv("MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER", "glm")
+    monkeypatch.setenv("MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER", "gemini")
     construidos = []
 
     class _WorkerEspia:
@@ -166,7 +166,7 @@ def test_both_entrypoints_resolve_the_same_consolidator(monkeypatch):
     cli.handle_dream_run(args, object(), None, "db")
 
     assert len(construidos) == 1
-    assert isinstance(construidos[0], GLMConsolidator), (
+    assert isinstance(construidos[0], AntigravityConsolidator), (
         "el CLI ignoro MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER"
     )
 

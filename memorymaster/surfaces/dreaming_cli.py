@@ -21,17 +21,7 @@ def handle_dream_run(args, service, parser, effective_db) -> int:
         service.init_db()
         capture_result = run_capture_worker(service, limit=25)
     ledger = DreamLedger(capture_state_path())
-    # `create_dream_consolidator()` y no `GLMConsolidator()` directo.
-    #
-    # Hasta el 2026-08-24 esta linea instanciaba GLM a mano, asi que el CLI
-    # ignoraba MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER por completo: la fabrica
-    # que elige el proveedor aprobado existia, tenia tests, y este camino —el que
-    # corre una persona al escribir `dream-run`— no la llamaba. El camino
-    # programatico (`worker.run_dream`) si la usaba, de modo que las dos entradas
-    # al mismo sistema resolvian proveedores distintos y ninguna lo decia.
-    #
-    # GLM quedo deseleccionado al darse de baja el plan de zai-coding-plan; el
-    # camino aprobado es Gemini via `agy`. Con la fabrica, la config manda.
+    # Both CLI and programmatic entrypoints use the same Gemini factory.
     worker = DreamWorker(
         ledger, service, create_dream_extractor(), create_dream_consolidator(),
     )

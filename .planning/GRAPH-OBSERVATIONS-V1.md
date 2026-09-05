@@ -1,9 +1,9 @@
-<!-- doc-head: PPR-7 shipped contract and dated operational evidence -->
+<!-- doc-head: PPR-7 shipped contract with scheduled-launcher activation discrepancy -->
 # Graph Observations V1
 # Covers: deterministic discovery, governed synthesis, lifecycle, opt-in recall, and rollout evidence.
 # Key terms: exact signatures, union-find, support fingerprint, candidate observation, steward gate.
 # Read when: implementing, reviewing, testing, or rolling back PPR-7.
-# Status: shipped in 4.7; generation intentionally off in the 2026-09-05 runtime artifact.
+# Status: shipped in 4.7; September 5 launcher enables generation despite the review reporting off.
 <!-- /doc-head -->
 
 ## Fixed boundary
@@ -65,8 +65,9 @@ and preserves the additive tables and audit history.
 
 ## September 5 consolidation evidence
 
-Main includes this feature; the runtime artifact reports generation intentionally
-off. No observation-precision claim follows from that operational PASS.
+Main includes this feature. The operational artifact reads its own flags as off,
+but the scheduled launcher enables generation. Recent discovery finds no
+eligible components. No precision claim follows from the artifact's PASS.
 The disposable public demo now verifies actual recall exclusion after public
 source retirement, in addition to candidate promotion and exact support rows.
 See ENGINEERING-CONSOLIDATION-2026-09-05.md for the focused check results.

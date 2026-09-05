@@ -239,23 +239,37 @@ def _discovery_outcome_counts(connection: sqlite3.Connection) -> dict[str, int]:
     return counts
 
 
+def _retained_graph_state(config: ReviewConfig) -> ReviewResult:
+    """A review-process flag does not establish the scheduled worker's environment."""
+    try:
+        with _connect_ro(config.db) as connection:
+            rows = connection.execute(
+                "SELECT status, COUNT(*) FROM graph_observation_jobs GROUP BY status"
+            ).fetchall()
+            counts = {state: 0 for state in ACTIVE_JOB_STATES}
+            counts.update({str(row[0]): int(row[1]) for row in rows})
+            counts["review_process_enabled"] = 0
+            counts["expired_leases"] = int(connection.execute(
+                "SELECT COUNT(*) FROM graph_observation_jobs WHERE status='leased' "
+                "AND lease_expires_at IS NOT NULL "
+                "AND datetime(lease_expires_at)<=datetime('now')"
+            ).fetchone()[0])
+    except (OSError, sqlite3.Error) as exc:
+        return ReviewResult("graph_observations", Verdict.FAIL, f"probe_error={type(exc).__name__}")
+    attention = (
+        counts["blocked"] or counts["retryable"] or counts["expired_leases"]
+        or counts["pending"] > 100
+    )
+    return ReviewResult(
+        "graph_observations", Verdict.WARN if attention else Verdict.PASS,
+        "review process flag is off; worker activation unverified; retained queue inspected",
+        counts,
+    )
+
+
 def check_graph_observations(config: ReviewConfig) -> ReviewResult:
-    # Un subsistema APAGADO no puede estar fallando: nadie va a procesar su cola,
-    # asi que un job bloqueado ahi es un resto, no un incidente. Sin esta salida
-    # temprana, apagar la funcion no silencia nada y la revision queda en FAIL
-    # PARA SIEMPRE por una fila que ya no le importa a nadie — el operador apago
-    # PPR-7 el 2026-08-29 (2 observaciones en total, ambas archivadas) y el FAIL
-    # sobrevivio al apagado.
-    #
-    # No se borra la fila ni se toca la cola: si la funcion se vuelve a prender,
-    # el estado sigue exactamente donde estaba y el FAIL vuelve a ser cierto.
     if not _enabled("MEMORYMASTER_GRAPH_OBSERVATIONS"):
-        return ReviewResult(
-            "graph_observations",
-            Verdict.PASS,
-            "subsistema deshabilitado (MEMORYMASTER_GRAPH_OBSERVATIONS=0); "
-            "la cola no se procesa y no se evalua",
-        )
+        return _retained_graph_state(config)
     marks = ",".join("?" for _ in ACTIVE_JOB_STATES)
     try:
         with _connect_ro(config.db) as connection:

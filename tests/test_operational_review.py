@@ -178,6 +178,20 @@ def test_missing_canary_and_disabled_features_warn(tmp_path: Path, monkeypatch) 
     assert review.exit_code(results) == 3
 
 
+def test_review_process_flag_cannot_hide_retained_worker_failures(tmp_path, monkeypatch):
+    monkeypatch.delenv("MEMORYMASTER_GRAPH_OBSERVATIONS", raising=False)
+    db = _db(tmp_path / "memory.db")
+    with sqlite3.connect(db) as connection:
+        connection.execute(
+            "INSERT INTO graph_observation_jobs VALUES ('synthesize', 'blocked', NULL, NULL)"
+        )
+    result = review.check_graph_observations(review.ReviewConfig(db=db))
+    assert result.verdict is review.Verdict.WARN
+    assert result.counts["blocked"] == 1
+    assert result.counts["review_process_enabled"] == 0
+    assert "worker activation unverified" in result.detail
+
+
 def test_powershell_scheduler_contract_is_bounded() -> None:
     root = Path(__file__).resolve().parents[1]
     installer = (root / "scripts" / "install-windows-operational-review.ps1").read_text(encoding="utf-8")

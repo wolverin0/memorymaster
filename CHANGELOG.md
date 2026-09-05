@@ -1,4 +1,4 @@
-<!-- doc-head: public history through v4.8.4 plus unreleased Workflow Intelligence -->
+<!-- doc-head: public history plus 4.8.6 Gemini consolidation and workflow corrections -->
 Covers user-visible changes, migrations, governance boundaries, workflow analytics, and operational fixes.
 Key terms: workflow intelligence, rule observations, graph observations, governed capture, recall, lineage.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
@@ -7,6 +7,18 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 # Changelog
 
 ## [Unreleased]
+
+### 4.8.6 integration candidate
+
+- Removed the retired GLM consolidation adapter and blocked its provider/model
+  routes before transport. Gemini remains the configured production path.
+- Fixed setup readiness to check the configured Gemini CLI instead of OpenCode.
+- Unified profile configuration defaults and extended the disposable public
+  demo to verify recall exclusion after retirement.
+- Consolidated agent guidance and corrected the distinction between review
+  process flags and scheduled-launcher activation.
+- Local integration/deployment evidence belongs in the September 5 ledger;
+  this entry does not assert publication to PyPI or a GitHub release.
 
 - Added on-demand **Workflow Intelligence** for Claude Code, Codex, and
   Wezbridge histories. It uses a rebuildable WAL-mode sidecar, bounded redacted

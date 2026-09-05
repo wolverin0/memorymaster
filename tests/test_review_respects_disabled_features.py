@@ -54,8 +54,9 @@ def db_con_job_bloqueado(tmp_path: Path) -> Path:
 def test_disabled_subsystem_is_not_reported_as_failing(db_con_job_bloqueado, monkeypatch):
     monkeypatch.setenv(FLAG, "0")
     result = check_graph_observations(ReviewConfig(db=db_con_job_bloqueado))
-    assert result.verdict is Verdict.PASS
-    assert "deshabilitado" in result.detail, "el veredicto tiene que DECIR por que no evaluo"
+    assert result.verdict is Verdict.WARN
+    assert "worker activation unverified" in result.detail
+    assert result.counts["blocked"] == 1
 
 
 def test_enabled_subsystem_still_fails_on_the_same_blocked_job(db_con_job_bloqueado, monkeypatch):
