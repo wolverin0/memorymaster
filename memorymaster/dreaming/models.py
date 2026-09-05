@@ -75,6 +75,7 @@ class DreamDecision:
     rationale: str
     confidence: float
     target_claim_id: int | None = None
+    source_review: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -187,4 +188,5 @@ def decision_from_payload(payload: dict[str, Any], valid_candidate_ids: set[str]
         rationale=str(payload.get("rationale", "") or "")[:500],
         confidence=_finite_confidence(payload.get("confidence"), default=0.5),
         target_claim_id=target_id,
+        source_review=payload.get("source_review"),
     )

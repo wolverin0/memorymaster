@@ -124,6 +124,13 @@ class _LifecycleMixin:
         valid_until_update = now if to_status == "superseded" else None
 
         with self.connect() as conn:
+            if to_status == "confirmed":
+                from memorymaster.dreaming.source_review import confirmation_allowed
+
+                # Check the same snapshot that is promoted, excluding concurrent writers.
+                conn.execute("BEGIN IMMEDIATE")
+                if not confirmation_allowed(conn, claim.id):
+                    raise ValueError("Dreaming confirmation requires a current source review")
             cur = conn.execute(
                 """
                 UPDATE claims
