@@ -1,21 +1,23 @@
-<!-- doc-head: canonical map through the unreleased Workflow Intelligence implementation -->
+<!-- doc-head: canonical map with integrated feature status and scoped development guidance -->
 # DOCS-MAP - memorymaster
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, workflow intelligence, compiled user profile, roadmap, ADR.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-08-30 for Workflow Intelligence, rule lineage, and sidecar ADR.
+# Updated: 2026-09-05 for consolidated instructions and dated runtime evidence.
 # Rule: generated profiles are disposable projections; MemoryMaster remains authority.
 <!-- /doc-head -->
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
-| CHANGELOG.md | CURRENT | 2026-08-19 | Public release history through v4.8.4, matching `pyproject.toml`. Earlier heads said v4.7.5; the entries were there, the verdict line was stale. |
+| docs/development.md | CURRENT | 2026-09-05 | Scoped verification, public lifecycle demonstration, and deeper agent/GitNexus guidance. |
+| .planning/ENGINEERING-CONSOLIDATION-2026-09-05.md | CURRENT | 2026-09-05 | Bounded implementation evidence and remaining measured gaps, subordinate to ROADMAP.md. |
+| CHANGELOG.md | CURRENT | 2026-08-19 | Public release history through v4.8.4, ; package source is 4.8.5, so release history currently lags package metadata. |
 | README.md | CURRENT | 2026-08-30 | Primary product overview for governed claims plus the optional non-authoritative Workflow Intelligence sidecar; hook activation remains separate. |
-| ROADMAP.md | CURRENT | 2026-08-30 | Sole authoritative roadmap; records Workflow Intelligence as locally implemented but unreleased/uninstalled and preserves separate shadow/advisory decisions. |
+| ROADMAP.md | CURRENT | 2026-08-30 | Sole authoritative roadmap; distinguishes integrated source from dated installed/disabled state and preserves separate activation decisions. |
 | docs/workflow-intelligence.md | CURRENT | 2026-08-30 | Operator and architecture contract for local trajectory analytics, deterministic evidence, inert candidates, and the off/shadow/advisory receipt gate. |
 | docs/adr/0016-workflow-analytics-uses-disposable-sidecar.md | CURRENT | 2026-08-30 | Accepted boundary: authoritative memory remains one database while rebuildable workflow analytics use a non-authoritative local sidecar. |
 | .planning/GRAPH-OBSERVATIONS-V1.md | CURRENT | 2026-08-12 | Bounded PPR-7 implementation ledger for deterministic supported components, governed synthesis, lifecycle, opt-in recall, and verification. |
-| .planning/COMPILED-USER-PROFILE-V1.md | CURRENT | 2026-08-12 | Implementation contract for the zero-curation, evidence-bound user profile projection and weekly GLM map/reduce job. |
+| .planning/COMPILED-USER-PROFILE-V1.md | CURRENT | 2026-08-12 | Implementation contract for the zero-curation, evidence-bound user profile projection and weekly configured map/reduce job and effective projection limits. |
 | .planning/PAPER-RADAR-REVIEW-2026-08-08.md | CURRENT | 2026-08-08 | Primary-paper ledger covers 57-paper triage, 18 deep reviews, exact MemoryMaster gaps, and ordered PPR-1 through PPR-6 decisions subordinate to ROADMAP.md. |
 | .planning/PAPER-RESEARCH-IMPLEMENTATION-2026-08-08.md | CURRENT | 2026-08-08 | Executable status ledger for PPR-1 through PPR-6; records acceptance criteria and evidence without competing with ROADMAP.md. |
 | .planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md | CURRENT | 2026-08-12 | Executable Tencent-derived ledger; repair5 passed and PR #189 is open without merge authority. |
@@ -41,7 +43,7 @@
 | docs/archive/AUDIT-2026-04-09.md | ABANDONED | 2026-06-20 | The doc is a dated audit from April 2026 with a specific 30-day fix plan for temporary issues (hardcoded paths, missing auth, failing tests) that implies a transient state of the codebase rather than permanent reference material.  |
 | .planning/audits/2026-07-13-phase2-budget-delta/pr-draft.md | ABANDONED | 2026-07-14 | The file is a draft PR from 2026 that describes Phase 2 core convergence as not yet deployed and requiring specific external evidence, suggesting a temporary plan that was either superseded or discarded.  |
 | .planning/P1-RELIABILITY-SPEC.md | CURRENT | 2026-06-10 | This is the approved, active specification for the v3.29 reliability build, with detailed implementation tasks and migration steps based on recent evidence.  |
-| .planning/MEMORYMASTER-DREAMING-V1.md | CURRENT | 2026-08-12 | Canonical contract for quiet capture, pinned Gemini extraction, GLM consolidation, fail-closed task status, and rollback. |
+| .planning/MEMORYMASTER-DREAMING-V1.md | CURRENT | 2026-08-12 | Canonical contract for quiet capture, configured Gemini extraction and Antigravity consolidation, fail-closed task status, and rollback. |
 | .planning/codebase/STRUCTURE.md | CURRENT | 2026-07-14 | The document accurately reflects the project's current directory layout, module boundaries, and file organization logic (e.g., 800 LOC limits), confirmed by specific references to existing paths and integration patterns.  |
 | .planning/audits/2026-07-13-phase2-budget-delta/audit-delta.md | CURRENT | 2026-07-14 | This document serves as the authoritative audit record for Phase 2 convergence, referencing specific completed milestones (e.g., P2-A through P2-F) and remaining external blockers, with no indication of being superseded or abandoned.  |
 | .planning/REMEDIATION-OPTIMIZATION-PLAN-2026-07-10.md | CURRENT | 2026-07-14 | The document is a dated 2026 remediation plan with proposed status and clear work packages that align with the project's scope, and no signals indicate it has been executed or superseded.  |

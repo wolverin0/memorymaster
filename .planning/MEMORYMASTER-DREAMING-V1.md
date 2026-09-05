@@ -1,10 +1,10 @@
-<!-- doc-head: native Dreaming contract; Gemini extraction and GLM consolidation -->
+<!-- doc-head: native Dreaming contract; shadow mode and configured Gemini providers -->
 # MemoryMaster Native Dreaming V1
 # Covers: quiet capture, asynchronous consolidation, governed writes, rollout, measurement, and rollback.
-# Key terms: Gemini, GLM, exact evidence spans, capture ledger, candidate-first, task-bound providers.
+# Key terms: Gemini, Antigravity, exact evidence spans, capture ledger, shadow mode.
 # Read when: enabling Dreaming, scheduling the worker, changing provider models, or activating writes.
 # Authority: claims remain authoritative; the auxiliary capture ledger is replay state, not a memory database.
-# Status: CURRENT; task-bound providers prevent ambient configuration drift and false-success results.
+# Status: September 5 source uses Antigravity consolidation; August GLM instructions below are historical.
 <!-- /doc-head -->
 
 ## Intent
@@ -14,7 +14,7 @@ Dreaming turns eligible Codex and Claude conversations into a small number of du
 The design deliberately separates three jobs:
 
 1. A quiet hook extracts user and assistant text, redacts locally, and appends an immutable capture envelope.
-2. A bounded worker asks the configured Gemini or OpenCode extractor for evidence-linked candidates, then asks the configured OpenCode model to compare them with current exact-scope claims.
+2. A bounded worker asks the configured Gemini or OpenCode extractor for evidence-linked candidates, then asks the configured consolidator to compare them with current exact-scope claims.
 3. The governed application layer may add or reinforce candidates, or create steward proposals for stale, conflict, or supersede decisions. It never confirms or destructively changes a claim directly.
 
 ## Data flow and authority
@@ -24,7 +24,7 @@ Claude/Codex transcript
   -> local parser and redaction
   -> auxiliary replay ledger
   -> configured Gemini or OpenCode extraction
-  -> OpenCode consolidation against exact-scope claims
+  -> configured consolidation against exact-scope claims
   -> shadow report OR governed candidate/proposal application
   -> existing MemoryMaster lifecycle and steward
 ```
@@ -52,57 +52,36 @@ Project knowledge stays in its exact `project:<name>` scope. Stable user prefere
 
 ## Provider configuration
 
-Environment variables:
+Current source defaults to Gemini extraction and Antigravity consolidation.
+`MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER=glm` retains the explicitly selected
+legacy adapter, but the paid GLM plan was retired in August. The model default
+is defined in `memorymaster/core/antigravity_client.py`; use configured task
+arguments and provider-call records to establish the actual model for a run.
+Old run labels alone are not proof of which provider executed resumed work.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `MEMORYMASTER_DREAM_EXTRACT_PROVIDER` | `gemini` | Select `gemini` or authenticated `opencode` extraction |
-| `GEMINI_API_KEY` | none | Required only by the Gemini extractor |
-| `MEMORYMASTER_DREAM_EXTRACT_MODEL` | provider default | `gemini-3.5-flash` or `openai/gpt-5.4-mini` |
-| `MEMORYMASTER_DREAM_EXTRACT_VARIANT` | `medium` | OpenCode extraction reasoning-effort variant |
-| `MEMORYMASTER_DREAM_CONSOLIDATE_MODEL` | `zai-coding-plan/glm-5.2` | OpenCode provider/model override |
-| `MEMORYMASTER_DREAM_CONSOLIDATE_VARIANT` | none | Optional OpenCode reasoning-effort variant |
-| `MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CANDIDATES` | `5` | Maximum candidate IDs in one consolidation call |
-| `MEMORYMASTER_OPENCODE_AUTH_MODE` | automatic | Set `oauth` to exclude provider API-key variables from child processes |
-| `MEMORYMASTER_OPENCODE_COMMAND` | discovered from `PATH` | Optional explicit OpenCode executable |
-| `MEMORYMASTER_CAPTURE_STATE_DB` | platform default | Auxiliary ledger location |
-| `MEMORYMASTER_DREAM_MAX_SEMANTIC_ATTEMPTS` | `2` | Quarantine bound for repeatedly malformed extraction evidence |
+| Variable | Purpose |
+|---|---|
+| `MEMORYMASTER_DREAM_EXTRACT_PROVIDER` | Explicit extractor selection; default Gemini |
+| `MEMORYMASTER_DREAM_EXTRACT_MODEL` | Extractor model override |
+| `MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER` | `antigravity` by default; `glm` is the legacy opt-in |
+| `MEMORYMASTER_DREAM_CONSOLIDATE_MODEL` | Model override for selected consolidator |
+| `MEMORYMASTER_CAPTURE_STATE_DB` | Auxiliary replay ledger |
+| `MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CANDIDATES` | Bounded candidate batch |
+| `MEMORYMASTER_DREAM_MAX_SEMANTIC_ATTEMPTS` | Repeated malformed-output bound |
 
-Gemini reads its key at call time. OpenCode extraction and consolidation do not
-require separate MemoryMaster API keys: the worker invokes `opencode run
---pure` with the selected provider/model and OpenCode's authenticated account
-session. Setting `MEMORYMASTER_OPENCODE_AUTH_MODE=oauth` removes the selected
-provider's API-key variable from the child process, making OAuth use explicit.
-The optional variants are passed as `--variant`. The prompt is supplied over
-stdin; tools, configured GitNexus/Playwright MCPs, Claude compatibility, and
-external plugins or instructions are disabled. OpenCode's internal
-authentication plugin remains enabled because it owns the OAuth session.
-Output is accepted only from JSON events that pass the Dreaming schemas. The
-worker deletes every OpenCode session it creates after parsing the result,
-including schema-rejection paths, so hourly runs do not accumulate a second
-transcript archive. OpenCode credentials remain owned by OpenCode and are never
-read, copied, logged, or persisted by MemoryMaster.
+Antigravity owns cached OAuth; MemoryMaster does not copy credentials into
+claims or reports. Provider commands and prompt sizes remain bounded, and
+output must pass the same evidence and governance checks. Inspect
+`memorymaster/dreaming/providers.py` for adapter-specific settings.
 
-The active local configuration uses `gemini-3.5-flash-lite` for typed,
-evidence-linked extraction and `zai-coding-plan/glm-5.2` for lifecycle
-comparison. The scheduled action embeds both selections, clears stale variants,
-and runs Python in isolated mode, so ambient user variables cannot silently
-replace the chosen pair. Capture errors make the task fail nonzero even if the
-separate Dreaming phase has no errors. The portable extractor default remains
-Gemini and the portable consolidator default remains GLM.
-
-Verify account readiness without exposing credentials:
-
-```powershell
-opencode auth list
-opencode models zai-coding-plan | Select-String 'zai-coding-plan/glm-5.2'
-```
-
-The scheduled task must run as the same Windows user that authenticated OpenCode. Missing CLI/account/model availability produces an actionable, retryable failure; it never silently switches providers.
+The August Gemini/GLM rollout receipts remain historical evidence. They do not
+authorize restoring those models, enabling application, or overriding a later
+shadow-mode decision. Scheduled review prompts live in `scripts/checkpoints/`
+and must inspect current effective settings before judging a run.
 
 ## Installation and modes
 
-Normal MemoryMaster setup does not register Dreaming. Explicit setup installs the central hook, preserves unrelated client hooks, removes the superseded Claude immediate session-end distiller, and schedules one hourly worker on Windows:
+Normal MemoryMaster setup does not register Dreaming. Explicit setup installs the central hook, preserves unrelated client hooks, removes the superseded Claude immediate session-end distiller, and schedules a bounded worker on Windows (inspect the live task for its cadence):
 
 ```powershell
 memorymaster-setup --enable-dream --yes
@@ -156,9 +135,9 @@ Activation requires all of these:
 
 An invalid or incomplete label blocks activation. Synthetic unit fixtures prove the evaluator contract but do not count as activation evidence.
 
-## Operations
+## Operations and historical rollout
 
-`dream-status` reports pending states, run/provider counters, structured yield, 429s, hook error count, scheduler freshness, and warnings. The first exhausted Gemini 429 opens a batch circuit so later captures wait for the next run instead of amplifying throttling. Repeated semantic evidence failures quarantine after two attempts for review rather than looping forever. Sustained GLM concurrency is intentionally one because the reused Z.AI account has shown throttling above two concurrent callers elsewhere. OpenCode runs in an isolated non-repository directory with tools and inherited MCP startup denied, so it cannot modify source or absorb project instructions. A recurring Windows task under the authenticated user is used instead of shell-detached processes.
+`dream-status` reports pending states, run/provider counters, structured yield, 429s, hook error count, scheduler freshness, and warnings. The first exhausted Gemini 429 opens a batch circuit so later captures wait for the next run instead of amplifying throttling. Repeated semantic evidence failures quarantine after two attempts for review rather than looping forever. Historical GLM operation used concurrency one because the reused account throttled concurrent callers. OpenCode runs in an isolated non-repository directory with tools and inherited MCP startup denied, so it cannot modify source or absorb project instructions. A recurring Windows task under the authenticated user is used instead of shell-detached processes.
 
 The initial real rollout was required to remain shadow-only while provider yield,
 retry/quarantine counts, scope mistakes, ephemeral candidates, evidence accuracy,
@@ -181,4 +160,4 @@ that earlier evidence covers a new provider or configuration.
 - Sources are Codex and Claude transcript formats only.
 - No ChatGPT-memory import, system-prompt dump, paid-provider smoke test, or automatic production activation is part of implementation.
 - Provider availability, 48-hour shadow evidence, and 50-decision human labeling are runtime rollout gates, not conditions that code tests can honestly manufacture.
-- Updating the repository `DOCS-MAP.md` is required when this branch is integrated. It was intentionally not synthesized here because the main checkout currently owns an uncommitted map.
+- Keep provider and activation status in the sole ROADMAP.md and its dated evidence; update DOCS-MAP.md when documentation authority changes.

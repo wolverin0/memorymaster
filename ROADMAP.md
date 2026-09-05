@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; Workflow Intelligence implemented locally and held off -->
+<!-- doc-head: sole roadmap; integrated features and dated runtime status -->
 # MemoryMaster roadmap
 # Covers: post-v4.6 sequence, workflow analytics, governed observations, compiled profile, and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, sustainability.
@@ -36,97 +36,42 @@ its governed-claims authority:
 
 ## Now
 
-- The 2026-08-09 post-P5 observation failed closed on one missing graph job.
-  Root cause: confidence-only validation changed `claims.updated_at`, while graph
-  replay identity incorrectly treated every metadata update as a new revision.
-- The repair is implemented and verified: scheduled Dreaming queues due work
-  before processing, graph identity uses the latest transition into `confirmed`,
-  and the one live job completed with capture coverage returning `ok`.
-- Clean wheel `d4d9aad` is installed in the Windows P5 runtime. Two new
-  reproducible builds share SHA-256 `828a327b...9ddd`; their payload matches all
-  353 installed package files. A real consoleless Dreaming run returned `0`.
-- Gitleaks scanned `origin/main..HEAD` with zero findings, and authoritative
-  SQLite `quick_check` completed `ok` in 172.406 seconds. The previous runtime
-  mismatch and skill-isolation failures were invalid line-ending and duplicate-
-  fixture checks; direct wheel and distinct-fixture canaries pass.
-- The observer wrapper fails nonzero unless Codex writes a fresh explicit
-  success marker. The August 10 baseline interval has elapsed; no additional
-  24-hour wait is required after repair4.
-- Repair4 closed scope aggregation, capture lease, Hermes stateless transport,
-  durable metadata, exact terminal cleanup, and live recall defects. A stale
-  user environment had overridden the selected Gemini+GLM Dreaming pair with
-  OpenAI models; task-bound provider arguments now prevent recurrence.
-- The pinned Gemini Flash Lite plus GLM 5.2 scheduled replay passes: exit 0,
-  eight extraction/consolidation/application decisions, zero errors, and one
-  stale crash run recovered. Repair5 independently replays the bounded gate
-  against the elapsed baseline and passes. [PR #189](https://github.com/wolverin0/memorymaster/pull/189)
-  merged as `d34b80c` and its clean wheel is active in the governed local
-  runtime with healthy MCP HTTP probes. The Gemini-plus-GLM pair recorded here
-  is historical: GLM was retired on 2026-08-21 (#226) when the paid plan ended,
-  and consolidation now runs on Gemini over the Antigravity CLI with cached
-  OAuth. GLM remains reachable through one environment variable, not a revert.
-- **Dreaming V1 is the main active workstream, and it stays in SHADOW.**
-  Operator ruling of 2026-08-21: no activation. Shadow is the default in code —
-  applying validated decisions as candidates requires the explicit
-  `--apply-candidates` flag — and nothing in the current work changes that.
-  The active track is reliability, not rollout: bounding provider failure
-  loops, hardening live extraction, and closing the first-soak gaps. Activation
-  is a separate operator decision that has not been made, so no rollout date
-  belongs here.
-- Workflow Intelligence v1 is implemented on an isolated feature branch: local
-  Claude/Codex/Wezbridge census, deterministic trajectory analysis, bounded
-  opt-in classification, local reports, inert candidates, independent-session
-  rule governance, and an off-by-default receipt hook. Implementation and tests
-  do not authorize installing the hook, starting its 14-day shadow window,
-  releasing 4.9.0, deploying, or promoting any candidate.
-- PPR-7 governed graph observations are implemented and locally verified on an
-  isolated feature branch. Implementation is additive, candidate-first, and
-  opt-in; its separate PR/CI, feature-off deployment, and rollout evidence are
-  still required before activation. No public release or automatic
-  ordinary-recall inclusion is implied.
-- The compiled user profile is being implemented as a disposable projection of
-  sanitized transcript evidence. Weekly bounded GLM map/reduce work stores
-  exact supports in SQLite; deterministic rendering produces `user.md` for
-  SessionStart injection. The feature remains off until explicitly enabled.
-- The invalid earlier window remains incident evidence only because it included
-  a VM OOM/gateway interruption and did not contain P5.
-- Keep v4.6.0 operational while the post-release Obsidian opt-in and OpenCode
-  OAuth capture fixes converge on `main` for a separately approved patch release.
-- Preserve governed retrieval, lifecycle authority, scope isolation, finite
-  capture budgets, and fail-closed production evidence defaults.
+As of the 2026-09-05 consolidation review, source main reports 4.8.5.
+PPR-7 graph observations and the compiled profile shipped in 4.7.
+Workflow Intelligence is integrated on main (#248); its hooks and promotion
+remain separately gated. Integrated code does not imply activation.
+
+- The live read-only operational artifact at 2026-09-05T09:55:40Z reports
+  installed 4.8.5, migration 24, database integrity passing, zero recent
+  private-context matches and the retrieval canary at rank 4.
+- That artifact records graph/profile generation intentionally disabled.
+  Its overall PASS is not evidence of live synthesis precision or throughput.
+  Existing profile state contains 52 active facts and 565 exact supports,
+  with zero manifest mismatches in that run.
+- The documented August 21 operator intent is SHADOW. September 5 live
+  inspection instead found `--apply-candidates` and recent `dry_run=0`
+  runs. This is an unresolved activation discrepancy, not shadow proof.
+  Current consolidation uses Gemini through Antigravity; the earlier
+  Gemini/GLM pairing is historical. This pass did not change worker mode.
+- PPR-7 and profile contracts live in their bounded implementation ledgers.
+  Use effective runtime configuration and provider-call evidence for current
+  models, limits, generation status and injection; do not reuse August task
+  prompts as current policy.
+- Local 2026-09-05 improvements and their verification are recorded in
+  [.planning/ENGINEERING-CONSOLIDATION-2026-09-05.md](.planning/ENGINEERING-CONSOLIDATION-2026-09-05.md).
+  This is an implementation record, not a second roadmap.
 
 ## Next
 
-- Review and integrate Workflow Intelligence without activating it. After a
-  separately approved shadow installation, collect at least 14 days and 100
-  eligible receipts (20 per Claude and Codex), manually review warnings, require
-  at least 90% precision and zero read-only false positives, then request a
-  separate advisory-mode decision. Never auto-promote analytics into rules or
-  skills.
-
-- Complete the bounded session-scope, native Hermes MemoryProvider, and
-  governed-skill proposal program defined by
-  `.planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md`; Windows SQLite
-  remains authoritative, global is never inferred, and skills require explicit
-  approval. P1 session binding, P2 transport, P3 governed skills, and P5
-  progressive approved-skill reuse are implemented, verified, and active.
-  Windows snapshot/readiness gates, consoleless P5 runtime replacement, VM
-  package rollback preparation, and live functional probes passed. The repair5
-  bounded verifier passed, PR #189 merged, and the governed local runtime was
-  upgraded with a clean wheel and healthy post-restart probe.
-- Review and integrate PPR-7 according to `.planning/GRAPH-OBSERVATIONS-V1.md`;
-  exact support signatures, deterministic discovery, candidate-only synthesis,
-  observation-specific steward validation, and explicit recall inclusion are
-  implemented with local evidence, while PR/CI and feature-off rollout remain.
-- Integrate the bounded compiled-profile implementation described in
-  `.planning/COMPILED-USER-PROFILE-V1.md`; then perform a one-time local run on
-  existing sanitized transcript rows before enabling its weekly task.
-- Improve personal/local backup guidance beyond the already verified disposable
-  backup/restore and migration procedure.
-- Keep semantic recall optional and disabled unless a local user deliberately
-  configures a governed Qdrant/provider profile.
-- Upgrade the pinned private runtime only through a separately authorized,
-  snapshot-backed operator action; a public package release is not a live cutover.
+- Complete the scoped consolidation changes with their regression evidence.
+- For future acceptance, measure user benefit on capture -> cited recall ->
+  retirement using the installed package and actual client. Live precision,
+  cost and retrieval impact need real eligible samples; empty or disabled
+  queues do not earn quality scores.
+- Keep workflow hooks, generation activation, live data curation and private
+  runtime upgrades under their existing explicit operator decisions.
+- Preserve historical P5 failures and repairs in the dated audit ledgers;
+  those elapsed windows are not new implementation prerequisites.
 
 ### Research-derived memory sustainability program
 

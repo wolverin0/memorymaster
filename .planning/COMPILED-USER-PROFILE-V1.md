@@ -1,9 +1,9 @@
 <!-- doc-head: compiled user profile v1 implementation contract -->
 # Compiled User Profile V1
-# Covers: evidence input, weekly GLM map/reduce, deterministic projection, and injection.
+# Covers: evidence input, bounded Gemini map/reduce, deterministic projection, and injection.
 # Key terms: verbatim_memories, exact supports, user.md, SessionStart, feature flag.
 # Read when: changing profile extraction, lifecycle, scheduling, rendering, or rollout.
-# Status: implemented on an isolated feature branch; integration and activation pending.
+# Status: shipped in 4.7; generation intentionally off in the 2026-09-05 runtime artifact.
 <!-- /doc-head -->
 
 ## Contract
@@ -15,14 +15,16 @@ facts, not agent instructions.
 
 - Input is incremental sanitized `verbatim_memories`: user turns are evidence;
   the preceding assistant turn is bounded context only.
-- GLM map output proposes allowlisted facts with exact verbatim row IDs. GLM
+- Configured map output proposes allowlisted facts with exact verbatim row IDs. Configured
   reduce output must partition every candidate into add, reinforce, replace, or
   ignore. Unknown IDs, sensitive content, malformed JSON, and instruction-shaped
   text fail closed.
 - New or replacement facts require support from at least two independent
   sessions. SQLite records exact row IDs, session IDs, message hashes, and dates.
 - Stable facts survive silence. Preferences expire after 90 unsupported days.
-- A deterministic renderer writes at most 40 facts within an 800-token budget.
+- The profile engine renders at most 60 facts within a 1,400-token budget
+  by default; explicit environment overrides still win. The original 800/40
+  limits are historical. Scheduled and direct construction share defaults.
 - The existing Dreaming task runs at most three map calls per invocation and
   resumes from durable watermarks. `MEMORYMASTER_COMPILED_PROFILE=1` enables it;
   the default is off.
@@ -33,7 +35,7 @@ facts, not agent instructions.
 
 ```powershell
 python -m memorymaster.profile status --db .\memorymaster.db
-python -m memorymaster.profile run --db .\memorymaster.db --workspace . --force
+python -m memorymaster.profile run --db .\disposable-profile.db --workspace .
 ```
 
 ## Acceptance evidence
@@ -43,5 +45,11 @@ python -m memorymaster.profile run --db .\memorymaster.db --workspace . --force
   expiry, stable-fact retention, and deterministic budget bounds.
 - Surface tests cover feature-off scheduling, fail-closed enabled scheduling,
   generated-only SessionStart loading, and CLI status/help.
-- Activation, a public package release, and historical transcript bootstrap are
-  separate operator actions; this implementation does not perform them.
+- Shipped source and runtime activation remain distinct. The September 5
+  artifact records generation off, 52 active facts and 565 supports with zero
+  mismatches. This pass does not activate generation or rebuild the profile.
+- September 5 regression: scheduled configuration silently used 800/40 while
+  direct configuration used 1400/60. The local fix reads the shared defaults;
+  tests compare every field and preserve explicit overrides.
+- Current provider defaults come from the configured Antigravity client;
+  GLM names in August receipts are historical. See ROADMAP.md for status.

@@ -1,4 +1,4 @@
-<!-- doc-head: MemoryMaster 4.8 governed memory, observations, profiles, workflow analytics, and operations -->
+<!-- doc-head: MemoryMaster 4.8 governed memory, observations, profiles, workflow analytics, and scoped verification -->
 <!-- Covers: installation, governed recall, graph observations, compiled profile, Workflow Intelligence, scheduling, and safety. -->
 <!-- Key terms: claims, citations, graph observations, workflow sidecar, compiled profile, Gemini, SQLite, MCP. -->
 <!-- Read when: evaluating, installing, operating, or upgrading MemoryMaster. -->
@@ -78,11 +78,16 @@ package, then verify:
 query_memory("What decisions have we made about storage?")
 ```
 
-Try the complete lifecycle in a disposable database:
+Try capture, cited recall and retirement in a disposable database:
 
 ```powershell
 memorymaster --json demo
 ```
+
+The demo uses local fixture providers and verifies that retired claims and stale
+observations disappear from trusted recall. For focused development checks, see
+[development guidance](docs/development.md). Installed services and provider
+quality require separate runtime evidence.
 
 ## Four public operations
 

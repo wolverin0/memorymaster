@@ -26,6 +26,9 @@ def test_disposable_demo_covers_public_lifecycle() -> None:
     assert report["observation_recall"][0]["claim_id"] == report["observation_claim_id"]
     assert len(report["observation_supports"]) >= 4
     assert report["observation_status_after_retirement"] == "stale"
+    assert report["ordinary_recall_excludes_observations"] is True
+    assert report["retired_claim_absent_from_recall"] is True
+    assert report["stale_observation_absent_from_recall"] is True
 
 
 def test_demo_cli_emits_versioned_json(capsys) -> None:

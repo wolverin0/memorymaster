@@ -24,7 +24,7 @@ from memorymaster.knowledge.graph_observation_engine import (
     GraphObservationEngine,
     review_observation_candidates,
 )
-from memorymaster.public.v1 import recall, remember
+from memorymaster.public.v1 import forget, recall, remember
 
 
 @contextmanager
@@ -175,6 +175,28 @@ def _run_observation_fixture(service: MemoryService, repository: CaptureReposito
     }
 
 
+def _retirement_report(workspace: Path, db: Path, source_id: int, claim_id: int, observation_id: int) -> dict:
+    forget(source_item_id=source_id, apply=True, db=db, workspace=workspace)
+    receipt = recall(
+        "Alice Project Atlas blocker dependency chain",
+        scope_allowlist=["project:demo"],
+        include_observations=True,
+        retrieval_mode="legacy",
+        db=db,
+        workspace=workspace,
+    )
+    service = MemoryService(db, workspace_root=workspace)
+    return {
+        "observation_status_after_retirement": service.store.get_claim(observation_id).status,
+        "retired_claim_absent_from_recall": claim_id not in {
+            claim["claim_id"] for claim in receipt.claims
+        },
+        "stale_observation_absent_from_recall": observation_id not in {
+            row["claim_id"] for row in receipt.observations
+        },
+    }
+
+
 def _demo_report(workspace: Path, db: Path, captures: list) -> dict:
     service = MemoryService(db, workspace_root=workspace)
     service.init_db()
@@ -194,6 +216,7 @@ def _demo_report(workspace: Path, db: Path, captures: list) -> dict:
     recalled = recall(
         "Alice Project Atlas",
         scope_allowlist=["project:demo"],
+        retrieval_mode="legacy",
         db=db,
         workspace=workspace,
     )
@@ -210,9 +233,13 @@ def _demo_report(workspace: Path, db: Path, captures: list) -> dict:
         "observation_claim_id": observation_id,
         "observation_recall": list(observation["recall"].observations),
         "observation_supports": observation["support"],
+        "ordinary_recall_excludes_observations": not recalled.observations and all(
+            claim["claim_id"] != observation_id for claim in recalled.claims
+        ),
+        **_retirement_report(
+            workspace, db, int(captures[0].source_item["id"]), confirmed[0].id, observation_id
+        ),
     }
-    repository.retire_source(int(captures[0].source_item["id"]), reason="demo support retirement")
-    report["observation_status_after_retirement"] = service.store.get_claim(observation_id).status
     del service, repository
     gc.collect()
     return report

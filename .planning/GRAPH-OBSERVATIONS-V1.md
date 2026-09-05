@@ -1,9 +1,9 @@
-<!-- doc-head: active PPR-7 graph-observations implementation ledger -->
+<!-- doc-head: PPR-7 shipped contract and dated operational evidence -->
 # Graph Observations V1
 # Covers: deterministic discovery, governed synthesis, lifecycle, opt-in recall, and rollout evidence.
 # Key terms: exact signatures, union-find, support fingerprint, candidate observation, steward gate.
 # Read when: implementing, reviewing, testing, or rolling back PPR-7.
-# Status: implemented and locally verified; separate PR and CI evidence in progress.
+# Status: shipped in 4.7; generation intentionally off in the 2026-09-05 runtime artifact.
 <!-- /doc-head -->
 
 ## Fixed boundary
@@ -24,9 +24,9 @@ own output, or feed observations back into extraction.
 | Lifecycle | Candidate-only creation, deterministic steward gate, immediate archive/stale on support change. | Implemented; promotion/retirement tests pass |
 | Recall | Default byte-equivalent output; separately packed opt-in observations bounded to five. | Implemented; equivalence and opt-in tests pass |
 | Surfaces | Python, CLI, MCP, dashboard, and disposable demo parity. | Implemented; focused surface tests pass |
-| Evaluation | Versioned 40+ case corpus plus structural, citation, leakage, replay, and retrieval gates. | Local gates pass; PR CI pending |
+| Evaluation | Versioned 40+ case corpus plus structural, citation, leakage, replay, and retrieval gates. | Historical local gates pass; see dated evidence below |
 
-## Acceptance evidence
+## Acceptance requirements (not live quality measurements)
 
 - Structural component precision and recall are each at least 95% on the
   versioned corpus; observation precision is at least 90% and root-cause
@@ -41,7 +41,7 @@ own output, or feed observations back into extraction.
   migration/restore, clean-wheel, supply-chain, and GitNexus checks pass before
 a PPR-7 pull request is proposed.
 
-## Local verification evidence
+## Historical August implementation verification
 
 - Offline corpus: 48 cases, structural precision 1.00 and recall 1.00.
 - Full non-ML suite: 4,463 passed, 72 skipped, 97 deselected, one expected
@@ -51,7 +51,8 @@ a PPR-7 pull request is proposed.
 - Clean wheel builds, passes Twine, installs into a fresh venv, initializes
   migration 0020, and completes the observation promotion/recall/staleness demo.
 - Feature generation remains disabled by default; the configured Dreaming
-  extraction/consolidation pair remains Gemini plus GLM.
+  August extraction/consolidation pair was Gemini plus GLM; current
+  provider policy is in ROADMAP.md.
 
 ## Rollout and rollback
 
@@ -61,3 +62,11 @@ then opt-in candidate generation. The 24-hour observation is post-implementation
 operational evidence, not a coding prerequisite. Rollback disables generation
 and recall, archives candidates, marks confirmed generated observations stale,
 and preserves the additive tables and audit history.
+
+## September 5 consolidation evidence
+
+Main includes this feature; the runtime artifact reports generation intentionally
+off. No observation-precision claim follows from that operational PASS.
+The disposable public demo now verifies actual recall exclusion after public
+source retirement, in addition to candidate promotion and exact support rows.
+See ENGINEERING-CONSOLIDATION-2026-09-05.md for the focused check results.

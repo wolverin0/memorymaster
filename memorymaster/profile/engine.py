@@ -76,6 +76,7 @@ class ProfileConfig:
 
     @classmethod
     def from_env(cls) -> "ProfileConfig":
+        defaults = cls()
         return cls(
             cadence_days=_env_int("MEMORYMASTER_PROFILE_CADENCE_DAYS", 7),
             max_map_calls=_env_int("MEMORYMASTER_PROFILE_MAX_MAP_CALLS", 3),
@@ -85,8 +86,8 @@ class ProfileConfig:
             ),
             min_independent_sessions=_env_int("MEMORYMASTER_PROFILE_MIN_SESSIONS", 2),
             preference_ttl_days=_env_int("MEMORYMASTER_PROFILE_PREFERENCE_TTL_DAYS", 90),
-            token_budget=_env_int("MEMORYMASTER_PROFILE_TOKEN_BUDGET", 800),
-            max_facts=_env_int("MEMORYMASTER_PROFILE_MAX_FACTS", 40),
+            token_budget=_env_int("MEMORYMASTER_PROFILE_TOKEN_BUDGET", defaults.token_budget),
+            max_facts=_env_int("MEMORYMASTER_PROFILE_MAX_FACTS", defaults.max_facts),
             reduce_batch_size=_env_int("MEMORYMASTER_PROFILE_REDUCE_BATCH", 40),
         )
 
