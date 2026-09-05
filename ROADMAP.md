@@ -36,7 +36,7 @@ its governed-claims authority:
 
 ## Now
 
-As of the 2026-09-05 consolidation review, source main reports 4.8.5.
+As of the 2026-09-05 authorized integration, source main reports 4.8.6.
 PPR-7 graph observations and the compiled profile shipped in 4.7.
 Workflow Intelligence is integrated on main (#248); its hooks and promotion
 remain separately gated. Integrated code does not imply activation.
@@ -69,7 +69,8 @@ remain separately gated. Integrated code does not imply activation.
 
 ## Next
 
-- Complete the scoped consolidation changes with their regression evidence.
+- Scoped consolidation and Gemini retirement are integrated; evaluate existing
+  Dreaming outputs for citation entailment before generating more data.
 - For future acceptance, measure user benefit on capture -> cited recall ->
   retirement using the installed package and actual client. Live precision,
   cost and retrieval impact need real eligible samples; empty or disabled

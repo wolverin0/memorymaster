@@ -80,5 +80,6 @@ def test_feature_activation_informs_instead_of_warning(monkeypatch):
     result = check_feature_activation(ReviewConfig(db=Path("no-usa-la-base.db")))
     assert result.verdict is Verdict.PASS
     assert "0/2" in result.detail, "tiene que seguir DICIENDO cuantas hay prendidas"
-    assert "apagadas a proposito" in result.detail
+    assert "review-process" in result.detail
+    assert "worker activation unverified" in result.detail
     assert result.counts == {"graph_observations": 0, "compiled_profile": 0}

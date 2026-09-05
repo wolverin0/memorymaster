@@ -162,3 +162,28 @@ now; waiting for more raw runs will not supply missing ground truth.
 - Provider cost in currency, statistical semantic precision, and causal recall
   benefit remain unmeasured. Existing retained data should be labeled and compared
   before commissioning more generation.
+
+### Integration and deployment evidence
+
+- 0547dfd (including prior eb8572e) fast-forwarded and pushed to origin/main.
+- Installed wheel verified from outside the checkout with isolated imports:
+  4.8.6, retired class absent, profile defaults aligned. Its public demo
+  confirmed cited opt-in recall and retirement/staleness exclusion.
+- General Python upgraded from 4.8.5; the actual scheduled-runtime virtual
+  environment was still 4.8.4, despite the review measuring general Python.
+  Both were installed as 4.8.6. Operational expected_version was updated.
+- The managed HTTP task was restarted, without terminating any agent pane.
+  Health and SQLite readiness returned 200; authenticated MCP tools/list
+  returned 200 with 51 tools, including query_memory.
+- Deployment log inspection exposed an old pythonw launcher import-order
+  defect: logging handlers captured stderr=None before the log stream existed.
+  A new fail-first test reproduced it. The repository template and installed
+  launcher now import the HTTP service only after configuring streams.
+  Five launcher/plugin tests pass. A fresh restart plus all three HTTP probes
+  produced 956 log characters, zero logging errors and zero tracebacks.
+- Eight long-lived stdio MCP processes predated installation. Their owning
+  clients need reconnect/restart; no fleet-wide activation is claimed.
+- Existing Dreaming mode and graph/profile launcher flags were preserved while
+  the operator mode question remains unanswered. No historical memory cleanup,
+  job reset, provider call, new scheduler, public release, or fabricated
+  success watermark occurred during this follow-up.

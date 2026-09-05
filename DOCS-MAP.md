@@ -1,4 +1,4 @@
-<!-- doc-head: canonical map with integrated feature status and scoped development guidance -->
+<!-- doc-head: canonical map with 4.8.6 integration and corrected scheduled-runtime evidence -->
 # DOCS-MAP - memorymaster
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, workflow intelligence, compiled user profile, roadmap, ADR.
@@ -11,7 +11,7 @@
 |---|---|---|---|
 | docs/development.md | CURRENT | 2026-09-05 | Scoped verification, public lifecycle demonstration, and deeper agent/GitNexus guidance. |
 | .planning/ENGINEERING-CONSOLIDATION-2026-09-05.md | CURRENT | 2026-09-05 | Bounded implementation evidence and remaining measured gaps, subordinate to ROADMAP.md. |
-| CHANGELOG.md | CURRENT | 2026-08-19 | Public release history through v4.8.4, ; package source is 4.8.5, so release history currently lags package metadata. |
+| CHANGELOG.md | CURRENT | 2026-09-05 | Historical releases plus 4.8.6 integration notes; local deployment does not imply GitHub/PyPI publication. |
 | README.md | CURRENT | 2026-08-30 | Primary product overview for governed claims plus the optional non-authoritative Workflow Intelligence sidecar; hook activation remains separate. |
 | ROADMAP.md | CURRENT | 2026-08-30 | Sole authoritative roadmap; distinguishes integrated source from dated installed/disabled state and preserves separate activation decisions. |
 | docs/workflow-intelligence.md | CURRENT | 2026-08-30 | Operator and architecture contract for local trajectory analytics, deterministic evidence, inert candidates, and the off/shadow/advisory receipt gate. |

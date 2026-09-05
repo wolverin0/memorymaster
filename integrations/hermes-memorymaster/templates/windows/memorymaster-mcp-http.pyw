@@ -6,9 +6,6 @@ import os
 import sys
 from pathlib import Path
 
-from memorymaster.surfaces.mcp_http import main
-
-
 USER_ENVIRONMENT_KEYS = (
     "MEMORYMASTER_MCP_HTTP_TOKEN",
     "MEMORYMASTER_MCP_AUTH_MODE",
@@ -59,4 +56,7 @@ if __name__ == "__main__":
     stream = _log_stream()
     sys.stdout = stream
     sys.stderr = stream
+    # pythonw starts with no stderr: logging handlers must see the real stream.
+    from memorymaster.surfaces.mcp_http import main
+
     raise SystemExit(main())
