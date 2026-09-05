@@ -1,4 +1,4 @@
-<!-- doc-head: release history and 4.8.7 source-aware Dreaming review safeguards -->
+<!-- doc-head: release history and locally deployed 4.8.7 source-aware Dreaming safeguards -->
 Covers user-visible changes, migrations, governance boundaries, workflow analytics, and operational fixes.
 Key terms: workflow intelligence, rule observations, graph observations, governed capture, recall, lineage.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
@@ -8,7 +8,7 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 ## [Unreleased]
 
-### 4.8.7 integration candidate
+### 4.8.7 local deployment - 2026-09-05
 
 - Reuse Gemini consolidation to review source messages, later corrections,
   uncertainty, scope and exact support before Dreaming promotion.
@@ -18,6 +18,9 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 - No schema migration, new scheduler, additional per-batch model call or
   retrospective modification of confirmed memories. Deployment evidence is
   recorded in .planning/DREAMING-SOURCE-STEWARD-V1.md.
+- PR #251 is merged; fresh-process and managed HTTP verification passed.
+  Existing long-lived MCP clients need reconnection. Public GitHub/PyPI release
+  is separate from this local deployment.
 
 ### 4.8.6 integration candidate
 

@@ -1,4 +1,4 @@
-<!-- doc-head: Source-aware Dreaming steward, implemented in an isolated branch; not deployed -->
+<!-- doc-head: Source-aware Dreaming steward deployed as 4.8.7; fleet reconnection remains outstanding -->
 # Dreaming source steward: bounded implementation
 Covers: original evidence review, promotion prerequisites, replay and verification.
 Key terms: Gemini, chronology, modality, exact citations, audit receipt, candidates.
@@ -40,10 +40,15 @@ Authority: implementation ledger only; ROADMAP.md remains the sole roadmap.
 - The real-provider smoke used synthetic text only and changed no memory rows.
   Five cases are a contract smoke, not a statistical precision benchmark.
 - Ruff passes. Collection: 5,024 non-ML items, 90 ML items deselected.
-- Broad non-ML run deliberately stopped after roughly ten minutes; INCOMPLETE,
-  not a full-suite PASS. Its first failure was an old correction
-  fixture promoting an unreviewed Dreaming claim. The fixture now explicitly
-  seeds a historical confirmed row; the correction assertion is unchanged.
+- Early broad verification was incomplete and exposed old fixture assumptions.
+  The historical-correction fixture now seeds an already-confirmed row, and
+  the tiny CAS fixture includes source identity and citation lineage. Original
+  correction and concurrency assertions remain unchanged. Final local Windows
+  suite: 4,946 passed, 77 skipped, one expected failure, 90 ML items deselected.
+- PR #251 CI passed all six platform/Python jobs, ML, performance and deployment
+  smoke. CI ML: 89 passed, six skipped. The optional legacy eval job was nominally
+  green but produced no artifact because three default benchmark files are
+  missing. It is NOT quality evidence; no whole-system quality claim is made.
 - GitNexus indexed this isolated worktree without embeddings (the primary
   index was untouched). Change detection reports medium risk at shared
   promotion boundaries. Exact Git diff is narrower than its name-based
@@ -51,8 +56,18 @@ Authority: implementation ledger only; ROADMAP.md remains the sole roadmap.
 
 ## Limits and rollout
 
-This branch is not installed or live. Existing task flags and historical data
-are unchanged. Review is point-in-time over the captured source snapshot;
+PR #251 merged as `4ffc3003aabbe466cb954bdbbd613d4eed19ab02` on September 5.
+Version 4.8.7 is installed in both the general and dedicated scheduled runtimes.
+The managed HTTP service was restarted; both fresh-process installations passed
+the source-review promotion/replay smoke, and live HTTP health/readiness,
+unauthenticated rejection and authenticated tool discovery pass. Existing peer
+stdio MCP processes were not killed and still require reconnection.
+
+No historical claims were rewritten. One obsolete blocked graph job was
+cancelled with an audit event after exact support revalidation; the detailed
+backup, installed-hook corrections and runtime evidence are recorded in
+ENGINEERING-CONSOLIDATION-2026-09-05.md. This is local deployment, not publication
+of a GitHub release or PyPI distribution. Review is point-in-time over the captured source snapshot;
 future messages in other captures still require subsequent consolidation.
 Filters minimize sensitive context but cannot prove arbitrary prose secret-free.
 Do not claim production accuracy or fleet activation from these source tests.
