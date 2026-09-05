@@ -200,6 +200,13 @@ def run(
     )
 
     for claim in claims:
+        if claim.source_agent == "dream-worker" or (claim.idempotency_key or "").startswith("dream-"):
+            from memorymaster.dreaming.source_review import review_allows_confirmation
+
+            if not review_allows_confirmation(store, claim.id):
+                pending += 1
+                store.record_event(claim_id=claim.id, event_type="validator", details="dream_source_review_pending")
+                continue
         is_revalidation = claim.status in {"confirmed", "stale", "conflicted"}
         citation_count = citation_counts.get(claim.id, 0)
         if claim.status == "candidate" and (claim.claim_type or "").strip().lower() == "skill":

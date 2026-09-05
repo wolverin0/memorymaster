@@ -102,9 +102,12 @@ def test_the_proposal_says_it_came_from_another_identity(service):
 def test_the_target_is_not_modified(service):
     """Recording a proposal must not retire anything on its own."""
     target = _ingest(service, "Original.", scope="global", source_agent="dream-worker")
-    service.store.apply_status_transition(
-        target, to_status="confirmed", reason="fixture", event_type="validator"
-    )
+    # Model an already-confirmed historical row, not a new promotion. New
+    # Dreaming candidates now require source review; this test protects the
+    # correction path for legacy rows without pretending they were reviewed.
+    with service.store.connect() as conn:
+        conn.execute("UPDATE claims SET status = 'confirmed' WHERE id = ?", (target.id,))
+        conn.commit()
 
     _ingest(
         service,

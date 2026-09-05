@@ -1,4 +1,4 @@
-<!-- doc-head: public history plus 4.8.6 Gemini consolidation and workflow corrections -->
+<!-- doc-head: release history and 4.8.7 source-aware Dreaming review safeguards -->
 Covers user-visible changes, migrations, governance boundaries, workflow analytics, and operational fixes.
 Key terms: workflow intelligence, rule observations, graph observations, governed capture, recall, lineage.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
@@ -7,6 +7,17 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 # Changelog
 
 ## [Unreleased]
+
+### 4.8.7 integration candidate
+
+- Reuse Gemini consolidation to review source messages, later corrections,
+  uncertainty, scope and exact support before Dreaming promotion.
+- Bind review receipts to the unchanged candidate and citations; unreviewed
+  or uncertain candidates cannot be confirmed by either steward path.
+- Preserve cached decisions during interrupted application/replay.
+- No schema migration, new scheduler, additional per-batch model call or
+  retrospective modification of confirmed memories. Deployment evidence is
+  recorded in .planning/DREAMING-SOURCE-STEWARD-V1.md.
 
 ### 4.8.6 integration candidate
 

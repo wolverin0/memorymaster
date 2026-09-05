@@ -2546,6 +2546,10 @@ class PostgresStore(SQLiteStore):
         event_type: str,
         replaced_by_claim_id: int | None = None,
     ) -> Claim:
+        if to_status == "confirmed" and (
+            claim.source_agent == "dream-worker" or (claim.idempotency_key or "").startswith("dream-")
+        ):
+            raise ValueError("Dreaming source review promotion is SQLite-only")
         validated_event_type = validate_transition_event_type(event_type)
         now = utc_now()
         last_validated_at = now if to_status in {"confirmed", "stale", "conflicted"} else claim.last_validated_at

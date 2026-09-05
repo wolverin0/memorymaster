@@ -12,6 +12,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -613,6 +614,15 @@ def consolidation_from_raw(
         raise ProviderCallError(
             f"{provider} must return exactly one decision per candidate"
         )
+    from memorymaster.dreaming.source_review import SourceCandidate, parse_review
+
+    by_id = {candidate.candidate_id: candidate for candidate in candidates}
+    validated_decisions = []
+    for decision in decisions:
+        candidate = by_id[decision.candidate_id]
+        if isinstance(candidate, SourceCandidate):
+            decision = replace(decision, source_review=parse_review(decision.source_review, candidate))
+        validated_decisions.append(decision)
     usage = ProviderUsage(
         provider,
         model,
@@ -622,7 +632,7 @@ def consolidation_from_raw(
         output_tokens,
         True,
     )
-    return ConsolidationResult(decisions, usage)
+    return ConsolidationResult(tuple(validated_decisions), usage)
 
 
 class AntigravityConsolidator:
@@ -697,6 +707,8 @@ class AntigravityConsolidator:
 def consolidation_prompt(
     candidates: list[DreamCandidate], current_claims: list[dict[str, Any]], scope: str,
 ) -> str:
+    from memorymaster.dreaming.source_review import REVIEW_INSTRUCTIONS, safe_context
+
     valid_candidate_ids = [candidate.candidate_id for candidate in candidates]
     system = (
         f"Compare the {len(candidates)} candidates with governed current claims. Return one "
@@ -711,13 +723,14 @@ def consolidation_prompt(
         "trivia unless the operator explicitly established durable knowledge. Never merge "
         "scopes. Do not use tools. Output JSON only."
     )
+    system += REVIEW_INSTRUCTIONS
     user = json.dumps(
-        {
+        safe_context({
             "scope": scope,
             "valid_candidate_ids": valid_candidate_ids,
             "candidates": [candidate.to_dict() for candidate in candidates],
             "current_claims_reference_only": current_claims,
-        },
+        }),
         ensure_ascii=False,
     )
     return f"{system}\n\nINPUT:\n{user}"

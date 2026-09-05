@@ -297,6 +297,8 @@ class DreamWorker:
         return list(reversed(kept))
 
     def _consolidate(self, run_id: str, rows: list[dict[str, Any]], summary: dict[str, Any]) -> None:
+        from memorymaster.dreaming.source_review import bind_source
+
         groups: dict[str, list[tuple[dict[str, Any], DreamCandidate]]] = {}
         for row in rows:
             if row.get("decisions") is not None:
@@ -306,7 +308,7 @@ class DreamWorker:
             for payload in row.get("extraction") or []:
                 candidate = DreamCandidate(**payload)
                 effective_scope = "personal" if candidate.scope_class == "personal" else str(row["scope"])
-                groups.setdefault(effective_scope, []).append((row, candidate))
+                groups.setdefault(effective_scope, []).append((row, bind_source(candidate, row)))
         decisions_by_capture: dict[int, list[dict[str, Any]]] = {int(row["id"]): [] for row in rows}
         failed_captures: set[int] = set()
         deferred_captures: set[int] = set()
@@ -344,7 +346,7 @@ class DreamWorker:
                 failed_captures.update(capture_ids)
         for row in rows:
             capture_id = int(row["id"])
-            if capture_id in failed_captures or capture_id in deferred_captures:
+            if row.get("decisions") is not None or capture_id in failed_captures or capture_id in deferred_captures:
                 continue
             self.ledger.set_decisions(capture_id, decisions_by_capture[capture_id], run_id)
             summary["consolidated"] += 1
@@ -427,12 +429,18 @@ class DreamWorker:
         return "da-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
 
     def _apply_decision(self, row: dict[str, Any], candidate: DreamCandidate, decision: DreamDecision, summary: dict[str, Any]) -> int | None:
+        from memorymaster.dreaming.source_review import bind_source, parse_review, record_review
+
         if decision.action == "ignore":
             return None
+        bound = bind_source(candidate, row)
+        review = parse_review(decision.source_review, bound) if decision.source_review is not None else None
         effective_scope = "personal" if candidate.scope_class == "personal" else str(row["scope"])
         created = None
         if decision.action in {"add", "reinforce", "propose_supersede", "propose_conflict"}:
             created = self._ingest_candidate(row, candidate, effective_scope)
+            if review is not None:
+                record_review(self.service.store, created.id, bound, review)
             summary["candidate_writes"] += 1
         if decision.action.startswith("propose_"):
             self._emit_proposal(candidate, decision, effective_scope, created.id if created else None)

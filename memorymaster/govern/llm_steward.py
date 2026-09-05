@@ -499,6 +499,12 @@ def _confirm_candidate_cas(
     confidence: float,
 ) -> bool:
     """Confirm a candidate claim with version CAS (see _archive_candidate_cas)."""
+    from memorymaster.dreaming.source_review import is_dream_claim
+
+    # This legacy reviewer sees only claim text and may rewrite structured fields.
+    # Dreaming is reviewed against sources, then promoted unchanged by validator.
+    if is_dream_claim(conn, claim_id):
+        return False
     cur = conn.execute(
         "UPDATE claims SET status = 'confirmed', subject = ?, predicate = ?, "
         "object_value = ?, confidence = ?, version = version + 1 "
@@ -637,6 +643,11 @@ def run_steward(
     }
 
     for row in candidates:
+        from memorymaster.dreaming.source_review import is_dream_claim
+
+        if is_dream_claim(conn, row["id"]):
+            stats["dream_source_review_pending"] = stats.get("dream_source_review_pending", 0) + 1
+            continue
         claim_id = row["id"]
         text = row["text"] or ""
         scope = row["scope"] or ""
