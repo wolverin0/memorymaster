@@ -273,6 +273,7 @@ class TestInstallHooksIdempotent:
         # recall + classify = exactly 2, not 4.
         assert len(mm_entries) == 2
         assert len(settings["hooks"]["SessionEnd"]) == 1
+        assert settings["hooks"]["SessionStart"][0]["matcher"] == "startup|resume|compact"
 
     def test_settings_json_stays_valid(self, hermetic_home):
         llm = {"provider": "ollama", "api_key": "", "model": "llama3.2:3b"}
