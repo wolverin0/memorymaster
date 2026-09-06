@@ -171,17 +171,16 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
       - name: Run evaluation suite
-        run: python scripts/eval_memorymaster.py
-        continue-on-error: true
+        # Same tracked qrels used by publication, plus the governed lifecycle.
+        # Missing fixtures, failed assertions and missing reports are failures.
+        run: python -m pytest tests/test_qrels_regression.py tests/test_public_demo.py -q --junitxml=artifacts/eval/results.xml
       - name: Upload eval artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: eval-results
-          path: |
-            artifacts/eval/eval_results.json
-            artifacts/eval/eval_report.md
-            artifacts/eval/eval_checks.csv
+          path: artifacts/eval/results.xml
+          if-no-files-found: error
 
   deployment-smoke:
     runs-on: ubuntu-latest

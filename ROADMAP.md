@@ -1,6 +1,6 @@
-<!-- doc-head: sole roadmap; Gemini-only consolidation and corrected scheduled runtime evidence -->
+<!-- doc-head: sole roadmap; useful-memory milestone following the September upstream review -->
 # MemoryMaster roadmap
-# Covers: post-v4.6 sequence, workflow analytics, governed observations, compiled profile, and deferrals.
+# Covers: useful-memory delivery/evaluation, workflow analytics, governed observations and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, sustainability.
 # Read when: choosing release scope, accepting a feature, or checking deferrals.
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
@@ -36,7 +36,30 @@ its governed-claims authority:
 
 ## Now
 
-As of the 2026-09-05 authorized integration, source main reports 4.8.6.
+### Next milestone: useful memory, reliable delivery (4.8.8)
+
+Operator-approved on 2026-09-05 after refreshing seventeen upstream repositories.
+Implement native improvements, not another framework or always-running agent:
+
+- Preserve automated-event filtering and session briefing deduplication through
+  hook installation, including compaction reset and customized-hook protection.
+- Replace the misleading optional CI evaluation with the existing tracked qrels
+  and governed lifecycle checks, retaining real failure and artifact evidence.
+- Extend the existing Dreaming evaluator to report missed useful facts, unwanted
+  emissions and explicit human-review provenance. Sample source captures
+  read-only, including captures with zero candidates.
+- Do not change ranking, graph membership or Dreaming thresholds on the basis of
+  upstream marketing or zero-output counts. Ship a scorer/rescue experiment only
+  after matched source labels demonstrate the actual gap.
+
+Implementation and verification: [bounded ledger](.planning/USEFUL-MEMORY-V1.md).
+No new database, process, scheduler, provider, historical curation or activation
+change is part of this milestone. Gemini remains the selected deployment provider.
+
+### Prior deployed state
+
+The September 5 integration progressed from 4.8.6 to deployed 4.8.7;
+the dated deployment ledgers below preserve what was actually verified.
 PPR-7 graph observations and the compiled profile shipped in 4.7.
 Workflow Intelligence is integrated on main (#248); its hooks and promotion
 remain separately gated. Integrated code does not imply activation.
