@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memorymaster"
-version = "4.8.7"
+version = "4.8.8"
 description = "Production-grade memory reliability system for AI coding agents. Lifecycle-managed claims with citations, conflict detection, steward governance, and MCP integration."
 license = {text = "MIT"}
 authors = [{name = "wolverin0"}]
@@ -45,7 +45,7 @@ vector = ["sentence-transformers>=3.0", "qdrant-client>=1.9"]
 # "single-file SQLite + optional Qdrant" story. Gated at runtime by
 # MEMORYMASTER_RECALL_GRAPH=1; off by default.
 graph = ["kuzu>=0.4"]
-dev = ["pytest>=8.2", "pytest-cov>=6.0", "pytest-timeout>=2.3", "pip-audit>=2.10"]
+dev = ["pytest>=8.2", "pytest-cov>=6.0", "pytest-timeout>=2.3", "pip-audit>=2.10", "PyYAML>=6.0,<7"]
 # Streamable HTTP and its ASGI app landed in the 1.8 line. Stdio remains the
 # default transport; the higher floor makes the explicit HTTP entrypoint real.
 mcp = ["mcp>=1.8.1,<2"]

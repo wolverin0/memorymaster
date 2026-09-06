@@ -69,6 +69,8 @@ memory.db
 .memorymaster/
 .venv-review/
 cloned/
+# Read-only upstream research snapshots; provenance lives in .planning/.
+/repo/
 quality_model.pkl
 autoresearch*.log
 *.jsonl

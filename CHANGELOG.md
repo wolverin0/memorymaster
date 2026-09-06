@@ -1,4 +1,4 @@
-<!-- doc-head: release history and locally deployed 4.8.7 source-aware Dreaming safeguards -->
+<!-- doc-head: release history with 4.8.8 useful-memory candidate and deployed 4.8.7 safeguards -->
 Covers user-visible changes, migrations, governance boundaries, workflow analytics, and operational fixes.
 Key terms: workflow intelligence, rule observations, graph observations, governed capture, recall, lineage.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
@@ -7,6 +7,22 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 # Changelog
 
 ## [Unreleased]
+
+### 4.8.8 useful memory, reliable delivery
+
+- Recall hooks skip recognized machine events and suppress unchanged context
+  briefly within a session; SessionStart/compaction clears delivery state.
+  Failed output does not advance the fingerprint.
+- Setup preserves customized recall hooks and stages the supported template
+  as a proposal. Managed-hook fingerprints detect local edits. Windows paths
+  no longer generate invalid Python escape sequences in installed hooks.
+- CI now runs tracked qrels and public lifecycle checks; failed evaluation
+  and missing artifacts are no longer tolerated.
+- Dreaming evaluation counts useful omissions/unwanted emissions, rejects
+  duplicate IDs and requires explicit human label provenance for human gates.
+  Read-only source sampling covers zero-candidate and unapplied captures.
+- No schema, extra model call, provider change or historical claim mutation.
+  See .planning/USEFUL-MEMORY-V1.md for verification and deployment status.
 
 ### 4.8.7 local deployment - 2026-09-05
 

@@ -1,14 +1,17 @@
-<!-- doc-head: canonical map with deployed 4.8.7 Dreaming safeguards and remaining verification limits -->
+<!-- doc-head: canonical map with useful-memory implementation and September upstream evidence -->
 # DOCS-MAP - memorymaster
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, workflow intelligence, compiled user profile, roadmap, ADR.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-09-05 for consolidated instructions and dated runtime evidence.
+# Updated: 2026-09-05 for useful-memory delivery/evaluation and pinned upstream research.
 # Rule: generated profiles are disposable projections; MemoryMaster remains authority.
 <!-- /doc-head -->
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
+| .planning/USEFUL-MEMORY-V1.md | CURRENT | 2026-09-05 | Bounded 4.8.8 implementation and acceptance record subordinate to ROADMAP.md. |
+| .planning/UPSTREAM-COMPARISON-2026-09-05.md | CURRENT | 2026-09-05 | Seventeen pinned upstream snapshots, source comparisons and bounded proposals; no head-to-head runtime benchmark. |
+| .planning/UPSTREAM-SNAPSHOTS-2026-09-05.json | CURRENT | 2026-09-05 | Origins, baselines, exact SHAs, branches, license labels and explicit inspection coverage. |
 | docs/development.md | CURRENT | 2026-09-05 | Scoped verification, public lifecycle demonstration, and deeper agent/GitNexus guidance. |
 | .planning/DREAMING-SOURCE-STEWARD-V1.md | CURRENT | 2026-09-05 | Source-aware Gemini review, promotion safeguards, verification limits and dated deployment evidence. |
 | .planning/ENGINEERING-CONSOLIDATION-2026-09-05.md | CURRENT | 2026-09-05 | Bounded implementation evidence and remaining measured gaps, subordinate to ROADMAP.md. |

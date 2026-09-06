@@ -31,6 +31,14 @@ from memorymaster.surfaces.setup_detect import Detected
 # ---------------------------------------------------------------------------
 
 
+def test_windows_placeholder_produces_valid_python_literal():
+    import ast
+    template = 'PROJECT_ROOT = "__MEMORYMASTER_PROJECT_ROOT__"'
+    rendered = sh.replace_placeholder(template, r"C:\Users\Example\Py Apps\MemoryMaster")
+    assignment = ast.parse(rendered).body[0]
+    assert ast.literal_eval(assignment.value) == "C:/Users/Example/Py Apps/MemoryMaster"
+
+
 def _detected(**overrides) -> Detected:
     defaults = dict(
         python_version="3.12.0",

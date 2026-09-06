@@ -245,7 +245,10 @@ def _format_context(
 def main():
     # Read stdin (may be empty for SessionStart)
     try:
-        sys.stdin.read()
+        data = json.loads(sys.stdin.read() or "{}")
+        sys.path.insert(0, str(MM_ROOT))
+        from memorymaster.recall.delivery import reset_session
+        reset_session(data.get("session_id", ""))
     except Exception:
         pass
 

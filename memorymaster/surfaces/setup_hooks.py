@@ -251,7 +251,9 @@ def banner(text):
 
 def replace_placeholder(content, project_root):
     """Replace __MEMORYMASTER_PROJECT_ROOT__ with actual path."""
-    return content.replace("__MEMORYMASTER_PROJECT_ROOT__", str(project_root))
+    # Forward slashes are valid Windows paths and cannot form Python escapes.
+    safe_path = str(project_root).replace("\\", "/")
+    return content.replace("__MEMORYMASTER_PROJECT_ROOT__", safe_path)
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +289,22 @@ def setup_llm_provider():
 # ---------------------------------------------------------------------------
 # 2. Install hooks
 # ---------------------------------------------------------------------------
+def _write_hook_template(dest, content):
+    import hashlib
+    marker = "# memorymaster-template-sha256: "
+    existing = dest.read_text(encoding="utf-8") if dest.exists() else ""
+    body, found, digest = existing.rpartition(marker)
+    managed = bool(found and digest.strip() == hashlib.sha256(body.encode()).hexdigest())
+    if dest.name == "memorymaster-recall.py" and dest.exists() and not managed:
+        proposed = dest.with_name(dest.name + ".proposed")
+        proposed.write_text(content, encoding="utf-8")
+        print("  Preserved customized recall hook; review memorymaster-recall.py.proposed")
+        return
+    stamped = content + marker + hashlib.sha256(content.encode()).hexdigest() + "\n"
+    dest.write_text(stamped if dest.name == "memorymaster-recall.py" else content, encoding="utf-8")
+    print(f"  Installed: {dest}")
+
+
 def install_hooks(llm_config, include_pretooluse: bool = False):
     banner("Claude Code Hooks")
 
@@ -298,8 +316,7 @@ def install_hooks(llm_config, include_pretooluse: bool = False):
         content = hook_file.read_text(encoding="utf-8")
         content = replace_placeholder(content, PROJECT_ROOT)
         dest = hooks_dir / hook_file.name
-        dest.write_text(content, encoding="utf-8")
-        print(f"  Installed: {dest}")
+        _write_hook_template(dest, content)
 
     # Update settings.json with hooks config. A malformed pre-existing file is
     # backed up (never silently wiped) by _load_json_preserving.
