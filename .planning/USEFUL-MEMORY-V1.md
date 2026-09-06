@@ -1,9 +1,9 @@
-<!-- doc-head: 4.8.8 deployed; activation verified and 4.8.9 installer closeout prepared -->
+<!-- doc-head: 4.8.9 deployed; activation verified and installer closeout complete -->
 # Useful memory, reliable delivery
 Covers: supported recall installation, real CI evaluation and source-level Dreaming sampling.
 Key terms: Gemini-only, duplicate delivery, missed facts, label provenance, read-only.
-Read when: accepting or deploying 4.8.8; ROADMAP.md remains the sole roadmap.
-Status: activation verified; 4.8.9 packages installer repairs; profile catch-up continues.
+Read when: accepting or operating 4.8.9; ROADMAP.md remains the sole roadmap.
+Status: both runtimes on 4.8.9; installer repairs shipped; profile catch-up continues.
 <!-- /doc-head -->
 
 ## Product changes
@@ -281,3 +281,57 @@ usefulness separately. No eligible live graph component currently supplies a
 production synthesis sample. Existing stdio clients predating 4.8.8 still need
 reconnection for that release's code; these activation flags do not require
 killing sessions, and installed SessionStart reads the projection per event.
+
+## Operational closeout deployed - 2026-09-06
+
+Operator authority: "lo que tengas que hacer aca, HACELO" after asking whether
+this pane can close. Scope is finishing the existing installer repairs and local
+deployment, not another feature, public release or historical data cleanup.
+
+- PR #253 merged as ca4e4bd28df71d1e50e8ee57161a87cec677f8bc at 19:50 UTC.
+  The original ten-file local patch was preserved in a scoped stash before
+  fast-forwarding main. Unrelated delta-exchange content was not staged or moved.
+- Both general and scheduled runtimes installed the exact 4.8.9 wheel with
+  --no-deps and --no-index. SHA-256:
+  5D7E97696FB6A159F105216C8743816ADAA9EA30796CA85A42DD9BF85BDD982C.
+  The prior 4.8.8 wheel remains available for rollback. No dependencies, schema,
+  provider selection or historical rows changed. Local generated egg-info was
+  refreshed so checkout metadata cannot shadow the installed version.
+- Restarted only the owned MemoryMaster-MCP-HTTP-Hermes task; its listener moved
+  from PID 52244 to 82132. Fresh isolated Python processes in both installations
+  report 4.8.9, health/readiness 200, unauthorized access 401, 51 tools and
+  successful authorized recall. A separate fresh stdio session exposes 51 tools.
+- Installed custom hook passes briefing preservation, duplicate suppression,
+  machine-event filtering, genuine human-prompt recall and reset. Both installed
+  installer code and live SessionStart registration include compact. Live review
+  configuration is unpinned; generated release-truth verification passes.
+- Fresh HTTP startup log contains the new PID and completed startup with zero
+  ERROR/CRITICAL/Traceback lines in the bounded post-startup log segment.
+- The existing scheduled operational review was started after deployment at
+  19:51 UTC and is still performing its read-only scan at this checkpoint.
+  Its older 14:55 UTC PASS artifact belongs to 4.8.8 and is NOT counted as a
+  completed 4.8.9 review. The task can finish without this pane and publishes
+  its own result/history; deployment verification above is separate evidence.
+- Seventy-eight focused installer/review/release tests and scoped Ruff passed.
+  PR CI run 34052986088 passed Linux and Windows on Python 3.10/3.11/3.12,
+  ML, evaluation, deployment smoke, security and contract/release checks.
+  The first performance job failed its ingest thresholds; one targeted rerun
+  of identical code passed (ingest p95 0.01546 s, 84.83 operations/s, zero query
+  misses). Failed evidence is retained. No thresholds, test assertions or
+  benchmark-path source were changed to obtain this pass; runner variability
+  remains an inference, not a diagnosed code fix. The earlier main-branch
+  Hermes HTTP timeout also passed unchanged locally and in this PR's matrix.
+- Primary GitNexus rebuilt successfully with embeddings preserved: 12,262
+  embeddings, 15,809 nodes. Initial cached-WAL warnings did not prevent progress
+  or completion; no shared MCP process was killed and no cache was deleted.
+- Snapshot cleanup is complete: 99 verified test/orphan folders (112 files,
+  77,066,240 bytes) were moved to Windows Recycle Bin and remain recoverable.
+  Both real August 25/September 1 snapshots and the small retirement audit were
+  retained. This was not deletion of authoritative memory or its real backups.
+
+Automatic Dreaming, steward and resumable profile work continue independently
+of this pane while the machine/session meets their Windows task conditions.
+Agent checkpoint prompts still need an existing target pane; closing it does
+not leave an autonomous coding/review agent running. Current profile catch-up
+and real-source semantic usefulness remain separate from this deployment proof.
+No semantic feature-success watermark is advanced by this closeout.

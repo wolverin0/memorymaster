@@ -1,4 +1,4 @@
-<!-- doc-head: release history; 4.8.9 operational installer corrections prepared -->
+<!-- doc-head: release history; 4.8.9 operational installer corrections locally deployed -->
 Covers user-visible changes, migrations, governance boundaries, workflow analytics, and operational fixes.
 Key terms: workflow intelligence, rule observations, graph observations, governed capture, recall, lineage.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
@@ -8,7 +8,11 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 ## [Unreleased]
 
-### 4.8.9 operational installer corrections
+### 4.8.9 local deployment - 2026-09-06 UTC
+
+- PR #253 merged; exact wheel installed in both local runtimes without changing
+  dependencies. Managed HTTP MCP restarted and authenticated recall verified.
+  This records local deployment, not a new public GitHub/PyPI release.
 
 - Register SessionStart for startup, resume and compact, so a fresh installation
   retains the already-deployed compaction reset behavior.

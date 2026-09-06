@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; 4.8.8 deployed and September 6 generation activation approved -->
+<!-- doc-head: sole roadmap; 4.8.9 deployed and September 6 generation activation approved -->
 # MemoryMaster roadmap
 # Covers: useful-memory delivery/evaluation, workflow analytics, governed observations and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, sustainability.
@@ -36,10 +36,11 @@ its governed-claims authority:
 
 ## Now
 
-### Deployed: useful memory, reliable delivery (4.8.8)
+### Deployed: useful memory, reliable delivery (4.8.9)
 
-PR #252 merged and local runtimes upgraded on 2026-09-06 UTC. HTTP MCP and
-installed hooks verified; already-open stdio clients still require reconnect.
+PRs #252 and #253 merged and local runtimes upgraded on 2026-09-06 UTC. HTTP
+MCP and installed hooks verified. Clients predating 4.8.8 require reconnect;
+4.8.9 adds installer corrections and does not require restarting 4.8.8 clients.
 See `.planning/USEFUL-MEMORY-V1.md` for exact evidence and limits.
 
 Operational activation approved September 6: the operator requested enabling
