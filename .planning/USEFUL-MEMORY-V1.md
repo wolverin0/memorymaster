@@ -3,7 +3,7 @@
 Covers: supported recall installation, real CI evaluation and source-level Dreaming sampling.
 Key terms: Gemini-only, duplicate delivery, missed facts, label provenance, read-only.
 Read when: accepting or deploying 4.8.8; ROADMAP.md remains the sole roadmap.
-Status: locally verified 4.8.8; merge and deployment are separate from these checks.
+Status: merged and locally deployed 4.8.8; existing stdio clients still need reconnect.
 <!-- /doc-head -->
 
 ## Product changes
@@ -99,6 +99,31 @@ outcomes. Persistent quota cooldown requires evidence of repeated cross-cycle
 quota failures; more state is not added speculatively. No 24-hour wait is an
 implementation prerequisite.
 
-Deployment/merge status is recorded after verification, never inferred from this
-source checklist. Existing customized hooks remain preserved until explicitly
-reconciled; supporting a guard in a package does not claim every live pane uses it.
+## Deployment evidence - 2026-09-06 UTC
+
+- PR #252 passed all fifteen checks, including the six-platform/Python matrix,
+  ML, performance, real evaluation artifacts and deployment smoke. Merged into
+  main as `39bacf871b5fd75737597d23f988da4bd62af30b`.
+- Built from merged main; wheel SHA-256:
+  `F1465722B70BE8E9E36FD1C1BB044D6225A398C8C298A0BEFBF1CA982FC506E6`.
+  Installed 4.8.8 with no dependency changes in the general and dedicated
+  scheduled runtimes. Prior 4.8.7 wheel and pre-change custom hooks retained.
+- Restarted only the managed HTTP MCP task. Fresh installed runtime reports
+  health/readiness 200, unauthenticated rejection 401, 51 tools and successful
+  authorized read-only recall. Startup was found in the configured log with
+  zero error/traceback lines in the post-start tail.
+- A separate fresh installed stdio process passed initialize/tool discovery
+  with 51 tools using a disposable workspace; no authoritative-row test writes.
+- Installed-package demo passed candidate promotion, cited opt-in observation
+  recall, ordinary exclusion and automatic staleness after support retirement.
+- Reconciled the existing custom recall hook with bounded combined-context
+  delivery, preserving task look-ahead. Its duplicate-delivery witness failed
+  before reconciliation and passed afterward, including real installed
+  SessionStart reset against a missing disposable DB. Hooks apply next event.
+- Nine older stdio MCP processes belonging to eight live agent processes were
+  left intact. Reconnect MemoryMaster MCP or restart/resume those sessions,
+  including this one; a package install cannot reload their imported modules.
+  No workstation or terminal-host restart is required. HTTP is already restarted.
+- Scripts, disposable test results and hook rollback copies are retained under
+  ignored `artifacts/deploy-4.8.8/`. No GitHub release tag or PyPI publication,
+  historical curation, provider change, new scheduler or database migration.

@@ -1,4 +1,4 @@
-<!-- doc-head: release history with 4.8.8 useful-memory candidate and deployed 4.8.7 safeguards -->
+<!-- doc-head: release history with locally deployed 4.8.8 useful-memory safeguards -->
 Covers user-visible changes, migrations, governance boundaries, workflow analytics, and operational fixes.
 Key terms: workflow intelligence, rule observations, graph observations, governed capture, recall, lineage.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
@@ -8,7 +8,11 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 ## [Unreleased]
 
-### 4.8.8 useful memory, reliable delivery
+### 4.8.8 local deployment - 2026-09-06 UTC
+
+- PR #252 merged; installed in both runtimes. Managed HTTP MCP restarted and
+  verified; existing stdio agent sessions require reconnect/restart. Customized
+  recall and SessionStart hooks reconciled and tested, effective next event.
 
 - Recall hooks skip recognized machine events and suppress unchanged context
   briefly within a session; SessionStart/compaction clears delivery state.

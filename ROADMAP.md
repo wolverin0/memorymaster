@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; useful-memory milestone following the September upstream review -->
+<!-- doc-head: sole roadmap; 4.8.8 useful-memory deployed with client reconnect remaining -->
 # MemoryMaster roadmap
 # Covers: useful-memory delivery/evaluation, workflow analytics, governed observations and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, sustainability.
@@ -36,7 +36,11 @@ its governed-claims authority:
 
 ## Now
 
-### Next milestone: useful memory, reliable delivery (4.8.8)
+### Deployed: useful memory, reliable delivery (4.8.8)
+
+PR #252 merged and local runtimes upgraded on 2026-09-06 UTC. HTTP MCP and
+installed hooks verified; already-open stdio clients still require reconnect.
+See `.planning/USEFUL-MEMORY-V1.md` for exact evidence and limits.
 
 Operator-approved on 2026-09-05 after refreshing seventeen upstream repositories.
 Implement native improvements, not another framework or always-running agent:
