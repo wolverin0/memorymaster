@@ -16,12 +16,14 @@ $historyLog = Join-Path $outputRoot "history.jsonl"
 $arguments = @(
     "-m", "memorymaster.operations.operational_review",
     "--db", [string]$config.db,
-    "--expected-version", [string]$config.expected_version,
     "--lookback-hours", [string]$config.lookback_hours,
     "--canary-query", [string]$config.canary_query,
     "--canary-human-id", [string]$config.canary_human_id,
     "--json"
 )
+if (-not [string]::IsNullOrWhiteSpace([string]$config.expected_version)) {
+    $arguments += @("--expected-version", [string]$config.expected_version)
+}
 
 try {
     $output = & ([string]$config.python) @arguments 2> $tempError

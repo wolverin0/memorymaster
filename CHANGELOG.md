@@ -1,4 +1,4 @@
-<!-- doc-head: release history with locally deployed 4.8.8 useful-memory safeguards -->
+<!-- doc-head: release history; 4.8.9 operational installer corrections prepared -->
 Covers user-visible changes, migrations, governance boundaries, workflow analytics, and operational fixes.
 Key terms: workflow intelligence, rule observations, graph observations, governed capture, recall, lineage.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
@@ -7,6 +7,15 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 # Changelog
 
 ## [Unreleased]
+
+### 4.8.9 operational installer corrections
+
+- Register SessionStart for startup, resume and compact, so a fresh installation
+  retains the already-deployed compaction reset behavior.
+- Scheduled review installation no longer pins an obsolete package version;
+  omit empty overrides and use the existing workspace version reference.
+  Deliberate explicit version pins remain supported.
+- No schema, dependency, ranking, provider or governance changes.
 
 ### 4.8.8 local deployment - 2026-09-06 UTC
 

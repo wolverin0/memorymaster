@@ -386,9 +386,9 @@ def install_hooks(llm_config, include_pretooluse: bool = False):
     ptu_hooks[:] = [h for h in ptu_hooks if "memorymaster-validate-wiki" not in json.dumps(h)]
     ptu_hooks.append(validate_wiki_hook)
 
-    # SessionStart — inject MemoryMaster context on startup/resume
+    # SessionStart — restore context and clear delivery suppression after compaction.
     session_start_hook = {
-        "matcher": "startup|resume",
+        "matcher": "startup|resume|compact",
         "hooks": [{
             "type": "command",
             "command": f'python "{hooks_dir / "memorymaster-session-start.py"}"',

@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; 4.8.8 useful-memory deployed with client reconnect remaining -->
+<!-- doc-head: sole roadmap; 4.8.8 deployed and September 6 generation activation approved -->
 # MemoryMaster roadmap
 # Covers: useful-memory delivery/evaluation, workflow analytics, governed observations and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, sustainability.
@@ -41,6 +41,17 @@ its governed-claims authority:
 PR #252 merged and local runtimes upgraded on 2026-09-06 UTC. HTTP MCP and
 installed hooks verified; already-open stdio clients still require reconnect.
 See `.planning/USEFUL-MEMORY-V1.md` for exact evidence and limits.
+
+Operational activation approved September 6: the operator requested enabling
+the reviewed Dreaming, governed graph-observation and compiled-profile lanes.
+User-level graph/profile settings now match the enabled scheduled launcher;
+Dreaming retains candidate application, Gemini-only selection and existing
+budgets. This resolves the dated shadow/off discrepancy below prospectively,
+not retroactively. Steward approval and opt-in observation recall remain
+mandatory. Weekly profile cadence and resumable per-cycle limits remain intact.
+Workflow promotion, wiki generation, retired tasks and historical cleanup are
+not included in this activation. Real-run validation is recorded in the ledger;
+enabled does not mean semantic quality has been established.
 
 Operator-approved on 2026-09-05 after refreshing seventeen upstream repositories.
 Implement native improvements, not another framework or always-running agent:

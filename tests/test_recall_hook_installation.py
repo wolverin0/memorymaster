@@ -26,6 +26,10 @@ def test_installed_hook_round_trip(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     path = install(tmp_path, monkeypatch)
     install(tmp_path, monkeypatch)
+    settings = json.loads((path.parents[1] / 'settings.json').read_text())
+    start_hook = next(item for item in settings['hooks']['SessionStart']
+                      if any('memorymaster-session-start.py' in h['command'] for h in item['hooks']))
+    assert 'compact' in start_hook['matcher'].split('|')
     capsys.readouterr()
     calls = []
     monkeypatch.setattr(context_hook, "recall", lambda *a, **k: calls.append(a) or "cited context")

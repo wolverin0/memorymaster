@@ -29,6 +29,36 @@ from memorymaster.operations.operational_review import (
 INSTALADA = importlib.metadata.version("memorymaster")
 
 
+def test_scheduled_installer_does_not_pin_a_historical_release():
+    root = Path(__file__).resolve().parents[1]
+    installer = (root / 'scripts/install-windows-operational-review.ps1').read_text()
+    assert '[string]$ExpectedVersion = ""' in installer
+
+
+@pytest.mark.parametrize('pin', [None, '', '1.2.3'])
+def test_windows_wrapper_omits_empty_version_override(tmp_path, pin):
+    import json
+    import shutil
+    import subprocess
+    shell = shutil.which('powershell') or shutil.which('pwsh')
+    if not shell:
+        pytest.skip('PowerShell unavailable')
+    root = Path(__file__).resolve().parents[1]
+    source = (root / 'scripts/windows-operational-review.ps1').read_text()
+    probe = tmp_path / 'args.ps1'
+    probe.write_text(source.split('\ntry {', 1)[0] + '\n$arguments | ConvertTo-Json\n')
+    config = tmp_path / 'config.json'
+    config.write_text(json.dumps({'db': 'fixture.db', 'expected_version': pin,
+        'lookback_hours': 8, 'canary_query': 'fixture query', 'canary_human_id': 'mm-fixture',
+        'output_root': str(tmp_path / 'output')}))
+    result = subprocess.run([shell, '-NoProfile', '-File', str(probe), '-ConfigPath', str(config)],
+                            capture_output=True, text=True, check=True)
+    args = json.loads(result.stdout)
+    assert ('--expected-version' in args) is bool(pin)
+    if pin:
+        assert args[args.index('--expected-version') + 1] == pin
+
+
 def _workspace(tmp_path: Path, version: str | None) -> Path:
     """Devuelve una ruta de base dentro de un checkout falso."""
     if version is not None:
