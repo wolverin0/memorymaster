@@ -97,6 +97,8 @@ newest attempt. The dashboard reads the installer result directory by default;
 - Dashboard Origin/Referer/Host checks use exact normalized authorities and the
   bound port. Wildcard binds require explicit
   `MEMORYMASTER_DASHBOARD_ALLOWED_ORIGINS` (comma-separated scheme/host/port).
+  The Docker image and Compose file default it to the loopback publish
+  (`http://127.0.0.1:8765,http://localhost:8765`); set it to expose elsewhere.
   Proxy headers do not authorize destinations. Loopback aliases are automatic
   only for loopback binds. Local non-browser clients may omit Origin/Referer,
   but must still send an allowed Host.

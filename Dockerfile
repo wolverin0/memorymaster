@@ -27,6 +27,10 @@ COPY pyproject.toml README.md ./
 # Environment variables
 ENV MEMORYMASTER_DEFAULT_DB=/data/memorymaster.db
 ENV MEMORYMASTER_WORKSPACE=/data
+# The dashboard binds 0.0.0.0 inside the container, and a wildcard bind must name the
+# browser origins it serves. The default matches the loopback publish
+# (-p 127.0.0.1:8765:8765); any other Host is rejected. Override it to expose elsewhere.
+ENV MEMORYMASTER_DASHBOARD_ALLOWED_ORIGINS=http://127.0.0.1:8765,http://localhost:8765
 
 # Volume for data persistence
 VOLUME /data
