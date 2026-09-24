@@ -49,34 +49,37 @@ except Exception as e:
 # has produced this cycle's stale claims), before scheduled_archive. A no-op
 # while MEMORYMASTER_JEV_MODE / MEMORYMASTER_JEV_REVALIDATE is off; capped by
 # MEMORYMASTER_JEV_REVALIDATE_PER_CYCLE (default 500, 0 disables).
-# Once per tenant holding stale claims: a service only sees its own tenant.
+# Once per tenant holding stale claims (S1 selects by tenant); the per-cycle cap applies
+# to each tenant, and one tenant's failure does not skip the others.
 try:
     from memorymaster.govern.jobs import revalidation
 
-    for _tenant in revalidation.tenants_with_work(svc.store):
+    _tenants = revalidation.tenants_with_work(svc.store)
+except Exception as e:
+    _tenants = []
+    print(f"[MemoryMaster] jev revalidation error: {e}", file=sys.stderr)
+for _tenant in _tenants:
+    try:
         _svc = svc if _tenant is None else MemoryService(
             db_target=DB_PATH, workspace_root=Path(PROJECT_ROOT), tenant_id=_tenant)
         reval = revalidation.run(_svc, limit=revalidation.per_cycle_limit())
         if reval.get("asked") or reval.get("stopped") not in (None, "mode_off"):
             print(f"[MemoryMaster] jev revalidation ({_tenant or 'no tenant'}): {reval}")
-except Exception as e:
-    print(f"[MemoryMaster] jev revalidation error: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"[MemoryMaster] jev revalidation error ({_tenant or 'no tenant'}): {e}", file=sys.stderr)
 
 # S4 DEDUP (4.9.0): Jev judges candidate pairs and files `source: jev` steward
 # proposals only (never a status change, never auto-approved). Here and nowhere
 # else: run_cycle (MCP, CLI, per-turn operator cycle, scheduler) never asks Jev.
 # A no-op while MEMORYMASTER_JEV_MODE / MEMORYMASTER_JEV_DEDUP is off; capped by
 # MEMORYMASTER_JEV_DEDUP_PER_CYCLE (default 200 pairs per run, 0 disables).
+# Once: the SQLite store reads candidates of every tenant, and a pair must share one.
 try:
     from memorymaster.govern import candidate_dedupe
-    from memorymaster.govern.jobs import revalidation
 
-    for _tenant in revalidation.tenants_with_work(svc.store, status="candidate"):
-        _svc = svc if _tenant is None else MemoryService(
-            db_target=DB_PATH, workspace_root=Path(PROJECT_ROOT), tenant_id=_tenant)
-        dedup = candidate_dedupe.run_jev(_svc.store, limit=candidate_dedupe.jev_pairs_per_cycle())
-        if dedup.get("asked") or dedup.get("stopped") not in (None, "mode_off"):
-            print(f"[MemoryMaster] jev dedup ({_tenant or 'no tenant'}): {dedup}")
+    dedup = candidate_dedupe.run_jev(svc.store, limit=candidate_dedupe.jev_pairs_per_cycle())
+    if dedup.get("asked") or dedup.get("stopped") not in (None, "mode_off"):
+        print(f"[MemoryMaster] jev dedup: {dedup}")
 except Exception as e:
     print(f"[MemoryMaster] jev dedup error: {e}", file=sys.stderr)
 

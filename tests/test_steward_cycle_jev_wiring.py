@@ -43,7 +43,7 @@ def test_s4_dedup_runs_only_from_the_hook_after_the_cycle_with_its_own_cap():
     cycle = _position(source, "svc.run_cycle(")
     dedup = _position(source, "candidate_dedupe.run_jev(")
     assert cycle < dedup < _position(source, "steward_cycle_outcomes(DB_PATH)")
-    assert "candidate_dedupe.run_jev(_svc.store, limit=candidate_dedupe.jev_pairs_per_cycle())" in source
+    assert "candidate_dedupe.run_jev(svc.store, limit=candidate_dedupe.jev_pairs_per_cycle())" in source
 
 
 def test_lifecycle_outcomes_join_once_after_the_writing_stages():

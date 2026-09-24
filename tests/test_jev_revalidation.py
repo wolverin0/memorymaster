@@ -653,5 +653,6 @@ def test_the_steward_template_runs_s1_and_s4_per_tenant():
     template = (Path(__file__).resolve().parents[1] / "memorymaster" / "config_templates" / "hooks"
                 / "memorymaster-steward-cycle.py").read_text(encoding="utf-8")
     assert template.count("revalidation.tenants_with_work(svc.store)") == 1
-    assert template.count("revalidation.tenants_with_work(svc.store, status=\"candidate\")") == 1
     assert "tenant_id=_tenant" in template
+    # S4 once: the SQLite store is not tenant-bound, so a per-tenant loop repeated the same work.
+    assert template.count("candidate_dedupe.run_jev(") == 1 and "status=\"candidate\"" not in template
