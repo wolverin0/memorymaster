@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import re
 import json
 import logging
 import math
@@ -548,7 +549,9 @@ class DecisionEngine:
         def egress(value: Any) -> Any:
             key = _dumps(value)
             if key not in redacted_once:
-                redacted_once[key] = prepare_egress_value(value)
+                # A lone surrogate (a cut emoji) is replaced BEFORE redaction, so the text
+                # the patterns see is the text that is sent and logged.
+                redacted_once[key] = prepare_egress_value(_scrub_surrogates(value))
             return redacted_once[key]
 
         egress_state = egress(state)
@@ -633,6 +636,10 @@ class DecisionEngine:
         if not self.ledger.reserve_send(decision_id, surface, ts=record.ts,
                                         est_cost_usd=cost_usd(estimate_tokens(record.egress_bytes), 0)):
             return finish("ledger_unavailable", effective_mode=effective_mode)
+        if pending.hard_end is not None:  # waiting for the intent write is part of the hook deadline
+            deadline_s = pending.started + self.config.deadline_ms(ctx.kind) / 1000.0 - self._monotonic()
+            if deadline_s <= 0:
+                return finish("timeout", effective_mode=effective_mode)
         transport = self._get_transport(key)
         sent_at = self._monotonic()
         result, timed_out = self._call_with_deadline(
@@ -839,6 +846,20 @@ class DecisionEngine:
         delivered = self._delivered(ctx, legacy_exposed)
         rows = self._item_rows(decision_id, items, [], None, legacy_exposed, legacy_exposed, delivered)
         return self.ledger.write_decision(record, rows)
+
+
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def _scrub_surrogates(value: Any) -> Any:
+    """Replace lone UTF-16 surrogates (unencodable in UTF-8) with U+FFFD, recursively."""
+    if isinstance(value, str):
+        return _SURROGATE.sub("\ufffd", value)
+    if isinstance(value, Mapping):
+        return {k: _scrub_surrogates(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_scrub_surrogates(v) for v in value]
+    return value
 
 
 def _dumps_strict(value: Any) -> str:

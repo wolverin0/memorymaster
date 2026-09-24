@@ -998,18 +998,19 @@ class _Utf8Transport(FakeTransport):
         return super().send(payload, expected=expected, timeout_s=timeout_s, max_retries=max_retries)
 
 
-def test_a_lone_surrogate_in_the_request_is_still_logged(tmp_path):
-    """A "\ud800" JSON escape in a prompt must not cost the decision its ledger row."""
-    engine, _ = make_engine(tmp_path, transport=_Utf8Transport())
-    prompt = json.loads('"run the tests \ud800 now"')
+def test_a_lone_surrogate_in_the_request_is_scrubbed_sent_and_logged_as_sent(tmp_path):
+    """A "\\ud800" JSON escape in a prompt is replaced by U+FFFD before redaction: the
+    request is valid UTF-8, it is sent, and the ledger holds exactly the text that left."""
+    engine, fake = make_engine(tmp_path, transport=_Utf8Transport())
+    prompt = json.loads('"run the tests \\ud800 now"')
     state, bound = q.build_recall(prompt, "memorymaster", [("claim:1", "Run pytest")])
     decision = engine.decide("recall", state=state, questions=bound, items=["claim:1"], legacy_action=["claim:1"],
                              choose=recall_choose)
-    assert decision.logged is True, decision
-    assert decision.action == ["claim:1"] and decision.fallback_reason == "request_invalid"
-    stored = rows(tmp_path, "SELECT fallback_reason, state_redacted FROM decisions")
-    assert [row["fallback_reason"] for row in stored] == ["request_invalid"]
-    assert json.loads(stored[0]["state_redacted"])["state"]["request"] == prompt  # escaped, not lost
+    assert decision.logged is True and decision.fallback_reason is None, decision
+    assert fake.calls and fake.calls[0]["payload"] is not None
+    stored = rows(tmp_path, "SELECT state_redacted FROM decisions")
+    logged = json.loads(stored[0]["state_redacted"])["state"]["request"]
+    assert logged == "run the tests \ufffd now" == fake.calls[0]["payload"]["state"]["request"]
 
 
 def _slow_egress(monkeypatch, per_call_s: float) -> list:
@@ -1114,3 +1115,38 @@ def test_every_sent_request_leaves_a_durable_intent_counted_by_the_budget(tmp_pa
     assert intents[1]["est_cost_usd"] > 0
     assert Budget(ledger, config).check() == "budget_exhausted"
     assert ledger.requests_since("1970-01-01T00:00:00+00:00") == 2
+
+
+def test_a_lone_surrogate_is_scrubbed_before_egress_so_what_is_redacted_is_what_is_sent(tmp_path):
+    """Review of 8c8d57e: the transport turned a lone surrogate into '?' AFTER redaction,
+    so '<surrogate>phone=...' left as '?phone=...' unredacted and the ledger logged a
+    different text. Surrogates are replaced before redaction; the wire and the ledger agree."""
+    engine, fake = make_engine(tmp_path)
+    query = "ping https://api.whatsapp.com/send\ud83dphone=5491122334455 and https://h.example.org/in\ud83dsig=abcDEF123ghi456"
+    state, bound = q.build_recall(query, "memorymaster", [("claim:3", "old note"), ("claim:2", "Use WAL")])
+    engine.decide("recall", state=state, questions=bound, items=ITEMS, legacy_action=LEGACY, choose=recall_choose,
+                  context=DecisionContext(session_key="sess-1", legacy_exposed=LEGACY))
+    assert len(fake.calls) == 1
+    wire = json.dumps(fake.calls[0]["payload"], ensure_ascii=False)
+    assert not any(0xD800 <= ord(ch) <= 0xDFFF for ch in wire)
+    assert "?phone=" not in wire and "?sig=" not in wire
+    logged = rows(tmp_path, "SELECT state_redacted FROM decisions")[0]["state_redacted"]
+    assert json.loads(logged)["state"] == fake.calls[0]["payload"]["state"]
+
+
+def test_waiting_for_the_send_intent_is_charged_to_the_hook_deadline(tmp_path):
+    """Review of f4096fb: reserve_send could wait for another writer and the request still
+    got the full deadline, so a hook acted live on an answer that came after its deadline."""
+    import threading
+
+    path = tmp_path / "decisions.db"
+    engine, fake = make_engine(tmp_path, transport=FakeTransport(delay=0.33),
+                               env={"MEMORYMASTER_JEV_HOOK_DEADLINE_MS": "400"})
+    decide_recall(engine)  # warm: questions registered, nothing else writes before the intent
+    holder = _hold_write_lock(path)
+    threading.Timer(0.22, lambda: (holder.rollback(), holder.close())).start()
+    started = time.perf_counter()
+    decision = decide_recall(engine)
+    elapsed = time.perf_counter() - started
+    assert decision.fallback_reason is not None and decision.action == LEGACY, decision
+    assert elapsed < 0.4 + 0.1 + 0.05, elapsed

@@ -878,11 +878,9 @@ def test_cost_table():
     assert tr.PRICE_TABLE_VERSION
 
 
-def test_a_lone_surrogate_in_a_prompt_is_sent_replaced_not_refused(server, transport):
-    """Live 2026-09-23: a real prompt carried a lone surrogate (a cut emoji); UTF-8
-    encoding refused it and the hint decision fell back as request_invalid."""
+def test_a_lone_surrogate_reaching_the_transport_is_refused_not_guessed(server, transport):
+    """The engine scrubs surrogates before redaction; one that still reaches the transport
+    means redaction saw different text, so nothing is sent (review of 8c8d57e)."""
     result = transport.send({"model": tr.MODEL, "state": {"prompt": "ship it \ud83d now"}, "questions": {}},
                             expected=EXPECTED, timeout_s=3.0)
-    assert result.outcome == "ok"
-    sent = json.loads(server.requests[0]["body"])
-    assert sent["state"]["prompt"] == "ship it ? now"
+    assert result.outcome == "request_invalid" and server.requests == []

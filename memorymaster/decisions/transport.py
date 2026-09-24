@@ -482,7 +482,7 @@ class HttpTransport:
         if self._https and ssl is None:
             return TransportResult(None, None, 0, 0, "transport_unavailable", error_class="ImportError")
         try:
-            body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8", "replace")
+            body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
         except (TypeError, ValueError) as exc:
             return TransportResult(None, None, 0, 0, "request_invalid", error_class=type(exc).__name__)
         if len(body) > MAX_REQUEST_BYTES:
