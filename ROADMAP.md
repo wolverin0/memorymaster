@@ -120,11 +120,13 @@ A box is ticked only with evidence (command, count or receipt) in the ledger.
 - [x] Dreaming ledger column repair (`d09eb0c`): schema version 3 was recorded without `held_count`; the first 4.9.0 run extracted nothing, the next one applied 20 with S3 triaging 22.
 - [x] Cut-emoji prompts sent instead of `request_invalid` (`8c8d57e`); in-flight intents are not orphans (`50f7a7f`); bounded ledger opens use the shared envelope (`fb9d776`).
 - [x] Pushed as PR #254 (squash; secret-shaped test fixtures built from parts for push protection).
+- [x] Python 3.10 keep-alive (`e913706`): 3.10's `http.client` leaves a response read to Content-Length open, so the next request on the pooled connection raised `ResponseNotReady` (CI ubuntu 3.10: 5 transport and 7 selector tests). The response is closed before pooling; reproduced and fixed on a local 3.10.
+- [x] S1 backlog of tenant `personal` judged once (2026-09-24): 24,447 asked, 104 re-confirmed, 48 no longer useful, 24,295 kept stale, 122 sensitive skipped, US$0.48; it stopped on the 600 RPM cap, which `budget_exhausted` also reports.
 
 **Phase 4 — re-test and independent review**
 - [x] Full non-ML gate (incl. the disposable public demo) on the installed revision `7d536a8`, four sequential shards: 6676 passed, 0 failed, 74 skipped, 1 xfailed.
 - [x] Live read-only checks 2026-09-24T01:24Z: operational review (database PASS, retrieval canary PASS, runtime pinned to 4.9.0 until main carries it, compiled_profile WARN while run 5 maps from claims, checkpoint WARN until the first Orca delivery, jev_decisions WARN: dedup/skills idle, 5 orphan intents traced to the memory-reaper kill and one killed recall hook); Hermes MCP health 200 / unauth 401 / 51 tools; ledger read through the dashboard tab and `jev-status`.
-- [ ] Independent adversarial review of the new code; no open high findings.
+- [x] Independent adversarial review of the new code; no open high findings (high: `799dc1f`; medium/low: `80277a4`, `2af6f81`, `25bb5af`, `8e85b3b`).
 - [ ] Reports at 24 h, 72 h and 7 days from dashboard numbers.
 
 **Phase 5 — learning loop**
