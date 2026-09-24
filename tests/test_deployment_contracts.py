@@ -75,6 +75,32 @@ def test_helm_deployment_defines_health_and_readiness_probes():
     assert "/readyz" in deployment
 
 
+def test_packaged_dashboard_starts_and_its_probes_pass_the_origin_policy(monkeypatch):
+    """A wildcard bind needs named origins and Host is checked on health routes too (4.9.0):
+    the stock image must start, and every probe must send a Host the policy accepts."""
+    from memorymaster.surfaces import dashboard_auth
+    from memorymaster.surfaces.dashboard_origins import explicit_origins
+
+    dockerfile = _read("Dockerfile")
+    origins = re.search(r"ENV MEMORYMASTER_DASHBOARD_ALLOWED_ORIGINS=(\S+)", dockerfile)
+    bind = re.search(r'CMD\s+\[.*"--host",\s*"([^"]+)"', dockerfile)
+    assert origins and bind
+    for name in ("MEMORYMASTER_DASHBOARD_TOKEN_OPERATOR", "MEMORYMASTER_DASHBOARD_UNSAFE_BIND"):
+        monkeypatch.delenv(name, raising=False)
+    # Every packaged profile supplies a viewer token (Helm secret, Compose env, CI smoke -e).
+    monkeypatch.setenv("MEMORYMASTER_DASHBOARD_TOKEN_VIEWER", "fixture-only")
+    monkeypatch.setenv("MEMORYMASTER_DASHBOARD_ALLOWED_ORIGINS", origins.group(1))
+    dashboard_auth.check_bind_safety(bind.group(1))  # raises BindUnsafeError if the image cannot start
+
+    deployment = _read("helm/memorymaster/templates/deployment.yaml")
+    probe_hosts = re.findall(r'- name: Host\s+value: "([^"]+)"', deployment)
+    compose_hosts = re.findall(r"https?://((?:127\.0\.0\.1|localhost):8765)/(?:healthz|readyz)",
+                               _read("docker-compose.yml"))
+    assert len(probe_hosts) == 2 and compose_hosts
+    for host in probe_hosts + compose_hosts:
+        assert dashboard_auth.check_host({"Host": host}, origins=explicit_origins()).ok, host
+
+
 def test_compose_http_service_is_private_and_resource_bounded():
     compose = _read("docker-compose.yml")
 
