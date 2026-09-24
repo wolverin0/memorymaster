@@ -13,8 +13,8 @@ check instead of once per window.
   frozen pre-optimization code (``_jev_reference_reads``) returns.
 * Performance: on the verifier's ledger (4000 recall decisions x 80 item rows over
   14 days) metrics over 7 days and the review queue take < 2 s, the operational
-  check < 3 s, and each peaks below 150 MB of Python allocations.  Skipped when
-  ``MEMORYMASTER_SKIP_PERF`` is set.
+  check < 3 s, and each peaks below 150 MB of Python allocations.  With
+  ``MEMORYMASTER_SKIP_PERF`` set only the time limits are skipped; the memory limits run.
 """
 from __future__ import annotations
 
@@ -96,15 +96,15 @@ def test_review_queue_matches_the_reference_implementation(mixed, days, size):
 
 # -------------------------------------------------------------- performance ---
 
-perf = pytest.mark.skipif(bool(os.environ.get("MEMORYMASTER_SKIP_PERF")),
-                          reason="MEMORYMASTER_SKIP_PERF is set")
+# MEMORYMASTER_SKIP_PERF skips only the wall-clock budgets (shared CI runners swing ~5x);
+# the peak-memory budgets do not depend on runner speed and always run: they are what
+# catches a read path that starts loading state_redacted for every decision.
+TIMING = not os.environ.get("MEMORYMASTER_SKIP_PERF")
 PEAK_BYTES = 150 * 1024 * 1024
 
 
 @pytest.fixture(scope="module")
 def verifier_ledger(tmp_path_factory):
-    if os.environ.get("MEMORYMASTER_SKIP_PERF"):
-        pytest.skip("MEMORYMASTER_SKIP_PERF is set")
     path = tmp_path_factory.mktemp("jev-perf") / "decisions.db"
     return write_synthetic_ledger(path, decisions=4000, candidates=20, days=14, seed=0)
 
@@ -122,29 +122,26 @@ def _measure(call):
     return result, elapsed, peak
 
 
-@perf
 def test_metrics_over_7_days_are_fast_and_lean(verifier_ledger):
     ledger = ReadOnlyLedger(verifier_ledger)
     report, elapsed, peak = _measure(lambda: jr.metrics_payload(ledger, now=NOW, days=7))
     assert report["surfaces"]["recall"]["volume"] > 1900
-    assert elapsed < 2.0, f"metrics 7d took {elapsed:.2f} s"
+    assert not TIMING or elapsed < 2.0, f"metrics 7d took {elapsed:.2f} s"
     assert peak < PEAK_BYTES, f"metrics 7d peaked at {peak / 2**20:.0f} MB"
 
 
-@perf
 def test_review_queue_is_fast_and_lean(verifier_ledger):
     ledger = ReadOnlyLedger(verifier_ledger)
     queue, elapsed, peak = _measure(lambda: jr.select_review_queue(ledger, now=NOW))
     assert len(queue) == jr.REVIEW_SIZE
-    assert elapsed < 2.0, f"review queue took {elapsed:.2f} s"
+    assert not TIMING or elapsed < 2.0, f"review queue took {elapsed:.2f} s"
     assert peak < PEAK_BYTES, f"review queue peaked at {peak / 2**20:.0f} MB"
 
 
-@perf
 def test_operational_check_is_fast_and_lean(verifier_ledger, tmp_path, monkeypatch):
     monkeypatch.setenv("MEMORYMASTER_JEV_RECALL", "live")
     config = review.ReviewConfig(db=tmp_path / "memory.db", decisions_db=verifier_ledger)
     result, elapsed, peak = _measure(lambda: review.check_jev_decisions(config, now=NOW))
     assert result.verdict in (review.Verdict.PASS, review.Verdict.WARN), result.detail
-    assert elapsed < 3.0, f"check_jev_decisions took {elapsed:.2f} s"
+    assert not TIMING or elapsed < 3.0, f"check_jev_decisions took {elapsed:.2f} s"
     assert peak < PEAK_BYTES, f"check_jev_decisions peaked at {peak / 2**20:.0f} MB"
