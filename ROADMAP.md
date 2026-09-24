@@ -109,12 +109,21 @@ A box is ticked only with evidence (command, count or receipt) in the ledger.
 - [x] 4.9.0 wheel installed in both runtimes, file-identical (434 files, 0 mismatches; built from `2bd8264`); rollback 4.8.9 wheel kept; consistent 7.2 GB pre-install DB backup; migrations 0026/0027 applied 2026-09-23T23:40Z.
 - [x] Installed hooks ported with backups (`~/.memorymaster/backups/hooks-pre490-20260923T233944Z`): recall/steward-cycle patched in place (operator look-ahead briefing, provider and dedupe settings kept), session-start/classify/auto-ingest from templates; every hook keeps `sys.path.append` so the installed package wins over the older checkout.
 - [x] `MEMORYMASTER_JEV_MODE=live` in `~/.claude/settings.json` env and the user environment (running panes picked it up without restart); hook deadline raised to 1500 ms after live latency measured 850–1220 ms (900 ms timed out every call); Hermes restarted (health 200, unauth 401, 51 tools).
-- [ ] S1 backlog revalidation run with its own cost cap.
+- [x] S1 backlog revalidation run with its own cost cap (`jev-revalidate --backfill --tenant personal --max-usd`): 23k+ live decisions by 2026-09-24T01:35Z, 118 re-confirmed, 9 judged no longer useful, US$0.48; the steward continues at 500 per tenant per cycle.
 - [ ] First 24 h: ≥95 % complete ledger rows, fallback < 20 %, cost < cap, zero unredacted egress, no surface stuck in breaker > 1 h.
 
+**Found while running live (2026-09-23/24), fixed and reinstalled**
+- [x] Hook deadline 900 ms → 1500 ms: live latency 850–1220 ms timed out every hook decision at 900 ms; 7/7 ok after.
+- [x] Recall hook timeout 5 s → 10 s in settings: a recall hook killed at 5 s lost the whole recall block and left an orphan send intent.
+- [x] S1/S4 per tenant (`7abaf1c`): the steward saw 403 of 41,368 stale claims; 99 % live in tenant `personal`.
+- [x] S1 page cap 500 (`d14a46b`): a 41k backfill page exceeded SQLite's parameter limit and stopped S1.
+- [x] Dreaming ledger column repair (`d09eb0c`): schema version 3 was recorded without `held_count`; the first 4.9.0 run extracted nothing, the next one applied 20 with S3 triaging 22.
+- [x] Cut-emoji prompts sent instead of `request_invalid` (`8c8d57e`); in-flight intents are not orphans (`50f7a7f`); bounded ledger opens use the shared envelope (`fb9d776`).
+- [x] Pushed as PR #254 (squash; secret-shaped test fixtures built from parts for push protection).
+
 **Phase 4 — re-test and independent review**
-- [ ] Full non-ML gate, repro suite and disposable public demo on the installed revision.
-- [ ] Live read-only checks: operational review, MCP health/auth, canaries, flags, queues, ledger.
+- [x] Full non-ML gate (incl. the disposable public demo) on the installed revision `7d536a8`, four sequential shards: 6676 passed, 0 failed, 74 skipped, 1 xfailed.
+- [x] Live read-only checks 2026-09-24T01:24Z: operational review (database PASS, retrieval canary PASS, runtime pinned to 4.9.0 until main carries it, compiled_profile WARN while run 5 maps from claims, checkpoint WARN until the first Orca delivery, jev_decisions WARN: dedup/skills idle, 5 orphan intents traced to the memory-reaper kill and one killed recall hook); Hermes MCP health 200 / unauth 401 / 51 tools; ledger read through the dashboard tab and `jev-status`.
 - [ ] Independent adversarial review of the new code; no open high findings.
 - [ ] Reports at 24 h, 72 h and 7 days from dashboard numbers.
 
