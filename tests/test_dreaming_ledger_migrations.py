@@ -36,3 +36,17 @@ def test_opening_a_current_ledger_twice_changes_nothing(tmp_path):
     DreamLedger(path)
     with sqlite3.connect(path) as conn:
         assert [tuple(row) for row in conn.execute("PRAGMA table_info(dream_captures)")] == before
+
+
+def test_a_column_present_without_its_version_row_does_not_crash_the_open(tmp_path):
+    """Review of d09eb0c: the reverse drift (column added, version row missing) raised
+    'duplicate column name' on open. Each numbered step skips a column that exists."""
+    path = tmp_path / "capture-control.db"
+    DreamLedger(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute("DELETE FROM dream_schema_versions WHERE version IN (2, 3)")
+
+    DreamLedger(path)
+
+    with sqlite3.connect(path) as conn:
+        assert {row[0] for row in conn.execute("SELECT version FROM dream_schema_versions")} >= {1, 2, 3}
