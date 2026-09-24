@@ -736,3 +736,14 @@ def test_an_active_surface_with_nothing_to_ask_leaves_a_skip_row(tmp_path, monke
     assert [(r["surface"], r["fallback_reason"], r["attempt_count"]) for r in rows] == [
         ("recall", "skip:no_candidates", 0), ("session", "skip:all_passthrough", 0)]
     assert json.loads(rows[0]["action_taken"]) == ["claim:7", "claim:8"]
+
+
+def test_a_session_skip_row_never_logs_the_private_passthrough_ids(tmp_path, monkeypatch):
+    """Review of 025d40b: the live S8 path never logs passthrough (private/sensitive) ids,
+    so its skip row must not either."""
+    install_engine(monkeypatch, tmp_path, ScriptedTransport(recall_answers({})))
+    assert jev.decide_session("demo", [jev.RecallCandidate(9, "a public claim")], legacy_ids=[1, 2, 3, 4, 5],
+                              passthrough_ids=[1, 2, 3, 4, 5]) is None
+    [row] = ledger_rows(tmp_path, "SELECT action_taken FROM decisions WHERE surface = 'session'")
+    assert json.loads(row["action_taken"]) == []
+    assert ledger_rows(tmp_path, "SELECT item_ref FROM decision_items") == []

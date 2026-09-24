@@ -466,8 +466,9 @@ def decide_session(project: str, pool: Sequence[RecallCandidate], *, legacy_ids:
     candidates = [c for c in pool if isinstance(c.claim_id, int) and c.claim_id not in kept][:SESSION_POOL_SIZE]
     slots = SESSION_TOP_K - len(passthrough)
     if not candidates or slots < 1:
-        _log_skip(SESSION_SURFACE, "no_candidates" if not candidates else "all_passthrough", legacy_ids,
-                  session_key, engine)
+        # Passthrough ids are private/sensitive: never logged, exactly like the live path.
+        _log_skip(SESSION_SURFACE, "no_candidates" if not candidates else "all_passthrough",
+                  [cid for cid in legacy_ids if cid not in kept], session_key, engine)
         return None
 
     from memorymaster.decisions import engine as decisions
