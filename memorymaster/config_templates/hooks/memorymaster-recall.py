@@ -19,6 +19,14 @@ os.chdir(PROJECT_ROOT)
 from memorymaster.core.hook_log import log_hook  # noqa: E402 — import must follow sys.path bootstrap
 from memorymaster.recall.delivery import deliver, is_automated  # noqa: E402
 
+try:  # 4.9.0+: recall_block and recall(hook_data=...) ship together
+    from memorymaster.recall.delivery import recall_block  # noqa: E402
+    JEV_OPT_IN = True
+except ImportError:  # a package older than this template: legacy prefix, no Jev opt-in
+    def recall_block(context):
+        return "[MemoryMaster recall]\n" + context
+    JEV_OPT_IN = False
+
 try:
     data = json.loads(sys.stdin.read() or "{}")
     query = data.get("prompt", "")
@@ -31,12 +39,14 @@ try:
     else:
         log_hook("recall", "start", session=session_id, query_len=len(query))
         from memorymaster.recall.context_hook import recall
-        ctx = recall(query, db_path=DB_PATH, skip_qdrant=True)
+        # hook_data opts into the S2 RECALL Jev surface (inert unless MEMORYMASTER_JEV_* is on).
+        extra = {"hook_data": data} if JEV_OPT_IN else {}
+        ctx = recall(query, db_path=DB_PATH, skip_qdrant=True, **extra)
         if ctx:
             def emit(output):
                 sys.stdout.write(output)
                 sys.stdout.flush()
-            sent = deliver(data, "[MemoryMaster recall]\n" + ctx, emit)
+            sent = deliver(data, recall_block(ctx), emit)
             log_hook("recall", "done", session=session_id, hit=True, delivered=sent)
 except Exception as e:
     log_hook("recall", "error", message=str(e)[:200])

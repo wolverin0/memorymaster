@@ -29,6 +29,7 @@ $config = [ordered]@{
     db = [IO.Path]::GetFullPath($Database)
     expected_version = $ExpectedVersion
     lookback_hours = $LookbackHours
+    every_hours = $EveryHours
     canary_query = $CanaryQuery
     canary_human_id = $CanaryHumanId
     output_root = $outputRoot
@@ -40,7 +41,9 @@ $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $actionArg
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) `
     -RepetitionInterval (New-TimeSpan -Hours $EveryHours)
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
-    -ExecutionTimeLimit (New-TimeSpan -Minutes 15) -StartWhenAvailable
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 25) -StartWhenAvailable -Priority 6
+# Priority 7 also lowers disk/cache priority; normal I/O keeps full SQLite checks
+# inside the existing deadline without weakening them or using high CPU priority.
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
 
 [pscustomobject]@{

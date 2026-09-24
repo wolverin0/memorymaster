@@ -50,6 +50,12 @@ class _Store:
     def list_claims(self, **kwargs):
         return self.claims[: kwargs.get("limit", len(self.claims))]
 
+    def list_claims_page(self, *, limit, cursor="", **kwargs):
+        offset = int(cursor or 0)
+        page = self.claims[offset: offset + limit]
+        end = offset + len(page)
+        return page, str(end) if end < len(self.claims) else ""
+
     def vector_scores(
         self,
         query: str,

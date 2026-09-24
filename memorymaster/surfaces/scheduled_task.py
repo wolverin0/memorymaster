@@ -85,7 +85,7 @@ def _run_dream(args: argparse.Namespace) -> int:
     if _compiled_profile_enabled():
         from memorymaster.profile.engine import run_compiled_profile
 
-        profile = run_compiled_profile(args.db)
+        profile = run_compiled_profile(args.db, tenant_id=service.tenant_id)
     print(
         {
             "queued": queued.to_dict(),

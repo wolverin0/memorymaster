@@ -113,12 +113,17 @@ class _LifecycleMixin:
         reason: str,
         event_type: str,
         replaced_by_claim_id: int | None = None,
+        event_payload: dict[str, object] | None = None,
     ) -> Claim:
         validated_event_type = validate_transition_event_type(event_type)
         now = utc_now()
         last_validated_at = now if to_status in {"confirmed", "stale", "conflicted"} else claim.last_validated_at
         archived_at = now if to_status == "archived" else None
         next_replaced_by = replaced_by_claim_id if replaced_by_claim_id is not None else claim.replaced_by_claim_id
+        payload = {
+            **({"replaced_by_claim_id": replaced_by_claim_id} if replaced_by_claim_id else {}),
+            **(event_payload or {}),
+        }
 
         # Set valid_until when superseding — the old claim is no longer current truth
         valid_until_update = now if to_status == "superseded" else None
@@ -152,7 +157,7 @@ class _LifecycleMixin:
                 from_status=claim.status,
                 to_status=to_status,
                 details=reason,
-                payload_json=json.dumps({"replaced_by_claim_id": replaced_by_claim_id}) if replaced_by_claim_id else None,
+                payload_json=json.dumps(payload) if payload else None,
                 created_at=now,
             )
             conn.commit()
@@ -232,7 +237,13 @@ class _LifecycleMixin:
         )
 
 
-    def mark_superseded(self, old_claim_id: int, new_claim_id: int, reason: str) -> None:
+    def mark_superseded(
+        self,
+        old_claim_id: int,
+        new_claim_id: int,
+        reason: str,
+        event_payload: dict[str, object] | None = None,
+    ) -> None:
         old_claim = self.get_claim(old_claim_id, include_citations=False)
         if old_claim is None:
             return
@@ -294,7 +305,7 @@ class _LifecycleMixin:
                 from_status=old_claim.status,
                 to_status="superseded",
                 details=reason,
-                payload_json=json.dumps({"replaced_by_claim_id": new_claim_id}),
+                payload_json=json.dumps({"replaced_by_claim_id": new_claim_id, **(event_payload or {})}),
                 created_at=now,
             )
             conn.commit()

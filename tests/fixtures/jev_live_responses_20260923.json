@@ -1,0 +1,6 @@
+{
+  "captured_at": "2026-09-23T16:10:00Z",
+  "note": "Real jev-1.13.0 responses (no private data). Score probabilities are keyed by 0-based index, legend maps index -> criterion as sent (string or object). Values are rounded to 2 decimals.",
+  "string_criteria": {"model": "jev-1.13.0", "answers": {"rel": {"type": "score", "score": 2.91, "confidence": 0.91, "legend": {"0": "Unrelated to the query", "1": "Same topic but does not help", "2": "Partially helps", "3": "Directly answers the query"}, "probabilities": {"0": 0.01, "1": 0.0, "2": 0.06, "3": 0.93}}, "ch": {"type": "choice", "choice": "hybrid", "confidence": 0.39, "probabilities": {"legacy": 0.34, "hybrid": 0.6, "none": 0.06}}, "n": {"type": "noul", "noul": 0.96}}, "usage": {"input_tokens": 446, "output_tokens": 72}},
+  "object_criteria": {"model": "jev-1.13.0", "answers": {"rel": {"type": "score", "score": 2.54, "confidence": 0.54, "legend": {"0": {"level": 1, "description": "Unrelated"}, "1": {"level": 2, "description": "Same topic, no help"}, "2": {"level": 3, "description": "Partially helps"}, "3": {"level": 4, "description": "Directly answers"}}, "probabilities": {"0": 0.01, "1": 0.04, "2": 0.36, "3": 0.59}}}, "usage": {"input_tokens": 392, "output_tokens": 17}}
+}

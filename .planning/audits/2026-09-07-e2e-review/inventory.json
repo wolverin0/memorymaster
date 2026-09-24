@@ -1,0 +1,1085 @@
+{
+  "source_commit": "b0dd976a32f8d29fb6ebf8257b4a9b8c5bcde700",
+  "stack": {
+    "language": "Python >=3.10",
+    "database": "SQLite WAL; PostgreSQL optional/deferred features",
+    "mcp": "FastMCP stdio + bearer-authenticated Starlette HTTP",
+    "ui": "ThreadingHTTPServer and embedded HTML/JavaScript",
+    "background": "Windows Task Scheduler, existing Python workers"
+  },
+  "source_files": 396,
+  "source_lines_inventory_only": 91159,
+  "test_files": 470,
+  "routes": {
+    "count": 46,
+    "definition": "unique literal surface paths; candidate inventory, not all are registered routes",
+    "source_glob": "memorymaster/surfaces/**/*.py",
+    "locations": [
+      {
+        "path": "/dashboard",
+        "source": "memorymaster/surfaces/cli_handlers_basic.py",
+        "line": 1484
+      },
+      {
+        "path": "/",
+        "source": "memorymaster/surfaces/cli_handlers_basic.py",
+        "line": 190
+      },
+      {
+        "path": "/",
+        "source": "memorymaster/surfaces/cli_handlers_curation.py",
+        "line": 438
+      },
+      {
+        "path": "/health",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 310
+      },
+      {
+        "path": "/healthz",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 311
+      },
+      {
+        "path": "/readyz",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 312
+      },
+      {
+        "path": "/",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 313
+      },
+      {
+        "path": "/dashboard",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 314
+      },
+      {
+        "path": "/api/claims",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 316
+      },
+      {
+        "path": "/api/capture-inbox",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 317
+      },
+      {
+        "path": "/api/graph-observations",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 318
+      },
+      {
+        "path": "/api/events",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 319
+      },
+      {
+        "path": "/api/timeline",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 320
+      },
+      {
+        "path": "/api/conflicts",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 321
+      },
+      {
+        "path": "/api/review-queue",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 322
+      },
+      {
+        "path": "/api/v1/review-queue",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 323
+      },
+      {
+        "path": "/api/action-proposals",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 324
+      },
+      {
+        "path": "/api/atlas/version",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 325
+      },
+      {
+        "path": "/api/retrieval",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 326
+      },
+      {
+        "path": "/api/recall-analysis",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 327
+      },
+      {
+        "path": "/api/audit",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 328
+      },
+      {
+        "path": "/api/namespaces",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 329
+      },
+      {
+        "path": "/api/provenance",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 330
+      },
+      {
+        "path": "/api/session-stats",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 331
+      },
+      {
+        "path": "/api/session-bindings",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 332
+      },
+      {
+        "path": "/api/observability",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 333
+      },
+      {
+        "path": "/api/integrity",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 334
+      },
+      {
+        "path": "/metrics/validation-latency",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 335
+      },
+      {
+        "path": "/api/operator/status",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 336
+      },
+      {
+        "path": "/api/operator/stream",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 337
+      },
+      {
+        "path": "/",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 622
+      },
+      {
+        "path": "/healthz",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 624
+      },
+      {
+        "path": "/collections",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 624
+      },
+      {
+        "path": "/dashboard",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 1524
+      },
+      {
+        "path": "/",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 355
+      },
+      {
+        "path": "/health",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 794
+      },
+      {
+        "path": "/healthz",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 794
+      },
+      {
+        "path": "/readyz",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 794
+      },
+      {
+        "path": "/api/triage/action",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 840
+      },
+      {
+        "path": "/api/operator/control",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 843
+      },
+      {
+        "path": "/api/action-proposals/status",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 846
+      },
+      {
+        "path": "/api/capture-inbox/retire",
+        "source": "memorymaster/surfaces/dashboard.py",
+        "line": 849
+      },
+      {
+        "path": "/api/operator/control",
+        "source": "memorymaster/surfaces/dashboard_auth.py",
+        "line": 42
+      },
+      {
+        "path": "/api/operator/stream",
+        "source": "memorymaster/surfaces/dashboard_auth.py",
+        "line": 43
+      },
+      {
+        "path": "/api/triage/action",
+        "source": "memorymaster/surfaces/dashboard_auth.py",
+        "line": 48
+      },
+      {
+        "path": "/api/operator/control",
+        "source": "memorymaster/surfaces/dashboard_auth.py",
+        "line": 49
+      },
+      {
+        "path": "/api/action-proposals/status",
+        "source": "memorymaster/surfaces/dashboard_auth.py",
+        "line": 50
+      },
+      {
+        "path": "/mcp",
+        "source": "memorymaster/surfaces/mcp_http.py",
+        "line": 109
+      },
+      {
+        "path": "/readyz",
+        "source": "memorymaster/surfaces/mcp_http.py",
+        "line": 114
+      },
+      {
+        "path": "/healthz",
+        "source": "memorymaster/surfaces/mcp_http.py",
+        "line": 115
+      },
+      {
+        "path": "/healthz",
+        "source": "memorymaster/surfaces/mcp_http.py",
+        "line": 30
+      },
+      {
+        "path": "/readyz",
+        "source": "memorymaster/surfaces/mcp_http.py",
+        "line": 30
+      },
+      {
+        "path": "/dashboard",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2569
+      },
+      {
+        "path": "/",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2578
+      },
+      {
+        "path": "/",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2578
+      },
+      {
+        "path": "/health",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2586
+      },
+      {
+        "path": "/api/tags",
+        "source": "memorymaster/surfaces/setup_detect.py",
+        "line": 119
+      },
+      {
+        "path": "/healthz",
+        "source": "memorymaster/surfaces/setup_detect.py",
+        "line": 141
+      },
+      {
+        "path": "/",
+        "source": "memorymaster/surfaces/setup_detect.py",
+        "line": 119
+      },
+      {
+        "path": "/",
+        "source": "memorymaster/surfaces/setup_detect.py",
+        "line": 141
+      },
+      {
+        "path": "/",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 255
+      },
+      {
+        "path": "/",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 480
+      },
+      {
+        "path": "/create",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 623
+      },
+      {
+        "path": "/tn",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 623
+      },
+      {
+        "path": "/sc",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 624
+      },
+      {
+        "path": "/mo",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 624
+      },
+      {
+        "path": "/tr",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 624
+      },
+      {
+        "path": "/f",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 624
+      },
+      {
+        "path": "/query",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 698
+      },
+      {
+        "path": "/tn",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 698
+      },
+      {
+        "path": "/fo",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 698
+      },
+      {
+        "path": "/v",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 698
+      },
+      {
+        "path": "/query",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 723
+      },
+      {
+        "path": "/tn",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 723
+      },
+      {
+        "path": "/xml",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 723
+      },
+      {
+        "path": "/tmp/obsidian-skills",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 1139
+      },
+      {
+        "path": "/",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 546
+      },
+      {
+        "path": "/create",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 1104
+      },
+      {
+        "path": "/tn",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 1105
+      },
+      {
+        "path": "/tr",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 1106
+      },
+      {
+        "path": "/sc",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 1107
+      },
+      {
+        "path": "/mo",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 1107
+      },
+      {
+        "path": "/f",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 1107
+      },
+      {
+        "path": "/tmp",
+        "source": "memorymaster/surfaces/setup_hooks.py",
+        "line": 1139
+      }
+    ]
+  },
+  "mcp_tools": {
+    "count": 51,
+    "source_glob": "memorymaster/surfaces/**/*.py @*.tool",
+    "locations": [
+      {
+        "name": "init_db",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 907
+      },
+      {
+        "name": "remember",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 917
+      },
+      {
+        "name": "recall",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 963
+      },
+      {
+        "name": "forget",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1003
+      },
+      {
+        "name": "improve",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1023
+      },
+      {
+        "name": "forget_preview",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1048
+      },
+      {
+        "name": "session_scope_show",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1067
+      },
+      {
+        "name": "session_scope_bind",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1093
+      },
+      {
+        "name": "session_scope_clear",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1125
+      },
+      {
+        "name": "ingest_claim",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1144
+      },
+      {
+        "name": "checkpoint",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1288
+      },
+      {
+        "name": "archive_by_source",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1330
+      },
+      {
+        "name": "resolve_project",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1354
+      },
+      {
+        "name": "local_search",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1427
+      },
+      {
+        "name": "run_cycle",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1489
+      },
+      {
+        "name": "run_steward",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1510
+      },
+      {
+        "name": "classify_query",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1564
+      },
+      {
+        "name": "query_memory",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1615
+      },
+      {
+        "name": "query_claim_paths",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1726
+      },
+      {
+        "name": "recall_analysis",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1780
+      },
+      {
+        "name": "query_for_context",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1825
+      },
+      {
+        "name": "volunteer_context",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 1907
+      },
+      {
+        "name": "query_for_task",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2012
+      },
+      {
+        "name": "read_active_tasks",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2068
+      },
+      {
+        "name": "list_claims",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2150
+      },
+      {
+        "name": "ingest_rule",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2202
+      },
+      {
+        "name": "query_rules",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2255
+      },
+      {
+        "name": "rules_export",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2278
+      },
+      {
+        "name": "skill_inputs",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2311
+      },
+      {
+        "name": "skill_propose",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2331
+      },
+      {
+        "name": "skill_review",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2357
+      },
+      {
+        "name": "skill_recall",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2381
+      },
+      {
+        "name": "skill_export",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2400
+      },
+      {
+        "name": "redact_claim_payload",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2418
+      },
+      {
+        "name": "pin_claim",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2445
+      },
+      {
+        "name": "compact_memory",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2457
+      },
+      {
+        "name": "list_events",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2469
+      },
+      {
+        "name": "search_verbatim",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2494
+      },
+      {
+        "name": "get_usage_rollup",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2527
+      },
+      {
+        "name": "recall_stats",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2540
+      },
+      {
+        "name": "dream_status",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2558
+      },
+      {
+        "name": "open_dashboard",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2566
+      },
+      {
+        "name": "list_steward_proposals",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2620
+      },
+      {
+        "name": "resolve_steward_proposal",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2639
+      },
+      {
+        "name": "extract_entities",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2661
+      },
+      {
+        "name": "entity_stats",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2683
+      },
+      {
+        "name": "find_related_claims",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2698
+      },
+      {
+        "name": "quality_scores",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2723
+      },
+      {
+        "name": "recompute_tiers",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2735
+      },
+      {
+        "name": "query_meta_decisions",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2742
+      },
+      {
+        "name": "federated_query",
+        "source": "memorymaster/surfaces/mcp_server.py",
+        "line": 2774
+      }
+    ]
+  },
+  "registered_surfaces": {
+    "dashboard_get_static": [
+      "/",
+      "/api/action-proposals",
+      "/api/atlas/version",
+      "/api/audit",
+      "/api/capture-inbox",
+      "/api/claims",
+      "/api/conflicts",
+      "/api/events",
+      "/api/graph-observations",
+      "/api/integrity",
+      "/api/namespaces",
+      "/api/observability",
+      "/api/operator/status",
+      "/api/operator/stream",
+      "/api/provenance",
+      "/api/recall-analysis",
+      "/api/retrieval",
+      "/api/review-queue",
+      "/api/session-bindings",
+      "/api/session-stats",
+      "/api/timeline",
+      "/api/v1/review-queue",
+      "/dashboard",
+      "/favicon.ico",
+      "/health",
+      "/healthz",
+      "/metrics/validation-latency",
+      "/readyz"
+    ],
+    "dashboard_get_dynamic": [
+      "/claim/{id}/lineage"
+    ],
+    "dashboard_post": [
+      "/api/action-proposals/status",
+      "/api/capture-inbox/retire",
+      "/api/operator/control",
+      "/api/triage/action"
+    ],
+    "mcp_http": [
+      "/healthz",
+      "/readyz",
+      "/mcp"
+    ]
+  },
+  "db_migrations": {
+    "count": 23,
+    "source_glob": "memorymaster/stores/migrations/[0-9]*.py",
+    "files": [
+      "memorymaster/stores/migrations/0001_initial.py",
+      "memorymaster/stores/migrations/0002_miner_state.py",
+      "memorymaster/stores/migrations/0003_contradiction_verdicts.py",
+      "memorymaster/stores/migrations/0004_query_cache.py",
+      "memorymaster/stores/migrations/0006_verbatim_session_content_index.py",
+      "memorymaster/stores/migrations/0007_rule_stats.py",
+      "memorymaster/stores/migrations/0008_postgres_tenant_rls.py",
+      "memorymaster/stores/migrations/0009_tenant_local_claim_identities.py",
+      "memorymaster/stores/migrations/0010_tenant_event_ledger.py",
+      "memorymaster/stores/migrations/0011_postgres_scoped_force_rls.py",
+      "memorymaster/stores/migrations/0012_principal_local_claim_identities.py",
+      "memorymaster/stores/migrations/0013_canonical_entity_graph.py",
+      "memorymaster/stores/migrations/0014_embedding_efficiency.py",
+      "memorymaster/stores/migrations/0015_query_storage_efficiency.py",
+      "memorymaster/stores/migrations/0016_media_retry_leases.py",
+      "memorymaster/stores/migrations/0017_governed_capture_lineage.py",
+      "memorymaster/stores/migrations/0018_legacy_event_dag.py",
+      "memorymaster/stores/migrations/0019_session_scope_bindings.py",
+      "memorymaster/stores/migrations/0020_graph_observations.py",
+      "memorymaster/stores/migrations/0021_compiled_user_profile.py",
+      "memorymaster/stores/migrations/0022_graph_observation_job_outcome.py",
+      "memorymaster/stores/migrations/0023_compiled_profile_candidate_consumed.py",
+      "memorymaster/stores/migrations/0024_rule_observation_lineage.py"
+    ]
+  },
+  "supabase_tables": {
+    "count": 0,
+    "definition": "no Supabase app database; explicit SQLite/Postgres stores"
+  },
+  "environment_keys": {
+    "count": 225,
+    "definition": "distinct MEMORYMASTER_* string literals; names only",
+    "names": [
+      "MEMORYMASTER_AGY_COMMAND",
+      "MEMORYMASTER_AGY_MODEL",
+      "MEMORYMASTER_AGY_TIMEOUT",
+      "MEMORYMASTER_ALLOW_SENSITIVE_BYPASS",
+      "MEMORYMASTER_ALLOW_SYNTHETIC_MEDIA",
+      "MEMORYMASTER_API_KEY",
+      "MEMORYMASTER_API_KEYS",
+      "MEMORYMASTER_BACKUP_KEY",
+      "MEMORYMASTER_BM25_",
+      "MEMORYMASTER_BOOST_FLOOR_RATIO",
+      "MEMORYMASTER_CADENCE_HOURS",
+      "MEMORYMASTER_CAPTURE_GLOBAL_DAILY_CALLS",
+      "MEMORYMASTER_CAPTURE_LLM_MODEL",
+      "MEMORYMASTER_CAPTURE_LLM_PROVIDER",
+      "MEMORYMASTER_CAPTURE_LLM_REASONING_EFFORT",
+      "MEMORYMASTER_CAPTURE_PROVIDER_DAILY_CALLS",
+      "MEMORYMASTER_CAPTURE_ROOTS",
+      "MEMORYMASTER_CAPTURE_SESSION_DAILY_CALLS",
+      "MEMORYMASTER_CAPTURE_STATE_DB",
+      "MEMORYMASTER_CAPTURE_TRUST_MODE",
+      "MEMORYMASTER_CLAUDE_CLI_BIN",
+      "MEMORYMASTER_CLAUDE_CLI_CWD",
+      "MEMORYMASTER_CLAUDE_CLI_TIMEOUT",
+      "MEMORYMASTER_COMPILED_PROFILE",
+      "MEMORYMASTER_CONFIG_FILE",
+      "MEMORYMASTER_CONFLICT_MARGIN",
+      "MEMORYMASTER_DASHBOARD_TOKEN_OPERATOR",
+      "MEMORYMASTER_DASHBOARD_TOKEN_VIEWER",
+      "MEMORYMASTER_DASHBOARD_UNSAFE_BIND",
+      "MEMORYMASTER_DAYDREAM_INGEST_DIR",
+      "MEMORYMASTER_DAYDREAM_VERBOSE",
+      "MEMORYMASTER_DB",
+      "MEMORYMASTER_DB_RETRIES",
+      "MEMORYMASTER_DB_RETRY_BASE",
+      "MEMORYMASTER_DECAY_RATES",
+      "MEMORYMASTER_DEDUPE_ENABLED",
+      "MEMORYMASTER_DEDUPE_JACCARD_HIGH",
+      "MEMORYMASTER_DEDUPE_SHADOW",
+      "MEMORYMASTER_DEFAULT_DB",
+      "MEMORYMASTER_DEFAULT_PROJECT_SCOPE",
+      "MEMORYMASTER_DISABLE_ST",
+      "MEMORYMASTER_DREAM_CAPTURE_MAX_BYTES",
+      "MEMORYMASTER_DREAM_CAPTURE_RETAIN_DAYS",
+      "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL",
+      "MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER",
+      "MEMORYMASTER_DREAM_CONSOLIDATE_VARIANT",
+      "MEMORYMASTER_DREAM_ENABLED",
+      "MEMORYMASTER_DREAM_EXTRACT_MODEL",
+      "MEMORYMASTER_DREAM_EXTRACT_PROVIDER",
+      "MEMORYMASTER_DREAM_EXTRACT_VARIANT",
+      "MEMORYMASTER_DREAM_IDLE_MINUTES",
+      "MEMORYMASTER_DREAM_LEASE_TTL_SECONDS",
+      "MEMORYMASTER_DREAM_MAX_CANDIDATE_WRITES_DAILY",
+      "MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CALLS_DAILY",
+      "MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CANDIDATES",
+      "MEMORYMASTER_DREAM_MAX_CONTEXT_CHARS",
+      "MEMORYMASTER_DREAM_MAX_EXTRACT_CALLS_DAILY",
+      "MEMORYMASTER_DREAM_MAX_INPUT_CHARS",
+      "MEMORYMASTER_DREAM_MAX_INPUT_TOKENS_DAILY",
+      "MEMORYMASTER_DREAM_MAX_SEMANTIC_ATTEMPTS",
+      "MEMORYMASTER_DREAM_MAX_SESSIONS",
+      "MEMORYMASTER_EMBED_MODEL",
+      "MEMORYMASTER_ENCRYPTION_KEY",
+      "MEMORYMASTER_ENTITY_FUZZY_RESOLVE",
+      "MEMORYMASTER_ENTITY_LLM",
+      "MEMORYMASTER_ERROR_TRACKING_DSN",
+      "MEMORYMASTER_EVERYTHING_ES_PATH",
+      "MEMORYMASTER_EVERYTHING_TIMEOUT",
+      "MEMORYMASTER_FRESHNESS_HALFLIFE",
+      "MEMORYMASTER_GRAPH_OBSERVATIONS",
+      "MEMORYMASTER_HEBBIAN_DECAY",
+      "MEMORYMASTER_HEBBIAN_DECAY_LAMBDA",
+      "MEMORYMASTER_INITDB_FASTPATH",
+      "MEMORYMASTER_INTAKE_DEFAULT_SOURCE_AGENT",
+      "MEMORYMASTER_INTAKE_MAX_PER_STOP",
+      "MEMORYMASTER_INTAKE_QUOTA_EXEMPT_AGENTS",
+      "MEMORYMASTER_INTAKE_QUOTA_PER_AGENT_PER_DAY",
+      "MEMORYMASTER_INTAKE_QUOTA_WINDOW",
+      "MEMORYMASTER_INTAKE_REJECTED_SCOPE_PREFIXES",
+      "MEMORYMASTER_INTAKE_REJECT_SESSION_STATE",
+      "MEMORYMASTER_INTAKE_REQUIRE_SOURCE_AGENT",
+      "MEMORYMASTER_INTEGRITY_DISABLE",
+      "MEMORYMASTER_KEY_FILE",
+      "MEMORYMASTER_LEXICAL_BM25",
+      "MEMORYMASTER_LEXICAL_WEIGHTS",
+      "MEMORYMASTER_LLM_API_KEYS",
+      "MEMORYMASTER_LLM_FALLBACK_MODEL",
+      "MEMORYMASTER_LLM_FALLBACK_PROVIDER",
+      "MEMORYMASTER_LLM_KEY_COOLDOWN_SECONDS",
+      "MEMORYMASTER_LLM_KEY_ROTATION",
+      "MEMORYMASTER_LLM_MODEL",
+      "MEMORYMASTER_LLM_PROVIDER",
+      "MEMORYMASTER_LLM_REASONING_EFFORT",
+      "MEMORYMASTER_LLM_RERANK",
+      "MEMORYMASTER_LLM_RERANK_MAX_FAILURES",
+      "MEMORYMASTER_LLM_RERANK_MIN_INTERVAL_SECONDS",
+      "MEMORYMASTER_MAX_EMBEDDING_ITEMS_PER_DAY",
+      "MEMORYMASTER_MAX_LLM_CALLS_PER_CYCLE",
+      "MEMORYMASTER_MAX_LLM_CALLS_PER_DAY",
+      "MEMORYMASTER_MAX_MCP_INGESTS_PER_AGENT_PER_DAY",
+      "MEMORYMASTER_MAX_MCP_INGESTS_PER_DAY",
+      "MEMORYMASTER_MAX_PROVIDER_CALLS_PER_DAY",
+      "MEMORYMASTER_MAX_PROVIDER_FAILURES_PER_CYCLE",
+      "MEMORYMASTER_MAX_TOKENS_PER_CYCLE",
+      "MEMORYMASTER_MCP_ADMIN_MODE",
+      "MEMORYMASTER_MCP_ALLOWED_SCOPES",
+      "MEMORYMASTER_MCP_ALLOW_SENSITIVE",
+      "MEMORYMASTER_MCP_AUTH_MODE",
+      "MEMORYMASTER_MCP_DB",
+      "MEMORYMASTER_MCP_DB_ALLOWLIST",
+      "MEMORYMASTER_MCP_HTTP_ALLOWED_HOSTS",
+      "MEMORYMASTER_MCP_HTTP_TOKEN",
+      "MEMORYMASTER_MCP_PRINCIPAL",
+      "MEMORYMASTER_MCP_TENANT_ID",
+      "MEMORYMASTER_MCP_WORKSPACE",
+      "MEMORYMASTER_MCP_WORKSPACE_ALLOWLIST",
+      "MEMORYMASTER_MEDIA_MODE",
+      "MEMORYMASTER_OCR_PROVIDER",
+      "MEMORYMASTER_ONTOLOGY_FILE",
+      "MEMORYMASTER_OPENCODE_AUTH_MODE",
+      "MEMORYMASTER_OPENCODE_COMMAND",
+      "MEMORYMASTER_OPENCODE_TIMEOUT",
+      "MEMORYMASTER_OTEL_ENDPOINT",
+      "MEMORYMASTER_PATH_ROOTS",
+      "MEMORYMASTER_PINNED_BONUS",
+      "MEMORYMASTER_POLICY_MODE",
+      "MEMORYMASTER_PRECOMPACT_BLOCKING",
+      "MEMORYMASTER_PRETOOLUSE_RECALL",
+      "MEMORYMASTER_PROFILE_CADENCE_DAYS",
+      "MEMORYMASTER_PROFILE_MAP_MODEL",
+      "MEMORYMASTER_PROFILE_MAX_FACTS",
+      "MEMORYMASTER_PROFILE_MAX_INPUT_CHARS",
+      "MEMORYMASTER_PROFILE_MAX_MAP_CALLS",
+      "MEMORYMASTER_PROFILE_MAX_MESSAGES",
+      "MEMORYMASTER_PROFILE_MIN_SESSIONS",
+      "MEMORYMASTER_PROFILE_OUTPUT_DIR",
+      "MEMORYMASTER_PROFILE_PREFERENCE_TTL_DAYS",
+      "MEMORYMASTER_PROFILE_PROVIDER_TIMEOUT",
+      "MEMORYMASTER_PROFILE_REDUCE_BATCH",
+      "MEMORYMASTER_PROFILE_REDUCE_MODEL",
+      "MEMORYMASTER_PROFILE_TOKEN_BUDGET",
+      "MEMORYMASTER_PROVIDER_FAILURE_EVENT_INTERVAL_SECONDS",
+      "MEMORYMASTER_QDRANT_DRIFT_MAX",
+      "MEMORYMASTER_QDRANT_GOVERNED_READS",
+      "MEMORYMASTER_QDRANT_OUTBOX_DIR",
+      "MEMORYMASTER_QDRANT_URL",
+      "MEMORYMASTER_QDRANT_WRITES",
+      "MEMORYMASTER_QUARANTINE_DIR",
+      "MEMORYMASTER_QUERY_CACHE",
+      "MEMORYMASTER_QUERY_INCLUDE_LEGACY_PROJECT",
+      "MEMORYMASTER_RECALL_",
+      "MEMORYMASTER_RECALL_ANCESTOR_SCOPES",
+      "MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD",
+      "MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_",
+      "MEMORYMASTER_RECALL_CLOSETS",
+      "MEMORYMASTER_RECALL_CLOSETS_BOOST_ONLY",
+      "MEMORYMASTER_RECALL_FUSION",
+      "MEMORYMASTER_RECALL_GRAPH",
+      "MEMORYMASTER_RECALL_GRAPH_CANDIDATES",
+      "MEMORYMASTER_RECALL_GRAPH_MAX_HOPS",
+      "MEMORYMASTER_RECALL_GRAPH_PATH",
+      "MEMORYMASTER_RECALL_QUERY_EXPANSION",
+      "MEMORYMASTER_RECALL_RERANK_LOCAL",
+      "MEMORYMASTER_RECALL_RERANK_LOCAL_MAX_PAIRS",
+      "MEMORYMASTER_RECALL_RERANK_LOCAL_OVERFETCH",
+      "MEMORYMASTER_RECALL_SCOPE_BOOST",
+      "MEMORYMASTER_RECALL_STATE_DIR",
+      "MEMORYMASTER_RECALL_TWO_PASS",
+      "MEMORYMASTER_RECALL_TWO_PASS_MAX",
+      "MEMORYMASTER_RECALL_TWO_PASS_USE_EDGES",
+      "MEMORYMASTER_RECALL_VECTOR_LIMIT",
+      "MEMORYMASTER_RECALL_VECTOR_MIN_CANDIDATES",
+      "MEMORYMASTER_RECALL_VECTOR_SCORE_THRESHOLD",
+      "MEMORYMASTER_RECALL_VERBATIM",
+      "MEMORYMASTER_RECALL_W_VERBATIM",
+      "MEMORYMASTER_RETRIEVAL_PROFILE_",
+      "MEMORYMASTER_RETRIEVAL_WEIGHTS",
+      "MEMORYMASTER_RETRIEVAL_WEIGHTS_NO_VECTOR",
+      "MEMORYMASTER_ROLES_CONFIG",
+      "MEMORYMASTER_ROLE_",
+      "MEMORYMASTER_RRF_TIEBREAKER",
+      "MEMORYMASTER_RRF_TIEBREAKER_THRESHOLD",
+      "MEMORYMASTER_RULE_CONFIDENCE_BOOTSTRAP",
+      "MEMORYMASTER_SCOPE_DEFAULT",
+      "MEMORYMASTER_SCOPE_DISAMBIGUATE",
+      "MEMORYMASTER_SESSION_DIVERSITY_CAP",
+      "MEMORYMASTER_SESSION_END_CAPTURE",
+      "MEMORYMASTER_SKILL_REVIEW",
+      "MEMORYMASTER_SKILL_REVIEW_LIMIT",
+      "MEMORYMASTER_SNAPSHOT_DIR",
+      "MEMORYMASTER_SOURCE_AGENT",
+      "MEMORYMASTER_SPOOL_DIR",
+      "MEMORYMASTER_STALE_THRESHOLD",
+      "MEMORYMASTER_STEWARD_CLASSIFIER_ENABLED",
+      "MEMORYMASTER_STEWARD_CLASSIFIER_PATH",
+      "MEMORYMASTER_STEWARD_FEATURE_CACHE",
+      "MEMORYMASTER_STEWARD_RULE_MINING",
+      "MEMORYMASTER_STEWARD_RULE_MINING_LIMIT",
+      "MEMORYMASTER_STOP_BLOCKING",
+      "MEMORYMASTER_STOP_CAPTURE_VERBATIM",
+      "MEMORYMASTER_STOP_EXTRACT",
+      "MEMORYMASTER_STOP_RULE_MINING",
+      "MEMORYMASTER_STORE_BACKEND",
+      "MEMORYMASTER_TRANSCRIPTION_PROVIDER",
+      "MEMORYMASTER_UNKNOWN_ARGS_DISABLED",
+      "MEMORYMASTER_UNKNOWN_ARGS_LOG",
+      "MEMORYMASTER_USAGE_LEDGER_DB",
+      "MEMORYMASTER_VALIDATION_THRESHOLD",
+      "MEMORYMASTER_VAULT_DIR",
+      "MEMORYMASTER_WAL_DISCIPLINE",
+      "MEMORYMASTER_WEBHOOK_SECRET",
+      "MEMORYMASTER_WEBHOOK_TIMEOUT",
+      "MEMORYMASTER_WEBHOOK_URL",
+      "MEMORYMASTER_WIKI_ABSORB",
+      "MEMORYMASTER_WIKI_AUTOPROMOTE_THRESHOLD",
+      "MEMORYMASTER_WIKI_DIR",
+      "MEMORYMASTER_WIKI_ROOT",
+      "MEMORYMASTER_WORKFLOW_DB",
+      "MEMORYMASTER_WORKFLOW_RECEIPTS",
+      "MEMORYMASTER_WORKFLOW_TRANSCRIPT_ROOTS",
+      "MEMORYMASTER_WORKSPACE",
+      "MEMORYMASTER_W_CONF",
+      "MEMORYMASTER_W_FRESH",
+      "MEMORYMASTER_W_LEX",
+      "MEMORYMASTER_W_VEC"
+    ]
+  },
+  "feature_flags": {
+    "count": 7,
+    "definition": "literal arguments to bool/enabled/flag helpers; lower bound, dynamic gates not counted",
+    "names": [
+      "MEMORYMASTER_COMPILED_PROFILE",
+      "MEMORYMASTER_GRAPH_OBSERVATIONS",
+      "MEMORYMASTER_SESSION_END_CAPTURE",
+      "MEMORYMASTER_STOP_BLOCKING",
+      "MEMORYMASTER_STOP_CAPTURE_VERBATIM",
+      "MEMORYMASTER_STOP_EXTRACT",
+      "MEMORYMASTER_STOP_RULE_MINING"
+    ]
+  },
+  "largest_source_files": [
+    [
+      "memorymaster/stores/postgres_store.py",
+      5182
+    ],
+    [
+      "memorymaster/surfaces/mcp_server.py",
+      2829
+    ],
+    [
+      "memorymaster/core/service.py",
+      2433
+    ],
+    [
+      "memorymaster/recall/context_hook.py",
+      2198
+    ],
+    [
+      "memorymaster/govern/steward.py",
+      1819
+    ],
+    [
+      "memorymaster/surfaces/cli_handlers_basic.py",
+      1812
+    ],
+    [
+      "memorymaster/surfaces/setup_hooks.py",
+      1733
+    ],
+    [
+      "memorymaster/surfaces/dashboard.py",
+      1550
+    ],
+    [
+      "memorymaster/surfaces/operator.py",
+      1453
+    ],
+    [
+      "memorymaster/stores/_storage_sources.py",
+      1257
+    ],
+    [
+      "memorymaster/stores/_storage_schema.py",
+      1187
+    ],
+    [
+      "memorymaster/surfaces/cli_handlers_curation.py",
+      1082
+    ]
+  ],
+  "parse_errors": [],
+  "excluded": [
+    "repo/",
+    "repos/",
+    "cloned/",
+    "delta-exchange/",
+    ".git/",
+    "generated artifacts",
+    "virtualenvs",
+    "live database contents"
+  ]
+}

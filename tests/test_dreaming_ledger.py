@@ -35,6 +35,22 @@ def test_enqueue_and_lease_are_idempotent_and_single_flight(tmp_path: Path) -> N
     )
 
 
+def test_lease_renewal_extends_only_for_the_current_owner(tmp_path: Path) -> None:
+    now = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
+    ledger = DreamLedger(tmp_path / "dream.db")
+
+    assert ledger.acquire_lease("dream-worker", "worker-a", 60, now=now)
+    assert ledger.renew_lease("dream-worker", "worker-a", 60, now=now + timedelta(seconds=50))
+    # Renewed at +50 s, so still held at +100 s.
+    assert not ledger.acquire_lease("dream-worker", "worker-b", 60, now=now + timedelta(seconds=100))
+    assert not ledger.renew_lease("dream-worker", "worker-b", 60, now=now + timedelta(seconds=100))
+    assert ledger.acquire_lease("dream-worker", "worker-b", 60, now=now + timedelta(seconds=200))
+    assert not ledger.renew_lease("dream-worker", "worker-a", 60, now=now + timedelta(seconds=201))
+    ledger.release_lease("dream-worker", "worker-b")
+    # A released lease is never silently re-acquired by a renewal.
+    assert not ledger.renew_lease("dream-worker", "worker-b", 60, now=now + timedelta(seconds=202))
+
+
 def test_enqueue_coalesces_contiguous_unprocessed_session_increments(tmp_path: Path) -> None:
     now = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
     ledger = DreamLedger(tmp_path / "dream.db")

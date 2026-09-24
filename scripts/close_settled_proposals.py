@@ -55,6 +55,11 @@ def classify(svc, proposal: dict) -> tuple[str, str]:
     texto y se perdia 90 propuestas porque ese campo no existe con ese nombre.
     Comparar contra `proposed_status` es lo que la propuesta realmente declara.
     """
+    from memorymaster.govern.steward import is_jev_proposal
+
+    if is_jev_proposal(proposal.get("payload")):
+        # F-21: una propuesta jev es un juicio de modelo; la resuelve el operador.
+        return "real", "propuesta jev: la resuelve el operador"
     claim_id = proposal.get("claim_id")
     row = svc.store.get_claim(claim_id) if claim_id else None
     if row is None:
@@ -114,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
                     svc, action="approve",
                     proposal_event_id=p.get("proposal_event_id"),
                     apply_on_approve=False,  # contabilidad: no re-aplica nada
+                    actor="automation",  # F-21: no es una correccion del operador
                 )
                 ok += 1
             except Exception as exc:

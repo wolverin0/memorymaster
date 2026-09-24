@@ -31,8 +31,8 @@ def _db(path: Path) -> Path:
             id INTEGER PRIMARY KEY, status TEXT, support_count INTEGER, independent_sessions INTEGER
         );
         INSERT INTO compiled_profile_facts VALUES (1, 'active', 2, 2);
-        CREATE TABLE compiled_profile_supports(fact_id INTEGER, session_id TEXT);
-        INSERT INTO compiled_profile_supports VALUES (1, 'a'), (1, 'b');
+        CREATE TABLE compiled_profile_supports(fact_id INTEGER, session_id TEXT, supported_at TEXT);
+        INSERT INTO compiled_profile_supports VALUES (1, 'a', datetime('now')), (1, 'b', datetime('now'));
         CREATE TABLE claims(
             id INTEGER PRIMARY KEY, human_id TEXT, text TEXT, claim_type TEXT,
             scope TEXT, tenant_id TEXT, status TEXT, confidence REAL,
@@ -199,9 +199,10 @@ def test_powershell_scheduler_contract_is_bounded() -> None:
 
     assert "RepetitionInterval" in installer
     assert "ExecutionTimeLimit" in installer
-    assert "New-TimeSpan -Minutes 15" in installer
+    assert "New-TimeSpan -Minutes 25" in installer
     assert "MultipleInstances IgnoreNew" in installer
-    assert "review_performed = $true" in runner
+    assert "memorymaster.operations.review_supervisor" in runner
+    assert "every_hours = $EveryHours" in installer
     assert "work-receipt" not in runner.lower()
 
 

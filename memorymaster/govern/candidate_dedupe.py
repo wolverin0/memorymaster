@@ -17,14 +17,34 @@ Env flags:
   MEMORYMASTER_DEDUPE_ENABLED      default "0" (off)
   MEMORYMASTER_DEDUPE_SHADOW       default "1" (count would-archive but don't act)
   MEMORYMASTER_DEDUPE_JACCARD_HIGH default "0.85"
+  MEMORYMASTER_JEV_DEDUP_PER_CYCLE default "200" (S4 pairs asked per run of the
+                                   steward-cycle hook; 0 disables)
+
+S4 DEDUP (4.9.0, ``run_jev``): the same kind of FTS pairs are asked to Jev
+(``memory.same_fact``, ``memory.contradicts``, ``memory.supersedes`` in two
+paraphrases, ``memory.same_scope``) when ``MEMORYMASTER_JEV_DEDUP`` /
+``MEMORYMASTER_JEV_MODE`` is not ``off``, independently of the legacy flags.
+Only the scheduled steward-cycle hook calls ``run_jev``, after ``run_cycle``:
+``run`` (the stage inside ``MemoryService.run_cycle``, which MCP, the CLI, the
+per-turn operator cycle and the scheduler all call) is 4.8.9's and never asks
+Jev, whatever the mode. The live action is only a steward proposal tagged
+``source: jev`` -- never a status change. Its details are
+``steward_proposal:jev_<decision>`` so recall's pending-supersession demotion
+and the validator's promotion block (which read
+``steward_proposal:superseded_candidate``) ignore it until an operator
+approves; ``curation_drain`` never approves it (F-21).
 """
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import json
+import logging
 import os
 import re
 import sqlite3
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 DedupeAction = Literal["archive", "passthrough"]
 
@@ -299,3 +319,320 @@ def run(store, *, limit: int = 200) -> dict[str, object]:
         "avg_jaccard": avg_jaccard,
         "results": results,
     }
+
+
+# ----------------------------------------------------------------- S4 DEDUP ---
+
+_log = logging.getLogger(__name__)
+
+JEV_SURFACE = "dedup"
+JEV_PAIRS_PER_CYCLE_ENV = "MEMORYMASTER_JEV_DEDUP_PER_CYCLE"
+_DEFAULT_JEV_PAIRS_PER_CYCLE = 200
+# Pairs with less lexical overlap than this are not worth a request.
+_JEV_MIN_JACCARD = 0.2
+_JEV_LIVE_STATUSES = ("candidate", "confirmed", "stale")
+NO_PROPOSAL = "no_proposal"
+PROPOSE_DUPLICATE = "propose_duplicate"
+PROPOSE_SUPERSEDE = "propose_supersede"
+PROPOSE_CONFLICT = "propose_conflict"
+_PROPOSAL_ACTIONS = frozenset({PROPOSE_DUPLICATE, PROPOSE_SUPERSEDE, PROPOSE_CONFLICT})
+
+
+def jev_pairs_per_cycle() -> int:
+    raw = os.getenv(JEV_PAIRS_PER_CYCLE_ENV, "").strip()
+    try:
+        value = int(raw) if raw else _DEFAULT_JEV_PAIRS_PER_CYCLE
+    except ValueError:
+        return _DEFAULT_JEV_PAIRS_PER_CYCLE
+    return value if value >= 0 else _DEFAULT_JEV_PAIRS_PER_CYCLE
+
+
+@dataclass(frozen=True)
+class _JevPair:
+    """memory_a = the existing (FTS-matched) claim, memory_b = the candidate."""
+
+    a_id: int
+    a_text: str
+    b_id: int
+    b_text: str
+    scope: str
+    tenant: str | None
+    jaccard: float
+    fts_rank: int
+
+    @property
+    def ref(self) -> str:
+        return f"pair:{self.a_id}-{self.b_id}"
+
+    @property
+    def texts_sha256(self) -> str:
+        return hashlib.sha256(f"{self.a_text}\x00{self.b_text}".encode("utf-8")).hexdigest()
+
+
+def _jev_sensitive(claim: Any) -> bool:
+    """Recall's egress policy: a claim the sensitivity scan flags is never sent (fails closed)."""
+    try:
+        from memorymaster.core.security import is_sensitive_claim
+
+        return bool(is_sensitive_claim(claim))
+    except Exception:  # noqa: BLE001 - an unscannable claim is treated as sensitive
+        return True
+
+
+def _jev_pairs(store, candidates) -> list[_JevPair]:
+    """Authorized FTS pairs: same scope, same tenant, both public and not sensitive, enough overlap."""
+    from types import SimpleNamespace
+
+    pairs: list[_JevPair] = []
+    seen: set[frozenset[int]] = set()
+    with contextlib.closing(store.connect()) as conn:
+        for claim in candidates:
+            text = (claim.text or "").strip()
+            if (claim.status != "candidate" or len(text) < 10 or not claim.scope
+                    or (claim.visibility or "public") != "public" or _jev_sensitive(claim)):
+                continue
+            matches = fts_candidates_in_scope(conn, scope=claim.scope, text=text, exclude_id=claim.id)
+            if not matches:
+                continue
+            ids = [cid for cid, _text, _status in matches]
+            rows = conn.execute(
+                f"SELECT id, tenant_id, COALESCE(visibility, 'public'), subject, predicate, object_value "
+                f"FROM claims WHERE id IN ({', '.join('?' for _ in ids)})",
+                ids,
+            ).fetchall()
+            meta = {int(row[0]): tuple(row[1:]) for row in rows}
+            for rank, (other_id, other_text, _status) in enumerate(matches, start=1):
+                tenant, visibility, subject, predicate, object_value = meta.get(
+                    other_id, (None, "missing", None, None, None))
+                key = frozenset((other_id, claim.id))
+                score = jaccard_tokens(text, other_text)
+                if (key in seen or visibility != "public" or tenant != claim.tenant_id
+                        or score < _JEV_MIN_JACCARD):
+                    continue
+                if _jev_sensitive(SimpleNamespace(text=other_text, subject=subject, predicate=predicate,
+                                                  object_value=object_value)):
+                    continue
+                seen.add(key)
+                pairs.append(_JevPair(other_id, other_text, claim.id, text, claim.scope, claim.tenant_id,
+                                      score, rank))
+    return pairs
+
+
+def _jev_answered_pairs(ledger, pairs: list[_JevPair], *, live_only: bool) -> set[frozenset[int]]:
+    """Pairs (either order) already answered, or egress-blocked, for the same texts.
+
+    In live mode only live answers count: a pair judged in shadow is asked again.
+    """
+    refs = sorted({ref for pair in pairs for ref in (pair.ref, f"pair:{pair.b_id}-{pair.a_id}")})
+    answered: set[tuple[str, str]] = set()
+    for start in range(0, len(refs), 400):
+        chunk = refs[start:start + 400]
+        rows = ledger.query(
+            "SELECT i.item_ref AS ref, d.baseline_features_json AS features "
+            "FROM decisions d JOIN decision_items i USING (decision_id) "
+            "WHERE d.surface = ? AND (d.transport_outcome = 'ok' OR d.fallback_reason = 'egress_blocked') "
+            + ("AND d.mode = 'live' " if live_only else "")
+            + f"AND i.item_ref IN ({', '.join('?' for _ in chunk)}) GROUP BY d.decision_id, i.item_ref",
+            [JEV_SURFACE, *chunk],
+        )
+        for row in rows:
+            try:
+                features = json.loads(row["features"] or "{}")
+            except ValueError:
+                continue
+            if isinstance(features, dict):
+                answered.add((row["ref"], str(features.get("texts_sha256"))))
+    done: set[frozenset[int]] = set()
+    for pair in pairs:
+        if (pair.ref, pair.texts_sha256) in answered:
+            done.add(frozenset((pair.a_id, pair.b_id)))
+        swapped = hashlib.sha256(f"{pair.b_text}\x00{pair.a_text}".encode("utf-8")).hexdigest()
+        if (f"pair:{pair.b_id}-{pair.a_id}", swapped) in answered:
+            done.add(frozenset((pair.a_id, pair.b_id)))
+    return done
+
+
+def _jev_dedup_choose(ref: str):
+    from memorymaster.decisions.engine import JevChoice
+
+    def choose(answers) -> JevChoice:
+        def threshold(question_id: str) -> float:
+            return answers.threshold(question_id, "propose", 0.8)
+
+        same = answers.get("memory.same_fact", ref)
+        p_same = same.probabilities.get("3") if same is not None and same.primitive == "score" else None
+        scope = answers.noul("memory.same_scope", ref)
+        contradicts = answers.noul("memory.contradicts", ref)
+        supersedes = answers.noul("memory.supersedes", ref)
+        supersedes_alt = answers.noul("memory.supersedes_alt", ref)
+        if None in (p_same, scope, contradicts, supersedes, supersedes_alt):
+            return JevChoice(action=NO_PROPOSAL)
+        if scope < threshold("memory.same_scope"):
+            return JevChoice(action=NO_PROPOSAL)
+        if p_same >= threshold("memory.same_fact"):
+            return JevChoice(action=PROPOSE_DUPLICATE)
+        if supersedes >= threshold("memory.supersedes") and supersedes_alt >= threshold("memory.supersedes_alt"):
+            return JevChoice(action=PROPOSE_SUPERSEDE)
+        if contradicts >= threshold("memory.contradicts"):
+            return JevChoice(action=PROPOSE_CONFLICT)
+        return JevChoice(action=NO_PROPOSAL)
+
+    return choose
+
+
+def _jev_ask(engine, pair: _JevPair):
+    from memorymaster.decisions.engine import DecisionContext, DecisionItem
+    from memorymaster.decisions.questions import build_dedup
+
+    state, bound = build_dedup(pair.a_text, pair.b_text, scope_label=pair.scope, item_ref=pair.ref)
+    items = [DecisionItem(pair.ref, kind="pair"), DecisionItem(f"claim:{pair.a_id}", kind="claim"),
+             DecisionItem(f"claim:{pair.b_id}", kind="claim")]
+    context = DecisionContext(
+        kind="batch", scope=pair.scope, tenant=pair.tenant, exploration="none",
+        baseline_features={"jaccard": round(pair.jaccard, 4), "fts_rank": pair.fts_rank,
+                           "texts_sha256": pair.texts_sha256},
+    )
+    return engine.decide(JEV_SURFACE, state=state, questions=bound, items=items, legacy_action=NO_PROPOSAL,
+                         choose=_jev_dedup_choose(pair.ref), context=context)
+
+
+def _jev_evidence(pair: _JevPair, answers: Any) -> dict[str, Any]:
+    def answer(question_id: str) -> Any:
+        parsed = (answers or {}).get(f"{question_id}::{pair.ref}")
+        if parsed is None:
+            return None
+        return dict(parsed.probabilities) if parsed.primitive == "score" else parsed.value
+
+    evidence = {name.split(".", 1)[1]: answer(name) for name in (
+        "memory.same_fact", "memory.contradicts", "memory.supersedes", "memory.supersedes_alt",
+        "memory.same_scope")}
+    evidence.update(jaccard=round(pair.jaccard, 4), fts_rank=pair.fts_rank, pair_ref=pair.ref)
+    return evidence
+
+
+def _jev_write_proposal(store, pair: _JevPair, action: str, decision_id: str, answers: Any) -> str | None:
+    """File the operator proposal for a live S4 action; no claim status changes here.
+
+    Returns why nothing was filed, or ``None`` when the proposal was written.
+    """
+    evidence = _jev_evidence(pair, answers)
+    if action == PROPOSE_DUPLICATE:  # the candidate repeats the existing claim, which stays
+        target, related, replaced_by = pair.b_id, pair.a_id, pair.a_id
+        decision, proposed = "superseded_candidate", "superseded"
+        priority = (evidence.get("same_fact") or {}).get("3")
+    elif action == PROPOSE_SUPERSEDE:  # the candidate is the current version of the existing claim
+        target, related, replaced_by = pair.a_id, pair.b_id, pair.b_id
+        decision, proposed = "superseded_candidate", "superseded"
+        priority = min(evidence.get("supersedes") or 0.0, evidence.get("supersedes_alt") or 0.0)
+    else:  # the candidate contradicts the existing claim
+        target, related, replaced_by = pair.b_id, pair.a_id, None
+        decision, proposed = "conflicted", "conflicted"
+        priority = evidence.get("contradicts")
+    target_claim = store.get_claim(target, include_citations=False)
+    related_claim = store.get_claim(related, include_citations=False)
+    if (target_claim is None or related_claim is None or target_claim.status not in _JEV_LIVE_STATUSES
+            or related_claim.status not in _JEV_LIVE_STATUSES):
+        return "claim_status_changed"
+    for event in store.list_events(claim_id=target, event_type="policy_decision", limit=200):
+        try:
+            existing = json.loads(event.payload_json or "{}")
+        except ValueError:
+            continue
+        if (isinstance(existing, dict) and existing.get("source") == "jev" and existing.get("decision") == decision
+                and existing.get("related_claim_id") == related):
+            return "proposal_exists"
+    store.record_event(
+        claim_id=target, event_type="policy_decision", from_status=target_claim.status, to_status=proposed,
+        details=f"steward_proposal:jev_{decision}",
+        payload={
+            "source": "jev", "proposal_type": "jev_dedup", "decision": decision, "proposed_status": proposed,
+            "priority": round(float(priority or 0.0), 4), "apply_requested": False,
+            "reasons": [{"code": f"jev_dedup:{action}", "probe_type": "jev", "severity": "info",
+                         "detail": f"Jev S4 judged pair {pair.ref} ({action}); operator review required.",
+                         "evidence": evidence}],
+            "replaced_by_claim_id": replaced_by, "related_claim_id": related, "decision_id": decision_id,
+            "pair_ref": pair.ref, "evidence": evidence,
+        },
+    )
+    return None
+
+
+def run_jev(store, *, limit: int | None = None, engine: Any = None, candidate_limit: int = 2000,
+            concurrency: int = 8) -> dict[str, Any]:
+    """S4 entrypoint for the steward-cycle hook only; never called by ``run_cycle``.
+
+    Asks about at most ``limit`` pairs (``None``: ``MEMORYMASTER_JEV_DEDUP_PER_CYCLE``)
+    of the first ``candidate_limit`` candidates. Never raises.
+    """
+    return jev_review(store, limit=candidate_limit, engine=engine, max_pairs=limit, concurrency=concurrency)
+
+
+def jev_review(store, *, candidates=None, limit: int = 200, engine: Any = None, max_pairs: int | None = None,
+               concurrency: int = 8) -> dict[str, Any]:
+    """S4: ask Jev about the candidates' FTS pairs; live answers become proposals only.
+
+    Pairs already answered for the same texts are not asked again; at most
+    ``max_pairs`` (``MEMORYMASTER_JEV_DEDUP_PER_CYCLE``) requests per call. SQLite
+    only (PostgreSQL fails closed). Never raises into the steward cycle.
+    """
+    summary: dict[str, Any] = {"surface": JEV_SURFACE, "mode": "off", "pairs_considered": 0, "asked": 0,
+                               "proposals": 0, "would_propose": 0, "apply_failed": 0, "skipped_already_asked": 0,
+                               "fallbacks": {}, "stopped": None}
+    try:
+        return _jev_review(store, summary, candidates=candidates, limit=limit, engine=engine,
+                           max_pairs=max_pairs, concurrency=concurrency)
+    except Exception as exc:  # noqa: BLE001 - S4 must never break the steward cycle
+        _log.warning("S4 dedup review failed: %s", type(exc).__name__)
+        summary["stopped"] = "error"
+        return summary
+
+
+def _jev_review(store, summary: dict[str, Any], *, candidates, limit: int, engine: Any, max_pairs: int | None,
+                concurrency: int) -> dict[str, Any]:
+    from memorymaster.decisions.engine import default_engine
+    from memorymaster.decisions.ledger import LedgerReadError
+    from memorymaster.govern.jev_batch import STOP_REASONS, Pacer, record_apply_failed, run_paced
+
+    engine = engine or default_engine()
+    summary["mode"] = engine.config.mode_for(JEV_SURFACE)
+    if summary["mode"] == "off":
+        summary["stopped"] = "mode_off"
+        return summary
+    if getattr(store, "dsn", None):
+        summary["stopped"] = "unsupported_store"
+        return summary
+    cap = jev_pairs_per_cycle() if max_pairs is None else max(int(max_pairs), 0)
+    if cap == 0:
+        return summary
+    if candidates is None:
+        candidates = store.find_by_status("candidate", limit=limit)
+    pairs = _jev_pairs(store, candidates)
+    summary["pairs_considered"] = len(pairs)
+    try:
+        answered = _jev_answered_pairs(engine.ledger, pairs, live_only=summary["mode"] == "live")
+    except LedgerReadError:
+        summary["stopped"] = "ledger_unavailable"
+        return summary
+    fresh = [pair for pair in pairs if frozenset((pair.a_id, pair.b_id)) not in answered]
+    summary["skipped_already_asked"] = len(pairs) - len(fresh)
+
+    def handle(pair: _JevPair, decision: Any) -> str | None:
+        summary["asked"] += 1
+        reason = getattr(decision, "fallback_reason", "engine_error")
+        if reason is not None:
+            summary["fallbacks"][reason] = summary["fallbacks"].get(reason, 0) + 1
+            return reason if reason in STOP_REASONS else None
+        if decision.mode != "live":
+            summary["would_propose"] += int(decision.jev_action in _PROPOSAL_ACTIONS)
+        elif decision.action in _PROPOSAL_ACTIONS:
+            failed = _jev_write_proposal(store, pair, decision.action, decision.decision_id, decision.answers)
+            if failed is None:
+                summary["proposals"] += 1
+            else:  # the decision row says propose_*; record that nothing was filed
+                summary["apply_failed"] += 1
+                record_apply_failed(engine, decision.decision_id, pair.ref, decision.action, failed)
+        return None
+
+    summary["stopped"] = run_paced(fresh[:cap], lambda pair: _jev_ask(engine, pair), handle,
+                                   concurrency=concurrency, pacer=Pacer(engine.config.rpm_cap))
+    return summary

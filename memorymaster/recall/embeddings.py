@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import logging
 import math
 import operator
@@ -172,6 +173,46 @@ def create_gemini_provider(
     return provider
 
 
+ENV_EMBEDDING_PROVIDER = "MEMORYMASTER_EMBEDDING_PROVIDER"
+_PROVIDER_ALIASES = {
+    "": "auto",
+    "auto": "auto",
+    "sentence-transformers": "sentence-transformers",
+    "sentence_transformers": "sentence-transformers",
+    "st": "sentence-transformers",
+    "gemini": "gemini",
+    "hash": "hash",
+    "hash-v1": "hash",
+}
+
+
+def configured_embedding_provider() -> str:
+    """Operator-selected provider: auto, sentence-transformers, gemini or hash.
+
+    ``auto`` (default, also for unknown values) keeps the historical priority.
+    """
+    raw = os.environ.get(ENV_EMBEDDING_PROVIDER, "auto").strip().lower()
+    return _PROVIDER_ALIASES.get(raw, "auto")
+
+
+def sentence_transformers_required() -> bool:
+    """Whether this process would load sentence-transformers.
+
+    Decided without importing it (review F-17): the Windows MCP stdio fix
+    pre-imports the package before the stdio readers start, which costs
+    6-18 s, so it must only happen when something will actually use it:
+    the embedding provider, or the local cross-encoder rerank (its own gate,
+    independent of the provider). The Qdrant vector fallback is quarantined
+    and never loads a model.
+    """
+    if configured_embedding_provider() in {"gemini", "hash"}:
+        from memorymaster.recall.local_rerank import local_rerank_enabled
+
+        if not local_rerank_enabled():
+            return False
+    return importlib.util.find_spec("sentence_transformers") is not None
+
+
 def create_best_provider() -> EmbeddingProvider:
     """Auto-detect the best available embedding provider.
 
@@ -180,21 +221,30 @@ def create_best_provider() -> EmbeddingProvider:
       2. Gemini embedding API -- requires API key, 768-dim
       3. hash-v1 fallback -- deterministic, no semantic understanding
 
+    ``MEMORYMASTER_EMBEDDING_PROVIDER`` narrows the chain: ``hash`` skips
+    both semantic backends, ``gemini`` skips sentence-transformers and
+    ``sentence-transformers`` skips Gemini; each still falls back to hash.
+
     Returns the best available provider without raising errors.
     """
+    choice = configured_embedding_provider()
+    if choice == "hash":
+        return EmbeddingProvider(model="hash-v1", dims=1536)
+
     # 1. Try sentence-transformers
-    try:
-        provider = create_semantic_provider("all-MiniLM-L6-v2")
-        logger.info("Using sentence-transformers (all-MiniLM-L6-v2) for embeddings")
-        return provider
-    except ImportError:
-        logger.debug("sentence-transformers not installed, trying Gemini API")
-    except Exception as exc:
-        logger.warning("sentence-transformers failed to load: %s", exc)
+    if choice in {"auto", "sentence-transformers"}:
+        try:
+            provider = create_semantic_provider("all-MiniLM-L6-v2")
+            logger.info("Using sentence-transformers (all-MiniLM-L6-v2) for embeddings")
+            return provider
+        except ImportError:
+            logger.debug("sentence-transformers not installed, trying Gemini API")
+        except Exception as exc:
+            logger.warning("sentence-transformers failed to load: %s", exc)
 
     # 2. Try Gemini API
     gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if gemini_key:
+    if gemini_key and choice in {"auto", "gemini"}:
         try:
             provider = create_gemini_provider(api_key=gemini_key)
             logger.info("Using Gemini embedding API for embeddings")

@@ -18,7 +18,7 @@ from __future__ import annotations
 import pytest
 
 from memorymaster.core.config import get_config, reset_config
-from memorymaster.core.models import Claim
+from memorymaster.core.models import Citation, Claim
 from memorymaster.recall.retrieval import (
     RankedClaim,
     apply_rrf_tiebreaker,
@@ -302,6 +302,30 @@ def test_session_cap_distinct_sessions_all_survive():
     ]
     capped = apply_session_diversity_cap(rows, 1)
     assert [r.claim.id for r in capped] == [1, 2, 3]
+
+
+def test_session_cap_uses_explicit_session_citations_before_agent():
+    rows = [_row(i, score=1 / i, source_agent="claude-session") for i in range(1, 6)]
+    for row, session in zip(rows, ["session-a", "session-a", "session-b", "session-c", "session-a"]):
+        row.claim.citations = [
+            Citation(1, row.claim.id, "file", "shared.py", None, ""),
+            Citation(2, row.claim.id, "session", session, None, ""),
+        ]
+    assert [r.claim.id for r in apply_session_diversity_cap(rows, 2)] == [1, 2, 3, 4]
+
+
+def test_session_cap_does_not_treat_different_files_as_different_sessions():
+    rows = [_row(i, score=1 / i, source_agent="claude-session") for i in range(1, 5)]
+    for row in rows:
+        row.claim.citations = [Citation(1, row.claim.id, "file", f"file-{row.claim.id}.py", None, "")]
+    assert [r.claim.id for r in apply_session_diversity_cap(rows, 2)] == [1, 2]
+
+
+def test_session_cap_without_session_locator_preserves_agent_fallback():
+    rows = [_row(i, score=1 / i, source_agent="claude-session") for i in range(1, 4)]
+    for row in rows:
+        row.claim.citations = [Citation(1, row.claim.id, "session", " ", None, "")]
+    assert [r.claim.id for r in apply_session_diversity_cap(rows, 1)] == [1]
 
 
 def test_session_cap_falls_back_to_claim_id_key_when_no_source():

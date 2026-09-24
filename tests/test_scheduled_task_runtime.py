@@ -155,7 +155,7 @@ def test_scheduled_dream_runs_enabled_compiled_profile(
     )
 
     assert _run_dream(args) == 0
-    assert calls == [(args.db, {})]
+    assert calls == [(args.db, {"tenant_id": None})]
 
 
 def test_scheduled_dream_fails_closed_on_enabled_profile_error(

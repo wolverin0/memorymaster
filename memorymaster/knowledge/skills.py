@@ -16,11 +16,13 @@ from typing import Any, Mapping
 from memorymaster.capture.repository import CaptureRepository
 from memorymaster.core import llm_budget, llm_provider
 from memorymaster.core.models import CitationInput
-from memorymaster.core.security import is_sensitive_claim, validate_persisted_metadata
+from memorymaster.core.security import is_sensitive_claim, scan_text_for_findings, validate_persisted_metadata
+from memorymaster.core.temporal_policy import claim_is_temporally_current
 from memorymaster.knowledge.rule_miner import rule_fingerprint
 from memorymaster.knowledge.rule_observations import observation_support
 from memorymaster.knowledge.rules import is_rule, parse_rule
 from memorymaster.stores._storage_shared import ConcurrentModificationError, connect_ro, utc_now
+from memorymaster.recall.retrieval import pending_supersession_ids, rank_claim_rows
 
 from .skill_schema import (
     SKILL_SCHEMA,
@@ -568,6 +570,10 @@ def _approve_in_transaction(store: Any, conn: Any, claim: Any, skill: Mapping[st
     current = conn.execute("SELECT * FROM claims WHERE id=?", (claim.id,)).fetchone()
     if current is None or current["status"] != "candidate" or int(current["version"]) != claim.version:
         raise ConcurrentModificationError(f"skill candidate {claim.id} changed before approval")
+    from memorymaster.dreaming.source_review import confirmation_allowed, is_dream_claim
+
+    if is_dream_claim(conn, claim.id) and not confirmation_allowed(conn, claim.id):
+        raise SkillValidationError("Dreaming skill confirmation requires a current source review")
     parent_id = skill["expected_parent_claim_id"]
     if parent_id is not None:
         _supersede_parent(conn, parent_id, skill["expected_parent_version"], claim.id, now)
@@ -679,24 +685,127 @@ def recall_skills(
     scope_allowlist: list[str] | None = None,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
-    rows = service.query_rows(
-        query_text=query,
-        limit=max(limit * 10, 50),
-        include_candidates=False,
-        include_stale=False,
-        include_conflicted=False,
-        retrieval_mode="legacy",
-        allow_sensitive=False,
-        scope_allowlist=scope_allowlist,
+    if limit <= 0:
+        return []
+    limit = min(limit, 100)
+    scopes = service._effective_scope_allowlist(scope_allowlist)
+    agent = service._effective_requesting_agent(None)
+    if agent:
+        from memorymaster.core.access_control import require_permission
+
+        require_permission(agent, "query")
+    claims = _authorized_skill_catalog(service, scopes)
+    if not claims:
+        return []
+    ranked = rank_claim_rows(
+        query, claims, mode="legacy", limit=len(claims),
+        pending_supersession_ids=pending_supersession_ids(service),
     )
-    result: list[dict[str, Any]] = []
-    for row in rows:
-        skill = _skill_result(row["claim"], row.get("score"))
-        if skill is not None:
-            result.append(skill)
-        if len(result) >= max(1, min(limit, 100)):
-            break
+    fallback_ids = [row.claim.id for row in ranked if not query.strip() or row.lexical_score > 0][:limit]
+    scores = {row.claim.id: row.score for row in ranked}
+    snapshots = {claim.id: claim for claim in claims}
+    selected = None
+    # Activation (surface ``skills`` mode) is handled by the adapter. Never send
+    # sensitive queries or private catalog entries to an external selection
+    # provider (still logged, without text); everything else leaves only through
+    # the decisions egress redactor.
+    if query.strip():
+        from memorymaster.knowledge import jev_selector
+
+        def deliverable(ids: list[int]) -> list[int]:  # the ledger's ``delivered``: same checks as below
+            ids = [claim_id for claim_id in ids if claim_id in snapshots]
+            return [claim.id for claim in _rehydrate_skill_selection(service, ids, snapshots, scopes, scores)[1]]
+
+        decision_scope = ",".join(scopes) if scopes else None
+        private = next((claim.id for claim in claims if getattr(claim, "visibility", "public") != "public"), None)
+        if "[REDACTED:" in query or scan_text_for_findings(query) or private is not None:
+            jev_selector.record_withheld(
+                "catalog_private" if private is not None else "query_sensitive", catalog_size=len(claims),
+                legacy_ids=fallback_ids, withheld_id=private, scope=decision_scope, tenant=service.tenant_id,
+                deliverable=deliverable,
+            )
+        else:
+            selected = jev_selector.select_skill_ids(
+                query, [parse_skill(claim) for claim in claims], legacy_ids=fallback_ids,
+                scope=decision_scope, tenant=service.tenant_id, deliverable=deliverable,
+            )
+    if selected is not None and (
+        not isinstance(selected, list)
+        or any(type(claim_id) is not int or claim_id not in snapshots for claim_id in selected)
+        or len(set(selected)) != len(selected)
+    ):
+        selected = None
+    ids = fallback_ids if selected is None else selected[:limit]
+    result, current = _rehydrate_skill_selection(service, ids, snapshots, scopes, scores)
+    # A provider verdict never revives a retired/changed claim. If it races a
+    # lifecycle update, fall back to the still-authorized lexical selection.
+    if selected is not None and len(result) != len(ids):
+        result, current = _rehydrate_skill_selection(service, fallback_ids, snapshots, scopes, scores)
+    service._record_accesses([{"claim": claim} for claim in current], query_text=query)
     return result
+
+
+def _active_skill(claim: Any) -> bool:
+    return (
+        claim.status == "confirmed"
+        and not claim.replaced_by_claim_id
+        and getattr(claim, "visibility", "public") != "sensitive"
+        and claim_is_temporally_current(claim)
+        and not is_sensitive_claim(claim)
+        and parse_skill(claim) is not None
+    )
+
+
+def _authorized_skill_catalog(service: Any, scopes: list[str] | None) -> list[Any]:
+    """Enumerate skill IDs before any ranking limit; rehydrate through authority.
+
+    Keyset pages bound each read, while ordinary claims cannot consume the
+    catalog's candidate slots. The governed skill surface remains SQLite-only.
+    """
+    path = _sqlite_path(service)
+    clauses = ["claim_type = 'skill'", "status = 'confirmed'", "replaced_by_claim_id IS NULL"]
+    params: list[Any] = []
+    if service.tenant_id is not None:
+        clauses.append("tenant_id = ?")
+        params.append(service.tenant_id)
+    if scopes is not None:
+        clauses.append(f"scope IN ({','.join('?' for _ in scopes)})")
+        params.extend(scopes)
+    sql = f"SELECT id FROM claims WHERE {' AND '.join(clauses)} AND id > ? ORDER BY id LIMIT 256"
+    result: list[Any] = []
+    after = 0
+    conn = connect_ro(path)
+    try:
+        while True:
+            ids = [int(row[0]) for row in conn.execute(sql, [*params, after]).fetchall()]
+            if not ids:
+                break
+            claims = service.list_claims(
+                ids=ids, status="confirmed", limit=len(ids),
+                scope_allowlist=scopes, allow_sensitive=False,
+            )
+            result.extend(claim for claim in claims if _active_skill(claim))
+            after = ids[-1]
+    finally:
+        conn.close()
+    return result
+
+
+def _rehydrate_skill_selection(service, ids, snapshots, scopes, scores):
+    if not ids:
+        return [], []
+    claims = service.list_claims(
+        ids=ids, status="confirmed", limit=len(ids),
+        scope_allowlist=scopes, allow_sensitive=False,
+    )
+    current = {
+        claim.id: claim for claim in claims
+        if _active_skill(claim)
+        and claim.version == snapshots[claim.id].version
+        and claim.object_value == snapshots[claim.id].object_value
+    }
+    ordered = [current[claim_id] for claim_id in ids if claim_id in current]
+    return [_skill_result(claim, scores.get(claim.id)) for claim in ordered], ordered
 
 
 def _skill_result(claim: Any, score: object) -> dict[str, Any] | None:

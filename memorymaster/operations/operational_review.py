@@ -11,16 +11,40 @@ import argparse
 import importlib.metadata
 import json
 import os
+import re
 import sqlite3
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 
 ACTIVE_JOB_STATES = ("pending", "leased", "retryable", "blocked")
 TRUE_VALUES = {"1", "true", "yes", "on"}
+PROFILE_MAX_SUPPORT_AGE_DAYS = 7
+# Jev decisions (4.9.0): a live hook surface (every prompt / session) must log within
+# a day or the review FAILs; a live batch surface (steward cycle, Dreaming) WARNs after
+# a day and a half; route is exempt while recall is not off (the prompt hook skips S7
+# by design) and otherwise WARNs after a day, like skills (on demand).  Spend stays
+# under the cap; more than 30 % fallbacks over at least 20 decisions that asked Jev
+# (``skip:`` rows are volume, not failures) is a broken surface; a weekly ECE rise
+# above 0.05 (with at least 20 matured items per week) is drift.
+JEV_SILENCE_HOURS = 24
+JEV_BATCH_SILENCE_HOURS = 36
+JEV_HOOK_SURFACES = ("recall", "session", "hints")
+JEV_BATCH_SURFACES = ("revalidate", "dedup", "ingest")
+JEV_FALLBACK_SHARE = 0.30
+JEV_FALLBACK_MIN_DECISIONS = 20
+JEV_ECE_RISE = 0.05
+JEV_ECE_MIN_ITEMS = 20
+# Daily feature-review checkpoint (review F-08): delivered at least every 26 h.
+CHECKPOINT_LOG_ENV = "MEMORYMASTER_CHECKPOINT_LOG"
+CHECKPOINT_MAX_AGE_HOURS = 26
+CHECKPOINT_TAIL_BYTES = 256 * 1024
+_CHECKPOINT_OK = re.compile(r"^(\S+)\s+(orca-poke|poke-pane)\s+OK\b")
+_CHECKPOINT_FAIL = re.compile(r"^\S+\s+(orca-poke|poke-pane)\s+FAIL\b")
 
 
 class Verdict(str, Enum):
@@ -45,6 +69,24 @@ class ReviewConfig:
     lookback_hours: int = 8
     canary_query: str | None = None
     canary_human_id: str | None = None
+    # Several (query, human_id) canaries (review F-12): one boundary canary at
+    # rank 5 of 5 is weak evidence. The single fields above still work and
+    # are probed first; duplicates are probed once.
+    canaries: tuple[tuple[str, str], ...] = ()
+    # Decisions ledger (default: MEMORYMASTER_DECISIONS_DB) and checkpoint log
+    # (default: MEMORYMASTER_CHECKPOINT_LOG, then ~/.memorymaster/checkpoints/).
+    decisions_db: Path | None = None
+    checkpoint_log: Path | None = None
+
+
+def _configured_canaries(config: ReviewConfig) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    if config.canary_query and config.canary_human_id:
+        pairs.append((config.canary_query, config.canary_human_id))
+    for query, human_id in config.canaries:
+        if query and human_id and (query, human_id) not in pairs:
+            pairs.append((query, human_id))
+    return pairs
 
 
 def _connect_ro(db: Path) -> sqlite3.Connection:
@@ -327,16 +369,45 @@ def check_compiled_profile(config: ReviewConfig) -> ReviewResult:
                     OR f.independent_sessions<>COALESCE(s.session_count,0)
                 )
             """).fetchone()[0])
+            # Freshness (review F-03): the injected profile froze for weeks while
+            # this check stayed PASS, because it verified manifest integrity only.
+            newest_age = connection.execute("""
+                SELECT julianday('now') - MAX(julianday(s.supported_at))
+                FROM compiled_profile_supports s
+                JOIN compiled_profile_facts f ON f.id = s.fact_id
+                WHERE f.status = 'active'
+            """).fetchone()[0]
     except (OSError, sqlite3.Error) as exc:
         return ReviewResult("compiled_profile", Verdict.FAIL, f"probe_error={type(exc).__name__}")
     counts = {"completed_runs": completed, "active_facts": facts, "supports": supports, "mismatches": mismatches}
+    detail = "active facts must retain exact session support"
+    stale = False
+    if facts:
+        # Real (float) age: truncating to whole days let 7.9 pass a 7-day limit.
+        # Clock skew under a day (a support stamped slightly ahead) is fresh;
+        # a day or more ahead is an unknown age.
+        age = None if newest_age is None or newest_age <= -1 else max(0.0, float(newest_age))
+        age_days = round(age, 1) if age is not None else -1
+        counts["newest_support_age_days"] = age_days
+        stale = age is None or age > PROFILE_MAX_SUPPORT_AGE_DAYS
+        if stale:
+            if age is None:
+                shown = "unknown"
+            elif age_days > PROFILE_MAX_SUPPORT_AGE_DAYS:
+                shown = f"{age_days:g}d"
+            else:  # 7.04 rounds to 7.0; do not print "7d old (max 7d)".
+                shown = f"more than {PROFILE_MAX_SUPPORT_AGE_DAYS}d"
+            detail += (
+                f"; newest active-fact support is {shown} old "
+                f"(max {PROFILE_MAX_SUPPORT_AGE_DAYS}d): the injected profile is not being refreshed"
+            )
     if mismatches:
         verdict = Verdict.FAIL
-    elif _enabled("MEMORYMASTER_COMPILED_PROFILE") and (completed == 0 or facts == 0):
+    elif stale or (_enabled("MEMORYMASTER_COMPILED_PROFILE") and (completed == 0 or facts == 0)):
         verdict = Verdict.WARN
     else:
         verdict = Verdict.PASS
-    return ReviewResult("compiled_profile", verdict, "active facts must retain exact session support", counts)
+    return ReviewResult("compiled_profile", verdict, detail, counts)
 
 
 def check_recent_private_context(config: ReviewConfig) -> ReviewResult:
@@ -394,19 +465,227 @@ def check_retrieval(
     *,
     retrieve: Callable[[Path, str], list[str]] = _default_retrieval,
 ) -> ReviewResult:
-    if not config.canary_query or not config.canary_human_id:
+    canaries = _configured_canaries(config)
+    if not canaries:
         return ReviewResult("retrieval_canary", Verdict.WARN, "canary not configured")
+    ranks: list[tuple[str, int]] = []
+    rankings: list[list[str]] = []
+    for query, human_id in canaries:
+        try:
+            ranking = retrieve(config.db, query)
+        except Exception as exc:  # noqa: BLE001 - review converts probe errors into evidence
+            return ReviewResult("retrieval_canary", Verdict.FAIL, f"probe_error={type(exc).__name__}")
+        rankings.append(ranking)
+        ranks.append((human_id, ranking.index(human_id) + 1 if human_id in ranking else 0))
+    detail = "; ".join(f"target={human_id} rank={rank or 'missing'}" for human_id, rank in ranks)
+    verdict = Verdict.PASS if all(rank for _, rank in ranks) else Verdict.FAIL
+    if len(canaries) == 1:
+        return ReviewResult("retrieval_canary", verdict, detail, human_ids=tuple(rankings[0]))
+    counts = {"canaries": len(canaries), "found": sum(1 for _, rank in ranks if rank)}
+    for human_id, rank in ranks:
+        key = f"rank:{human_id}"
+        # A human id probed by two queries reports its worst rank (0 = missing).
+        counts[key] = rank if key not in counts else (0 if 0 in (rank, counts[key]) else max(rank, counts[key]))
+    return ReviewResult("retrieval_canary", verdict, detail, counts, tuple(human_id for human_id, _ in ranks))
+
+
+def _utc(moment: datetime | None) -> datetime:
+    return (moment or datetime.now(timezone.utc)).astimezone(timezone.utc)
+
+
+def _parse_utc(value: str) -> datetime | None:
     try:
-        ranking = retrieve(config.db, config.canary_query)
-    except Exception as exc:  # noqa: BLE001 - review converts probe errors into evidence
-        return ReviewResult("retrieval_canary", Verdict.FAIL, f"probe_error={type(exc).__name__}")
-    rank = ranking.index(config.canary_human_id) + 1 if config.canary_human_id in ranking else 0
-    return ReviewResult(
-        "retrieval_canary",
-        Verdict.PASS if rank else Verdict.FAIL,
-        f"target={config.canary_human_id} rank={rank or 'missing'}",
-        human_ids=tuple(ranking),
-    )
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _jev_ece_rises(ledger, end: datetime) -> list[str]:
+    """Compare the two most recent matured weeks per outcome maturity.
+
+    ``compute_metrics`` only counts items decided at least one maturity before its
+    ``until``: a week ending now holds no matured item for a 7-day lifecycle outcome
+    (``ingest.usefulness`` -> ``steward_confirmed``), so each maturity class is
+    compared on the weeks ending ``maturity`` before now.  All the windows come from
+    one ``calibration_windows`` read of the calibrated questions.
+    """
+    from memorymaster.decisions.metrics import DEFAULT_MATURITY, LIFECYCLE_MATURITY, calibration_windows
+
+    week = timedelta(days=7)
+    maturities = sorted({*DEFAULT_MATURITY.values(), LIFECYCLE_MATURITY})
+    reports = calibration_windows(ledger, [window for maturity in maturities for window in (
+        (end - maturity - week, end), (end - maturity - 2 * week, end - week))])
+    current: dict = {}
+    previous: dict = {}
+    for index, maturity in enumerate(maturities):
+        def matures(entry: dict, maturity: timedelta = maturity) -> bool:
+            return DEFAULT_MATURITY.get(entry.get("positive_kind"), LIFECYCLE_MATURITY) == maturity
+
+        now_week, week_before = reports[2 * index], reports[2 * index + 1]
+        current.update({key: entry for key, entry in now_week.items() if matures(entry)})
+        previous.update({key: entry for key, entry in week_before.items() if matures(entry)})
+    rises = []
+    for key in sorted(set(current) & set(previous)):
+        now_c, before = current[key], previous[key]
+        if min(now_c["n"], before["n"]) < JEV_ECE_MIN_ITEMS or now_c["ece"] is None or before["ece"] is None:
+            continue
+        if now_c["ece"] - before["ece"] > JEV_ECE_RISE:
+            rises.append(f"{key} ece {before['ece']:.3f}->{now_c['ece']:.3f}")
+    return rises
+
+
+def _jev_silence(live: list[str], day: dict, batch_window: dict, recall_mode: str
+                 ) -> tuple[list[str], list[str], list[str]]:
+    """Silent live surfaces: (hooks -> FAIL, batch surfaces over 36 h -> WARN, route/skills -> WARN)."""
+    hooks = [s for s in live if s in JEV_HOOK_SURFACES and not day.get(s)]
+    batches = [s for s in live if s in JEV_BATCH_SURFACES and not batch_window.get(s)]
+    others = [s for s in live if s not in JEV_HOOK_SURFACES and s not in JEV_BATCH_SURFACES and not day.get(s)
+              and not (s == "route" and recall_mode != "off")]
+    return hooks, batches, others
+
+
+def _silence_findings(hooks: list[str], batches: list[str], others: list[str]) -> tuple[list[str], list[str]]:
+    failing = [f"silent_{JEV_SILENCE_HOURS}h={','.join(hooks)}"] if hooks else []
+    warning = [f"silent_{hours}h={','.join(names)}"
+               for hours, names in ((JEV_BATCH_SILENCE_HOURS, batches), (JEV_SILENCE_HOURS, others)) if names]
+    return failing, warning
+
+
+def check_jev_decisions(config: ReviewConfig, *, now: datetime | None = None) -> ReviewResult:
+    """Health of live Jev decisions from the decisions ledger alone, opened read-only."""
+    from memorymaster.decisions.config import SURFACES, DecisionConfig
+    from memorymaster.decisions.ledger import utc_iso
+    from memorymaster.surfaces.jev_review import ReadOnlyLedger
+
+    decision_config = DecisionConfig.from_env()
+    ledger = ReadOnlyLedger(config.decisions_db or decision_config.decisions_db)
+    end = _utc(now)
+    live = [surface for surface in SURFACES if decision_config.mode_for(surface) == "live"]
+    recall_mode = decision_config.mode_for("recall")
+    if not ledger.exists():
+        if not live:
+            return ReviewResult("jev_decisions", Verdict.PASS, "Jev off: no decisions ledger", {"live_surfaces": 0})
+        failing, warning = _silence_findings(*_jev_silence(live, {}, {}, recall_mode))
+        verdict = Verdict.FAIL if failing else Verdict.WARN if warning else Verdict.PASS
+        return ReviewResult("jev_decisions", verdict, f"live={','.join(live)} but no decisions ledger exists",
+                            {"live_surfaces": len(live)})
+    day_start = end.replace(hour=0, minute=0, second=0, microsecond=0)
+    day = utc_iso(end - timedelta(hours=JEV_SILENCE_HOURS))
+    asked = "NOT COALESCE(fallback_reason GLOB 'skip:*', 0)"  # a skip row did not ask Jev
+    try:
+        recent = ledger.query(
+            "SELECT surface, SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS n, "
+            f"SUM(CASE WHEN ts >= ? AND mode != 'off' AND {asked} THEN 1 ELSE 0 END) AS active, "
+            f"SUM(CASE WHEN ts >= ? AND mode != 'off' AND fallback_reason IS NOT NULL AND {asked} THEN 1 ELSE 0 END) "
+            "AS fallbacks, COUNT(*) AS n_batch_window FROM decisions WHERE ts >= ? AND ts <= ? GROUP BY surface",
+            (day, day, day, utc_iso(end - timedelta(hours=JEV_BATCH_SILENCE_HOURS)), utc_iso(end)),
+        )
+        spent = ledger.query("SELECT COALESCE(SUM(cost_usd), 0.0) AS spend FROM decisions WHERE ts >= ? AND ts <= ?",
+                             (utc_iso(day_start), utc_iso(end)))
+        # An intent younger than a minute is a request still in flight, not an orphan.
+        orphans = _jev_orphan_intents(ledger, utc_iso(day_start), day, utc_iso(end - timedelta(seconds=60)))
+        rises = _jev_ece_rises(ledger, end)
+    except Exception as exc:  # noqa: BLE001 - LedgerReadError, sqlite3/OS errors or anything unexpected:
+        # run_review has no per-check guard, so this is one FAIL row instead of a lost review.
+        return ReviewResult("jev_decisions", Verdict.FAIL, f"probe_error={type(exc).__name__}")
+    by_surface = {str(row["surface"]): row for row in recent}
+    # A request whose decision row never landed still cost money: its send intent counts.
+    cost_today = (float(spent[0]["spend"]) if spent else 0.0) + orphans["cost_today"]
+    cap = decision_config.daily_usd_cap
+    hooks, batches, others = _jev_silence(live, {s: int(r["n"] or 0) for s, r in by_surface.items()},
+                                          {s: int(r["n_batch_window"] or 0) for s, r in by_surface.items()},
+                                          recall_mode)
+    failing, warning = _silence_findings(hooks, batches, others)
+    broken = []
+    for surface, row in sorted(by_surface.items()):
+        active, fallbacks = int(row["active"] or 0), int(row["fallbacks"] or 0)
+        if active >= JEV_FALLBACK_MIN_DECISIONS and fallbacks / active > JEV_FALLBACK_SHARE:
+            broken.append(f"{surface} {fallbacks}/{active}")
+    problems = list(failing)
+    if cost_today > cap:
+        problems.append(f"cost_today=${cost_today:.4f} over cap ${cap:.2f}")
+    if broken:
+        problems.append(f"fallback_24h>{JEV_FALLBACK_SHARE:.0%}: {'; '.join(broken)}")
+    warnings = list(warning)
+    if rises:
+        warnings.append(f"weekly calibration worsened: {'; '.join(rises)}")
+    if orphans["n_24h"]:
+        warnings.append(f"orphan_send_intents_24h={orphans['n_24h']} (requests sent without a decision row)")
+    counts = {"live_surfaces": len(live), "decisions_24h": sum(int(r["n"] or 0) for r in recent),
+              "silent_live_surfaces": len(hooks), "quiet_live_surfaces": len(batches) + len(others),
+              "high_fallback_surfaces": len(broken), "ece_rises": len(rises),
+              "orphan_send_intents_24h": orphans["n_24h"]}
+    summary = f"live={','.join(live) or 'none'}; cost_today=${cost_today:.4f}/cap ${cap:.2f}"
+    if problems:
+        return ReviewResult("jev_decisions", Verdict.FAIL, "; ".join(problems + warnings) + f" ({summary})", counts)
+    if warnings:
+        return ReviewResult("jev_decisions", Verdict.WARN, "; ".join(warnings) + f" ({summary})", counts)
+    return ReviewResult("jev_decisions", Verdict.PASS, summary, counts)
+
+
+def _jev_orphan_intents(ledger: Any, day_start: str, since_24h: str, until: str) -> dict[str, Any]:
+    """Send intents with no decision row: count in the last 24 h and cost since midnight UTC."""
+    if not ledger.query("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'send_intents'"):
+        return {"n_24h": 0, "cost_today": 0.0}
+    orphan = "FROM send_intents i WHERE NOT EXISTS (SELECT 1 FROM decisions d WHERE d.decision_id = i.decision_id)"
+    rows = ledger.query(
+        f"SELECT COALESCE(SUM(CASE WHEN i.ts >= ? AND i.ts <= ? THEN 1 ELSE 0 END), 0) AS n_24h, "
+        f"COALESCE(SUM(CASE WHEN i.ts >= ? AND i.ts <= ? THEN i.est_cost_usd ELSE 0.0 END), 0.0) AS cost_today "
+        f"{orphan}", (since_24h, until, day_start, until))
+    return {"n_24h": int(rows[0]["n_24h"] or 0), "cost_today": float(rows[0]["cost_today"] or 0.0)}
+
+
+def _checkpoint_log_path(config: ReviewConfig) -> Path:
+    if config.checkpoint_log is not None:
+        return config.checkpoint_log
+    configured = os.environ.get(CHECKPOINT_LOG_ENV, "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".memorymaster" / "checkpoints" / "feature-checkpoint.log"
+
+
+def check_checkpoint_delivery(config: ReviewConfig, *, now: datetime | None = None) -> ReviewResult:
+    """WARN when the daily checkpoint was last delivered more than 26 h ago (review F-08)."""
+    path = _checkpoint_log_path(config)
+    end = _utc(now)
+    try:
+        with path.open("rb") as handle:
+            handle.seek(max(0, path.stat().st_size - CHECKPOINT_TAIL_BYTES))
+            text = handle.read().decode("utf-8", errors="replace")
+    except FileNotFoundError:
+        return ReviewResult("checkpoint_delivery", Verdict.WARN, "checkpoint log not found: delivery unverified")
+    except OSError as exc:
+        return ReviewResult("checkpoint_delivery", Verdict.WARN, f"probe_error={type(exc).__name__}")
+    last: tuple[datetime, str] | None = None
+    ok_lines = fail_lines = 0
+    for raw in text.splitlines():
+        line = raw.strip()
+        match = _CHECKPOINT_OK.match(line)
+        if match is None:
+            fail_lines += bool(_CHECKPOINT_FAIL.match(line))
+            continue
+        stamp = _parse_utc(match.group(1))
+        if stamp is None:
+            continue
+        ok_lines += 1
+        if last is None or stamp > last[0]:
+            last = (stamp, match.group(2))
+    counts = {"ok_lines": ok_lines, "fail_lines": fail_lines}
+    if last is None:
+        return ReviewResult("checkpoint_delivery", Verdict.WARN,
+                            f"no successful delivery in the log tail ({fail_lines} failures)", counts)
+    age_hours = max(0.0, (end - last[0]).total_seconds() / 3600)
+    counts["last_delivery_age_hours"] = int(age_hours)
+    detail = (f"last successful delivery {last[0].isoformat()} via {last[1]}, "
+              f"{age_hours:.1f}h ago (max {CHECKPOINT_MAX_AGE_HOURS}h)")
+    verdict = Verdict.WARN if age_hours > CHECKPOINT_MAX_AGE_HOURS else Verdict.PASS
+    return ReviewResult("checkpoint_delivery", verdict, detail, counts)
+
+
+REVIEW_CHECKS = (check_runtime, check_database, check_feature_activation, check_graph_observations,
+                 check_compiled_profile, check_recent_private_context, check_retrieval,
+                 check_jev_decisions, check_checkpoint_delivery)
 
 
 def exit_code(results: Iterable[ReviewResult]) -> int:
@@ -419,15 +698,17 @@ def exit_code(results: Iterable[ReviewResult]) -> int:
 
 
 def run_review(config: ReviewConfig) -> list[ReviewResult]:
-    return [
-        check_runtime(config),
-        check_database(config),
-        check_feature_activation(config),
-        check_graph_observations(config),
-        check_compiled_profile(config),
-        check_recent_private_context(config),
-        check_retrieval(config),
-    ]
+    from memorymaster.operations.review_attempt import phase_progress
+
+    results = []
+    for check in REVIEW_CHECKS:
+        phase_progress(check.__name__)
+        started = time.monotonic()
+        try:
+            results.append(check(config))
+        finally:
+            phase_progress(check.__name__, time.monotonic() - started)
+    return results
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -437,6 +718,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--lookback-hours", type=int, default=8)
     parser.add_argument("--canary-query")
     parser.add_argument("--canary-human-id")
+    parser.add_argument(
+        "--canary", nargs=2, action="append", metavar=("QUERY", "HUMAN_ID"), default=[],
+        help="additional retrieval canary; repeat for several",
+    )
+    parser.add_argument("--decisions-db", help="Jev decisions ledger (default: MEMORYMASTER_DECISIONS_DB)")
+    parser.add_argument("--checkpoint-log", help="feature checkpoint log (default: MEMORYMASTER_CHECKPOINT_LOG)")
     parser.add_argument("--json", action="store_true")
     return parser
 
@@ -449,11 +736,15 @@ def main(argv: list[str] | None = None) -> int:
         lookback_hours=max(1, min(168, args.lookback_hours)),
         canary_query=args.canary_query,
         canary_human_id=args.canary_human_id,
+        canaries=tuple((query, human_id) for query, human_id in args.canary),
+        decisions_db=Path(args.decisions_db).expanduser().resolve() if args.decisions_db else None,
+        checkpoint_log=Path(args.checkpoint_log).expanduser().resolve() if args.checkpoint_log else None,
     )
     results = run_review(config)
     code = exit_code(results)
     payload = {
         "schema": "memorymaster.operational-review.v1",
+        "attempt_id": os.environ.get("MEMORYMASTER_REVIEW_ATTEMPT_ID"),
         "observed_at": datetime.now(timezone.utc).isoformat(),
         "review_performed": True,
         "database_mutations": 0,

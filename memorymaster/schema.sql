@@ -204,6 +204,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_nonpublic_principal_idempotency_key
 CREATE INDEX IF NOT EXISTS idx_claims_tuple ON claims(subject, predicate, scope);
 CREATE INDEX IF NOT EXISTS idx_claims_topic ON claims(topic);
 CREATE INDEX IF NOT EXISTS idx_claims_replaced_by ON claims(replaced_by_claim_id);
+CREATE INDEX IF NOT EXISTS idx_claims_active_skill_catalog
+    ON claims(status, id, tenant_id, scope)
+    WHERE claim_type = 'skill' AND status = 'confirmed' AND replaced_by_claim_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_citations_claim_id ON citations(claim_id);
 CREATE INDEX IF NOT EXISTS idx_events_claim_id ON events(claim_id);
 CREATE INDEX IF NOT EXISTS idx_events_tenant_id ON events(tenant_id);

@@ -7,8 +7,8 @@ Read when: implementing changes or choosing the smallest sufficient verification
 
 Install development dependencies with `python -m pip install -e ".[dev,mcp,security]"`.
 Use `python -m pytest` from the intended checkout so source-under-test is explicit.
-The minimal product depends only on requests and tenacity; provider, vector and
-MCP adapters are optional extras. Upstream research is not a runtime dependency
+The minimal product depends only on requests and tenacity (the Jev decisions
+transport is the standard library's http.client); provider, vector and MCP adapters are optional extras. Upstream research is not a runtime dependency
 inventory; `pyproject.toml` is the dependency contract.
 
 ## Verification by change

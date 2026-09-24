@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,7 @@ from memorymaster.knowledge.graph_observation_repository import (
     GraphObservationRepository,
 )
 from memorymaster.knowledge.ontology import load_ontology
+from memorymaster.recall.context_optimizer import estimate_tokens
 
 API_VERSION = "memorymaster.public.v1"
 
@@ -51,6 +53,15 @@ class RecallReceipt:
     observations: tuple[dict[str, Any], ...] = ()
     scope: str = "user"
     scope_source: str = "default_user"
+    budget_scope: str = "context"
+    receipt_tokens_estimate: int = 0
+
+    def __post_init__(self) -> None:
+        while True:
+            measured = estimate_tokens(json.dumps(asdict(self), ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+            if measured == self.receipt_tokens_estimate:
+                return
+            object.__setattr__(self, "receipt_tokens_estimate", measured)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 import subprocess
 import time
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from memorymaster.core import observability
 from memorymaster.core import llm_budget
@@ -826,6 +826,11 @@ def _decision_for_claim(
     )
 
 
+# A steward cycle applies its own decisions: the lifecycle events it causes
+# carry the automation actor in their payload, like proposal resolutions (F-21).
+_CYCLE_EVENT_PAYLOAD = {"actor": "automation"}
+
+
 def _apply_decision(service: MemoryService, claim: Any, decision: Decision) -> None:
     if decision.decision == "keep":
         return
@@ -838,6 +843,7 @@ def _apply_decision(service: MemoryService, claim: Any, decision: Decision) -> N
             to_status="stale",
             reason="steward_apply:stale",
             event_type="transition",
+            event_payload=dict(_CYCLE_EVENT_PAYLOAD),
         )
         decision.applied = True
         return
@@ -850,6 +856,7 @@ def _apply_decision(service: MemoryService, claim: Any, decision: Decision) -> N
             to_status="conflicted",
             reason="steward_apply:conflicted",
             event_type="transition",
+            event_payload=dict(_CYCLE_EVENT_PAYLOAD),
         )
         decision.applied = True
         return
@@ -860,6 +867,7 @@ def _apply_decision(service: MemoryService, claim: Any, decision: Decision) -> N
             old_claim_id=claim.id,
             new_claim_id=decision.replaced_by_claim_id,
             reason="steward_apply:superseded_candidate",
+            event_payload=dict(_CYCLE_EVENT_PAYLOAD),
         )
         decision.applied = True
 
@@ -1244,7 +1252,11 @@ def list_steward_proposals(
     *,
     limit: int = 100,
     include_resolved: bool = False,
+    exclude_from_limit: Callable[[dict[str, Any]], bool] | None = None,
 ) -> list[dict[str, Any]]:
+    """Newest proposals first. Entries matching ``exclude_from_limit`` are still
+    returned but do not count toward ``limit`` (the drain keeps jev proposals for
+    the operator, so they must not use up the slots it can resolve)."""
     if limit <= 0:
         return []
     # Bounded by TIME, not by `max(limit * 6, 500)` rows. `list_events` returns
@@ -1282,6 +1294,7 @@ def list_steward_proposals(
             }
 
     out: list[dict[str, Any]] = []
+    counted = 0
     for event in proposals_raw:
         details = str(event.details or "")
         if not details.startswith("steward_proposal:"):
@@ -1320,7 +1333,9 @@ def list_steward_proposals(
                 "payload": payload,
             }
         )
-        if len(out) >= limit:
+        if exclude_from_limit is None or not exclude_from_limit(out[-1]):
+            counted += 1
+        if counted >= limit:
             break
     return out
 
@@ -1381,16 +1396,40 @@ def _find_target_proposal(
     return None
 
 
+# Who resolved a steward proposal (review F-21). Automatic approvals used to be
+# written as human overrides, which made operator corrections indistinguishable
+# from automation in the audit trail and in any label derived from it.
+STEWARD_ACTORS = ("operator", "automation")
+_ACTOR_SOURCE = {"operator": "human_override", "automation": "automation"}
+
+
+class JevProposalOperatorOnly(ValueError):
+    """A ``source: jev`` proposal may be resolved only by the operator: the
+    dashboard, or the CLI with an explicit ``--actor operator``. Automation and
+    the MCP tool (an agent) are refused, for approval and rejection alike."""
+
+
+def is_jev_proposal(payload: Any) -> bool:
+    """A proposal whose payload says ``source: jev``: a model judgment that
+    waits for the operator and is never resolved by automation."""
+    return isinstance(payload, dict) and str(payload.get("source") or "").strip().lower() == "jev"
+
+
 def _apply_steward_approval(
     service: MemoryService,
     target_claim_id: int,
     decision: str,
     proposed_status: str,
     replaced_by_claim_id: Any,
+    actor: str = "operator",
 ) -> tuple[bool, str | None]:
     """Apply approval action, return (applied, error)."""
     applied = False
     apply_error: str | None = None
+    reason = f"steward_{_ACTOR_SOURCE[actor]}:approve"
+    # The actor also goes in the lifecycle event payload (F-21), so consumers
+    # such as outcome joiners read it without parsing the reason.
+    event_payload = {"actor": actor}
 
     claim = service.store.get_claim(target_claim_id, include_citations=False)
     if claim is None:
@@ -1401,7 +1440,8 @@ def _apply_steward_approval(
             service.store.mark_superseded(
                 old_claim_id=target_claim_id,
                 new_claim_id=int(replaced_by_claim_id),
-                reason="steward_human_override:approve",
+                reason=reason,
+                event_payload=event_payload,
             )
             applied = True
         elif proposed_status in {"stale", "conflicted", "superseded"}:
@@ -1409,9 +1449,10 @@ def _apply_steward_approval(
                 service.store,
                 claim_id=target_claim_id,
                 to_status=proposed_status,  # type: ignore[arg-type]
-                reason="steward_human_override:approve",
+                reason=reason,
                 event_type="transition",
                 replaced_by_claim_id=(int(replaced_by_claim_id) if isinstance(replaced_by_claim_id, int) else None),
+                event_payload=event_payload,
             )
             applied = True
     except Exception as exc:  # pragma: no cover
@@ -1427,9 +1468,20 @@ def resolve_steward_proposal(
     proposal_event_id: int | None = None,
     claim_id: int | None = None,
     apply_on_approve: bool = True,
+    actor: Literal["operator", "automation"] = "operator",
+    allow_jev: bool = True,
 ) -> dict[str, Any]:
+    """Approve or reject one steward proposal.
+
+    ``allow_jev=False`` is for channels that are not the operator (the MCP
+    tool, a CLI call without an explicit ``--actor operator``): a ``source: jev``
+    proposal is then refused with :class:`JevProposalOperatorOnly`, as it
+    always is for ``actor="automation"``.
+    """
     if action not in {"approve", "reject"}:
         raise ValueError("action must be approve or reject")
+    if actor not in STEWARD_ACTORS:
+        raise ValueError("actor must be operator or automation")
     if proposal_event_id is None and claim_id is None:
         raise ValueError("proposal_event_id or claim_id is required")
 
@@ -1451,6 +1503,11 @@ def resolve_steward_proposal(
         raise ValueError("Selected proposal has invalid claim_id.")
 
     payload = target.get("payload") if isinstance(target.get("payload"), dict) else {}
+    if (actor == "automation" or not allow_jev) and is_jev_proposal(payload):
+        # Jev proposals are model judgments awaiting a human verdict; letting
+        # automation or an agent resolve them would turn a proposal into a live action.
+        raise JevProposalOperatorOnly(
+            "jev proposals require operator resolution (dashboard, or the CLI with --actor operator)")
     decision = str(payload.get("decision") or target.get("proposal_decision") or "").strip().lower()
     proposed_status = str(payload.get("proposed_status") or target.get("proposed_status") or "").strip().lower()
     replaced_by_claim_id = payload.get("replaced_by_claim_id")
@@ -1459,7 +1516,7 @@ def resolve_steward_proposal(
 
     if action == "approve" and apply_on_approve:
         applied, apply_error = _apply_steward_approval(
-            service, target_claim_id, decision, proposed_status, replaced_by_claim_id
+            service, target_claim_id, decision, proposed_status, replaced_by_claim_id, actor
         )
 
     # A failed apply must NOT be recorded as an approval. Writing
@@ -1476,7 +1533,8 @@ def resolve_steward_proposal(
     else:
         audit_details = "steward_proposal_rejected"
     audit_payload: dict[str, Any] = {
-        "source": "human_override",
+        "source": _ACTOR_SOURCE[actor],
+        "actor": actor,
         "proposal_event_id": int(target["proposal_event_id"]),
         "proposal_decision": decision or None,
         "proposed_status": proposed_status or None,

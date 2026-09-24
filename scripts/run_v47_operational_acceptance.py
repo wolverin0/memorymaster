@@ -397,7 +397,9 @@ def checkpoint_result(
 ) -> CheckResult:
     label = "condition_4_checkpoint_" + ("daily" if task_name.endswith("Daily") else "weekly")
     if not state or not state.get("enabled"):
-        return CheckResult(label, Verdict.FAIL, "scheduled task missing or disabled")
+        return CheckResult(label, Verdict.FAIL, "requested=false delivered=unknown completed=false; scheduled task missing or disabled")
+    if state.get("last_result") == 4:
+        return CheckResult(label, Verdict.FAIL, "requested=true delivered=false completed=false; no matching pane")
     last_run = _parse_time(str(state.get("last_run") or ""))
     never_ran = last_run is None or last_run.year < 2001
     due = _parse_time(str(state.get("next_run") or "")) if never_ran else last_run
@@ -432,18 +434,19 @@ def checkpoint_result(
         else:
             stale += 1
     if fresh:
-        return CheckResult(label, Verdict.PASS, f"real_work_receipts={len(fresh)}")
+        return CheckResult(label, Verdict.PASS, f"requested=true delivered=unknown completed=true; real_work_receipts={len(fresh)}")
     if stale:
         return CheckResult(
             label,
             Verdict.FAIL,
-            f"only stale receipts: {stale} older than {RECEIPT_MAX_AGE_HOURS}h",
+            f"requested=true delivered=unknown completed=false; only stale receipts: {stale} older than {RECEIPT_MAX_AGE_HOURS}h",
         )
     if never_ran and due is not None and now < due:
         due_text = due.isoformat()
-        return CheckResult(label, Verdict.NOT_YET_DUE, "first natural fire has not occurred", due_text)
+        return CheckResult(label, Verdict.NOT_YET_DUE, "requested=false delivered=false completed=false; first natural fire has not occurred", due_text)
     due_text = due.isoformat() if due is not None else "unknown"
-    return CheckResult(label, Verdict.FAIL, f"no real-work receipt after due={due_text}", due_text)
+    delivered = "true" if state.get("last_result") == 0 else "unknown"
+    return CheckResult(label, Verdict.FAIL, f"requested=true delivered={delivered} completed=false; no real-work receipt after due={due_text}", due_text)
 
 
 def check_runtime(config: GateConfig, *, now: datetime | None = None) -> list[CheckResult]:

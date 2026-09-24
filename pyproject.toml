@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memorymaster"
-version = "4.8.9"
+version = "4.9.0"
 description = "Production-grade memory reliability system for AI coding agents. Lifecycle-managed claims with citations, conflict detection, steward governance, and MCP integration."
 license = {text = "MIT"}
 authors = [{name = "wolverin0"}]
@@ -25,6 +25,7 @@ requires-python = ">=3.10"
 dependencies = [
     "requests>=2.31",
     "tenacity>=8.2",
+    # Jev decisions use the standard library (http.client + ssl): no HTTP client dependency.
 ]
 
 [project.optional-dependencies]

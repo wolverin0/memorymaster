@@ -1560,8 +1560,11 @@ def _handle_resolve_proposal(args: argparse.Namespace, service, parser: argparse
         raise ValueError("resolve-proposal requires --proposal-event-id or --claim-id")
     from memorymaster.govern.steward import resolve_steward_proposal
 
+    actor = getattr(args, "actor", None)
+    # A Jev proposal is the operator's call: only an explicit --actor operator resolves it.
     result = resolve_steward_proposal(service, action=args.action,
-        proposal_event_id=args.proposal_event_id, claim_id=args.claim_id, apply_on_approve=not args.no_apply)
+        proposal_event_id=args.proposal_event_id, claim_id=args.claim_id, apply_on_approve=not args.no_apply,
+        actor=actor or "operator", allow_jev=actor == "operator")
     print(json.dumps(result, indent=2, default=_json_default))
     return 0
 

@@ -53,6 +53,33 @@ def initdb_fastpath_enabled() -> bool:
     return raw not in ("0", "false", "False", "no", "off", "")
 
 
+def _refresh_planner_statistics(conn: sqlite3.Connection) -> None:
+    """Give the query planner statistics once migrations shaped the indexes.
+
+    Review F-18: without ``sqlite_stat1`` the tenant-scoped skill-catalog
+    enumeration scans ``idx_claims_tenant_id`` instead of the partial index
+    from migration 0025. ``PRAGMA optimize=0x10002`` checks every table on
+    SQLite >= 3.46; older SQLite (3.45 ships with Python 3.12) only considers
+    tables this connection queried, so a populated ``claims`` table that was
+    never analyzed gets one bounded ANALYZE here. An empty table is skipped:
+    empty statistics would mislead the planner once rows arrive.
+    Statistics are an optimisation, so a failure never blocks startup.
+    """
+    try:
+        conn.execute("PRAGMA analysis_limit=1000")
+        has_stats = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'"
+        ).fetchone() is not None
+        claims_analyzed = has_stats and conn.execute(
+            "SELECT 1 FROM sqlite_stat1 WHERE tbl='claims' LIMIT 1"
+        ).fetchone() is not None
+        if not claims_analyzed and conn.execute("SELECT 1 FROM claims LIMIT 1").fetchone():
+            conn.execute("ANALYZE claims")
+        conn.execute("PRAGMA optimize=0x10002")
+    except sqlite3.Error as exc:
+        logger.warning("planner statistics refresh skipped: %s", exc)
+
+
 def _legacy_schema_source() -> bytes:
     """Return legacy ensure-helper source included in the fast-path stamp."""
     from memorymaster.stores import _storage_schema
@@ -188,6 +215,7 @@ class SQLiteStore(
             # A standalone `migrate` may have stamped v17 on an empty database.
             # Converge again after all prerequisite tables now exist.
             self._ensure_governed_capture_schema(mig_conn)
+            _refresh_planner_statistics(mig_conn)
             if fastpath:
                 # Stamp ONLY after the full path succeeded end-to-end — an
                 # exception above propagates and leaves the DB unstamped, so

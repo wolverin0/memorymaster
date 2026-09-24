@@ -36,9 +36,12 @@ class _PaginationMixin:
         tenant_id: str | None = None,
         holder: str | None = None,
         ids: list[int] | None = None,
+        status_in: list[str] | None = None,
     ):
+        # status_in is pushed into SQL so rows of unrequested statuses never
+        # leave SQLite (review F-13: 118 pages to find one confirmed row).
         clauses, params = self._build_list_clauses(
-            status, None, include_archived, scope_allowlist, tenant_id, holder, ids
+            status, status_in, include_archived, scope_allowlist, tenant_id, holder, ids
         )
         after = _decode_cursor(cursor, 4)
         if after:

@@ -163,7 +163,7 @@ def test_proposal_drain_keeps_operator_claims(svc, monkeypatch):
 
     monkeypatch.setattr(
         "memorymaster.govern.steward.list_steward_proposals",
-        lambda service, limit, include_resolved: [
+        lambda service, limit, include_resolved, **_kwargs: [
             {"proposal_event_id": 1, "claim_id": de_user},
             {"proposal_event_id": 2, "claim_id": normal},
         ],
@@ -171,7 +171,7 @@ def test_proposal_drain_keeps_operator_claims(svc, monkeypatch):
     aprobadas: list[int] = []
     monkeypatch.setattr(
         "memorymaster.govern.steward.resolve_steward_proposal",
-        lambda service, action, proposal_event_id, apply_on_approve: aprobadas.append(proposal_event_id),
+        lambda service, action, proposal_event_id, apply_on_approve, actor: aprobadas.append(proposal_event_id),
     )
 
     r = curation_drain.drain_proposals(svc, apply=True)

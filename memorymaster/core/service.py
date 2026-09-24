@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import logging
 import os
@@ -12,7 +12,8 @@ from memorymaster.core import access_recording, observability
 from memorymaster.core import llm_budget
 from memorymaster.govern import candidate_dedupe
 from memorymaster.knowledge import entity_ingest
-from memorymaster.recall import query_cache
+from memorymaster.recall import graph_expansion, query_cache
+from memorymaster.recall.candidate_pool import hybrid_candidates, page_authorized_lexical
 from memorymaster.recall.embeddings import EmbeddingProvider, create_best_provider
 from memorymaster.govern.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, integrity, qdrant_reconcile, spool_drain, validator
 from memorymaster.core.models import ActionProposal, CitationInput, Claim, ClaimLink, Event, validate_temporal_fields
@@ -1305,11 +1306,17 @@ class MemoryService(IntegrationService):
         # donde si decide algo: elegir modo hibrido.
         multi_term = len(query_text.split()) > 1
         candidate_limit = max(limit * 12, 60) if multi_term else limit
-        legacy = self._legacy_candidates(query_text, candidate_limit, statuses, normalized_scopes)
-        if not include_sensitive:
-            legacy = [claim for claim in legacy if not is_sensitive_claim(claim)]
-        # Visibility: filter out private claims from other agents
-        legacy = _filter_agent_visibility(legacy, requesting_agent)
+        def _authorize(claims: list[Claim]) -> list[Claim]:
+            if not include_sensitive:
+                claims = [claim for claim in claims if not is_sensitive_claim(claim)]
+            # Visibility: filter out private claims from other agents
+            return _filter_agent_visibility(claims, requesting_agent)
+
+        # Authorize while paging (F-14): unauthorized matches cannot use up
+        # the candidate budget and hide an authorized lexical match.
+        legacy = self._legacy_candidates(
+            query_text, candidate_limit, statuses, normalized_scopes, authorize=_authorize
+        )
         ranked_rows = rank_claim_rows(
             query_text,
             legacy,
@@ -1341,27 +1348,44 @@ class MemoryService(IntegrationService):
         limit: int,
         statuses: list[str],
         normalized_scopes: list[str] | None,
+        *,
+        authorize: Callable[[list[Claim]], list[Claim]] | None = None,
     ) -> list[Claim]:
-        """Resolve planner OR expressions without exposing raw FTS syntax."""
+        """Resolve planner OR expressions without exposing raw FTS syntax.
+
+        With ``authorize``, the lexical window keeps growing until ``limit``
+        rows survive it (review F-14); without it the fetch is one bounded
+        window, as before.
+        """
         queries = [query_text]
         if " OR " in query_text:
-            queries = [term for term in query_text.split(" OR ") if term]
-        merged: dict[int, Claim] = {}
-        for text_query in queries:
-            claims = self.store.list_claims(
-                limit=limit,
-                text_query=text_query,
-                status_in=statuses,
-                include_archived=False,
-                include_citations=True,
-                scope_allowlist=normalized_scopes,
-                tenant_id=self.tenant_id,
-            )
-            for claim in claims:
-                if not claim_is_temporally_current(claim):
-                    continue
-                merged.setdefault(claim.id, claim)
-        return list(merged.values())[:limit]
+            # Planner expansion must not become an unbounded query fan-out.
+            queries = list(dict.fromkeys(term for term in query_text.split(" OR ") if term))[:32]
+
+        def fetch(window: int) -> tuple[list[Claim], bool]:
+            merged: dict[int, Claim] = {}
+            exhausted = True
+            for text_query in queries:
+                claims = self.store.list_claims(
+                    limit=window,
+                    text_query=text_query,
+                    status_in=statuses,
+                    include_archived=False,
+                    include_citations=True,
+                    scope_allowlist=normalized_scopes,
+                    tenant_id=self.tenant_id,
+                )
+                if len(claims) >= window:
+                    exhausted = False
+                for claim in claims:
+                    if not claim_is_temporally_current(claim):
+                        continue
+                    merged.setdefault(claim.id, claim)
+            return list(merged.values()), exhausted
+
+        if authorize is None:
+            return fetch(limit)[0][:limit]
+        return page_authorized_lexical(fetch, limit, authorize, terms=len(queries))
 
     @observed()
     def query_rows(
@@ -1381,9 +1405,13 @@ class MemoryService(IntegrationService):
         requesting_agent: str | None = None,
         query_type: str | None = None,
         record_accesses: bool = True,
+        graph_mode: str | None = None,
     ) -> list[dict[str, Any]]:
         if limit <= 0:
             return []
+        # Opt-in claim-graph expansion (MEMORYMASTER_RECALL_GRAPH_MODE, default
+        # off). An explicit argument overrides the environment.
+        effective_graph_mode = graph_expansion.resolve_graph_mode(graph_mode)
 
         requesting_agent = self._effective_requesting_agent(requesting_agent)
 
@@ -1416,7 +1444,7 @@ class MemoryService(IntegrationService):
             retrieval_mode = "hybrid"
 
         if retrieval_mode == "legacy":
-            return self._query_legacy_mode(
+            rows = self._query_legacy_mode(
                 query_text,
                 limit,
                 statuses,
@@ -1424,6 +1452,11 @@ class MemoryService(IntegrationService):
                 include_sensitive,
                 requesting_agent,
                 record_accesses,
+            )
+            return graph_expansion.recall_with_graph(
+                self, rows, query_text, limit, mode=effective_graph_mode, statuses=statuses,
+                scope_allowlist=normalized_scopes, requesting_agent=requesting_agent,
+                visibility_filter=_filter_agent_visibility,
             )
 
         use_llm_rerank = _llm_rerank_enabled()
@@ -1433,7 +1466,13 @@ class MemoryService(IntegrationService):
         # the corpus generation (bumped by claim-write triggers) is unchanged.
         cache_path = None
         cache_key = None
-        if query_cache.cache_enabled() and not getattr(self.store, "read_only", False):
+        # Graph expansion recomputes supports on every call, so it bypasses
+        # the result cache instead of serving rows without their explanation.
+        if (
+            query_cache.cache_enabled()
+            and not getattr(self.store, "read_only", False)
+            and effective_graph_mode == "off"
+        ):
             cache_path = query_cache.sqlite_db_path(self.store)
             if cache_path:
                 cache_key = query_cache.make_cache_key(query_text, {
@@ -1442,6 +1481,10 @@ class MemoryService(IntegrationService):
                     "sensitive": include_sensitive, "query_type": query_type,
                     "tenant": self.tenant_id or "", "enrich": enrich_with_entities,
                     "llm_rerank": use_llm_rerank,
+                    # v2 widens the semantic admission pool and unions an
+                    # authorized lexical stream.  Narrow v1 cache entries can
+                    # omit a now-admissible claim even at the same generation.
+                    "candidate_pool": "v2",
                     # Per-agent visibility differs per requester; keying on it
                     # prevents serving agentA's PRIVATE claims to agentB.
                     "agent": requesting_agent or "",
@@ -1465,21 +1508,12 @@ class MemoryService(IntegrationService):
         # not whatever it is after ranking/LLM-rerank (which a concurrent claim
         # write could have bumped). See query_cache.write TOCTOU note.
         cache_generation = query_cache.read_generation(cache_path) if cache_path else 0
-        candidate_limit = max(limit * 6, 60, 50 if use_llm_rerank else 0)
-        candidates = self.store.list_claims(
-            limit=candidate_limit,
-            status_in=statuses,
-            include_archived=False,
-            include_citations=True,
-            scope_allowlist=normalized_scopes,
-            tenant_id=self.tenant_id,
+        candidates = hybrid_candidates(
+            self, query_text, limit=limit, statuses=statuses,
+            normalized_scopes=normalized_scopes, requesting_agent=requesting_agent,
+            include_sensitive=include_sensitive, use_llm_rerank=use_llm_rerank,
+            visibility_filter=_filter_agent_visibility,
         )
-        candidates = [claim for claim in candidates if claim_is_temporally_current(claim)]
-        if not include_sensitive:
-            candidates = [claim for claim in candidates if not is_sensitive_claim(claim)]
-        # Visibility: filter out private claims from other agents (parity with
-        # the legacy path; without this the hybrid path leaks cross-agent data).
-        candidates = _filter_agent_visibility(candidates, requesting_agent)
         semantic = False
         if vector_hook is None and hasattr(self.store, "vector_scores"):
             # Compute the query vector once and pass it through to storage. This
@@ -1531,16 +1565,12 @@ class MemoryService(IntegrationService):
             results = rerank_with_llm(query_text, results, top_k=limit)
         if record_accesses:
             self._record_accesses(results, query_text=query_text)
-        if enrich_with_entities:
-            results = self._enrich_with_entity_graph(
-                results,
-                query_text,
-                limit,
-                scope_allowlist=normalized_scopes,
-                allow_sensitive=include_sensitive,
-                statuses=statuses,
-                requesting_agent=requesting_agent,
-            )
+        results = graph_expansion.recall_with_graph(
+            self, results, query_text, limit, mode=effective_graph_mode, statuses=statuses,
+            scope_allowlist=normalized_scopes, requesting_agent=requesting_agent,
+            visibility_filter=_filter_agent_visibility,
+            enrich_with_entities=enrich_with_entities, allow_sensitive=include_sensitive,
+        )
         if cache_path and cache_key:
             query_cache.write(cache_path, cache_key, [
                 {
@@ -1624,92 +1654,6 @@ class MemoryService(IntegrationService):
                 "breakdown": stub.get("breakdown"),
             })
         return rows
-
-    def _enrich_with_entity_graph(
-        self,
-        results: list[dict[str, Any]],
-        query_text: str,
-        limit: int,
-        *,
-        scope_allowlist: list[str] | None = None,
-        allow_sensitive: bool = False,
-        statuses: list[str] | None = None,
-        requesting_agent: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """Merge governed entity candidates without making graph retrieval default.
-
-        Entity paths are discovery hints only: every graph candidate is
-        rehydrated through the authoritative claim store and rechecked against
-        the same lifecycle, tenant, scope, sensitivity, and principal rules as
-        ranked rows. Valid graph evidence reserves result slots so a full
-        lexical top-k cannot turn opt-in enrichment into a vacancy-only path.
-        """
-        from memorymaster.knowledge.entity_graph import EntityGraph
-
-        query_words = [
-            word for word in query_text.split() if len(word) > 3 and word[0].isupper()
-        ]
-        if not query_words:
-            return results
-        db_target = str(
-            getattr(self.store, "db_path", "") or getattr(self.store, "dsn", "")
-        )
-        if not db_target:
-            return results
-        graph = EntityGraph(db_target, read_only=True)
-        related = graph.find_related_claims_explained(
-            query_words,
-            hops=2,
-            limit=limit,
-            scope_allowlist=scope_allowlist,
-        )
-        existing_ids = {
-            row["claim"].id for row in results if hasattr(row.get("claim"), "id")
-        }
-        allowed_statuses = set(statuses or ("confirmed",))
-        graph_rows: list[dict[str, Any]] = []
-        for explanation in related:
-            claim_id = int(explanation["claim_id"])
-            if claim_id in existing_ids:
-                continue
-            claim = self.store.get_claim(claim_id, include_citations=True)
-            if claim is None or claim.status not in allowed_statuses:
-                continue
-            if not claim_is_temporally_current(claim):
-                continue
-            if self.tenant_id is not None and claim.tenant_id != self.tenant_id:
-                continue
-            if scope_allowlist is not None and claim.scope not in scope_allowlist:
-                continue
-            if not allow_sensitive and is_sensitive_claim(claim):
-                continue
-            if not _filter_agent_visibility([claim], requesting_agent):
-                continue
-            graph_rows.append(self._entity_graph_row(claim, explanation=explanation))
-            existing_ids.add(claim.id)
-
-        if not graph_rows:
-            return results[:limit]
-        graph_rows = graph_rows[:limit]
-        lexical_limit = max(0, limit - len(graph_rows))
-        return results[:lexical_limit] + graph_rows
-
-    def _entity_graph_row(
-        self, claim: Claim, *, explanation: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
-        return {
-            "claim": claim,
-            "status": claim.status,
-            "annotation": self._annotation_for_claim(claim),
-            "score": 0.3,
-            "lexical_score": 0.0,
-            "freshness_score": 0.0,
-            "confidence_score": claim.confidence,
-            "vector_score": 0.0,
-            "source": "entity_graph",
-            "breakdown": {"entity_graph": explanation or {}},
-            "graph_explanation": explanation or {},
-        }
 
     def _record_accesses(self, rows: list[dict[str, Any]], query_text: str = "") -> None:
         """Record access + feedback for each claim returned by a query.

@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from memorymaster.recall.planner import RetrievalRequest
 from memorymaster.knowledge.skill_schema import is_skill
 from memorymaster.knowledge.skills import recall_skills
 from memorymaster.knowledge.graph_observation_recall import (
@@ -124,7 +125,7 @@ def query_context_bundle(
         observation_text, observations = pack_observations(
             candidates, token_budget=observation_budget
         )
-    observation_reserved = estimate_tokens(observation_text) + 1 if observation_text else 0
+    observation_reserved = (len(observation_text) + 5) // 4 if observation_text else 0
     skill_text, skills = _selected_skill_text(
         service,
         query,
@@ -133,7 +134,7 @@ def query_context_bundle(
         include_skills=include_skills,
         skill_limit=skill_limit,
     )
-    skill_reserved = estimate_tokens(skill_text) + 1 if skill_text else 0
+    skill_reserved = (len(skill_text) + 5) // 4 if skill_text else 0
     reserved = observation_reserved + skill_reserved
     observation_count = sum(
         len(
@@ -143,33 +144,29 @@ def query_context_bundle(
         )
         for scope in scope_allowlist
     )
-    result = service.query_for_context(
-        query=query,
-        token_budget=max(1, token_budget - reserved),
+    retrieval = service.retrieve(RetrievalRequest(
+        query_text=query,
         limit=100 + min(observation_count, 400),
-        output_format=output_format,
         retrieval_mode=retrieval_mode,
         trust_mode=trust_mode,
-        scope_allowlist=scope_allowlist,
-    )
+        scope_allowlist=tuple(scope_allowlist),
+    ))
     ordinary_rows = [
-        row for row in result.rows if getattr(row["claim"], "claim_type", None) != "observation"
+        row for row in retrieval.rows
+        if getattr(row["claim"], "claim_type", None) != "observation" and not is_skill(row["claim"])
     ][:100]
-    if include_skills:
-        ordinary_rows = [row for row in ordinary_rows if not is_skill(row["claim"])]
-    if len(ordinary_rows) != len(result.rows):
-        result = pack_context(
-            ordinary_rows,
-            token_budget=max(1, token_budget - reserved),
-            output_format=output_format,
-        )
+    result = pack_context(
+        ordinary_rows,
+        token_budget=token_budget - reserved,
+        output_format=output_format,
+    )
     sections = [text for text in (result.output, observation_text, skill_text) if text]
     output = "\n\n".join(sections)
     return ContextBundle(
         output=output,
         rows=result.rows,
         skills=skills,
-        tokens_used=result.tokens_used + reserved,
+        tokens_used=estimate_tokens(output),
         token_budget=token_budget,
         output_format=result.format,
         observations=observations,

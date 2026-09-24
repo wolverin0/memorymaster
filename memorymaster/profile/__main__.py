@@ -47,12 +47,14 @@ def main(argv: list[str] | None = None) -> int:
     else:
         from memorymaster.core.service import MemoryService
 
-        MemoryService(args.db, workspace_root=Path(args.workspace)).init_db()
+        service = MemoryService(args.db, workspace_root=Path(args.workspace))
+        service.init_db()
         result = run_compiled_profile(
             args.db,
             output_dir=args.output_dir or None,
             force=bool(args.force),
             max_map_calls=args.max_map_calls,
+            tenant_id=service.tenant_id,
         )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0 if result.get("ok", True) else 1

@@ -13,7 +13,7 @@ from memorymaster.core.service import MemoryService
 from memorymaster.dreaming.models import DreamCandidate
 from memorymaster.dreaming.providers import consolidation_from_raw, consolidation_prompt
 from memorymaster.dreaming.source_review import (
-    CHECKS, bind_source, parse_review, record_review, review_allows_confirmation,
+    CHECKS, REVIEW_EVENT, bind_source, parse_review, record_review, review_allows_confirmation,
 )
 from memorymaster.govern.jobs import validator
 from memorymaster.govern.llm_steward import _confirm_candidate_cas
@@ -41,8 +41,12 @@ def capture():
 
 
 def accepted(bound):
-    return {"verdict": "accept", "source_hash": bound.source_context["source_hash"],
-            "checks": dict.fromkeys(CHECKS, True)}
+    # Synthetic verdict exercises receipt enforcement, not model entailment accuracy.
+    return {"version": 2, "verdict": "accept", "source_hash": bound.source_context["source_hash"],
+            "checks": dict.fromkeys(CHECKS, True), "selection": {
+                "destination": "memory", "kind": "constraint", "novelty": "new",
+                "scope": bound.source_context["capture_scope"], "memory_key": "importer.limit.30_days",
+                "future_use": "Apply the established retention limit during future importer runs."}}
 
 
 def ingest(service):
@@ -109,7 +113,7 @@ def test_review_receipt_binds_claim_and_citations_and_is_replay_safe(service):
     record_review(service.store, claim.id, bound, review)
     assert review_allows_confirmation(service.store, claim.id)
     events = service.list_events(claim_id=claim.id, event_type="audit", limit=100)
-    assert sum(e.details == "dream_source_review_v1" for e in events) == 1
+    assert sum(e.details == REVIEW_EVENT for e in events) == 1
     with service.store.connect() as conn:
         conn.execute("UPDATE citations SET excerpt = 'different evidence' WHERE claim_id = ?", (claim.id,))
         conn.commit()
@@ -216,7 +220,7 @@ def test_worker_uses_one_existing_gemini_call_and_persists_review(tmp_path, serv
         decision = {"candidate_id": candidate().candidate_id, "action": "add", "confidence": .8}
         if not omit_review:
             # Synthetic verdict tests orchestration, not a claim of model precision.
-            decision["source_review"] = {"verdict": "needs_evidence",
+            decision["source_review"] = {**accepted(bind_source(candidate(), row)), "verdict": "needs_evidence",
                 "source_hash": supplied["source_context"]["source_hash"], "checks": dict.fromkeys(CHECKS, False)}
         return SimpleNamespace(text=json.dumps({"decisions": [decision]}), input_tokens=1, output_tokens=1)
 
@@ -232,10 +236,10 @@ def test_worker_uses_one_existing_gemini_call_and_persists_review(tmp_path, serv
     else:
         assert result["errors"] == 0
         claims = service.list_claims(limit=10)
-        assert len(claims) == 1 and claims[0].status == "candidate"
-        assert not review_allows_confirmation(service.store, claims[0].id)
+        assert claims == []  # Rejected source evidence remains only in the capture ledger.
+        assert ledger.get_capture(capture_id)["decisions"][0]["action"] == "ignore"
         ledger.mark_retryable(capture_id, "crash-fixture", "interrupted after application")
         worker.run(apply_candidates=True)
         assert len(calls) == 1
-        assert len(service.list_claims(limit=10)) == 1
+        assert service.list_claims(limit=10) == []
         assert len(ledger.get_capture(capture_id)["decisions"]) == 1

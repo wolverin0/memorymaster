@@ -1,12 +1,67 @@
-<!-- doc-head: release history; 4.8.9 operational installer corrections locally deployed -->
+<!-- doc-head: release history; 4.9.0 release candidate (live TypeSafe Jev decisions with an RL-grade decision ledger, weekly-review cure F-01..F-21, entity-enrichment support authorization, opt-in graph recall); 4.8.9 locally deployed -->
 Covers user-visible changes, migrations, governance boundaries, workflow analytics, and operational fixes.
-Key terms: workflow intelligence, rule observations, graph observations, governed capture, recall, lineage.
+Key terms: workflow intelligence, rule observations, graph observations, governed capture, recall, lineage, graph expansion.
 Read when upgrading MemoryMaster, preparing release notes, or checking migration and rollback impact.
 <!-- /doc-head -->
 
 # Changelog
 
 ## [Unreleased]
+
+### 4.9.0 (release candidate) - live Jev decisions and the weekly-review cure
+
+- TypeSafe Jev (System One, `jev-1.13.0`) judges eight surfaces through one
+  engine (`memorymaster/decisions/`): S1 stale-claim revalidation, S2 prompt
+  and MCP recall selection, S3 Dreaming ingest triage (`held`, releasable),
+  S4 duplicate/contradiction/supersession proposals, S5 skill selection, S6
+  prompt hints, S7 retrieval routing, S8 session-start injection. Modes
+  `off`/`shadow`/`live` per surface (`MEMORYMASTER_JEV_MODE`,
+  `MEMORYMASTER_JEV_<SURFACE>`); default off. Every live action is reversible
+  or a steward proposal; SQLite stays authoritative.
+- Decision ledger `~/.memorymaster/decisions.db` (append-only): every decision,
+  fallback, skip, exposure, delivery, propensity and outcome, plus a durable
+  send intent written before any request leaves. Outcome joiners (turn usage,
+  lifecycle tail, skill invocation, held release, S3 consolidation verdicts),
+  dashboard "Decisions" tab with a weekly operator review queue, operational
+  review `jev_decisions` and `checkpoint_delivery` checks, calibration, OPE and
+  training-export scripts, `jev-*` CLI commands.
+- Safety: one egress redactor (home paths in every documented spelling, phone
+  numbers, credentials; credential-grade findings block the request), daily
+  USD cap (US$2) and RPM cap that also count unrecorded requests, per-surface
+  breaker with one shadow probe per minute while open, hook decisions bounded
+  to deadline + 100 ms even with a locked ledger, late answers never act,
+  unlogged decisions never act.
+- Transport: stdlib `http.client` + system trust store (ruling R6); httpx is no
+  longer a core dependency. Measured cold hook process 0.43-0.69 s to answer
+  versus 1.0-1.25 s with httpx.
+- Weekly-review cure (F-01..F-21, `.planning/audits/2026-09-23-weekly-claude-review/REPORT.md`):
+  bounded Dreaming retries, token accounting on failed calls, packed
+  consolidation batches, lease renewal, SQL status paging, authorized lexical
+  paging, lazy sentence-transformers, `PRAGMA optimize` after migrations,
+  scheduled archive gated on a recorded "no longer useful" judgment, explicit
+  operator/automation actors, several retrieval canaries, compiled profile fed
+  from confirmed claims and Dreaming. Migrations 0026 and 0027 alter the
+  compiled-profile tables.
+
+### 4.9.0 - recall graph
+
+- Security: the opt-in entity enrichment (`query_rows(enrich_with_entities=True)`)
+  now re-authorizes every claim supporting a graph path (tenant, scope,
+  principal, sensitivity, active status, citation, never generated output)
+  before its id and citations appear in `graph_explanation`; a row whose
+  supports do not all pass is dropped. Before, another principal's private
+  claim, another tenant's claim or an out-of-scope claim could be exposed as
+  a support.
+- Opt-in `MEMORYMASTER_RECALL_GRAPH_MODE` (default `off`; per call
+  `query_rows(graph_mode=...)`): `vector_first` walks existing claim links,
+  claim edges and supported entity relations 1-2 hops from the claims recall
+  already authorized, under fanout/candidate/token/deadline caps
+  (`MEMORYMASTER_RECALL_GRAPH_EXPAND_*`). Every expanded claim and support is
+  rehydrated and re-authorized in SQLite, at least one base row is kept, and
+  any fallback keeps the current recall. `graph_first` is an evaluation arm.
+  Not enabled anywhere; ranking benefit is unmeasured (no relevance labels).
+- The graph recall step moved from `core/service.py` to
+  `recall/graph_expansion.py` (`recall_with_graph`); no behaviour change.
 
 ### 4.8.9 local deployment - 2026-09-06 UTC
 
