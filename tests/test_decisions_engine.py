@@ -466,7 +466,9 @@ def test_end_to_end_with_real_transport_against_local_server(tmp_path):
     try:
         config = DecisionConfig.from_env({"MEMORYMASTER_JEV_MODE": "live",
                                           "MEMORYMASTER_DECISIONS_DB": str(tmp_path / "decisions.db"),
-                                          "MEMORYMASTER_JEV_EXPLORE_RECALL": "0"})
+                                          "MEMORYMASTER_JEV_EXPLORE_RECALL": "0",
+                                          # Windows CI 2026-09-24 timed out at the 900 ms default
+                                          "MEMORYMASTER_JEV_HOOK_DEADLINE_MS": str(int(UNTIMED_HOOK_S * 1000))})
         engine = DecisionEngine(config, key_lookup=lambda: KEY,
                                 transport_factory=lambda key: HttpTransport(key, endpoint=server.url))
         decision = decide_recall(engine)
@@ -879,7 +881,8 @@ _BREAKER_HOOK_PROCESS = textwrap.dedent(
             sent.append(1)
             return TransportResult(529, None, 1, 1, "http_529")
 
-    config = DecisionConfig.from_env({"MEMORYMASTER_JEV_MODE": "live", "MEMORYMASTER_DECISIONS_DB": path})
+    config = DecisionConfig.from_env({"MEMORYMASTER_JEV_MODE": "live", "MEMORYMASTER_DECISIONS_DB": path,
+                                      "MEMORYMASTER_JEV_HOOK_DEADLINE_MS": "10000"})  # not a deadline test
     state, bound = q.build_recall("how do we run tests?", "memorymaster",
                                   [("claim:1", "Run pytest"), ("claim:2", "Use WAL")])
     reasons = []
