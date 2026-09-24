@@ -9,6 +9,7 @@ current recall on no seeds / no valid supports / error / timeout.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -40,6 +41,10 @@ def _hermetic_graph_env(monkeypatch, tmp_path_factory):
         "MEMORYMASTER_LLM_RERANK",
     ):
         monkeypatch.delenv(name, raising=False)
+    if os.environ.get("MEMORYMASTER_SKIP_PERF"):
+        # Shared CI runners: a 250 ms expansion fell back to "timeout" before its stats were
+        # measured (Windows 2026-09-24). Deadline tests pass their own ExpansionCaps.
+        monkeypatch.setenv("MEMORYMASTER_RECALL_GRAPH_EXPAND_DEADLINE_MS", "900")
     monkeypatch.setenv("MEMORYMASTER_EMBEDDING_PROVIDER", "hash")
     monkeypatch.setenv(
         "MEMORYMASTER_DECISIONS_DB",
