@@ -264,6 +264,8 @@ def test_retired_or_inactive_candidate_is_never_expanded(tmp_path, monkeypatch, 
 
 @pytest.mark.parametrize("status", ["archived", "superseded", "stale"])
 def test_retired_support_invalidates_the_path(tmp_path, monkeypatch, status):
+    from memorymaster.recall import graph_expansion
+
     g, w = _qdrant_world(tmp_path)
     # Re-point the only relation support to a retired claim.
     retired = g.claim("Qdrant was on the Atlas NAS until the migration", status=status)
@@ -271,14 +273,18 @@ def test_retired_support_invalidates_the_path(tmp_path, monkeypatch, status):
     g.relation(w["qdrant"], w["atlas"], "located_in", retired.id)
     g.sql("DELETE FROM claim_entity_links WHERE claim_id = ?", (w["support"].id,))
     monkeypatch.setenv("MEMORYMASTER_RECALL_GRAPH_MODE", "vector_first")
+    # Not a deadline test: Windows CI (2026-09-24) twice ran out the expansion deadline before
+    # the rejections were measured, even at the 900 ms cap. The clock is frozen here.
+    monkeypatch.setattr(graph_expansion, "_clock", lambda: 0.0)
     rows = g.rows("qdrant recall vectors", include_stale=True)
     assert w["target"].id not in _ids(rows)
     assert all(row.get("source") != "graph_expansion" for row in rows)
-    stats = g.svc.last_graph_expansion["stats"]
+    outcome = g.svc.last_graph_expansion
+    stats = outcome["stats"]
     if status in {"archived", "superseded"}:
-        assert stats["retired_rejections"] >= 1  # measured, not just filtered
+        assert stats.get("retired_rejections", 0) >= 1, outcome  # measured, not just filtered
     else:
-        assert stats["rejections"].get("support:inactive", 0) >= 1
+        assert stats.get("rejections", {}).get("support:inactive", 0) >= 1, outcome
 
 
 def test_support_with_retired_source_evidence_is_rejected(tmp_path, monkeypatch):
