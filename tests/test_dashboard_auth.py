@@ -15,7 +15,6 @@ import pytest
 
 from memorymaster.surfaces import dashboard_auth
 from memorymaster.surfaces.dashboard_auth import (
-    AuthDecision,
     BindUnsafeError,
     DashboardRole,
 )
@@ -27,6 +26,7 @@ def _clear_env(monkeypatch) -> Iterator[None]:
         "MEMORYMASTER_DASHBOARD_TOKEN_VIEWER",
         "MEMORYMASTER_DASHBOARD_TOKEN_OPERATOR",
         "MEMORYMASTER_DASHBOARD_UNSAFE_BIND",
+        "MEMORYMASTER_DASHBOARD_ALLOWED_ORIGINS",
     ):
         monkeypatch.delenv(var, raising=False)
     yield
@@ -120,9 +120,9 @@ def test_authorize_operator_allowed_on_post(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_csrf_legacy_mode_always_passes():
+def test_csrf_legacy_mode_rejects_foreign_origin():
     decision = dashboard_auth.check_csrf({"Origin": "http://evil.example"}, configured_host_port="127.0.0.1:8765")
-    assert decision.ok is True
+    assert decision.ok is False
 
 
 def test_csrf_no_origin_header_passes(monkeypatch):
@@ -170,11 +170,13 @@ def test_bind_non_loopback_refused_in_legacy_mode():
 
 def test_bind_non_loopback_allowed_with_auth_token(monkeypatch):
     monkeypatch.setenv("MEMORYMASTER_DASHBOARD_TOKEN_OPERATOR", "op")
+    monkeypatch.setenv("MEMORYMASTER_DASHBOARD_ALLOWED_ORIGINS", "http://dashboard.example:8765")
     dashboard_auth.check_bind_safety("0.0.0.0")  # no raise
 
 
 def test_bind_non_loopback_allowed_with_unsafe_opt_in(monkeypatch, caplog):
     monkeypatch.setenv("MEMORYMASTER_DASHBOARD_UNSAFE_BIND", "1")
+    monkeypatch.setenv("MEMORYMASTER_DASHBOARD_ALLOWED_ORIGINS", "http://dashboard.example:8765")
     import logging
     with caplog.at_level(logging.WARNING, logger="memorymaster.surfaces.dashboard_auth"):
         dashboard_auth.check_bind_safety("0.0.0.0")

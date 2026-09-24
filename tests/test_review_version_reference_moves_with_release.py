@@ -43,17 +43,24 @@ def test_windows_wrapper_omits_empty_version_override(tmp_path, pin):
     shell = shutil.which('powershell') or shutil.which('pwsh')
     if not shell:
         pytest.skip('PowerShell unavailable')
+    from memorymaster.operations.review_supervisor import _command
+
     root = Path(__file__).resolve().parents[1]
     source = (root / 'scripts/windows-operational-review.ps1').read_text()
     probe = tmp_path / 'args.ps1'
-    probe.write_text(source.split('\ntry {', 1)[0] + '\n$arguments | ConvertTo-Json\n')
+    # Keep the real wrapper, substituting only the child executable with a
+    # local PowerShell function that records its argv and never starts a review.
+    stub = '\nfunction Invoke-FixturePython { ConvertTo-Json -InputObject @($args); $global:LASTEXITCODE=0 }\n'
+    probe.write_text(source.replace('$ErrorActionPreference = "Stop"', '$ErrorActionPreference = "Stop"' + stub))
     config = tmp_path / 'config.json'
-    config.write_text(json.dumps({'db': 'fixture.db', 'expected_version': pin,
+    payload = {'python': 'Invoke-FixturePython', 'db': 'fixture.db', 'expected_version': pin,
         'lookback_hours': 8, 'canary_query': 'fixture query', 'canary_human_id': 'mm-fixture',
-        'output_root': str(tmp_path / 'output')}))
+        'output_root': str(tmp_path / 'output')}
+    config.write_text(json.dumps(payload))
     result = subprocess.run([shell, '-NoProfile', '-File', str(probe), '-ConfigPath', str(config)],
                             capture_output=True, text=True, check=True)
-    args = json.loads(result.stdout)
+    assert json.loads(result.stdout) == ['-m', 'memorymaster.operations.review_supervisor', '--config', str(config)]
+    args = _command(payload)
     assert ('--expected-version' in args) is bool(pin)
     if pin:
         assert args[args.index('--expected-version') + 1] == pin

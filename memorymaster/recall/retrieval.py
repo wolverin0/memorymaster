@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import re
@@ -191,7 +192,11 @@ _SUPERSEDED_PENDING_PENALTY = -0.40
 _PENDING_SUPERSESSION_TTL_SECONDS = 300.0
 
 
-def pending_supersession_ids(service: object, *, use_cache: bool = True) -> frozenset[int]:
+class PendingSupersessionScanError(RuntimeError):
+    """``pending_supersession_ids(strict=True)`` could not scan the proposal log."""
+
+
+def pending_supersession_ids(service: object, *, use_cache: bool = True, strict: bool = False) -> frozenset[int]:
     """Claim ids whose supersession is PROPOSED but not applied.
 
     Declaring ``supersedes_claim_id`` files a
@@ -210,7 +215,9 @@ def pending_supersession_ids(service: object, *, use_cache: bool = True) -> froz
 
     Never raises: on any fault it returns an empty set, which is exactly "rank
     as before". A fault is LOGGED and NOT cached, so it does not masquerade as
-    "nothing pending" for the next five minutes.
+    "nothing pending" for the next five minutes. ``strict=True`` is for a caller
+    that must fail closed instead (S1 revalidation): the fault raises
+    :class:`PendingSupersessionScanError`, still uncached.
     """
     import json
     import time
@@ -257,7 +264,9 @@ def pending_supersession_ids(service: object, *, use_cache: bool = True) -> froz
             claim_id = getattr(event, "claim_id", None)
             if isinstance(claim_id, int) and claim_id > 0:
                 ids.add(claim_id)
-    except Exception:  # noqa: BLE001 - retrieval must survive a bookkeeping fault
+    except Exception as exc:  # noqa: BLE001 - retrieval must survive a bookkeeping fault
+        if strict:
+            raise PendingSupersessionScanError("pending supersession scan failed") from exc
         _LOG.warning(
             "pending supersession scan failed; ranking WITHOUT the demotion this call",
             exc_info=True,
@@ -474,8 +483,40 @@ def _compute_claim_score(
     return parts.relevance + parts.boosts
 
 
+_TRANSCRIPT_SUFFIXES = frozenset({"jsonl", "json", "txt", "log", "md"})
+
+
+def _normalize_session_locator(locator: str) -> str:
+    """One session, one key: strip, keep the path stem, casefold (review F-11).
+
+    A transcript path and its bare session id, ``\\`` vs ``/`` and case or
+    whitespace variants all name the same session. Only a transcript file
+    extension is dropped, so dotted ids such as ``run.1`` stay distinct.
+    """
+    value = locator.strip()
+    tail = value.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    base, dot, suffix = tail.rpartition(".")
+    is_transcript = dot and base.strip(".") and suffix.casefold() in _TRANSCRIPT_SUFFIXES
+    stem = base if is_transcript else tail
+    return (stem.strip() or value).casefold()
+
+
 def _source_session_key(row: RankedClaim) -> str:
     claim = row.claim
+    # Generic agent names span many sessions. Prefer explicit session lineage
+    # when it identifies one session; unrelated file/evidence citations do not.
+    sessions = {
+        _normalize_session_locator(citation.locator)
+        for citation in claim.citations
+        if citation.source == "session" and citation.locator and citation.locator.strip()
+    }
+    if len(sessions) == 1:
+        # Drop traces must not expose raw session locators (which can be paths).
+        # The session, not the writing agent, is the unit being capped: the
+        # same session under two source_agent values is still one session.
+        session = next(iter(sessions))
+        identity = repr((claim.tenant_id, session))
+        return "session:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
     if claim.source_agent:
         return claim.source_agent
     if claim.citations:

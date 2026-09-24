@@ -52,6 +52,12 @@
     "install-gitnexus-hook",
     "install-hook",
     "integrity",
+    "jev-export",
+    "jev-prune",
+    "jev-release-held",
+    "jev-revalidate",
+    "jev-review-queue",
+    "jev-status",
     "label-evidence-item",
     "label-source-item",
     "link",
@@ -133,11 +139,11 @@
     "memorymaster-workflow-hook"
   ],
   "counts": {
-    "cli_commands": 120,
+    "cli_commands": 126,
     "console_entrypoints": 9,
     "mcp_tools": 51,
     "ops_cli_commands": 5,
-    "pytest_test_functions": 4221
+    "pytest_test_functions": 5048
   },
   "feature_profile_matrix": {
     "capture_hook": [
@@ -259,5 +265,5 @@
       "mcp"
     ]
   },
-  "version": "4.8.9"
+  "version": "4.9.0"
 }

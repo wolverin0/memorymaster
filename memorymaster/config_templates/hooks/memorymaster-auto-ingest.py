@@ -24,8 +24,48 @@ def _enabled(name):
     return os.environ.get(name, "").strip().lower() not in ("", "0", "false", "no", "off")
 
 
-def _approve():
+TURN_USAGE_BUDGET_S = 0.3
+_JEV_MODE_ENVS = ("MEMORYMASTER_JEV_MODE", "MEMORYMASTER_JEV_RECALL", "MEMORYMASTER_JEV_SESSION")
+
+
+def _jev_may_be_on():
+    """Import-free pre-check: some Jev mode variable says shadow or live."""
+    return any(os.environ.get(name, "").strip().lower() in ("shadow", "live") for name in _JEV_MODE_ENVS)
+
+
+def _record_turn_usage(data):
+    """Jev outcome joiner for the finished turn (4.9.0): local files only, bounded, silent.
+
+    Runs after the approve JSON is written, whatever the STOP_* flags say. It never
+    writes to stdout and never changes the hook's decision: the work runs in a
+    daemon thread joined for at most TURN_USAGE_BUDGET_S, so a busy ledger or a
+    large transcript cannot hold the Stop hook.
+    """
+    if not isinstance(data, dict) or not _jev_may_be_on():
+        return
+
+    def work():
+        try:
+            from memorymaster.recall.jev_surfaces import record_stop_turn_usage
+
+            record_stop_turn_usage(data, db_path=DB_PATH)
+        except Exception:
+            pass
+
+    try:
+        import threading
+
+        worker = threading.Thread(target=work, name="memorymaster-turn-usage", daemon=True)
+        worker.start()
+        worker.join(TURN_USAGE_BUDGET_S)
+    except Exception:
+        pass
+
+
+def _approve(data=None):
     sys.stdout.write(json.dumps({"decision": "approve"}))
+    sys.stdout.flush()
+    _record_turn_usage(data)
 
 
 def _temporary_chunk(text):
@@ -345,11 +385,11 @@ def main():
 
     # If already in a save cycle, let through (prevents infinite loop)
     if stop_hook_active in (True, "True", "true"):
-        _approve()
+        _approve(data)
         return
 
     if not any((blocking, verbatim, extract, rule_mining)):
-        _approve()
+        _approve(data)
         return
 
     os.makedirs(STATE_DIR, exist_ok=True)
@@ -358,7 +398,7 @@ def main():
 
         ledger = CaptureLedger(capture_state_path())
     except Exception:
-        _approve()
+        _approve(data)
         return
 
     # Count human messages
@@ -418,7 +458,7 @@ def main():
             _run_rule_extraction,
         )
 
-    _approve()
+    _approve(data)
 
 
 if __name__ == "__main__":

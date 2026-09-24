@@ -36,6 +36,19 @@ _DREAM_EXTRA_PATTERNS = re.compile(
     # Personal/user-specific paths
     r"|[A-Z]:\\.*\\(?:OneDrive|Users\\[a-z])"
     r"|/home/\w+"
+    # Home directories in the remaining spellings (ruling R3): WSL mounts
+    # /mnt/<drive>/Users/<u>, Git Bash /c/Users/<u>, C:/Users/<u> and
+    # c:\users\<u> in any case, \\wsl$\<distro>\home\<u>, macOS /Users/<u>,
+    # lowercase /users/<u> and ~user/. This refuses whole memories on import AND
+    # export, so it spares what only looks alike: REST routes (/users/:id,
+    # /users/me, /users/42, /users/admin -- a real /Users/admin is still caught)
+    # and prose tildes (~ten minutes): a ~user counts only as a path, ~user/...
+    r"|(?<![\w.~-])(?:[a-z]:|/mnt/[a-z]|/[a-z])/users/(?![:{<\[$*])[^\s/\\\"'`<>|,;]+"
+    r"|(?<![\w.~-])/(?-i:Users)/(?![:{<\[$*])[^\s/\\\"'`<>|,;]+"
+    r"|(?<![\w.~-])/users/(?![:{<\[$*])(?!(?:me|self|current|admin|new|\d+)(?![\w-]))[^\s/\\\"'`<>|,;]+"
+    r"|(?<![\w])[a-z]:\\{1,2}users\\{1,2}[^\\\s\"'`<>|,;]+"
+    r"|(?:\\\\|//)(?:wsl\$|wsl\.localhost)[\\/][^\\/\s]+[\\/]home[\\/][^\\/\s]+"
+    r"|(?<![\w/~-])~[a-z_][\w-]*(?:\.[\w-]+)*[\\/]"
     # SSH/SCP command shapes — not credentials but memory-leaking host refs
     r"|ssh\s+.*\w+@"
     r"|sshpass\b"

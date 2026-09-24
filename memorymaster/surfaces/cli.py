@@ -34,6 +34,7 @@ from memorymaster.surfaces.cli_handlers_integrity import _handle_drain_spool, _h
 from memorymaster.surfaces.dreaming_cli import handle_dream_run, handle_dream_status
 from memorymaster.surfaces.session_scope import handle_session_scope
 from memorymaster.surfaces.cli_handlers_skills import SKILL_COMMAND_HANDLERS, register_skill_parsers
+from memorymaster.surfaces.cli_handlers_jev import JEV_COMMAND_HANDLERS, LEDGER_COMMANDS, register_jev_parsers
 from memorymaster.surfaces.cli_handlers_workflow import (
     WORKFLOW_COMMAND_HANDLERS,
     register_workflow_parser,
@@ -71,6 +72,7 @@ COMMAND_HANDLERS["demo"] = handle_demo
 COMMAND_HANDLERS["session-scope"] = handle_session_scope
 COMMAND_HANDLERS.update(SKILL_COMMAND_HANDLERS)
 COMMAND_HANDLERS.update(WORKFLOW_COMMAND_HANDLERS)
+COMMAND_HANDLERS.update(JEV_COMMAND_HANDLERS)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -460,6 +462,8 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_proposal.add_argument("--proposal-event-id", type=int, help="Specific steward proposal event id")
     resolve_proposal.add_argument("--claim-id", type=int, help="Resolve latest pending proposal for claim id")
     resolve_proposal.add_argument("--no-apply", action="store_true", help="When approving, do not apply state transition; only mark proposal approved")
+    resolve_proposal.add_argument("--actor", choices=["operator", "automation"], default=None,
+                                  help="Who resolves it (default operator); a Jev (source: jev) proposal needs an explicit --actor operator")
 
     link_cmd = sub.add_parser("link", help="Create a typed link between two claims")
     link_cmd.add_argument("source_id", help="Source claim numeric id or human_id")
@@ -822,6 +826,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     register_skill_parsers(sub)
     register_workflow_parser(sub)
+    register_jev_parsers(sub)
 
     return parser
 
@@ -842,6 +847,7 @@ def main(argv: list[str] | None = None) -> int:
         "qdrant-search",
         "dream-status",
         "workflow",
+        *LEDGER_COMMANDS,  # decisions ledger / Dreaming ledger only: never open the memory DB
     }
 
     try:

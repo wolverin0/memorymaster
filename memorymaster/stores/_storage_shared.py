@@ -180,6 +180,25 @@ def open_conn(
     return connect_with_retry(_open)
 
 
+def open_conn_bounded(db_path: str | Path) -> sqlite3.Connection:
+    """The ``open_conn`` envelope with no busy handler and no retry backoff.
+
+    For callers that must return within a hard deadline and do their own
+    precisely timed waiting (the decisions ledger in hooks): SQLite's busy
+    handler sleeps in Windows timer steps, so a short busy_timeout overshoots.
+    """
+    conn = sqlite3.connect(str(db_path), timeout=0)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 0")
+    except BaseException:
+        conn.close()
+        raise
+    return conn
+
+
 def connect_ro(db_path: str | Path, *, query_ms: int = DEFAULT_RO_BUSY_TIMEOUT_MS) -> sqlite3.Connection:
     """Open a strictly read-only SQLite connection.
 

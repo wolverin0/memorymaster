@@ -25,6 +25,10 @@ import logging
 import os
 from dataclasses import dataclass
 from enum import Enum
+from memorymaster.surfaces.dashboard_origins import (
+    WILDCARD_HOSTS, allowed_origins, explicit_origins, host_allowed, is_loopback,
+    normalize_origin, single_header,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +77,7 @@ def legacy_mode() -> bool:
     """True when no auth secrets are configured (back-compat path).
 
     Legacy mode preserves the pre-v3.19 behaviour for loopback bind — no
-    auth check, no CSRF. Bind safety still applies regardless.
+    auth check. Origin and Host validation still apply regardless.
     """
     return not (
         _env_token("MEMORYMASTER_DASHBOARD_TOKEN_VIEWER")
@@ -142,27 +146,31 @@ def authorize(decision: AuthDecision, *, method: str, route: str) -> AuthDecisio
     return decision
 
 
-def check_csrf(headers, *, configured_host_port: str | None) -> AuthDecision:
-    """Validate Origin/Referer for browser-originated POSTs.
+def check_csrf(headers, *, configured_host_port: str | None, origins=None) -> AuthDecision:
+    """Compare normalized origins exactly, including in token-free local mode."""
+    try:
+        origin = single_header(headers, "Origin")
+        referer = single_header(headers, "Referer") if origin is None else None
+        if origin is None and referer is None:
+            return AuthDecision(True)  # compatible local non-browser clients
+        if origins is None:
+            _, host, port = normalize_origin(f"http://{configured_host_port}")
+            origins = allowed_origins(host, port)
+        if normalize_origin(origin if origin is not None else referer, referer=origin is None) in origins:
+            return AuthDecision(True)
+    except (ValueError, UnicodeError, TypeError):
+        pass
+    return AuthDecision(False, reason="csrf_origin_mismatch", status=403)
 
-    Non-browser clients (curl, scripts, MCP-style integrations) typically
-    omit ``Origin`` — those requests pass through unchallenged. Browsers
-    always set ``Origin``; when present, it must contain the configured
-    host:port string. Returns 403 (``csrf_origin_mismatch``) on mismatch.
 
-    Legacy mode skips CSRF entirely.
-    """
-    if legacy_mode():
-        return AuthDecision(True)
-
-    origin = ""
-    if headers:
-        origin = headers.get("Origin", "") or headers.get("Referer", "") or ""
-    if not origin:
-        return AuthDecision(True)  # non-browser caller
-    if configured_host_port and configured_host_port not in origin:
-        return AuthDecision(False, reason="csrf_origin_mismatch", status=403)
-    return AuthDecision(True)
+def check_host(headers, *, origins) -> AuthDecision:
+    try:
+        value = single_header(headers, "Host")
+        if value and host_allowed(value, origins):
+            return AuthDecision(True)
+    except (ValueError, UnicodeError):
+        pass
+    return AuthDecision(False, reason="host_mismatch", status=403)
 
 
 def check_bind_safety(host: str) -> None:
@@ -173,8 +181,13 @@ def check_bind_safety(host: str) -> None:
     not set. Otherwise returns silently. Logs a WARNING for the unsafe opt-in
     case so operators see they're running exposed.
     """
-    loopback_hosts = {"127.0.0.1", "::1", "localhost", ""}
-    if host in loopback_hosts:
+    try:
+        explicit = explicit_origins()
+    except (ValueError, UnicodeError) as exc:
+        raise BindUnsafeError("Invalid MEMORYMASTER_DASHBOARD_ALLOWED_ORIGINS") from exc
+    if host in WILDCARD_HOSTS and not explicit:
+        raise BindUnsafeError("Wildcard bind requires MEMORYMASTER_DASHBOARD_ALLOWED_ORIGINS")
+    if is_loopback(host):
         return
     if not legacy_mode():
         return  # token-based auth is enforced; non-loopback bind is acceptable

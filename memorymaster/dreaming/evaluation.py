@@ -110,6 +110,8 @@ def evaluate_records(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
         "schema": "memorymaster.dreaming.eval.v1",
         "labeled_decisions": len(valid),
         "human_reviews": reviewed_count,
+        "label_origins": dict(Counter(str(row.get("label_origin", "unknown")) for row in valid)),
+        "assessment_dimensions": _assessment_dimensions(valid),
         "invalid_records": invalid,
         "duplicate_record_ids": duplicates,
         "counts": counts,
@@ -118,3 +120,13 @@ def evaluate_records(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
         "failed_gates": failed,
         "activation_ready": not failed,
     }
+
+
+def _assessment_dimensions(records: list[dict]) -> dict:
+    """Keep semantic support, current validity and usefulness distinct from exact quotes."""
+    dimensions = {}
+    for name in ("evidence_exact", "semantic_sufficiency", "current_validity", "useful"):
+        labeled = [row[name] for row in records if type(row.get(name)) is bool]
+        dimensions[name] = {"labeled": len(labeled), "positive": sum(labeled),
+                            "unknown": len(records) - len(labeled), "rate": _ratio(sum(labeled), len(labeled))}
+    return dimensions

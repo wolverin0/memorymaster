@@ -1,7 +1,7 @@
-<!-- doc-head: governed skills with independent human-root recurrence -->
+<!-- doc-head: governed skills with catalog-first recall and optional Jev selection (decision surface skills) -->
 # Governed personal skills
-# Covers: personal-skill-v1 proposals, independent-session review, recall reuse, and staging export.
-# Key terms: skill candidate, root-session lineage, approval, include_skills, SKILL.md.
+# Covers: personal-skill-v1 proposals, independent-session review, recall reuse, Jev skill suggestion, and staging export.
+# Key terms: skill candidate, root-session lineage, approval, include_skills, SKILL.md, surface skills, MEMORYMASTER_JEV_SKILLS_ENABLED.
 # Read when: reviewing workflows or integrating approved skills into agent recall.
 # Safety: review is default-off, promotion is human-only, and export never activates global files.
 <!-- /doc-head -->
@@ -71,6 +71,76 @@ Hermes enables this mode for authoritative and read-only fallback recall.
 Candidate, stale, superseded, conflicted, archived, sensitive, and wrong-scope
 skills remain unavailable. Ordinary public recall keeps the option off, so
 existing callers and non-text output are unchanged.
+
+## Catalog-first recall and optional System One selection
+
+Skill recall enumerates confirmed skill IDs directly from SQLite before applying
+the requested result limit. Unrelated fact/rule claims cannot displace a skill.
+Every page is rehydrated through the service's tenant, scope, visibility and
+sensitivity checks; malformed, replaced and temporally invalid skills are excluded.
+The deterministic fallback ranks only this catalog and requires lexical overlap
+for a nonempty query. This governed skill catalog remains SQLite-only.
+Migration 25 adds a partial active-skill index. Reads use 256-ID pages; total
+catalog enumeration and ranking scale with the number of active skills rather
+than applying an arbitrary cutoff that could hide an applicable skill.
+
+The optional TypeSafe Jev selector (decision surface `skills`, S5) uses
+progressive disclosure in two logged decisions. The first asks the cookbook
+gate ("does the request need a multi-step procedure?") and a Choice over the
+authorized skill descriptions; a closed gate or a confident `none` means no
+skill, otherwise the three most probable skills are shortlisted. The second
+inspects the shortlist in detail and asks whether the chosen skill fits. It
+returns an existing ID or confidently chooses none. Low confidence, a low fit
+of the chosen skill, a contradictory answer, missing configuration, a timeout,
+invalid output or an oversized request preserves the deterministic fallback.
+Returned IDs are rehydrated and checked again after the provider call; Jev
+cannot authorize, promote, edit or revive a claim.
+
+It is **off by default**. The mode comes from the shared decisions config
+(`MEMORYMASTER_JEV_SKILLS`, else `MEMORYMASTER_JEV_MODE`; see
+[Jev decisions](jev-decisions.md)) and a `TYPESAFE_API_KEY` is required.
+Backward compatibility: when neither `MEMORYMASTER_JEV_SKILLS` nor
+`MEMORYMASTER_JEV_MODE` is set, the pre-4.9 flag
+`MEMORYMASTER_JEV_SKILLS_ENABLED` (any of `1/true/yes/on`) means `live`; a
+falsy value changes nothing, and `MEMORYMASTER_JEV_MODE=off` wins over it. The model is pinned to `jev-1.13.0`. No
+credential is persisted by this feature. Queries the ingest scanner flags,
+private catalog entries and skills whose text holds a local path (below) bypass
+the external selector; every other query and skill descriptor leaves only
+through the decisions egress redactor (private IPs, emails, tokens and home
+paths written as paths are replaced; a surviving credential blocks the
+request). Known gap: the redactor does not yet replace a home directory inside
+a URL (`smb://nas/home/<user>/...`), so such a query still leaves with the
+name; a skill descriptor never does, because it is withheld. Citations, scope and supporting evidence are never included.
+Activation is separate from installation and from `MEMORYMASTER_SKILL_REVIEW`.
+
+Defaults: at most 200 skills, a three-skill shortlist, gate threshold 0.50,
+confidence and winner-fit thresholds of 0.70 (stored per question version in
+the decisions ledger), 4,000 query characters (each field is cut to 1,200
+characters by the redactor) and a 64 KiB catalog payload. Larger or incomplete
+descriptors fall back without truncating safety conditions, and so does a skill
+whose text holds a local path (drive, UNC or system/home directory, also inside
+a URL such as `smb://nas/home/<user>` or `https://host/users/<name>`; only the
+`s:/` of `https://` is not a drive): one such skill keeps the whole catalog
+local until it is fixed, and the logged row names it (`withheld_ref`). Both rounds use the
+in-process decisions transport: no child process (so a module planted in the
+working directory never sees the key), no proxy variables, no redirects, a
+128 KiB response cap and the 900 ms hook deadline per round with no retries;
+the legacy selection is returned at once when a deadline passes and a late
+answer never changes it. Every decision, including fallbacks and requests
+withheld before sending (scanner-flagged query, private catalog, size limits,
+invalid or path-bearing descriptors), is written to the decisions ledger
+(`decisions.db`); a withheld row carries only the rule's label, never the query
+or catalog text.
+
+This selects MemoryMaster's governed skills; it does not rewrite or activate the
+agent's installed filesystem skill catalog. Local tests use disposable SQLite and
+fake HTTP responses. They establish routing/fallback and governance, not JEV's
+semantic quality or latency. A held-out task benchmark is still required before
+claiming a usefulness improvement or changing default activation.
+
+Official interface references: [typed questions](https://docs.typesafe.ai/primitives),
+[skill suggestion](https://docs.typesafe.ai/cookbooks/skill_suggestion), and
+[versioned models](https://docs.typesafe.ai/models).
 
 ## Staging boundary
 

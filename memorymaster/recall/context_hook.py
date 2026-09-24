@@ -123,23 +123,53 @@ def reset_auto_gate_stats() -> None:
         _AUTO_GATE_STATS[key] = 0
 
 
-def _classify_query_type(query: str | None) -> str | None:
+def _classify_query_type(query: str | None, *, jev: bool = True, session_key: str | None = None,
+                         scope: str | None = None) -> str | None:
     """Best-effort ``query_classifier`` type for ``query`` (or None).
 
     Returns one of ``query_classifier.QUERY_TYPES`` (e.g. ``fact_lookup``)
     so a per-type threshold override can be looked up. Defensive: a blank
     query, an import failure, or any classifier error yields None, in which
     case the gate uses the global threshold — it never crashes recall().
+    ``jev=False`` skips S7 ROUTE and uses the keyword rules directly.
     """
     if not query or not query.strip():
         return None
     try:
-        from memorymaster.recall.query_classifier import classify_query
+        from memorymaster.recall.query_classifier import classify_query, route_query
 
-        return classify_query(query)
+        if not jev:
+            return classify_query(query)
+        # S7 ROUTE; keyword rules unless Jev is live
+        return route_query(query, session_key=session_key, scope=scope)
     except Exception as exc:  # noqa: BLE001 — classification is advisory
         logger.debug("auto-gate query classification skipped: %s", exc)
         return None
+
+
+def _route_recall_query(query: str, hook_data: dict | None) -> str | None:
+    """S7 ROUTE for one recall (the caller memoizes it: at most one route per recall).
+
+    In the prompt hook (``hook_data`` given) S2 RECALL owns the prompt's single
+    Jev request whenever its mode is not off, so the query is routed by the
+    keyword rules and Jev adds at most one hook deadline to the prompt.
+    Otherwise the route decision carries the hook's session key and scope.
+    """
+    if hook_data is None:
+        return _classify_query_type(query)
+    try:
+        from memorymaster.decisions.config import DecisionConfig
+
+        if DecisionConfig.from_env().mode_for("recall") != "off":
+            return _classify_query_type(query, jev=False)
+        from memorymaster.recall.jev_surfaces import decision_session_key
+
+        data = hook_data if isinstance(hook_data, dict) else {}
+        return _classify_query_type(query, session_key=decision_session_key(data.get("session_id")),
+                                    scope=_current_scope())
+    except Exception as exc:  # noqa: BLE001 — routing is advisory
+        logger.debug("recall route skipped: %s", type(exc).__name__)
+        return _classify_query_type(query, jev=False)
 
 
 def _read_threshold_env(env_key: str) -> int | None:
@@ -1100,6 +1130,7 @@ def recall(
     format: str = "text",
     skip_qdrant: bool = False,
     return_ids: bool = False,
+    hook_data: dict | None = None,
 ) -> str | tuple[str, list[int]]:
     """Query memorymaster for relevant context with quality ranking.
 
@@ -1116,6 +1147,11 @@ def recall(
 
     ``skip_qdrant`` is retained for caller compatibility but is a no-op while
     R1.3 unconditionally quarantines Qdrant retrieval.
+
+    ``hook_data`` is the UserPromptSubmit payload (``session_id``, ``cwd``).
+    Passing it opts this call into the S2 RECALL Jev surface; with
+    ``MEMORYMASTER_JEV_RECALL``/``MEMORYMASTER_JEV_MODE`` off (the default) the
+    output is byte-identical to a call without it.
     """
     from memorymaster.core.service import MemoryService
 
@@ -1142,6 +1178,7 @@ def recall(
             phase_ms=phase_ms,
             _memory_service_cls=MemoryService,
             _rendered_ids=rendered_ids if return_ids else None,
+            _hook_data=hook_data,
         )
         if return_ids:
             return rendered, rendered_ids
@@ -1338,6 +1375,7 @@ def _recall_impl(
     phase_ms: dict[str, float],
     _memory_service_cls,
     _rendered_ids: list[int] | None = None,
+    _hook_data: dict | None = None,
 ) -> str:
     """Inner recall body. Kept separate from ``recall()`` so the outer
     function's ``try/finally`` can emit latency logs from every return path
@@ -1736,10 +1774,18 @@ def _recall_impl(
     # v3.11 P2 — derive query intent from query_classifier (sharper than the
     # 6-pattern classify_observation which matched "preference" too greedily).
     # Map query_type → claim_type so the boost compares apples to apples.
+    # S7 ROUTE runs at most once per recall: this boost and the RRF auto-gate
+    # below share one answer (see _route_recall_query for the prompt hook).
+    _query_type_memo: list[str | None] = []
+
+    def _query_type() -> str | None:
+        if not _query_type_memo:
+            _query_type_memo.append(_route_recall_query(query, _hook_data))
+        return _query_type_memo[0]
+
     if w_claim_type > 0.0:
         try:
-            from memorymaster.recall.query_classifier import classify_query
-            qt = classify_query(query)
+            qt = _query_type()
             _query_to_claim_type = {
                 "constraint_check": "constraint",
                 "preference": "preference",
@@ -1977,7 +2023,7 @@ def _recall_impl(
             bm25_scores,
             bm25_on,
             w_freshness,
-            query=query,
+            threshold=_auto_gate_threshold(_query_type()),
         )
 
     if fusion_mode == "rrf":
@@ -2053,32 +2099,16 @@ def _recall_impl(
             ranked = ranked[: max(0, len(ranked) - _lr_fts_surplus)]
 
     # Build output — top claims within budget
-    lines = ["# Memory Context", ""]
-    rendered_rows: list[dict] = []
-    tokens_used = 0
-    chars_per_token = 4
-    for row in ranked:
-        claim = row.get("claim")
-        if not hasattr(claim, "text"):
-            continue
-        text = claim.text[:300]
-        # Only surface the "(compiled in [[slug]])" wiki breadcrumb when the
-        # Obsidian markdown view is explicitly enabled — otherwise it points at
-        # an archived/absent vault (the wiki layer is opt-in as of 2026-07-06;
-        # the claims DB + recall is the memory system). See MEMORYMASTER_WIKI_ABSORB.
-        wiki_slug = getattr(claim, "wiki_article", None)
-        if wiki_slug and os.environ.get("MEMORYMASTER_WIKI_ABSORB", "0").strip().lower() in ("1", "true", "yes"):
-            chunk = f"- {text}  (compiled in [[{wiki_slug}]])"
-        else:
-            chunk = f"- {text}"
-        chunk_tokens = len(chunk) // chars_per_token
-        if tokens_used + chunk_tokens > budget:
-            break
-        lines.append(chunk)
-        rendered_rows.append(row)
-        tokens_used += chunk_tokens
-        if _rendered_ids is not None:
-            cid = getattr(claim, "id", None)
+    lines, rendered_rows = _render_recall_lines(ranked, budget)
+    # S2 RECALL (Jev, 4.9.0): only the prompt hook opts in by passing its
+    # payload; with the surface off this is a no-op and the block is unchanged.
+    if _hook_data is not None:
+        jev_rendering = _jev_recall_rendering(query, ranked, lines, rendered_rows, budget, _hook_data, phase_ms)
+        if jev_rendering is not None:
+            lines, rendered_rows = jev_rendering
+    if _rendered_ids is not None:
+        for row in rendered_rows:
+            cid = getattr(row.get("claim"), "id", None)
             if isinstance(cid, int):
                 _rendered_ids.append(cid)
 
@@ -2089,10 +2119,107 @@ def _recall_impl(
     # measurement covers _relevance/RRF + the budget-trimming loop.
     phase_ms["rank_and_build"] = (time.perf_counter() - _rank_start) * 1000.0
 
+    return _recall_text(lines)
+
+
+def _recall_chunk(claim, labels: tuple[str, ...] = ()) -> str:
+    """One injected bullet: the claim text (300 chars), Jev flags first when any."""
+    text = claim.text[:300]
+    if labels:
+        text = " ".join(labels) + " " + text
+    # Only surface the "(compiled in [[slug]])" wiki breadcrumb when the
+    # Obsidian markdown view is explicitly enabled — otherwise it points at
+    # an archived/absent vault (the wiki layer is opt-in as of 2026-07-06;
+    # the claims DB + recall is the memory system). See MEMORYMASTER_WIKI_ABSORB.
+    wiki_slug = getattr(claim, "wiki_article", None)
+    if wiki_slug and os.environ.get("MEMORYMASTER_WIKI_ABSORB", "0").strip().lower() in ("1", "true", "yes"):
+        return f"- {text}  (compiled in [[{wiki_slug}]])"
+    return f"- {text}"
+
+
+def _render_recall_lines(rows, budget: int, labels=None) -> tuple[list[str], list[dict]]:
+    """Header plus bullets in ``rows`` order until the token budget is spent."""
+    lines = ["# Memory Context", ""]
+    rendered_rows: list[dict] = []
+    tokens_used = 0
+    chars_per_token = 4
+    for row in rows:
+        claim = row.get("claim")
+        if not hasattr(claim, "text"):
+            continue
+        flags = labels.get(getattr(claim, "id", None), ()) if labels else ()
+        chunk = _recall_chunk(claim, flags)
+        chunk_tokens = len(chunk) // chars_per_token
+        if tokens_used + chunk_tokens > budget:
+            break
+        lines.append(chunk)
+        rendered_rows.append(row)
+        tokens_used += chunk_tokens
+    return lines, rendered_rows
+
+
+def _recall_text(lines: list[str]) -> str:
     if len(lines) <= 2:
         return ""
-
     return "\n".join(lines).encode("ascii", errors="replace").decode("ascii")
+
+
+def _jev_recall_rendering(query, ranked, legacy_lines, legacy_rows, budget, hook_data, phase_ms):
+    """S2 RECALL over the top authorized candidates; ``None`` keeps the legacy block.
+
+    Candidates are the first 20 renderable rows of the existing ranking (all of
+    them already passed the trusted prompt policy).  ``k`` is capped so every
+    chosen bullet, flags included, fits the budget: what the ledger logs as
+    exposed is exactly what is rendered.  The delivery check predicts
+    ``recall.delivery.deliver`` for the hook's block, so a suppressed repeat is
+    logged as exposed but not delivered.  Any failure keeps the legacy block.
+    """
+    try:
+        from memorymaster.recall import jev_surfaces as jev
+
+        if not jev.surface_active(jev.RECALL_SURFACE):
+            return None
+        started = time.perf_counter()
+        from memorymaster.recall.delivery import recall_block, would_deliver
+
+        pool = [row for row in ranked
+                if hasattr(row.get("claim"), "text") and isinstance(getattr(row.get("claim"), "id", None), int)]
+        pool = pool[: jev.RECALL_TOP_N]
+        by_id = {row["claim"].id: row for row in pool}
+        cap = jev.budget_cap([len(_recall_chunk(row["claim"], jev.WORST_CASE_LABELS)) // 4 for row in pool], budget)
+        legacy_by_id = {row["claim"].id: row for row in legacy_rows
+                        if isinstance(getattr(row.get("claim"), "id", None), int)}
+        legacy_ids = list(legacy_by_id)
+        # A flagged re-render of the legacy block may name rows beyond the pool.
+        renderable = {**legacy_by_id, **by_id}
+        data = hook_data if isinstance(hook_data, dict) else {}
+
+        def deliverable(ids, labels) -> bool:
+            if labels is None:
+                text = _recall_text(legacy_lines)
+            else:
+                text = _recall_text(_render_recall_lines([renderable[cid] for cid in ids], budget, labels)[0])
+            return bool(text) and would_deliver(data, recall_block(text))
+
+        scope = _current_scope()
+        selection = jev.decide_recall(
+            query,
+            [jev.RecallCandidate(row["claim"].id, row["claim"].text[:300]) for row in pool],
+            legacy_ids=legacy_ids,
+            project_label=jev.project_label(cwd=data.get("cwd"), scope=scope),
+            k_cap=cap,
+            path="prompt_hook",
+            session_key=jev.decision_session_key(data.get("session_id")),
+            scope=scope,
+            delivery=deliverable,
+        )
+        phase_ms["jev_recall"] = (time.perf_counter() - started) * 1000.0
+        if selection is None:
+            return None
+        return _render_recall_lines([by_id[cid] for cid in selection.claim_ids], budget, selection.labels)
+    except Exception as exc:  # noqa: BLE001 — Jev never breaks recall
+        logger.debug("jev recall skipped: %s", type(exc).__name__)
+        return None
 
 
 def observe(

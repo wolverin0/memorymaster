@@ -1,23 +1,30 @@
-<!-- doc-head: canonical map with useful-memory implementation and September upstream evidence -->
+<!-- doc-head: canonical map; installed semantic candidate correction and pending JEV evaluation -->
 # DOCS-MAP - memorymaster
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, workflow intelligence, compiled user profile, roadmap, ADR.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-09-05 for useful-memory delivery/evaluation and pinned upstream research.
+# Updated: 2026-09-20 for semantic candidates and optional JEV source/runtime boundaries.
 # Rule: generated profiles are disposable projections; MemoryMaster remains authority.
 <!-- /doc-head -->
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
+| .planning/audits/2026-09-07-e2e-review/LIVE-DEPLOYMENT.md | CURRENT | 2026-09-20 | Two-environment candidate-fix deployment, additive migration and rollback; earlier selection-v2 Dreaming/MCP evidence remains dated. |
+| .planning/audits/2026-09-07-e2e-review/IMPLEMENTATION.md | CURRENT | 2026-09-08 | Single completed source-candidate checklist; useful-selection correction supersedes UI-first technical acceptance, with separate source/provider/live evidence. |
+| .planning/audits/2026-09-07-e2e-review/USEFUL-SELECTION.md | CURRENT | 2026-09-08 | Selection v2 implementation, authorization/replay regressions, blinded actual-provider evidence, cost and delivery limits. |
+| docs/e2e-candidate-deployment.md | CURRENT | 2026-09-08 | Installation and non-destructive rollback procedure; dated execution evidence is in LIVE-DEPLOYMENT.md. |
+| .planning/audits/2026-09-07-e2e-review/AI-REREVIEW-13.md | CURRENT | 2026-09-08 | AI technical review of 13 emitted records, canonical-source comparison and reusable negative evaluation labels; no live claim mutation. |
+| docs/human-review.md | CURRENT | 2026-09-08 | Local review page, source excerpts, saved drafts and human JSONL handoff; no claim mutation or automatic quality acceptance. |
+| .planning/JEV-LIVE-4.9.0.md | CURRENT | 2026-09-23 | 4.9.0 implementation contract: live Jev decisions, ledger schema, surfaces S1-S8, remediation tracks. |
 | .planning/USEFUL-MEMORY-V1.md | CURRENT | 2026-09-05 | Bounded 4.8.8 implementation and acceptance record subordinate to ROADMAP.md. |
 | .planning/UPSTREAM-COMPARISON-2026-09-05.md | CURRENT | 2026-09-05 | Seventeen pinned upstream snapshots, source comparisons and bounded proposals; no head-to-head runtime benchmark. |
 | .planning/UPSTREAM-SNAPSHOTS-2026-09-05.json | CURRENT | 2026-09-05 | Origins, baselines, exact SHAs, branches, license labels and explicit inspection coverage. |
 | docs/development.md | CURRENT | 2026-09-05 | Scoped verification, public lifecycle demonstration, and deeper agent/GitNexus guidance. |
-| .planning/DREAMING-SOURCE-STEWARD-V1.md | CURRENT | 2026-09-05 | Source-aware Gemini review, promotion safeguards, verification limits and dated deployment evidence. |
+| .planning/DREAMING-SOURCE-STEWARD-V1.md | CURRENT | 2026-09-05 | Dated deployed v1 checkpoint; its receipt contract is superseded for the candidate by USEFUL-SELECTION.md, without retroactive runtime activation. |
 | .planning/ENGINEERING-CONSOLIDATION-2026-09-05.md | CURRENT | 2026-09-05 | Bounded implementation evidence and remaining measured gaps, subordinate to ROADMAP.md. |
 | CHANGELOG.md | CURRENT | 2026-09-05 | Historical releases plus local 4.8.7 deployment; distinguishes fleet reconnection and public publication. |
 | README.md | CURRENT | 2026-08-30 | Primary product overview for governed claims plus the optional non-authoritative Workflow Intelligence sidecar; hook activation remains separate. |
-| ROADMAP.md | CURRENT | 2026-08-30 | Sole authoritative roadmap; distinguishes integrated source from dated installed/disabled state and preserves separate activation decisions. |
+| ROADMAP.md | CURRENT | 2026-09-20 | Sole roadmap; semantic/JEV source correction is separate from installed selection v2 and activation/real-provider acceptance. |
 | docs/workflow-intelligence.md | CURRENT | 2026-08-30 | Operator and architecture contract for local trajectory analytics, deterministic evidence, inert candidates, and the off/shadow/advisory receipt gate. |
 | docs/adr/0016-workflow-analytics-uses-disposable-sidecar.md | CURRENT | 2026-08-30 | Accepted boundary: authoritative memory remains one database while rebuildable workflow analytics use a non-authoritative local sidecar. |
 | .planning/GRAPH-OBSERVATIONS-V1.md | CURRENT | 2026-08-12 | Bounded PPR-7 implementation ledger for deterministic supported components, governed synthesis, lifecycle, opt-in recall, and verification. |
@@ -26,7 +33,7 @@
 | .planning/PAPER-RESEARCH-IMPLEMENTATION-2026-08-08.md | CURRENT | 2026-08-08 | Executable status ledger for PPR-1 through PPR-6; records acceptance criteria and evidence without competing with ROADMAP.md. |
 | .planning/HERMES-SCOPE-SKILLS-INTEGRATION-2026-08-07.md | CURRENT | 2026-08-12 | Executable Tencent-derived ledger; repair5 passed and PR #189 is open without merge authority. |
 | .planning/audits/2026-08-07-hermes-scope-skills/audit-delta.md | CURRENT | 2026-08-12 | Bounded delta preserves failed runs and records repair5 pass plus PR #189 creation. |
-| docs/governed-skills.md | CURRENT | 2026-08-30 | Operator guide for three-human-root recurrence, human promotion, confirmed-skill recall, isolation, and staging-only export. |
+| docs/governed-skills.md | CURRENT | 2026-09-20 | Catalog-first authorized recall, migration 25 and default-off JEV selector limits/fallback; human promotion and staging-only export remain governed. |
 | .planning/AUTORESEARCH-PROGRAM-2026-08-03.md | CURRENT | 2026-08-04 | Completed six-phase execution overlay records retrieval, graph, capture, full-QA, OAuth quality, public release, and the sole remaining longitudinal gate. |
 | .planning/audits/2026-08-04-autoresearch-convergence/audit-delta.md | CURRENT | 2026-08-04 | Bounded convergence delta records SQLite-only tests, 40-case quality evidence, public v4.6.0 release evidence, and the remaining seven-day observation. |
 | COMPETITOR_ANALYSIS.md | CURRENT | 2026-07-27 | Current prior-art analysis corrects Cognee provenance, temporal, tenant, graph, and document capabilities without adopting it as a dependency. |

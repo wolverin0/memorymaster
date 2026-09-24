@@ -12,12 +12,26 @@ text. Zero LLM calls, zero external deps, ~5ms runtime.
 
 Output: hookSpecificOutput.additionalContext with routing hints.
 Claude reads them and decides whether to call ingest_claim.
+
+Jev (surface ``hints``, S6): when MEMORYMASTER_JEV_HINTS / MEMORYMASTER_JEV_MODE
+is ``live``, one request of seven nouls over the redacted prompt chooses the
+hints (labels at or above their ``show`` threshold); ``shadow`` logs Jev's
+labels and keeps the regex hints.  Every failure (timeout at the 900 ms hook
+deadline, HTTP error, malformed answer, missing key) falls back to the regex
+hints, and every decision is logged in the decisions ledger.  With nothing
+configured the mode is ``off`` and the engine is not even imported, so the
+output is byte-identical to the regex-only hook.
 """
 import json
 import os
 import sys
 import re
 from datetime import datetime
+
+PROJECT_ROOT = "__MEMORYMASTER_PROJECT_ROOT__"
+# Any of these set means the decisions config must be consulted; none set is
+# the code default ``off`` (pinned by tests/test_classify_hook_jev.py).
+_JEV_ENV = ("MEMORYMASTER_JEV_HINTS", "MEMORYMASTER_JEV_MODE", "MEMORYMASTER_DECISIONS_LOG_OFF")
 
 
 def _log(event, **kw):
@@ -256,30 +270,104 @@ def classify(prompt: str) -> list:
     return signals
 
 
-def main():
+# Jev labels (decisions.questions.HINT_LABELS) -> hint names.  GOTCHA has no Jev
+# question, so only the regex fallback can show it.
+_JEV_HINTS = {
+    "decision": "DECISION", "constraint": "CONSTRAINT", "bug_root_cause": "BUG_ROOT_CAUSE",
+    "environment": "ENVIRONMENT", "reference": "REFERENCE", "architecture": "ARCHITECTURE",
+    "preference": "PREFERENCE",
+}
+_MESSAGES = {sig["name"]: sig["message"] for sig in SIGNALS}
+_MESSAGES["PREFERENCE"] = (
+    "PREFERENCE detected — how the user wants work done. Call ingest_claim "
+    "with claim_type='preference' (scope='user' when it applies across projects)."
+)
+_ORDER = [sig["name"] for sig in SIGNALS] + ["PREFERENCE"]
+
+
+def _ref(name: str) -> str:
+    return "hint:" + name.lower()
+
+
+_BY_REF = {_ref(name): name for name in _ORDER}
+
+
+def jev_configured(environ) -> bool:
+    return any((environ.get(name) or "").strip() for name in _JEV_ENV)
+
+
+# The installed hook is killed at 5 s; the ledger's default 15 s busy wait on a
+# decisions.db another process is writing would lose even the regex hints.
+_LEDGER_BUSY_MS = 1000
+
+
+def _hook_engine(jev):
+    """An engine whose ledger waits at most ``_LEDGER_BUSY_MS`` for another writer."""
+    from memorymaster.decisions.config import DecisionConfig
+
+    config = DecisionConfig.from_env()
+    ledger = None
+    if config.mode_for("hints") != "off" or config.log_off:  # off never opens the ledger
+        from memorymaster.decisions.ledger import DecisionLedger
+
+        ledger = DecisionLedger(config.decisions_db, busy_timeout_ms=_LEDGER_BUSY_MS)
+    return jev.DecisionEngine(config, ledger=ledger)
+
+
+def _session_key(session_id):
+    """The ledger's session key (F-11): the normalized, tenant-bound hash every hook
+    shares (``recall.jev_surfaces.decision_session_key``), never the raw session id."""
     try:
-        input_data = json.loads(sys.stdin.read() or "{}")
-    except (ValueError, OSError):
-        sys.exit(0)
+        from memorymaster.recall.jev_surfaces import decision_session_key
 
-    prompt = input_data.get("prompt", "")
-    if not isinstance(prompt, str) or len(prompt) < 5:
-        _log("skip", reason="short-prompt", chars=len(prompt) if isinstance(prompt, str) else 0)
-        sys.exit(0)
+        return decision_session_key(session_id)
+    except Exception:
+        return None
 
+
+def select_hints(prompt: str, legacy: list, *, session_id=None, engine=None):
+    """Hint names to show and a short Jev status for the log (``None`` when not consulted)."""
+    if engine is None and not jev_configured(os.environ):
+        return legacy, None
     try:
-        signals = classify(prompt)
-    except Exception as e:
-        _log("error", message=str(e)[:200])
-        sys.exit(0)
+        if os.path.isdir(PROJECT_ROOT) and PROJECT_ROOT not in sys.path:
+            sys.path.insert(0, PROJECT_ROOT)
+        from memorymaster.decisions import engine as jev
+        from memorymaster.decisions import questions
+    except Exception:
+        return legacy, "unavailable"
 
-    if not signals:
-        _log("no-match", chars=len(prompt))
-        sys.exit(0)
+    def choose(answers):
+        shown = set()
+        for label in questions.HINT_LABELS:
+            question_id = "hints." + label
+            value = answers.noul(question_id)
+            if value is None:
+                raise ValueError("unanswered hint")
+            if value >= answers.threshold(question_id, "show", 0.7):
+                shown.add(_JEV_HINTS[label])
+        return jev.JevChoice(action=[_ref(name) for name in _ORDER if name in shown])
 
-    _log("matched", count=len(signals), names=",".join(n for n, _ in signals))
+    try:  # a hook and package out of step must not cost the regex hints
+        state, bound = questions.build_hints(_strip_meta(prompt))
+        decision = jev.decide(
+            "hints", state=state, questions=bound,
+            items=[jev.DecisionItem(_ref(name), "hint") for name in _ORDER],
+            legacy_action=[_ref(name) for name in legacy], choose=choose,
+            context=jev.DecisionContext(kind="hook", session_key=_session_key(session_id)),
+            engine=engine or _hook_engine(jev),
+        )
+    except Exception:
+        return legacy, "error"
+    action = decision.action
+    if not isinstance(action, list) or not all(ref in _BY_REF for ref in action):
+        return legacy, "invalid"
+    status = f"{decision.mode}:{decision.fallback_reason or 'ok'}"
+    return [_BY_REF[ref] for ref in action], status
 
-    hints = "\n".join(f"- [{name}] {msg}" for name, msg in signals)
+
+def render(names: list) -> str:
+    hints = "\n".join(f"- [{name}] {_MESSAGES[name]}" for name in names)
     output = {
         "hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",
@@ -292,8 +380,41 @@ def main():
             ),
         }
     }
-    sys.stdout.write(json.dumps(output))
-    sys.stdout.flush()
+    return json.dumps(output)
+
+
+def run(input_data, *, engine=None):
+    """The hook's stdout for one UserPromptSubmit payload, or ``None`` for no output."""
+    prompt = input_data.get("prompt", "") if isinstance(input_data, dict) else ""
+    if not isinstance(prompt, str) or len(prompt) < 5:
+        _log("skip", reason="short-prompt", chars=len(prompt) if isinstance(prompt, str) else 0)
+        return None
+
+    try:
+        legacy = [name for name, _ in classify(prompt)]
+    except Exception as e:
+        _log("error", message=str(e)[:200])
+        return None
+
+    names, jev = select_hints(prompt, legacy, session_id=input_data.get("session_id"), engine=engine)
+    if not names:
+        _log("no-match", chars=len(prompt), jev=jev)
+        return None
+
+    _log("matched", count=len(names), names=",".join(names), jev=jev)
+    return render(names)
+
+
+def main():
+    try:
+        input_data = json.loads(sys.stdin.read() or "{}")
+    except (ValueError, OSError):
+        sys.exit(0)
+
+    output = run(input_data)
+    if output is not None:
+        sys.stdout.write(output)
+        sys.stdout.flush()
     sys.exit(0)
 
 

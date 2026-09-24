@@ -48,6 +48,11 @@ def _server(service: MemoryService, db: Path, workspace: Path) -> Iterator[str]:
         thread.join(timeout=2)
 
 
+# A hang guard, not a latency budget: a retire with apply took over 3 s on a Windows CI
+# runner (2026-09-24).
+CLIENT_TIMEOUT_S = 30
+
+
 def _post(url: str, payload: dict) -> dict:
     request = urllib.request.Request(
         url,
@@ -55,7 +60,7 @@ def _post(url: str, payload: dict) -> dict:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=3) as response:
+    with urllib.request.urlopen(request, timeout=CLIENT_TIMEOUT_S) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -163,7 +168,7 @@ def test_dashboard_retirement_is_preview_then_apply(tmp_path: Path) -> None:
         )
         assert applied["apply"] is True
         with urllib.request.urlopen(
-            f"{base_url}/api/capture-inbox", timeout=3
+            f"{base_url}/api/capture-inbox", timeout=CLIENT_TIMEOUT_S
         ) as response:
             inbox = json.loads(response.read().decode("utf-8"))
 

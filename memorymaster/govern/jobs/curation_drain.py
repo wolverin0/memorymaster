@@ -157,17 +157,28 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
 
 
 def drain_proposals(service: Any, *, limit: int = 100, apply: bool = False) -> dict[str, Any]:
-    from memorymaster.govern.steward import list_steward_proposals, resolve_steward_proposal
+    from memorymaster.govern.steward import is_jev_proposal, list_steward_proposals, resolve_steward_proposal
 
-    proposals = list_steward_proposals(service, limit=limit, include_resolved=False)
+    # Jev proposals stay for the operator; they must not use up ``limit``.
+    proposals = list_steward_proposals(
+        service, limit=limit, include_resolved=False,
+        exclude_from_limit=lambda proposal: is_jev_proposal(proposal.get("payload")),
+    )
     summary: dict[str, Any] = {
         "scanned": len(proposals),
         "approved": 0,
         "kept_for_operator": 0,
+        "kept_jev": 0,
         "failed": 0,
         "dry_run": not apply,
     }
     for proposal in proposals:
+        if is_jev_proposal(proposal.get("payload")):
+            # F-21: las propuestas de Jev son juicios de modelo que esperan
+            # veredicto humano; el dren nunca las aprueba (quedan en la cola).
+            summary["kept_for_operator"] += 1
+            summary["kept_jev"] += 1
+            continue
         claim_id = proposal.get("claim_id")
         claim = service.store.get_claim(int(claim_id), include_citations=False) if claim_id else None
         if claim is None or _is_operator_owned(claim):
@@ -182,6 +193,7 @@ def drain_proposals(service: Any, *, limit: int = 100, apply: bool = False) -> d
                 action="approve",
                 proposal_event_id=int(proposal["proposal_event_id"]),
                 apply_on_approve=True,
+                actor="automation",
             )
             summary["approved"] += 1
         except Exception as exc:  # noqa: BLE001 - una propuesta rota no frena el dren

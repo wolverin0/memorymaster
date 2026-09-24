@@ -1,0 +1,75 @@
+{
+ "generated_from": "memorymaster/config_templates/hooks/memorymaster-classify.py @ 30dbce2 (regex-only hook)",
+ "cases": [
+  {
+   "stdin": "{\"prompt\": \"We decided to use WAL mode for the ledger.\", \"session_id\": \"s-1\"}",
+   "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"UserPromptSubmit\", \"additionalContext\": \"[MemoryMaster routing hints]\\nThe user's message contains signals. If the content is durable and non-obvious, consider calling ingest_claim AFTER doing the work:\\n- [DECISION] DECISION detected \\u2014 if this is a durable architectural/design decision, call mcp__memorymaster__ingest_claim with claim_type='decision', source_agent='claude-session'.\\n\\nNever ingest credentials, IPs, tokens, or raw code.\"}}",
+   "returncode": 0
+  },
+  {
+   "stdin": "{\"prompt\": \"The root cause was a race in the lease renewal; watch out for Windows paths.\"}",
+   "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"UserPromptSubmit\", \"additionalContext\": \"[MemoryMaster routing hints]\\nThe user's message contains signals. If the content is durable and non-obvious, consider calling ingest_claim AFTER doing the work:\\n- [BUG_ROOT_CAUSE] BUG ROOT CAUSE detected \\u2014 after fixing, call ingest_claim with claim_type='bug' and describe the root cause (not the fix) so future sessions avoid re-debugging it.\\n- [GOTCHA] GOTCHA detected \\u2014 non-obvious trap worth remembering. Call ingest_claim with claim_type='gotcha', volatility='low'.\\n\\nNever ingest credentials, IPs, tokens, or raw code.\"}}",
+   "returncode": 0
+  },
+  {
+   "stdin": "{\"prompt\": \"It must not exceed 900 ms and the architecture keeps SQLite authoritative.\"}",
+   "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"UserPromptSubmit\", \"additionalContext\": \"[MemoryMaster routing hints]\\nThe user's message contains signals. If the content is durable and non-obvious, consider calling ingest_claim AFTER doing the work:\\n- [CONSTRAINT] CONSTRAINT detected \\u2014 hard limit or requirement. Call ingest_claim with claim_type='constraint' so future sessions respect it.\\n- [ARCHITECTURE] ARCHITECTURE discussion detected \\u2014 call mcp__memorymaster__query_memory BEFORE deciding, then ingest_claim with claim_type='architecture' after.\\n\\nNever ingest credentials, IPs, tokens, or raw code.\"}}",
+   "returncode": 0
+  },
+  {
+   "stdin": "{\"prompt\": \"set the env var and pip install httpx, see the docs at https://docs.typesafe.ai/primitives\"}",
+   "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"UserPromptSubmit\", \"additionalContext\": \"[MemoryMaster routing hints]\\nThe user's message contains signals. If the content is durable and non-obvious, consider calling ingest_claim AFTER doing the work:\\n- [ENVIRONMENT] ENVIRONMENT/SETUP detected \\u2014 install steps, env vars, config quirks. Call ingest_claim with claim_type='environment' so setup pain is documented.\\n- [REFERENCE] REFERENCE detected \\u2014 docs/URL/paper/repo worth remembering. Call ingest_claim with claim_type='reference' and include the source in sources_json.\\n\\nNever ingest credentials, IPs, tokens, or raw code.\"}}",
+   "returncode": 0
+  },
+  {
+   "stdin": "{\"prompt\": \"decidimos que no vamos a usar postgres; ojo con el path de windows, no anda\"}",
+   "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"UserPromptSubmit\", \"additionalContext\": \"[MemoryMaster routing hints]\\nThe user's message contains signals. If the content is durable and non-obvious, consider calling ingest_claim AFTER doing the work:\\n- [DECISION] DECISION detected \\u2014 if this is a durable architectural/design decision, call mcp__memorymaster__ingest_claim with claim_type='decision', source_agent='claude-session'.\\n- [BUG_ROOT_CAUSE] BUG ROOT CAUSE detected \\u2014 after fixing, call ingest_claim with claim_type='bug' and describe the root cause (not the fix) so future sessions avoid re-debugging it.\\n- [GOTCHA] GOTCHA detected \\u2014 non-obvious trap worth remembering. Call ingest_claim with claim_type='gotcha', volatility='low'.\\n\\nNever ingest credentials, IPs, tokens, or raw code.\"}}",
+   "returncode": 0
+  },
+  {
+   "stdin": "{\"prompt\": \"please summarise this file for me\"}",
+   "stdout": "",
+   "returncode": 0
+  },
+  {
+   "stdin": "{\"prompt\": \"I prefer short answers with code over explanations\"}",
+   "stdout": "",
+   "returncode": 0
+  },
+  {
+   "stdin": "{\"prompt\": \"<local-command-caveat>we decided never to refactor</local-command-caveat> hello there friend\"}",
+   "stdout": "",
+   "returncode": 0
+  },
+  {
+   "stdin": "{\"prompt\": \"hey\"}",
+   "stdout": "",
+   "returncode": 0
+  },
+  {
+   "stdin": "{\"prompt\": 42}",
+   "stdout": "",
+   "returncode": 0
+  },
+  {
+   "stdin": "{\"prompt\": \"\\u00dcber-Refactor: la arquitectura \\u2014 m\\u00f3dulo nuevo, gotcha con UTF-8 \\u2713\"}",
+   "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"UserPromptSubmit\", \"additionalContext\": \"[MemoryMaster routing hints]\\nThe user's message contains signals. If the content is durable and non-obvious, consider calling ingest_claim AFTER doing the work:\\n- [GOTCHA] GOTCHA detected \\u2014 non-obvious trap worth remembering. Call ingest_claim with claim_type='gotcha', volatility='low'.\\n- [ARCHITECTURE] ARCHITECTURE discussion detected \\u2014 call mcp__memorymaster__query_memory BEFORE deciding, then ingest_claim with claim_type='architecture' after.\\n\\nNever ingest credentials, IPs, tokens, or raw code.\"}}",
+   "returncode": 0
+  },
+  {
+   "stdin": "{}",
+   "stdout": "",
+   "returncode": 0
+  },
+  {
+   "stdin": "",
+   "stdout": "",
+   "returncode": 0
+  },
+  {
+   "stdin": "not json at all",
+   "stdout": "",
+   "returncode": 0
+  }
+ ]
+}

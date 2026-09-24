@@ -62,7 +62,10 @@ def transition_claim(
     reason: str,
     event_type: str = "transition",
     replaced_by_claim_id: int | None = None,
+    event_payload: dict[str, object] | None = None,
 ) -> Claim:
+    """``event_payload`` adds fields to the transition event's payload (e.g.
+    the steward resolution ``actor``, review F-21)."""
     claim = store.get_claim(claim_id, include_citations=False)
     if claim is None:
         raise ValueError(f"Claim {claim_id} does not exist.")
@@ -72,12 +75,14 @@ def transition_claim(
         raise ValueError(f"Invalid transition: {claim.status} -> {to_status}")
     if to_status == "superseded" and replaced_by_claim_id is None:
         raise ValueError("Superseded transition requires replaced_by_claim_id.")
+    extra = {"event_payload": event_payload} if event_payload else {}
     updated = store.apply_status_transition(
         claim,
         to_status=to_status,
         reason=reason,
         event_type=event_type,
         replaced_by_claim_id=replaced_by_claim_id,
+        **extra,
     )
     _wiki_autopromote_after_validator(store, updated.id, event_type)
     return updated

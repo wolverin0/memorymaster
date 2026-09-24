@@ -99,16 +99,24 @@ spec:
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          # The dashboard checks Host on every route, health included (DNS-rebinding
+          # defence); kubelet would send the pod IP, so the probes name an allowed Host.
           livenessProbe:
             httpGet:
               path: /healthz
               port: 8765
+              httpHeaders:
+                - name: Host
+                  value: "127.0.0.1:8765"
             initialDelaySeconds: 5
             periodSeconds: 15
           readinessProbe:
             httpGet:
               path: /readyz
               port: 8765
+              httpHeaders:
+                - name: Host
+                  value: "127.0.0.1:8765"
             initialDelaySeconds: 5
             periodSeconds: 10
       volumes:

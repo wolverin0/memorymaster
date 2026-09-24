@@ -1,9 +1,9 @@
-<!-- doc-head: 4.8.9 deployed; activation verified and installer closeout complete -->
+<!-- doc-head: installed operational repairs and verified NAS recovery; acceptance limits -->
 # Useful memory, reliable delivery
 Covers: supported recall installation, real CI evaluation and source-level Dreaming sampling.
 Key terms: Gemini-only, duplicate delivery, missed facts, label provenance, read-only.
 Read when: accepting or operating 4.8.9; ROADMAP.md remains the sole roadmap.
-Status: both runtimes on 4.8.9; installer repairs shipped; profile catch-up continues.
+Status: September 21 repairs installed; NAS backup restored and scheduler recovered.
 <!-- /doc-head -->
 
 ## Product changes
@@ -335,3 +335,344 @@ Agent checkpoint prompts still need an existing target pane; closing it does
 not leave an autonomous coding/review agent running. Current profile catch-up
 and real-source semantic usefulness remain separate from this deployment proof.
 No semantic feature-success watermark is advanced by this closeout.
+
+## Daily operational review — 2026-09-21
+
+**ATTENTION REQUIRED.** ROADMAP and installed configuration were read before
+the checks. The authoritative database and auxiliary Dreaming ledger were opened
+with `mode=ro` and `query_only=ON`; no live lifecycle cycle, generation, activation,
+installation or production repair was executed. Existing shared source changes
+were preserved. Evidence is in `artifacts/operational-review/20260921/`.
+
+### Current runtime and observed outcomes
+
+- Both general and scheduled runtimes report 4.8.9. Their installed wheel SHA-256
+  is `cddcc637b8f7ce8b665b0e93a2bc94f3aac129f6681ad866c36599a57d45788a`;
+  service, skills and Dreaming-provider module hashes agree across runtimes.
+  Dirty checkout files are not evidence of installed changes.
+- Fresh installed operational review at 14:30:51 UTC: SQLite quick-check OK,
+  zero foreign-key errors, migration 25. Overall **FAIL** because the configured
+  recall canary `mm-8aef` is absent from top five in **legacy** retrieval. Its
+  confirmed fact (128576) still exists, confidence 0.5707; another archived
+  heartbeat shares the human ID. Do not retire this failure as a stale expectation
+  or replace the canary merely to obtain a pass. Read-only diagnosis finds the
+  target in the 60-candidate pool. It ranks fifth before the configured
+  three-per-session diversity cap, which removes it. This was isolated by an
+  in-memory diagnostic only; production ranking/configuration was unchanged.
+  Follow-up must reconcile the canary with the diversity contract, rather than
+  widening the pool or silently weakening that guard.
+- Installed disposable demo passed capture, cited recall, observation exclusion,
+  retirement and temporary-database disposal. Source lifecycle tests passed
+  **13/13** (19.50 seconds). These establish lifecycle behavior, not real-source
+  semantic usefulness or live ingestion precision.
+- MCP HTTP health and database readiness both returned HTTP 200. Task result
+  267009 means running, not a failed execution. Authenticated tool round-trip and
+  remote-client reachability were not measured by those health probes.
+- Capture queue: 210 extraction jobs completed (11 retain
+  `partial_provider_output`), 158 graph jobs completed, and **93 blocked**:
+  1 attempts exhausted, 71 graph claim ineligible, 20 unavailable, 1 ontology
+  validation failure. No jobs were requeued or deleted.
+
+### Activation, provider evidence and retained work
+
+- September 6 approval in ROADMAP remains the activation authority. Installed
+  Dreaming launcher explicitly enables graph observations and compiled profile;
+  its task includes `--apply-candidates`. User settings agree. Old September 5
+  shadow/off expectations are historical, not the current contract.
+- Current selected extraction is Gemini via `google`, model
+  `gemini-3.5-flash-lite`; consolidation is `antigravity`, model
+  `gemini-3.7-flash-low`. In the rolling 24-hour auxiliary ledger sample:
+  extraction has 26 structured-valid and 3 structured-invalid HTTP-200 calls;
+  consolidation has 10 valid calls and 3 errors with HTTP status 0.
+  Historical GLM/OpenCode labels do not describe these calls.
+- Latest Dreaming run at 09:11 UTC is **partial**, with 4 extracted, 4 consolidated,
+  3 applied, zero candidate writes and 2 errors. Scheduler result 1 agrees with
+  partial execution; an `ok: true` envelope does not make it clean success.
+  Retained Dreaming states: 204 applied, 18 captured, 345 extracted, 2 retryable.
+  The two retryable reasons reject unsupported source/useful selection or
+  scope/sensitivity mismatch. These guards were not bypassed.
+- Steward selects Google `gemini-3.5-flash-lite`, with no fallback. Latest log
+  records zero provider calls, so selection alone is not provider-use evidence.
+  Classifier is requested by the installed hook but **DISABLED** at runtime:
+  scheduled environment lacks joblib, confirmed by import availability and log.
+  Wiki generation remains **DISABLED**. JEV ingest shadow flag is unset;
+  the closed T-0504 evaluation is not an active production filter.
+
+### Graph, profile and session delivery
+
+- Graph has 3 observations, 63 observation supports, 173 entity edges and 348
+  edge-support rows. Fresh eligibility checks found zero unknown-sensitivity
+  supports and zero ineligible confirmed observations. No active/expired graph
+  leases; 23,921 completed jobs and one cancelled synthesis job remain retained.
+  Latest discovery reaches September 21 but emits no supported components.
+  Zero output is an observed outcome, not evidence of synthesis quality.
+- Effective profile bounds: weekly cadence, 3 map calls, 500 messages,
+  24,000 input characters, 2 independent sessions, 90-day preference TTL,
+  1,400 output tokens, 60 facts and reduce batches of 40. Dreaming retains
+  40/12 extraction/consolidation calls, 2,000,000 input tokens/day,
+  200 candidate writes/day, 18,000 context characters and 900-second leases.
+- Profile has 3 completed and 1 cancelled run. Latest completed run 4 has
+  watermark 10,190,314 (September 10), with `ProfileValidationError` retained.
+  SQLite has 61 active facts; the September 21 projection has 52. All projected
+  IDs, timestamps, support counts/hashes and exact support-ID manifests match
+  SQLite: **zero mismatches**. This is an exact subset, not all active facts.
+  A new rendering timestamp is not a new compilation watermark. The latest
+  eligible source ID is also 10,190,314: `no_changes` is consistent with no new
+  eligible input, even though weekly cadence has elapsed. Token metadata is not
+  present; byte size was not misreported as a measured token count.
+- Generated `user.md` has its required marker and is 5,665 bytes, within the
+  installed SessionStart 16,000-byte limit. Today's hook log records successful
+  injection. This proves delivery execution, not improved agent decisions.
+  Retained profile candidates: 108 unconsumed (40 from cancelled run 1 and 68
+  from completed run 2). Media retry queue empty; capture leases inactive.
+
+### Follow-up ownership and acceptance limits
+
+No newly introduced, bounded code regression was isolated in this review; no
+speculative ranking change, dependency installation or production restart was
+used to make checks pass. Recall investigation and classifier dependency/runtime
+alignment remain open findings in this ledger. Missing classifier dependencies
+were already recorded on September 6; this is an unresolved baseline failure,
+not a regression attributed to today's review. Old release-specific 4.7.6
+acceptance expectations do not override the verified current 4.8.9 package.
+Delivery/checkpoint task success
+does not advance a feature-success watermark.
+
+## Weekly acceptance review — 2026-09-21
+
+**NOT ACCEPTED as a feature-quality success.** This extends the daily review
+above, using the rolling seven days ending at the evidence timestamps around
+14:42 UTC. Counts come from normal WAL-aware read-only SQLite connections.
+  Evidence: `weekly-activity.json`, `weekly-lineage.json`, `profile-graph.json`,
+`canary-diagnostic.json` and `backup-sync.json` in the same artifact directory.
+
+- Dreaming executed **26 partial, non-dry-run runs**. Actual provider-call rows
+  show Google `gemini-3.5-flash-lite`: 186 HTTP-200 calls, of which 157 structured
+  valid and 29 invalid; Antigravity `gemini-3.7-flash-low`: 74 valid HTTP-200
+  calls and 4 errors with status 0. These are call outcomes, not semantic
+  precision. Recorded run model labels happen to agree with this window's call
+  records, but are not substituted for them. **Cost UNKNOWN**: token counters
+  do not provide an authoritative billed-cost measurement.
+- Application ledger records **10 adds and 169 ignores**. All 10 added claims
+  exist and have nonempty citation source, locator and excerpt. None has a
+  `claim_evidence_links` row; this structural check does not establish semantic
+  source entailment. Across the authoritative lifecycle, **40 distinct candidate
+  claims were promoted to confirmed**, all with citations, and 911 decayed to
+  stale. Promotion and citation presence are not quality labels.
+- Queue age is material: retained captured/extracted work reaches July 22;
+  extracted rows have up to 9 attempts. Two retryable captures reach September
+  11 and have up to **61 attempts**, with source/scope validation errors retained.
+  Capture-stage blocked jobs reach August 11 and remain 93. No retry loop was
+  manually triggered and no rejected input was silently accepted. The latest
+  weekly snapshot has 19 captured rows versus 18 earlier in the daily snapshot;
+  independent capture continued during this read-only review.
+- Retrieval impact over real tasks is **UNMEASURED**: no matched before/after
+  cohort was run in this review. The one live recall canary fails its top-five
+  expectation because of session diversity; this cannot establish aggregate
+  recall quality. Disposable retirement tests passed, separately from live
+  retired-source observation availability.
+- Graph discovery completed 3,679 jobs in seven days, with **0 new observations
+  and 0 new supports**. Observation precision is **UNMEASURED (n=0)**, never
+  100%. All 3 persisted observations are archived. There are zero retired-source
+  support rows, so the zero ineligible-confirmed-observation result has no
+  positive live sample. Retired-support exclusion is verified by the installed
+  disposable lifecycle, not by a fresh production retirement sample.
+- Profile active facts: **61/61** meet the independent-session bound (range
+  2–18). Of these, 17 are preferences, none expired under the effective 90-day
+  TTL, and 44 are stable facts retained as active. New profile supports in the
+  window: 0. Rendered facts are 52/60 allowed; measured token count is
+  **UNMEASURED**, while configured token limit remains 1,400. Seven-day unsafe
+  rejection count/reason distribution is **UNMEASURED**; the old run's aggregate
+  `rejected=53` is outside this window and is not a safety-specific numerator.
+- Graph jobs in the window have at most one attempt and no open queue. One
+  capture job was created/completed in the window with no retry; old retained
+  blocked capture and Dreaming queues above are separate from that new activity.
+- Wiki generation and JEV ingest shadow remain **DISABLED**, with retained
+  queues untouched. No missing samples justify activation. The missing-joblib
+  classifier remains an observed runtime failure rather than an intentional
+  acceptance pass.
+
+### Sync and backup acceptance
+
+Hermes local AM/PM task results are zero. Both local delta databases pass fresh
+read-only quick-check: Hermes 4,895 claims/7,787 citations; Windows 4,136/6,985.
+The local watermark is September 21 03:13:58 UTC. Remote merge acknowledgement
+and end-to-end round-trip are **UNMEASURED**; local files and task exits prove less.
+
+Weekly NAS backup task failed with `0x800710e0`; September 14 recovery task
+returned 1. Latest dedicated remote artifact is
+`wolverin0/20260914/memorymaster-20260914T041733Z.db`, 7,167,848,448 bytes.
+Its creation receipt reports a matched size/SHA-256, and a current read-only
+header probe opens it. That is **partial evidence**, not a fresh full integrity
+or restore rehearsal. No backup was launched or restored over production.
+The matching local staging DB is absent. The local semantic-candidates snapshot
+belongs to deployment/evaluation safety, not the operational NAS-backup namespace;
+it is not substituted for a verified current operational backup.
+
+Required follow-up remains in this ledger: reconcile recall-canary expectations
+with session diversity; diagnose repeat Dreaming validation failures without
+bypassing rejection; align the scheduled classifier dependency; recover backup
+scheduling and independently verify a restorable copy. Remote sync acceptance,
+new observation precision, unsafe-output rejection effectiveness and real-task
+retrieval benefit remain unmeasured. No production repair or activation was
+performed without an isolated regression and its acceptance evidence.
+
+## Operational repairs — 2026-09-21, after review
+
+Operator requested execution of the outstanding bounded repairs, not another
+diagnostic handoff. Work is isolated on `fix/operational-review-20260921`, based
+on 7955291, preserving the shared checkout and installed semantic-candidate/JEV
+code. Package comparison against the installed wheel confirmed baseline parity.
+
+- **Recall cause corrected:** the earlier report identified the diversity cap
+  but stopped before checking its key. `_source_session_key` grouped all claims
+  from a generic agent such as `claude-session`, even when citation lineage
+  identified different sessions. The fix prefers a single explicit session
+  citation; ambiguous/missing session provenance preserves the prior fallback.
+  The cap remains three. Session locators are hashed before trace emission.
+  Regression failed before the change; 24 recall/review tests pass afterward.
+  Read-only source-runtime canary now returns the unchanged target at rank 5.
+  This corrects the monitor's underlying recall behavior, not its expectation.
+- **Dreaming retry cause corrected in source:** consolidation source-review
+  validation errors bypassed the existing semantic-attempt limit and always
+  became retryable. The shared bounded failure disposition now covers extraction,
+  consolidation and application replay; a capture failed in one batch cannot
+  consume another provider call in a later batch of the same run. Repeated
+  invalid output is quarantined, never accepted. Existing capture rows were not
+  manually changed or requeued. Focused Dreaming tests and Ruff pass.
+- **Configured classifier runtime repaired:** the installed steward hook already
+  requested v3, but its environment lacked the required dependencies. Installed
+  only the same five pinned versions verified in the working general runtime:
+  joblib 1.5.1, scikit-learn 1.7.1, numpy 1.26.4, scipy 1.17.1 and threadpoolctl
+  3.6.0. Scheduled runtime passes dependency checks, loads the unchanged v3
+  artifact (22 features) and makes a finite synthetic prediction. Four
+  classifier fallback/rollback tests pass. No live promotion cycle was invoked.
+
+Evidence: `recall-repair-source.json`, `classifier-repair.json`,
+`repair-tests.json`; the old wheel is preserved with its verified hash under
+the review artifact's `rollback/` directory.
+
+Independent review blocked the first Dreaming patch: generic `attempts` includes
+successful transitions, and provider-side review validation can reject a mixed
+batch before worker-level isolation. Neither rejected candidate was installed.
+The final fix counts consecutive semantic failures per stage in existing durable
+error metadata, preserves that metadata for cached application replay, and keeps
+provider batches within one capture. First semantic failure retries; repeated
+failure reaches quarantine. Transient errors reset the consecutive count.
+No schema migration is needed. Per-capture isolation can defer more sessions
+under the unchanged daily call/token budgets; those limits were not raised.
+The final focused Dreaming suite passes 81 tests, and the independent reviewer
+passes 79 targeted tests with no remaining deployment blocker. The first full
+non-ML run was interrupted after the review finding; its log remains evidence
+of an incomplete run, not a PASS. The final full non-ML gate passed 5,169 tests, with 75 skipped, 90 deselected,
+1 expected failure and native exit 0 (1,378.14 seconds).
+
+### Recovery evidence and remaining NAS constraint
+
+- Fresh local operational backup completed September 21 at 17:48:58 UTC,
+  7,585,837,056 bytes. SQLite's online backup API read the live WAL consistently;
+  a second isolated restored file has the same SHA-256:
+  `d7844db4b19e07e5bcd42c80e1a8e462e35ceab7d20a47c4a4b347c790d08d1c`.
+  Both pass quick-check, zero FK errors and migration 25; authoritative table
+  counts match, and restored trusted recall returns five cited confirmed claims.
+  Neither the live database nor old backups were overwritten. Evidence:
+  `local-restore-proof.json`; local namespace `operational-repair-20260921-b1b824fde9`
+  under the existing per-user MemoryMaster backups directory.
+- The September 14 remote backup now also passes a fresh full hash comparison,
+  SQLite quick-check and FK check. This supersedes the earlier unmeasured
+  integrity result; it is still an older remote copy, not today's local snapshot.
+- Added and tested `MM_PRESERVE_ALL=1` in the existing infra backup script so a
+  recovery verification does not clean aged staging files or remote retention.
+  The adversarial preservation test failed before the repair and passes after.
+- A new NAS upload was **NOT_STARTED**: its coordinator admits MemoryMaster only
+  Sunday 01:00–04:00 local time. Today is Monday; its old recovery exception has
+  expired. The available forced-command credential cannot grant the supported
+  temporary recovery exception. No live lease was stolen, policy bypassed, task
+  battery setting guessed, or external heartbeat sent. The next ordinary
+  scheduled window is September 27. A new offsite copy still needs admission
+  by that existing coordinator; local recovery readiness is independently proven.
+
+### Installed repair verification
+
+- Source commit `4c83e65c09fa4064e8569cdcc65a3b7a8b1c3bac`, isolated branch
+  `fix/operational-review-20260921`; shared checkout changes preserved.
+- Installed the reviewed 4.8.9 wheel in both the general Python environment and
+  the scheduled graph/profile environment. Wheel SHA-256:
+  `45595644d5aea76ecf1230ada82c86a829090e27a9ea2e67a613bcc9b95de6f7`.
+  All 410 packaged Python files match in both environments. Prior wheel retained.
+- Original live recall canary now **PASS**, target `mm-8aef` at rank 5, using the
+  installed scheduled runtime and read-only SQLite. Query, target, provider and
+  session diversity cap were not changed to obtain this result.
+- Installed disposable lifecycle passed: capture, cited recall, valid observation
+  support, retired-claim exclusion and stale-observation exclusion; temporary DB
+  disposed. This is fixture lifecycle evidence, not production precision.
+- Restarted only the verified MCP HTTP owner task. Health/readiness both 200;
+  unauthenticated MCP 401; authenticated `tools/list` 200 with 51 tools. Existing
+  long-lived stdio clients were not forcibly restarted; their loaded revision is
+  unverified until their owners reconnect.
+- Four scheduler task definitions plus operational-review configuration compare
+  byte-for-byte unchanged by SHA-256. No provider, activation, budget or threshold
+  changes. Wiki and JEV ingest shadow remain disabled.
+- No live steward/Dreaming cycle was invoked for validation; quarantine behavior
+  is source-tested and installed, with the next natural worker outcome unmeasured.
+
+Evidence: `release-final/manifest.json`, `non-ml-final.log`,
+`installed-general-identity.json`, `installed-scheduled-identity.json`,
+`recall-repair-installed.json`, `installed-demo-after-repair.json`,
+`mcp-restart.json`, `mcp-after-repair.json`, `config-after-repair-install.json`.
+The post-install read-only operational probe completed at 18:14:39 UTC: **PASS**,
+SQLite quick-check OK, zero FK errors, migration 25, graph/profile invariants and
+original recall canary PASS, with zero database mutations. Its activation field
+only describes the review process; scheduled worker flags were inspected separately
+in the runtime evidence. Evidence: `live-review-after-repair.json`.
+None of these repairs establishes observation precision or advances a
+feature-success watermark.
+
+
+### NAS recovery closed ? 2026-09-21, 19:20 UTC
+
+This supersedes the earlier NAS admission blocker and partial backup verdict.
+The documented administrative NAS credential was available and worked; the
+restricted coordinator credential was not the only authorized access path.
+Stopping at that restriction was an investigation error, not an operator action
+that was required to complete this repair.
+
+- Opened a two-hour recovery exception naming only MemoryMaster, retained the
+  existing coordinator mutex and deadlines, and saved exact policy preimages.
+  The normal NAS policy and Windows client command were restored byte-for-byte
+  after completion; no active or blocked coordinator lease remains.
+- The first ordinary-script attempt created a consistent staging artifact but
+  inherited task priority 7 (low CPU/disk and memory priority). After bounded
+  runtime priority corrections it still progressed too slowly at hashing and
+  was deliberately stopped through its child process; the coordinator recorded
+  exit 15 normally. Its staging file and failure evidence were preserved.
+- Corrected the weekly task to priority 6. Exact exported XML comparison shows
+  that only Priority changed. Added the existing backup-contract check for this
+  setting; live configuration passes and a mocked priority-7 task is rejected.
+  No trigger, credential, retention policy, deadline or catch-up setting changed.
+- A second execution of the same weekly task finalized the already verified
+  consistent snapshot completed today at 17:48:58 UTC. It started with normal
+  CPU/disk priority without runtime intervention. This is explicitly a recovery
+  upload of that snapshot, not a claim that new source data was captured at
+  upload time. The task and NAS coordinator both finished with exit **0**.
+- New NAS artifact `20260921/memorymaster-20260921T174557Z.db`, 7,585,837,056 bytes,
+  SHA-256 `d7844db4b19e07e5bcd42c80e1a8e462e35ceab7d20a47c4a4b347c790d08d1c`.
+  Fresh remote manifest/hash, SQLite quick-check and FK checks pass. Downloaded
+  that actual NAS file into an isolated restore target: identical hash, matching
+  table counts, zero FK errors, migration 25, and five cited confirmed recall
+  results. Old backups and production memory data were preserved.
+- The existing backup-health endpoint accepted its success receipt (HTTP 200,
+  `ok=true`) only after restoration passed. This is backup health evidence, not
+  a feature-quality watermark. The ordinary weekly schedule remains Sunday
+  01:00. The expired September 14 one-time recovery task has no future trigger;
+  its old exit code is historical evidence, not an outstanding current job.
+- Infra source commit `615f1d0afafc518d0693493c1b7176ebac32b9b6` records preservation
+  and the priority guard. The original September 20 scheduler-refusal cause is
+  not retroactively attributed to priority; the current successful task run and
+  the separately measured priority defect are the evidence for recovery.
+
+Evidence: `nas-recovery-upload.json`, `nas-new-integrity.json`,
+`nas-recovery-restored.json`, `nas-policy-restored.json`,
+`nas-scheduler-recovered.json`, `backup-priority-repair.json`,
+`nas-monitor-receipt.json`. **The NAS backup/restoration repair is closed.**
+This does not change the independent semantic-quality findings of the review.

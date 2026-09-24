@@ -2,6 +2,7 @@ from dataclasses import asdict, dataclass
 from functools import wraps
 import hashlib
 import http.client
+import importlib
 import inspect
 import json
 import logging
@@ -865,6 +866,21 @@ if FastMCP is not None:
     class AuthorizedFastMCP(FastMCP):
         """FastMCP registration that cannot omit authorization metadata."""
 
+        def __init__(self, *args: Any, tool_profile: str | None = None, **kwargs: Any) -> None:
+            profile = tool_profile if tool_profile is not None else os.environ.get("MEMORYMASTER_MCP_TOOL_PROFILE", "full")
+            if profile not in {"full", "core"}:
+                raise ValueError("MEMORYMASTER_MCP_TOOL_PROFILE must be full or core")
+            self.tool_profile = profile
+            super().__init__(*args, **kwargs)
+
+        async def list_tools(self) -> list[Any]:
+            """Discovery optimization only; named calls retain the same authorization."""
+            registered = await super().list_tools()
+            if self.tool_profile == "full":
+                return registered
+            core = {"remember", "recall", "forget", "improve"}
+            return [tool for tool in registered if tool.name in core]
+
         def tool(self, *args: Any, **kwargs: Any) -> Any:
             register = super().tool(*args, **kwargs)
 
@@ -980,6 +996,7 @@ if FastMCP is not None:
         from memorymaster.public.v1 import recall as public_recall
 
         scopes = _effective_scope_allowlist(scope_allowlist, workspace)
+        tenant_id = current_request_context().tenant_id if current_request_context() else None
         receipt = public_recall(
             query,
             scope_allowlist=scopes,
@@ -995,7 +1012,28 @@ if FastMCP is not None:
             platform=platform,
             db=db,
             workspace=workspace,
-            tenant_id=(current_request_context().tenant_id if current_request_context() else None),
+            tenant_id=tenant_id,
+        )
+        # S2 RECALL (Jev): no-op unless MEMORYMASTER_JEV_RECALL/_MODE is on; only
+        # reorders/trims/flags the claims the governed receipt already authorized.
+        from memorymaster.recall import jev_surfaces
+
+        readers: list[Any] = []
+
+        def fetch_claim(claim_id: int) -> Any:
+            if not readers:
+                readers.append(_read_service(db, workspace))
+            return readers[0].store.get_claim(claim_id, include_citations=True)
+
+        project_scope = _project_scope(workspace)
+        receipt = jev_surfaces.apply_recall_to_receipt(
+            receipt,
+            query=query,
+            fetch_claim=fetch_claim,
+            project=jev_surfaces.project_label(scope=project_scope),
+            scope=project_scope,
+            tenant=tenant_id,
+            session_key=jev_surfaces.decision_session_key(session_id, tenant_id),
         )
         return {"ok": True, **asdict(receipt)}
 
@@ -1872,6 +1910,22 @@ if FastMCP is not None:
             allow_sensitive=allow_sensitive,
             scope_allowlist=_effective_scope_allowlist(scope_allowlist, workspace),
         )
+        # S2 RECALL (Jev): no-op unless MEMORYMASTER_JEV_RECALL/_MODE is on and
+        # sensitive access is not requested; re-packs only authorized rows.
+        from memorymaster.recall import jev_surfaces
+
+        project_scope = _project_scope(workspace)
+        tenant_id = current_request_context().tenant_id if current_request_context() else None
+        result = jev_surfaces.apply_recall_to_context(
+            result,
+            query=query,
+            token_budget=token_budget,
+            output_format=output_format,
+            project=jev_surfaces.project_label(scope=project_scope),
+            scope=project_scope,
+            tenant=tenant_id,
+            allow_sensitive=allow_sensitive,
+        )
         response: dict[str, Any] = {
             "ok": True,
             "output": result.output,
@@ -2644,17 +2698,26 @@ if FastMCP is not None:
         claim_id: int | None = None,
         apply_on_approve: bool = True,
     ) -> dict[str, Any]:
-        """Approve or reject a steward proposal by proposal_event_id or claim_id."""
+        """Approve or reject a steward proposal by proposal_event_id or claim_id.
+
+        Jev (``source: jev``) proposals are refused: only the operator resolves
+        them, through the dashboard or the CLI with ``--actor operator``.
+        """
+        from memorymaster.govern.steward import JevProposalOperatorOnly
         from memorymaster.govern.steward import resolve_steward_proposal as _resolve_steward_proposal
 
         svc = _service(db, workspace)
-        result = _resolve_steward_proposal(
-            svc,
-            action=str(action).strip().lower(),  # type: ignore[arg-type]
-            proposal_event_id=proposal_event_id,
-            claim_id=claim_id,
-            apply_on_approve=apply_on_approve,
-        )
+        try:
+            result = _resolve_steward_proposal(
+                svc,
+                action=str(action).strip().lower(),  # type: ignore[arg-type]
+                proposal_event_id=proposal_event_id,
+                claim_id=claim_id,
+                apply_on_approve=apply_on_approve,
+                allow_jev=False,
+            )
+        except JevProposalOperatorOnly as exc:
+            return _structured_error(str(exc), "JEV_PROPOSAL_OPERATOR_ONLY")
         return {"ok": True, "result": result}
 
     @mcp.tool()
@@ -2821,6 +2884,18 @@ if FastMCP is not None:
 def main() -> int:
     if FastMCP is None:  # pragma: no cover
         raise RuntimeError("MCP support is not installed. Install with: pip install 'memorymaster[mcp]'")
+    from memorymaster.recall.embeddings import sentence_transformers_required
+
+    if os.name == "nt" and sentence_transformers_required():
+        # Native ML imports can stall after Windows stdio readers start.
+        # Import only: model construction and provider selection remain lazy.
+        # Skipped when the effective provider never loads it (review F-17:
+        # the import alone delayed stdio by 6-18 s).
+        try:
+            importlib.import_module("sentence_transformers")
+        except Exception:
+            # Optional/misconfigured ML must not prevent the MCP fallback path.
+            logger.debug("Optional semantic imports unavailable during stdio startup")
     mcp.run()
     return 0
 

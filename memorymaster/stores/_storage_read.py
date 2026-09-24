@@ -658,6 +658,31 @@ class _ReadMixin:
         )
 
 
+    def find_archive_candidates(
+        self, *, created_before: str, after_id: int = 0, limit: int = 500
+    ) -> list[Claim]:
+        """Stale, never-accessed, unpinned claims created before a cutoff.
+
+        Filtered in SQL and keyset-paged by id (review F-20: loading a
+        confidence-ordered batch and filtering afterwards hid every eligible
+        row). Eligibility here is necessary, not sufficient, for archival.
+        """
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM claims
+                WHERE status = 'stale'
+                  AND access_count = 0
+                  AND pinned = 0
+                  AND created_at < ?
+                  AND id > ?
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (created_before, int(after_id), max(1, int(limit))),
+            ).fetchall()
+        return [self._row_to_claim(row) for row in rows]
+
     def find_for_decay(self, limit: int = 200) -> list[Claim]:
         with self.connect() as conn:
             rows = conn.execute(

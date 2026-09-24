@@ -1,0 +1,75 @@
+{
+  "schema": "memorymaster.dreaming.eval.v1",
+  "labeled_decisions": 13,
+  "human_reviews": 0,
+  "label_origins": {
+    "ai": 13
+  },
+  "assessment_dimensions": {
+    "evidence_exact": {
+      "labeled": 13,
+      "positive": 13,
+      "unknown": 0,
+      "rate": 1.0
+    },
+    "semantic_sufficiency": {
+      "labeled": 13,
+      "positive": 10,
+      "unknown": 0,
+      "rate": 0.7692
+    },
+    "current_validity": {
+      "labeled": 11,
+      "positive": 8,
+      "unknown": 2,
+      "rate": 0.7273
+    },
+    "useful": {
+      "labeled": 13,
+      "positive": 0,
+      "unknown": 0,
+      "rate": 0.0
+    }
+  },
+  "invalid_records": [],
+  "duplicate_record_ids": [],
+  "counts": {
+    "expected_useful": 0,
+    "captured_useful": 0,
+    "missed_useful": 0,
+    "unwanted_emissions": 13
+  },
+  "metrics": {
+    "useful_precision": 0.0,
+    "useful_recall": 0.0,
+    "evidence_precision": 1.0,
+    "ephemeral_rejection": 0.0,
+    "scope_isolation": 0.5385,
+    "action_accuracy": 0.0,
+    "structured_yield": 1.0,
+    "human_acceptance": 0.0
+  },
+  "thresholds": {
+    "minimum_labeled_decisions": 50,
+    "minimum_human_reviews": 20,
+    "evidence_precision": 0.95,
+    "ephemeral_rejection": 0.9,
+    "scope_isolation": 1.0,
+    "action_accuracy": 0.85,
+    "structured_yield": 0.95,
+    "human_acceptance": 0.8,
+    "useful_precision": 0.9,
+    "useful_recall": 0.85
+  },
+  "failed_gates": [
+    "minimum_labeled_decisions",
+    "minimum_human_reviews",
+    "useful_precision",
+    "useful_recall",
+    "ephemeral_rejection",
+    "scope_isolation",
+    "action_accuracy",
+    "human_acceptance"
+  ],
+  "activation_ready": false
+}

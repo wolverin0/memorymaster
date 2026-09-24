@@ -12,7 +12,6 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +66,77 @@ class ProviderCallError(RuntimeError):
         self.http_status = http_status
 
 
+class ProviderOutputError(ProviderCallError, ValueError):
+    """The call completed but its content cannot be used.
+
+    Retrying the same capture reproduces the same rejection, so the worker's
+    ValueError-based semantic retry bound applies. Transport, configuration
+    and availability failures stay plain ProviderCallError (transient).
+    """
+
+
+class ProviderConfigError(ProviderCallError):
+    """Configuration or authentication failure: no capture can succeed until fixed.
+
+    Ruling R1 (4.9.0): missing API key, an invalid or expired key, 401, 403,
+    404 (model not found), Gemini's HTTP 400 ``FAILED_PRECONDITION`` (unsupported
+    location, billing not enabled), a retired provider or a missing CLI. The worker
+    never charges it to a capture and stops the run. ``reason`` is a short
+    message-free code for the run summary.
+    """
+
+    def __init__(self, message: str, *, reason: str, http_status: int = 0) -> None:
+        super().__init__(message, http_status=http_status)
+        self.reason = reason
+
+
+_CONFIG_HTTP_REASONS = {401: "unauthorized", 403: "forbidden", 404: "model_not_found"}
+_API_KEY_REASONS = {"API_KEY_INVALID": "invalid_api_key", "API_KEY_EXPIRED": "expired_api_key"}
+_API_KEY_MESSAGES = (
+    (re.compile(r"(?i)\bapi key expired\b"), "expired_api_key"),
+    (re.compile(r"(?i)\bapi key not valid\b|\binvalid api key\b"), "invalid_api_key"),
+)
+
+
+def _api_key_rejection(body: Any) -> str | None:
+    """Gemini answers HTTP 400 (not 401) for an invalid or expired key."""
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict):
+        return None
+    for detail in error.get("details") or []:
+        if isinstance(detail, dict) and str(detail.get("reason", "")).upper() in _API_KEY_REASONS:
+            return _API_KEY_REASONS[str(detail["reason"]).upper()]
+    message = str(error.get("message") or "")
+    return next((reason for pattern, reason in _API_KEY_MESSAGES if pattern.search(message)), None)
+
+
+_PRECONDITION_MESSAGES = (
+    (re.compile(r"(?i)\blocation\b.*\bnot supported\b|\bunsupported\b.*\blocation\b"), "unsupported_location"),
+    (re.compile(r"(?i)\bbilling\b"), "billing_required"),
+)
+
+
+def _failed_precondition(body: Any) -> str | None:
+    """Gemini HTTP 400 ``FAILED_PRECONDITION``: the project's region or billing, never the input.
+
+    Provider-wide configuration (ruling R1 extension): no capture can succeed
+    until the operator fixes it, so it is never charged to a capture.
+    """
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict) or str(error.get("status") or "").strip().upper() != "FAILED_PRECONDITION":
+        return None
+    message = str(error.get("message") or "")
+    return next((reason for pattern, reason in _PRECONDITION_MESSAGES if pattern.search(message)),
+                "failed_precondition")
+
+
+def config_failure_reason(status: int, body: Any = None) -> str | None:
+    """Reason code when an HTTP answer is a configuration/auth failure, else ``None``."""
+    if status in _CONFIG_HTTP_REASONS:
+        return _CONFIG_HTTP_REASONS[status]
+    return (_api_key_rejection(body) or _failed_precondition(body)) if status == 400 else None
+
+
 def _default_transport(url: str, payload: dict[str, Any], headers: dict[str, str], timeout: int) -> tuple[int, dict[str, Any], dict[str, str]]:
     request = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
     try:
@@ -90,6 +160,7 @@ def _retry_after(headers: dict[str, str], attempt: int) -> float:
 
 def _post_with_retry(transport: Transport, url: str, payload: dict[str, Any], headers: dict[str, str], timeout: int, sleep: Callable[[float], None]) -> tuple[int, dict[str, Any]]:
     last_status = 0
+    last_body: Any = None
     attempts = 4
     for attempt in range(attempts):
         try:
@@ -99,12 +170,18 @@ def _post_with_retry(transport: Transport, url: str, payload: dict[str, Any], he
                 raise ProviderCallError("provider request failed") from exc
             sleep(min(10.0, float(2**attempt)))
             continue
-        last_status = status
+        last_status, last_body = status, body
         if status == 200:
             return status, body
         if status not in {408, 429, 500, 502, 503, 504} or attempt == attempts - 1:
             break
         sleep(_retry_after(response_headers, attempt))
+    reason = config_failure_reason(last_status, last_body)
+    if reason is not None:  # never the provider's message: it is not needed and may echo input
+        raise ProviderConfigError(
+            f"provider rejected the configuration with HTTP {last_status} ({reason})",
+            reason=reason, http_status=last_status,
+        )
     raise ProviderCallError(
         f"provider request failed with HTTP {last_status}",
         http_status=last_status,
@@ -115,9 +192,9 @@ def _json_object(raw: str) -> dict[str, Any]:
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ProviderCallError("provider returned malformed JSON") from exc
+        raise ProviderOutputError("provider returned malformed JSON") from exc
     if not isinstance(parsed, dict):
-        raise ProviderCallError("provider JSON response must be an object")
+        raise ProviderOutputError("provider JSON response must be an object")
     return parsed
 
 
@@ -174,7 +251,7 @@ def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
 
 def _opencode_environment(provider: str) -> dict[str, str]:
     if provider.lower() in {"glm", "zai", "zai-coding-plan", "z.ai"}:
-        raise ProviderCallError("Retired provider is disabled; use Gemini")
+        raise ProviderConfigError("Retired provider is disabled; use Gemini", reason="retired_provider")
     env = dict(os.environ)
     env.pop("GLM_API_KEY", None)
     env.pop("OPENCODE_DISABLE_DEFAULT_PLUGINS", None)
@@ -353,7 +430,7 @@ class GeminiExtractor:
 
     def extract(self, messages: list[dict[str, Any]], *, scope: str, capture_hash: str) -> ExtractionResult:
         if not self.api_key:
-            raise ProviderCallError("GEMINI_API_KEY is not configured")
+            raise ProviderConfigError("GEMINI_API_KEY is not configured", reason="missing_api_key")
         prompt = (
             "Extract at most five stable facts, decisions, preferences, profiles, or constraints. "
             "Ignore ephemeral work chatter, routine system/tool instructions, transient execution "
@@ -370,7 +447,7 @@ class GeminiExtractor:
         parsed = _json_object(raw)
         rows = parsed.get("candidates", [])
         if not isinstance(rows, list):
-            raise ProviderCallError("Gemini candidates must be an array")
+            raise ProviderOutputError("Gemini candidates must be an array")
         candidates: list[DreamCandidate] = []
         structured_valid = True
         for index, row in enumerate(rows[:5]):
@@ -426,7 +503,7 @@ class OpenCodeExtractor:
             "MEMORYMASTER_DREAM_EXTRACT_MODEL", "openai/gpt-5.4-mini",
         )
         if "glm" in configured_model.lower() or configured_model.lower().startswith(("zai", "z.ai")):
-            raise ProviderCallError("Retired provider is disabled; use Gemini")
+            raise ProviderConfigError("Retired provider is disabled; use Gemini", reason="retired_provider")
         self.model = (
             configured_model
             if "/" in configured_model
@@ -462,7 +539,7 @@ class OpenCodeExtractor:
                 command, self._prompt(messages, scope), 180, self.work_dir, env,
             )
         except FileNotFoundError as exc:
-            raise ProviderCallError("OpenCode CLI is not installed or not on PATH") from exc
+            raise ProviderConfigError("OpenCode CLI is not installed or not on PATH", reason="cli_missing") from exc
         except subprocess.TimeoutExpired as exc:
             raise ProviderCallError("OpenCode extraction timed out") from exc
         if completed.returncode != 0:
@@ -492,7 +569,7 @@ class OpenCodeExtractor:
         parsed = _json_object(_without_markdown_fence(raw))
         rows = parsed.get("candidates", [])
         if not isinstance(rows, list):
-            raise ProviderCallError("OpenCode candidates must be an array")
+            raise ProviderOutputError("OpenCode candidates must be an array")
         _, evidence_lookup = _evidence_span_payload(messages)
         candidates: list[DreamCandidate] = []
         structured_valid = True
@@ -523,7 +600,7 @@ class OpenCodeExtractor:
     def _command(self) -> list[str]:
         executable = self.command or shutil.which("opencode.cmd") or shutil.which("opencode")
         if not executable:
-            raise ProviderCallError("OpenCode CLI is not installed or not on PATH")
+            raise ProviderConfigError("OpenCode CLI is not installed or not on PATH", reason="cli_missing")
         command = [
             executable,
             "run",
@@ -593,6 +670,28 @@ def consolidation_from_raw(
     provider: str,
     model: str,
 ) -> ConsolidationResult:
+    try:
+        return _consolidation_from_raw(
+            raw, candidates, started=started, input_tokens=input_tokens,
+            output_tokens=output_tokens, provider=provider, model=model,
+        )
+    except ValueError as exc:
+        # The call completed and was billed even though its output is unusable.
+        # Carry the reported usage so the daily token budget sees the failure.
+        exc.input_tokens = max(0, int(input_tokens or 0))
+        raise
+
+
+def _consolidation_from_raw(
+    raw: str,
+    candidates: list[DreamCandidate],
+    *,
+    started: float,
+    input_tokens: int,
+    output_tokens: int,
+    provider: str,
+    model: str,
+) -> ConsolidationResult:
     """Valida la respuesta cruda de un consolidador, sea cual sea el transporte.
 
     Shared validation is transport-independent.
@@ -604,24 +703,24 @@ def consolidation_from_raw(
     parsed = _json_object(_without_markdown_fence(raw))
     rows = parsed.get("decisions", [])
     if not isinstance(rows, list):
-        raise ProviderCallError(f"{provider} decisions must be an array")
+        raise ProviderOutputError(f"{provider} decisions must be an array")
     valid_ids = {candidate.candidate_id for candidate in candidates}
     decisions = tuple(
         decision_from_payload(row, valid_ids) for row in rows if isinstance(row, dict)
     )
     decision_ids = [decision.candidate_id for decision in decisions]
     if len(decision_ids) != len(valid_ids) or set(decision_ids) != valid_ids:
-        raise ProviderCallError(
+        raise ProviderOutputError(
             f"{provider} must return exactly one decision per candidate"
         )
-    from memorymaster.dreaming.source_review import SourceCandidate, parse_review
+    from memorymaster.dreaming.source_review import SourceCandidate, reviewed_decision
 
     by_id = {candidate.candidate_id: candidate for candidate in candidates}
     validated_decisions = []
     for decision in decisions:
         candidate = by_id[decision.candidate_id]
-        if isinstance(candidate, SourceCandidate):
-            decision = replace(decision, source_review=parse_review(decision.source_review, candidate))
+        if isinstance(candidate, SourceCandidate) and decision.action != "ignore":
+            decision = reviewed_decision(candidate, decision)
         validated_decisions.append(decision)
     usage = ProviderUsage(
         provider,
@@ -676,6 +775,13 @@ class AntigravityConsolidator:
         self.model = configured
         self.client = client or AntigravityClient(model=self.model, timeout=timeout)
 
+    @property
+    def max_prompt_chars(self) -> int:
+        """The client's fixed prompt cap; the worker fits each batch under it."""
+        from memorymaster.core import antigravity_client
+
+        return antigravity_client._MAX_PROMPT_CHARS
+
     def consolidate(
         self,
         candidates: list[DreamCandidate],
@@ -690,6 +796,11 @@ class AntigravityConsolidator:
         try:
             response = self.client.complete(prompt)
         except AntigravityError as exc:
+            if isinstance(exc.__cause__, FileNotFoundError) or not _client_available(self.client):
+                # Ruling R1: a missing CLI is configuration, not an outage.
+                raise ProviderConfigError(
+                    "the Antigravity CLI is not installed or not on PATH", reason="cli_missing",
+                ) from exc
             # Se re-envuelve en ProviderCallError para que el worker lo trate como
             # cualquier otra falla de proveedor: reintentable, sin observacion.
             raise ProviderCallError(str(exc)) from exc
@@ -702,6 +813,17 @@ class AntigravityConsolidator:
             provider=self.provider,
             model=self.model,
         )
+
+
+def _client_available(client: Any) -> bool:
+    """``False`` only when the client says its CLI is missing (test doubles have no probe)."""
+    available = getattr(client, "available", None)
+    if not callable(available):
+        return True
+    try:
+        return bool(available())
+    except Exception:
+        return True
 
 
 def consolidation_prompt(

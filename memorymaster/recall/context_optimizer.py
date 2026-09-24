@@ -348,6 +348,36 @@ def _pack_blocks(
     return included, used
 
 
+def _render_context(included, *, considered, budget, output_format, tokens=0):
+    header, footer, _ = _get_format_overhead(output_format)
+    if output_format == "text":
+        body = "\n\n".join(block for block, _ in included) or "(no claims fit within token budget)"
+        output = header + body + footer.format(included=len(included), considered=considered, tokens=tokens, budget=budget)
+    elif output_format == "xml":
+        inner = "\n".join(block for block, _ in included) + "\n" if included else "  <!-- no claims fit within token budget -->\n"
+        meta = f'<meta claims_included="{len(included)}" claims_considered="{considered}" tokens_used="{tokens}" token_budget="{budget}" />\n'
+        output = header + meta + inner + footer
+    else:
+        output = json.dumps({
+            "claims": [_claim_json_entry(row["claim"], float(row.get("score", 0.0))) for _, row in included],
+            "meta": {"claims_included": len(included), "claims_considered": considered,
+                     "tokens_used": tokens, "token_budget": budget},
+        }, indent=2)
+    return output
+
+
+def _measured_context(included, *, considered, budget, output_format):
+    # Resolve the small self-reference caused by serializing tokens_used itself.
+    tokens = 0
+    while True:
+        output = _render_context(included, considered=considered, budget=budget,
+                                 output_format=output_format, tokens=tokens)
+        measured = estimate_tokens(output)
+        if measured == tokens:
+            return output, measured
+        tokens = measured
+
+
 def pack_context(
     ranked_rows: list[dict[str, Any]],
     *,
@@ -355,73 +385,26 @@ def pack_context(
     output_format: str = "text",
     provider: str | None = None,
 ) -> ContextResult:
-    """Pack ranked claim rows into a token budget using greedy knapsack.
-
-    Parameters
-    ----------
-    ranked_rows:
-        Output of ``MemoryService.query_rows()`` — list of dicts with
-        ``claim`` (Claim) and ``score`` (float) keys.
-    token_budget:
-        Maximum tokens for the output block.
-    output_format:
-        One of ``text``, ``xml``, ``json``.
-    provider:
-        Optional provider strategy. When omitted, preserves the historical
-        greedy row-by-row behavior.
-
-    Returns
-    -------
-    ContextResult with the formatted output and metadata.
-    """
+    """Greedily pack complete claims against the final serialized representation."""
     if output_format not in OUTPUT_FORMATS:
         raise ValueError(f"Unknown format '{output_format}'. Choose from: {', '.join(OUTPUT_FORMATS)}")
     if token_budget <= 0:
         raise ValueError("token_budget must be positive.")
     profile = _get_provider_profile(provider, token_budget)
-
-    claims_considered = len(ranked_rows)
-
-    # Reserve tokens for header/footer framing.
-    header, footer_template, overhead = _get_format_overhead(output_format)
-
-    available = max(1, token_budget - overhead)
+    kwargs = dict(considered=len(ranked_rows), budget=token_budget, output_format=output_format)
+    output, used = _measured_context([], **kwargs)
+    if used > token_budget:
+        raise ValueError(f"token_budget is below the minimum {output_format} representation ({used} tokens).")
     blocks = _build_blocks(ranked_rows, output_format)
-    included, used = _pack_blocks(blocks, available=available, profile=profile)
-
-    # Assemble final output based on format
-    if output_format == "text":
-        body = "(no claims fit within token budget)" if not included else "\n\n".join(block for block, _ in included)
-        footer = footer_template.format(
-            included=len(included),
-            considered=claims_considered,
-            tokens=used + overhead,
-            budget=token_budget,
-        )
-        output = f"{header}{body}{footer}"
-    elif output_format == "xml":
-        inner = "  <!-- no claims fit within token budget -->\n" if not included else "\n".join(block for block, _ in included) + "\n"
-        meta = f'<meta claims_included="{len(included)}" claims_considered="{claims_considered}" tokens_used="{used + overhead}" token_budget="{token_budget}" />\n'
-        output = f"{header}{meta}{inner}{footer_template}"
-    else:  # JSON
-        entries = [_claim_json_entry(row["claim"], float(row.get("score", 0.0))) for _, row in included]
-        output = json.dumps({
-            "claims": entries,
-            "meta": {
-                "claims_included": len(included),
-                "claims_considered": claims_considered,
-                "tokens_used": used + overhead,
-                "token_budget": token_budget,
-            },
-        }, indent=2)
-
-    total_tokens = used + overhead
+    ordered, _ = _pack_blocks(blocks, available=sum(block.tokens for block in blocks), profile=profile)
+    included = []
+    for block in ordered:
+        proposed = [*included, block]
+        candidate, measured = _measured_context(proposed, **kwargs)
+        if measured <= token_budget:
+            included, output, used = proposed, candidate, measured
     return ContextResult(
-        output=output,
-        claims_considered=claims_considered,
-        claims_included=len(included),
-        tokens_used=total_tokens,
-        token_budget=token_budget,
-        format=output_format,
-        rows=tuple(ranked_rows),
+        output=output, claims_considered=len(ranked_rows), claims_included=len(included),
+        tokens_used=used, token_budget=token_budget, format=output_format,
+        rows=tuple(row for _, row in included),
     )

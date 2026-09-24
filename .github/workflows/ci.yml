@@ -28,6 +28,10 @@ jobs:
         run: pytest tests/ -m "not ml" -q --tb=short
         env:
           MEMORYMASTER_ALLOW_SENSITIVE_BYPASS: "1"
+          # Wall-clock Jev read-path budgets (tests/test_jev_read_paths.py) are measured
+          # on the release machine; shared runners swing ~5x, so CI skips only those
+          # time limits. The peak-memory budgets in the same tests still run.
+          MEMORYMASTER_SKIP_PERF: "1"
 
   ml:
     # Los 97 tests marcados `ml` no corrian en NINGUN job: el unico paso de tests

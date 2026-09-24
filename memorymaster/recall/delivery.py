@@ -14,6 +14,7 @@ AUTOMATED_PREFIXES = (
     "AUTO-SAVE checkpoint", "FLEET agents=",
 )
 REPEAT_WINDOW_SECONDS = 300
+RECALL_PREFIX = "[MemoryMaster recall]\n"
 
 
 def is_automated(prompt: str) -> bool:
@@ -67,17 +68,40 @@ def _remember(path: Path, fingerprint: str, now: float) -> None:
                 pass
 
 
+def recall_block(context: str) -> str:
+    """The exact text the recall hook delivers for a rendered recall ``context``."""
+    return RECALL_PREFIX + context
+
+
+def _session_path(data: dict, state_dir: Path | None) -> Path | None:
+    session = data.get("session_id")
+    return _state_path(session, state_dir) if isinstance(session, str) and session else None
+
+
+def _fingerprint(data: dict, context: str) -> str:
+    return hashlib.sha256(json.dumps(
+        [data.get("cwd", ""), context], ensure_ascii=False,
+    ).encode()).hexdigest()
+
+
+def would_deliver(data: dict, context: str, *, state_dir: Path | None = None,
+                  now: float | None = None) -> bool:
+    """Whether :func:`deliver` would write ``context`` now; reads state, never writes it."""
+    if not context.strip():
+        return False
+    now = time.time() if now is None else now
+    path = _session_path(data, state_dir)
+    return path is None or not _recent(path, _fingerprint(data, context), now)
+
+
 def deliver(data: dict, context: str, write: Callable[[str], object], *,
             state_dir: Path | None = None, now: float | None = None) -> bool:
     """Record only after output succeeds; state failures never break recall."""
     if not context.strip():
         return False
     now = time.time() if now is None else now
-    session = data.get("session_id")
-    path = _state_path(session, state_dir) if isinstance(session, str) and session else None
-    fingerprint = hashlib.sha256(json.dumps(
-        [data.get("cwd", ""), context], ensure_ascii=False,
-    ).encode()).hexdigest()
+    path = _session_path(data, state_dir)
+    fingerprint = _fingerprint(data, context)
     if path is not None and _recent(path, fingerprint, now):
         return False
     write(json.dumps({"hookSpecificOutput": {

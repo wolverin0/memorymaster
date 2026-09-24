@@ -45,6 +45,7 @@ Everything below is **opt-in or additive** — the default recall/ranking path i
 | Intent-aware ranking | `retrieval_profile="auto"` on query tools | opt-in per call; temporal→fresh, relational→semantic, fact/constraint→precision |
 | Guarded fuzzy entity resolver | ingest-time alias matching | `MEMORYMASTER_ENTITY_FUZZY_RESOLVE=1` (refuses ambiguous matches) |
 | Hebbian/Ebbinghaus entity edges | steward cycle + `find_related_claims` | `MEMORYMASTER_HEBBIAN_DECAY=1` |
+| Graph-expanded recall (experimental) | `query_rows` (legacy and hybrid; per call `graph_mode=`) | `MEMORYMASTER_RECALL_GRAPH_MODE=vector_first` (default `off`; `graph_first` is an evaluation arm only). Seeds are the claims recall already authorized; 1-2 hops over `claim_links` / `claim_edges` / supported entity relations under `MEMORYMASTER_RECALL_GRAPH_EXPAND_*` caps (hops 2, seeds 5, fanout 6, candidates 24, tokens 600, base share 0.5, deadline 250 ms). Every expanded claim and support is re-authorized (confirmed, same tenant/scope/principal, non-sensitive, cited, lineage not retired, never generated output); at least one base row is always kept; no seeds / no valid supports / error / timeout keep the current recall. Process-wide when set: every `query_rows` caller in that process follows it, including the recall hook, the internal `query_rows` calls in `MemoryService`, the steward contradiction probe, the Dreaming worker's consolidation context and the operational review; pass `graph_mode="off"` where a caller must stay unexpanded. Outcomes are only kept in `last_graph_expansion` (per service, overwritten per call), not in a durable ledger. Not enabled in production. |
 | PreToolUse grep/glob recall-inject | Claude Code hook | install with `memorymaster-setup --pretooluse`, then set `MEMORYMASTER_PRETOOLUSE_RECALL=1` |
 | Belief `holder` (takes-vs-facts) | `ingest_claim` / `checkpoint` / CLI `--holder`; filter via `list_claims(holder=…)` | additive nullable field; belief *type* (take/fact/bet/hunch) rides on `claim_type` |
 
@@ -68,6 +69,17 @@ primary-store claim rows with lexical and optional local/primary-store embedding
 signals. R2.1 may restore Qdrant payload retrieval only as untrusted ID
 candidates followed by authoritative SQLite/Postgres rehydration and the shared
 tenant/scope/visibility/lifecycle/sensitivity planner.
+
+`MEMORYMASTER_EMBEDDING_PROVIDER` (`auto` default, `sentence-transformers`,
+`gemini`, `hash`) selects the embedding backend. `auto` keeps the historical
+order: sentence-transformers when installed, then Gemini, then `hash-v1`. The
+MCP server pre-imports sentence-transformers before stdio (the Windows stall
+fix, 6-18 s) only when this process will load it: under `auto` or
+`sentence-transformers` with the package installed, or with
+`MEMORYMASTER_RECALL_RERANK_LOCAL=1`. Otherwise `gemini` and `hash` skip it. The
+setting is process-wide, not MCP-only. Hybrid recall, `dedup.run` (which
+archives, behind its two-gate guard) and the contradiction probe all switch
+backend with it, and switching changes the vector space of new embeddings.
 
 ---
 

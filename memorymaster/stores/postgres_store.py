@@ -2212,6 +2212,7 @@ class PostgresStore(SQLiteStore):
         scope_allowlist: list[str] | None = None,
         tenant_id: str | None = None,
         holder: str | None = None,
+        status_in: list[str] | None = None,
     ):
         clauses: list[str] = []
         params: list[object] = []
@@ -2225,7 +2226,15 @@ class PostgresStore(SQLiteStore):
         if status is not None:
             clauses.append("status = %s")
             params.append(status)
-        elif not include_archived:
+        elif status_in:
+            clauses.append(f"status IN ({','.join('%s' for _ in status_in)})")
+            params.extend(status_in)
+        # Parity with SQLite _build_list_clauses: an explicit archived request
+        # via status/status_in overrides the implicit archived exclusion.
+        explicitly_wants_archived = status == "archived" or (
+            status is None and bool(status_in) and "archived" in status_in
+        )
+        if not include_archived and not explicitly_wants_archived:
             clauses.append("status <> 'archived'")
         if scope_allowlist:
             scopes = [scope.strip() for scope in scope_allowlist if scope.strip()]
@@ -2545,6 +2554,7 @@ class PostgresStore(SQLiteStore):
         reason: str,
         event_type: str,
         replaced_by_claim_id: int | None = None,
+        event_payload: dict[str, object] | None = None,
     ) -> Claim:
         if to_status == "confirmed" and (
             claim.source_agent == "dream-worker" or (claim.idempotency_key or "").startswith("dream-")
@@ -2572,7 +2582,10 @@ class PostgresStore(SQLiteStore):
                 from_status=claim.status,
                 to_status=to_status,
                 details=reason,
-                payload={"replaced_by_claim_id": replaced_by_claim_id} if replaced_by_claim_id else None,
+                payload={
+                    **({"replaced_by_claim_id": replaced_by_claim_id} if replaced_by_claim_id else {}),
+                    **(event_payload or {}),
+                } or None,
                 created_at=now,
             )
 
@@ -2684,7 +2697,13 @@ class PostgresStore(SQLiteStore):
             "set_supersedes compatibility path",
         )
 
-    def mark_superseded(self, old_claim_id: int, new_claim_id: int, reason: str) -> None:
+    def mark_superseded(
+        self,
+        old_claim_id: int,
+        new_claim_id: int,
+        reason: str,
+        event_payload: dict[str, object] | None = None,
+    ) -> None:
         if old_claim_id == new_claim_id:
             raise ValueError("Supersession claims are unavailable.")
         now = utc_now()
@@ -2710,6 +2729,7 @@ class PostgresStore(SQLiteStore):
                 rows[new_claim_id],
                 reason,
                 now,
+                event_payload,
             )
 
     def _apply_atomic_supersession(
@@ -2720,6 +2740,7 @@ class PostgresStore(SQLiteStore):
         new: dict[str, object],
         reason: str,
         now: datetime,
+        event_payload: dict[str, object] | None = None,
     ) -> None:
         old_id = int(old["id"])
         new_id = int(new["id"])
@@ -2743,7 +2764,7 @@ class PostgresStore(SQLiteStore):
             from_status=str(old.get("status") or "candidate"),
             to_status="superseded",
             details=reason,
-            payload={"replaced_by_claim_id": new_id},
+            payload={"replaced_by_claim_id": new_id, **(event_payload or {})},
             created_at=now,
         )
 
@@ -2787,6 +2808,33 @@ class PostgresStore(SQLiteStore):
             include_archived=True,
             include_citations=include_citations,
         )
+
+    def find_archive_candidates(
+        self, *, created_before: str, after_id: int = 0, limit: int = 500
+    ) -> list[Claim]:
+        """Stale, never-accessed, unpinned claims created before a cutoff (F-20).
+
+        The ISO cutoff is bound as a native datetime for TIMESTAMPTZ.
+        """
+        cutoff = datetime.fromisoformat(created_before)
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=timezone.utc)
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                    SELECT * FROM claims
+                    WHERE status = 'stale'
+                      AND access_count = 0
+                      AND pinned = FALSE
+                      AND created_at < %s
+                      AND id > %s
+                    ORDER BY id ASC
+                    LIMIT %s
+                    """,
+                (cutoff, int(after_id), max(1, int(limit))),
+            )
+            rows = cur.fetchall()
+        return [self._row_to_claim(row) for row in rows]
 
     def find_for_decay(self, limit: int = 200) -> list[Claim]:
         with self.connect() as conn, conn.cursor() as cur:

@@ -119,6 +119,16 @@ class CompiledProfileEngine:
 
     def run(self, *, force: bool = False, max_map_calls: int | None = None) -> dict[str, Any]:
         current = self.now()
+        # Every run re-checks claim supports, before the cadence gate and
+        # before mapping or reducing, and rewrites the projection at once so a
+        # retired fact stops being injected even when no compile is due or
+        # this run ends mid-mapping.
+        retraction = self.repo.retract_ineligible_claim_supports(
+            now=current, min_sessions=self.config.min_independent_sessions
+        )
+        if retraction["supports_removed"]:
+            logger.info("compiled profile retraction: %s", retraction)
+            self._write_projection(current)
         active = self.repo.active_run()
         if active is None and not force and not self.repo.due(
             now=current, cadence_days=self.config.cadence_days
@@ -154,16 +164,35 @@ class CompiledProfileEngine:
             }
 
     def _start_run(self, now: datetime) -> dict[str, Any] | None:
-        target = self.repo.max_user_id()
-        latest = self.repo.latest_completed_run()
+        # Verbatim user turns stay the primary evidence. Verbatim capture is
+        # opt-in, though, and sat empty for weeks while the profile froze and
+        # was injected as current (review F-03); with no new verbatim input,
+        # governed claims (confirmed / Dreaming-applied) feed the profile.
+        latest = self.repo.latest_completed_run("verbatim")
         start = int(latest["target_watermark"]) if latest else 0
-        if target <= start:
+        watermark = self.repo.max_user_id()
+        if watermark > start:
+            return self.repo.start_run(
+                target=watermark,
+                map_model=self.mapper.model,
+                reduce_model=self.reducer.model,
+                now=now,
+                source="verbatim",
+            )
+        # Claims are selected by what no run has mapped yet, not by a MAX(id)
+        # watermark, so a claim that becomes eligible after higher ids were
+        # compiled (steward confirmation, S1 re-confirmation) is still read.
+        pending = self.repo.pending_claim_bounds()
+        if pending is None:
             return None
+        first, last = pending
         return self.repo.start_run(
-            target=target,
+            target=last,
+            start=first - 1,
             map_model=self.mapper.model,
             reduce_model=self.reducer.model,
             now=now,
+            source="claims",
         )
 
     def _advance_mapping(
@@ -177,6 +206,7 @@ class CompiledProfileEngine:
                 through_id=int(run["target_watermark"]),
                 max_messages=self.config.max_messages,
                 max_chars=self.config.max_input_chars,
+                source=str(run.get("source") or "verbatim"),
             )
             provider_called = bool(batch.messages)
             if provider_called and calls >= max(1, limit):
@@ -186,6 +216,10 @@ class CompiledProfileEngine:
             self.repo.save_mapping(
                 int(run["id"]), candidates, batch.scanned_through_id,
                 now=now, provider_called=provider_called,
+                # Claim supports carry the claim id negated.
+                seen_claim_ids=tuple(
+                    -item.message_id for item in batch.messages if item.message_id < 0
+                ),
             )
             run = self.repo.run(int(run["id"]))
             if batch.scanned_through_id <= int(run["start_watermark"]):
@@ -286,7 +320,10 @@ def run_compiled_profile(
     output_dir: str | Path | None = None,
     force: bool = False,
     max_map_calls: int | None = None,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
+    """``tenant_id`` is the calling service's tenant: claims evidence is read
+    under the store's tenant semantics (legacy rows only when it is unset)."""
     from memorymaster.profile.providers import ProfileMapper, ProfileReducer
 
 
@@ -304,7 +341,7 @@ def run_compiled_profile(
         or (Path(configured) if configured else Path.home() / ".memorymaster" / "projections")
     )
     engine = CompiledProfileEngine(
-        ProfileRepository(db_path),
+        ProfileRepository(db_path, tenant_id=tenant_id),
         ProfileMapper(),
         ProfileReducer(),
         output_dir=directory,

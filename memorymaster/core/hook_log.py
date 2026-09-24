@@ -14,7 +14,9 @@ Design constraints:
   ``sys.path.insert(0, PROJECT_ROOT)`` bootstrap; we can't rely on stdlib
   extras or third-party packages.
 * Human-skim + grep friendly. The format is
-  ``[HH:MM:SS] hook=<name> session=<id> event=<what> [k=v ...]``.
+  ``[YYYY-MM-DDTHH:MM:SS+HH:MM] hook=<name> session=<id> event=<what> [k=v ...]``
+  (local time with its UTC offset; a bare ``HH:MM:SS`` could not tell days
+  apart once the log spanned more than one).
 
 Usage::
 
@@ -51,7 +53,7 @@ def log_hook(hook: str, event: str, **fields: Any) -> None:
     """
     try:
         _STATE_DIR.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%H:%M:%S")
+        ts = datetime.now().astimezone().isoformat(timespec="seconds")
         parts = [f"[{ts}] hook={hook} event={event}"]
         for key, val in fields.items():
             if val is None:

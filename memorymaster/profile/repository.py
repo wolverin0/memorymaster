@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from memorymaster.core.security import scan_persisted_value
+from memorymaster.core.temporal_policy import claim_is_temporally_current
+from memorymaster.profile.egress import prepare_claim_egress
 from memorymaster.profile.models import (
     MessageBatch,
     ProfileCandidate,
@@ -26,15 +28,145 @@ _WRAPPER = re.compile(
     r"(?is)^\s*(?:<system-reminder|\[system|<task-notification|<local-command|stop hook feedback:)"
 )
 
+# Governed claims usable as profile evidence when verbatim input is empty
+# (review F-03): confirmed claims, plus claims Dreaming applied that still
+# await the steward. Public only; stale/superseded/archived never qualify.
+# Claim supports are stored with the claim id NEGATED in verbatim_id, so the
+# exact-support manifest, its primary key and the mismatch check are shared.
+_CLAIM_ELIGIBLE_SQL = (
+    "(status = 'confirmed' OR (status = 'candidate' AND source_agent = 'dream-worker')) "
+    "AND COALESCE(visibility, 'public') = 'public' AND replaced_by_claim_id IS NULL"
+)
+# Tenant boundary, same semantics as the store's ``tenant_id IS ?`` lookups:
+# the service tenant's rows only, legacy NULL-tenant rows only when the
+# service tenant is unset. Applies to selection and to support resolution.
+_CLAIM_TENANT_SQL = "tenant_id IS ?"
+# A claims run takes the eligible claims no earlier run has mapped. Not a
+# MAX(id) watermark: a claim becomes eligible long after higher ids were
+# compiled (steward confirmation, S1 re-confirming a stale claim, a conflict
+# resolved), and Dreaming candidates are eligible the moment they exist.
+_CLAIM_UNSEEN_SQL = (
+    "NOT EXISTS (SELECT 1 FROM compiled_profile_claim_seen seen WHERE seen.claim_id = claims.id)"
+)
+
+
+class _Validity:
+    __slots__ = ("valid_from", "valid_until")
+
+    def __init__(self, valid_from: Any, valid_until: Any) -> None:
+        self.valid_from = valid_from
+        self.valid_until = valid_until
+
+
+def _claim_citations(conn: sqlite3.Connection, claim_ids: list[int]) -> dict[int, list[tuple[str, str]]]:
+    if not claim_ids:
+        return {}
+    placeholders = ",".join("?" for _ in claim_ids)
+    grouped: dict[int, list[tuple[str, str]]] = {}
+    for row in conn.execute(
+        f"SELECT claim_id, source, locator FROM citations WHERE claim_id IN ({placeholders}) ORDER BY id",
+        claim_ids,
+    ):
+        grouped.setdefault(int(row["claim_id"]), []).append((str(row["source"] or ""), str(row["locator"] or "")))
+    return grouped
+
+
+def _claim_session(claim_id: int, citations: list[tuple[str, str]]) -> str:
+    """Independent-evidence unit of a claim: its session lineage.
+
+    Claims with no session or Dreaming lineage all share ``claim:unlinked``,
+    so they never satisfy the independent-sessions gate by themselves. A claim
+    citing several sessions is its own unit.
+    """
+    from memorymaster.recall.retrieval import _normalize_session_locator
+
+    for source, locator in citations:
+        # Dreaming locator: dream:<provider>:<session hash>:<message id>
+        if source == "dream-worker" and locator.startswith("dream:") and locator.count(":") >= 3:
+            return locator.rsplit(":", 1)[0]
+    sessions = {
+        _normalize_session_locator(locator)
+        for source, locator in citations
+        if source == "session" and locator.strip()
+    }
+    if len(sessions) == 1:
+        return "session:" + sessions.pop()
+    if not sessions:
+        return "claim:unlinked"
+    return f"claim:{claim_id}"
+
+
+def _claim_usable(text: str, valid_from: Any, valid_until: Any) -> bool:
+    # A redaction marker means the claim carried a secret at ingest; like
+    # is_sensitive_claim, treat it as sensitive rather than as clean text.
+    # redact_claim_payload leaves status and visibility as they were, so its
+    # [REDACTED_CLAIM_TEXT] / [ERASED_CLAIM_TEXT] payloads are caught here.
+    # The egress check keeps a claim the map provider may not receive out of
+    # selection too, so it never stays pending.
+    return (
+        bool(text)
+        and "[REDACTED" not in text
+        and "[ERASED_CLAIM_TEXT]" not in text
+        and not scan_persisted_value({"text": text})
+        and claim_is_temporally_current(_Validity(valid_from, valid_until))
+        and not prepare_claim_egress(text).blocked
+    )
+
+
+def _eligible_claim_rows(
+    conn: sqlite3.Connection, tenant_id: str | None, where: str, params: list[Any]
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        f"""SELECT id, scope, text, created_at, valid_from, valid_until FROM claims
+            WHERE {_CLAIM_ELIGIBLE_SQL} AND {_CLAIM_TENANT_SQL} AND {where}""",
+        [tenant_id, *params],
+    ).fetchall()
+    citations = _claim_citations(conn, [int(row["id"]) for row in rows])
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        text = str(row["text"] or "").strip()
+        usable = _claim_usable(text, row["valid_from"], row["valid_until"])
+        out.append({
+            "id": int(row["id"]),
+            "scope": str(row["scope"] or ""),
+            "content": text,
+            "timestamp": str(row["created_at"]),
+            "session_id": _claim_session(int(row["id"]), citations.get(int(row["id"]), [])),
+            "usable": usable,
+        })
+    return out
+
 
 class ProfileRepository:
     """Persist only derived facts, exact support IDs, hashes, and run state."""
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, tenant_id: str | None = None) -> None:
         self.db_path = str(db_path)
+        # Same normalization as MemoryService.tenant_id.
+        self.tenant_id = (tenant_id or "").strip() or None
 
     def connect(self) -> sqlite3.Connection:
         return open_conn(self.db_path)
+
+    def pending_claim_bounds(self) -> tuple[int, int] | None:
+        """Lowest and highest id of usable eligible claims not mapped yet.
+
+        ``None`` when no claim is pending, so an eligible claim that is not
+        usable (secret finding, not current) never starts an empty run.
+        """
+        with closing(self.connect()) as conn:
+            rows = conn.execute(
+                f"""SELECT id, text, valid_from, valid_until FROM claims
+                    WHERE {_CLAIM_ELIGIBLE_SQL} AND {_CLAIM_TENANT_SQL} AND {_CLAIM_UNSEEN_SQL}
+                    ORDER BY id""",
+                (self.tenant_id,),
+            ).fetchall()
+        ids = [
+            int(row["id"])
+            for row in rows
+            if _claim_usable(str(row["text"] or "").strip(), row["valid_from"], row["valid_until"])
+        ]
+        return (ids[0], ids[-1]) if ids else None
 
     def max_user_id(self) -> int:
         with closing(self.connect()) as conn:
@@ -52,11 +184,17 @@ class ProfileRepository:
             ).fetchone()
         return dict(row) if row else None
 
-    def latest_completed_run(self) -> dict[str, Any] | None:
+    def latest_completed_run(self, source: str | None = None) -> dict[str, Any] | None:
+        """Latest completed run, optionally of one evidence ``source``.
+
+        Verbatim runs continue from the latest verbatim run's target; claims
+        runs select the claims not mapped yet (``pending_claim_bounds``).
+        """
+        where = "status='completed'" + (" AND source=?" if source else "")
         with closing(self.connect()) as conn:
             row = conn.execute(
-                """SELECT * FROM compiled_profile_runs WHERE status='completed'
-                   ORDER BY id DESC LIMIT 1"""
+                f"SELECT * FROM compiled_profile_runs WHERE {where} ORDER BY id DESC LIMIT 1",
+                (source,) if source else (),
             ).fetchone()
         return dict(row) if row else None
 
@@ -68,21 +206,29 @@ class ProfileRepository:
         return completed <= now - timedelta(days=max(1, cadence_days))
 
     def start_run(
-        self, *, target: int, map_model: str, reduce_model: str, now: datetime
+        self,
+        *,
+        target: int,
+        map_model: str,
+        reduce_model: str,
+        now: datetime,
+        source: str = "verbatim",
+        start: int | None = None,
     ) -> dict[str, Any]:
         active = self.active_run()
         if active is not None:
             return active
-        latest = self.latest_completed_run()
-        start = int(latest["target_watermark"]) if latest else 0
+        if start is None:
+            latest = self.latest_completed_run(source)
+            start = int(latest["target_watermark"]) if latest else 0
         timestamp = now.isoformat()
         with closing(self.connect()) as conn:
             cur = conn.execute(
                 """INSERT INTO compiled_profile_runs
                    (status, active_slot, start_watermark, current_watermark,
-                    target_watermark, map_model, reduce_model, started_at, updated_at)
-                   VALUES ('mapping',1,?,?,?,?,?,?,?)""",
-                (start, start, target, map_model, reduce_model, timestamp, timestamp),
+                    target_watermark, map_model, reduce_model, started_at, updated_at, source)
+                   VALUES ('mapping',1,?,?,?,?,?,?,?,?)""",
+                (start, start, target, map_model, reduce_model, timestamp, timestamp, source),
             )
             conn.commit()
             run_id = int(cur.lastrowid)
@@ -104,13 +250,19 @@ class ProfileRepository:
         through_id: int,
         max_messages: int,
         max_chars: int,
+        source: str = "verbatim",
     ) -> MessageBatch:
-        rows = self._message_rows(after_id, through_id, max_messages)
+        if source == "claims":
+            rows: list[Any] = self._claim_rows(after_id, through_id, max_messages)
+            to_message = self._claim_message
+        else:
+            rows = self._message_rows(after_id, through_id, max_messages)
+            to_message = self._profile_message
         messages: list[ProfileMessage] = []
         scanned = after_id
         used = 0
         for row in rows:
-            message = self._profile_message(row)
+            message = to_message(row)
             if message is None:
                 scanned = int(row["id"])
                 continue
@@ -125,6 +277,31 @@ class ProfileRepository:
         if not rows:
             scanned = through_id
         return MessageBatch(tuple(messages), scanned)
+
+    def _claim_rows(
+        self, after_id: int, through_id: int, max_messages: int
+    ) -> list[dict[str, Any]]:
+        fetch_limit = max(100, max_messages * 10)
+        with closing(self.connect()) as conn:
+            return _eligible_claim_rows(
+                conn,
+                self.tenant_id,
+                f"id>? AND id<=? AND {_CLAIM_UNSEEN_SQL} ORDER BY id LIMIT ?",
+                [after_id, through_id, fetch_limit],
+            )
+
+    @staticmethod
+    def _claim_message(row: dict[str, Any]) -> ProfileMessage | None:
+        if not row["usable"]:
+            return None
+        # Only the egress-redacted text leaves for the map provider.
+        return ProfileMessage(
+            -int(row["id"]),
+            str(row["session_id"]),
+            str(row["scope"]),
+            prepare_claim_egress(str(row["content"])).text[:16_000],
+            "",
+        )
 
     def _message_rows(
         self, after_id: int, through_id: int, max_messages: int
@@ -166,11 +343,19 @@ class ProfileRepository:
         *,
         now: datetime,
         provider_called: bool,
+        seen_claim_ids: Iterable[int] = (),
     ) -> None:
         timestamp = now.isoformat()
         with closing(self.connect()) as conn:
             for candidate in candidates:
                 self._insert_candidate(conn, run_id, candidate, timestamp)
+            # Same transaction as the candidates and the watermark: a claim is
+            # recorded as mapped only together with what its mapping produced.
+            conn.executemany(
+                """INSERT OR IGNORE INTO compiled_profile_claim_seen
+                   (claim_id, run_id, seen_at) VALUES (?,?,?)""",
+                [(int(claim_id), run_id, timestamp) for claim_id in seen_claim_ids],
+            )
             conn.execute(
                 """UPDATE compiled_profile_runs
                    SET current_watermark=?, map_calls=map_calls+?, updated_at=?
@@ -362,18 +547,30 @@ class ProfileRepository:
             return self._supersede(conn, int(decision.target_fact_id or 0), fact_id, now)
         return bool(fact_id)
 
-    @staticmethod
     def _support_rows(
-        conn: sqlite3.Connection, support_ids: tuple[int, ...]
-    ) -> list[sqlite3.Row]:
-        if not support_ids:
-            return []
-        placeholders = ",".join("?" for _ in support_ids)
-        return conn.execute(
-            f"""SELECT id, session_id, content, timestamp FROM verbatim_memories
-                WHERE role='user' AND id IN ({placeholders}) ORDER BY id""",
-            support_ids,
-        ).fetchall()
+        self, conn: sqlite3.Connection, support_ids: tuple[int, ...]
+    ) -> list[Any]:
+        """Resolve exact supports; a negative id is a claim that must still qualify."""
+        verbatim_ids = [item for item in support_ids if item > 0]
+        claim_ids = [-item for item in support_ids if item < 0]
+        rows: list[Any] = []
+        if verbatim_ids:
+            placeholders = ",".join("?" for _ in verbatim_ids)
+            rows.extend(conn.execute(
+                f"""SELECT id, session_id, content, timestamp FROM verbatim_memories
+                    WHERE role='user' AND id IN ({placeholders}) ORDER BY id""",
+                verbatim_ids,
+            ).fetchall())
+        if claim_ids:
+            placeholders = ",".join("?" for _ in claim_ids)
+            rows.extend(
+                {**row, "id": -int(row["id"])}
+                for row in _eligible_claim_rows(
+                    conn, self.tenant_id, f"id IN ({placeholders})", claim_ids
+                )
+                if row["usable"]
+            )
+        return sorted(rows, key=lambda row: int(row["id"]))
 
     def _upsert_fact(
         self,
@@ -465,11 +662,12 @@ class ProfileRepository:
         material = "|".join(f"{row['verbatim_id']}:{row['message_hash']}" for row in rows)
         support_hash = hashlib.sha256(material.encode("utf-8")).hexdigest()
         sessions = len({str(row["session_id"]) for row in rows})
-        last_seen = max(str(row["supported_at"]) for row in rows)
+        # A retraction can leave a retired fact with no support at all.
+        last_seen = max((str(row["supported_at"]) for row in rows), default=None)
         conn.execute(
             """UPDATE compiled_profile_facts
                SET support_hash=?, support_count=?, independent_sessions=?,
-                   last_supported_at=?, updated_at=? WHERE id=?""",
+                   last_supported_at=COALESCE(?, last_supported_at), updated_at=? WHERE id=?""",
             (support_hash, len(rows), sessions, last_seen, now.isoformat(), fact_id),
         )
 
@@ -506,6 +704,70 @@ class ProfileRepository:
             (replacement_id, now.isoformat(), target_id),
         )
         return True
+
+    def retract_ineligible_claim_supports(
+        self, *, now: datetime, min_sessions: int
+    ) -> dict[str, int]:
+        """Re-check the claim supports of active facts (review F-03).
+
+        A support whose claim is no longer eligible (status, visibility,
+        replacement, tenant, currency, egress) is removed, and so is one whose
+        claim was edited in place: its current text no longer hashes to the
+        support's ``message_hash`` (ruling R4). A fact whose remaining support
+        spans fewer than ``min_sessions`` sessions is retired as ``expired``. A
+        removed claim leaves the seen set, so it is mapped again if it becomes
+        eligible again (e.g. S1 re-confirms it) or with its edited text.
+        """
+        stats = {"supports_removed": 0, "facts_retired": 0}
+        with closing(self.connect()) as conn:
+            rows = conn.execute(
+                """SELECT s.fact_id, s.verbatim_id, s.message_hash FROM compiled_profile_supports s
+                   JOIN compiled_profile_facts f ON f.id = s.fact_id
+                   WHERE f.status = 'active' AND s.verbatim_id < 0"""
+            ).fetchall()
+            claim_ids = sorted({-int(row["verbatim_id"]) for row in rows})
+            # Eligible claim id -> hash of its current text, as _attach_supports hashed it.
+            eligible: dict[int, str] = {}
+            for start in range(0, len(claim_ids), 500):
+                chunk = claim_ids[start:start + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                eligible.update(
+                    (int(row["id"]), hashlib.sha256(str(row["content"]).encode("utf-8")).hexdigest())
+                    for row in _eligible_claim_rows(
+                        conn, self.tenant_id, f"id IN ({placeholders})", chunk
+                    )
+                    if row["usable"]
+                )
+            removed = [
+                (int(row["fact_id"]), int(row["verbatim_id"]))
+                for row in rows
+                if eligible.get(-int(row["verbatim_id"])) != str(row["message_hash"] or "")
+            ]
+            if not removed:
+                return stats
+            conn.executemany(
+                "DELETE FROM compiled_profile_supports WHERE fact_id=? AND verbatim_id=?", removed
+            )
+            conn.executemany(
+                "DELETE FROM compiled_profile_claim_seen WHERE claim_id=?",
+                [(-support_id,) for support_id in sorted({item for _, item in removed})],
+            )
+            stamp = now.isoformat()
+            for fact_id in sorted({fact for fact, _ in removed}):
+                sessions = conn.execute(
+                    "SELECT COUNT(DISTINCT session_id) FROM compiled_profile_supports WHERE fact_id=?",
+                    (fact_id,),
+                ).fetchone()[0]
+                if int(sessions) < min_sessions:
+                    conn.execute(
+                        "UPDATE compiled_profile_facts SET status='expired', updated_at=? WHERE id=?",
+                        (stamp, fact_id),
+                    )
+                    stats["facts_retired"] += 1
+                self._refresh_support_stats(conn, fact_id, now)
+            conn.commit()
+        stats["supports_removed"] = len(removed)
+        return stats
 
     def expire_preferences(self, *, now: datetime, ttl_days: int) -> int:
         threshold = (now - timedelta(days=max(1, ttl_days))).isoformat()
