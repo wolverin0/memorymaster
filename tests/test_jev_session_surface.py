@@ -123,6 +123,7 @@ def _injected_ids(context: str) -> list[int]:
 
 def _install(monkeypatch, tmp_path, transport, mode="live"):
     monkeypatch.setenv("MEMORYMASTER_JEV_MODE", mode)
+    monkeypatch.setenv("MEMORYMASTER_JEV_HOOK_DEADLINE_MS", "10000")  # not deadline tests (CI 2026-09-24)
     engine = DecisionEngine(DecisionConfig.from_env(), transport_factory=lambda _k: transport, key_lookup=lambda: KEY)
     monkeypatch.setattr(decisions_engine, "default_engine", lambda: engine)
 

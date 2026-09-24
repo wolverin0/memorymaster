@@ -83,7 +83,10 @@ def recall_answers(plan):
 
 
 def install_engine(monkeypatch, tmp_path, transport, **env):
-    settings = {"MEMORYMASTER_JEV_MODE": "live", "MEMORYMASTER_JEV_EXPLORE_RECALL": "0"}
+    # A hook deadline no loaded runner reaches unless the test is about the deadline (Ubuntu CI
+    # 2026-09-24 fell back to legacy at the 900 ms default); deadline tests pass their own.
+    settings = {"MEMORYMASTER_JEV_MODE": "live", "MEMORYMASTER_JEV_EXPLORE_RECALL": "0",
+                "MEMORYMASTER_JEV_HOOK_DEADLINE_MS": "10000"}
     settings.update(env)
     for name, value in settings.items():
         monkeypatch.setenv(name, value)
@@ -189,7 +192,8 @@ def test_live_orders_by_relevance_adapts_k_and_labels_flags(tmp_path, monkeypatc
     # One request, hook deadline, zero retries; state = request + project label only.
     assert len(transport.calls) == 1
     call = transport.calls[0]
-    assert 0 < call["timeout_s"] <= 0.9 and call["max_retries"] == 0  # hook: time left of 0.9 s
+    # hook kind: no retries (batch retries 3 times), and at most the time left of the hook deadline
+    assert 0 < call["timeout_s"] <= 10.0 and call["max_retries"] == 0
     assert call["payload"]["state"] == {"request": wide, "project": "memorymaster"}
     asked = {wire.split("::", 1)[1] for wire in call["payload"]["questions"]}
     assert asked == {f"claim:{cid}" for cid in legacy_ids}
@@ -683,7 +687,7 @@ def test_prompt_hook_jev_time_stays_within_one_hook_deadline(tmp_path, monkeypat
     legacy_out = context_hook.recall(QUERY, db_path=str(db), skip_qdrant=True, hook_data=data)
     baseline = time.perf_counter() - started
     transport = ScriptedTransport(with_route(recall_answers({})), delay=3.0)
-    install_engine(monkeypatch, tmp_path, transport)  # default 900 ms hook deadline
+    install_engine(monkeypatch, tmp_path, transport, MEMORYMASTER_JEV_HOOK_DEADLINE_MS="900")  # production value
 
     started = time.perf_counter()
     out = context_hook.recall(QUERY, db_path=str(db), skip_qdrant=True, hook_data=data)

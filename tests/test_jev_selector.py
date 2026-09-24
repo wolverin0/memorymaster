@@ -136,7 +136,10 @@ def stub():
 
 def make_engine(tmp_path: Path, stub: JevStub, *, mode: str = "live", key: ApiKey | None = KEY,
                 env: dict[str, str] | None = None) -> DecisionEngine:
-    environ = {"MEMORYMASTER_JEV_MODE": mode, "MEMORYMASTER_DECISIONS_DB": str(tmp_path / "decisions.db")}
+    # A hook deadline no loaded CI runner reaches unless the test is about the deadline
+    # (CI 2026-09-24 fell back at the 900 ms default); deadline tests pass their own.
+    environ = {"MEMORYMASTER_JEV_MODE": mode, "MEMORYMASTER_DECISIONS_DB": str(tmp_path / "decisions.db"),
+               "MEMORYMASTER_JEV_HOOK_DEADLINE_MS": "10000"}
     environ.update(env or {})
     return DecisionEngine(DecisionConfig.from_env(environ),
                           transport_factory=lambda k: HttpxTransport(k, endpoint=stub.url),
@@ -264,7 +267,7 @@ def test_contradictory_unknown_or_nonfinite_answers_fall_back_and_are_logged(tmp
 
 
 def test_http_errors_and_timeouts_degrade_to_legacy_within_the_deadline(tmp_path, stub) -> None:
-    engine = make_engine(tmp_path, stub)
+    engine = make_engine(tmp_path, stub, env={"MEMORYMASTER_JEV_HOOK_DEADLINE_MS": "900"})  # the production hook deadline
     stub.reply({}, status=503)
     assert select_skill_ids("Run request 1", skills(), legacy_ids=[1], engine=engine) is None
 

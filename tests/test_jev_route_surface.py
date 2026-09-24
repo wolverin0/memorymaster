@@ -48,6 +48,9 @@ def _isolated(tmp_path, monkeypatch):
 
 def install_engine(monkeypatch, tmp_path, transport, **env):
     monkeypatch.setenv("MEMORYMASTER_JEV_MODE", "live")
+    # Not deadline tests: a hook deadline no loaded CI runner reaches (the 900 ms default
+    # made recall-surface tests fall back on Ubuntu CI, 2026-09-24).
+    monkeypatch.setenv("MEMORYMASTER_JEV_HOOK_DEADLINE_MS", "10000")
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     engine = DecisionEngine(DecisionConfig.from_env(), transport_factory=lambda _key: transport,
@@ -108,4 +111,5 @@ def test_route_prompt_path_uses_hook_kind(tmp_path, monkeypatch):
     transport = ScriptedTransport(route_answers("preference", 0.9))
     install_engine(monkeypatch, tmp_path, transport)
     route_query("how should replies be formatted")
-    assert transport.calls[0]["max_retries"] == 0 and 0 < transport.calls[0]["timeout_s"] <= 0.9
+    # hook kind: no retries (batch retries 3 times), at most the time left of the hook deadline
+    assert transport.calls[0]["max_retries"] == 0 and 0 < transport.calls[0]["timeout_s"] <= 10.0

@@ -81,7 +81,10 @@ class FakeTransport:
 
 def make_engine(tmp_path: Path, transport: FakeTransport, *, mode: str = "live", key: ApiKey | None = KEY,
                 env: dict[str, str] | None = None) -> DecisionEngine:
-    environ = {"MEMORYMASTER_JEV_MODE": mode, "MEMORYMASTER_DECISIONS_DB": str(tmp_path / "decisions.db")}
+    # A hook deadline no loaded CI runner reaches unless the test is about the deadline
+    # (CI 2026-09-24 fell back at the 900 ms default); deadline tests pass their own.
+    environ = {"MEMORYMASTER_JEV_MODE": mode, "MEMORYMASTER_DECISIONS_DB": str(tmp_path / "decisions.db"),
+               "MEMORYMASTER_JEV_HOOK_DEADLINE_MS": "10000"}
     environ.update(env or {})
     return DecisionEngine(DecisionConfig.from_env(environ), transport_factory=lambda _key: transport,
                           key_lookup=lambda: key)
@@ -171,7 +174,8 @@ def test_live_mode_sends_one_request_of_seven_nouls_over_the_redacted_prompt(hoo
     assert set(payload["questions"]) == {f"hints.{label}" for label in HINT_LABELS}
     assert {q["type"] for q in payload["questions"].values()} == {"noul"}
     # hook kind: the time left of the 0.9 s deadline, no retries
-    assert 0 < fake.calls[0]["timeout_s"] <= 0.9 and fake.calls[0]["max_retries"] == 0
+    # hook kind: no retries (batch retries 3 times), at most the time left of the hook deadline
+    assert 0 < fake.calls[0]["timeout_s"] <= 10.0 and fake.calls[0]["max_retries"] == 0
     sent = json.dumps(payload)
     assert "jane.doe@example.com" not in sent and "192.168.1.10" not in sent
     assert "[REDACTED:email]" in payload["state"]["prompt"]
@@ -208,7 +212,8 @@ def test_live_mode_with_no_label_over_threshold_shows_nothing(hook, tmp_path) ->
 # ------------------------------------------------------------ fallbacks ---
 
 def test_timeout_degrades_to_the_regex_hints_within_the_deadline(hook, tmp_path) -> None:
-    engine = make_engine(tmp_path, FakeTransport({"preference": 0.99}, delay=2.0))
+    engine = make_engine(tmp_path, FakeTransport({"preference": 0.99}, delay=2.0),
+                         env={"MEMORYMASTER_JEV_HOOK_DEADLINE_MS": "900"})  # the production hook deadline
 
     started = time.monotonic()
     out = hook.run(json.loads(DECIDED["stdin"]), engine=engine)

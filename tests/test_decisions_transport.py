@@ -642,7 +642,8 @@ def test_engine_decisions_share_the_keep_alive_connection(server, tmp_path):
 
     server.script.extend([answer, answer])
     config = DecisionConfig.from_env({"MEMORYMASTER_JEV_MODE": "live",
-                                      "MEMORYMASTER_DECISIONS_DB": str(tmp_path / "decisions.db")})
+                                      "MEMORYMASTER_DECISIONS_DB": str(tmp_path / "decisions.db"),
+                                      "MEMORYMASTER_JEV_HOOK_DEADLINE_MS": "10000"})  # not a deadline test
     engine = DecisionEngine(config, key_lookup=lambda: KEY,
                             transport_factory=lambda key: HttpTransport(key, endpoint=server.url))
     state, bound = build_hints("we decided to use WAL")
