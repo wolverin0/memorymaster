@@ -407,6 +407,9 @@ class HttpTransport:
             _close_quietly(conn)
 
     def _checkin(self, conn: Any, response: Any) -> None:
+        # Python 3.10 leaves a response read1'd to Content-Length open, and the next request
+        # on the connection raises ResponseNotReady. Closing it releases only the reader.
+        response.close()
         if response.will_close or getattr(conn, "sock", None) is None:
             _close_quietly(conn)
             return
