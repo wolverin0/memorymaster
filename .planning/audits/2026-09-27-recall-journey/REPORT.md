@@ -1,5 +1,5 @@
 <!-- doc-head: governed recall journey and complete evidence delivery -->
-<!-- Covers: paired fixture measurement, temporal admission, ledger latency and acceptance limits. -->
+<!-- Covers: renderer and temporal repairs, installed verification and acceptance limits. -->
 <!-- Authority: ROADMAP.md; this is implementation evidence, not a second backlog. -->
 <!-- Runtime: installed and fresh-session delivery verified; semantic utility unmeasured. -->
 <!-- /doc-head -->
@@ -372,3 +372,27 @@ Its disposable installed-package run passed 21 temporal/renderer tests and all
 five journey cases with network egress blocked and zero provider calls. Only the
 temporal admission predicate changes executable behavior; engine documentation
 and one newline-only packaged file account for the other manifest differences.
+
+### Installed follow-up — 2026-09-28
+
+Source `190d020` was fast-forwarded into main without changing any of the three
+pre-existing dirty file hashes. The selected wheel was installed with no
+dependency changes in both general and scheduled runtimes: all **438 files per
+runtime match**, version 4.9.0. The previous wheel and hash-checked rollback are
+retained. Each installed interpreter passed the five-case governed journey
+evaluation with zero provider calls; these are fixture checks, not real qrels.
+
+Two fresh installed prompt hooks returned valid context in **2299.0 / 2598.6 ms**,
+within the configured 10-second timeout. Both used one successful live
+`jev-1.13.0` call (406 / 422 ms transport), with no fallback. Each output contained
+two complete public claims longer than 300 characters, each with persisted
+citations. Citation presence is not semantic support correctness. Their combined
+ledger token-rate estimate is $0.000396564; invoiced cost remains unknown.
+
+MCP checks pass: health/readiness 200, unauthenticated MCP 401, authenticated
+initialization and 51 tools, zero errors in eight new log lines. No long-lived
+service executable behavior changed, so no unrelated service was restarted.
+Settings and authoritative memory data were unchanged; normal hook/decision
+telemetry was recorded. Evidence: `deployment-20260928.json`. Optional graph
+recall remains off, skills has no authorized catalog, and semantic usefulness
+remains unmeasured. No activation decision is required to use the installed fix.

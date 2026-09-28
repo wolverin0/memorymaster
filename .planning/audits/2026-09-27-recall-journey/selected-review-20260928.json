@@ -1,7 +1,7 @@
 {
   "review": "independent selected-release source and artifact inspection",
   "date_utc": "2026-09-28",
-  "verdict": "PASS_FOR_SELECTION_WITH_ACCEPTANCE_LIMITS",
+  "verdict": "PASS_POST_INSTALL_WITH_ACCEPTANCE_LIMITS",
   "selected_wheel": {
     "sha256": "42d64016b07debb32ada961c368cca4af8f7350a944b470bb1283a31736c166b",
     "location": "main checkout artifacts/recall-acceptance-20260928/selected-dist/memorymaster-4.9.0-py3-none-any.whl",
@@ -41,5 +41,16 @@
     "verification": "Coordinator reports 61 passing tests across all four affected files plus tests/test_prompt_temporal_boundary.py; this follow-up is an independent diff review and did not repeat that run while the full gate was in progress.",
     "gate_status": "All 11 first-run failures remain evidence; complete shards 2 and 4 must be rerun before the final full gate can close. Those reruns are coordinator-owned and not claimed complete here."
   },
-  "limits": ["Focused tests used only disposable fixture databases; no source, test, authoritative database, provider, job or installed runtime was mutated in this review", "This inspection does not close the coordinator's running full gate or prove the wheel installed in either runtime", "The selected ledger retains its prior WAL synchronous=NORMAL send-intent power-loss limitation; no new connection-reuse regression is packaged"]
+  "limits": ["The initial selection inspection was read-only; its earlier pending-install and pending-gate statements are historical and superseded by post_install_review", "The selected ledger retains its prior WAL synchronous=NORMAL send-intent power-loss limitation; no new connection-reuse regression is packaged"],
+  "post_install_review": {
+    "verdict": "PASS_FOR_BOUNDED_RECALL_RELEASE_ACCEPTANCE",
+    "method": "Independently reran python -I artifacts/recall-acceptance-20260928/package_identity.py after; read installed journey, live-probe, HTTP health, final gate and SessionStart receipts. No provider call, job, source edit or database write by this reviewer.",
+    "package_identity": {"selected_wheel_sha256": "42d64016b07debb32ada961c368cca4af8f7350a944b470bb1283a31736c166b", "rollback_wheel_sha256": "3db620800859ea0dfd7f63b888d2c2e1f4a63fce4a23609c0a5500d41bedf640", "general": "4.9.0; 438 files checked; zero mismatches", "scheduled": "4.9.0; 438 files checked; zero mismatches", "selected_executable_delta": "recall/context_hook.py only; ledger connection optimization excluded; engine executable AST unchanged"},
+    "full_non_ml_gate": {"receipt": "artifacts/recall-acceptance-20260928/full-gate-isolated/consolidated.json", "accepted_result": "6707 passed, 75 skipped, 90 deselected, 1 xfailed; all four accepted shards exit 0", "failure_preservation": "Original shard 2 had 4 and shard 4 had 7 fixture failures; complete replacement shards passed after the four fixture-only changes. No executable source changed during replacement."},
+    "installed_journey": {"receipts": ["artifacts/recall-acceptance-20260928/installed-general-journey.json", "artifacts/recall-acceptance-20260928/installed-scheduled-journey.json"], "result": "5/5 cases without error per runtime; forbidden exclusion, citation source matching, and recall budget compliance 100% in both disposable fixtures", "source_context_hook_sha256": "e5ad5d2873cc0688bce69fdceb4d6969eadddd65637ce01df6b6f3906d5bf633", "provider_calls": 0, "limit": "Small lexical declarative fixture, no independently human-labeled semantic quality or production benefit proof"},
+    "live_probe": {"receipt": "artifacts/recall-acceptance-20260928/installed-live-probe.json", "result": "Two real hook executions exited 0 with valid delivery, logged start/done, no stderr, at 2299.0 and 2598.6 ms; each had one successful live jev-1.13.0 decision and two whole exposed public claims over 300 characters with persisted citations", "limit": "Persisted citations prove presence, not semantic support correctness; small two-run sample and token-rate costs are not invoices"},
+    "mcp_health": {"receipt": "artifacts/recall-acceptance-20260928/http-health.json", "result": "healthz 200, readyz 200, unauthenticated MCP 401, authenticated initialized with 51 tools, zero new error log lines"},
+    "sessionstart_delivery": {"receipts": ["artifacts/operational-review/20260928/sessionstart-first-crlf-comparator.json", "artifacts/operational-review/20260928/sessionstart-delivery.json"], "result": "Actual installed SessionStart hook exited 0; normalized compiled-profile SHA-256 36a78e22270e9a3319550f0d7195911e5fc963426405c6feabc76a4ff80a7269 matched exact emitted context, settings and profile unchanged during probe", "initial_comparator": "First raw-byte comparator reported false because on-disk profile used CRLF while installed loader applied universal-newline text reading; retained failure, then normalized comparator true", "limit": "Captured hook output only; agent consumption or use in later answers remains UNMEASURED"},
+    "separate_open_issue": "Daily config snapshot drift is under coordinator review and is not accepted or closed by this recall release review"
+  }
 }

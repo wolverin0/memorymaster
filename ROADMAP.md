@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; installed recall integrity and verified fresh-session delivery -->
+<!-- doc-head: sole roadmap; installed recall integrity, temporal guard and verified delivery -->
 # MemoryMaster roadmap
 # Covers: live Jev decision ledger (4.9.0 checklist), useful-memory delivery/evaluation, workflow analytics, governed observations and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, sustainability.
@@ -81,6 +81,9 @@ frozen cases, then correct the observed loss. Work is isolated on
 - [x] Complete follow-up acceptance gate: 6,707 non-ML tests passed, 0 failed;
   75 skipped, 90 deselected, 1 expected failure. Preserve 11 initial incomplete-
   mock failures and complete repaired-shard reruns; independent review passes.
+- [x] Install temporal follow-up `190d020` in both runtimes: 438/438 files match
+  each; installed fixture journeys 5/5 each, two live JEV recall hooks pass,
+  MCP health/auth/51 tools pass. Settings unchanged; graph recall remains off.
 
 ### Live Jev decisions and weekly-review cure (4.9.0, operator order 2026-09-23)
 
@@ -170,7 +173,13 @@ A box is ticked only with evidence (command, count or receipt) in the ledger.
 - [x] S1 backlog of tenant `personal` judged once (2026-09-24): 24,447 asked, 104 re-confirmed, 48 no longer useful, 24,295 kept stale, 122 sensitive skipped, US$0.48; it stopped on the 600 RPM cap, which `budget_exhausted` also reports.
 - [x] Merged as `f89324b` (2026-09-24) with all 15 checks green, after CI found: Windows runners missing wall-clock bounds (non-deadline tests now get an untimed hook deadline; wall-clock limits run only on the release machine), the Docker image refusing to start (a wildcard bind needs `MEMORYMASTER_DASHBOARD_ALLOWED_ORIGINS`; image and Compose default to the loopback publish) and Helm probes that the Host check would reject (probes send `Host: 127.0.0.1:8765`; executable contract test).
 - [x] Deployed `f89324b` in both runtimes (installed identity PASS, 434 files, 0 mismatches); Hermes MCP-HTTP restarted (healthz/readyz 200, unauthenticated 401); the operational review no longer pins `expected_version` and passes runtime against `pyproject` (4.9.0).
-- [x] Snapshot disk: the drive holding `MEMORYMASTER_SNAPSHOT_DIR` logged bad blocks since 2026-09-16 and the pre-4.9.0 copy on it failed quick_check; a verified post-4.9.0 copy was written to another disk and infra moved the snapshot directory to `~/.memorymaster/snapshots`.
+- [x] Snapshot history corrected (2026-09-28): the earlier pre-4.9.0 copy failed
+  quick_check. The later **2026-09-24 operator decision** keeps snapshots on the
+  `T:` archive volume, away from the `C:` system SSD; current user configuration
+  and observed steward/MCP processes match that choice. The prior claim that
+  the configured target is the user-profile default was obsolete. The September
+  24 moved-copy hash/quick-check receipt is dated evidence, not a fresh restore
+  or independent current physical-disk health check.
 - [ ] Encrypted backup and restore drill (`govern/recovery.py`) hold the whole database in memory (plaintext and ciphertext, ~18 GB for today's 7.6 GB); they need a streaming format before use at this size. The scheduled NAS backup does not use them.
 - [x] Removed stale metadata shadowing (2026-09-28): moved the ignored 4.8.9 `memorymaster.egg-info` intact to local acceptance artifacts; metadata lookup from the main checkout now returns installed 4.9.0. Scheduled review was unaffected.
 
