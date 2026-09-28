@@ -31,9 +31,22 @@ from typing import Any
 # evaluator itself stays identical while only the implementation import path
 # changes.
 _SOURCE_ROOT = os.environ.get("MEMORYMASTER_EVAL_SOURCE_ROOT", "").strip()
+_INSTALLED_MODE = (
+    os.environ.get("MEMORYMASTER_EVAL_INSTALLED", "") == "1"
+    or "--installed" in sys.argv
+)
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, _SOURCE_ROOT or str(ROOT))
 
+
+def _configure_import_path(source_root: str, installed_mode: bool) -> None:
+    """Select source imports without putting site-packages ahead of stdlib."""
+    if not installed_mode:
+        sys.path.insert(0, source_root or str(ROOT))
+
+
+_configure_import_path(_SOURCE_ROOT, _INSTALLED_MODE)
+
+import memorymaster  # noqa: E402
 from memorymaster.capture import CaptureRepository  # noqa: E402
 from memorymaster.core.lifecycle import transition_claim  # noqa: E402
 from memorymaster.core.models import CitationInput  # noqa: E402
@@ -402,35 +415,48 @@ def run(fixture_path: Path, output_path: Path | None = None) -> dict[str, Any]:
     budget_compliance = [case["recall_budget_compliant"] for case in cases if "recall_budget_compliant" in case]
     answer_cases = [case for case in cases if case.get("expected_ids")]
     script_path = Path(__file__).resolve()
-    source_tree = Path(_SOURCE_ROOT or ROOT).resolve()
+    source_tree = None if _INSTALLED_MODE else Path(_SOURCE_ROOT or ROOT).resolve()
     imported_context_hook = Path(context_hook.__file__).resolve()
+    imported_package_file = Path(memorymaster.__file__).resolve()
+    package_root = imported_package_file.parent
     try:
         fixture_label = fixture_path.resolve().relative_to(ROOT.resolve()).as_posix()
     except ValueError:
         fixture_label = fixture_path.name
     try:
-        context_hook_label = imported_context_hook.relative_to(source_tree).as_posix()
+        context_hook_label = imported_context_hook.relative_to(package_root.parent).as_posix()
     except ValueError:
         context_hook_label = imported_context_hook.name
     try:
-        source_version = tomllib.loads(
-            (source_tree / "pyproject.toml").read_text(encoding="utf-8")
-        )["project"]["version"]
-    except (KeyError, OSError, tomllib.TOMLDecodeError):
+        source_package_label = imported_package_file.relative_to(package_root.parent).as_posix()
+    except ValueError:
+        source_package_label = imported_package_file.name
+    if source_tree is None:
         source_version = None
+        git_head = None
+    else:
+        try:
+            source_version = tomllib.loads(
+                (source_tree / "pyproject.toml").read_text(encoding="utf-8")
+            )["project"]["version"]
+        except (KeyError, OSError, tomllib.TOMLDecodeError):
+            source_version = None
+        git_head = subprocess.run(
+            ["git", "-C", str(source_tree), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=False,
+        ).stdout.strip()
     distribution_version = importlib.metadata.version("memorymaster")
     result = {
         "schema": "memorymaster.recall_journey.v1",
         "fixture": fixture_label,
-        "source_label": "source_override" if _SOURCE_ROOT else "candidate_worktree",
+        "source_label": "installed_runtime" if _INSTALLED_MODE else ("source_override" if _SOURCE_ROOT else "candidate_worktree"),
         "fixture_sha256": _sha256(fixture_path),
         "evaluator_sha256": _sha256(script_path),
-        "git_head": subprocess.run(
-            ["git", "-C", str(source_tree), "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=False,
-        ).stdout.strip(),
+        "git_head": git_head,
         "source_context_hook": context_hook_label,
         "source_context_hook_sha256": _sha256(imported_context_hook),
+        "source_package_file": source_package_label,
+        "source_package_sha256": _sha256(imported_package_file),
         "pyproject_version": source_version,
         "distribution_version": distribution_version,
         "provider_calls_observed": provider_calls,
@@ -490,12 +516,24 @@ def main() -> int:
         "--source-root", type=Path, default=None,
         help="Import MemoryMaster from this checkout in a child process.",
     )
+    parser.add_argument(
+        "--installed", action="store_true",
+        help="Run isolated from the interpreter's installed package without changing sys.path order.",
+    )
     args = parser.parse_args()
-    if args.source_root is not None:
+    if args.source_root is not None and args.installed:
+        parser.error("--source-root and --installed cannot be combined")
+    if args.source_root is not None or args.installed:
         env = os.environ.copy()
-        env["MEMORYMASTER_EVAL_SOURCE_ROOT"] = str(args.source_root.resolve())
-        forwarded = [sys.executable, str(Path(__file__).resolve()),
-                     "--fixture", str(args.fixture.resolve())]
+        if args.installed:
+            env.pop("MEMORYMASTER_EVAL_SOURCE_ROOT", None)
+            env["MEMORYMASTER_EVAL_INSTALLED"] = "1"
+            forwarded = [sys.executable, "-I", str(Path(__file__).resolve())]
+        else:
+            env.pop("MEMORYMASTER_EVAL_INSTALLED", None)
+            env["MEMORYMASTER_EVAL_SOURCE_ROOT"] = str(args.source_root.resolve())
+            forwarded = [sys.executable, str(Path(__file__).resolve())]
+        forwarded.extend(["--fixture", str(args.fixture.resolve())])
         if args.json_out is not None:
             forwarded.extend(["--json-out", str(args.json_out.resolve())])
         return subprocess.run(forwarded, env=env, check=False).returncode

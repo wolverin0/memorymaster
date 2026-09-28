@@ -93,3 +93,15 @@ def test_empty_expected_case_is_unmeasured_and_citation_mismatch_fails(monkeypat
 
 def test_p95_uses_nearest_rank() -> None:
     assert evaluator._nearest_rank_p95([1.0, 2.0, 3.0]) == 3.0
+
+
+def test_installed_mode_preserves_interpreter_import_order(monkeypatch) -> None:
+    original_path = list(evaluator.sys.path)
+    monkeypatch.setattr(evaluator.sys, "path", list(original_path))
+
+    evaluator._configure_import_path(
+        "C:/Python/Lib/site-packages", installed_mode=True
+    )
+
+    assert evaluator.sys.path == original_path
+    assert "C:/Python/Lib/site-packages" not in evaluator.sys.path

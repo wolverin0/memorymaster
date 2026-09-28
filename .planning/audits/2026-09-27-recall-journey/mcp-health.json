@@ -1,0 +1,22 @@
+{
+  "/health": {
+    "status": 401
+  },
+  "/ready": {
+    "status": 401
+  },
+  "/mcp": {
+    "status": 401
+  },
+  "authenticated_mcp": {
+    "initialized": true,
+    "tools_count": 51,
+    "protocol": "2024-11-05"
+  },
+  "/healthz": {
+    "status": 200
+  },
+  "/readyz": {
+    "status": 200
+  }
+}

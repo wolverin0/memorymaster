@@ -1,0 +1,25 @@
+{
+  "code_commit": "f2c0521",
+  "wheel_sha256": "3db620800859ea0dfd7f63b888d2c2e1f4a63fce4a23609c0a5500d41bedf640",
+  "runtime_version": "4.9.0",
+  "changed_package_files": [
+    "memorymaster/recall/context_hook.py",
+    "memorymaster/surfaces/cli_handlers_curation.py"
+  ],
+  "general_and_scheduled_files_checked": 438,
+  "unrelated_tracked_edits_unchanged": 3,
+  "settings_unchanged": true,
+  "schema_changes": false,
+  "new_harness_session_consumption": true,
+  "resumable_transcripts_found": 0,
+  "jev_provider_calls": 4,
+  "jev_model_served": [
+    "jev-1.13.0"
+  ],
+  "jev_recorded_cost_usd": 0.0008159759999999999,
+  "claude_reported_list_cost_usd": 0.0213914,
+  "claude_cash_billing": "unknown; CLI reports list-price usage",
+  "inherited_long_lived_stdio_processes_restarted": false,
+  "restart_scope": "fresh hook and CLI processes load the changed functions; existing MCP surfaces do not use changed renderer/CLI handler",
+  "production_quality": "complete-text delivery verified; semantic benchmark unmeasured"
+}

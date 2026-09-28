@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; live Jev decisions and measured recall delivery repair -->
+<!-- doc-head: sole roadmap; installed recall integrity and verified fresh-session delivery -->
 # MemoryMaster roadmap
 # Covers: live Jev decision ledger (4.9.0 checklist), useful-memory delivery/evaluation, workflow analytics, governed observations and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, sustainability.
@@ -54,8 +54,17 @@ frozen cases, then correct the observed loss. Work is isolated on
   Three supplemental engine timing failures also reproduce on the baseline.
 - [x] Record deployment recommendation and measurement limits in
   `.planning/audits/2026-09-27-recall-journey/REPORT.md`.
-  Source-tested only; production installation and real semantic quality are
-  not accepted by this fixture. Fresh public lifecycle checks: 13 passed.
+  Initial source checkpoint: fresh public lifecycle checks 13 passed; fixture
+  delivery is not evidence of real semantic quality.
+- [x] Operator-authorized integration and installation: `main` fast-forward to
+  `f2c0521`; both runtimes match all 438 packaged files; two-file package delta,
+  prior wheel and hash-checking rollback retained. Settings/schema unchanged.
+- [x] Installed recall delivery: three fresh hook processes pass within 10 s;
+  a new ephemeral Claude session consumed a complete 1100-character Unicode
+  claim. No resumable transcript created. MCP health/auth/tools checks pass.
+- [x] Diagnose baseline timing failures: durable SQLite commit/close dominates;
+  1500 ms stress case took 1792.7 ms with correct fallback. Strict deadline
+  acceptance remains FAIL; real semantic quality remains UNMEASURED.
 
 ### Live Jev decisions and weekly-review cure (4.9.0, operator order 2026-09-23)
 
