@@ -1210,12 +1210,21 @@ def _prompt_recall_plan(query_text: str, *, limit: int):
 
 def _prompt_claim_allowed(claim, plan) -> bool:
     """Fail closed for claims introduced by any prompt-recall stream."""
+    from types import SimpleNamespace
+
     from memorymaster.core.security import is_sensitive_claim
+    from memorymaster.core.temporal_policy import claim_is_temporally_current
 
     if claim is None or getattr(claim, "status", "") not in set(plan.statuses):
         return False
     scopes = plan.scope_allowlist
     if scopes is not None and (getattr(claim, "scope", "") or "").strip() not in scopes:
+        return False
+    bounds = SimpleNamespace(
+        valid_from=getattr(claim, "valid_from", None),
+        valid_until=getattr(claim, "valid_until", None),
+    )
+    if not claim_is_temporally_current(bounds):
         return False
     visibility = (getattr(claim, "visibility", "public") or "public").strip().lower()
     return visibility == "public" and not is_sensitive_claim(claim)

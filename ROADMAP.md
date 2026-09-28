@@ -65,6 +65,22 @@ frozen cases, then correct the observed loss. Work is isolated on
 - [x] Diagnose baseline timing failures: durable SQLite commit/close dominates;
   1500 ms stress case took 1792.7 ms with correct fallback. Strict deadline
   acceptance remains FAIL; real semantic quality remains UNMEASURED.
+- [x] Follow-up temporal boundary: expired/future/malformed validity cannot
+  re-enter prompt recall from optional candidate streams; 7 regression cases
+  pass, with 5 inverse failures on the original filter.
+- [x] Evaluate and reject scoped ledger connection reuse: no measured latency
+  gain on the installed volume, and it can postpone a pre-send checkpoint.
+  Original ledger retained; experimental tests/receipts preserved, not deployed.
+- [x] Resolve timing confound (2026-09-28): inherited `T:` temp fails 9 stress
+  cases; explicit `C:` temp, matching the installed ledger volume, passes 9/9
+  for both original and experimental source. No demonstrated wall-time speedup or
+  universal deadline guarantee; full measurements remain in the existing report.
+- [x] Check real activation: JEV already live (1,256 receipts/24 h, 9 timeouts,
+  1 orphan intent). Skills has no authorized catalog; GraphRAG stays disabled.
+  Cost is a ledger estimate; semantic benefit remains unmeasured.
+- [x] Complete follow-up acceptance gate: 6,707 non-ML tests passed, 0 failed;
+  75 skipped, 90 deselected, 1 expected failure. Preserve 11 initial incomplete-
+  mock failures and complete repaired-shard reruns; independent review passes.
 
 ### Live Jev decisions and weekly-review cure (4.9.0, operator order 2026-09-23)
 
@@ -156,7 +172,7 @@ A box is ticked only with evidence (command, count or receipt) in the ledger.
 - [x] Deployed `f89324b` in both runtimes (installed identity PASS, 434 files, 0 mismatches); Hermes MCP-HTTP restarted (healthz/readyz 200, unauthenticated 401); the operational review no longer pins `expected_version` and passes runtime against `pyproject` (4.9.0).
 - [x] Snapshot disk: the drive holding `MEMORYMASTER_SNAPSHOT_DIR` logged bad blocks since 2026-09-16 and the pre-4.9.0 copy on it failed quick_check; a verified post-4.9.0 copy was written to another disk and infra moved the snapshot directory to `~/.memorymaster/snapshots`.
 - [ ] Encrypted backup and restore drill (`govern/recovery.py`) hold the whole database in memory (plaintext and ciphertext, ~18 GB for today's 7.6 GB); they need a streaming format before use at this size. The scheduled NAS backup does not use them.
-- [ ] A stale `memorymaster.egg-info` (4.8.9, gitignored) in the main checkout shadows package metadata for `python -m` runs started from that folder; the scheduled review is unaffected (no working directory).
+- [x] Removed stale metadata shadowing (2026-09-28): moved the ignored 4.8.9 `memorymaster.egg-info` intact to local acceptance artifacts; metadata lookup from the main checkout now returns installed 4.9.0. Scheduled review was unaffected.
 
 **Phase 4 — re-test and independent review**
 - [x] Full non-ML gate (incl. the disposable public demo) on the installed revision `7d536a8`, four sequential shards: 6676 passed, 0 failed, 74 skipped, 1 xfailed.

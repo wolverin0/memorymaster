@@ -1,5 +1,5 @@
 <!-- doc-head: governed recall journey and complete evidence delivery -->
-<!-- Covers: paired fixture measurement, renderer repair and acceptance limits. -->
+<!-- Covers: paired fixture measurement, temporal admission, ledger latency and acceptance limits. -->
 <!-- Authority: ROADMAP.md; this is implementation evidence, not a second backlog. -->
 <!-- Runtime: installed and fresh-session delivery verified; semantic utility unmeasured. -->
 <!-- /doc-head -->
@@ -92,8 +92,8 @@ does not replace a fresh independently labeled semantic-recall benchmark.
   functions into the same worktree reproduced the failure; the ledger recorded
   pre-send timeout. This is not renderer causality.
 - Bounded test setup repair: pre-register the disposable ledger's question
-  schema before timing the deliberately delayed transport. The production
-  900 ms deadline, exact one-send assertion and fallback assertions remain.
+  schema before timing the deliberately delayed transport. The
+  fixture's 900 ms deadline, exact one-send assertion and fallback assertions remain.
   The repaired test passed. No production engine changes were made.
 - Three supplemental direct-engine deadline tests failed elapsed-time limits
   both here and in the original checkout. Legacy/timeout assertions passed.
@@ -236,3 +236,139 @@ were not weakened to manufacture a pass. A connection-lifecycle change requires
 its own measured core fix and regression gate; it is not silently included in
 this two-file deployment. Semantic ranking quality on a fresh labeled cohort
 remains **UNMEASURED**.
+
+## Acceptance follow-up, 2026-09-28
+
+The current activation review (`acceptance-20260928.json`) reads effective
+settings and authoritative databases without running jobs or provider calls.
+JEV is already live: 1,256 decision receipts in the preceding 24 hours, including
+451 recall decisions, with 9 timeout fallbacks (0.72%). One additional orphan
+send intent has no final receipt. Recorded token-rate cost is $0.097014918 plus
+an orphan reserve estimate of $0.000169092; actual invoiced cost is unknown.
+Seven-day activity is 45,007 receipts and 10 orphan intents. Lifecycle/detector
+outcomes do not provide independently labeled semantic quality.
+
+Skills selection has zero authorized skill claims and zero observed decisions;
+it is unmeasured, despite the global live configuration. Filesystem skills are
+not the governed SQLite skill catalog. Graph expansion is disabled with zero
+confirmed entity-edge supports; its retained rows/jobs are not quality evidence.
+Neither feature was activated or populated to manufacture acceptance.
+
+A new graph-stream regression reproduced expired and future confirmed claims
+re-entering prompt recall after ordinary retrieval had filtered them. The final
+shared candidate boundary now applies the canonical temporal policy, including
+malformed-bound rejection. The corrected seven-case regression passes; the
+original source failed five cases and passed the two current-claim controls.
+The first test draft also had incomplete fake-claim attributes; that harness
+error was fixed before establishing the five-failure baseline.
+
+The ignored main-checkout `memorymaster.egg-info` still advertised 4.8.9.
+It was moved intact to the local acceptance artifacts as a rollback copy;
+`importlib.metadata.version('memorymaster')` now resolves installed 4.9.0 from
+that checkout. No source, package, configuration or database was modified by
+that metadata cleanup.
+
+### Connection lifetime and corrected timing interpretation
+
+The final package retains the original ledger implementation. The following
+experiment and its measurements explain why the proposed optimization was rejected.
+
+An experimental bounded ledger scope reused one thread-local connection, retaining
+separate committed transactions for the send intent and final receipt. Nested
+scopes reuse it; a late-answer thread uses its own connection; the outer scope
+closed synchronously. A close exception was contained instead of escaping the
+engine's fallback handler. No PRAGMA values, deadlines or assertions were
+relaxed. Six experimental regressions covered connection count, independently visible committed
+intent, rollback recovery, thread isolation, handle cleanup and close errors.
+The focused owner run passed 14 tests plus 2 public-demo tests; initial independent
+review passed the combined 13 temporal/lifetime tests and Ruff. The experimental
+wheel separately passed 27 temporal/lifetime/renderer tests in a disposable
+environment and all five journey-fixture cases, with zero provider calls.
+
+Two asynchronous close proposals were rejected before installation: one
+accumulated threads/handles, and a bounded queue still caused checkpoint races
+with subsequent decisions. Their failures remain in
+`ledger-lifetime-20260928.json`.
+
+**The connection-reuse experiment was also rejected before installation.** A
+second review of the before-send durability boundary found that retaining the
+connection can postpone the last-close checkpoint until after the provider call.
+With WAL and NORMAL synchronization, that can weaken power-loss protection
+relative to the old quiet, single-connection case. The original implementation
+also has no unconditional power-loss guarantee when other connections remain
+open. These limits follow SQLite's [synchronization contract](https://www.sqlite.org/pragma.html#pragma_synchronous)
+and [WAL checkpoint behavior](https://www.sqlite.org/wal.html).
+There was no demonstrated wall-time gain on the installed volume to justify
+that change. The final package retains the original ledger implementation;
+experimental code/tests and all measurements are preserved in local artifacts,
+not installed. The engine change is documentation only, correcting its absolute
+wall-clock claim. Its deadlines and executable behavior are unchanged.
+
+**Storage was a confound in the earlier deadline diagnosis.** This shell inherits
+TEMP/TMP on `T:`, whereas the installed decisions ledger is on `C:`. A disposable
+three-trial WAL create/commit/close probe measured 640.26-690.89 ms on `T:` versus
+31.14-39.54 ms on `C:`. The initial nine candidate stress trials on inherited
+`T:` all exceeded deadline plus 100 ms; they remain failures for that environment.
+Repeating the same seeded fake-transport trials explicitly on local `C:` gave:
+
+| Deadline | Rejected experiment (ms) | Retained original ledger (ms) |
+|---|---|---|
+| 300 ms | 360.23 / 371.99 / 357.10 | 368.52 / 368.80 / 367.06 |
+| 400 ms | 463.93 / 477.00 / 472.45 | 466.47 / 469.58 / 474.20 |
+| 1500 ms | 1567.11 / 1565.11 / 1546.38 | 1562.31 / 1565.09 / 1566.08 |
+
+Both experimental and original code pass all nine local-`C:` timing cases. Every case
+records a timeout and exactly one fake send. This corrects the implication that
+the inherited-temp failures demonstrated an installed-`C:` latency failure; it
+does not establish a performance gain or a universal wall-clock guarantee.
+The experiment reduced connection opens/closes but was not selected. Synchronous
+filesystem work can still exceed the transport/lock-wait budget on a slow disk.
+
+The general gate was restarted against the final frozen source and explicit
+local-`C:` fixture paths. Partial preliminary logs are retained under the local
+acceptance artifacts: one run preceded the final close-error regression, and
+another used inherited `T:`, and a third tested the subsequently rejected ledger
+experiment. None of those runs counts as the final selected-package gate.
+
+The first selected-package shard reported 1305 passed and two failures in the
+real skills-adapter integration test. The gate wrapper had forced the global
+JEV mode to off, overriding the test's legacy enable flag and preventing its
+fake transport calls. Correcting the wrapper to remove inherited mode/keys and
+use the product's default-off behavior restored the intended test configuration:
+the complete skill-catalog file passed all 19 tests without source/test edits.
+The original two failures are retained. The full suite was restarted with the
+corrected isolated environment; this is harness correction, not selector repair.
+
+The corrected gate's second shard exposed four failures in two older mock
+fixtures: their `MagicMock` claims did not define `valid_from`/`valid_until`,
+so the strict temporal parser correctly rejected the mock-valued attributes.
+Both fixture helpers now explicitly use `None` for unbounded validity, as the
+real claim model does. Assertions and production guards are unchanged.
+All 33 tests in the two complete affected files plus the new temporal regression
+pass. Independent diff review confirms this is fixture-only repair; the original
+four-failure log is retained and the complete affected shard will be repeated.
+
+The fourth shard revealed the same omission in the BM25 helper (four failures)
+and three direct hook fixtures (three failures). Isolated runs reproduced both
+sets. These mocks now also declare unbounded validity explicitly; no assertions
+were edited. The combined four affected files and temporal regressions pass
+all 61 tests. Both affected full shards are repeated for final acceptance.
+
+### Final selected-source gate
+
+The full non-ML gate is complete: **6,707 passed, 0 failed, 75 skipped,
+90 deselected, 1 expected failure** across 534 test files. Shards 1/3 passed
+unchanged; complete shards 2/4 passed after the fixture-only repairs. Executable
+source was identical throughout, and source/tests remained byte-identical during
+the replacement runs. The original 11 failures and all replacement logs are
+retained; `full-gate-20260928.json` records the counts and log hashes. Ruff,
+release-truth verification and diff-check also pass. Independent review accepted
+the temporal guard and confirmed all six repaired mock sites changed only their
+optional validity attributes.
+
+Selected wheel SHA-256:
+`42d64016b07debb32ada961c368cca4af8f7350a944b470bb1283a31736c166b`.
+Its disposable installed-package run passed 21 temporal/renderer tests and all
+five journey cases with network egress blocked and zero provider calls. Only the
+temporal admission predicate changes executable behavior; engine documentation
+and one newline-only packaged file account for the other manifest differences.

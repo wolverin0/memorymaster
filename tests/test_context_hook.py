@@ -82,6 +82,8 @@ class TestRecall:
         mock_claim.object_value = None
         mock_claim.subject = None
         mock_claim.predicate = None
+        mock_claim.valid_from = None
+        mock_claim.valid_until = None
         mock_service.query_rows.return_value = [
             {"claim": mock_claim, "lexical_score": 0.8, "confidence_score": 0.9},
         ]
@@ -117,6 +119,8 @@ class TestRecall:
         mock_claim.object_value = None
         mock_claim.subject = None
         mock_claim.predicate = None
+        mock_claim.valid_from = None
+        mock_claim.valid_until = None
         mock_service.query_rows.return_value = [
             {"claim": mock_claim, "lexical_score": 0.5, "confidence_score": 0.5},
         ]
@@ -139,6 +143,8 @@ class TestRecall:
         mock_claim.object_value = None
         mock_claim.subject = None
         mock_claim.predicate = None
+        mock_claim.valid_from = None
+        mock_claim.valid_until = None
         mock_service.query_rows.return_value = [
             {"claim": mock_claim, "lexical_score": 0.5, "confidence_score": 0.5},
         ]

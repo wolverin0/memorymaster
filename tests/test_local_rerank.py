@@ -87,6 +87,8 @@ def _row(cid: int, text: str) -> dict:
     claim.visibility = "public"
     claim.object_value = None
     claim.predicate = None
+    claim.valid_from = None
+    claim.valid_until = None
     return {"claim": claim, "lexical_score": 0.5, "confidence_score": 0.5}
 
 

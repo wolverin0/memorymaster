@@ -60,6 +60,8 @@ def _make_claim(cid: int, subject: str, text: str) -> MagicMock:
     claim.visibility = "public"
     claim.object_value = None
     claim.predicate = None
+    claim.valid_from = None
+    claim.valid_until = None
     claim.confidence_score = 0.0
     return claim
 

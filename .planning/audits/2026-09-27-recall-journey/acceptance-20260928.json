@@ -1,0 +1,52 @@
+{
+  "review_utc": "2026-09-28T13:08:18Z",
+  "scope": "Read-only activation and outcome review of recent recall, JEV, skills and optional graph implementation; no provider calls or jobs were initiated",
+  "source_and_install": {
+    "status": "PASS_WITH_LIMITS",
+    "source_revision": "f2c0521",
+    "installed_wheel_sha256": "3db620800859ea0dfd7f63b888d2c2e1f4a63fce4a23609c0a5500d41bedf640",
+    "evidence": "Existing 2026-09-27 deployment summary records 438 identical packaged files in general and scheduled runtimes and fresh hook delivery; this review did not rehash installed files. Ledger activity through 2026-09-28T13:06Z independently confirms current JEV use."
+  },
+  "effective_activation": {
+    "claude_settings_env": {"MEMORYMASTER_JEV_MODE": "live", "MEMORYMASTER_JEV_HOOK_DEADLINE_MS": "1500", "per_surface_overrides": "unset", "MEMORYMASTER_RECALL_GRAPH_MODE": "unset"},
+    "process_and_user_env": {"MEMORYMASTER_JEV_MODE": "live", "MEMORYMASTER_JEV_RECALL": "unset", "MEMORYMASTER_JEV_SKILLS": "unset", "MEMORYMASTER_JEV_ROUTE": "unset", "MEMORYMASTER_RECALL_GRAPH_MODE": "unset"},
+    "interpretation": "JEV global mode resolves to live for all eight surfaces, but a surface without eligible work or integration calls produces no ledger row. Graph expansion resolves to off by default. The installed hook declaration and fresh prior delivery support installed recall; existing long-lived process environments were not enumerated. No credential value was read or reported."
+  },
+  "ledger_windows": {
+    "24h": {"since_utc": "2026-09-27T13:08:18Z", "decisions": 1256, "surface_rows": {"hints": 665, "ingest": 36, "recall": 451, "revalidate": 57, "session": 47, "skills": 0, "route": 0, "dedup": 0}, "fallbacks": 9, "fallback_rate": 0.00717, "fallback_reasons": {"timeout": 9}, "recorded_attempts": 1252, "orphan_send_intents": 1, "provider_send_lower_bound_including_orphans": 1253, "model_served_ok": {"jev-1.13.0": 1247}, "served_model_unknown_after_timeout": 5, "tokens_in_recorded": 2309879, "tokens_out_recorded": 544622, "ledger_cost_usd": 0.097014918, "orphan_reserved_estimate_usd": 0.000169092, "structurally_complete_decision_rows": 1256},
+    "72h": {"since_utc": "2026-09-25T13:08:18Z", "decisions": 2438, "surface_rows": {"dedup": 1, "hints": 1351, "ingest": 105, "recall": 761, "revalidate": 118, "session": 102, "skills": 0, "route": 0}, "fallbacks": 28, "fallback_rate": 0.01148, "fallback_reasons": {"timeout": 28}, "recorded_attempts": 2433, "orphan_send_intents": 2, "provider_send_lower_bound_including_orphans": 2435, "model_served_ok": {"jev-1.13.0": 2410}, "served_model_unknown_after_timeout": 23, "ledger_cost_usd": 0.172153926, "orphan_reserved_estimate_usd": 0.00032928, "structurally_complete_decision_rows": 2438},
+    "7d": {"since_utc": "2026-09-21T13:08:18Z", "decisions": 45007, "live_rows": 44981, "shadow_rows": 26, "skills_rows": 0, "route_rows": 0, "fallbacks": 217, "fallback_rate": 0.00482, "fallback_reasons": {"timeout": 184, "breaker_open": 24, "http_529": 3, "budget_exhausted": 3, "request_invalid": 1, "ledger_unavailable": 1, "http_5xx": 1}, "recorded_attempts": 44972, "orphan_send_intents": 10, "provider_send_lower_bound_including_orphans": 44982, "model_served_ok": {"jev-1.13.0": 44797}, "served_model_unknown_after_non_ok_transport": 175, "ledger_cost_usd_approx": 1.06075, "orphan_reserved_estimate_usd": 0.000455868, "structurally_complete_decision_rows": 45007}
+  },
+  "cost_and_receipt_limits": "Ledger cost is a token-rate calculation, not a provider invoice or cash-billing proof. On successful responses, transport uses provider token usage when reported and otherwise estimates input tokens; this estimated-versus-reported flag is not stored in the decision table. Timeout and other possibly billed errors retain estimated input-token cost and may lack model_served. Structural completeness means question_set_id, policy_version, action_taken and transport_outcome are populated; orphan send intents have no decision receipt and count toward spend/request caps. Attempts count sends, not unique user prompts.",
+  "authoritative_data": {
+    "skill_claims_all_statuses": 0,
+    "active_authorized_skill_catalog": 0,
+    "skill_acceptance": "UNMEASURED: JEV S5 is configured live but has zero skill decisions and no approved skill claims to choose or deliver. Installed filesystem skills are a separate catalog.",
+    "graph_mode": "off",
+    "entity_edge_support_rows": 348,
+    "entity_edge_supports_with_confirmed_unreplaced_claim": 0,
+    "claim_edges_total": 3093,
+    "claim_edges_confirmed_to_confirmed_raw": 1,
+    "claim_links_confirmed_to_confirmed_raw": 0,
+    "graph_observations": {"archived": 3},
+    "graph_observation_jobs": {"completed": 27972, "cancelled": 1},
+    "graph_acceptance": "UNMEASURED: raw active-endpoint counts do not establish authorization, currentness, citation validity or useful graph expansion. The feature remains disabled and the completed historical queue does not prove active quality."
+  },
+  "outcomes": {
+    "24h": {"used_in_turn_detector": 1, "stale_automation": 166, "consolidation_rejected_steward": 25, "consolidation_applied_steward": 6, "dream_claim_created_surface": 6, "steward_confirmed": 6},
+    "72h": {"used_in_turn_detector": 13, "stale_automation": 304, "consolidation_rejected_steward": 62, "consolidation_applied_steward": 8, "dream_claim_created_surface": 8, "steward_confirmed": 10},
+    "7d": {"used_in_turn_detector": 14, "revalidated_jev": 184, "late_answer_transport": 4, "apply_failed_surface": 3},
+    "interpretation": "These are recorded machine or lifecycle events, not independently labeled relevance, solved-task outcomes, causal JEV gains, or human judgments. The 24h and 72h windows have no S5/S7 decisions; retention and sparse joins prevent an outcome acceptance claim."
+  },
+  "feature_verdicts": {
+    "recall_complete_text_delivery": "PASS for prior installed fresh-session canary and bounded fixture; live semantic usefulness UNMEASURED, and strict 1500 ms stress deadline remains FAIL in the dated report",
+    "jev_recall": "ACTIVE_WITH_LIMITS: current live decisions and low 24h fallback rate; semantic benefit, privacy egress audit and task success UNMEASURED",
+    "jev_hints_ingest_revalidate_session": "ACTIVE_WITH_LIMITS: current live rows and receipts, but no independent usefulness/accuracy labels",
+    "jev_skills": "INACTIVE_IN_PRACTICE: configured live with zero authorized skill claims and zero S5 rows",
+    "jev_route": "UNOBSERVED: configured live globally, zero S7 rows; route integration only runs at auto-classification sites",
+    "jev_dedup": "SPARSE: one live S4 row in 72h and none in 24h; no quality conclusion",
+    "graph_expansion": "OFF: optional mode unset; no current supported entity edges and no measured relational improvement"
+  },
+  "acceptance_gaps": ["Fresh independently labeled semantic recall and skills tasks with current lifecycle eligibility", "Delivered citation/support correctness and measured solved-task outcomes", "Provider invoice reconciliation or durable recorded token provenance for estimated versus reported usage", "Timeout/orphan reduction and strict hook deadline acceptance", "S5 catalog and S7 route exposure sufficient to measure their effect", "Authorized confirmed-support graph cohort before considering opt-in activation"],
+  "method": "Both SQLite databases opened by URI mode=ro with PRAGMA query_only=ON. Queries used aggregate counts only; no claim text, request state, credentials or private paths were copied. Settings inspection was restricted to named activation keys."
+}

@@ -1,0 +1,45 @@
+{
+  "review": "independent selected-release source and artifact inspection",
+  "date_utc": "2026-09-28",
+  "verdict": "PASS_FOR_SELECTION_WITH_ACCEPTANCE_LIMITS",
+  "selected_wheel": {
+    "sha256": "42d64016b07debb32ada961c368cca4af8f7350a944b470bb1283a31736c166b",
+    "location": "main checkout artifacts/recall-acceptance-20260928/selected-dist/memorymaster-4.9.0-py3-none-any.whl",
+    "rollback_sha256_from_existing_receipt": "3db620800859ea0dfd7f63b888d2c2e1f4a63fce4a23609c0a5500d41bedf640",
+    "installation_status_at_review": "selection inspected; installation and full selected-source gate are coordinator-owned and not claimed complete"
+  },
+  "source_identity": {
+    "method": "SHA-256 of selected wheel and contained Python files; compare selected wheel bytes to worktree, normalize CRLF/LF for HEAD identity, compare Python AST after removing docstrings for executable identity",
+    "wheel_equals_worktree_bytes": ["memorymaster/decisions/ledger.py", "memorymaster/decisions/engine.py", "memorymaster/recall/context_hook.py"],
+    "ledger": {"wheel_file_sha256": "fc5bb75e7571e3fd2b7152b9d068f71b8252e3927fba4a7bfeed3d6cea46738a", "normalized_wheel_equals_HEAD": true, "executable_ast_equals_HEAD": true, "rejected_connection_reuse_in_selected_wheel": false},
+    "engine": {"wheel_file_sha256": "1756b3d3aeb166401b7e86f993c07e595d3747c8308aaeb51a7d4cc85047a5e0", "executable_ast_equals_HEAD": true, "change": "module documentation and comments correct the wall-clock claim"},
+    "context_hook": {"wheel_file_sha256": "e5ad5d2873cc0688bce69fdceb4d6969eadddd65637ce01df6b6f3906d5bf633", "executable_ast_equals_HEAD": false, "change": "_prompt_claim_allowed checks canonical temporal currentness for candidate streams"},
+    "package_manifest_cross_check": "selected-package-before.json lists engine.py and context_hook.py changed plus a cli_handlers_curation.py newline-only delta; no ledger file appears in its changed-package list"
+  },
+  "temporal_boundary": {
+    "source_scope": "The existing final _filter_prompt_rows call still runs after optional candidate additions. The changed shared admission predicate rejects expired, future and malformed validity bounds through claim_is_temporally_current; status, scope, visibility and sensitivity checks remain.",
+    "focused_tests_fresh": "7 passed in 7.33 seconds",
+    "inverse_baseline": "REPORT.md records original filter five failures and two current-claim controls passing after correcting an incomplete fake-claim fixture; this review did not rerun the inverse baseline",
+    "limit": "Source and disposable-fixture proof; no claim of installed semantic usefulness or all-stream adversarial completeness"
+  },
+  "timing_and_quality": {
+    "rejected_experiment": "Scoped ledger reuse and asynchronous close proposals remain rejected and uninstalled; the original ledger is selected",
+    "original_ledger_local_C": "9/9 seeded fake-transport stress trials passed deadline plus 100 ms on explicit local C: fixtures, matching installed ledger volume",
+    "original_ledger_inherited_T": "9/9 seeded inherited-T: stress trials failed the same timing bound; failures retained",
+    "interpretation": "The volume difference is a measured confound, not a universal timing guarantee. Real provider performance, independently labeled semantic recall quality, skill quality and solved-task improvement remain UNMEASURED. Full selected-source non-ML gate was still running at review time."
+  },
+  "documentation_review": {
+    "report": "PASS: identifies original ledger as final selected implementation, keeps experimental runs and failed timing receipts separate, states C: and T: outcomes and semantic limits, and does not count preliminary full-suite runs as the final gate",
+    "roadmap": "PASS_WITH_HISTORICAL_CONTEXT: records temporal follow-up, rejected reuse, 9/9 C: pass and nine T: failures, existing installed 4.9.0 status, and unmeasured semantic benefit; earlier strict-deadline FAIL remains dated historical evidence",
+    "potential_reader_caveat": "An earlier ROADMAP bullet says strict deadline acceptance remains FAIL from the previous T:-affected stress; the newer follow-up specifies the local C: 9/9 result. Both should be read with their dates and fixture volume."
+  },
+  "fixture_follow_up": {
+    "verdict": "PASS_FIXTURE_ONLY",
+    "trigger": "The initial full-gate run found 11 fixture failures across shards 2 and 4 because MagicMock claims at six fixture sites lacked concrete temporal bounds; MagicMock attributes were passed to the strict temporal parser.",
+    "reviewed_delta": "Exactly 12 insertions across four test files: tests/test_local_rerank.py _row, tests/test_recall_latency.py _mock_claim, tests/test_bm25_per_field.py _make_claim, and three direct recall mocks in tests/test_context_hook.py each add valid_from=None and valid_until=None. Git diff contains no removed or changed assertions, test selection, expected outputs, other mock behavior, or production weakening in this follow-up.",
+    "contract_fit": "Each mock now represents an unbounded current claim, matching the real Claim model's optional validity fields. Explicit None does not cause future, expired or malformed values to pass the production temporal guard.",
+    "verification": "Coordinator reports 61 passing tests across all four affected files plus tests/test_prompt_temporal_boundary.py; this follow-up is an independent diff review and did not repeat that run while the full gate was in progress.",
+    "gate_status": "All 11 first-run failures remain evidence; complete shards 2 and 4 must be rerun before the final full gate can close. Those reruns are coordinator-owned and not claimed complete here."
+  },
+  "limits": ["Focused tests used only disposable fixture databases; no source, test, authoritative database, provider, job or installed runtime was mutated in this review", "This inspection does not close the coordinator's running full gate or prove the wheel installed in either runtime", "The selected ledger retains its prior WAL synchronous=NORMAL send-intent power-loss limitation; no new connection-reuse regression is packaged"]
+}
