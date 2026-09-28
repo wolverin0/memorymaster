@@ -3,12 +3,13 @@
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, workflow intelligence, compiled user profile, roadmap, ADR.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-09-20 for semantic candidates and optional JEV source/runtime boundaries.
+# Updated: 2026-09-28 for shared CLI navigation; earlier dated entries retain their recorded scope.
 # Rule: generated profiles are disposable projections; MemoryMaster remains authority.
 <!-- /doc-head -->
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
+| docs/code-navigation.md | CURRENT | 2026-09-28 | Shared CLI navigation, bounded Serena, GitNexus freshness, Graphify limits and measured evidence. |
 | .planning/audits/2026-09-07-e2e-review/LIVE-DEPLOYMENT.md | CURRENT | 2026-09-20 | Two-environment candidate-fix deployment, additive migration and rollback; earlier selection-v2 Dreaming/MCP evidence remains dated. |
 | .planning/audits/2026-09-07-e2e-review/IMPLEMENTATION.md | CURRENT | 2026-09-08 | Single completed source-candidate checklist; useful-selection correction supersedes UI-first technical acceptance, with separate source/provider/live evidence. |
 | .planning/audits/2026-09-07-e2e-review/USEFUL-SELECTION.md | CURRENT | 2026-09-08 | Selection v2 implementation, authorization/replay regressions, blinded actual-provider evidence, cost and delivery limits. |

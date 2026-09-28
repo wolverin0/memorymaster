@@ -1,0 +1,36 @@
+{
+  "codex": {
+    "actual_completed_calls": [
+      [
+        "gitnexus",
+        "context"
+      ],
+      [
+        "serena",
+        "find_symbol"
+      ]
+    ],
+    "call_errors": [
+      null,
+      null
+    ],
+    "evidence": "JSONL tool events",
+    "correct_editor_lines": true,
+    "expected_path": true,
+    "stdout_sha256": "c50c0901e34349303a508b5fac267b867c6a8163a4989cc06fc9ce2a641e93fd"
+  },
+  "claude": {
+    "denials": [],
+    "evidence": "client final result, no complete tool transcript",
+    "correct_editor_lines": true,
+    "expected_path": true,
+    "stdout_sha256": "8f4fe41f5e3f16115d37ef3bce8bab07fb6ab791d03aabca01476972dafcfbc6"
+  },
+  "agy": {
+    "denials": [],
+    "evidence": "client final result, no complete tool transcript",
+    "correct_editor_lines": true,
+    "expected_path": true,
+    "stdout_sha256": "bad7a6777e5ec433c22a9721dc8bdc23e735666447aef0e4f91fd27a93f1c35a"
+  }
+}

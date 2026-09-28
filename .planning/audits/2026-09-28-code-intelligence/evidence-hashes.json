@@ -1,0 +1,12 @@
+{
+  "cohort.json": "62c0b9dc8285a2d17310ab02cb6dc1791c123907405ec6dfad9087a0011f785f",
+  "benchmark-rows.json": "ad91d12664e8e2ce66e7b5dd56c5cda005cc581facf50154d21f9c5ba33e7a97",
+  "benchmark-summary.json": "6da781fef66dfddfd78fc2bfbe53dbbb2e9a947dba8b0698ab2809ff9693492f",
+  "serena-exact-discovery.json": "746749caa4a56c6f6941ff63c45f98b27f4ee4ea0dbe9b4f760c47c5f8038f40",
+  "boundaries.json": "af7e1bd540d40f437ac59b806ed3eb8a47e9e9efa5c2155b5cf1c52623b8f32d",
+  "client_smoke.py": "41912f2e0c7fa31bb9fe01767bd251355273e48be2c5f6e3c74e79f4617f0f12",
+  "benchmark.py": "5ca45e240f4430f2b93dced6bf893d08e4a024a6a9397db5b466fc8ee4181459",
+  "summarize.py": "0d3a544b58b8c9fe2bcc3d4c8100e74339d49538319aeb77a3b9e98325f14856",
+  "configuration-verification.json": "d24c2ce435c868e9096a5b840a89987142dd1ed7bc5cbe1dc31dc4dfbd709770",
+  "independent-review.md": "9cf809b10aa2377844d4cae96cf37dd8276f7d4d0ca4724b91ac8dcd82fc59e3"
+}

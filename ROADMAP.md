@@ -1,7 +1,7 @@
 <!-- doc-head: sole roadmap; installed recall integrity, temporal guard and verified delivery -->
 # MemoryMaster roadmap
 # Covers: live Jev decision ledger (4.9.0 checklist), useful-memory delivery/evaluation, workflow analytics, governed observations and deferrals.
-# Key terms: Workflow Intelligence, governed skills, graph observations, user profile, sustainability.
+# Key terms: Workflow Intelligence, governed skills, graph observations, user profile, code navigation.
 # Read when: choosing release scope, accepting a feature, or checking deferrals.
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
 # Safety: SQLite remains authority; generated user.md is disposable and feature-off by default.
@@ -35,6 +35,23 @@ its governed-claims authority:
 | Memory Hub, loadouts, team ACLs, proxy replacement, cloud database | Deferred: no personal SQLite requirement justifies multi-user/cloud infrastructure or a second agent gateway. |
 
 ## Now
+
+### Shared CLI code navigation (2026-09-28)
+
+- [x] Refresh the current GitNexus index while preserving embeddings and excluding
+  research clones; install a bounded Serena navigation profile for AGY, Claude
+  Code and both native/Orca Codex configurations.
+- [x] Exercise fresh clients and a frozen 20-task source-verified cohort; verify
+  dirty-source refresh, project switching, references and output limits.
+  GitNexus file hit@5 is 9/20, lexical heuristic 7/20; Serena exact-name lookup
+  is 5/5. Nineteen known-target bodies fit the limit; one overflows. Conditional
+  payload reduction is 92.06%; total agent-token savings remain unmeasured.
+- [x] Add a read-only checkout/index preflight with disposable regression tests.
+  Keep Graphify out of default routing: its old graph returns cloned upstreams.
+  MemoryMaster's governed GraphRAG activation remains a separate decision.
+- Evidence and operational guidance:
+  `.planning/audits/2026-09-28-code-intelligence/REPORT.md`,
+  `docs/code-navigation.md`.
 
 ### Recall journey and delivery integrity (2026-09-27)
 

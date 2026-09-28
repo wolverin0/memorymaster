@@ -1,0 +1,421 @@
+{
+  "cohort_id": "mm-code-nav-20260928",
+  "generated_at": "2026-09-28",
+  "repo": "memorymaster",
+  "git": {
+    "branch": "main",
+    "head_commit": "5d87e02f4d301b881872f76fb85edc0f6891f204",
+    "head_commit_date": "2026-09-28T11:50:19-03:00",
+    "head_commit_subject": "docs: record installed recall acceptance and correct snapshot target history",
+    "note": "All 15 source files referenced below were clean (no working-tree diff vs HEAD) at capture time; git status --porcelain confirmed zero of them appear in the modified/untracked list."
+  },
+  "purpose": "Retrieval-evidence cohort for evaluating code-navigation (file+symbol location), not end-to-end coding quality. Ground truth was derived by direct source inspection (Read/Grep on the working tree at the recorded HEAD), never by running any recall/retrieval tool against these questions.",
+  "task_count": 20,
+  "exact_symbol_task_count": 5,
+  "natural_language_task_count": 15,
+  "domains_covered": [
+    "recall", "skills", "capture", "lifecycle", "profile", "graph", "provider", "public_facade"
+  ],
+  "schema": {
+    "id": "unique task id, nav-001..nav-020",
+    "domain": "one of domains_covered",
+    "task_type": "'natural_language' (query contains no symbol/function/class name) or 'exact_symbol' (query is the bare symbol name — the 5 flagged tasks)",
+    "is_exact_symbol_task": "boolean flag duplicating task_type for easy filtering; true for exactly 5 tasks",
+    "query": "the natural-language question a navigator would be given, OR for exact_symbol tasks, an instruction naming the literal symbol to locate",
+    "expected_path": "repo-relative path of the file containing the definition, verified via `git show HEAD:<path>`",
+    "expected_symbol": "Python-qualified name (Class.method or bare function name) exactly as defined in source",
+    "symbol_lookup": "plain bare identifier string (no qualification) suitable for a literal grep/symbol-search — the minimal string that should locate the definition",
+    "question_kind": "locate_function_by_behavior | locate_method_by_behavior | exact_symbol_lookup",
+    "evidence": "source line number(s) and a verbatim snippet copied from the file at the recorded git blob, proving the symbol exists exactly where claimed",
+    "source_hash": "git blob SHA-1 (git ls-tree/hash-object identity) and a SHA-256 of the file's raw bytes at HEAD, both independent of this cohort's own tooling"
+  },
+  "tasks": [
+    {
+      "id": "nav-001",
+      "domain": "recall",
+      "task_type": "natural_language",
+      "is_exact_symbol_task": false,
+      "query": "Where does the code decide, using an auto-classification decision engine over the possible query types, whether to trust that engine's pick or fall back to the plain keyword-based classifier — including a confidence-threshold check on the engine's answer?",
+      "expected_path": "memorymaster/recall/query_classifier.py",
+      "expected_symbol": "route_query",
+      "symbol_lookup": "route_query",
+      "question_kind": "locate_function_by_behavior",
+      "evidence": {
+        "def_line": 68,
+        "snippet": "def route_query(query: str, *, session_key: str | None = None, scope: str | None = None,"
+      },
+      "source_hash": {
+        "git_blob_sha1": "a576bde45d76425b46cd66489efdf35a05023f65",
+        "content_sha256": "b128c71819db87e76a83bc2eec7f58f18bbdd201c30809bf566dd1d888ce61e4"
+      }
+    },
+    {
+      "id": "nav-002",
+      "domain": "recall",
+      "task_type": "natural_language",
+      "is_exact_symbol_task": false,
+      "query": "Which function combines several separately-ranked lists of results from different retrieval methods (for example a keyword stream and a vector-similarity stream) into one merged ranking, by summing a rank-based reciprocal score for each item across every list it appears in?",
+      "expected_path": "memorymaster/recall/recall_fusion.py",
+      "expected_symbol": "rrf_fuse",
+      "symbol_lookup": "rrf_fuse",
+      "question_kind": "locate_function_by_behavior",
+      "evidence": {
+        "def_line": 48,
+        "snippet": "def rrf_fuse(\n    rankings: dict[str, list[int]],\n    k: int = RRF_K_DEFAULT,\n) -> dict[int, float]:"
+      },
+      "source_hash": {
+        "git_blob_sha1": "02db86e25640d8904009e60e27437c7aff3ea2f2",
+        "content_sha256": "d505ca22ed52134940501c695f7de3136ad45389311f4b400c25655724d28556"
+      }
+    },
+    {
+      "id": "nav-003",
+      "domain": "recall",
+      "task_type": "exact_symbol",
+      "is_exact_symbol_task": true,
+      "query": "Locate the definition of the symbol `page_authorized_lexical`.",
+      "expected_path": "memorymaster/recall/candidate_pool.py",
+      "expected_symbol": "page_authorized_lexical",
+      "symbol_lookup": "page_authorized_lexical",
+      "question_kind": "exact_symbol_lookup",
+      "evidence": {
+        "def_line": 26,
+        "snippet": "def page_authorized_lexical(\n    fetch: Callable[[int], tuple[list[Claim], bool]],\n    limit: int,\n    authorize: Callable[[list[Claim]], list[Claim]],\n    *,\n    terms: int = 1,\n) -> list[Claim]:"
+      },
+      "source_hash": {
+        "git_blob_sha1": "99eb17642e3fb5a9e3253f0e01eb1deadc819919",
+        "content_sha256": "ac5eabefce908e329b751dd54e739d26ab11d01fa9e5f7464b83c9f2d679d651"
+      }
+    },
+    {
+      "id": "nav-004",
+      "domain": "skills",
+      "task_type": "natural_language",
+      "is_exact_symbol_task": false,
+      "query": "Which function promotes a candidate skill claim to confirmed status inside a single transaction, refusing unless the claim is still a candidate at its expected version, and supersedes the skill's parent claim when one is recorded?",
+      "expected_path": "memorymaster/knowledge/skills.py",
+      "expected_symbol": "approve_skill_candidate",
+      "symbol_lookup": "approve_skill_candidate",
+      "question_kind": "locate_function_by_behavior",
+      "evidence": {
+        "def_line": 554,
+        "snippet": "def approve_skill_candidate(service: Any, claim_id: int, *, actor: str) -> dict[str, Any]:"
+      },
+      "source_hash": {
+        "git_blob_sha1": "dac994c0c6c4694ebe54b7653da4371703c6b201",
+        "content_sha256": "b06ce2cc8bfbaae7e464bd1a0f09935700bf08794ab6ed9b177c01d0dabb753c"
+      }
+    },
+    {
+      "id": "nav-005",
+      "domain": "skills",
+      "task_type": "natural_language",
+      "is_exact_symbol_task": false,
+      "query": "Which function writes every confirmed skill claim out to its own file under a staging directory, named after the skill's slug, and raises an error if a slug would let the output path escape that root?",
+      "expected_path": "memorymaster/knowledge/skills.py",
+      "expected_symbol": "export_confirmed_skills",
+      "symbol_lookup": "export_confirmed_skills",
+      "question_kind": "locate_function_by_behavior",
+      "evidence": {
+        "def_line": 823,
+        "snippet": "def export_confirmed_skills(\n    service: Any,\n    *,\n    staging_root: str | Path | None = None,\n    scope_allowlist: list[str] | None = None,\n    limit: int = 200,\n) -> dict[str, Any]:"
+      },
+      "source_hash": {
+        "git_blob_sha1": "dac994c0c6c4694ebe54b7653da4371703c6b201",
+        "content_sha256": "b06ce2cc8bfbaae7e464bd1a0f09935700bf08794ab6ed9b177c01d0dabb753c"
+      }
+    },
+    {
+      "id": "nav-006",
+      "domain": "capture",
+      "task_type": "natural_language",
+      "is_exact_symbol_task": false,
+      "query": "Which repository method claims a bounded batch of pending capture jobs on behalf of a named worker, first expiring any leases that have gone stale, then stamping each newly-claimed job with that worker's name and a lease expiry time?",
+      "expected_path": "memorymaster/capture/repository.py",
+      "expected_symbol": "CaptureRepository.lease_jobs",
+      "symbol_lookup": "lease_jobs",
+      "question_kind": "locate_method_by_behavior",
+      "evidence": {
+        "class_line": 57,
+        "def_line": 216,
+        "snippet": "def lease_jobs(\n        self,\n        *,\n        owner: str,\n        limit: int = 25,\n        lease_seconds: int = 300,\n        stages: tuple[str, ...] | None = None,\n    ) -> list[CaptureJob]:"
+      },
+      "source_hash": {
+        "git_blob_sha1": "37b05d2495560850596fc14a9d04d0fc7b23d737",
+        "content_sha256": "21489e470a8e40adb7f3d3d5097511bc4de8568bd704b44d1d393002eb19d559"
+      }
+    },
+    {
+      "id": "nav-007",
+      "domain": "capture",
+      "task_type": "natural_language",
+      "is_exact_symbol_task": false,
+      "query": "Which function drains a bounded batch of capture jobs one at a time under a generated (or caller-supplied) worker identity, and tallies how many completed, were blocked, were retried, or errored across the batch?",
+      "expected_path": "memorymaster/capture/worker.py",
+      "expected_symbol": "run_capture_worker",
+      "symbol_lookup": "run_capture_worker",
+      "question_kind": "locate_function_by_behavior",
+      "evidence": {
+        "def_line": 183,
+        "snippet": "def run_capture_worker(\n    service: Any,\n    *,\n    owner: str | None = None,\n    limit: int = 25,\n) -> CaptureWorkerResult:"
+      },
+      "source_hash": {
+        "git_blob_sha1": "538cbb1447d59f64efb5830018ce8d080007db1b",
+        "content_sha256": "e1729ee865aeac0753ef4f4397e39913dc724a22d12ce026f62790c6c34002e1"
+      }
+    },
+    {
+      "id": "nav-008",
+      "domain": "capture",
+      "task_type": "exact_symbol",
+      "is_exact_symbol_task": true,
+      "query": "Locate the definition of the symbol `graph_job_content_hash`.",
+      "expected_path": "memorymaster/capture/repository.py",
+      "expected_symbol": "graph_job_content_hash",
+      "symbol_lookup": "graph_job_content_hash",
+      "question_kind": "exact_symbol_lookup",
+      "evidence": {
+        "def_line": 28,
+        "snippet": "def graph_job_content_hash(claim_id: int, revision: Any) -> str:"
+      },
+      "source_hash": {
+        "git_blob_sha1": "37b05d2495560850596fc14a9d04d0fc7b23d737",
+        "content_sha256": "21489e470a8e40adb7f3d3d5097511bc4de8568bd704b44d1d393002eb19d559"
+      }
+    },
+    {
+      "id": "nav-009",
+      "domain": "lifecycle",
+      "task_type": "natural_language",
+      "is_exact_symbol_task": false,
+      "query": "Which function validates and applies a claim's status change against an allowed-transitions table, requires a replacement claim id whenever the new status is a supersession, and fires a wiki auto-promotion hook afterward?",
+      "expected_path": "memorymaster/core/lifecycle.py",
+      "expected_symbol": "transition_claim",
+      "symbol_lookup": "transition_claim",
+      "question_kind": "locate_function_by_behavior",
+      "evidence": {
+        "def_line": 58,
+        "snippet": "def transition_claim(\n    store,\n    claim_id: int,\n    to_status: str,\n    reason: str,\n    event_type: str = \"transition\",\n    replaced_by_claim_id: int | None = None,\n    event_payload: dict[str, object] | None = None,\n) -> Claim:"
+      },
+      "source_hash": {
+        "git_blob_sha1": "9d6291d52a82204d64a00c1730879d58f7db1762",
+        "content_sha256": "b69a0c6ac1cf9233e3c3fcb6e68d25394c213e2e10e40423c4e2d14491b44dc8"
+      }
+    },
+    {
+      "id": "nav-010",
+      "domain": "lifecycle",
+      "task_type": "natural_language",
+      "is_exact_symbol_task": false,
+      "query": "Which store method recomputes a claim's recall-weight tier for every non-archived claim, promoting to the top tier on high access count or recent creation and demoting to the lowest tier when a claim has never been accessed and is old, returning counts moved into each tier?",
+      "expected_path": "memorymaster/stores/_storage_lifecycle.py",
+      "expected_symbol": "_LifecycleMixin.recompute_tiers",
+      "symbol_lookup": "recompute_tiers",
+      "question_kind": "locate_method_by_behavior",
+      "evidence": {
+        "class_line": 85,
+        "def_line": 790,
+        "snippet": "def recompute_tiers(self) -> dict[str, int]:\n        \"\"\"Recompute tier for all non-archived claims based on access_count and age."
+      },
+      "notes": "_LifecycleMixin is mixed into the concrete SQLiteStore class (memorymaster/stores/storage.py:112-119), which callers actually instantiate; the method body itself is defined only in _storage_lifecycle.py.",
+      "source_hash": {
+        "git_blob_sha1": "61e6f7c493da405ee8a49ada5723cf0db368b8b6",
+        "content_sha256": "96a06e703b5c53cd82abd4a0ffb299428057d04db92fd4e7e4e4b9ed2282c11d"
+      }
+    },
+    {
+      "id": "nav-011",
+      "domain": "profile",
+      "task_type": "natural_language",
+      "is_exact_symbol_task": false,
+      "query": "Which engine method retracts claim supports that no longer meet the minimum independent-session bar and rewrites the compiled projection immediately if any were removed, then checks whether a new compile cycle is due before advancing the mapping or reduction phase?",
+      "expected_path": "memorymaster/profile/engine.py",
+      "expected_symbol": "CompiledProfileEngine.run",
+      "symbol_lookup": "run",
+      "question_kind": "locate_method_by_behavior",
+      "evidence": {
+        "class_line": 102,
+        "def_line": 120,
+        "snippet": "def run(self, *, force: bool = False, max_map_calls: int | None = None) -> dict[str, Any]:"
+      },
+      "notes": "`run` is a very common method name; the qualifying class CompiledProfileEngine is required to disambiguate it from other run() methods elsewhere in the tree.",
+      "source_hash": {
+        "git_blob_sha1": "83ca1b33eea554e5cbfacd759ef8aac536fa887e",
+        "content_sha256": "8de3a816124752cea44e14f799b29da9763a4bb1dc5f585293ff9ecffe3f20ea"
+      }
+    },
+    {
+      "id": "nav-012",
+      "domain": "profile",
+      "task_type": "natural_language",
+      "is_exact_symbol_task": false,
+      "query": "Which function validates the raw JSON output of a reduce phase, enforcing that every candidate id from a bounded array of proposed decisions is consumed exactly once — no duplicates, none left over — before turning the rows into typed decision objects?",
+      "expected_path": "memorymaster/profile/providers.py",
+      "expected_symbol": "parse_reduce_output",
+      "symbol_lookup": "parse_reduce_output",
+      "question_kind": "locate_function_by_behavior",
+      "evidence": {
+        "def_line": 96,
+        "snippet": "def parse_reduce_output(\n    raw: str,\n    candidates: tuple[ProfileCandidate, ...],\n    facts: tuple[ProfileFact, ...],\n) -> tuple[ProfileDecision, ...]:"
+      },
+      "source_hash": {
+        "git_blob_sha1": "fd0e39db17d0036debf8c8caa66d22fea5f27ada",
+        "content_sha256": "f256e8e7819e3a89adbc860b97b4ab4c8804076f4dea7a6e8bf4bd999fbcdd9b"
+      }
+    },
+    {
+      "id": "nav-013",
+      "domain": "profile",
+      "task_type": "exact_symbol",
+      "is_exact_symbol_task": true,
+      "query": "Locate the definition of the symbol `prepare_claim_egress`.",
+      "expected_path": "memorymaster/profile/egress.py",
+      "expected_symbol": "prepare_claim_egress",
+      "symbol_lookup": "prepare_claim_egress",
+      "question_kind": "exact_symbol_lookup",
+      "evidence": {
+        "def_line": 60,
+        "snippet": "def prepare_claim_egress(text: str) -> ClaimEgress:"
+      },
+      "source_hash": {
+        "git_blob_sha1": "07c9898112d966aa0b194c02024c51db9e6256b7",
+        "content_sha256": "d5adf8d96ad3d2ef1ebbc93e747f70aae3ba9a6c1caa67527a74e263aaf10908"
+      }
+    },
+    {
+      "id": "nav-014",
+      "domain": "graph",
+      "task_type": "natural_language",
+      "is_exact_symbol_task": false,
+      "query": "Which method pulls ontology-valid entities and relations out of a single claim's text, skips claims that are not eligible for graph extraction, upserts the resulting nodes and edges scoped to that claim, and links each extracted entity back to it?",
+      "expected_path": "memorymaster/knowledge/entity_graph.py",
+      "expected_symbol": "EntityGraph.extract_and_link",
+      "symbol_lookup": "extract_and_link",
+      "question_kind": "locate_method_by_behavior",
+      "evidence": {
+        "class_line": 84,
+        "def_line": 272,
+        "snippet": "def extract_and_link(self, claim_id: int, text: str) -> list[str]:\n        \"\"\"Extract and link ontology-valid entities from an eligible claim.\"\"\""
+      },
+      "source_hash": {
+        "git_blob_sha1": "d7f9eb3c1e7b6d0958c7d3e201b6f9343a813f70",
+        "content_sha256": "48b3b000078887d82b8551cb9728db9b3ca66f1b9c7efab32f353c4eebee8082"
+      }
+    },
+    {
+      "id": "nav-015",
+      "domain": "graph",
+      "task_type": "natural_language",
+      "is_exact_symbol_task": false,
+      "query": "Which function expands an already-authorized set of recall result rows across existing graph edges by opening a read-only, deadline-bounded database connection, and is designed to never raise — falling back to the original rows on an unsupported store, a timeout, or any unexpected error?",
+      "expected_path": "memorymaster/recall/graph_expansion.py",
+      "expected_symbol": "expand_recall",
+      "symbol_lookup": "expand_recall",
+      "question_kind": "locate_function_by_behavior",
+      "evidence": {
+        "def_line": 533,
+        "snippet": "def expand_recall(\n    base_rows: list[dict[str, Any]],\n    query_text: str,\n    *,\n    mode: str,\n    limit: int,\n    db_path: str | None,\n    get_claim: Callable[[int], Any],\n    annotate: Callable[[Any], Any],\n    statuses: Sequence[str],\n    scope_allowlist: Sequence[str] | None,\n    tenant_id: str | None,\n    requesting_agent: str | None,\n    caps: ExpansionCaps | None = None,\n) -> ExpansionOutcome:"
+      },
+      "source_hash": {
+        "git_blob_sha1": "25e3176761a218663fdb52d7adec2ec758a0786e",
+        "content_sha256": "b226fe958928eb4f0677f7825a4f5004e83da8d85efc51f5ff9e956fae993661"
+      }
+    },
+    {
+      "id": "nav-016",
+      "domain": "graph",
+      "task_type": "exact_symbol",
+      "is_exact_symbol_task": true,
+      "query": "Locate the definition of the symbol `find_related_claims_explained`.",
+      "expected_path": "memorymaster/knowledge/entity_graph.py",
+      "expected_symbol": "EntityGraph.find_related_claims_explained",
+      "symbol_lookup": "find_related_claims_explained",
+      "question_kind": "exact_symbol_lookup",
+      "evidence": {
+        "class_line": 84,
+        "def_line": 552,
+        "snippet": "def find_related_claims_explained(\n        self,\n        entity_names: list[str],\n        *,\n        hops: int = 2,\n        limit: int = 50,\n        scope_allowlist: list[str] | None = None,\n    ) -> list[dict]:"
+      },
+      "source_hash": {
+        "git_blob_sha1": "d7f9eb3c1e7b6d0958c7d3e201b6f9343a813f70",
+        "content_sha256": "48b3b000078887d82b8551cb9728db9b3ca66f1b9c7efab32f353c4eebee8082"
+      }
+    },
+    {
+      "id": "nav-017",
+      "domain": "provider",
+      "task_type": "natural_language",
+      "is_exact_symbol_task": false,
+      "query": "Which single entry-point function calls whichever LLM provider is configured through environment variables, gates on a per-cycle call budget first, and falls back to a secondary configured provider when the primary comes back empty or with a quota-exhausted error shape?",
+      "expected_path": "memorymaster/core/llm_provider.py",
+      "expected_symbol": "call_llm",
+      "symbol_lookup": "call_llm",
+      "question_kind": "locate_function_by_behavior",
+      "evidence": {
+        "def_line": 717,
+        "snippet": "def call_llm(prompt: str, text: str) -> str:\n    \"\"\"Call configured LLM provider with optional fallback chain. Returns raw text."
+      },
+      "source_hash": {
+        "git_blob_sha1": "e4b72e73a5872c19fd000c1da502a1afa023aac3",
+        "content_sha256": "adaa47ec783bb03a1e4652d4a1b58f149821b0bf35765fcd4ec027b5dd703caf"
+      }
+    },
+    {
+      "id": "nav-018",
+      "domain": "provider",
+      "task_type": "exact_symbol",
+      "is_exact_symbol_task": true,
+      "query": "Locate the definition of the symbol `purge_claude_cli_scratch`.",
+      "expected_path": "memorymaster/core/llm_provider.py",
+      "expected_symbol": "purge_claude_cli_scratch",
+      "symbol_lookup": "purge_claude_cli_scratch",
+      "question_kind": "exact_symbol_lookup",
+      "evidence": {
+        "def_line": 486,
+        "snippet": "def purge_claude_cli_scratch(max_age_days: float = 2.0, scratch: str | None = None) -> dict:"
+      },
+      "source_hash": {
+        "git_blob_sha1": "e4b72e73a5872c19fd000c1da502a1afa023aac3",
+        "content_sha256": "adaa47ec783bb03a1e4652d4a1b58f149821b0bf35765fcd4ec027b5dd703caf"
+      }
+    },
+    {
+      "id": "nav-019",
+      "domain": "public_facade",
+      "task_type": "natural_language",
+      "is_exact_symbol_task": false,
+      "query": "Which public facade function requires exactly one of a claim id or a source item id (rejecting calls that pass both or neither), always returns a preview of the retirement actions it would take, and only actually archives the claim or retires the source when an explicit apply flag is set?",
+      "expected_path": "memorymaster/public/v1.py",
+      "expected_symbol": "forget",
+      "symbol_lookup": "forget",
+      "question_kind": "locate_function_by_behavior",
+      "evidence": {
+        "def_line": 527,
+        "snippet": "def forget(\n    *,\n    claim_id: int | None = None,\n    source_item_id: int | None = None,\n    apply: bool = False,\n    db: str | Path | None = None,\n    workspace: str | Path | None = None,\n) -> ForgetReceipt:\n    \"\"\"Preview or apply logical retirement; this is not privacy erasure.\"\"\""
+      },
+      "source_hash": {
+        "git_blob_sha1": "7452f62e5783578aabb43c6625011c5294794a64",
+        "content_sha256": "8a173b76d55d170ad7eba934557f9711a85d32de1e399e041c7a835f72eecc65"
+      }
+    },
+    {
+      "id": "nav-020",
+      "domain": "public_facade",
+      "task_type": "natural_language",
+      "is_exact_symbol_task": false,
+      "query": "Which public facade function queues due evidence work, due graph work, and observation discovery for a scope, bounded by a maximum-items value that must be between 1 and 200, without itself confirming or rewriting any claims?",
+      "expected_path": "memorymaster/public/v1.py",
+      "expected_symbol": "improve",
+      "symbol_lookup": "improve",
+      "question_kind": "locate_function_by_behavior",
+      "evidence": {
+        "def_line": 616,
+        "snippet": "def improve(\n    *,\n    scope: str | None = None,\n    max_items: int = 200,\n    session_id: str | None = None,\n    source_agent: str = \"memorymaster-public\",\n    platform: str = \"local\",\n    db: str | Path | None = None,\n    workspace: str | Path | None = None,\n    tenant_id: str | None = None,\n) -> ImproveReceipt:\n    \"\"\"Queue due work without directly confirming or rewriting claims.\"\"\""
+      },
+      "source_hash": {
+        "git_blob_sha1": "7452f62e5783578aabb43c6625011c5294794a64",
+        "content_sha256": "8a173b76d55d170ad7eba934557f9711a85d32de1e399e041c7a835f72eecc65"
+      }
+    }
+  ]
+}

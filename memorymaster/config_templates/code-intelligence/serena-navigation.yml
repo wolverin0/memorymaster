@@ -1,0 +1,29 @@
+description: Bounded code navigation for CLI agents; MemoryMaster owns durable memory.
+prompt: |
+  Use symbol tools to retrieve the smallest relevant code fragment. Start with
+  an overview or name lookup without bodies, then request the required body.
+  Set max_answer_chars to a bounded value and narrow the path on overflow.
+  body_location lines are zero-based: add one for editor/file citations.
+  An empty reference result is not proof of no callers; verify scoped source.
+  Confirm the active project matches the current checkout before using results.
+  For exact text or paths use your native search. For dependency impact use
+  GitNexus when its index matches the checkout; verify live source before edits.
+  These code indexes are derived views, not MemoryMaster claims or authority.
+fixed_tools:
+  - activate_project
+  - get_current_config
+  - get_symbols_overview
+  - find_symbol
+  - find_referencing_symbols
+single_project: false
+structured_tool_output: false
+tool_description_overrides:
+  find_symbol: |
+    Find a live code symbol by name/path; omit bodies initially and bound output
+    with max_answer_chars. IMPORTANT: returned body_location.start_line and
+    end_line are ZERO-BASED. Add 1 to BOTH when giving editor/file citations.
+    Restrict relative_path to a known file or directory to avoid broad scans.
+  get_symbols_overview: |
+    List symbols in one live source file before selecting a body to read.
+    Bound output with max_answer_chars. Any body_location lines are ZERO-BASED;
+    add 1 for editor/file citations. Do not load whole source files by default.

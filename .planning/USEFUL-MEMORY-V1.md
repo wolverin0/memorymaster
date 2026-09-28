@@ -1,4 +1,4 @@
-<!-- doc-head: installed operational repairs and verified NAS recovery; acceptance limits -->
+<!-- doc-head: useful memory implementation and shared CLI navigation evidence -->
 # Useful memory, reliable delivery
 Covers: supported recall installation, real CI evaluation and source-level Dreaming sampling.
 Key terms: Gemini-only, duplicate delivery, missed facts, label provenance, read-only.
@@ -676,3 +676,18 @@ Evidence: `nas-recovery-upload.json`, `nas-new-integrity.json`,
 `nas-scheduler-recovered.json`, `backup-priority-repair.json`,
 `nas-monitor-receipt.json`. **The NAS backup/restoration repair is closed.**
 This does not change the independent semantic-quality findings of the review.
+
+
+## Shared CLI code navigation ? 2026-09-28
+
+Installed Serena 1.7.0 with five navigation tools and per-session stdio for AGY,
+Claude Code and native/Orca Codex. Refreshed GitNexus 1.4.7 preserving embeddings;
+excluded cloned research. Fresh client smokes exercised/reported both tools.
+The frozen 20-task cohort gives GitNexus file@5 9/20 versus lexical heuristic
+7/20; Serena exact-symbol discovery 5/5, known-target bodies 19/20 (one bounded
+overflow). The 92.06% smaller successful body payload is conditional and does
+not establish total session token savings. Graphify's old graph returned cloned
+upstreams and remains outside default routing. GraphRAG activation unchanged.
+Added read-only index/checkout preflight: four regressions plus public lifecycle
+demo (six tests) passed, guard recheck four passed, Ruff and release truth pass.
+Evidence: `.planning/audits/2026-09-28-code-intelligence/REPORT.md`.
