@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "description": "Small governed recall journey fixture. Logical claim keys are resolved to disposable SQLite IDs at run time.",
+  "scope": "project:memorymaster",
+  "claims": [
+    {
+      "key": "authoritative_store",
+      "text": "MemoryMaster keeps authoritative governed claims in SQLite WAL.",
+      "status": "confirmed",
+      "visibility": "public",
+      "citation_source": "fixture://authoritative-store"
+    },
+    {
+      "key": "cited_recall",
+      "text": "Trusted recall reads cited claims from the local authoritative store.",
+      "status": "confirmed",
+      "visibility": "public",
+      "citation_source": "fixture://cited-recall"
+    },
+    {
+      "key": "other_scope",
+      "text": "MemoryMaster keeps authoritative governed claims in the other project store.",
+      "status": "confirmed",
+      "visibility": "public",
+      "scope": "project:other",
+      "citation_source": "fixture://other-scope"
+    },
+    {
+      "key": "stale_claim",
+      "text": "MemoryMaster keeps authoritative governed claims in the retired store.",
+      "status": "stale",
+      "visibility": "public",
+      "citation_source": "fixture://stale-claim"
+    },
+    {
+      "key": "private_claim",
+      "text": "MemoryMaster keeps authoritative governed claims in the private store.",
+      "status": "confirmed",
+      "visibility": "private",
+      "citation_source": "fixture://private-claim"
+    },
+    {
+      "key": "retired_support",
+      "text": "MemoryMaster keeps authoritative governed claims in a source whose support was retired.",
+      "status": "confirmed",
+      "visibility": "public",
+      "citation_source": "fixture://retired-support",
+      "retire_support": true
+    },
+    {
+      "key": "distractor",
+      "text": "The recall journey fixture records an unrelated operational note.",
+      "status": "confirmed",
+      "visibility": "public",
+      "citation_source": "fixture://distractor"
+    },
+    {
+      "key": "oversized",
+      "text_prefix": "Oversized ranking note ",
+      "text_repeat": 700,
+      "status": "confirmed",
+      "visibility": "public",
+      "citation_source": "fixture://oversized"
+    },
+    {
+      "key": "after_oversized",
+      "text": "Small fallback answer remains eligible after an oversized candidate.",
+      "status": "confirmed",
+      "visibility": "public",
+      "citation_source": "fixture://after-oversized"
+    },
+    {
+      "key": "long_tail_unicode",
+      "text_prefix": "Long body ",
+      "text_repeat": 40,
+      "text_suffix": "TAIL-UNICODE-🎯",
+      "status": "confirmed",
+      "visibility": "public",
+      "citation_source": "fixture://long-tail-unicode"
+    }
+  ],
+  "queries": [
+    {
+      "key": "authoritative",
+      "query": "Where are authoritative claims kept in SQLite?",
+      "expected": ["authoritative_store"],
+      "forbidden": ["other_scope", "stale_claim", "private_claim", "retired_support"]
+    },
+    {
+      "key": "cited",
+      "query": "Where does trusted cited memory read from locally?",
+      "expected": ["cited_recall"],
+      "forbidden": ["other_scope", "stale_claim", "private_claim", "retired_support"]
+    },
+    {
+      "key": "retired_support",
+      "query": "What does the source with retired support say about authoritative claims?",
+      "expected": [],
+      "forbidden": ["retired_support", "other_scope", "stale_claim", "private_claim"]
+    },
+    {
+      "key": "oversized_render",
+      "query": "Oversized ranking note small fallback answer",
+      "expected": ["after_oversized"],
+      "forbidden": ["other_scope", "stale_claim", "private_claim", "retired_support"],
+      "allowed_overflow": ["oversized"]
+    },
+    {
+      "key": "long_tail_unicode",
+      "query": "TAIL-UNICODE-🎯",
+      "expected": ["long_tail_unicode"],
+      "forbidden": ["other_scope", "stale_claim", "private_claim", "retired_support"],
+      "budget_tokens": 200
+    }
+  ]
+}

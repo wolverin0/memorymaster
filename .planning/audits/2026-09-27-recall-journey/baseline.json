@@ -1,0 +1,403 @@
+{
+  "schema": "memorymaster.recall_journey.v1",
+  "fixture": "tests/fixtures/recall_journey_v1.json",
+  "source_label": "source_override",
+  "fixture_sha256": "3fc7206135224867d752634c7648bfb6d4fc35104da6a809e6a76d0bc8749a9a",
+  "evaluator_sha256": "ff78c22c5b3a10eb1d3b56c737faa166f485d9f8d7a31a9251117251584ba53c",
+  "git_head": "f5143d3ef64ac6ce84c2b0198940a14e9ecbfb90",
+  "source_context_hook": "memorymaster/recall/context_hook.py",
+  "source_context_hook_sha256": "8e5e0a82fd4cdf6959d61f825b43433c90aeefce9b2ef3c311f340ec628ef7ad",
+  "pyproject_version": "4.9.0",
+  "distribution_version": "4.8.9",
+  "provider_calls_observed": [],
+  "provider_call_count": 0,
+  "monetary_cost": "0 observed provider calls; no paid call made",
+  "network_policy": "socket egress blocked during run",
+  "sqlite_mode": "disposable temp database; authoritative database untouched",
+  "jev_surfaces": "off",
+  "cases": [
+    {
+      "key": "authoritative",
+      "query": "Where are authoritative claims kept in SQLite?",
+      "candidate_ids_by_token": [
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          2
+        ],
+        [],
+        [
+          1
+        ]
+      ],
+      "candidate_ids": [
+        1,
+        2
+      ],
+      "ranked_ids": [
+        1,
+        2
+      ],
+      "rendered_ids": [
+        1,
+        2
+      ],
+      "expected_ids": [
+        1
+      ],
+      "forbidden_ids": [
+        3,
+        4,
+        5,
+        6
+      ],
+      "ranked_hit_at_5": true,
+      "rendered_hit_at_5": true,
+      "candidate_coverage": true,
+      "ranked_precision_at_5_fixed": 0.2,
+      "rendered_precision_at_5_fixed": 0.2,
+      "expected_answer_present_in_decoded_delivery": true,
+      "unicode_tail_present_in_decoded_delivery": false,
+      "forbidden_excluded": true,
+      "forbidden_in_candidates": false,
+      "forbidden_in_ranked": false,
+      "forbidden_in_rendered": false,
+      "allowed_overflow_in_candidates": false,
+      "allowed_overflow_in_ranked": false,
+      "allowed_overflow_rendered": false,
+      "citation_sources_by_claim": {
+        "1": [
+          "fixture://authoritative-store"
+        ],
+        "2": [
+          "fixture://cited-recall"
+        ]
+      },
+      "citation_checked_claim_count": 2,
+      "citation_source_correct_count": 2,
+      "citation_source_correct": true,
+      "delivered": true,
+      "additional_context_chars": 177,
+      "rendered_bullet_chars": 136,
+      "recall_context_chars": 155,
+      "recall_budget_compliant": true,
+      "budget_tokens": 160,
+      "budget_chars_estimate": 640,
+      "delivery_json": true,
+      "latency_ms": 116.25
+    },
+    {
+      "key": "cited",
+      "query": "Where does trusted cited memory read from locally?",
+      "candidate_ids_by_token": [
+        [
+          2
+        ],
+        [
+          2
+        ],
+        [],
+        [
+          2
+        ],
+        [
+          2
+        ]
+      ],
+      "candidate_ids": [
+        2
+      ],
+      "ranked_ids": [
+        2
+      ],
+      "rendered_ids": [
+        2
+      ],
+      "expected_ids": [
+        2
+      ],
+      "forbidden_ids": [
+        3,
+        4,
+        5,
+        6
+      ],
+      "ranked_hit_at_5": true,
+      "rendered_hit_at_5": true,
+      "candidate_coverage": true,
+      "ranked_precision_at_5_fixed": 0.2,
+      "rendered_precision_at_5_fixed": 0.2,
+      "expected_answer_present_in_decoded_delivery": true,
+      "unicode_tail_present_in_decoded_delivery": false,
+      "forbidden_excluded": true,
+      "forbidden_in_candidates": false,
+      "forbidden_in_ranked": false,
+      "forbidden_in_rendered": false,
+      "allowed_overflow_in_candidates": false,
+      "allowed_overflow_in_ranked": false,
+      "allowed_overflow_rendered": false,
+      "citation_sources_by_claim": {
+        "2": [
+          "fixture://cited-recall"
+        ]
+      },
+      "citation_checked_claim_count": 1,
+      "citation_source_correct_count": 1,
+      "citation_source_correct": true,
+      "delivered": true,
+      "additional_context_chars": 111,
+      "rendered_bullet_chars": 71,
+      "recall_context_chars": 89,
+      "recall_budget_compliant": true,
+      "budget_tokens": 160,
+      "budget_chars_estimate": 640,
+      "delivery_json": true,
+      "latency_ms": 29.931
+    },
+    {
+      "key": "retired_support",
+      "query": "What does the source with retired support say about authoritative claims?",
+      "candidate_ids_by_token": [
+        [],
+        [],
+        [],
+        [],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "candidate_ids": [
+        1,
+        2
+      ],
+      "ranked_ids": [
+        1,
+        2
+      ],
+      "rendered_ids": [
+        1,
+        2
+      ],
+      "expected_ids": [],
+      "forbidden_ids": [
+        6,
+        3,
+        4,
+        5
+      ],
+      "ranked_hit_at_5": null,
+      "rendered_hit_at_5": null,
+      "candidate_coverage": null,
+      "ranked_precision_at_5_fixed": null,
+      "rendered_precision_at_5_fixed": null,
+      "expected_answer_present_in_decoded_delivery": null,
+      "unicode_tail_present_in_decoded_delivery": false,
+      "forbidden_excluded": true,
+      "forbidden_in_candidates": false,
+      "forbidden_in_ranked": false,
+      "forbidden_in_rendered": false,
+      "allowed_overflow_in_candidates": false,
+      "allowed_overflow_in_ranked": false,
+      "allowed_overflow_rendered": false,
+      "citation_sources_by_claim": {
+        "1": [
+          "fixture://authoritative-store"
+        ],
+        "2": [
+          "fixture://cited-recall"
+        ]
+      },
+      "citation_checked_claim_count": 2,
+      "citation_source_correct_count": 2,
+      "citation_source_correct": true,
+      "delivered": true,
+      "additional_context_chars": 177,
+      "rendered_bullet_chars": 136,
+      "recall_context_chars": 155,
+      "recall_budget_compliant": true,
+      "budget_tokens": 160,
+      "budget_chars_estimate": 640,
+      "delivery_json": true,
+      "latency_ms": 10.738
+    },
+    {
+      "key": "oversized_render",
+      "query": "Oversized ranking note small fallback answer",
+      "candidate_ids_by_token": [
+        [
+          8,
+          9
+        ],
+        [
+          8
+        ],
+        [
+          8,
+          7
+        ],
+        [
+          9
+        ],
+        [
+          9
+        ],
+        [
+          9
+        ]
+      ],
+      "candidate_ids": [
+        8,
+        9,
+        7
+      ],
+      "ranked_ids": [
+        9,
+        8,
+        7
+      ],
+      "rendered_ids": [
+        9,
+        8,
+        7
+      ],
+      "expected_ids": [
+        9
+      ],
+      "forbidden_ids": [
+        3,
+        4,
+        5,
+        6
+      ],
+      "ranked_hit_at_5": true,
+      "rendered_hit_at_5": true,
+      "candidate_coverage": true,
+      "ranked_precision_at_5_fixed": 0.2,
+      "rendered_precision_at_5_fixed": 0.2,
+      "expected_answer_present_in_decoded_delivery": true,
+      "unicode_tail_present_in_decoded_delivery": false,
+      "forbidden_excluded": true,
+      "forbidden_in_candidates": false,
+      "forbidden_in_ranked": false,
+      "forbidden_in_rendered": false,
+      "allowed_overflow_in_candidates": true,
+      "allowed_overflow_in_ranked": true,
+      "allowed_overflow_rendered": true,
+      "citation_sources_by_claim": {
+        "9": [
+          "fixture://after-oversized"
+        ],
+        "8": [
+          "fixture://oversized"
+        ],
+        "7": [
+          "fixture://distractor"
+        ]
+      },
+      "citation_checked_claim_count": 3,
+      "citation_source_correct_count": 3,
+      "citation_source_correct": true,
+      "delivered": true,
+      "additional_context_chars": 481,
+      "rendered_bullet_chars": 439,
+      "recall_context_chars": 459,
+      "recall_budget_compliant": true,
+      "budget_tokens": 160,
+      "budget_chars_estimate": 640,
+      "delivery_json": true,
+      "latency_ms": 77.444
+    },
+    {
+      "key": "long_tail_unicode",
+      "query": "TAIL-UNICODE-🎯",
+      "candidate_ids_by_token": [
+        [
+          10
+        ]
+      ],
+      "candidate_ids": [
+        10
+      ],
+      "ranked_ids": [
+        10
+      ],
+      "rendered_ids": [
+        10
+      ],
+      "expected_ids": [
+        10
+      ],
+      "forbidden_ids": [
+        3,
+        4,
+        5,
+        6
+      ],
+      "ranked_hit_at_5": true,
+      "rendered_hit_at_5": true,
+      "candidate_coverage": true,
+      "ranked_precision_at_5_fixed": 0.2,
+      "rendered_precision_at_5_fixed": 0.2,
+      "expected_answer_present_in_decoded_delivery": false,
+      "unicode_tail_present_in_decoded_delivery": false,
+      "forbidden_excluded": true,
+      "forbidden_in_candidates": false,
+      "forbidden_in_ranked": false,
+      "forbidden_in_rendered": false,
+      "allowed_overflow_in_candidates": false,
+      "allowed_overflow_in_ranked": false,
+      "allowed_overflow_rendered": false,
+      "citation_sources_by_claim": {
+        "10": [
+          "fixture://long-tail-unicode"
+        ]
+      },
+      "citation_checked_claim_count": 1,
+      "citation_source_correct_count": 1,
+      "citation_source_correct": true,
+      "delivered": true,
+      "additional_context_chars": 342,
+      "rendered_bullet_chars": 302,
+      "recall_context_chars": 320,
+      "recall_budget_compliant": true,
+      "budget_tokens": 200,
+      "budget_chars_estimate": 800,
+      "delivery_json": true,
+      "latency_ms": 6.43
+    }
+  ],
+  "summary": {
+    "cases_total": 5,
+    "cases_without_error": 5,
+    "candidate_cases_total": 4,
+    "candidate_coverage": 1.0,
+    "ranked_hit_at_5": 1.0,
+    "rendered_hit_at_5": 1.0,
+    "ranked_precision_at_5_fixed": 0.2,
+    "rendered_precision_at_5_fixed": 0.2,
+    "answer_cases_total": 4,
+    "answer_present_rate": 0.75,
+    "forbidden_exclusion_rate": 1.0,
+    "citation_checked_claims_total": 9,
+    "citation_source_correct_rate": 1.0,
+    "latency_p50_ms": 29.931,
+    "latency_p95_ms": 116.25,
+    "budget_chars_estimate_min": 640,
+    "budget_chars_estimate_max": 800,
+    "recall_budget_compliance_rate": 1.0
+  },
+  "limitations": [
+    "Declarative fixture expectations are not independent human qrels.",
+    "The fixture is small and lexical terms overlap by design; it measures governance and journey integrity, not production semantic quality.",
+    "The evaluator does not claim the 953-prompt cohort or MiniLM quality result.",
+    "Monetary cost is zero only for this run because provider_calls_observed is empty; no provider pricing was inferred."
+  ]
+}

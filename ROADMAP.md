@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; 4.9.0 live Jev decisions + weekly-review cure in progress (checklist under Now) -->
+<!-- doc-head: sole roadmap; live Jev decisions and measured recall delivery repair -->
 # MemoryMaster roadmap
 # Covers: live Jev decision ledger (4.9.0 checklist), useful-memory delivery/evaluation, workflow analytics, governed observations and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, sustainability.
@@ -35,6 +35,27 @@ its governed-claims authority:
 | Memory Hub, loadouts, team ACLs, proxy replacement, cloud database | Deferred: no personal SQLite requirement justifies multi-user/cloud infrastructure or a second agent gateway. |
 
 ## Now
+
+### Recall journey and delivery integrity (2026-09-27)
+
+Operator-approved follow-up to the upstream comparison: measure authorized
+candidates, ranking, rendered memory and the decoded hook delivery on the same
+frozen cases, then correct the observed loss. Work is isolated on
+`fix/recall-journey-20260927`; SQLite remains authoritative.
+
+- [x] Reproduce renderer loss: 300-character truncation, Unicode replacement,
+  first-oversized-row starvation and framing omitted from the budget estimate.
+- [x] Preserve complete claim text and Unicode; skip non-fitting claims; include
+  framing and flags in the estimate and keep JEV exposure capacity conservative.
+  Legacy console encoding is handled only at the CLI output boundary.
+- [x] Finish paired fixture receipts, affected regressions and independent review:
+  complete text delivered in 3/4 -> 4/4 positive fixture cases; ranking unchanged.
+  Initial affected run 179 pass / 1 fail; isolated test-setup repair passes.
+  Three supplemental engine timing failures also reproduce on the baseline.
+- [x] Record deployment recommendation and measurement limits in
+  `.planning/audits/2026-09-27-recall-journey/REPORT.md`.
+  Source-tested only; production installation and real semantic quality are
+  not accepted by this fixture. Fresh public lifecycle checks: 13 passed.
 
 ### Live Jev decisions and weekly-review cure (4.9.0, operator order 2026-09-23)
 

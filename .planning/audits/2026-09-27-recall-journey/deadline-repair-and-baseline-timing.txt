@@ -1,0 +1,91 @@
+python : <USERPROFILE>\AppData\Local\Programs\Python\Python312\Lib\site-packages\pytest_asyncio\plugin.py:208:
+PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+At line:2 char:35
++ ... MODE='off'; python -m pytest tests/test_jev_recall_surfaces.py::test_ ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (<USERPROFILE>\...cope" is unset.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of
+pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop
+scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function",
+"class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+.FFF                                                                     [100%]
+================================== FAILURES ===================================
+___________ test_deadline_returns_legacy_and_late_answer_never_acts ___________
+
+tmp_path = WindowsPath('T:/systemp/pytest-fixtures/pytest-40/test_deadline_returns_legacy_a0')
+
+    def test_deadline_returns_legacy_and_late_answer_never_acts(tmp_path):
+        slow = FakeTransport(delay=1.2)
+        engine, _ = make_engine(tmp_path, transport=slow, env={"MEMORYMASTER_JEV_HOOK_DEADLINE_MS": "300"})
+        engine.ledger.register_questions(q.get(key) for key in ("recall.relevant", "recall.usable_evidence",
+                                                                "recall.contradicts_request", "recall.instruction_like"))
+        started = time.perf_counter()  # the ledger exists: the hook deadline is spent waiting for the answer
+        decision = decide_recall(engine)
+        # deadline + 100 ms (the hook contract), plus one tick of the Windows monotonic clock the engine reads
+        if TIMING:
+>           assert time.perf_counter() - started <= 0.3 + 0.1 + 0.016
+E           assert (190490.6357097 - 190489.9024821) <= ((0.3 + 0.1) + 0.016)
+E            +  where 190490.6357097 = <built-in function perf_counter>()
+E            +    where <built-in function perf_counter> = time.perf_counter
+
+tests\test_decisions_engine.py:291: AssertionError
+___________________ test_hook_egress_stops_at_the_deadline ____________________
+
+tmp_path = WindowsPath('T:/systemp/pytest-fixtures/pytest-40/test_hook_egress_stops_at_the_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000257898EAC30>
+
+    def test_hook_egress_stops_at_the_deadline(tmp_path, monkeypatch):
+        """Egress is CPU work before the send: a hook decision still returns by deadline + 100 ms."""
+        per_call = 0.05
+        calls = _slow_egress(monkeypatch, per_call)
+        engine, fake = make_engine(tmp_path, env={"MEMORYMASTER_JEV_HOOK_DEADLINE_MS": "300"})
+        candidates = [(f"claim:{n}", f"candidate memory number {n} about the build") for n in range(20)]
+        state, bound = q.build_recall("how do we run tests?", "memorymaster", candidates)
+        refs = [ref for ref, _ in candidates]
+        started = time.perf_counter()
+        decision = engine.decide("recall", state=state, questions=bound, items=refs, legacy_action=refs[:5],
+                                 choose=recall_choose)
+        elapsed = time.perf_counter() - started
+        assert fake.calls == [] and decision.action == refs[:5]
+        assert decision.fallback_reason == "timeout" and decision.logged is True
+        # deadline + 100 ms, plus at most the one egress call already running, plus one clock tick
+        if TIMING:
+>           assert elapsed <= 0.3 + 0.1 + per_call + 0.016, (elapsed, len(calls))
+E           AssertionError: (1.3930280999920797, 1)
+E           assert 1.3930280999920797 <= (((0.3 + 0.1) + 0.05) + 0.016)
+
+tests\test_decisions_engine.py:1080: AssertionError
+______ test_waiting_for_the_send_intent_is_charged_to_the_hook_deadline _______
+
+tmp_path = WindowsPath('T:/systemp/pytest-fixtures/pytest-40/test_waiting_for_the_send_inte0')
+
+    def test_waiting_for_the_send_intent_is_charged_to_the_hook_deadline(tmp_path):
+        """Review of f4096fb: reserve_send could wait for another writer and the request still
+        got the full deadline, so a hook acted live on an answer that came after its deadline."""
+        import threading
+
+        path = tmp_path / "decisions.db"
+        engine, fake = make_engine(tmp_path, transport=FakeTransport(delay=0.33),
+                                   env={"MEMORYMASTER_JEV_HOOK_DEADLINE_MS": "400"})
+        decide_recall(engine)  # warm: questions registered, nothing else writes before the intent
+        holder = _hold_write_lock(path)
+        threading.Timer(0.22, lambda: (holder.rollback(), holder.close())).start()
+        started = time.perf_counter()
+        decision = decide_recall(engine)
+        elapsed = time.perf_counter() - started
+        assert decision.fallback_reason is not None and decision.action == LEGACY, decision
+        if TIMING:
+>           assert elapsed < 0.4 + 0.1 + 0.05, elapsed
+E           AssertionError: 0.844557199976407
+E           assert 0.844557199976407 < ((0.4 + 0.1) + 0.05)
+
+tests\test_decisions_engine.py:1179: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_decisions_engine.py::test_deadline_returns_legacy_and_late_answer_never_acts
+FAILED tests/test_decisions_engine.py::test_hook_egress_stops_at_the_deadline
+FAILED tests/test_decisions_engine.py::test_waiting_for_the_send_intent_is_charged_to_the_hook_deadline
+3 failed, 1 passed in 16.77s

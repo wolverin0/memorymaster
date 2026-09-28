@@ -687,7 +687,13 @@ def test_prompt_hook_jev_time_stays_within_one_hook_deadline(tmp_path, monkeypat
     legacy_out = context_hook.recall(QUERY, db_path=str(db), skip_qdrant=True, hook_data=data)
     baseline = time.perf_counter() - started
     transport = ScriptedTransport(with_route(recall_answers({})), delay=3.0)
-    install_engine(monkeypatch, tmp_path, transport, MEMORYMASTER_JEV_HOOK_DEADLINE_MS="900")  # production value
+    engine = install_engine(monkeypatch, tmp_path, transport, MEMORYMASTER_JEV_HOOK_DEADLINE_MS="900")
+    # This checks a delayed transport, not cold schema creation. An empty
+    # ledger can exhaust the production 900 ms before sending on slow disks.
+    # Pre-send deadlines have separate decision-engine regression coverage.
+    from memorymaster.decisions import questions
+
+    assert engine.ledger.register_questions(questions.all_specs())
 
     started = time.perf_counter()
     out = context_hook.recall(QUERY, db_path=str(db), skip_qdrant=True, hook_data=data)

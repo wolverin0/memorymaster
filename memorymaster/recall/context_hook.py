@@ -2123,8 +2123,8 @@ def _recall_impl(
 
 
 def _recall_chunk(claim, labels: tuple[str, ...] = ()) -> str:
-    """One injected bullet: the claim text (300 chars), Jev flags first when any."""
-    text = claim.text[:300]
+    """One complete evidence bullet; the packing step decides whether it fits."""
+    text = claim.text
     if labels:
         text = " ".join(labels) + " " + text
     # Only surface the "(compiled in [[slug]])" wiki breadcrumb when the
@@ -2138,30 +2138,35 @@ def _recall_chunk(claim, labels: tuple[str, ...] = ()) -> str:
 
 
 def _render_recall_lines(rows, budget: int, labels=None) -> tuple[list[str], list[dict]]:
-    """Header plus bullets in ``rows`` order until the token budget is spent."""
+    """Pack complete bullets, counting framing in the four-character estimate.
+
+    A claim that cannot fit must not hide later, smaller claims. Returning an
+    ID for a silently truncated claim makes recall evaluation and exposure
+    receipts misleading, so each included claim retains its full text.
+    """
     lines = ["# Memory Context", ""]
     rendered_rows: list[dict] = []
-    tokens_used = 0
-    chars_per_token = 4
+    chars_used = len("\n".join(lines))
+    char_budget = max(0, budget) * 4
     for row in rows:
         claim = row.get("claim")
         if not hasattr(claim, "text"):
             continue
         flags = labels.get(getattr(claim, "id", None), ()) if labels else ()
         chunk = _recall_chunk(claim, flags)
-        chunk_tokens = len(chunk) // chars_per_token
-        if tokens_used + chunk_tokens > budget:
-            break
+        chunk_chars = len(chunk) + 1  # join separator, including the first bullet
+        if chars_used + chunk_chars > char_budget:
+            continue
         lines.append(chunk)
         rendered_rows.append(row)
-        tokens_used += chunk_tokens
+        chars_used += chunk_chars
     return lines, rendered_rows
 
 
 def _recall_text(lines: list[str]) -> str:
     if len(lines) <= 2:
         return ""
-    return "\n".join(lines).encode("ascii", errors="replace").decode("ascii")
+    return "\n".join(lines)
 
 
 def _jev_recall_rendering(query, ranked, legacy_lines, legacy_rows, budget, hook_data, phase_ms):
@@ -2184,9 +2189,17 @@ def _jev_recall_rendering(query, ranked, legacy_lines, legacy_rows, budget, hook
 
         pool = [row for row in ranked
                 if hasattr(row.get("claim"), "text") and isinstance(getattr(row.get("claim"), "id", None), int)]
+        # JEV can only choose complete bullets that individually fit, even
+        # with all labels. One oversized claim must not zero the entire cap.
+        header_chars = len("# Memory Context\n")
+        pool = [row for row in pool
+                if header_chars + len(_recall_chunk(row["claim"], jev.WORST_CASE_LABELS)) + 1 <= max(0, budget) * 4]
         pool = pool[: jev.RECALL_TOP_N]
         by_id = {row["claim"].id: row for row in pool}
-        cap = jev.budget_cap([len(_recall_chunk(row["claim"], jev.WORST_CASE_LABELS)) // 4 for row in pool], budget)
+        cap = jev.budget_cap(
+            [(len(_recall_chunk(row["claim"], jev.WORST_CASE_LABELS)) + 4) // 4 for row in pool],
+            budget, overhead=(header_chars + 3) // 4,
+        )
         legacy_by_id = {row["claim"].id: row for row in legacy_rows
                         if isinstance(getattr(row.get("claim"), "id", None), int)}
         legacy_ids = list(legacy_by_id)
