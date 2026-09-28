@@ -678,7 +678,7 @@ Evidence: `nas-recovery-upload.json`, `nas-new-integrity.json`,
 This does not change the independent semantic-quality findings of the review.
 
 
-## Shared CLI code navigation ? 2026-09-28
+## Shared CLI code navigation - 2026-09-28
 
 Installed Serena 1.7.0 with five navigation tools and per-session stdio for AGY,
 Claude Code and native/Orca Codex. Refreshed GitNexus 1.4.7 preserving embeddings;
