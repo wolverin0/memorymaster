@@ -206,6 +206,38 @@ def test_relay_workspace_priority(tmp_path, monkeypatch):
     assert relay.resolve_workspace(both) == str(tmp_path / "o")
 
 
+def test_relay_token_prefers_env_then_service_registry_key(monkeypatch):
+    assert relay.resolve_token({"MEMORYMASTER_MCP_HTTP_TOKEN": " env-token "}) == "env-token"
+    if relay.os.name != "nt":
+        assert relay.resolve_token({}) == ""
+        return
+    import winreg
+
+    opened = []
+
+    class _Key:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def open_key(root, path):
+        opened.append((root, path))
+        return _Key()
+
+    monkeypatch.setattr(winreg, "OpenKey", open_key)
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda key, name: (" reg-token ", winreg.REG_SZ))
+    assert relay.resolve_token({}) == "reg-token"
+    assert opened == [(winreg.HKEY_CURRENT_USER, relay.SHARED_KEY)]
+
+    def missing(root, path):
+        raise OSError("no key")
+
+    monkeypatch.setattr(winreg, "OpenKey", missing)
+    assert relay.resolve_token({}) == ""
+
+
 def test_relay_bad_url_setting_becomes_an_error_reply_not_a_parse_error():
     request = json.dumps({"jsonrpc": "2.0", "id": 9, "method": "tools/list"})
     [reply] = relay.forward(request, url="not a url", token="t", workspace="w")

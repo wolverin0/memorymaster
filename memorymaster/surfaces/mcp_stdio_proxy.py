@@ -7,7 +7,8 @@ server resolves the project scope per request instead of from its own cwd.
 
 Configuration (environment):
     MEMORYMASTER_SHARED_MCP_URL    default http://127.0.0.1:8766/mcp
-    MEMORYMASTER_MCP_HTTP_TOKEN    bearer token of the shared server (required)
+    MEMORYMASTER_MCP_HTTP_TOKEN    bearer token of the shared server (required; on Windows
+                                   falls back to the HKCU key SHARED_KEY below)
     MEMORYMASTER_PROXY_WORKSPACE   overrides the workspace; else CLAUDE_PROJECT_DIR, else cwd
 Standard library only; keep it that way so each relay stays a few MB.
 """
@@ -24,6 +25,8 @@ from concurrent.futures import ThreadPoolExecutor
 DEFAULT_URL = "http://127.0.0.1:8766/mcp"
 WORKSPACE_HEADER = "X-MM-Workspace"
 TIMEOUT_SECONDS = 120
+TOKEN_ENV = "MEMORYMASTER_MCP_HTTP_TOKEN"
+SHARED_KEY = r"Software\MemoryMaster\SharedMcp"
 
 _stdout_lock = threading.Lock()
 
@@ -34,6 +37,26 @@ def resolve_workspace(environ=os.environ) -> str:
         if value:
             return os.path.abspath(value)
     return os.getcwd()
+
+
+def resolve_token(environ=os.environ) -> str:
+    """Bearer token: the environment, else the shared service's own registry key.
+
+    The registry fallback lets clients launched before the service existed
+    (their inherited environment predates it) find the token without it ever
+    being written into a client config file.
+    """
+    token = (environ.get(TOKEN_ENV) or "").strip()
+    if token or os.name != "nt":
+        return token
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, SHARED_KEY) as key:
+            value, _kind = winreg.QueryValueEx(key, TOKEN_ENV)
+    except OSError:
+        return ""
+    return value.strip() if isinstance(value, str) else ""
 
 
 def _emit(message: dict) -> None:
@@ -86,9 +109,9 @@ def main() -> int:
     for stream in (sys.stdin, sys.stdout):
         stream.reconfigure(encoding="utf-8")  # MCP stdio is UTF-8; Windows pipes default to cp1252
     url =os.environ.get("MEMORYMASTER_SHARED_MCP_URL", DEFAULT_URL).strip() or DEFAULT_URL
-    token = os.environ.get("MEMORYMASTER_MCP_HTTP_TOKEN", "").strip()
+    token = resolve_token()
     if not token:
-        sys.stderr.write("MEMORYMASTER_MCP_HTTP_TOKEN is required for the shared MCP relay\n")
+        sys.stderr.write(f"{TOKEN_ENV} is required for the shared MCP relay (env or HKCU\\{SHARED_KEY})\n")
         return 2
     workspace = resolve_workspace()
 
