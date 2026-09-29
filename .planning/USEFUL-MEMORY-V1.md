@@ -1,9 +1,9 @@
-<!-- doc-head: useful memory implementation and shared CLI navigation evidence -->
+<!-- doc-head: installed recall repair and September 28 daily/weekly evidence; quality limits -->
 # Useful memory, reliable delivery
 Covers: supported recall installation, real CI evaluation and source-level Dreaming sampling.
 Key terms: Gemini-only, duplicate delivery, missed facts, label provenance, read-only.
-Read when: accepting or operating 4.8.9; ROADMAP.md remains the sole roadmap.
-Status: September 21 repairs installed; NAS backup restored and scheduler recovered.
+Read when: accepting or operating 4.9.0; ROADMAP.md remains the sole roadmap.
+Status: September 28 reviews complete with warnings; local restore verified, semantic quality unmeasured.
 <!-- /doc-head -->
 
 ## Product changes
@@ -677,6 +677,101 @@ Evidence: `nas-recovery-upload.json`, `nas-new-integrity.json`,
 `nas-monitor-receipt.json`. **The NAS backup/restoration repair is closed.**
 This does not change the independent semantic-quality findings of the review.
 
+## 2026-09-23 independent weekly review (Claude)
+
+Findings, coverage, fresh gate and evidence:
+[.planning/audits/2026-09-23-weekly-claude-review/REPORT.md](audits/2026-09-23-weekly-claude-review/REPORT.md).
+Corrections to statements above: the JEV ingest shadow flag **is set** in
+`~/.claude/settings.json` (armed but inert, F-02), contrary to the "flag is
+unset" / "remain disabled" lines of the September 21 review; the compiled
+profile's `no_changes` is caused by verbatim capture being off since
+2026-08-24 (F-03). F-04 is repaired on an unmerged local branch only.
+Execution plan (cure, re-test, live Jev activation with decision ledger):
+`artifacts/2026-09-23-plan-jev-y-curacion.html`; code-inventory findings F-20
+(dormant irreversible `scheduled_archive`) and F-21 (automation logged as human
+override) are in the review report addendum.
+
+
+## 2026-09-28 daily operational and weekly acceptance review
+
+**Review completed with warnings; weekly semantic acceptance remains UNMEASURED.**
+ROADMAP and effective installed configuration were read first. Authoritative and
+auxiliary SQLite were opened read-only; no steward, generation, sync or scheduled
+backup job was forced. The configured graph-observation and profile generators
+are enabled; GraphRAG recall is **DISABLED**, with retained graph data and no
+eligible confirmed entity supports. Wiki absorption and workflow receipts also
+remain disabled. No feature was enabled to produce a passing sample.
+
+| Area | Observed result and acceptance limit |
+|---|---|
+| Installed correction | `190d020`, deployment receipt `5d87e02`; 6,707 non-ML tests passed, 0 failed, 75 skipped, 90 deselected, 1 expected failure. Both installed 4.9.0 runtimes match 438 files. Eleven original mock-fixture failures and full affected-shard reruns are preserved. |
+| Authority and recall | Full SQLite quick_check OK, FK errors 0, schema 27. Configured live canary rank 5. Two fresh JEV recall hooks delivered complete long claim text in 2299.0/2598.6 ms. Persisted citations were present; this is not a measured semantic citation-correctness rate. |
+| Capture and retirement | 95 retained blocked capture jobs, oldest August 11, maximum attempts 5; reasons include 73 ineligible and 20 unavailable graph claims. No retired production source item supplies a live retirement sample. Disposable lifecycle/retirement regressions pass separately. No retained data was deleted or promoted for the review. |
+| Dreaming and steward | Dreaming application is enabled, not shadow-only. Current configured extraction/steward: google/gemini-3.5-flash-lite; consolidation: antigravity/gemini-3.7-flash-low. Seven-day Dreaming call records: 353, of which 339 OK and 14 errors. Latest partial run has one extraction HTTP 429 and one retryable capture; 14 captures applied. A dedicated actual steward-call receipt was not established. |
+| Provider evidence and cost | Seven-day JEV ledger: 45,072 decisions, 10 orphan send intents, local token-rate estimate $1.06598268; invoiced cost UNKNOWN. Dreaming labels are call-record labels, not independent served-model attestations. Actual bounded hook probes served jev-1.13.0. Four validation calls total (two recall, two SessionStart including the retained comparator failure), not a quality cohort. |
+| Graph quality and leases | 4,051 seven-day jobs report no_supports; zero new observations and zero independent precision labels: **UNMEASURED, n=0**. Three retained observations are archived, all 63 support edges have non-confirmed claims. No active/expired graph leases observed. Completed jobs do not establish precision. |
+| Profile structure | Watermark 148519/148519, 61 active facts, all supported by 2-20 independent sessions. Exact hashes/counts/session manifests match. Projection emits 52 facts, omits 9, estimates 1,399/1,400 tokens and respects the 60 rendered-fact limit. Seventeen active preferences: zero beyond 90-day TTL; 44 stable facts retained. |
+| Profile history and delivery | The retained AntigravityError precedes completed run 5 (September 25); September 28 is not_due, not a new successful map/reduce call. Actual installed SessionStart emitted the exact normalized generated profile within 10 seconds. The first comparison incorrectly included raw CRLF bytes; its failure is retained and the corrected loader-equivalent comparison passes. Agent consumption remains unmeasured. |
+| Promotion and safety | 161 distinct candidate-to-confirmed promotions and 230 new citations are activity, not relevance labels. The 109 consolidation rejections are not a safety-specific rejection rate. Unsafe-output rejection effectiveness and real-task retrieval impact remain UNMEASURED; 13,146 returned-feedback rows and 14 detector events do not establish benefit. |
+| MCP and sync | MCP health/readiness 200, unauthenticated 401, authenticated 51 tools; no new errors. Current Windows sync tasks succeeded; outbound/inbound delta quick_check and FK checks pass. Remote consumer acknowledgment remains UNMEASURED. |
+| Backups and namespace | Latest weekly NAS task September 27 succeeded, but its independent restore is unmeasured; latest independently restored NAS receipt remains September 21. New local snapshot `mm-20260928.db` in authoritative namespace `memorymaster-073eec9cf3f9` on approved T volume has an independent restore, equal SHA-256, quick_check OK, FK errors 0 and canary rank 5. No existing backup was deleted or production target restored over. |
+
+Fresh local backup SHA-256: `ab246f74c8d187633d4b382cb947378c535cf480fa0fc573ff0614d90d1d163f`;
+size 7,660,548,096 bytes. Restored counts and provenance are in
+`artifacts/operational-review/20260928/snapshot-restore.json`. This local proof
+does not upgrade the unverified September 27 remote artifact to restore-tested.
+
+The September 24 operator decision intentionally selects the T archive volume,
+not the C system SSD. Current user settings and observed steward/MCP processes
+match it; current OS disk mapping shows T on a separate healthy/online SATA disk.
+The old ROADMAP statement pointing to the user-profile default was corrected.
+An initial new temporary C copy was stopped after recovering that later decision;
+the owned copy was preserved and verified under T. A combined move/cleanup was
+blocked by automatic policy review; the fallback was additive copying, not a
+configuration override. Slow direct HDD checking was replaced with full streaming
+hash equality and independent restored-file integrity checks on the data volume.
+After matching its hash to the verified backup, only the review-owned temporary
+C copy and its sidecars were removed using narrowly scoped file operations.
+
+Evidence: `artifacts/operational-review/20260928/` contains the installed review,
+profile/graph manifest, seven-day aggregates, backup/sync state, SessionStart
+receipts, snapshot restore and consolidated completion receipt. Source release
+evidence remains in `.planning/audits/2026-09-27-recall-journey/REPORT.md`.
+Work receipts are emitted only after these real checks. Review completion does
+not advance any feature-success watermark or claim semantic acceptance.
+
+
+## 2026-09-29 daily operational review
+
+**Review completed with warnings; MCP was broken at session start and self-recovered; one bounded source-only fix shipped.**
+ROADMAP, DOCS-MAP and the installed configuration were read first. The scheduled
+`MemoryMaster-Operational-Review` task's own run (11:09Z, exit 3/WARN) supplied
+the database/runtime/graph/profile/canary checks; this session added the checks
+it does not cover (capture/retirement, live provider window, MCP health, sync,
+backup restorability) read-only, without forcing any steward/generation/backup job.
+
+| Area | Observed result and acceptance limit |
+|---|---|
+| Runtime and database | Scheduled review: installed=4.9.0=expected (pyproject), quick_check=ok, FK errors 0, schema 27 (11:09Z, took 220s on the live 7.6GB file; not re-run today to avoid a second multi-minute scan). |
+| Declared vs actual activation | Review-process flags report compiled_profile=1, graph_observations=1, but that is the checker's own env, not proof of the scheduled worker's env. Cross-checked directly: Task Scheduler's `MemoryMaster-Dreaming` action passes `--apply-candidates` (not shadow) and matches the extract provider/model env vars; `MemoryMasterSteward`, both `HermesSync` tasks and both NAS backup tasks all last exited 0. GraphRAG vector-first recall and the TypeSafe skill selector remain **DISABLED** by declared config (`MEMORYMASTER_RECALL_GRAPH_MODE` unset, no `TYPESAFE_API_KEY`); their absence of errors is not counted as quality evidence. |
+| Current provider calls (not historical labels) | Live `dream_status` 24h provider window: only `antigravity` (10 calls, 90% structured yield) and `google` (41 calls, 82.9%) were actually called in the last 24h, matching the current `MEMORYMASTER_DREAM_EXTRACT_PROVIDER=gemini`/`MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER=antigravity` config. `openai` and `zai-coding-plan` only appear in lifetime totals (527 and 225 calls respectively) from a superseded configuration; the `google_structured_yield_low` warning is driven entirely by the lifetime aggregate (0.705), not the healthy 24h figure (0.829). |
+| Effective profile bounds | Read `ProfileConfig.from_env()` directly: only `MEMORYMASTER_PROFILE_MAX_INPUT_CHARS=24000` is overridden; every other bound is the code default (cadence 7d, max_map_calls 3, max_messages 500, min_independent_sessions 2, preference_ttl 90d, token_budget 1400, max_facts 60, reduce_batch 40). Scheduled review: 61 active facts (at the 60 cap, +1), 0 manifest mismatches, newest support age 6.3d against the 7d staleness limit — PASS but close to the edge. |
+| Capture, recall and retirement | `capture_coverage(scope="*")`: status **attention** — 102 active sources, 212 active evidence, 3 confirmed claims in this scope; 95 blocked extract_graph/claims jobs (73 `graph_claim_ineligible`, 20 `graph_claim_unavailable`, 1 `attempts_exhausted`, 1 `ontology_validation_failed`), 0 expired leases, 0 orphans, 11 partially-completed jobs. Full-DB claim status census: 97,981 archived, 41,373 stale, 4,793 confirmed, 4,370 superseded, 8 candidate — retirement (archival) is clearly active. 0 of 102 source_items are retired (no source-level `forget()` has been invoked); this is a real zero, not a probe failure. `recall_stats` sample=0 is **UNMEASURED**, not a failure: the MCP server's in-memory counters reset when it reconnected mid-review (see MCP health below). |
+| Graph supports and leases | Scheduled review: 348 edge_support_rows, 0 unknown_sensitivity_rows, 0 ineligible_confirmed_observations, 0 expired_leases. Live `dream_status` from the 09:11Z Dreaming run: 143 discovery jobs enqueued, 144 concluded no_supports, 0 components found, 0 observations emitted — consistent with the review's own 28,544-completed/3-observations lifetime shape. Low yield is a known, pre-existing characteristic (documented in the 2026-09-23 GraphRAG report), not a new regression. |
+| Generated marker and SessionStart / checkpoint delivery | SessionStart injected the compiled profile and recent claims at this session's own start (directly observed, not log-inferred). Separately, the F-08 daily checkpoint **delivered into this exact pane** at 2026-09-29T14:25:04Z (`orca-poke OK: 900 chars -> claude term_30bc27c0`) — this review's own trigger. Checking the trailing 7 days in `feature-checkpoint.log` found a **5-day total delivery outage** (Sep 23 DRY-RUN/FAIL, Sep 24-27 all FAIL on both Orca and WezTerm paths with `no connected MemoryMaster claude/codex terminal`) that only recovered Sep 28-29. ROADMAP's own F-08 gate ("alert on failed delivery and 7/7 days delivered") is **NOT MET**: 2/7 trailing days, though the two most recent days are clean. This is an observed, dated, now-recovering failure, not a currently-open incident. |
+| MCP health | **Observed broken at session start**: `memorymaster` MCP server reported `CONNECT_TIMEOUT`. Self-reconnected mid-session (`/mcp reconnect memorymaster` via `orca terminal send` to this own pane, per the standing self-reconnect instruction); confirmed healthy afterward with two live successful tool calls (`dream_status`, `recall_stats`). The separate Hermes-facing HTTP MCP server (`MemoryMaster-MCP-HTTP-Hermes`, 192.168.100.155:8765) has been running continuously since 2026-09-25T17:27 (4 days uptime, not an error) and is a distinct surface from this session's own stdio connection. |
+| Sync | Both `MemoryMaster-HermesSync-AM` (04:00 local) and `-PM` (16:00 local) tasks last exited 0, most recently this morning. No sync failure observed. |
+| Latest restorable backup | Weekly NAS task (`MemoryMaster-Backup-NAS-Weekly`) last succeeded 2026-09-27T01:01-01:11 UTC: `VACUUM INTO` consistent snapshot, row counts verified against the live DB, SHA-256 verified **both locally and on the remote NAS** (`/tank/backups/wolverin0/20260927`), Uptime Kuma heartbeat sent. This is genuine restorability evidence (hash-matched on both ends), 2 days old, not just "the job exited 0." A separate, more recent local snapshot (`memorymaster-073eec9cf3f9/mm-20260928.db`, 7,660,548,096 bytes, 2026-09-28) exists on the approved T: volume but carries leftover `.part-wal`/`.part-shm` sidecars; its own integrity was **not** re-verified today (would require a second ~220s quick_check against a 7.6GB file with no new signal expected) — its restorability is UNMEASURED by this review, distinct from the NAS artifact's confirmed status. The known limitation that `govern/recovery.py`'s encrypted restore drill cannot handle this database's current size (~18GB peak memory) remains open and unaddressed by this review; the NAS path does not depend on it. |
+| Bounded fix shipped | `memorymaster/dreaming/ledger.py`: `DreamLedger.status`/`read_status` had a hardcoded `interval_minutes=60` default driving the `scheduler_stale` warning (fires when the last heartbeat is older than 2x this value). The real Dreaming cadence is 360 minutes (6h) via Windows Task Scheduler, so the old default guaranteed a false `scheduler_stale` warning for roughly 4 of every 6 hours — this is why `dream_status` shows it right now even though the actual scheduler is healthy (on-time, exit 0). Changed the default to fall back through `MEMORYMASTER_DREAM_INTERVAL_MINUTES` when unset (still 60 if that is not set, so behavior is unchanged for everyone who has not configured it). `pytest tests/test_dreaming_ledger.py` (8 passed) and `pytest tests/ -k "dream_status or dreaming_cli"` (3 passed) both green. **SOURCE-ONLY, NOT INSTALLED**: the live scheduled tasks run from the installed wheel under `C:\Users\pauol\.memorymaster\runtime\graph-profile-20260813\`, untouched by this change; the live false-positive persists until that runtime is rebuilt/reinstalled and the new env var is set to match the real cadence — an explicit operator decision, not made here. |
+
+Zero authoritative-database mutations; zero production configuration changes;
+zero forced jobs. Evidence: `artifacts/operational-review/20260929/raw-evidence.json`
+(sha256 `ae8dfd19b9e61328f8eb168208536029a1706b9282ce6d8116de5bfe3f231217`) and a copy
+of the scheduled review's own `installed-review.json`
+(sha256 `d7fe010dba21ee561c41a8dd7845e98fb5b21feec6652c0b67930bdae2af54c9`). This
+review does not advance any feature-success watermark or claim semantic
+acceptance; delivery of this checkpoint is not, by itself, evidence of quality.
+
 
 ## Shared CLI code navigation - 2026-09-28
 
@@ -691,3 +786,14 @@ upstreams and remains outside default routing. GraphRAG activation unchanged.
 Added read-only index/checkout preflight: four regressions plus public lifecycle
 demo (six tests) passed, guard recheck four passed, Ruff and release truth pass.
 Evidence: `.planning/audits/2026-09-28-code-intelligence/REPORT.md`.
+
+OpenCode extension (2026-09-28): installed the same Serena context and ten exact
+read-navigation permissions. The initial run exposed unavailable GitNexus and
+temporary-project selection; retained that evidence and corrected the native
+Node launcher, 90-second discovery timeout and workspace-relative MCP cwd.
+Fresh OpenCode 1.18.33 with existing plugins/default provider completed
+`serena_get_current_config`, `gitnexus_context` and `serena_find_symbol`.
+Verified MemoryMaster project, exact five exposed Serena tools and source AST
+lines 681-745. Unrelated configuration preserved. Client cost estimate for the
+successful run is $0.839411 (not invoice, excludes initial attempt); total token
+savings remain UNMEASURED. See `opencode-checks.json` beside the shared report.
