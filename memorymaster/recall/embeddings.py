@@ -7,6 +7,7 @@ import math
 import operator
 import os
 import struct
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -259,16 +260,26 @@ def create_best_provider() -> EmbeddingProvider:
     return EmbeddingProvider(model="hash-v1", dims=1536)
 
 
+# One loaded model per process: the shared HTTP server builds a service per
+# request, and reloading all-MiniLM-L6-v2 each time cost ~2.7 s per hybrid call (T-0726).
+_TRANSFORMERS: dict[str, Any] = {}
+_TRANSFORMERS_LOCK = threading.Lock()
+
+
 def _load_transformer(model: str) -> Any:
     try:
         from sentence_transformers import SentenceTransformer
-        return SentenceTransformer(model)
     except ImportError as e:
         raise ImportError(
             "sentence-transformers is required for semantic embeddings. "
             "Install with: pip install sentence-transformers\n"
             "Or use the default hash-v1 model (no dependencies, but not semantic)."
         ) from e
+    with _TRANSFORMERS_LOCK:
+        transformer = _TRANSFORMERS.get(model)
+        if transformer is None:
+            transformer = _TRANSFORMERS[model] = SentenceTransformer(model)
+    return transformer
 
 
 def _load_gemini_client(api_key: str | None = None) -> Any:

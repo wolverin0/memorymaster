@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 import urllib.error
 from types import SimpleNamespace
+
+import pytest
 
 from memorymaster.surfaces import mcp_server
 from memorymaster.surfaces import mcp_stdio_proxy as relay
@@ -51,6 +54,105 @@ def test_header_is_read_from_the_current_mcp_request():
         assert mcp_server._client_workspace_header() == "G:/repos/beta"
     finally:
         request_ctx.reset(token)
+
+
+def _over_http(headers: dict[str, str]):
+    from mcp.server.lowlevel.server import request_ctx
+
+    return request_ctx.set(SimpleNamespace(request=SimpleNamespace(headers=headers)))
+
+
+def _recording_tool(action: str):
+    calls: list[str] = []
+
+    def tool(db: str = "memorymaster.db", workspace: str = ".") -> str:
+        calls.append(workspace)
+        return workspace
+
+    return mcp_server._authorized_tool_callable(tool, mcp_server.McpToolPolicy(action, team_enabled=True)), calls
+
+
+@pytest.mark.parametrize("action", ["ingest", "query"])
+def test_shared_server_without_a_declared_workspace_fails_closed(monkeypatch, action):
+    # Verifier gap (a): the "." default used to resolve to the server's cwd (project:serverdir).
+    monkeypatch.setenv("MEMORYMASTER_MCP_AUTH_MODE", "local-trusted")
+    tool, calls = _recording_tool(action)
+    token = _over_http({})
+    try:
+        with pytest.raises(PermissionError, match="declare an absolute client workspace"):
+            tool()
+        with pytest.raises(PermissionError, match="declare an absolute client workspace"):
+            tool(workspace="relative/repo")
+    finally:
+        from mcp.server.lowlevel.server import request_ctx
+
+        request_ctx.reset(token)
+    assert calls == []
+
+
+def test_shared_server_accepts_a_declared_absolute_workspace(monkeypatch, tmp_path):
+    monkeypatch.setenv("MEMORYMASTER_MCP_AUTH_MODE", "local-trusted")
+    tool, calls = _recording_tool("ingest")
+    token = _over_http({"x-mm-workspace": str(tmp_path)})
+    try:
+        assert tool() == str(tmp_path)
+    finally:
+        from mcp.server.lowlevel.server import request_ctx
+
+        request_ctx.reset(token)
+    assert calls == [str(tmp_path)]
+
+
+def test_stdio_default_workspace_still_works(monkeypatch):
+    monkeypatch.setenv("MEMORYMASTER_MCP_AUTH_MODE", "local-trusted")
+    tool, calls = _recording_tool("ingest")
+    assert tool() == "."
+    assert calls == ["."]
+
+
+@pytest.mark.parametrize(
+    "placeholder",
+    ["${CLAUDE_PROJECT_DIR}", "{env:PWD}", "$PWD", "%CD%", "G:/x/${workspaceFolder}"],
+)
+@pytest.mark.parametrize("via_header", [True, False])
+def test_unexpanded_config_placeholders_are_rejected(monkeypatch, placeholder, via_header):
+    # Verifier gap (b): these used to create project:claude_project_dir / project:env-pwd.
+    monkeypatch.setenv("MEMORYMASTER_MCP_AUTH_MODE", "local-trusted")
+    tool, calls = _recording_tool("ingest")
+    if via_header:
+        token = _over_http({"x-mm-workspace": placeholder})
+        try:
+            with pytest.raises(PermissionError, match="unexpanded config variable"):
+                tool()
+        finally:
+            from mcp.server.lowlevel.server import request_ctx
+
+            request_ctx.reset(token)
+    else:  # stdio clients with a broken config are refused too
+        with pytest.raises(PermissionError, match="unexpanded config variable"):
+            tool(workspace=placeholder)
+    assert calls == []
+
+
+def test_embedding_model_loads_once_per_process(monkeypatch):
+    # Verifier gap (c): the stateless server builds a service per request and reloaded the model (~2.7 s).
+    from memorymaster.recall import embeddings
+
+    loads: list[str] = []
+
+    class FakeSentenceTransformer:
+        def __init__(self, model):
+            loads.append(model)
+
+        def get_sentence_embedding_dimension(self):
+            return 384
+
+    monkeypatch.setitem(sys.modules, "sentence_transformers", SimpleNamespace(SentenceTransformer=FakeSentenceTransformer))
+    monkeypatch.setattr(embeddings, "_TRANSFORMERS", {})
+    first = embeddings.create_semantic_provider("all-MiniLM-L6-v2")
+    second = embeddings.create_semantic_provider("all-MiniLM-L6-v2")
+    assert loads == ["all-MiniLM-L6-v2"]
+    assert first._transformer is second._transformer
 
 
 class _Response(io.BytesIO):

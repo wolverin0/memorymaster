@@ -8,6 +8,7 @@ import json
 import logging
 import os
 from os import environ as _environ
+import re
 from pathlib import Path
 import threading
 import time
@@ -836,6 +837,30 @@ def _normalize_team_arguments(
 
 
 CLIENT_WORKSPACE_HEADER = "x-mm-workspace"
+_UNEXPANDED_WORKSPACE = re.compile(r"\$\{|\{env:|^\$[A-Za-z_]|%[A-Za-z_]\w*%")
+
+
+def _current_http_request() -> Any:
+    """The HTTP request behind this tool call, or None over stdio."""
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+
+        return request_ctx.get().request
+    except (ImportError, LookupError, AttributeError):
+        return None
+
+
+def _check_client_workspace(workspace: str, *, shared: bool) -> None:
+    """Refuse a workspace that would silently mis-scope memory."""
+    if _UNEXPANDED_WORKSPACE.search(workspace):
+        raise PermissionError(
+            f"Workspace {workspace!r} is an unexpanded config variable; fix the client's MCP config."
+        )
+    if shared and (workspace in {"", _DEFAULT_WORKSPACE} or not os.path.isabs(workspace)):
+        raise PermissionError(
+            "Shared MemoryMaster server: declare an absolute client workspace (X-MM-Workspace header "
+            "or workspace argument); the server's own directory is never used as a project."
+        )
 
 
 def _client_workspace_header() -> str:
@@ -844,13 +869,7 @@ def _client_workspace_header() -> str:
     A shared HTTP server has one process cwd for every client, so the default
     workspace "." would put every repository in the same project scope (T-0726).
     """
-    try:
-        from mcp.server.lowlevel.server import request_ctx
-
-        request = request_ctx.get().request
-    except (ImportError, LookupError, AttributeError):
-        return ""
-    headers = getattr(request, "headers", None)
+    headers = getattr(_current_http_request(), "headers", None)
     return str(headers.get(CLIENT_WORKSPACE_HEADER, "") or "").strip() if headers is not None else ""
 
 
@@ -871,6 +890,12 @@ def _authorized_tool_callable(func: Any, policy: McpToolPolicy) -> Any:
             workspace=str(bound.arguments.get("workspace", "") or ""),
         )
         authorize_context_action(context, policy.action)
+        if "workspace" in bound.arguments:
+            _check_client_workspace(
+                str(bound.arguments["workspace"] or ""),
+                # Over HTTP one process serves every repository; its cwd is never a project (T-0726).
+                shared=_current_http_request() is not None and context.mode is AuthMode.LOCAL_TRUSTED,
+            )
         if context.mode is AuthMode.TEAM:
             _normalize_team_arguments(bound, context, func.__name__)
         if context.mode is AuthMode.TEAM and not policy.team_enabled:
