@@ -11,7 +11,13 @@ from typing import Any
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from memorymaster.surfaces.mcp_server import FastMCP, _read_service, mcp
+from memorymaster.surfaces.mcp_server import (
+    FastMCP,
+    _limit_native_threads,
+    _preload_native_ml,
+    _read_service,
+    mcp,
+)
 
 
 TOKEN_ENV = "MEMORYMASTER_MCP_HTTP_TOKEN"
@@ -128,6 +134,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _limit_native_threads()
+    _preload_native_ml()  # a lazy torch import inside the event loop stalls on Windows (T-0726 POC)
     args = _build_parser().parse_args(argv)
     app = create_http_app(
         db_target=args.db,

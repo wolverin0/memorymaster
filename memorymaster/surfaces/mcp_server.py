@@ -835,6 +835,25 @@ def _normalize_team_arguments(
         raise PermissionError("Semantic MCP retrieval remains disabled in team mode pending planner containment.")
 
 
+CLIENT_WORKSPACE_HEADER = "x-mm-workspace"
+
+
+def _client_workspace_header() -> str:
+    """Workspace the HTTP client declared for this request, or "" (stdio, no header).
+
+    A shared HTTP server has one process cwd for every client, so the default
+    workspace "." would put every repository in the same project scope (T-0726).
+    """
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+
+        request = request_ctx.get().request
+    except (ImportError, LookupError, AttributeError):
+        return ""
+    headers = getattr(request, "headers", None)
+    return str(headers.get(CLIENT_WORKSPACE_HEADER, "") or "").strip() if headers is not None else ""
+
+
 def _authorized_tool_callable(func: Any, policy: McpToolPolicy) -> Any:
     call_signature = inspect.signature(func)
 
@@ -842,6 +861,11 @@ def _authorized_tool_callable(func: Any, policy: McpToolPolicy) -> Any:
     def guarded(*args: Any, **kwargs: Any) -> Any:
         bound = call_signature.bind_partial(*args, **kwargs)
         bound.apply_defaults()
+        if "workspace" in bound.arguments and str(bound.arguments["workspace"] or "") in {"", _DEFAULT_WORKSPACE}:
+            declared = _client_workspace_header()
+            if declared:
+                # Team mode still validates this against the authenticated workspace below.
+                bound.arguments["workspace"] = declared
         context = resolve_request_context(
             db_target=str(bound.arguments.get("db", "") or ""),
             workspace=str(bound.arguments.get("workspace", "") or ""),
@@ -2897,6 +2921,13 @@ def main() -> int:
     _limit_native_threads()
     if FastMCP is None:  # pragma: no cover
         raise RuntimeError("MCP support is not installed. Install with: pip install 'memorymaster[mcp]'")
+    _preload_native_ml()
+    mcp.run()
+    return 0
+
+
+def _preload_native_ml() -> None:
+    """Import native ML before any server I/O loop starts (stdio and HTTP)."""
     from memorymaster.recall.embeddings import sentence_transformers_required
 
     if os.name == "nt" and sentence_transformers_required():
@@ -2909,8 +2940,6 @@ def main() -> int:
         except Exception:
             # Optional/misconfigured ML must not prevent the MCP fallback path.
             logger.debug("Optional semantic imports unavailable during stdio startup")
-    mcp.run()
-    return 0
 
 
 if __name__ == "__main__":
