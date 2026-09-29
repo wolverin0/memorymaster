@@ -7,6 +7,7 @@ import inspect
 import json
 import logging
 import os
+from os import environ as _environ
 from pathlib import Path
 import threading
 import time
@@ -2881,7 +2882,19 @@ if FastMCP is not None:
         }
 
 
+_NATIVE_THREAD_VARS = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
+
+
+def _limit_native_threads() -> None:
+    # One server per client session: default per-core BLAS/OpenMP pools reserved
+    # ~1.9 GB of private commit each once torch loaded (T-0725). Must run before
+    # any native ML import; an explicit operator value still wins.
+    for name in _NATIVE_THREAD_VARS:
+        _environ.setdefault(name, "1")
+
+
 def main() -> int:
+    _limit_native_threads()
     if FastMCP is None:  # pragma: no cover
         raise RuntimeError("MCP support is not installed. Install with: pip install 'memorymaster[mcp]'")
     from memorymaster.recall.embeddings import sentence_transformers_required
