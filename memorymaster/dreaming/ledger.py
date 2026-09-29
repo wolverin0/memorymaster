@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -13,6 +14,29 @@ from typing import Any, Callable, Iterable
 from memorymaster.dreaming import held
 from memorymaster.dreaming.models import CaptureEnvelope
 from memorymaster.stores._storage_shared import connect_ro, open_conn
+
+_DEFAULT_INTERVAL_MINUTES = 60
+
+
+def _resolve_interval_minutes(interval_minutes: int | None) -> int:
+    """``scheduler_stale`` fires when the last heartbeat is older than 2x this.
+
+    The 60-minute default predates the documented multi-hour Windows Task
+    Scheduler cadence (Dreaming/Steward/operational-review all run every few
+    hours, never sub-hourly) and made ``dream_status`` report a false
+    ``scheduler_stale`` for most of every real interval. Explicit callers are
+    unaffected; unset callers can opt in via ``MEMORYMASTER_DREAM_INTERVAL_MINUTES``
+    without changing the default for anyone who has not configured it.
+    """
+    if interval_minutes is not None:
+        return interval_minutes
+    raw = os.environ.get("MEMORYMASTER_DREAM_INTERVAL_MINUTES", "").strip()
+    if not raw:
+        return _DEFAULT_INTERVAL_MINUTES
+    try:
+        return int(raw)
+    except ValueError:
+        return _DEFAULT_INTERVAL_MINUTES
 
 
 _SCHEMA = """
@@ -545,13 +569,13 @@ class DreamLedger:
         self,
         *,
         now: datetime | None = None,
-        interval_minutes: int = 60,
+        interval_minutes: int | None = None,
         provider_window_hours: int = 24,
     ) -> dict[str, Any]:
         current = now or _utc_now()
         with self._connect() as conn:
             return self._status_from_connection(
-                conn, current, interval_minutes, provider_window_hours,
+                conn, current, _resolve_interval_minutes(interval_minutes), provider_window_hours,
             )
 
     @classmethod
@@ -560,10 +584,11 @@ class DreamLedger:
         db_path: str | Path,
         *,
         now: datetime | None = None,
-        interval_minutes: int = 60,
+        interval_minutes: int | None = None,
         provider_window_hours: int = 24,
     ) -> dict[str, Any]:
         """Read status through SQLite query-only mode; never create or migrate a ledger."""
+        interval_minutes = _resolve_interval_minutes(interval_minutes)
         path = Path(db_path)
         current = now or _utc_now()
         empty_window = cls._provider_window({}, current, provider_window_hours)
