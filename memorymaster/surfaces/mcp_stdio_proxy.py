@@ -16,15 +16,19 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
 import threading
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 DEFAULT_URL = "http://127.0.0.1:8766/mcp"
 WORKSPACE_HEADER = "X-MM-Workspace"
 TIMEOUT_SECONDS = 120
+CONNECT_RETRY_SECONDS = 60
 TOKEN_ENV = "MEMORYMASTER_MCP_HTTP_TOKEN"
 SHARED_KEY = r"Software\MemoryMaster\SharedMcp"
 
@@ -82,27 +86,65 @@ def _error_for(message: dict, text: str) -> dict | None:
     return {"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32603, "message": text}}
 
 
-def forward(raw: str, *, url: str, token: str, workspace: str, opener=urllib.request.urlopen) -> list[dict]:
+def header_workspace(workspace: str) -> str:
+    """HTTP headers are Latin-1: send a non-ASCII path as RFC 8187 utf-8''<percent-encoded>."""
+    if workspace.isascii():
+        return workspace
+    return "utf-8''" + urllib.parse.quote(workspace, safe="")
+
+
+def _refused(exc: BaseException) -> bool:
+    reason = getattr(exc, "reason", exc)
+    return isinstance(reason, ConnectionRefusedError)
+
+
+def _timed_out(exc: BaseException) -> bool:
+    reason = getattr(exc, "reason", exc)
+    return isinstance(reason, (TimeoutError, socket.timeout))
+
+
+def forward(
+    raw: str,
+    *,
+    url: str,
+    token: str,
+    workspace: str,
+    opener=urllib.request.urlopen,
+    connect_retry_seconds: float = CONNECT_RETRY_SECONDS,
+    sleep=time.sleep,
+) -> list[dict]:
     message = json.loads(raw)
-    try:
-        request = urllib.request.Request(
-            url,
-            data=raw.encode("utf-8"),
-            method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-                "Authorization": f"Bearer {token}",
-                WORKSPACE_HEADER: workspace,
-            },
-        )
-        with opener(request, timeout=TIMEOUT_SECONDS) as response:
-            return _parse_body(response.read(), response.headers.get("Content-Type", ""))
-    except urllib.error.HTTPError as exc:
-        reply = _error_for(message, f"memorymaster shared MCP returned HTTP {exc.code}")
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        reply = _error_for(message, f"memorymaster shared MCP unreachable at {url}: {type(exc).__name__}")
-    return [reply] if reply else []
+    waited = 0.0
+    while True:
+        try:
+            request = urllib.request.Request(
+                url,
+                data=raw.encode("utf-8"),
+                method="POST",
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/event-stream",
+                    "Authorization": f"Bearer {token}",
+                    WORKSPACE_HEADER: header_workspace(workspace),
+                },
+            )
+            with opener(request, timeout=TIMEOUT_SECONDS) as response:
+                return _parse_body(response.read(), response.headers.get("Content-Type", ""))
+        except urllib.error.HTTPError as exc:
+            reply = _error_for(message, f"memorymaster shared MCP returned HTTP {exc.code}")
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            if _refused(exc) and waited < connect_retry_seconds:
+                # Nothing reached the server (not up yet at logon, or restarting): safe to resend.
+                sleep(1.0)
+                waited += 1.0
+                continue
+            if _timed_out(exc):
+                text = (f"memorymaster shared MCP at {url} timed out after {TIMEOUT_SECONDS} s; "
+                        "the server may still be executing the call")
+            else:
+                text = f"memorymaster shared MCP unreachable at {url}: {type(exc).__name__}"
+            reply = _error_for(message, text)
+        return [reply] if reply else []
 
 
 def main() -> int:

@@ -142,10 +142,23 @@ def main(argv: list[str] | None = None) -> int:
         workspace=args.workspace,
         allowed_hosts=args.allowed_hosts,
     )
+    _serve(app, host=args.host, port=args.port)
+    return 0
+
+
+def _serve(app: Any, *, host: str, port: int) -> None:
     import uvicorn
 
-    uvicorn.run(app, host=args.host, port=args.port)
-    return 0
+    if os.name != "nt":
+        uvicorn.run(app, host=host, port=port)
+        return
+    # Windows: uvicorn's default ProactorEventLoop closes the LISTENING socket when an
+    # accept completes with an error (a client reset before accept, WinError 64), leaving
+    # a live process that serves nothing and never restarts. The selector loop does not.
+    import asyncio
+
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, loop="none"))
+    asyncio.run(server.serve(), loop_factory=asyncio.SelectorEventLoop)
 
 
 if __name__ == "__main__":
