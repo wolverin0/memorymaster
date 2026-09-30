@@ -9,7 +9,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Wheel,
     [Parameter(Mandatory = $true)][string]$WheelSha256,
-    [Parameter(Mandatory = $true)][string]$Db,
+    [Parameter(Mandatory = $true)][string]$DbPath,
     [Parameter(Mandatory = $true)][string]$WorkspaceAllowlist,
     [string]$ClientPython = 'C:\Users\pauol\AppData\Local\Programs\Python\Python312\python.exe',
     [string]$Runtime = 'C:\Users\pauol\.memorymaster\runtime\graph-profile-20260813',
@@ -44,15 +44,15 @@ if (-not $props.MEMORYMASTER_MCP_HTTP_TOKEN) {
     Set-ItemProperty -Path $key -Name MEMORYMASTER_MCP_HTTP_TOKEN -Value $token
     Remove-Variable token, bytes
 }
-Set-ItemProperty -Path $key -Name MEMORYMASTER_DEFAULT_DB -Value $Db
-Set-ItemProperty -Path $key -Name MEMORYMASTER_MCP_DB_ALLOWLIST -Value $Db
+Set-ItemProperty -Path $key -Name MEMORYMASTER_DEFAULT_DB -Value $DbPath
+Set-ItemProperty -Path $key -Name MEMORYMASTER_MCP_DB_ALLOWLIST -Value $DbPath
 Set-ItemProperty -Path $key -Name MEMORYMASTER_MCP_WORKSPACE_ALLOWLIST -Value $WorkspaceAllowlist
 
 if (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue) {
     Stop-ScheduledTask -TaskName $task
     Unregister-ScheduledTask -TaskName $task -Confirm:$false
 }
-$action = New-ScheduledTaskAction -Execute $pythonw -Argument "`"$launcher`"" -WorkingDirectory (Split-Path $Db)
+$action = New-ScheduledTaskAction -Execute $pythonw -Argument "`"$launcher`"" -WorkingDirectory (Split-Path $DbPath)
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
