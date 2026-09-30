@@ -374,3 +374,49 @@ def test_supervisor_restarts_a_dead_server_and_kills_an_unhealthy_one(launcher, 
     assert len(spawned) == 2
     assert "--serve" in spawned[0].argv and str(os.getpid()) in spawned[0].argv
     assert spawned[1].killed  # unhealthy after the startup grace -> killed, then replaced
+
+
+def test_relay_connect_budget_is_wall_clock_not_attempts(monkeypatch):
+    # Round-2 review: each refused connect takes ~2 s on Windows, so 60 attempts took ~185 s.
+    clock = iter([0.0, 2.0, 4.0, 6.0, 8.0, 100.0, 100.0])
+    monkeypatch.setattr(relay.time, "monotonic", lambda: next(clock))
+    attempts: list[int] = []
+
+    def refused(request, timeout):
+        attempts.append(1)
+        raise urllib.error.URLError(ConnectionRefusedError(10061, "refused"))
+
+    raw = '{"jsonrpc": "2.0", "id": 4, "method": "tools/list"}'
+    [reply] = relay.forward(raw, url="http://127.0.0.1:1/mcp", token="t", workspace="w",
+                            opener=refused, connect_retry_seconds=10, sleep=lambda s: None)
+    assert "unreachable" in reply["error"]["message"]
+    assert len(attempts) == 5  # stopped at the 10 s deadline, not after 10 attempts
+
+
+@pytest.mark.parametrize(
+    ("workspace", "outside"),
+    [
+        ("G:/Py Apps/infra", False),
+        ("G:/Py Apps", False),
+        ("G:/py apps/_worktrees/x", False),
+        ("C:/Users/me/orca/workspaces/a/b", False),
+        ("C:/Users/me/Downloads", True),
+        ("T:/claudecodetemp/x", True),
+    ],
+)
+def test_relay_detects_sessions_outside_the_served_roots(workspace, outside):
+    roots = "G:/Py Apps,G:/Py Apps/*,C:/Users/me/orca/workspaces/*"
+    env = {"MEMORYMASTER_PROXY_ROOTS": roots.replace("/", os.sep)}
+    assert relay.outside_served_roots(workspace.replace("/", os.sep), env) is outside
+    assert relay.outside_served_roots(workspace, {}) is False  # no roots configured: always relay
+
+
+def test_relay_outside_the_roots_runs_the_local_stdio_server(monkeypatch, tmp_path):
+    monkeypatch.setenv("MEMORYMASTER_PROXY_ROOTS", str(tmp_path / "served") + "," + str(tmp_path / "served" / "*"))
+    monkeypatch.setenv("MEMORYMASTER_PROXY_WORKSPACE", str(tmp_path / "elsewhere"))
+    monkeypatch.delenv("MEMORYMASTER_MCP_HTTP_TOKEN", raising=False)
+    monkeypatch.setattr(relay, "resolve_token", lambda environ=None: "")
+    monkeypatch.setattr(relay.sys, "stdin", io.TextIOWrapper(io.BytesIO(b"")))
+    monkeypatch.setattr(relay.sys, "stdout", io.TextIOWrapper(io.BytesIO()))
+    monkeypatch.setattr(relay, "_run_local_server", lambda: 17)
+    assert relay.main() == 17  # fell back before needing a token

@@ -2237,6 +2237,7 @@ if FastMCP is not None:
         """
         import re as _re
         from pathlib import Path as _Path
+        mcp_path_policy.validate_workspace_path(project_root, actor="mcp_caller")
         candidates = [
             _Path(project_root) / "vault" / "active_tasks.md",
             _Path(project_root) / "active_tasks.md",

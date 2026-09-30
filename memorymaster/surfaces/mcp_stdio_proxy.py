@@ -10,6 +10,8 @@ Configuration (environment):
     MEMORYMASTER_MCP_HTTP_TOKEN    bearer token of the shared server (required; on Windows
                                    falls back to the HKCU key SHARED_KEY below)
     MEMORYMASTER_PROXY_WORKSPACE   overrides the workspace; else CLAUDE_PROJECT_DIR, else cwd
+    MEMORYMASTER_PROXY_ROOTS       the server's workspace allowlist; a session outside it runs
+                                   the local stdio server instead of failing every call
 Standard library only; keep it that way so each relay stays a few MB.
 """
 from __future__ import annotations
@@ -114,7 +116,7 @@ def forward(
     sleep=time.sleep,
 ) -> list[dict]:
     message = json.loads(raw)
-    waited = 0.0
+    deadline = time.monotonic() + connect_retry_seconds
     while True:
         try:
             request = urllib.request.Request(
@@ -133,10 +135,10 @@ def forward(
         except urllib.error.HTTPError as exc:
             reply = _error_for(message, f"memorymaster shared MCP returned HTTP {exc.code}")
         except (urllib.error.URLError, OSError, ValueError) as exc:
-            if _refused(exc) and waited < connect_retry_seconds:
+            if _refused(exc) and time.monotonic() < deadline:
                 # Nothing reached the server (not up yet at logon, or restarting): safe to resend.
+                # The budget is wall-clock: a refused connect itself takes ~2 s on Windows.
                 sleep(1.0)
-                waited += 1.0
                 continue
             if _timed_out(exc):
                 text = (f"memorymaster shared MCP at {url} timed out after {TIMEOUT_SECONDS} s; "
@@ -147,15 +149,45 @@ def forward(
         return [reply] if reply else []
 
 
+def outside_served_roots(workspace: str, environ=os.environ) -> bool:
+    """True when MEMORYMASTER_PROXY_ROOTS is set and the workspace is not under it.
+
+    Same comma-separated exact-or-glob form as the server's workspace allowlist:
+    such a session would get a path-policy error for every tool from the shared
+    server, so it runs today's local stdio server instead.
+    """
+    raw = (environ.get("MEMORYMASTER_PROXY_ROOTS") or "").strip()
+    if not raw:
+        return False
+    import fnmatch
+
+    path = os.path.normcase(os.path.abspath(workspace))
+    for entry in (item.strip() for item in raw.split(",")):
+        if not entry:
+            continue
+        pattern = os.path.normcase(os.path.abspath(entry)) if "*" not in entry else os.path.normcase(entry)
+        if path == pattern or fnmatch.fnmatch(path, pattern):
+            return False
+    return True
+
+
+def _run_local_server() -> int:
+    import subprocess
+
+    return subprocess.call([sys.executable, "-I", "-m", "memorymaster.mcp_server"])
+
+
 def main() -> int:
     for stream in (sys.stdin, sys.stdout):
         stream.reconfigure(encoding="utf-8")  # MCP stdio is UTF-8; Windows pipes default to cp1252
-    url =os.environ.get("MEMORYMASTER_SHARED_MCP_URL", DEFAULT_URL).strip() or DEFAULT_URL
+    workspace = resolve_workspace()
+    if outside_served_roots(workspace):
+        return _run_local_server()  # inherits this relay's stdin/stdout: the client talks to it directly
+    url = os.environ.get("MEMORYMASTER_SHARED_MCP_URL", DEFAULT_URL).strip() or DEFAULT_URL
     token = resolve_token()
     if not token:
         sys.stderr.write(f"{TOKEN_ENV} is required for the shared MCP relay (env or HKCU\\{SHARED_KEY})\n")
         return 2
-    workspace = resolve_workspace()
 
     def handle(raw: str) -> None:
         try:
