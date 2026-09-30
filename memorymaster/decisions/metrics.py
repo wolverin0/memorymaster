@@ -293,7 +293,11 @@ def _exposure_use(exposed: Mapping[str, set[tuple[str, str]]], outcome_set: set[
     result: dict[str, dict[str, Any]] = {}
     for arm, pairs in exposed.items():
         used = sum(1 for d, ref in pairs if (d, ref, "used_in_turn") in outcome_set)
-        result[arm] = {"exposed": len(pairs), "used": used, "rate": used / len(pairs) if pairs else None}
+        # Weak evidence (T-0739) is reported beside, never inside, the strong rate.
+        weak = sum(1 for d, ref in pairs
+                   if (d, ref, "used_in_turn_weak") in outcome_set and (d, ref, "used_in_turn") not in outcome_set)
+        result[arm] = {"exposed": len(pairs), "used": used, "rate": used / len(pairs) if pairs else None,
+                       "used_weak": weak, "rate_weak": weak / len(pairs) if pairs else None}
     return result
 
 

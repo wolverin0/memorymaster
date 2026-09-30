@@ -2131,11 +2131,19 @@ def _recall_impl(
     return _recall_text(lines)
 
 
+# The id lets the agent cite what it used and lets the Stop-hook joiner see it (T-0739):
+# without it the usage detector could only match 8 verbatim words (base rate 0.0006).
+RECALL_HEADER = ("# Memory Context", "When a memory below informs your reply, cite its [mm-id].", "")
+
+
 def _recall_chunk(claim, labels: tuple[str, ...] = ()) -> str:
     """One complete evidence bullet; the packing step decides whether it fits."""
     text = claim.text
     if labels:
         text = " ".join(labels) + " " + text
+    human_id = getattr(claim, "human_id", None)
+    if isinstance(human_id, str) and human_id:
+        text = f"[{human_id}] {text}"
     # Only surface the "(compiled in [[slug]])" wiki breadcrumb when the
     # Obsidian markdown view is explicitly enabled — otherwise it points at
     # an archived/absent vault (the wiki layer is opt-in as of 2026-07-06;
@@ -2153,7 +2161,7 @@ def _render_recall_lines(rows, budget: int, labels=None) -> tuple[list[str], lis
     ID for a silently truncated claim makes recall evaluation and exposure
     receipts misleading, so each included claim retains its full text.
     """
-    lines = ["# Memory Context", ""]
+    lines = list(RECALL_HEADER)
     rendered_rows: list[dict] = []
     chars_used = len("\n".join(lines))
     char_budget = max(0, budget) * 4
@@ -2173,7 +2181,7 @@ def _render_recall_lines(rows, budget: int, labels=None) -> tuple[list[str], lis
 
 
 def _recall_text(lines: list[str]) -> str:
-    if len(lines) <= 2:
+    if len(lines) <= len(RECALL_HEADER):
         return ""
     return "\n".join(lines)
 
@@ -2200,7 +2208,7 @@ def _jev_recall_rendering(query, ranked, legacy_lines, legacy_rows, budget, hook
                 if hasattr(row.get("claim"), "text") and isinstance(getattr(row.get("claim"), "id", None), int)]
         # JEV can only choose complete bullets that individually fit, even
         # with all labels. One oversized claim must not zero the entire cap.
-        header_chars = len("# Memory Context\n")
+        header_chars = len("\n".join(RECALL_HEADER)) + 1
         pool = [row for row in pool
                 if header_chars + len(_recall_chunk(row["claim"], jev.WORST_CASE_LABELS)) + 1 <= max(0, budget) * 4]
         pool = pool[: jev.RECALL_TOP_N]
