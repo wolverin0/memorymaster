@@ -2,10 +2,33 @@
 <!-- Covers: per-client scope resolution (header, relay, URL path, roots/list), fail-closed shared-server workspace rule, placeholder rejection, process-wide model cache, mandatory allowlist, hooks, POC numbers, deploy plan, client config proposals. -->
 <!-- Key terms: X-MM-Workspace, mcp_stdio_proxy relay, stateless streamable HTTP, 127.0.0.1:8766, MEMORYMASTER_MCP_WORKSPACE_ALLOWLIST (mandatory), ship T-0725+T-0726 together, fallback. -->
 <!-- Read when: deploying the shared server, changing MCP scope resolution, or editing client MCP configs. -->
-<!-- Status: POC on branch poc/t0726-shared-mcp (T-0725 0c959ed + T-0726 9d29abb + verifier fixes); NOT installed; ship as one unit; client configs are operator-owned proposals. -->
+<!-- Status: DEPLOYED 2026-09-30 (main 7321732, wheel 67db3656): MemoryMaster-MCP-Shared on 127.0.0.1:8766; Claude/Codex(+Orca)/OpenCode/agy global configs use the relay; running sessions switch when restarted; rollback artifacts/release-shared-mcp-20260929/rollback.ps1. -->
 <!-- /doc-head -->
 
 # One shared MemoryMaster MCP server (T-0726)
+
+## Deployed 2026-09-30
+
+Two adversarial review rounds (5 then 4 lenses, 2 skeptics per finding, live
+end-to-end on disposable servers) ran before install. Fixed and pinned by
+`tests/test_shared_mcp_hardening.py`:
+- core tools opened `<cwd>/memorymaster.db` (pre-existing in every stdio pane:
+  infra/pedrito/yolo26 recalled from empty stray DBs);
+- sync tools blocked the one event loop (now worker threads over HTTP);
+- the Windows proactor loop killed the listening socket (now selector loop);
+- the scheduled runtime lacks sentence-transformers (server runs on Python312);
+- sessions outside the allowlist fall back to local stdio (`MEMORYMASTER_PROXY_ROOTS`);
+- plus project_root scoping, RFC 8187 header encoding, per-workspace rate buckets,
+  a wall-clock relay retry and a supervisor launcher (`integrations/shared-mcp/windows`).
+
+Installed with `integrations/shared-mcp/windows/install.ps1` (hash-pinned wheel).
+Live: supervisor 15 MB + server 473-850 MB; relay 18 MB per session; stdio
+server was 1.94 GB per session. Warm latency through the relay: hybrid ~2.0 s
+(stdio 1.3 s), recall ~3.6 s (2.7 s), initialize 0.12 s (8.7 s). First hybrid
+call after a server start pays ~45 s of warm-up. Scope results identical to
+stdio from the same folder; Claude, Codex (exec), OpenCode and the pilot pane
+verified connected. The full non-ML suite was not completed (killed for low
+RAM); rerun it once the old stdio servers are gone.
 
 ## Recommendation
 
