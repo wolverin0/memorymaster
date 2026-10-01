@@ -9,7 +9,13 @@ from memorymaster.recall import context_hook
 
 
 def row(cid, text):
-    return {"claim": SimpleNamespace(id=cid, text=text, wiki_article=None)}
+    return {"claim": SimpleNamespace(id=cid, human_id=f"mm-{cid:04x}", text=text, wiki_article=None)}
+
+
+# T-0739 grew the frame: a cite instruction line in the header and a "[mm-xxxx] " id per
+# bullet. Budgets below were sized for the old frame, so they get exactly that growth added.
+_OLD_HEADER_CHARS = len("# Memory Context") + 1
+FRAME_GROWTH = -(-(len(chr(10).join(context_hook.RECALL_HEADER)) - _OLD_HEADER_CHARS + len("[mm-0000] ")) // 4)
 
 
 def render(rows, budget):
@@ -32,7 +38,7 @@ def test_unicode_evidence_survives_rendering():
 
 
 def test_oversized_claim_does_not_hide_a_later_fitting_claim():
-    output, ids = render([row(1, "long evidence " * 30), row(2, "Use WAL.")], 12)
+    output, ids = render([row(1, "long evidence " * 30), row(2, "Use WAL.")], 12 + FRAME_GROWTH)
     assert ids == [2]
     assert "Use WAL." in output
 
@@ -75,7 +81,7 @@ def test_jev_oversized_candidate_does_not_zero_out_fitting_pool(monkeypatch):
     from memorymaster.recall import jev_surfaces as jev
 
     rows = [row(1, "evidence " * 100), row(2, "Use WAL.")]
-    budget = 35
+    budget = 35 + FRAME_GROWTH
     observed = {}
 
     def choose(_query, candidates, **kwargs):

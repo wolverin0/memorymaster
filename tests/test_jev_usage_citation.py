@@ -130,3 +130,59 @@ def test_metrics_report_weak_use_beside_the_strong_rate():
     arm = _exposure_use(exposed, outcome_set)["jev"]
     assert (arm["used"], arm["used_weak"]) == (1, 1)  # a strongly used item is not double counted as weak
     assert arm["rate"] == 0.25 and arm["rate_weak"] == 0.25
+
+
+# --- review findings (independent review of T-0739) -------------------------------------------
+
+
+def test_human_id_does_not_credit_the_parent_of_a_derived_or_suffixed_id():  # F3
+    assert outcomes.detect_usage("mm-a3f8", TEXT, "Per [mm-a3f8.1] the fix holds.") is None
+    assert outcomes.detect_usage("mm-a3f8", TEXT, "Per [mm-a3f8~2] the fix holds.") is None
+    assert outcomes.detect_usage("mm-a3f8", TEXT, "That came from mm-a3f8.") == "human_id"
+
+
+def test_claim_number_only_counts_as_a_free_standing_citation():  # F4
+    for noise in ("color: #148;", "PR #148 merged", "issue #148 is open", "see [a](#148)", "x &#148; y", "x#148"):
+        assert outcomes.detect_usage(None, TEXT, noise, claim_id=148) is None, noise
+    for cite in ("see #148 for why", "(#148) says so", "#148 [bug/confirmed] applies"):
+        assert outcomes.detect_usage(None, TEXT, cite, claim_id=148) == "claim_id", cite
+
+
+def test_entity_tokens_keep_identifiers_and_drop_prose():  # F5
+    found = outcomes.entity_tokens(
+        "C:/x/y.py mcp_server.py v2.3.1 SelectorEventLoop HTTP T-0739 sha256 well-known and/or 2026 hello")
+    assert found == {"c:/x/y.py", "mcp_server.py", "v2.3.1", "selectoreventloop", "http", "t-0739", "sha256"}
+
+
+def test_prose_overlap_is_not_weak_usage():  # F5
+    claim = "Retries are a well-known source of lock contention on the worker pool"
+    # Shares a real 4-gram ("contention on the worker") and only the hyphenated prose word "well-known".
+    turn = "No lock contention on the worker pool today; a well-known pattern in 2026."
+    assert outcomes.detect_weak_usage(claim, turn) is False
+
+
+def test_entity_extraction_is_linear_on_long_runs():  # F2 (minor): the old regex was quadratic
+    import time
+
+    started = time.perf_counter()
+    outcomes.entity_tokens("acgt" * 25_000)  # 100 KB without separators
+    assert time.perf_counter() - started < 2.0
+
+
+def test_joiner_computes_turn_side_weak_features_once(monkeypatch):  # F2
+    calls = {"entities": 0}
+    real = outcomes.entity_tokens
+
+    def counting(text):
+        if len(text) > 10_000:  # the turn, not a claim
+            calls["entities"] += 1
+        return real(text)
+
+    monkeypatch.setattr(outcomes, "entity_tokens", counting)
+    exposures = [{"decision_id": f"d{i}", "ts": "2026-09-30T10:00:00+00:00", "item_ref": f"claim:{i % 20}"}
+                 for i in range(40)]  # 20 claims, each exposed twice
+    ledger = _Ledger(exposures)
+    lookup = {f"claim:{i}": (f"mm-{i:04x}", f"unrelated note number {i} about kopia retention") for i in range(20)}
+    turn = {"turn_id": "t", "assistant_text": "lorem ipsum dolor sit amet " * 4000}
+    outcomes.record_turn_usage(ledger, "s", turn, observed_at="2026-09-30T10:05:00+00:00", lookup=lookup.get)
+    assert calls["entities"] == 1
