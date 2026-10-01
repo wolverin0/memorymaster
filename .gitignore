@@ -99,3 +99,5 @@ graphify-out/
 
 # Mined claim scratch (LLM labeling batches) — may contain ambient PII/IPs; never commit
 artifacts/label-batches-*/
+# nox session virtualenvs (noxfile.py)
+.nox/
