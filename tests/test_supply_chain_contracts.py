@@ -90,7 +90,7 @@ def _resolver(tmp_path: Path) -> supply.Resolver:
     directory = tmp_path.parent / f"{tmp_path.name}-trusted-tools"
     directory.mkdir(exist_ok=True)
     paths: dict[str, str] = {}
-    for name in ("gitleaks", "docker", "git"):
+    for name in ("gitleaks", "docker", "git", "uv"):
         path = directory / f"{name}.bin"
         path.write_bytes(f"trusted-{name}".encode())
         paths[name] = str(path)
@@ -178,6 +178,9 @@ def test_scanners_receive_sterile_environment_and_working_directory(
         "GIT_WORK_TREE",
         "PIP_AUDIT_VULNERABILITY_SERVICE",
         "PIP_AUDIT_OSV_URL",
+        "UV_INDEX_URL",
+        "UV_EXTRA_INDEX_URL",
+        "UV_CONFIG_FILE",
         "DOCKER_HOST",
         "AWS_SECRET_ACCESS_KEY",
     ):
@@ -194,6 +197,8 @@ def test_scanners_receive_sterile_environment_and_working_directory(
         environment = kwargs.get("env")
         assert isinstance(environment, dict)
         assert not any(key.startswith(("GIT_", "PIP_AUDIT_", "DOCKER_")) for key in environment)
+        # uv is told to ignore config files; no operator UV_* value may redirect its index or service.
+        assert {key for key in environment if key.startswith("UV_")} == {"UV_NO_CONFIG"}
         assert "AWS_SECRET_ACCESS_KEY" not in environment
         assert environment["PROGRAMFILES"] == str(program_files)
         working_directory = Path(str(kwargs["cwd"])).resolve()
@@ -327,41 +332,60 @@ def test_reviewed_gitleaks_fingerprints_reject_broad_or_malformed_entries(
         supply._reviewed_gitleaks_fingerprints(tmp_path)
 
 
-def test_plan_enforces_strict_cyclonedx_dependency_audit(tmp_path: Path) -> None:
+def test_plan_enforces_dependency_audit_and_cyclonedx_validation(tmp_path: Path) -> None:
     commands = _by_name(_plan(tmp_path))
-    audit = commands["pip_audit_project"].argv
+    audit = commands["uv_audit_release"].argv
     validation = commands["validate_sbom"].argv
 
-    assert audit[:4] == (sys.executable, "-I", "-m", "pip_audit")
-    assert "--strict" in audit
-    assert str(tmp_path.resolve()) in audit
+    assert audit[:2] == (supply._UV_EXECUTABLE, "audit")
+    assert "pip_audit_project" not in commands and "pip_audit_release_extras" not in commands
     assert validation[0] == sys.executable
     assert validation[validation.index("--expected-name") + 1] == EXPECTED_NAME
     assert validation[validation.index("--expected-version") + 1] == EXPECTED_VERSION
 
 
-def test_dependency_audit_is_bound_to_project_and_fixed_service(tmp_path: Path) -> None:
-    audit = _by_name(_plan(tmp_path))["pip_audit_project"].argv
+def test_dependency_audit_uses_fixed_service_and_never_downloads_python(tmp_path: Path) -> None:
+    audit = _by_name(_plan(tmp_path))["uv_audit_release"].argv
 
-    assert str(tmp_path.resolve()) in audit
-    assert audit[audit.index("--vulnerability-service") + 1] == "osv"
+    assert audit[audit.index("--service-format") + 1] == "osv"
+    assert "--service-url" not in audit  # the default OSV endpoint, not an operator-supplied one
+    assert "--no-python-downloads" in audit
+    assert audit[audit.index("--preview-features") + 1] == "audit-command"
 
 
-def test_release_dependency_audit_matches_minimal_profile_extras(tmp_path: Path) -> None:
-    observed_requirements: list[str] = []
+def _executed_audit(tmp_path: Path) -> tuple[tuple[str, ...], dict[str, object]]:
+    seen: dict[str, object] = {}
 
-    def fake_runner(argv: tuple[str, ...], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        if "--requirement" in argv:
-            path = Path(argv[argv.index("--requirement") + 1])
-            observed_requirements.extend(path.read_text(encoding="utf-8").splitlines())
+    def fake_runner(argv: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if "audit" in argv[1:2]:
+            project = Path(argv[argv.index("--project") + 1])
+            seen.update(argv=argv, env=kwargs.get("env"), pyproject=(project / "pyproject.toml").read_text("utf-8"),
+                        project=project)
         return subprocess.CompletedProcess(argv, 0)
 
     report = _execute(_plan(tmp_path), tmp_path, fake_runner)
-
     assert report.ok is True
-    assert {"requests>=2.31", "tenacity>=8.2"}.issubset(observed_requirements)
-    assert {"mcp>=1.8.1", "cryptography>=42"}.issubset(observed_requirements)
-    assert "httpx>=0.27" not in observed_requirements
+    return seen["argv"], seen  # type: ignore[return-value]
+
+
+def test_release_dependency_audit_matches_minimal_profile_extras(tmp_path: Path) -> None:
+    _argv, seen = _executed_audit(tmp_path)
+    audited = set(json.loads(str(seen["pyproject"]).split("dependencies = ", 1)[1].splitlines()[0]))
+
+    assert {"requests>=2.31", "tenacity>=8.2"}.issubset(audited)
+    assert {"mcp>=1.8.1", "cryptography>=42"}.issubset(audited)
+    assert "httpx>=0.27" not in audited
+
+
+def test_dependency_audit_runs_outside_the_repository_with_approved_uv(tmp_path: Path) -> None:
+    argv, seen = _executed_audit(tmp_path)
+
+    assert Path(argv[0]).name == "uv.bin"  # the resolved, hash-recorded trusted tool
+    project, cache = Path(str(seen["project"])), Path(argv[argv.index("--cache-dir") + 1])
+    for path in (project, cache):  # no lockfile or cache is written into the repository
+        assert tmp_path.resolve() not in path.resolve().parents
+    assert not (tmp_path / "uv.lock").exists()
+    assert seen["env"]["UV_NO_CONFIG"] == "1"  # type: ignore[index]
 
 
 def test_project_identity_cannot_be_supplied_by_operator(tmp_path: Path) -> None:
@@ -380,7 +404,6 @@ def test_project_identity_cannot_be_supplied_by_operator(tmp_path: Path) -> None
 def test_python_scanner_and_validator_use_isolated_mode(tmp_path: Path) -> None:
     commands = _by_name(_plan(tmp_path))
 
-    assert commands["pip_audit_project"].argv[:3] == (sys.executable, "-I", "-m")
     assert commands["validate_sbom"].argv[:2] == (sys.executable, "-I")
 
 
