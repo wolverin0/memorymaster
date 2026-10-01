@@ -127,9 +127,11 @@ def test_engine_overhead_is_reported_next_to_transport_latency(tmp_path):
 def test_exposure_to_use_rates_by_arm(populated):
     report = mt.compute_metrics(populated, since=NOW - timedelta(days=2), until=NOW)
     use = report["surfaces"]["recall"]["exposure_use"]
-    assert use["jev"] == {"exposed": 3, "used": 1, "rate": pytest.approx(1 / 3)}
-    assert use["legacy"] == {"exposed": 1, "used": 1, "rate": 1.0}
-    assert use["explored"] == {"exposed": 1, "used": 1, "rate": 1.0}
+    # Weak evidence (T-0739) is reported beside the strong rate; this fixture has none.
+    no_weak = {"used_weak": 0, "rate_weak": 0.0}
+    assert use["jev"] == {"exposed": 3, "used": 1, "rate": pytest.approx(1 / 3), **no_weak}
+    assert use["legacy"] == {"exposed": 1, "used": 1, "rate": 1.0, **no_weak}
+    assert use["explored"] == {"exposed": 1, "used": 1, "rate": 1.0, **no_weak}
 
 
 def test_question_distributions_and_calibration(populated):

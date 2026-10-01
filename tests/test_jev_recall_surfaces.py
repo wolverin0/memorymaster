@@ -7,6 +7,7 @@ user's home is written.
 from __future__ import annotations
 
 import json
+import re
 import math
 import time
 from pathlib import Path
@@ -149,6 +150,9 @@ def hook_data(tmp_path):
     return {"session_id": SESSION, "cwd": str(tmp_path / "workspace" / "memorymaster"), "prompt": QUERY}
 
 
+_ID_PREFIX = re.compile(r"^- \[mm-[0-9a-z]+\] ")
+
+
 def legacy_recall(db):
     return context_hook.recall(QUERY, db_path=str(db), skip_qdrant=True, return_ids=True)
 
@@ -163,7 +167,12 @@ def test_off_mode_output_is_byte_identical_and_sends_nothing(tmp_path, monkeypat
                                              hook_data=hook_data(tmp_path))
     assert plain_ids and hooked == plain and hooked_ids == plain_ids
     by_id = dict(zip(fixture_ids, TEXTS))
-    assert hooked == "\n".join(["# Memory Context", ""] + [f"- {by_id[i]}" for i in plain_ids])
+    header = list(context_hook.RECALL_HEADER)
+    lines = hooked.splitlines()
+    assert lines[:len(header)] == header
+    # T-0739: every bullet carries its citable id, then the unchanged claim text.
+    assert all(_ID_PREFIX.match(line) for line in lines[len(header):])
+    assert [_ID_PREFIX.sub("- ", line) for line in lines[len(header):]] == [f"- {by_id[i]}" for i in plain_ids]
     assert not (tmp_path / "decisions.db").exists()
 
 
@@ -184,11 +193,14 @@ def test_live_orders_by_relevance_adapts_k_and_labels_flags(tmp_path, monkeypatc
                                    hook_data=hook_data(tmp_path))
 
     assert ids == [best, second, third]
+    header = list(context_hook.RECALL_HEADER)
     lines = out.splitlines()
-    assert lines[:2] == ["# Memory Context", ""] and len(lines) == 5
-    assert lines[2].startswith("- " + jev.LABEL_CONFLICT + " ")
-    assert lines[3].startswith("- " + jev.LABEL_INSTRUCTION + " ")
-    assert "[flag:" not in lines[4]
+    assert lines[:len(header)] == header and len(lines) == len(header) + 3
+    assert all(_ID_PREFIX.match(line) for line in lines[len(header):])
+    bullets = [_ID_PREFIX.sub("- ", line) for line in lines[len(header):]]  # T-0739: id first, then labels
+    assert bullets[0].startswith("- " + jev.LABEL_CONFLICT + " ")
+    assert bullets[1].startswith("- " + jev.LABEL_INSTRUCTION + " ")
+    assert "[flag:" not in bullets[2]
     # One request, hook deadline, zero retries; state = request + project label only.
     assert len(transport.calls) == 1
     call = transport.calls[0]
