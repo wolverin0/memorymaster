@@ -16,6 +16,7 @@ picks a workspace and db per call, so the allowlists are the scope boundary.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -47,7 +48,10 @@ def _log_stream():
 
 
 def _say(message: str) -> None:
-    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} memorymaster-mcp-shared[{os.getpid()}]: {message}", flush=True)
+    # Same JSON-lines shape as the server's records in this log (memorymaster/core/structured_log.py).
+    print(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "level": "info",
+                      "logger": "memorymaster.mcp.supervisor", "component": "mcp-supervisor",
+                      "event": message, "pid": os.getpid()}), flush=True)
 
 
 def _load_shared_environment() -> list[str]:

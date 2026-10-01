@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import hmac
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from memorymaster.core.structured_log import configure_structured_logging
 from memorymaster.surfaces.mcp_server import (
     FastMCP,
     _limit_native_threads,
@@ -135,6 +137,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     _limit_native_threads()
+    # JSON lines from the first log record on: one parseable stream for the server log (T-0764).
+    os.environ.setdefault("TQDM_DISABLE", "1")  # model progress bars would write raw text to stderr
+    configure_structured_logging(sys.stderr, component="mcp-http")
     _preload_native_ml()  # a lazy torch import inside the event loop stalls on Windows (T-0726 POC)
     args = _build_parser().parse_args(argv)
     app = create_http_app(
@@ -150,14 +155,14 @@ def _serve(app: Any, *, host: str, port: int) -> None:
     import uvicorn
 
     if os.name != "nt":
-        uvicorn.run(app, host=host, port=port)
+        uvicorn.run(app, host=host, port=port, log_config=None)  # uvicorn logs reach the JSON root handler
         return
     # Windows: uvicorn's default ProactorEventLoop closes the LISTENING socket when an
     # accept completes with an error (a client reset before accept, WinError 64), leaving
     # a live process that serves nothing and never restarts. The selector loop does not.
     import asyncio
 
-    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, loop="none"))
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, loop="none", log_config=None))
     asyncio.run(server.serve(), loop_factory=asyncio.SelectorEventLoop)
 
 

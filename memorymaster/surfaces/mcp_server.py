@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 import threading
 import time
+from collections.abc import Mapping
 from typing import Any, TypeVar
 from urllib.parse import urlparse
 
@@ -28,6 +29,7 @@ from memorymaster.surfaces import mcp_path_policy
 from pydantic import BaseModel, ValidationError
 
 from memorymaster.core.models import CitationInput
+from memorymaster.core.structured_log import timed_event
 from memorymaster.surfaces.unknown_args import record_unknown_arguments
 from memorymaster.core.scope_utils import (
     ancestor_project_scopes,
@@ -887,11 +889,39 @@ def _client_workspace_header() -> str:
     return value
 
 
+_TOOL_LOG = logging.getLogger("memorymaster.mcp.tools")
+
+
+def _scope_for_log(arguments: Mapping[str, Any]) -> str | None:
+    """The scope a tool call targets, for the structured log only; never raises."""
+    explicit = str(arguments.get("scope", "") or "").strip()
+    if explicit and explicit != "project":
+        return explicit
+    workspace = str(arguments.get("workspace", "") or arguments.get("project_root", "") or "").strip()
+    if not workspace or workspace == _DEFAULT_WORKSPACE:
+        return None
+    try:
+        return _project_scope(workspace)
+    except Exception:  # noqa: BLE001 - a log field must not fail the call
+        return None
+
+
 def _authorized_tool_callable(func: Any, policy: McpToolPolicy) -> Any:
     call_signature = inspect.signature(func)
 
     @wraps(func)
     def guarded(*args: Any, **kwargs: Any) -> Any:
+        if not _TOOL_LOG.isEnabledFor(logging.INFO):  # stdio: logging is not configured, skip the bookkeeping
+            return _invoke(None, args, kwargs)
+        # One JSON line per call on the shared server (T-0764): refusals and {"ok": false} count too.
+        with timed_event(_TOOL_LOG, "mcp_tool", surface="mcp", tool=func.__name__) as fields:
+            result = _invoke(fields, args, kwargs)
+            if isinstance(result, dict) and result.get("ok") is False:
+                fields["outcome"] = "failed"
+                fields["error_code"] = result.get("code")
+            return result
+
+    def _invoke(fields: dict[str, Any] | None, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
         bound = call_signature.bind_partial(*args, **kwargs)
         bound.apply_defaults()
         client_paths = [name for name in _CLIENT_PATH_ARGUMENTS if name in bound.arguments]
@@ -918,6 +948,9 @@ def _authorized_tool_callable(func: Any, policy: McpToolPolicy) -> Any:
             )
         if bool(bound.arguments.get("allow_sensitive", False)) and not context.allow_sensitive:
             raise PermissionError("Authenticated MCP context does not allow sensitive-data access.")
+        if fields is not None:
+            fields["mode"] = context.mode.value
+            fields["scope"] = _scope_for_log(bound.arguments)
         with bind_request_context(context):
             return func(*bound.args, **bound.kwargs)
 

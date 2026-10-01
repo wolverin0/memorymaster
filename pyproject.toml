@@ -25,6 +25,9 @@ requires-python = ">=3.10"
 dependencies = [
     "requests>=2.31",
     "tenacity>=8.2",
+    # JSON-lines logs for the shared MCP server and scheduled jobs (core/structured_log.py,
+    # which falls back to a stdlib JSON formatter when structlog is absent).
+    "structlog>=24.1",
     # Jev decisions use the standard library (http.client + ssl): no HTTP client dependency.
 ]
 

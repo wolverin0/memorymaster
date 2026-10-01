@@ -366,7 +366,7 @@ def test_supervisor_restarts_a_dead_server_and_kills_an_unhealthy_one(launcher, 
     g["_single_instance"] = lambda: True
     g["_load_shared_environment"] = lambda: []
     g["_healthy"] = lambda: False  # second server never answers
-    g["time"] = SimpleNamespace(sleep=lambda s: None, monotonic=iter(range(0, 100000, 100)).__next__, strftime=lambda f: "t")
+    g["time"] = SimpleNamespace(sleep=lambda s: None, monotonic=iter(range(0, 100000, 100)).__next__, strftime=lambda f, *_: "t", gmtime=lambda: None)
     g["subprocess"] = SimpleNamespace(Popen=FakeChild, DEVNULL=None, TimeoutExpired=TimeoutError)
     with pytest.raises(Stop):
         g["_supervise"]()
