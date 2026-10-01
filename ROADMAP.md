@@ -41,6 +41,9 @@ its governed-claims authority:
 - [x] Refresh the current GitNexus index while preserving embeddings and excluding
   research clones; install a bounded Serena navigation profile for AGY, Claude
   Code and both native/Orca Codex configurations.
+- [x] Extend the same navigation setup to OpenCode; correct its MCP launcher
+  and workspace cwd, then verify three actual MCP calls and live source lines.
+  Evidence: `opencode-checks.json` beside the shared navigation report.
 - [x] Exercise fresh clients and a frozen 20-task source-verified cohort; verify
   dirty-source refresh, project switching, references and output limits.
   GitNexus file hit@5 is 9/20, lexical heuristic 7/20; Serena exact-name lookup
@@ -204,7 +207,8 @@ A box is ticked only with evidence (command, count or receipt) in the ledger.
 - [x] Full non-ML gate (incl. the disposable public demo) on the installed revision `7d536a8`, four sequential shards: 6676 passed, 0 failed, 74 skipped, 1 xfailed.
 - [x] Live read-only checks 2026-09-24T01:24Z: operational review (database PASS, retrieval canary PASS, runtime pinned to 4.9.0 until main carries it, compiled_profile WARN while run 5 maps from claims, checkpoint WARN until the first Orca delivery, jev_decisions WARN: dedup/skills idle, 5 orphan intents traced to the memory-reaper kill and one killed recall hook); Hermes MCP health 200 / unauth 401 / 51 tools; ledger read through the dashboard tab and `jev-status`.
 - [x] Independent adversarial review of the new code; no open high findings (high: `799dc1f`; medium/low: `80277a4`, `2af6f81`, `25bb5af`, `8e85b3b`).
-- [ ] Reports at 24 h, 72 h and 7 days from dashboard numbers.
+- [x] Reports at 24 h, 72 h and 7 days from dashboard numbers (2026-09-30, `artifacts/2026-09-30-jev-live-week-report.html`): every first-24 h operational criterion passed for the whole week (fallback <=6 %, US$1.18/week vs US$2/day cap, 0 ledger write failures, 0 leaked egress). Usefulness was unmeasurable: the recall block showed no claim ids, so `used_in_turn` was 2/2811.
+- [ ] T-0739 (installed 2026-10-01T02:32Z, wheel `072fd1ff`): `[mm-id]` on every injected claim plus a cite instruction (+29 tokens/block, +5.1 %); detector by id, `#<id>` and 8-gram, plus a separately labelled weak path (`used_in_turn_weak`, never a calibration label). Re-measure with `jev-status` after 2026-10-04T02:32Z: use rate per path and positive outcomes per question (>=100 to start calibration).
 
 **Phase 5 — learning loop**
 - [ ] Weekly per-question calibration (split-half, 95 % lower bound, ≥100 outcomes).
