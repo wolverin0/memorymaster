@@ -67,3 +67,21 @@ def test_ml_session_runs_only_ml_marker_with_model_stack():
     [install] = session.installs
     extras = set(install[-1].split("[", 1)[1].rstrip("]").split(","))
     assert {"embeddings", "vector", "graph", "ml"} <= extras
+
+
+@pytest.fixture(autouse=True)
+def _session_env(monkeypatch):
+    """The sessions edit os.environ; give them a copy so this pytest process keeps its own."""
+    env = dict(__import__("os").environ)
+    monkeypatch.setattr(_noxfile().os, "environ", env)
+    return env
+
+
+@pytest.mark.parametrize("name", ["unit", "ml"])
+def test_sessions_do_not_hand_the_live_configuration_to_the_tests(_session_env, name):
+    _session_env.update({"MEMORYMASTER_DREAM_EXTRACT_PROVIDER": "gemini", "MEMORYMASTER_JEV_MODE": "on",
+                         "TYPESAFE_API_KEY": "x", "GEMINI_API_KEY": "x", "PATH": "kept"})
+    _call(getattr(_noxfile(), name), _Session())
+    assert not [k for k in _session_env if k.startswith("MEMORYMASTER_")]
+    assert "TYPESAFE_API_KEY" not in _session_env and "GEMINI_API_KEY" not in _session_env
+    assert _session_env["PATH"] == "kept"
