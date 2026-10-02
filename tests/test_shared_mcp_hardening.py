@@ -9,6 +9,7 @@ up while the server starts, and a supervisor that must never die silently.
 from __future__ import annotations
 
 import io
+import json
 import os
 import runpy
 import sqlite3
@@ -391,6 +392,70 @@ def test_relay_connect_budget_is_wall_clock_not_attempts(monkeypatch):
                             opener=refused, connect_retry_seconds=10, sleep=lambda s: None)
     assert "unreachable" in reply["error"]["message"]
     assert len(attempts) == 5  # stopped at the 10 s deadline, not after 10 attempts
+
+
+def _refused_opener(request, timeout):
+    raise urllib.error.URLError(ConnectionRefusedError(10061, "refused"))
+
+
+def test_relay_connects_while_the_server_boots_from_its_last_answers(tmp_path):
+    # 2026-10-01: server boot took 56-144 s after logon, Claude's MCP connect timeout is 30 s,
+    # so sessions opened during boot came up without memorymaster.
+    cache = relay.ListingCache(str(tmp_path / "listings.json"))
+    url = "http://127.0.0.1:1/mcp"
+    tools = {"tools": [{"name": "query_memory", "inputSchema": {"type": "object"}}]}
+
+    def up(request, timeout):
+        method = json.loads(request.data)["method"]
+        result = {"protocolVersion": "2025-06-18"} if method == "initialize" else tools
+        return _Response(json.dumps({"jsonrpc": "2.0", "id": json.loads(request.data)["id"], "result": result}).encode())
+
+    for i, method in enumerate(("initialize", "tools/list")):
+        relay.forward(json.dumps({"jsonrpc": "2.0", "id": i, "method": method}), url=url, token="t",
+                      workspace="w", opener=up, cache=cache)
+
+    slept: list[float] = []
+    booting = {"opener": _refused_opener, "sleep": slept.append, "cache": cache}
+    [init] = relay.forward('{"jsonrpc": "2.0", "id": 7, "method": "initialize", "params": {}}',
+                           url=url, token="t", workspace="w", **booting)
+    [listed] = relay.forward('{"jsonrpc": "2.0", "id": 8, "method": "tools/list"}',
+                             url=url, token="t", workspace="w", **booting)
+    assert init == {"jsonrpc": "2.0", "id": 7, "result": {"protocolVersion": "2025-06-18"}}
+    assert listed["id"] == 8 and listed["result"] == tools
+    assert slept == []  # answered at once, inside any client connect timeout
+
+
+def test_relay_never_replays_tool_calls_or_cursor_pages(tmp_path):
+    cache = relay.ListingCache(str(tmp_path / "listings.json"))
+    url = "http://127.0.0.1:1/mcp"
+    cache.put(url, "tools/list", {"tools": []})
+    cache.put(url, "tools/call", {"content": "stale"})  # even if something stored it
+    for raw in ('{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "q"}}',
+                '{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {"cursor": "p2"}}'):
+        [reply] = relay.forward(raw, url=url, token="t", workspace="w", opener=_refused_opener,
+                                connect_retry_seconds=0, sleep=lambda s: None, cache=cache)
+        assert "unreachable" in reply["error"]["message"]
+
+
+def test_relay_without_a_saved_answer_still_waits_for_the_server(tmp_path):
+    cache = relay.ListingCache(str(tmp_path / "missing" / "listings.json"))
+    [reply] = relay.forward('{"jsonrpc": "2.0", "id": 3, "method": "initialize"}', url="http://127.0.0.1:1/mcp",
+                            token="t", workspace="w", opener=_refused_opener, connect_retry_seconds=0,
+                            sleep=lambda s: None, cache=cache)
+    assert "unreachable" in reply["error"]["message"]
+
+
+def test_relay_waits_longer_than_the_slowest_measured_boot():
+    assert relay.CONNECT_RETRY_SECONDS > 144
+
+
+def test_relay_cache_survives_a_corrupt_file(tmp_path):
+    path = tmp_path / "listings.json"
+    path.write_text("{torn", encoding="utf-8")
+    cache = relay.ListingCache(str(path))
+    assert cache.get("u", "tools/list") is None
+    cache.put("u", "tools/list", {"tools": []})
+    assert cache.get("u", "tools/list") == {"tools": []}
 
 
 @pytest.mark.parametrize(

@@ -12,10 +12,18 @@ Configuration (environment):
     MEMORYMASTER_PROXY_WORKSPACE   overrides the workspace; else CLAUDE_PROJECT_DIR, else cwd
     MEMORYMASTER_PROXY_ROOTS       the server's workspace allowlist; a session outside it runs
                                    the local stdio server instead of failing every call
+    MEMORYMASTER_PROXY_CACHE       file with the server's last initialize/list answers; default
+                                   %LOCALAPPDATA%/MemoryMaster/relay-listings.json
 Standard library only; keep it that way so each relay stays a few MB.
+
+Server boot (56-144 s measured after logon, the ML pre-import) is longer than a
+client's MCP connect timeout (Claude Code: 30 s). While the server refuses
+connections the relay answers initialize and the list requests from the last
+answers it saw, so the client connects; tool calls wait for the server.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import socket
@@ -30,11 +38,73 @@ from concurrent.futures import ThreadPoolExecutor
 DEFAULT_URL = "http://127.0.0.1:8766/mcp"
 WORKSPACE_HEADER = "X-MM-Workspace"
 TIMEOUT_SECONDS = 120
-CONNECT_RETRY_SECONDS = 60
+CONNECT_RETRY_SECONDS = 180  # longest server boot measured 2026-09-30..10-01: 144 s
 TOKEN_ENV = "MEMORYMASTER_MCP_HTTP_TOKEN"
 SHARED_KEY = r"Software\MemoryMaster\SharedMcp"
+CACHE_ENV = "MEMORYMASTER_PROXY_CACHE"
+# Answers that describe the server rather than the caller's data: safe to replay while it boots.
+CACHEABLE_METHODS = frozenset({
+    "initialize", "tools/list", "prompts/list", "resources/list", "resources/templates/list",
+})
 
 _stdout_lock = threading.Lock()
+
+
+class ListingCache:
+    """The server's last initialize/list results per URL, kept in one JSON file.
+
+    Holds tool and prompt schemas only, never call results. Writes go through a
+    temp file and os.replace so concurrent relays never read a torn file.
+    """
+
+    def __init__(self, path: str):
+        self.path = path
+        self._lock = threading.Lock()
+
+    def _read(self) -> dict:
+        try:
+            with open(self.path, encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def get(self, url: str, method: str) -> dict | None:
+        result = self._read().get(url, {}).get(method)
+        return result if isinstance(result, dict) else None
+
+    def put(self, url: str, method: str, result: dict) -> None:
+        with self._lock:
+            data = self._read()
+            if data.get(url, {}).get(method) == result:
+                return
+            data.setdefault(url, {})[method] = result
+            tmp = f"{self.path}.{os.getpid()}.{threading.get_ident()}.tmp"
+            try:
+                os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+                with open(tmp, "w", encoding="utf-8") as handle:
+                    json.dump(data, handle)
+                os.replace(tmp, self.path)
+            except OSError:
+                with contextlib.suppress(OSError):
+                    os.remove(tmp)
+
+
+def default_cache_path(environ=os.environ) -> str:
+    configured = (environ.get(CACHE_ENV) or "").strip()
+    if configured:
+        return configured
+    base = environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".memorymaster")
+    return os.path.join(base, "MemoryMaster", "relay-listings.json")
+
+
+def _cache_key(message: dict) -> str | None:
+    """The method when its answer is replayable: a first page only, never a cursor page."""
+    method = message.get("method")
+    params = message.get("params") or {}
+    if method in CACHEABLE_METHODS and "id" in message and not (isinstance(params, dict) and params.get("cursor")):
+        return method
+    return None
 
 
 def resolve_workspace(environ=os.environ) -> str:
@@ -114,8 +184,10 @@ def forward(
     opener=urllib.request.urlopen,
     connect_retry_seconds: float = CONNECT_RETRY_SECONDS,
     sleep=time.sleep,
+    cache: ListingCache | None = None,
 ) -> list[dict]:
     message = json.loads(raw)
+    key = _cache_key(message) if cache and isinstance(message, dict) else None
     deadline = time.monotonic() + connect_retry_seconds
     while True:
         try:
@@ -131,10 +203,20 @@ def forward(
                 },
             )
             with opener(request, timeout=TIMEOUT_SECONDS) as response:
-                return _parse_body(response.read(), response.headers.get("Content-Type", ""))
+                replies = _parse_body(response.read(), response.headers.get("Content-Type", ""))
+            if key:
+                for reply in replies:
+                    if reply.get("id") == message["id"] and isinstance(reply.get("result"), dict):
+                        cache.put(url, key, reply["result"])
+            return replies
         except urllib.error.HTTPError as exc:
             reply = _error_for(message, f"memorymaster shared MCP returned HTTP {exc.code}")
         except (urllib.error.URLError, OSError, ValueError) as exc:
+            cached = cache.get(url, key) if key and _refused(exc) else None
+            if cached is not None:
+                # Server booting or restarting: describe it from its last answer so the
+                # client's connect timeout does not expire; tool calls still wait for it.
+                return [{"jsonrpc": "2.0", "id": message["id"], "result": cached}]
             if _refused(exc) and time.monotonic() < deadline:
                 # Nothing reached the server (not up yet at logon, or restarting): safe to resend.
                 # The budget is wall-clock: a refused connect itself takes ~2 s on Windows.
@@ -189,9 +271,11 @@ def main() -> int:
         sys.stderr.write(f"{TOKEN_ENV} is required for the shared MCP relay (env or HKCU\\{SHARED_KEY})\n")
         return 2
 
+    cache = ListingCache(default_cache_path())
+
     def handle(raw: str) -> None:
         try:
-            for message in forward(raw, url=url, token=token, workspace=workspace):
+            for message in forward(raw, url=url, token=token, workspace=workspace, cache=cache):
                 _emit(message)
         except ValueError:
             _emit({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
