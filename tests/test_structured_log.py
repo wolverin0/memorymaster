@@ -91,6 +91,30 @@ def test_reconfiguring_replaces_only_our_handler():
         root.removeHandler(other)
 
 
+def test_exclusive_drops_fastmcps_rich_handler_so_the_log_is_only_json():
+    # 2026-10-01 live log: 11 of 18 lines were FastMCP's RichHandler text beside the JSON.
+    fastmcp_logging = pytest.importorskip("mcp.server.fastmcp.utilities.logging")
+    root = logging.getLogger()
+    saved = list(root.handlers), root.level
+    for handler in saved[0]:
+        root.removeHandler(handler)
+    try:
+        fastmcp_logging.configure_logging("INFO")  # what importing the MCP server does first
+        assert root.handlers
+        stream = io.StringIO()
+        sl.configure_structured_logging(stream, component="mcp-http", exclusive=True)
+        logging.getLogger("uvicorn.access").info('127.0.0.1 - "POST /mcp HTTP/1.1" 200')
+        assert len(root.handlers) == 1
+        lines = stream.getvalue().splitlines()
+        assert lines and all(json.loads(line)["component"] == "mcp-http" for line in lines)
+    finally:
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+        for handler in saved[0]:
+            root.addHandler(handler)
+        root.setLevel(saved[1])
+
+
 # --- the shared MCP server: one event per tool call ---------------------------------------
 
 

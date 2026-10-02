@@ -139,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     _limit_native_threads()
     # JSON lines from the first log record on: one parseable stream for the server log (T-0764).
     os.environ.setdefault("TQDM_DISABLE", "1")  # model progress bars would write raw text to stderr
-    configure_structured_logging(sys.stderr, component="mcp-http")
+    configure_structured_logging(sys.stderr, component="mcp-http", exclusive=True)
     _preload_native_ml()  # a lazy torch import inside the event loop stalls on Windows (T-0726 POC)
     args = _build_parser().parse_args(argv)
     app = create_http_app(

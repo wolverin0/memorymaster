@@ -88,10 +88,13 @@ def _structlog_formatter(component: str) -> logging.Formatter | None:
 
 
 def configure_structured_logging(stream: IO[str] | None = None, *, component: str,
-                                 level: int = logging.INFO) -> str:
+                                 level: int = logging.INFO, exclusive: bool = False) -> str:
     """Route the root logger to ``stream`` as JSON lines; returns the renderer used.
 
-    Idempotent: a handler installed by an earlier call is replaced, other handlers stay.
+    Idempotent: a handler installed by an earlier call is replaced, other handlers stay
+    unless ``exclusive`` is set. A process whose log must be JSON only (the shared HTTP
+    server) passes it: importing the MCP server already put FastMCP's RichHandler on
+    the root logger, which wrote every record a second time as wrapped text.
     """
     formatter = _structlog_formatter(component)
     renderer = "structlog" if formatter is not None else "stdlib-json"
@@ -100,7 +103,7 @@ def configure_structured_logging(stream: IO[str] | None = None, *, component: st
     setattr(handler, _HANDLER_MARK, True)
     root = logging.getLogger()
     for existing in list(root.handlers):
-        if getattr(existing, _HANDLER_MARK, False):
+        if exclusive or getattr(existing, _HANDLER_MARK, False):
             root.removeHandler(existing)
     root.addHandler(handler)
     root.setLevel(level)
