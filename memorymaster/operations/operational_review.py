@@ -348,6 +348,20 @@ def check_graph_observations(config: ReviewConfig) -> ReviewResult:
     )
 
 
+def _rendered_profile_fact_ids() -> set[int] | None:
+    """Fact ids in the injected profile manifest; ``None`` when it cannot be read.
+
+    Same directory rule as ``memorymaster.profile.engine.run_compiled_profile``.
+    """
+    configured = os.environ.get("MEMORYMASTER_PROFILE_OUTPUT_DIR", "").strip()
+    directory = Path(configured) if configured else Path.home() / ".memorymaster" / "projections"
+    try:
+        manifest = json.loads((directory / "user-profile.json").read_text(encoding="utf-8"))
+        return {int(fact["fact_id"]) for fact in manifest.get("facts", [])}
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
 def check_compiled_profile(config: ReviewConfig) -> ReviewResult:
     try:
         with _connect_ro(config.db) as connection:
@@ -377,11 +391,28 @@ def check_compiled_profile(config: ReviewConfig) -> ReviewResult:
                 JOIN compiled_profile_facts f ON f.id = s.fact_id
                 WHERE f.status = 'active'
             """).fetchone()[0]
+            active_ids = {int(row[0]) for row in connection.execute(
+                "SELECT id FROM compiled_profile_facts WHERE status='active'"
+            )}
     except (OSError, sqlite3.Error) as exc:
         return ReviewResult("compiled_profile", Verdict.FAIL, f"probe_error={type(exc).__name__}")
     counts = {"completed_runs": completed, "active_facts": facts, "supports": supports, "mismatches": mismatches}
     detail = "active facts must retain exact session support"
     stale = False
+    # Active facts the injected projection left out (renderer token/fact budget).
+    # Measured 2026-10-02: 61 active, 52 rendered at 1399/1400 tokens; the 9 cut
+    # were all standing constraints, the last section, and this check stayed
+    # silent because it only verified manifest integrity.
+    rendered = _rendered_profile_fact_ids()
+    omitted = sorted(active_ids - rendered) if rendered is not None else []
+    if rendered is not None:
+        counts["rendered_facts"] = len(rendered & active_ids)
+        counts["omitted_active_facts"] = len(omitted)
+    if omitted:
+        detail += (
+            f"; {len(omitted)} of {facts} active facts are not in the injected profile "
+            f"(budget cut, first ids {omitted[:5]})"
+        )
     if facts:
         # Real (float) age: truncating to whole days let 7.9 pass a 7-day limit.
         # Clock skew under a day (a support stamped slightly ahead) is fresh;
@@ -403,7 +434,7 @@ def check_compiled_profile(config: ReviewConfig) -> ReviewResult:
             )
     if mismatches:
         verdict = Verdict.FAIL
-    elif stale or (_enabled("MEMORYMASTER_COMPILED_PROFILE") and (completed == 0 or facts == 0)):
+    elif stale or omitted or (_enabled("MEMORYMASTER_COMPILED_PROFILE") and (completed == 0 or facts == 0)):
         verdict = Verdict.WARN
     else:
         verdict = Verdict.PASS

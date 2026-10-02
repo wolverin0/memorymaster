@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -228,3 +229,35 @@ def test_review_reports_why_completed_discovery_found_nothing(tmp_path: Path, mo
     assert graph.counts["discovery_no_supports"] == 2
     assert graph.counts["discovery_no_components"] == 1
     assert graph.counts["discovery_components_found"] == 1
+
+
+def _profile_with_two_active_facts(tmp_path: Path, monkeypatch, rendered: list[int]) -> review.ReviewConfig:
+    db = _db(tmp_path / "memory.db")
+    with sqlite3.connect(db) as connection:
+        connection.execute("INSERT INTO compiled_profile_facts VALUES (2, 'active', 2, 2)")
+        connection.execute(
+            "INSERT INTO compiled_profile_supports VALUES (2, 'a', datetime('now')), (2, 'b', datetime('now'))"
+        )
+    projections = tmp_path / "projections"
+    projections.mkdir()
+    (projections / "user-profile.json").write_text(
+        json.dumps({"facts": [{"fact_id": fact_id} for fact_id in rendered]}), encoding="utf-8"
+    )
+    monkeypatch.setenv("MEMORYMASTER_PROFILE_OUTPUT_DIR", str(projections))
+    monkeypatch.setenv("MEMORYMASTER_COMPILED_PROFILE", "1")
+    return review.ReviewConfig(db=db)
+
+
+def test_profile_warns_when_the_budget_leaves_active_facts_out(tmp_path: Path, monkeypatch) -> None:
+    # 2026-10-02 live: 61 active facts, 52 injected at 1399/1400 tokens, and the
+    # check stayed silent about the 9 standing constraints the renderer cut.
+    result = review.check_compiled_profile(_profile_with_two_active_facts(tmp_path, monkeypatch, [1]))
+    assert result.verdict is review.Verdict.WARN
+    assert "1 of 2 active facts are not in the injected profile" in result.detail
+    assert result.counts["rendered_facts"] == 1 and result.counts["omitted_active_facts"] == 1
+
+
+def test_profile_with_every_active_fact_injected_passes(tmp_path: Path, monkeypatch) -> None:
+    result = review.check_compiled_profile(_profile_with_two_active_facts(tmp_path, monkeypatch, [1, 2]))
+    assert result.verdict is review.Verdict.PASS
+    assert result.counts["omitted_active_facts"] == 0
