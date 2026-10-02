@@ -773,6 +773,27 @@ review does not advance any feature-success watermark or claim semantic
 acceptance; delivery of this checkpoint is not, by itself, evidence of quality.
 
 
+## 2026-10-02 daily operational review
+
+**Completed with warnings. One bounded source fix was committed but not installed.**
+
+| Area | Observed result and acceptance limit |
+|---|---|
+| Scheduled review (11:09Z, exit 3) | Runtime, database, graph, private context and canary PASS. WARN on compiled_profile, jev_decisions and checkpoint_delivery. |
+| Declared vs actual activation | The worker's own `dream_result` carries the `graph_observations` and `compiled_profile` sections, so both flags are active in the scheduled worker. Jev mode is live. |
+| Current providers | Since 2026-10-01T12Z: google/gemini-3.5-flash-lite 37 ok and one 429; antigravity/gemini-3.7-flash-low 15 ok. This matches the configured extract and consolidate providers. The 03:11Z run was partial because of that one 429 (extraction stops on 429 by design); the 09:11Z run was ok with 20 applied. |
+| Profile | Run 5 completed 2026-09-25T09:16Z and the cadence is 7 days, so the 09:15:28Z Dreaming run was not_due by about 32 s; the next run starts run 6. The review threshold (support under 7 days) cannot hold with a 7-day cadence plus multi-day mapping: this is an **obsolete expectation**. **Observed:** 61 active facts but 52 rendered at 1399/1400 tokens; the 9 omitted are all standing constraints, the last section. SessionStart also caps the whole injection at 3000 chars (T-0797 P11, installed hook only, not in the repo template), so working style and constraints do not reach sessions. The manifest and user.md agree (52), and the generated marker is present. |
+| Capture, recall, retirement | Last 24 h: 20 claims created, 168 touched by recall, 28 decayed to stale, 0 archived. 95 capture jobs are permanently blocked by design; 0 expired leases; graph jobs idle. |
+| Jev dedup silence | Last decision 2026-09-26. Dedup asks Jev only about `candidate` pairs, and only 7 candidates exist. The steward still runs dedup every cycle. **Input-starved, not broken**: the 36 h silence rule does not fit this surface. |
+| Checkpoint (F-08) | Trailing 7 days: 3 ok (09-28, 09-29, 10-02) and 3 failed (09-27 both paths, 09-30 no connected terminal, 10-01 `orca terminal list` timed out at 40 s). The gate is **NOT MET**. The Windows task exits 0 even on failure; only this review detects it. |
+| MCP health | Shared server 8766 healthz 200, no watchdog kill since the 01:59Z restart. Hermes (LAN bind) healthz/readyz 200, unauthenticated 401. |
+| Sync | Windows watermark updated 2026-10-02 04:08 local; Hermes delta updated 03:00 local. |
+| Latest restorable backup | NAS 2026-09-27, sha256 verified locally and on the NAS. Local snapshot `mm-20260930.db`: read-only `quick_check` ok, 148,555 claims, 365 s; this is fresh evidence for that copy. |
+| Fix | `6c26d50`: compiled_profile now WARNs when active facts are missing from the injected manifest (red/green tests; live run reports "9 of 61"). **Source only**: the scheduled review runs the installed wheel. |
+
+Not changed (design decisions for the operator): renderer section priority, profile budget, the SessionStart cap in `~/.claude/hooks`, and the cadence/threshold mismatch. Zero authoritative-database mutations, zero forced jobs. Separately, under explicit operator approval, the Serena MCP configuration and hooks were changed today; that change is not part of this review.
+Evidence: `artifacts/operational-review/20261002/raw-evidence.json` (sha256 `e342be7a3913fdadfc52f049d967c77019d3b7fce2266d9e34c1a4d5f295c2e6`) and `installed-review.json` (sha256 `7f235ed198769c6f587919bbb9e68f7e523ed51576fd4ecbe82cb9e3a93147c1`). No feature-success watermark is advanced.
+
 ## Shared CLI code navigation - 2026-09-28
 
 Installed Serena 1.7.0 with five navigation tools and per-session stdio for AGY,
