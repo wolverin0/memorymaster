@@ -35,12 +35,11 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-DEFAULT_URL = "http://127.0.0.1:8766/mcp"
+from memorymaster.core.shared_mcp import DEFAULT_URL, SHARED_KEY, TOKEN_ENV, resolve_token  # noqa: F401 - re-exported
+
 WORKSPACE_HEADER = "X-MM-Workspace"
 TIMEOUT_SECONDS = 120
 CONNECT_RETRY_SECONDS = 180  # longest server boot measured 2026-09-30..10-01: 144 s
-TOKEN_ENV = "MEMORYMASTER_MCP_HTTP_TOKEN"
-SHARED_KEY = r"Software\MemoryMaster\SharedMcp"
 CACHE_ENV = "MEMORYMASTER_PROXY_CACHE"
 # Answers that describe the server rather than the caller's data: safe to replay while it boots.
 CACHEABLE_METHODS = frozenset({
@@ -113,26 +112,6 @@ def resolve_workspace(environ=os.environ) -> str:
         if value:
             return os.path.abspath(value)
     return os.getcwd()
-
-
-def resolve_token(environ=os.environ) -> str:
-    """Bearer token: the environment, else the shared service's own registry key.
-
-    The registry fallback lets clients launched before the service existed
-    (their inherited environment predates it) find the token without it ever
-    being written into a client config file.
-    """
-    token = (environ.get(TOKEN_ENV) or "").strip()
-    if token or os.name != "nt":
-        return token
-    import winreg
-
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, SHARED_KEY) as key:
-            value, _kind = winreg.QueryValueEx(key, TOKEN_ENV)
-    except OSError:
-        return ""
-    return value.strip() if isinstance(value, str) else ""
 
 
 def _emit(message: dict) -> None:

@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("rapidfuzz")
+pytest.importorskip("numpy")  # process.cdist returns a numpy matrix
 
 from memorymaster.core import lifecycle  # noqa: E402
 from memorymaster.core.models import CitationInput  # noqa: E402
@@ -102,4 +103,12 @@ def test_off_switch_and_cap(service, monkeypatch):
     assert fuzzy_dedupe.run(service.store) == {"stopped": "disabled"}
     monkeypatch.delenv(fuzzy_dedupe.ENABLED_ENV)
     assert fuzzy_dedupe.run(service.store, limit=0) == {"stopped": "cap_zero"}
+    assert _fuzzy_proposals(service) == []
+
+
+def test_missing_numpy_stops_the_step_instead_of_breaking_the_cycle(service, monkeypatch):
+    # 2026-10-03: the nox env had rapidfuzz without numpy and run() raised ModuleNotFoundError.
+    _confirmed(service, KEEP), _confirmed(service, PARAPHRASE)
+    monkeypatch.setitem(__import__("sys").modules, "numpy", None)
+    assert fuzzy_dedupe.run(service.store) == {"stopped": "rapidfuzz_missing"}
     assert _fuzzy_proposals(service) == []

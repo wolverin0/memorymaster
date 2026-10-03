@@ -163,6 +163,7 @@ def run(store, *, limit: int | None = None, threshold: float = THRESHOLD) -> dic
     if cap == 0:
         return {"stopped": "cap_zero"}
     try:
+        import numpy  # noqa: F401 - process.cdist returns a numpy matrix
         import rapidfuzz  # noqa: F401 - optional extra `dedupe`
     except ImportError:
         return {"stopped": "rapidfuzz_missing"}

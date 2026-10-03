@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from typing import NamedTuple
 
-from memorymaster.surfaces.mcp_stdio_proxy import DEFAULT_URL, resolve_token
+from memorymaster.core.shared_mcp import DEFAULT_URL, resolve_token
 
 HOOK_RECALL_PATH = "/hook/recall"
 DEFAULT_TIMEOUT_SECONDS = 4.0
