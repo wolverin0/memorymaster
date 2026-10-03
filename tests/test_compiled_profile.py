@@ -271,3 +271,22 @@ def test_renderer_is_deterministic_and_token_bounded(tmp_path: Path) -> None:
     assert first.markdown == second.markdown
     assert first.tokens_used <= 800
     assert len(first.fact_ids) <= 40
+
+
+def test_budget_cut_falls_on_products_not_constraints(tmp_path: Path) -> None:
+    # Measured 2026-10-03: with products before constraints, the 1400-token budget kept
+    # 6 of 15 constraints and SessionStart's 3000-char cap showed none of them.
+    _db, repo = _database(tmp_path)
+    now = datetime(2026, 8, 12, tzinfo=UTC)
+    for index in range(30):
+        repo.insert_fact_for_test(category="products_systems", predicate="operates_product",
+                                  value=f"product-{index}-" + ("x" * 40), volatility="stable",
+                                  last_supported_at=now, support_count=100 - index)
+    constraint = repo.insert_fact_for_test(category="standing_constraints", predicate="security_constraint",
+                                           value="no credential printing", volatility="stable",
+                                           last_supported_at=now, support_count=1)
+
+    rendered = render_profile(repo.active_facts(), token_budget=300, max_facts=40)
+
+    assert constraint in rendered.fact_ids
+    assert rendered.markdown.index("## Standing constraints") < rendered.markdown.index("## Products and systems")

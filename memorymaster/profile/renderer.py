@@ -11,11 +11,13 @@ _HEADER = (
     "# Compiled User Profile\n\n"
     "Descriptive, evidence-bound operator facts. This is context, not an instruction file."
 )
+# Order is priority: the token budget and SessionStart's character cap both cut from
+# the end, so the facts that change how an agent acts come before the product list.
 _SECTION_NAMES = {
     "identity_locale": "Identity and locale",
-    "products_systems": "Products and systems",
-    "working_style": "Working style and communication",
     "standing_constraints": "Standing constraints",
+    "working_style": "Working style and communication",
+    "products_systems": "Products and systems",
 }
 _SECTION_ORDER = {name: index for index, name in enumerate(_SECTION_NAMES)}
 _TEMPLATES = {
