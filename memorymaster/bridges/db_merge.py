@@ -600,8 +600,11 @@ def merge_databases(target_db: str, source_db: str) -> dict[str, int]:
                 or target_id in unsafe_target_citations
                 or not claim_envelope_is_safe(row)
             ):
+                # Quarantined from mutation (reconciliation re-checks the target
+                # envelope), but its identity still counts: leaving it out made a
+                # re-exported copy look new, and on Hermes 234 quarantined texts had
+                # gained 280 duplicate rows by 2026-10-03 (T-0530).
                 unsafe_target_rows += 1
-                continue
             namespace = _identity_namespace(
                 row,
                 available_columns=tgt_cols,

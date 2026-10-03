@@ -129,6 +129,23 @@ def _load_citations_by_claim(
     return by_claim
 
 
+def _stamp_schema_version(src, out) -> None:
+    """Record the source's applied schema version in the delta (T-0530).
+
+    Without it merge-db saw ``source=None`` on every run and could only warn
+    "merging without a compatibility guarantee", which also hid a real
+    4.5.0/4.9.0 schema gap between the two sync sides.
+    """
+    try:
+        row = src.execute("SELECT MAX(version) FROM schema_versions").fetchone()
+    except sqlite3.OperationalError:
+        return
+    if row is None or row[0] is None:
+        return
+    out.execute("CREATE TABLE IF NOT EXISTS schema_versions (version INTEGER NOT NULL)")
+    out.execute("INSERT INTO schema_versions (version) VALUES (?)", (int(row[0]),))
+
+
 def export_delta(
     source_db: str | Path,
     since: str,
@@ -186,6 +203,7 @@ def export_delta(
         src.execute("BEGIN")
         for table in _DELTA_TABLES:
             _copy_table_ddl(src, out, table)
+        _stamp_schema_version(src, out)
 
         # `since` empty => full export. SQLite string comparison on ISO-8601
         # timestamps is chronological, so it works as a watermark.
