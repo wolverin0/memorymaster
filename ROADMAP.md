@@ -54,13 +54,17 @@ Measurements owed in production live in
   overwrites the installed copy with the template, so a reinstall would have
   doubled session context. Tests no longer reach the live shared server
   (`27c9750`).
-- [ ] 5. Shared-server stalls: cause found 2026-10-03. The only stack dump shows
-  the loop in trivial logging code with every other thread idle; the server had
-  612 MB private and a 65 MB working set, on a machine with 3.9 GB free of 64.
-  Memory pressure pages it out. Next: keep torch/JAX out of the server (its
-  restart reloads them, 95 s boot) and stop the supervisor killing a server that
-  is only paging back in.
+- [x] 5. Shared-server stalls: memory pressure pages the server out (612 MB
+  private, 65 MB working set, 3.9 GB free of 64); it stops answering ~33 s and
+  recovers alone. The supervisor now kills only a 120 s outage (`6f4e978`,
+  installed). Torch stays preloaded on purpose (lazy import stalls, T-0726).
+  Proof owed: `shared-mcp-outage-window` measurement, 2026-10-05.
 - [ ] 6. Hermes: clean the ~280 duplicates left from before the 4.9.0 sync fix.
+- [ ] 7. Autoresearch first run (operator's Codex prompt, 8 deliverables). Done:
+  part of #3, the evaluator now rejects bad results (`3e0fcc4`). Missing:
+  architecture coverage map, campaign catalog A-P checked against current code,
+  measured offline baselines, manifests and launch commands for the first three
+  campaigns, and the decision report. Campaigns run only after operator approval.
 - Operator-only, not blocking: approve or reject the 9 fuzzy near-duplicate
   proposals once they appear; the 3000-char cap itself belongs to Fleet T-0797.
 
