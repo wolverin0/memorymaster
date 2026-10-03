@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import argparse
 import hmac
+import json
+import logging
 import os
 import sys
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from memorymaster.core.structured_log import configure_structured_logging
+from memorymaster.core.structured_log import configure_structured_logging, timed_event
 from memorymaster.surfaces.mcp_server import (
     FastMCP,
     _limit_native_threads,
@@ -25,6 +28,15 @@ from memorymaster.surfaces.mcp_server import (
 TOKEN_ENV = "MEMORYMASTER_MCP_HTTP_TOKEN"
 ALLOWED_HOSTS_ENV = "MEMORYMASTER_MCP_HTTP_ALLOWED_HOSTS"
 DEFAULT_ALLOWED_HOSTS = ("127.0.0.1:*", "localhost:*", "[::1]:*")
+HOOK_RECALL_PATH = "/hook/recall"
+_HOOK_LOG = logging.getLogger("memorymaster.hook_recall")
+HOOK_RECALL_MAX_BYTES = 256 * 1024
+# T-0594: the UserPromptSubmit hook used to recall from a cold process on every
+# prompt: ~1.5 s of a ~2.1 s hook was opening the 7.6 GB DB and building caches,
+# while the same recall in a warm process takes ~0.05 s. Only the loopback,
+# local-trusted shared server serves it; a team-mode server (Hermes) does not.
+_HOOK_RECALL_THREADS = 4
+_hook_recall_limiter: Any = None
 
 
 class BearerAuthMiddleware:
@@ -114,6 +126,33 @@ def create_http_app(
             status_code=200 if ready else 503,
         )
 
+    async def hook_recall(request: Any) -> JSONResponse:
+        global _hook_recall_limiter
+        body = await request.body()
+        if len(body) > HOOK_RECALL_MAX_BYTES:
+            return JSONResponse({"error": "payload_too_large"}, status_code=413)
+        try:
+            payload = json.loads(body or b"{}")
+            query = str(payload.get("query") or "")
+            hook_data = payload.get("hook_data")
+            if hook_data is not None and not isinstance(hook_data, dict):
+                raise ValueError("hook_data must be an object")
+        except (ValueError, AttributeError):
+            return JSONResponse({"error": "bad_request"}, status_code=400)
+        import anyio
+        from memorymaster.context_hook import recall
+
+        if _hook_recall_limiter is None:
+            _hook_recall_limiter = anyio.CapacityLimiter(_HOOK_RECALL_THREADS)
+        extra = {"hook_data": hook_data} if hook_data else {}
+        with timed_event(_HOOK_LOG, "hook_recall", surface="hook", query_chars=len(query)) as fields:
+            ctx = await anyio.to_thread.run_sync(
+                partial(recall, query, db_path=resolved_db, skip_qdrant=True, **extra),
+                limiter=_hook_recall_limiter,
+            )
+            fields["ctx_chars"] = len(ctx or "")
+        return JSONResponse({"ctx": ctx or ""})
+
     mcp.settings.streamable_http_path = "/mcp"
     mcp.settings.json_response = True
     mcp.settings.stateless_http = True
@@ -121,6 +160,8 @@ def create_http_app(
     app = mcp.streamable_http_app()
     app.routes.insert(0, Route("/readyz", readyz, methods=["GET"]))
     app.routes.insert(0, Route("/healthz", healthz, methods=["GET"]))
+    if os.environ.get("MEMORYMASTER_MCP_AUTH_MODE", "").strip().lower() == "local-trusted":
+        app.routes.insert(0, Route(HOOK_RECALL_PATH, hook_recall, methods=["POST"]))
     app.add_middleware(BearerAuthMiddleware, token=resolved_token)
     return app
 

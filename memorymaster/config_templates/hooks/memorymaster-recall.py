@@ -38,15 +38,15 @@ try:
         log_hook("recall", "skip", session=session_id, reason="short-query", words=len(query.split()))
     else:
         log_hook("recall", "start", session=session_id, query_len=len(query))
-        from memorymaster.recall.context_hook import recall
+        from memorymaster.recall.remote import hook_recall  # T-0594: warm shared server first
         # hook_data opts into the S2 RECALL Jev surface (inert unless MEMORYMASTER_JEV_* is on).
         extra = {"hook_data": data} if JEV_OPT_IN else {}
-        ctx = recall(query, db_path=DB_PATH, skip_qdrant=True, **extra)
+        ctx, via = hook_recall(query, extra.get("hook_data"), db_path=DB_PATH)
         if ctx:
             def emit(output):
                 sys.stdout.write(output)
                 sys.stdout.flush()
             sent = deliver(data, recall_block(ctx), emit)
-            log_hook("recall", "done", session=session_id, hit=True, delivered=sent)
+            log_hook("recall", "done", session=session_id, hit=True, delivered=sent, via=via)
 except Exception as e:
     log_hook("recall", "error", message=str(e)[:200])
