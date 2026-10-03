@@ -794,6 +794,26 @@ acceptance; delivery of this checkpoint is not, by itself, evidence of quality.
 Not changed (design decisions for the operator): renderer section priority, profile budget, the SessionStart cap in `~/.claude/hooks`, and the cadence/threshold mismatch. Zero authoritative-database mutations, zero forced jobs. Separately, under explicit operator approval, the Serena MCP configuration and hooks were changed today; that change is not part of this review.
 Evidence: `artifacts/operational-review/20261002/raw-evidence.json` (sha256 `e342be7a3913fdadfc52f049d967c77019d3b7fce2266d9e34c1a4d5f295c2e6`) and `installed-review.json` (sha256 `7f235ed198769c6f587919bbb9e68f7e523ed51576fd4ecbe82cb9e3a93147c1`). No feature-success watermark is advanced.
 
+## 2026-10-03 daily operational review
+
+**Completed with warnings. Two bounded fixes committed and installed.**
+
+| Area | Observed result and acceptance limit |
+|---|---|
+| Scheduled review (11:09Z, exit 3) | Runtime 4.9.0, database (quick_check ok, migration 27), activation, graph, private context, canary (mm-8aef rank 5) and checkpoint PASS. WARN on compiled_profile and jev_decisions. 0 mutations. |
+| Declared vs actual activation | Compiled profile 1, graph observations 1, Jev live; both runtimes 4.9.0. The workers ran: Steward 13:52Z rc 0, Dreaming 09:11Z rc 1 (the profile failure below), HermesSync 07:00Z rc 0. |
+| Current providers | Since the last review: google/gemini-3.5-flash-lite 40 ok, 1 error; antigravity/gemini-3.7-flash-low 11 ok. Matches the configured extract and consolidate providers. |
+| Profile | **Observed failure.** Run 6 mapped 41 candidates in 6 calls and sits in `reducing`; three attempts in a row were rejected by the validator, each for a different reason (volatility, predicate, candidates not exactly once). The model output is malformed and the fail-closed validator is right; it retries every 6 h (follow-up `profile-run-6-reduce`, 21:30Z). Order changed today (`51c8792`): 61 active, 47 rendered, all 15 constraints and 21 working-style facts; the 14 omitted are products. Manifest = user.md = 47, generated marker present. SessionStart, live hook run: 2960 chars, 5 identity + 4 constraints visible (was 0 constraints). |
+| Capture, recall, retirement | Last 24 h: 16 claims created, 27 extractor and 77 decay events, 7 policy decisions. 95 capture jobs blocked (unchanged since yesterday), 0 expired leases, graph jobs idle, 63 graph supports. |
+| Jev | dedup silent 36 h (input-starved, as on 2026-10-02); skills silent 24 h is **unmeasured** until the 72 h measurement due 2026-10-04. |
+| Checkpoint (F-08) | Trailing 7 days: 4 ok (09-28, 09-29, 10-02, 10-03), 3 failed (09-27, 09-30, 10-01). Gate **NOT MET**. |
+| MCP health | Shared 8766 healthz 200; Hermes healthz/readyz 200, unauthenticated 401. **Observed failure:** watchdog kill at 14:02:37Z. The stack dump points to memory pressure, not code: the loop thread was in trivial logging code with every other thread idle, 612 MB private / 65 MB working set, 3.9 GB free of 64. ROADMAP item 5. |
+| Sync | Hermes delta 02:59 local merged; Windows delta exported 04:09 local; watermark 2026-10-03T04:46Z. |
+| Latest restorable backup | Local `mm-20260930.db` (weekly cadence, so on schedule; quick_check ok 2026-10-02, file unchanged since). NAS 2026-09-27 rc 0, next 2026-10-04. |
+| Fixes | `27c9750`: the session-start template now carries the 3000-char cap (`setup` would have reinstalled it without the cap); the suite no longer reaches the live shared server (regression from T-0594 `ff35152`, red then green). Installed in both runtimes. |
+
+Obsolete expectation, unchanged: profile support under 7 days cannot hold with a 7-day cadence. Zero authoritative-database mutations by the review, zero forced jobs. Evidence: `artifacts/operational-review/20261003/raw-evidence.json` and `installed-review.json`. No feature-success watermark is advanced.
+
 ## Shared CLI code navigation - 2026-09-28
 
 Installed Serena 1.7.0 with five navigation tools and per-session stdio for AGY,

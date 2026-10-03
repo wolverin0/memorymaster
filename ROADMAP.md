@@ -36,6 +36,34 @@ its governed-claims authority:
 
 ## Now
 
+### Engineering-owner plan (operator grant 2026-10-03)
+
+The operator handed this lane full autonomy: plan, execute, test. One item at a
+time; every item ships with a red-then-green test, a rollback and a live check.
+Measurements owed in production live in
+`~/.memorymaster/checkpoints/due-measurements.json`; the daily checkpoint runs them.
+
+- [x] 1. Evaluators enforce a policy: the LongMemEval gate fails on an
+  incomplete slice or excess provider calls; resumed QA chunks must match their
+  inputs (`3e0fcc4`).
+- [x] 2. The shared MCP server dumps every thread stack when its loop stalls,
+  so the next stall names its blocking call (`015f6ab`). Cause still owed.
+- [x] 3. Compiled profile renders constraints and working style before
+  products; a session now sees 4 of 15 constraints instead of 0 (`51c8792`).
+- [x] 4. The session-start hook template carries the 3000-char cap; `setup`
+  overwrites the installed copy with the template, so a reinstall would have
+  doubled session context. Tests no longer reach the live shared server
+  (`27c9750`).
+- [ ] 5. Shared-server stalls: cause found 2026-10-03. The only stack dump shows
+  the loop in trivial logging code with every other thread idle; the server had
+  612 MB private and a 65 MB working set, on a machine with 3.9 GB free of 64.
+  Memory pressure pages it out. Next: keep torch/JAX out of the server (its
+  restart reloads them, 95 s boot) and stop the supervisor killing a server that
+  is only paging back in.
+- [ ] 6. Hermes: clean the ~280 duplicates left from before the 4.9.0 sync fix.
+- Operator-only, not blocking: approve or reject the 9 fuzzy near-duplicate
+  proposals once they appear; the 3000-char cap itself belongs to Fleet T-0797.
+
 ### Shared CLI code navigation (2026-09-28)
 
 - [x] Refresh the current GitNexus index while preserving embeddings and excluding
