@@ -377,6 +377,51 @@ def test_supervisor_restarts_a_dead_server_and_kills_an_unhealthy_one(launcher, 
     assert spawned[1].killed  # unhealthy after the startup grace -> killed, then replaced
 
 
+def test_supervisor_waits_out_a_paging_stall_before_killing(launcher, monkeypatch, tmp_path):
+    # 2026-10-03: a paged-out server stopped answering for ~33 s and recovered on its own;
+    # three failed probes (~45 s) killed it anyway, and the restart costs ~95 s of torch import.
+    g = launcher["_supervise"].__globals__
+    clock = {"now": 0.0}
+    answers = iter([True] + [False] * 5 + [True] + [False] * 20)
+
+    class Stop(Exception):
+        pass
+
+    class FakeChild:
+        pid, returncode = 7, None
+
+        def __init__(self, argv, **kwargs):
+            if getattr(FakeChild, "started", False):
+                raise Stop
+            FakeChild.started = True
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+            FakeChild.killed_at = clock["now"]
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+    def sleep(seconds):
+        clock["now"] += seconds
+
+    for name in ("MEMORYMASTER_MCP_HTTP_TOKEN", "MEMORYMASTER_MCP_WORKSPACE_ALLOWLIST", "MEMORYMASTER_MCP_DB_ALLOWLIST"):
+        monkeypatch.setenv(name, "x")
+    monkeypatch.setenv("MEMORYMASTER_DEFAULT_DB", str(tmp_path / "memorymaster.db"))
+    g["_single_instance"] = lambda: True
+    g["_load_shared_environment"] = lambda: []
+    g["_healthy"] = lambda: next(answers)
+    g["time"] = SimpleNamespace(sleep=sleep, monotonic=lambda: clock["now"], strftime=lambda f, *_: "t", gmtime=lambda: None)
+    g["subprocess"] = SimpleNamespace(Popen=FakeChild, DEVNULL=None, TimeoutExpired=TimeoutError)
+    with pytest.raises(Stop):
+        g["_supervise"]()
+    # 50 s of failed probes is survived; the kill comes only after a sustained outage.
+    assert FakeChild.killed_at - 70 >= g["UNHEALTHY_SECONDS_BEFORE_RESTART"] >= 120
+
+
 def test_relay_connect_budget_is_wall_clock_not_attempts(monkeypatch):
     # Round-2 review: each refused connect takes ~2 s on Windows, so 60 attempts took ~185 s.
     clock = iter([0.0, 2.0, 4.0, 6.0, 8.0, 100.0, 100.0])

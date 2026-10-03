@@ -38,6 +38,9 @@ OPTIONAL = ("MEMORYMASTER_LOG_DIR",)
 STARTUP_GRACE_SECONDS = 300  # model pre-import + first bind can take minutes on a busy box
 PROBE_EVERY_SECONDS = 10
 PROBE_FAILURES_BEFORE_RESTART = 3
+# A paged-out server on a RAM-starved box stops answering for ~30 s and then recovers;
+# killing it costs a ~95 s restart (torch pre-import). Kill only a sustained outage (2026-10-03).
+UNHEALTHY_SECONDS_BEFORE_RESTART = 120
 
 
 def _log_stream():
@@ -111,16 +114,19 @@ def _supervise() -> int:
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         _say(f"started server pid {child.pid}")
-        seen_healthy, failures = False, 0
+        seen_healthy, failures, unhealthy_since = False, 0, None
         while child.poll() is None:
             time.sleep(PROBE_EVERY_SECONDS)
             if _healthy():
-                seen_healthy, failures = True, 0
+                seen_healthy, failures, unhealthy_since = True, 0, None
                 continue
             if not seen_healthy and time.monotonic() - started < STARTUP_GRACE_SECONDS:
                 continue
             failures += 1
-            if failures >= PROBE_FAILURES_BEFORE_RESTART:
+            if unhealthy_since is None:
+                unhealthy_since = time.monotonic()
+            outage = time.monotonic() - unhealthy_since + PROBE_EVERY_SECONDS
+            if failures >= PROBE_FAILURES_BEFORE_RESTART and outage >= UNHEALTHY_SECONDS_BEFORE_RESTART:
                 _say(f"server pid {child.pid} failed {failures} health probes; killing it")
                 child.kill()
                 try:
