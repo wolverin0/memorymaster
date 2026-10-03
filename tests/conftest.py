@@ -194,6 +194,19 @@ def _prune_case_root(root: Path) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_live_shared_recall(monkeypatch) -> None:
+    """Keep hook recall off the operator's running shared MCP server.
+
+    WHY: since T-0594 the installed recall hook asks the shared server first
+    whenever a token resolves, which it does on the operator's machine. A test
+    that runs the hook then got live recall instead of its fake (found
+    2026-10-03 in test_installed_hook_round_trip). Tests of the remote path
+    pass their own environ.
+    """
+    monkeypatch.setenv("MEMORYMASTER_HOOK_RECALL_REMOTE", "0")
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_snapshot_dir(tmp_path_factory, monkeypatch) -> None:
     """Keep the integrity phase's VACUUM INTO snapshots out of the real home.
 
