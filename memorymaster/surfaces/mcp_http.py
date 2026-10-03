@@ -193,18 +193,73 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _serve(app: Any, *, host: str, port: int) -> None:
+    import asyncio
+
     import uvicorn
 
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, loop="none", log_config=None))
+
+    async def serve_with_stall_dump() -> None:
+        watchdog = asyncio.create_task(_loop_stall_dump(_stall_dump_seconds()))
+        try:
+            await server.serve()
+        finally:
+            watchdog.cancel()
+            _cancel_stall_dump()
+
     if os.name != "nt":
-        uvicorn.run(app, host=host, port=port, log_config=None)  # uvicorn logs reach the JSON root handler
+        asyncio.run(serve_with_stall_dump())  # uvicorn logs reach the JSON root handler
         return
     # Windows: uvicorn's default ProactorEventLoop closes the LISTENING socket when an
     # accept completes with an error (a client reset before accept, WinError 64), leaving
     # a live process that serves nothing and never restarts. The selector loop does not.
-    import asyncio
+    asyncio.run(serve_with_stall_dump(), loop_factory=asyncio.SelectorEventLoop)
 
-    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, loop="none", log_config=None))
-    asyncio.run(server.serve(), loop_factory=asyncio.SelectorEventLoop)
+
+STALL_DUMP_ENV = "MEMORYMASTER_MCP_STALL_DUMP_SECONDS"
+_STALL_REARM_SECONDS = 5.0
+
+
+def _stall_dump_seconds() -> float:
+    """Seconds the event loop may stop before every thread's stack is dumped (0 disables).
+
+    The shared server froze several times a day and the supervisor killed it after
+    three failed health probes (~35 s), leaving no trace of what blocked the loop.
+    15 s dumps first.
+    """
+    try:
+        return max(0.0, float(os.environ.get(STALL_DUMP_ENV, "15")))
+    except ValueError:
+        return 15.0
+
+
+async def _loop_stall_dump(seconds: float) -> None:
+    """Re-arm faulthandler's timer from the loop; if the loop stops, the C timer thread dumps.
+
+    faulthandler's watchdog is a C thread that does not need the GIL, so the dump
+    happens even when a worker holds it. Each re-arm cancels the previous timer.
+    """
+    if seconds <= 0:
+        return
+    import asyncio
+    import faulthandler
+
+    stream = sys.stderr
+    if not hasattr(stream, "fileno"):
+        return
+    try:
+        stream.fileno()
+    except (OSError, ValueError):
+        return
+    while True:
+        faulthandler.dump_traceback_later(seconds, repeat=False, file=stream, exit=False)
+        await asyncio.sleep(_STALL_REARM_SECONDS)
+
+
+def _cancel_stall_dump() -> None:
+    import faulthandler
+
+    faulthandler.cancel_dump_traceback_later()
 
 
 if __name__ == "__main__":

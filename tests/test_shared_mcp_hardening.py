@@ -485,3 +485,50 @@ def test_relay_outside_the_roots_runs_the_local_stdio_server(monkeypatch, tmp_pa
     monkeypatch.setattr(relay.sys, "stdout", io.TextIOWrapper(io.BytesIO()))
     monkeypatch.setattr(relay, "_run_local_server", lambda: 17)
     assert relay.main() == 17  # fell back before needing a token
+
+
+# --- a stalled event loop leaves its stacks in the log before the watchdog kills it ---------
+
+
+def _run_loop_for(seconds_stalled: float, monkeypatch, tmp_path):
+    import asyncio
+    import time
+
+    from memorymaster.surfaces import mcp_http
+
+    log = (tmp_path / "server.log").open("w+", encoding="utf-8")
+    monkeypatch.setattr(mcp_http.sys, "stderr", log)
+    monkeypatch.setattr(mcp_http, "_STALL_REARM_SECONDS", 0.05)
+
+    async def main():
+        watchdog = asyncio.create_task(mcp_http._loop_stall_dump(0.3))
+        await asyncio.sleep(0.2)
+        time.sleep(seconds_stalled)  # blocks the loop like a stuck call would
+        await asyncio.sleep(0.1)
+        watchdog.cancel()
+        mcp_http._cancel_stall_dump()
+
+    try:
+        asyncio.run(main())
+        log.flush()
+        return (tmp_path / "server.log").read_text(encoding="utf-8")
+    finally:
+        log.close()
+
+
+def test_a_stalled_loop_dumps_every_thread_stack(monkeypatch, tmp_path):
+    dump = _run_loop_for(0.9, monkeypatch, tmp_path)
+    assert "most recent call first" in dump and "_run_loop_for" in dump
+
+
+def test_a_healthy_loop_dumps_nothing(monkeypatch, tmp_path):
+    assert _run_loop_for(0.0, monkeypatch, tmp_path) == ""
+
+
+def test_stall_dump_threshold_defaults_and_disables(monkeypatch):
+    from memorymaster.surfaces import mcp_http
+
+    monkeypatch.delenv(mcp_http.STALL_DUMP_ENV, raising=False)
+    assert mcp_http._stall_dump_seconds() == 15.0
+    monkeypatch.setenv(mcp_http.STALL_DUMP_ENV, "0")
+    assert mcp_http._stall_dump_seconds() == 0.0
