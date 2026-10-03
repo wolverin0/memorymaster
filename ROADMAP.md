@@ -59,7 +59,11 @@ Measurements owed in production live in
   recovers alone. The supervisor now kills only a 120 s outage (`6f4e978`,
   installed). Torch stays preloaded on purpose (lazy import stalls, T-0726).
   Proof owed: `shared-mcp-outage-window` measurement, 2026-10-05.
-- [ ] 6. Hermes: clean the ~280 duplicates left from before the 4.9.0 sync fix.
+- [x] 6. Hermes duplicates. Real size was 17,187, not 280: Windows stamped
+  tenant `personal` on its old claims, Hermes held them tenant-less, and the
+  merge (tenant is identity, on purpose) inserted every update again. Archived
+  through the lifecycle with a VM backup kept; a post-merge step archives new
+  twins (`abf6337`, installed on Hermes). Duplicates 17,300 -> 113.
 - [ ] 7. Autoresearch first run (operator's Codex prompt, 8 deliverables). Done:
   part of #3, the evaluator now rejects bad results (`3e0fcc4`). Missing:
   architecture coverage map, campaign catalog A-P checked against current code,
