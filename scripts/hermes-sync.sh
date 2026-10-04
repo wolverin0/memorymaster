@@ -111,7 +111,11 @@ if [ -f "$WIN_DELTA_REMOTE" ]; then
     # Windows stamps tenant "personal"; Hermes runs tenant-less, so the merge inserts a
     # "personal" twin of every old claim Windows updates. Archive the tenant-less copy
     # (ROADMAP item 6, 2026-10-03). A failure here is logged, never fatal to the sync.
-    TWINS_JSON="$("${MM_PYTHON:-python3}" -P -m memorymaster.bridges.tenant_twins --db "$LOCAL_DB" --tenant personal --apply 2>&1)" \n        && echo "  tenant twins: $TWINS_JSON" || echo "  WARN: tenant twin step failed: $TWINS_JSON"
+    if TWINS_JSON="$("${MM_PYTHON:-python3}" -P -m memorymaster.bridges.tenant_twins --db "$LOCAL_DB" --tenant personal --apply 2>&1)"; then
+        echo "  tenant twins: $TWINS_JSON"
+    else
+        echo "  WARN: tenant twin step failed: $TWINS_JSON"
+    fi
 else
     echo "  No windows-delta.db on the share yet — Windows scheduled task"
     echo "  has not exported. Skipping inbound merge (will retry next cycle)."
