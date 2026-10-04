@@ -69,6 +69,9 @@ Measurements owed in production live in
   architecture coverage map, campaign catalog A-P checked against current code,
   measured offline baselines, manifests and launch commands for the first three
   campaigns, and the decision report. Campaigns run only after operator approval.
+- [ ] 8. Graph observations produce nothing since 2026-08-31: about 150
+  discovery jobs per Dreaming run all end `no_supports`, 0 emitted, 31,345 jobs
+  accumulated. Find why discovery finds no supports, or stop enqueueing it.
 - Operator-only, not blocking: approve or reject the 9 fuzzy near-duplicate
   proposals once they appear; the 3000-char cap itself belongs to Fleet T-0797.
 
@@ -245,6 +248,7 @@ A box is ticked only with evidence (command, count or receipt) in the ledger.
 - [x] Independent adversarial review of the new code; no open high findings (high: `799dc1f`; medium/low: `80277a4`, `2af6f81`, `25bb5af`, `8e85b3b`).
 - [x] Reports at 24 h, 72 h and 7 days from dashboard numbers (2026-09-30, `artifacts/2026-09-30-jev-live-week-report.html`): every first-24 h operational criterion passed for the whole week (fallback <=6 %, US$1.18/week vs US$2/day cap, 0 ledger write failures, 0 leaked egress). Usefulness was unmeasurable: the recall block showed no claim ids, so `used_in_turn` was 2/2811.
 - [ ] T-0739 (installed 2026-10-01T02:32Z, wheel `072fd1ff`): `[mm-id]` on every injected claim plus a cite instruction (+29 tokens/block, +5.1 %); detector by id, `#<id>` and 8-gram, plus a separately labelled weak path (`used_in_turn_weak`, never a calibration label). Re-measure with `jev-status` after 2026-10-04T02:32Z: use rate per path and positive outcomes per question (>=100 to start calibration).
+  Measured 2026-10-04 (72 h): recall 1 strong + 18 weak uses of 1,066 exposed (0.09 % strong, as before: 2/2811); session 3 + 14 of 277 (1.1 %); hints 0 of 1,576; skills 0 of 11. Positives per question: recall.relevant about 1 of 1,144, session.relevant_to_project about 3 of 272. Calibration **cannot start** at this rate (>=100 needed). Cost $0.02-0.06/day of a $2 cap; context +29 tokens/block. Open question: hints are exposed 1,576 times with zero use.
 
 **Phase 5 — learning loop**
 - [ ] Weekly per-question calibration (split-half, 95 % lower bound, ≥100 outcomes).

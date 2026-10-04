@@ -794,6 +794,28 @@ acceptance; delivery of this checkpoint is not, by itself, evidence of quality.
 Not changed (design decisions for the operator): renderer section priority, profile budget, the SessionStart cap in `~/.claude/hooks`, and the cadence/threshold mismatch. Zero authoritative-database mutations, zero forced jobs. Separately, under explicit operator approval, the Serena MCP configuration and hooks were changed today; that change is not part of this review.
 Evidence: `artifacts/operational-review/20261002/raw-evidence.json` (sha256 `e342be7a3913fdadfc52f049d967c77019d3b7fce2266d9e34c1a4d5f295c2e6`) and `installed-review.json` (sha256 `7f235ed198769c6f587919bbb9e68f7e523ed51576fd4ecbe82cb9e3a93147c1`). No feature-success watermark is advanced.
 
+## 2026-10-04 daily operational review
+
+**Completed with warnings. One bounded regression of mine fixed, installed and run on Hermes.**
+
+| Area | Observed result and acceptance limit |
+|---|---|
+| Scheduled review (11:09Z, exit 3) | Runtime 4.9.0, database (quick_check ok, migration 27), activation, graph, private context, canary (mm-8aef rank 5) and checkpoint PASS. WARN on compiled_profile (17 of 63 omitted: products, by design since `51c8792`) and jev_decisions. 0 mutations. |
+| Declared vs actual activation | Profile 1, graph observations 1, Jev live; 4.9.0 in both runtimes. Workers ran: Steward 13:52Z rc 0, Backup 04:00Z rc 0, Hermes sync 07:00Z rc 0. Dreaming 09:11Z rc 1: a google 429 on the run's first call, the rest of the run completed (15 applied). Same 429 eight times since 09-27; known, extraction stops on 429 by design. |
+| Current providers | Since the last review: google/gemini-3.5-flash-lite 37 ok, 1 error (429); antigravity/gemini-3.7-flash-low 8 ok. Matches the configuration. |
+| Profile | Run 6 completed on the 10-03 15:11Z retry: 46 facts, 7 applied, 30 rejected; watermark 148760 = target. Manifest = user.md = 46, generated marker present, constraints second. `error_code` keeps the last intermediate error on a completed run (cosmetic). |
+| Graph observations | **Observed failure (no output).** Active, but every run enqueues about 150 discovery jobs that all end `no_supports`; 0 emitted. Only 3 observations exist, the last from 2026-08-31; 31,345 jobs accumulated. ROADMAP item 8. |
+| Capture, recall, retirement | Last 24 h: 11 claims created, 21 extractor, 91 validator, 79 decay events. 95 capture jobs blocked (unchanged), 0 expired leases, 63 graph supports. |
+| Jev (72 h measurement) | Strong use: recall 1/1066, session 3/277, hints 0/1576, skills 0/11. Positives per question about 1 and 3: calibration **cannot start**. Orphan send intents 16 since 09-20 (about 1/day of about 490 sends), recall hook cut by its deadline: known, low rate. |
+| Recall hook (T-0594) | **Observed failure against its criterion.** Cancellations did not fall (5/183, 2/50); `skipped_busy` 21-32 %: the paged-out shared server. |
+| Checkpoint (F-08) | Trailing 7 days 5 ok, 2 failed (09-30, 10-01). Gate **NOT MET**. |
+| MCP health | Shared 200; Hermes healthz/readyz 200, unauthenticated 401. |
+| Sync | Windows watermark 2026-10-04T05:36Z; Hermes delta 02:59 local. On Hermes: merges ok, 0 errors, quarantine 1568 stable over 3 runs, no schema warning (T-0530 closed). **My regression:** the tenant-twin step (`abf6337`) had a literal backslash-n and aborted the 10-03 15:00 and 10-04 03:00 runs after their merge (cleanup and DONE skipped). |
+| Latest restorable backup | NAS `memorymaster-20261004T040106Z.db`: counts verified against the live DB, sha256 local equals NAS. |
+| Fix | `1621f01`: the twin step is an if-block; a test runs the real block under `set -euo pipefail` (red before, green after). Deployed to Hermes and run there: exit 0, 0 twins. Proof owed at the 15:00 local run (`hermes-twin-step-first-run`). |
+
+Zero authoritative-database mutations by the review, zero forced jobs. Evidence: `artifacts/operational-review/20261004/` (raw-evidence, installed-review, jev-status-3d). No feature-success watermark is advanced.
+
 ## 2026-10-03 daily operational review
 
 **Completed with warnings. Two bounded fixes committed and installed.**
