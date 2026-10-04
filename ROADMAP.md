@@ -64,11 +64,15 @@ Measurements owed in production live in
   merge (tenant is identity, on purpose) inserted every update again. Archived
   through the lifecycle with a VM backup kept; a post-merge step archives new
   twins (`abf6337`, installed on Hermes). Duplicates 17,300 -> 113.
-- [ ] 7. Autoresearch first run (operator's Codex prompt, 8 deliverables). Done:
-  part of #3, the evaluator now rejects bad results (`3e0fcc4`). Missing:
-  architecture coverage map, campaign catalog A-P checked against current code,
-  measured offline baselines, manifests and launch commands for the first three
-  campaigns, and the decision report. Campaigns run only after operator approval.
+- [x] 7. Autoresearch first run: all 8 deliverables are in
+  `.planning/audits/2026-10-04-autoresearch/REPORT.md` (`b0b8f81`).
+  - Three guarded benchmarks were added, along with fixes to the perf gate
+    (`bc8493e`) and a compaction tenant leak (`0aec7bb`).
+  - Key measurement: warm recall at 45k claims takes 69 ms, but the first call
+    after a single write takes 681 ms. That is the cold tokenizer rescan, and it
+    matches the live 660 ms median.
+  - The campaigns (A tokenizer, B packing, D warm recall) are waiting for
+    operator approval to install codex-autoresearch.
 - [ ] 8. Graph observations produce nothing since 2026-08-31: about 150
   discovery jobs per Dreaming run all end `no_supports`, 0 emitted, 31,345 jobs
   accumulated. Find why discovery finds no supports, or stop enqueueing it.
