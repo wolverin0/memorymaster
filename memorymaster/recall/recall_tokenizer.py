@@ -213,16 +213,19 @@ def _corpus_stats(
         # less work per claim: _strip can only change text holding a URL, a path or
         # code, and each claim counts a token once, so dedupe first and let
         # Counter do the counting in C. Cold recall scanned ~46k live claims.
+        # _WORD matches start with a letter and are at least _MIN long, and lower()
+        # neither shortens text nor turns a letter into a digit, so the length and
+        # digit filters of _candidate_tokens cannot drop anything here.
         counts: Counter[str] = Counter()
-        findall, stop, min_len = _WORD.findall, _STOP, _MIN
+        findall, stop, lower = _WORD.findall, _STOP, str.lower
         for (text,) in rows:
             if not text:
                 continue
             if "http" in text or "/" in text or "`" in text or "\\" in text:
                 text = _strip(text)
-            tokens = {match.lower() for match in findall(text)}
+            tokens = set(map(lower, findall(text)))
             tokens.difference_update(stop)
-            counts.update(tok for tok in tokens if len(tok) >= min_len and not tok.isdigit())
+            counts.update(tokens)
         return (total, dict(counts))
     except sqlite3.Error as exc:
         logger.debug("recall_tokenizer: corpus scan failed: %s", exc)
