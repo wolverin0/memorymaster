@@ -73,6 +73,14 @@ Measurements owed in production live in
     matches the live 660 ms median.
   - The campaigns (A tokenizer, B packing, D warm recall) are waiting for
     operator approval to install codex-autoresearch.
+- [x] 7a. Campaign A (cold tokenizer), operator-approved and merged
+  (`3d314a5`, `6415b33`).
+  - Cold time at 20k fell from 253 to 135 ms (−47 %), with identical tokens
+    and alternated rounds in the same session.
+  - Installed in both runtimes, and the shared server was restarted.
+  - Live warm recall afterwards: 420-789 ms.
+  - Found along the way: the first recall after a server boot takes about
+    20 s (lazy loading), and requests that arrive meanwhile queue behind it.
 - [ ] 8. Graph observations produce nothing since 2026-08-31: about 150
   discovery jobs per Dreaming run all end `no_supports`, 0 emitted, 31,345 jobs
   accumulated. Find why discovery finds no supports, or stop enqueueing it.
