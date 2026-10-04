@@ -36,6 +36,7 @@ import logging
 import math
 import re
 import sqlite3
+from collections import Counter
 from functools import lru_cache
 
 logger = logging.getLogger(__name__)
@@ -203,20 +204,26 @@ def _corpus_stats(
                 _NON_CANONICAL_STATUSES,
             ).fetchone()[0]
         )
-        df: dict[str, int] = {}
         rows = conn.execute(
             f"SELECT text FROM claims "
             f"WHERE text IS NOT NULL AND status NOT IN ({placeholders})",
             _NON_CANONICAL_STATUSES,
         )
+        # Same document frequencies as counting _candidate_tokens per claim, with
+        # less work per claim: _strip can only change text holding a URL, a path or
+        # code, and each claim counts a token once, so dedupe first and let
+        # Counter do the counting in C. Cold recall scanned ~46k live claims.
+        counts: Counter[str] = Counter()
+        findall, stop, min_len = _WORD.findall, _STOP, _MIN
         for (text,) in rows:
-            seen: set[str] = set()
-            for tok in _candidate_tokens(text or ""):
-                if tok in seen:
-                    continue
-                seen.add(tok)
-                df[tok] = df.get(tok, 0) + 1
-        return (total, df)
+            if not text:
+                continue
+            if "http" in text or "/" in text or "`" in text or "\\" in text:
+                text = _strip(text)
+            tokens = {match.lower() for match in findall(text)}
+            tokens.difference_update(stop)
+            counts.update(tok for tok in tokens if len(tok) >= min_len and not tok.isdigit())
+        return (total, dict(counts))
     except sqlite3.Error as exc:
         logger.debug("recall_tokenizer: corpus scan failed: %s", exc)
         return (0, {})
