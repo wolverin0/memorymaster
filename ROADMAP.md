@@ -88,6 +88,11 @@ Measurements owed in production live in
   - Live on Windows and Hermes from 2026-10-05T00:23Z, with backups and
     rollbacks.
   - Proof owed: `textgen-live-recall`, 2026-10-06.
+- [x] 7c. The shared server warms the token statistics at boot and after text
+  changes (`88f75d0`).
+  - Live, the first recall after a restart fell from 2,452 ms to 803 ms.
+  - A profile without Jev puts warm recall at 65 ms. The live remainder
+    (400-600 ms) is Jev's provider calls.
 - [ ] 8. Graph observations produce nothing since 2026-08-31: about 150
   discovery jobs per Dreaming run all end `no_supports`, 0 emitted, 31,345 jobs
   accumulated. Find why discovery finds no supports, or stop enqueueing it.
