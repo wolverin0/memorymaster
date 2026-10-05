@@ -540,12 +540,28 @@ def _check_schema_compatibility(
             "compatibility guarantee.", src_v, tgt_v,
         )
         return
-    if src_v != tgt_v:
+    if src_v != tgt_v and not _merge_compatible_gap(min(src_v, tgt_v), max(src_v, tgt_v)):
         raise ValueError(
             "Refusing to merge across incompatible schema versions: "
             f"source applied v{src_v}, target applied v{tgt_v}. "
             "Migrate both DBs to the same version first."
         )
+
+
+def _merge_compatible_gap(low: int, high: int) -> bool:
+    """True when every migration in (low, high] declares ``MERGE_COMPATIBLE``.
+
+    Such a migration changes nothing a merged claim row must satisfy (migration 28
+    adds only a counter and triggers), so both sides of the gap accept each other's
+    rows. Any other migration in the gap, or one this code does not know, refuses.
+    """
+    import importlib
+
+    from memorymaster.stores.migrations.runner import discover_migrations
+
+    flags = {m.version: bool(getattr(importlib.import_module(m.module_name), "MERGE_COMPATIBLE", False))
+             for m in discover_migrations()}
+    return all(flags.get(version, False) for version in range(low + 1, high + 1))
 
 
 def merge_databases(target_db: str, source_db: str) -> dict[str, int]:

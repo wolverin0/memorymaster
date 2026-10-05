@@ -15,6 +15,9 @@ from typing import Any
 
 VERSION = 28
 DESCRIPTION = "text_generation counter for recall-token statistics"
+# Adds a counter row and triggers only: claim rows stay valid on either side, so a
+# v27 database and a v28 one may still exchange deltas (bridges/db_merge.py).
+MERGE_COMPATIBLE = True
 
 _SQLITE = """
 INSERT OR IGNORE INTO cache_meta(key, value) VALUES ('text_generation', 0);
