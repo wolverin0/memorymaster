@@ -41,6 +41,7 @@ def rescope_claim(store, claim_id: int, target_scope: str, *, reason: str) -> in
     for step in _PATH[old.status]:
         lifecycle.transition_claim(store, new.id, step, reason=f"rescope from #{claim_id}: {reason}",
                                    event_type="transition")
+    store.adopt_claim_history(new.id, claim_id)
     store.mark_superseded(claim_id, new.id, f"rescope {old.scope} -> {target_scope}: {reason}",
                           event_payload={"rescope": True, "from_scope": old.scope, "to_scope": target_scope})
     return new.id

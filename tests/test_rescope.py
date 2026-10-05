@@ -49,6 +49,25 @@ def test_a_move_copies_the_claim_and_supersedes_the_original(store, status) -> N
     assert (old.status, old.replaced_by_claim_id, new.supersedes_claim_id) == ("superseded", new_id, old_id)
 
 
+def test_a_moved_claim_keeps_its_age_so_ranking_does_not_treat_it_as_new(store) -> None:
+    # Found 2026-10-05: copies made at 03:29 carried created_at/last_validated_at of
+    # that moment, so freshness (anchored on last_validated_at) and recompute_tiers
+    # (created < 7 days -> core) ranked month-old claims as brand new and pushed the
+    # operational-review canary out of the top 5.
+    old_id = _claim(store, "confirmed")
+    with store.connect() as conn:
+        conn.execute("UPDATE claims SET created_at = '2026-09-02T03:37:46+00:00', "
+                     "last_validated_at = '2026-09-02T08:02:42+00:00', tier = 'working', "
+                     "access_count = 4, last_accessed = '2026-09-20T10:00:00+00:00' WHERE id = ?", (old_id,))
+        conn.commit()
+    new = store.get_claim(rescope.rescope_claim(store, old_id, "project:whatsappbot", reason="age"),
+                          include_citations=False)
+    assert (new.created_at, new.last_validated_at, new.tier, new.access_count, new.last_accessed) == (
+        "2026-09-02T03:37:46+00:00", "2026-09-02T08:02:42+00:00", "working", 4, "2026-09-20T10:00:00+00:00")
+    assert store.recompute_tiers() is not None
+    assert store.get_claim(new.id, include_citations=False).tier != "core"
+
+
 def test_retired_claims_and_same_scope_moves_are_refused(store) -> None:
     claim_id = _claim(store, "confirmed")
     with pytest.raises(ValueError, match="already"):

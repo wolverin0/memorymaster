@@ -2493,6 +2493,10 @@ class PostgresStore(SQLiteStore):
                 ),
             )
 
+    def adopt_claim_history(self, claim_id: int, source_claim_id: int) -> None:
+        # Rescope (govern/rescope.py) is SQLite-only for now: fail closed.
+        raise NotImplementedError("adopt_claim_history is SQLite-only")
+
     def set_confidence(self, claim_id: int, confidence: float, details: str | None = None) -> None:
         bounded = max(0.0, min(1.0, confidence))
         now = utc_now()
