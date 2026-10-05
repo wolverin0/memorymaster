@@ -794,6 +794,37 @@ acceptance; delivery of this checkpoint is not, by itself, evidence of quality.
 Not changed (design decisions for the operator): renderer section priority, profile budget, the SessionStart cap in `~/.claude/hooks`, and the cadence/threshold mismatch. Zero authoritative-database mutations, zero forced jobs. Separately, under explicit operator approval, the Serena MCP configuration and hooks were changed today; that change is not part of this review.
 Evidence: `artifacts/operational-review/20261002/raw-evidence.json` (sha256 `e342be7a3913fdadfc52f049d967c77019d3b7fce2266d9e34c1a4d5f295c2e6`) and `installed-review.json` (sha256 `7f235ed198769c6f587919bbb9e68f7e523ed51576fd4ecbe82cb9e3a93147c1`). No feature-success watermark is advanced.
 
+## 2026-10-05 daily operational and weekly acceptance review
+
+**Completed with warnings. Two owned regressions fixed, one installed; weekly semantic acceptance remains UNMEASURED.**
+ROADMAP and the effective installed configuration were read first; the authoritative
+and auxiliary SQLite were opened read-only for measurement. No steward, generation,
+sync or backup job was forced and no feature was enabled to produce a sample.
+
+| Area | Observed result and acceptance limit |
+|---|---|
+| Scheduled review (11:05Z, exit 1) | **FAIL on retrieval_canary** (mm-8aef rank missing, was 5). Runtime 4.9.0, database (quick_check ok, FK 0, migration 28), activation, graph, private context and checkpoint PASS; WARN compiled_profile (17 of 63 omitted, products by design) and jev_decisions. 0 mutations. |
+| Canary diagnosis | Two causes. **Owned:** the 774 curation copies (03:29Z) carried created_at/last_validated_at of the copy moment, so the freshness bonus and recompute_tiers (created < 7 days -> core) ranked month-old claims as new; three wezbridge copies took the top places. Fixed `b5ba660`/`668fcf7` (copies adopt the source's created/validated times, tier and access counters; updated_at moves so the delta sync re-exports them); the 774 live copies were repaired, 0 mismatches, prior values in `artifacts/curation-20261005/history-fix-before.json`. **Not owned:** the canary claim itself decays by clock each steward cycle (confidence 0.5008 at 13:53Z) and stays at rank 8 after the fix, so the FAIL stands: it is the known clock-decay issue, not retrieval. |
+| Declared vs actual activation | Profile 1, graph observations 1, Jev **shadow since 13:38Z** (operator ruling; live before, with the shadow-inline fix `7e80757`). Dreaming in application mode (dry_run=0 on all 27 runs in 7 days). 4.9.0 in both runtimes. GraphRAG recall, wiki absorption and workflow receipts: DISABLED. |
+| Providers (call records) | Since the last review: google/gemini-3.5-flash-lite 33 ok, 2 x 429 (the first call of each Dreaming run); antigravity/gemini-3.7-flash-low 5 ok. Seven days: google 264 ok, 7 x 429, 5 x 503, 1 other; antigravity 54 ok, 2 errors. Model names are call-record labels, not served-model attestations. Profile runs keep run labels only; no separate profile provider-call records were found. Jev seven-day estimate $0.421 at token rates; **invoiced cost UNKNOWN**. |
+| Graph observations | Enabled; **UNMEASURED, n=0.** 3,969 jobs in 7 days, all `no_supports`, max attempts 1, no expired leases; 0 new observations (3 retained, all archived). All 63 supports point to non-confirmed claims (archived 10, stale 48, superseded 5), so no observation is recallable on retired support. ROADMAP item 8. |
+| Capture and queues | Capture jobs: 95 blocked (oldest 08-11, max attempts 5; 73 ineligible, 20 unavailable graph claims), 0 expired leases. Dreaming captures: 326 applied, 37 captured, 345 `extracted` retained from 07-22..09-07 (max attempts 9, nothing new since), 1 retryable. Applications in 7 days: 13 add, 100 ignore. |
+| Promotion and citations | 917 distinct candidate-to-confirmed promotions in 7 days, **143 excluding the 774 curation copies**; 1,199 new citations, 1,023 of them copies. Activity, not relevance labels. Unsafe-output rejection rate and retrieval impact: **UNMEASURED**. |
+| Profile | 63 active facts (18 preference, 45 stable), every fact with >= 2 independent sessions, support counts and session counts match exactly, 0 preferences beyond the 90-day TTL, stable facts retained since 08-06. Run 6 completed 10-03 at watermark 148760 = target; manifest = user.md = 46 facts, generated marker present, 1400-token/60-fact renderer limits. Live installed SessionStart: rc 0, 936 ms, 2,952 chars, exact prefix of user.md, 9 of 46 facts visible (identity and constraints) under the 3000-char cap (Fleet T-0797). Agent consumption UNMEASURED. |
+| Steward | Runs every 6 h, task rc 0. **Owned regression:** since T-0764 every `job_finish` logged `outcome=error, error_type=SystemExit` because the steward script ends with `sys.exit`. Fixed `a76e36a` (red then green), installed in both runtimes; rollback `artifacts/release-stewardexit-20261005/rollback.ps1`. Proof owed at the next steward run (19:52Z). |
+| Checkpoint (F-08) | Trailing 7 days: 5 ok (09-29, 10-02..10-05), 2 failed (09-30, 10-01). Gate **NOT MET**. |
+| MCP and sync | Shared 8766 healthz 200; Hermes 8765 healthz/readyz 200, unauthenticated 401; authenticated hook recall 200. Hermes runs DONE 10-04 15:13 and 10-05 03:13 local, twins 0, quarantine 1568 stable. The curation copies and their repair travel with the next Windows delta. |
+| Snapshot namespace and backup | `T:/MemoryMaster/snapshots/memorymaster-073eec9cf3f9/mm-20260930.db` (weekly; next due about 10-07) plus a stray 0-byte `mm-20260928-*.part-wal`, left in place. Restorable today: `artifacts/curation-20261005/pre-curation.db` (sqlite backup API before the curation): quick_check ok, FK 0, 148,665 claims, opens and answers through MemoryService. NAS `memorymaster-20261004T040106Z.db` verified 10-04. |
+| Due measurement | `shared-mcp-outage-window` **PASS**: since 10-03 15:20Z, 1 stall dump and 0 supervisor kills (about 5/day before); today's two restarts were manual deploys. `steward-job-finish-outcome` added (due 20:30Z). |
+| Tests | Full `nox -s unit` 6,840 passed, 0 failed (after `3271867`: cwd restored per test, TF-IDF tests marked ml); `nox -s ml` 90 passed. |
+
+Other work today, recorded in ROADMAP 7e-7f: prompt recall reads the cwd project and its
+parents (`97f855d`, `367e8a9`); 774 project-specific claims moved out of `project:py-apps`
+by copy and supersession (`d3cb153`). The authoritative database was mutated by that
+curation, its history repair, and 7 operator-approved fuzzy-duplicate resolutions;
+the review itself forced no job. Evidence: `artifacts/operational-review/20261005/`
+(installed-review, raw-evidence, weekly-acceptance). No feature-success watermark is advanced.
+
 ## 2026-10-04 daily operational review
 
 **Completed with warnings. One bounded regression of mine fixed, installed and run on Hermes.**
