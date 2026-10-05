@@ -348,7 +348,19 @@ def _pack_blocks(
     return included, used
 
 
-def _render_context(included, *, considered, budget, output_format, tokens=0):
+def _json_fragment(row, fragments):
+    """One claim's entry exactly as json.dumps(indent=2) prints it inside "claims"."""
+    key = id(row)
+    fragment = fragments.get(key) if fragments is not None else None
+    if fragment is None:
+        entry = _claim_json_entry(row["claim"], float(row.get("score", 0.0)))
+        fragment = "    " + json.dumps(entry, indent=2).replace("\n", "\n    ")
+        if fragments is not None:
+            fragments[key] = fragment
+    return fragment
+
+
+def _render_context(included, *, considered, budget, output_format, tokens=0, fragments=None):
     header, footer, _ = _get_format_overhead(output_format)
     if output_format == "text":
         body = "\n\n".join(block for block, _ in included) or "(no claims fit within token budget)"
@@ -358,20 +370,23 @@ def _render_context(included, *, considered, budget, output_format, tokens=0):
         meta = f'<meta claims_included="{len(included)}" claims_considered="{considered}" tokens_used="{tokens}" token_budget="{budget}" />\n'
         output = header + meta + inner + footer
     else:
-        output = json.dumps({
-            "claims": [_claim_json_entry(row["claim"], float(row.get("score", 0.0))) for _, row in included],
-            "meta": {"claims_included": len(included), "claims_considered": considered,
-                     "tokens_used": tokens, "token_budget": budget},
-        }, indent=2)
+        # Same bytes as json.dumps({"claims": [...], "meta": {...}}, indent=2), built from
+        # per-claim fragments serialised once per pack_context call: packing re-renders
+        # the growing prefix for every candidate (200 rows: ~390 ms re-serialising).
+        claims = ",\n".join(_json_fragment(row, fragments) for _, row in included)
+        claims = "[\n" + claims + "\n  ]" if included else "[]"
+        meta = json.dumps({"claims_included": len(included), "claims_considered": considered,
+                           "tokens_used": tokens, "token_budget": budget}, indent=2).replace("\n", "\n  ")
+        output = '{\n  "claims": ' + claims + ',\n  "meta": ' + meta + "\n}"
     return output
 
 
-def _measured_context(included, *, considered, budget, output_format):
+def _measured_context(included, *, considered, budget, output_format, fragments=None):
     # Resolve the small self-reference caused by serializing tokens_used itself.
     tokens = 0
     while True:
         output = _render_context(included, considered=considered, budget=budget,
-                                 output_format=output_format, tokens=tokens)
+                                 output_format=output_format, tokens=tokens, fragments=fragments)
         measured = estimate_tokens(output)
         if measured == tokens:
             return output, measured
@@ -391,7 +406,7 @@ def pack_context(
     if token_budget <= 0:
         raise ValueError("token_budget must be positive.")
     profile = _get_provider_profile(provider, token_budget)
-    kwargs = dict(considered=len(ranked_rows), budget=token_budget, output_format=output_format)
+    kwargs = dict(considered=len(ranked_rows), budget=token_budget, output_format=output_format, fragments={})
     output, used = _measured_context([], **kwargs)
     if used > token_budget:
         raise ValueError(f"token_budget is below the minimum {output_format} representation ({used} tokens).")
