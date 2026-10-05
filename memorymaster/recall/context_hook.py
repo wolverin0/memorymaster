@@ -18,6 +18,7 @@ Usage (from CLAUDE.md):
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import math
 import os
@@ -825,6 +826,10 @@ def _recall_weight(name: str) -> float:
 # falling back to ``project:memorymaster`` so the typical deployment gets a
 # sensible default without forcing every caller to wire env plumbing.
 _DEFAULT_CURRENT_SCOPE = "project:memorymaster"
+# The project of the prompt being recalled, from the hook payload's cwd (2026-10-05):
+# writes already took their scope from the session's cwd, but recall searched the
+# fixed default above, so every project read MemoryMaster's claims and none of its own.
+_REQUEST_SCOPE: contextvars.ContextVar[str | None] = contextvars.ContextVar("mm_prompt_scope", default=None)
 
 
 def _recall_scope_boost() -> float:
@@ -853,10 +858,12 @@ def _current_scope() -> str:
     Reads ``MEMORYMASTER_SCOPE_DEFAULT`` first; falls back to
     :data:`_DEFAULT_CURRENT_SCOPE` when unset or empty.
     """
+    # An explicit MEMORYMASTER_SCOPE_DEFAULT pins the scope; otherwise the prompt's
+    # own project (its cwd) wins over the built-in default.
     raw = os.environ.get("MEMORYMASTER_SCOPE_DEFAULT")
-    if raw is None or raw.strip() == "":
-        return _DEFAULT_CURRENT_SCOPE
-    return raw.strip()
+    if raw is not None and raw.strip():
+        return raw.strip()
+    return _REQUEST_SCOPE.get() or _DEFAULT_CURRENT_SCOPE
 
 
 # Query expansion via entity-matched synonyms (roadmap 1.5).
@@ -1167,6 +1174,13 @@ def recall(
     # bullet-order so the caller gets exact mapping without parsing the
     # rendered markdown.
     rendered_ids: list[int] = []
+    cwd = hook_data.get("cwd") if isinstance(hook_data, dict) else None
+    if cwd:
+        from memorymaster.core.scope_utils import scope_from_cwd
+
+        scope_token = _REQUEST_SCOPE.set(scope_from_cwd(cwd))
+    else:
+        scope_token = None
 
     try:
         rendered = _recall_impl(
@@ -1184,6 +1198,8 @@ def recall(
             return rendered, rendered_ids
         return rendered
     finally:
+        if scope_token is not None:
+            _REQUEST_SCOPE.reset(scope_token)
         _emit_recall_latency(phase_ms, total_start)
 
 
