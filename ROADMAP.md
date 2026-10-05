@@ -81,6 +81,13 @@ Measurements owed in production live in
   - Live warm recall afterwards: 420-789 ms.
   - Found along the way: the first recall after a server boot takes about
     20 s (lazy loading), and requests that arrive meanwhile queue behind it.
+- [x] 7b. The tokenizer keys on a text-only generation (migration 28, `af2d72a`).
+  - On a 20k corpus, recall after a confidence write fell from 154 ms to 37 ms
+    (warm is 32 ms), with identical rankings.
+  - Merge tolerates a merge-compatible version gap (`e946d86`).
+  - Live on Windows and Hermes from 2026-10-05T00:23Z, with backups and
+    rollbacks.
+  - Proof owed: `textgen-live-recall`, 2026-10-06.
 - [ ] 8. Graph observations produce nothing since 2026-08-31: about 150
   discovery jobs per Dreaming run all end `no_supports`, 0 emitted, 31,345 jobs
   accumulated. Find why discovery finds no supports, or stop enqueueing it.
