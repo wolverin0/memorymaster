@@ -233,3 +233,22 @@ def test_scope_field_tolerates_any_workspace():
     assert mcp_server._scope_for_log({"workspace": "."}) is None
     assert mcp_server._scope_for_log({"scope": "project:explicit"}) == "project:explicit"
     assert mcp_server._scope_for_log({}) is None
+
+
+@pytest.mark.parametrize(("exit_call", "code", "outcome"), [("sys.exit(0)", 0, "ok"), ("sys.exit()", 0, "ok"),
+                                                             ("sys.exit(3)", 3, "failed")])
+def test_steward_script_exit_is_an_exit_code_not_an_error(tmp_path, monkeypatch, exit_call, code, outcome):
+    # Found 2026-10-05: the installed steward cycle ends with sys.exit(...), so every run
+    # logged job_finish outcome=error error_type=SystemExit while the task returned 0.
+    from memorymaster.surfaces import scheduled_task
+
+    script = tmp_path / "steward.py"
+    script.write_text(f"import sys\n{exit_call}\n", encoding="utf-8")
+    log_path = tmp_path / "steward.log"
+    monkeypatch.setattr(scheduled_task, "_log_path", lambda _mode: log_path)
+    result = scheduled_task.main(["steward", "--db", str(tmp_path / "x.db"), "--workspace", str(tmp_path),
+                                  "--script", str(script)])
+    finish = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()
+              if line.strip() and json.loads(line)["event"] == "job_finish"][-1]
+    assert result == code
+    assert (finish["outcome"], finish["exit_code"]) == (outcome, code)

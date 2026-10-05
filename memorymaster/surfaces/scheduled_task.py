@@ -123,7 +123,14 @@ def _run_dream(args: argparse.Namespace) -> int:
 def _run_steward(args: argparse.Namespace) -> int:
     if not args.script:
         raise ValueError("--script is required for steward mode")
-    runpy.run_path(args.script, run_name="__main__")
+    try:
+        runpy.run_path(args.script, run_name="__main__")
+    except SystemExit as exc:
+        # The steward cycle script ends with sys.exit(...): that is its exit code, not an
+        # error (every run logged outcome=error, error_type=SystemExit until 2026-10-05).
+        if exc.code is None or isinstance(exc.code, int):
+            return int(exc.code or 0)
+        raise
     return 0
 
 
