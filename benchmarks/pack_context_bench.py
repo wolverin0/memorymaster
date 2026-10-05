@@ -18,6 +18,7 @@ import random
 import statistics
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +26,21 @@ sys.path.insert(0, str(ROOT))
 
 from memorymaster.core.models import Citation, Claim  # noqa: E402
 from memorymaster.recall.context_optimizer import OUTPUT_FORMATS, pack_context  # noqa: E402
+from memorymaster.recall import context_optimizer as _optimizer  # noqa: E402
+
+# The JSON output carries age_days against the wall clock, so with a live clock the
+# fingerprint drifted one day at a time with no code change (found 2026-10-05).
+# The benchmark freezes the clock the optimiser sees.
+FROZEN_NOW = datetime(2026, 10, 4, 12, 0, tzinfo=timezone.utc)
+
+
+class _FrozenDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):  # noqa: ANN001, ANN206 - mirrors datetime.now
+        return FROZEN_NOW.astimezone(tz) if tz else FROZEN_NOW.replace(tzinfo=None)
+
+
+_optimizer.datetime = _FrozenDateTime
 
 SIZES = (20, 50, 200)
 BUDGET = 16_000  # large enough that most rows fit: the quadratic path is exercised
