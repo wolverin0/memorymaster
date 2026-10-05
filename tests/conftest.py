@@ -207,6 +207,19 @@ def _no_live_shared_recall(monkeypatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _restore_cwd():
+    """Every test ends in the directory it started in.
+
+    WHY: in the full `nox -s unit` run (2026-10-05) a test left the process in
+    another directory, and the supply-chain contracts that read `.dockerignore`
+    and the default `--repo-root .` failed with FileNotFoundError; alone they pass.
+    """
+    start = os.getcwd()
+    yield
+    os.chdir(start)
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_snapshot_dir(tmp_path_factory, monkeypatch) -> None:
     """Keep the integrity phase's VACUUM INTO snapshots out of the real home.
 

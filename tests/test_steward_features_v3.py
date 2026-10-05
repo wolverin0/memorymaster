@@ -127,6 +127,7 @@ def test_empty_corpus_returns_zero(conn, tmp_path: Path) -> None:
     assert feats["wiki_similarity_cosine"] == 0.0
 
 
+@pytest.mark.ml  # TF-IDF needs scikit-learn (the ml extra); nox unit does not install it
 def test_no_text_returns_zero(conn, wiki_dir, tf_idf_only) -> None:
     corpus = load_wiki_corpus(wiki_root=wiki_dir)
     assert corpus.embedding_backend == "tfidf"
@@ -138,6 +139,7 @@ def test_no_text_returns_zero(conn, wiki_dir, tf_idf_only) -> None:
     assert feats["wiki_similarity_cosine"] == 0.0
 
 
+@pytest.mark.ml  # TF-IDF needs scikit-learn (the ml extra); nox unit does not install it
 def test_exact_match_gives_high_similarity(conn, wiki_dir, tf_idf_only) -> None:
     corpus = load_wiki_corpus(wiki_root=wiki_dir)
     assert corpus.embedding_backend == "tfidf"
@@ -152,6 +154,7 @@ def test_exact_match_gives_high_similarity(conn, wiki_dir, tf_idf_only) -> None:
     assert sim >= 0.85, f"expected ~1.0 cosine for near-identical content, got {sim}"
 
 
+@pytest.mark.ml  # TF-IDF needs scikit-learn (the ml extra); nox unit does not install it
 def test_wrong_slug_still_scored_against_that_slug(conn, wiki_dir, tf_idf_only) -> None:
     """When the claim carries an explicit ``wiki_article`` column, respect it
     even if token overlap would pick another article. Ensures downstream
@@ -174,6 +177,7 @@ def test_wrong_slug_still_scored_against_that_slug(conn, wiki_dir, tf_idf_only) 
     )
 
 
+@pytest.mark.ml  # TF-IDF needs scikit-learn (the ml extra); nox unit does not install it
 def test_token_overlap_fallback_picks_best_slug(conn, wiki_dir, tf_idf_only) -> None:
     corpus = load_wiki_corpus(wiki_root=wiki_dir)
     # No wiki_article column set; token overlap should pick beta (qdrant / vector).
@@ -189,6 +193,7 @@ def test_token_overlap_fallback_picks_best_slug(conn, wiki_dir, tf_idf_only) -> 
     )
 
 
+@pytest.mark.ml  # TF-IDF needs scikit-learn (the ml extra); nox unit does not install it
 def test_disk_cache_roundtrip(conn, wiki_dir, tmp_path, tf_idf_only) -> None:
     corpus = load_wiki_corpus(wiki_root=wiki_dir)
     cache = tmp_path / "feature-cache"
