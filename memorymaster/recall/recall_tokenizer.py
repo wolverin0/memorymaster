@@ -180,6 +180,30 @@ def _stem(tok: str) -> str | None:
 _NON_CANONICAL_STATUSES = ("archived", "superseded")
 
 
+def read_text_generation(db_path: str) -> int:
+    """Cache key for the corpus statistics: changes only when they can (migration 28).
+
+    ``text_generation`` advances on claim inserts, deletes, text or status changes and
+    alias changes. A database without it falls back to ``corpus_generation``, which
+    is coarser (it also moves on confidence and validation writes) but never stale.
+    """
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return 0
+    try:
+        row = conn.execute("SELECT value FROM cache_meta WHERE key = 'text_generation'").fetchone()
+    except sqlite3.Error:
+        row = None
+    finally:
+        conn.close()
+    if row is not None:
+        return int(row[0])
+    from memorymaster.recall.query_cache import read_generation
+
+    return read_generation(db_path)
+
+
 @lru_cache(maxsize=16)
 def _corpus_stats(
     db_path: str, generation: int | None = None
@@ -291,9 +315,7 @@ def extract_query_tokens(raw_prompt: str, db_path: str, max_tokens: int = 6) -> 
     if not tokens:
         return ""
 
-    from memorymaster.recall.query_cache import read_generation
-
-    generation = read_generation(db_path)
+    generation = read_text_generation(db_path)
     total_docs, df = _corpus_stats(db_path, generation)
     aliases = _alias_set(db_path, generation)
 

@@ -101,13 +101,20 @@ def _measure(size: int, repeats: int, confirmed_share: float, cache_dir: str | N
                                       scope="project:p1")
             ms, _ = call(QUERIES[r % len(QUERIES)])
             after_write.append(ms)
+        after_update = []  # the write the steward and validators make all day
+        for r in range(repeats):
+            with writer.store.connect() as conn:
+                conn.execute("UPDATE claims SET confidence = ?, updated_at = ? WHERE id = ?",
+                             (0.5 + r / 100, f"2026-10-04T00:00:{r:02d}Z", 1 + r))
+            ms, _ = call(QUERIES[r % len(QUERIES)])
+            after_update.append(ms)
         del writer
         gc.collect()
     warm_q = _quantiles(warm)
     return {"schema": "memorymaster.bench.recall_warm.v1", "size": size, "repeats": repeats,
             "confirmed_share": confirmed_share,
             "build_seconds": round(build_seconds, 1), "metric": warm_q["p95_ms"],
-            "cold_ms": round(cold_ms, 1), "warm": warm_q, "after_write": _quantiles(after_write),
+            "cold_ms": round(cold_ms, 1), "warm": warm_q, "after_write": _quantiles(after_write), "after_update": _quantiles(after_update),
             "returned_any": any(fp != hashlib.sha256(b"[]").hexdigest() for fp in fingerprints.values()),
             "fingerprints": fingerprints}
 
