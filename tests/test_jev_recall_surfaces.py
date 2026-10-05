@@ -286,12 +286,42 @@ def test_shadow_mode_keeps_legacy_and_logs_jev_action(tmp_path, monkeypatch):
     install_engine(monkeypatch, tmp_path, ScriptedTransport(recall_answers(plan)), MEMORYMASTER_JEV_MODE="shadow")
 
     out = context_hook.recall(QUERY, db_path=str(db), skip_qdrant=True, hook_data=hook_data(tmp_path))
+    jev.wait_shadow_decisions()
 
     assert out == legacy_out
     decision = ledger_rows(tmp_path, "SELECT * FROM decisions")[0]
     assert decision["mode"] == "shadow" and decision["fallback_reason"] is None
     assert json.loads(decision["action_taken"]) == [f"claim:{cid}" for cid in legacy_ids]
     assert json.loads(decision["jev_action"]) == [f"claim:{cid}" for cid in reversed(legacy_ids)][:5]
+
+
+def test_shadow_mode_never_makes_the_prompt_wait_for_jev(tmp_path, monkeypatch):
+    # Operator ruling 2026-10-05: shadow records what Jev would choose but must not slow the
+    # prompt; inline shadow kept the live hook p50 at ~1.2 s against ~65 ms without Jev.
+    import threading
+    import time
+
+    db, _ = build_db(tmp_path, TEXTS)
+    legacy_out, legacy_ids = legacy_recall(db)
+    plan = {cid: {"relevant": 0.5, "usable": 0.9} for cid in legacy_ids}
+    install_engine(monkeypatch, tmp_path, ScriptedTransport(recall_answers(plan)), MEMORYMASTER_JEV_MODE="shadow")
+    release = threading.Event()
+    real_decide = decisions_engine.decide
+
+    def slow_decide(*args, **kwargs):
+        release.wait(10)
+        return real_decide(*args, **kwargs)
+
+    monkeypatch.setattr(decisions_engine, "decide", slow_decide)
+    started = time.perf_counter()
+    out = context_hook.recall(QUERY, db_path=str(db), skip_qdrant=True, hook_data=hook_data(tmp_path))
+    elapsed = time.perf_counter() - started
+    release.set()
+    jev.wait_shadow_decisions()
+
+    assert out == legacy_out
+    assert elapsed < 5
+    assert ledger_rows(tmp_path, "SELECT mode FROM decisions")[0]["mode"] == "shadow"
 
 
 def test_exploration_is_logged_with_engine_propensities(tmp_path, monkeypatch):
@@ -507,6 +537,7 @@ def test_mcp_paths_never_send_private_or_sensitive_claims(tmp_path, monkeypatch,
     install_engine(monkeypatch, tmp_path, transport, MEMORYMASTER_JEV_MODE=mode)
 
     out = call(**args)
+    jev.wait_shadow_decisions()
 
     assert len(transport.calls) == 1
     sent = json.dumps(transport.calls[0]["payload"])
@@ -736,6 +767,7 @@ def test_shadow_delivery_prediction_covers_legacy_blocks_longer_than_the_pool(tm
     install_engine(monkeypatch, tmp_path, ScriptedTransport(recall_answers(plan)), MEMORYMASTER_JEV_MODE="shadow")
 
     assert context_hook._jev_recall_rendering(QUERY, rows, lines, rendered, budget, data, {}) is None
+    jev.wait_shadow_decisions()
 
     items = ledger_rows(tmp_path, "SELECT item_ref, MAX(delivered) AS d FROM decision_items WHERE exposed = 1 "
                                   "GROUP BY item_ref")

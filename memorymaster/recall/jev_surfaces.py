@@ -24,12 +24,16 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import logging
 import os
 import re
 import sqlite3
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
+
+logger = logging.getLogger(__name__)
 
 RECALL_SURFACE = "recall"
 SESSION_SURFACE = "session"
@@ -282,14 +286,43 @@ def decide_recall(query: str, candidates: Sequence[RecallCandidate], *, legacy_i
         baseline_features={"path": path, "candidates": len(refs), "legacy_exposed": len(legacy_refs),
                            "k_cap": cap, "passthrough": int(passthrough)},
     )
-    decision = decisions.decide(RECALL_SURFACE, state=state, questions=bound, items=items,
+    def run() -> Any:
+        return decisions.decide(RECALL_SURFACE, state=state, questions=bound, items=items,
                                 legacy_action=legacy_refs, choose=choose, context=context, engine=engine)
+
+    if config.mode_for(RECALL_SURFACE) == "shadow":
+        # Shadow only records what Jev would have chosen, so the prompt never waits for it
+        # (operator ruling 2026-10-05: inline shadow kept the hook p50 at ~1.2 s).
+        _start_shadow(run)
+        return None
+    decision = run()
     if decision.mode != "live" or decision.fallback_reason is not None:
         return None
     chosen = [ref for ref in (decision.action or []) if ref in position]
     if not chosen or len(chosen) != len(decision.action):
         return None
     return RecallSelection(decision.decision_id, tuple(claim_id_of(ref) for ref in chosen), labels_for(chosen))
+
+
+_SHADOW_THREADS: list[threading.Thread] = []
+
+
+def _start_shadow(run: Callable[[], Any]) -> None:
+    def guarded() -> None:
+        try:
+            run()
+        except Exception as exc:  # noqa: BLE001 — a shadow decision never affects recall
+            logger.debug("shadow recall decision failed: %s", type(exc).__name__)
+
+    thread = threading.Thread(target=guarded, name="jev-recall-shadow", daemon=True)
+    _SHADOW_THREADS[:] = [t for t in _SHADOW_THREADS if t.is_alive()] + [thread]
+    thread.start()
+
+
+def wait_shadow_decisions(timeout: float = 10.0) -> None:
+    """Join pending shadow decisions (tests, and short-lived processes before exit)."""
+    for thread in list(_SHADOW_THREADS):
+        thread.join(timeout)
 
 
 def labelled_row(row: Mapping[str, Any], labels: Sequence[str] | None) -> dict[str, Any]:
