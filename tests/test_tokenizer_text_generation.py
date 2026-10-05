@@ -80,3 +80,26 @@ def test_a_confidence_write_does_not_force_a_rescan(svc) -> None:
         conn.execute("UPDATE claims SET confidence = 0.4, updated_at = 'z' WHERE id = ?", (claim_id,))
     recall_tokenizer.extract_query_tokens("mikrotik dns failover", db)
     assert recall_tokenizer._corpus_stats.cache_info().misses == 1
+
+
+def test_the_shared_server_warms_the_statistics_and_rewarms_only_after_a_text_change(svc, monkeypatch) -> None:
+    # Profiled live 2026-10-05: a fresh process' first recall took 1,426 ms, 1,216 of
+    # them building these statistics (and the alias set); the second took 65 ms.
+    from memorymaster.surfaces import mcp_http
+
+    db = str(svc.store.db_path)
+    calls: list[str] = []
+    real = recall_tokenizer.extract_query_tokens
+    monkeypatch.setattr(recall_tokenizer, "extract_query_tokens", lambda q, d: calls.append(d) or real(q, d))
+    last = mcp_http._warm_tokenizer_once(db, None)
+    assert calls == [db] and last == _key(svc)
+    assert mcp_http._warm_tokenizer_once(db, last) == last and calls == [db]  # nothing changed: no rescan
+    _claim(svc, "a new live claim about the steward")
+    assert mcp_http._warm_tokenizer_once(db, last) == _key(svc) and calls == [db, db]
+
+
+def test_the_warmer_can_be_switched_off(monkeypatch) -> None:
+    from memorymaster.surfaces import mcp_http
+
+    monkeypatch.setenv("MEMORYMASTER_TOKENIZER_WARM_SECONDS", "0")
+    assert mcp_http._start_tokenizer_warmer("unused.db") is None
