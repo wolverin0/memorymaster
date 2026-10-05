@@ -67,3 +67,24 @@ def test_an_explicit_scope_default_still_pins_the_scope(db, tmp_path, monkeypatc
     _ctx, ids = context_hook.recall("how does weapon recoil spread work", db_path=db, skip_qdrant=True,
                                     return_ids=True, hook_data={"cwd": str(cwd)})
     assert _scopes(db, ids) == {"project:memorymaster"}
+
+
+def test_a_project_also_reads_its_parent_folders_shared_scopes(tmp_path, monkeypatch) -> None:
+    # project:py-apps is the convention for knowledge shared across the Py Apps projects,
+    # and a worktree belongs to its repository: E:/Pedrito/worktrees/x must still read
+    # project:pedrito. Recall from a project read neither.
+    monkeypatch.setenv(ENV_OUTBOX_DIR, str(tmp_path / "outbox"))
+    for name in ("QDRANT_URL", "MEMORYMASTER_SCOPE_DEFAULT", "MEMORYMASTER_JEV_MODE"):
+        monkeypatch.delenv(name, raising=False)
+    svc = MemoryService(tmp_path / "h.db", workspace_root=tmp_path)
+    svc.init_db()
+    for scope in ("project:py-apps", "project:pedrito", "project:unrelated"):
+        claim = svc.store.create_claim(text=f"sqlite checkpoint lesson recorded in {scope}",
+                                       citations=[CitationInput(source="test://h")], scope=scope)
+        lifecycle.transition_claim(svc.store, claim.id, "confirmed", reason="fixture", event_type="validator")
+    db = str(svc.store.db_path)
+    cwd = tmp_path / "Py Apps" / "pedrito" / "ui-reported"
+    cwd.mkdir(parents=True)
+    _ctx, ids = context_hook.recall("sqlite checkpoint lesson", db_path=db, skip_qdrant=True,
+                                    return_ids=True, hook_data={"cwd": str(cwd)})
+    assert _scopes(db, ids) == {"project:py-apps", "project:pedrito"}

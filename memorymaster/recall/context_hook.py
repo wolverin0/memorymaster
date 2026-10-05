@@ -830,6 +830,10 @@ _DEFAULT_CURRENT_SCOPE = "project:memorymaster"
 # writes already took their scope from the session's cwd, but recall searched the
 # fixed default above, so every project read MemoryMaster's claims and none of its own.
 _REQUEST_SCOPE: contextvars.ContextVar[str | None] = contextvars.ContextVar("mm_prompt_scope", default=None)
+# Scopes of the prompt folder's parent and grandparent: project:py-apps holds what the
+# Py Apps projects share, and a worktree (E:/Pedrito/worktrees/x) belongs to its repo.
+_REQUEST_SHARED_SCOPES: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
+    "mm_prompt_shared_scopes", default=())
 
 
 def _recall_scope_boost() -> float:
@@ -1179,8 +1183,12 @@ def recall(
         from memorymaster.core.scope_utils import scope_from_cwd
 
         scope_token = _REQUEST_SCOPE.set(scope_from_cwd(cwd))
+        parents = list(Path(str(cwd)).parents)[:2]
+        shared = tuple(dict.fromkeys(s for s in (scope_from_cwd(str(p)) for p in parents)
+                                     if s.startswith("project:")))
+        shared_token = _REQUEST_SHARED_SCOPES.set(shared)
     else:
-        scope_token = None
+        scope_token = shared_token = None
 
     try:
         rendered = _recall_impl(
@@ -1200,6 +1208,7 @@ def recall(
     finally:
         if scope_token is not None:
             _REQUEST_SCOPE.reset(scope_token)
+            _REQUEST_SHARED_SCOPES.reset(shared_token)
         _emit_recall_latency(phase_ms, total_start)
 
 
@@ -1207,7 +1216,7 @@ def _prompt_recall_plan(query_text: str, *, limit: int):
     """Build the immutable trusted policy shared by every prompt stream."""
     from memorymaster.recall.planner import RetrievalRequest, build_retrieval_plan
 
-    scopes = [_current_scope(), "global"]
+    scopes = [_current_scope(), *_REQUEST_SHARED_SCOPES.get(), "global"]
     include_legacy = os.environ.get(
         "MEMORYMASTER_QUERY_INCLUDE_LEGACY_PROJECT", "1"
     ).strip().lower() not in {"0", "false", "no"}
