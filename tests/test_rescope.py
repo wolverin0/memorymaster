@@ -64,6 +64,7 @@ def test_a_moved_claim_keeps_its_age_so_ranking_does_not_treat_it_as_new(store) 
                           include_citations=False)
     assert (new.created_at, new.last_validated_at, new.tier, new.access_count, new.last_accessed) == (
         "2026-09-02T03:37:46+00:00", "2026-09-02T08:02:42+00:00", "working", 4, "2026-09-20T10:00:00+00:00")
+    assert new.updated_at > "2026-10-05"  # the delta sync must export the corrected row
     assert store.recompute_tiers() is not None
     assert store.get_claim(new.id, include_citations=False).tier != "core"
 

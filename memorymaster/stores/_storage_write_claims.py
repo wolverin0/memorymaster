@@ -468,17 +468,18 @@ class _WriteClaimsMixin:
 
         A rescoped claim is the same knowledge, so ranking must not treat it as new:
         freshness anchors on last_validated_at and recompute_tiers promotes anything
-        created in the last 7 days to core. updated_at stays current (sync watermark).
+        created in the last 7 days to core. updated_at moves to now, so the delta sync
+        exports the corrected row.
         """
         with self.connect() as conn:
             cur = conn.execute(
                 """
                 UPDATE claims SET (created_at, last_validated_at, tier, access_count, last_accessed) =
                     (SELECT created_at, last_validated_at, tier, access_count, last_accessed
-                     FROM claims WHERE id = ?)
+                     FROM claims WHERE id = ?), updated_at = ?
                 WHERE id = ? AND EXISTS (SELECT 1 FROM claims WHERE id = ?)
                 """,
-                (source_claim_id, claim_id, source_claim_id),
+                (source_claim_id, utc_now(), claim_id, source_claim_id),
             )
             if cur.rowcount != 1:
                 raise ValueError(f"Claim {claim_id} or source {source_claim_id} does not exist.")
