@@ -93,6 +93,10 @@ Measurements owed in production live in
   - Live, the first recall after a restart fell from 2,452 ms to 803 ms.
   - A profile without Jev puts warm recall at 65 ms. The live remainder
     (400-600 ms) is Jev's provider calls.
+- [x] 7d. Campaign B: JSON context packing serialises each claim once
+  (`2942699`). 200 rows: 391 to 15 ms, byte-identical output, installed.
+  - The pack bench now freezes the clock (`4bfe5d2`): `age_days` had made its
+    fingerprint drift daily.
 - [ ] 8. Graph observations produce nothing since 2026-08-31: about 150
   discovery jobs per Dreaming run all end `no_supports`, 0 emitted, 31,345 jobs
   accumulated. Find why discovery finds no supports, or stop enqueueing it.
