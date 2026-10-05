@@ -97,6 +97,20 @@ Measurements owed in production live in
   (`2942699`). 200 rows: 391 to 15 ms, byte-identical output, installed.
   - The pack bench now freezes the clock (`4bfe5d2`): `age_days` had made its
     fingerprint drift daily.
+- [x] 7e. Prompt recall reads the project the prompt came from (`97f855d`,
+  `367e8a9`, installed 2026-10-05). It used to read only `project:memorymaster`
+  and `global`, so no project ever received its own memories, which explains the
+  1-in-1,066 use rate. Recall now reads the cwd scope plus its parent and
+  grandparent folders (Py Apps projects also read `project:py-apps`). Rollback:
+  `artifacts/release-scope-20261005/rollback.ps1`.
+- [x] 7f. Curation: 774 project-specific claims moved out of `project:py-apps`
+  into their projects (`d3cb153`, copy and supersession). 7,152 claims were
+  labelled by Haiku; a claim moved only when the label was high confidence, the
+  text names the project, and the scope already exists. Undo:
+  `artifacts/curation-20261005/ROLLBACK.txt`.
+- [ ] 7g. Scope fragmentation: 267 project scopes, with variants such as
+  `whatsappbot` vs `whatsappbot-final` and worktree names. Merging them needs an
+  operator mapping.
 - [ ] 8. Graph observations produce nothing since 2026-08-31: about 150
   discovery jobs per Dreaming run all end `no_supports`, 0 emitted, 31,345 jobs
   accumulated. Find why discovery finds no supports, or stop enqueueing it.
