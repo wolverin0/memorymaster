@@ -76,3 +76,34 @@ def test_retired_claims_and_same_scope_moves_are_refused(store) -> None:
     lifecycle.transition_claim(store, claim_id, "archived", reason="fixture", event_type="compactor")
     with pytest.raises(ValueError, match="archived"):
         rescope.rescope_claim(store, claim_id, "project:whatsappbot", reason="retired")
+
+
+def _confirmed(store, scope: str, object_value: str) -> int:
+    claim = store.create_claim(text=f"service url is {object_value}", subject="service", predicate="url",
+                               object_value=object_value, citations=[CitationInput(source="session://y")],
+                               scope=scope)
+    lifecycle.transition_claim(store, claim.id, "confirmed", reason="fixture", event_type="validator")
+    return claim.id
+
+
+def test_a_move_onto_an_identical_confirmed_claim_supersedes_by_it(store) -> None:
+    # Found 2026-10-06 unifying 'project:py apps' into 'project:py-apps': the target already
+    # held the same confirmed (subject, predicate), the copy hit the unique index and a
+    # half-made candidate was left behind.
+    keeper = _confirmed(store, "project:py-apps", "http://localhost:3004/send")
+    old = _confirmed(store, "project:py apps", "http://localhost:3004/send")
+    before = store.count_claims() if hasattr(store, "count_claims") else None
+    assert rescope.rescope_claim(store, old, "project:py-apps", reason="spelling") == keeper
+    assert store.get_claim(old, include_citations=False).replaced_by_claim_id == keeper
+    if before is not None:
+        assert store.count_claims() == before
+
+
+def test_a_move_onto_a_different_confirmed_value_is_refused_without_side_effects(store) -> None:
+    _confirmed(store, "project:py-apps", "http://localhost:3004/send")
+    old = _confirmed(store, "project:py apps", "http://localhost:9999/send")
+    with pytest.raises(rescope.RescopeConflict):
+        rescope.rescope_claim(store, old, "project:py-apps", reason="spelling")
+    assert store.get_claim(old, include_citations=False).status == "confirmed"
+    with store.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM claims WHERE scope = 'project:py-apps'").fetchone()[0] == 1

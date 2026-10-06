@@ -11,6 +11,27 @@ from memorymaster.core import lifecycle
 from memorymaster.core.models import CitationInput
 
 _RETIRED = {"superseded", "archived"}
+
+
+class RescopeConflict(ValueError):
+    """The target scope already holds a different confirmed value for the same triple."""
+
+
+def _confirmed_twin(store, claim, target_scope: str):
+    """The target's confirmed public claim for the same (tenant, subject, predicate), if any.
+
+    A unique index allows one per scope, so a copy that must pass through `confirmed`
+    cannot be created next to it.
+    """
+    if not (claim.subject and claim.predicate and claim.visibility == "public"):
+        return None
+    with store.connect() as conn:
+        row = conn.execute(
+            "SELECT id, object_value FROM claims WHERE status = 'confirmed' AND visibility = 'public' "
+            "AND COALESCE(tenant_id, '') = COALESCE(?, '') AND subject = ? AND predicate = ? AND scope = ?",
+            (claim.tenant_id, claim.subject, claim.predicate, target_scope),
+        ).fetchone()
+    return None if row is None else (int(row[0]), row[1])
 # Lifecycle path from a fresh candidate to each live status.
 _PATH = {"candidate": (), "confirmed": ("confirmed",), "stale": ("confirmed", "stale"),
          "conflicted": ("conflicted",)}
@@ -28,6 +49,18 @@ def rescope_claim(store, claim_id: int, target_scope: str, *, reason: str) -> in
         raise ValueError(f"Claim {claim_id} is {old.status}; only live claims move.")
     if old.scope == target_scope:
         raise ValueError(f"Claim {claim_id} is already in {target_scope}.")
+    if "confirmed" in _PATH[old.status]:
+        twin = _confirmed_twin(store, old, target_scope)
+        if twin is not None:
+            twin_id, twin_value = twin
+            if (twin_value or "") != (old.object_value or ""):
+                raise RescopeConflict(f"Claim {claim_id}: {target_scope} already confirms a different "
+                                      f"value for this triple (claim {twin_id}).")
+            store.mark_superseded(claim_id, twin_id, f"rescope {old.scope} -> {target_scope}: {reason} "
+                                  "(same confirmed claim already there)",
+                                  event_payload={"rescope": True, "from_scope": old.scope,
+                                                 "to_scope": target_scope, "merged_into_existing": True})
+            return twin_id
     citations = [CitationInput(source=c.source, locator=c.locator, excerpt=c.excerpt) for c in old.citations]
     if not citations:
         citations = [CitationInput(source=f"claim://{claim_id}", locator="rescope")]
