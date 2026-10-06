@@ -144,7 +144,9 @@ class DenseIndex:
             self._save_cache()
         return len(new_texts)
 
-    def search(self, query_vector: np.ndarray, *, scopes: Sequence[str] | None, k: int) -> list[tuple[int, float]]:
+    def search(self, query_vector: np.ndarray, *, scopes: Sequence[str] | None, k: int,
+               outside: bool = False) -> list[tuple[int, float]]:
+        """Top ``k`` inside ``scopes``; with ``outside``, the top ``k`` of every other scope instead."""
         with self._lock:
             ids, vectors, claim_scopes = self.ids, self.vectors, self.scopes
         if not len(ids):
@@ -153,7 +155,9 @@ class DenseIndex:
         if scopes:
             allowed = set(scopes)
             mask = np.fromiter((scope in allowed for scope in claim_scopes), dtype=bool, count=len(claim_scopes))
-            scores = np.where(mask, scores, -np.inf)
+            scores = np.where(~mask if outside else mask, scores, -np.inf)
+        elif outside:
+            return []
         top = np.argsort(-scores)[: max(0, k)]
         return [(int(ids[i]), float(scores[i])) for i in top if np.isfinite(scores[i])]
 
@@ -223,13 +227,15 @@ class DenseService:
     def stop(self) -> None:
         self._stop.set()
 
-    def search(self, query: str, scopes: Sequence[str] | None, k: int) -> dict[str, Any]:
+    def search(self, query: str, scopes: Sequence[str] | None, k: int, outside_k: int = 0) -> dict[str, Any]:
         started = time.perf_counter()
         vector = self.encode([query], "query")[0]
         embedded = time.perf_counter()
         results = self.index.search(vector, scopes=scopes, k=k)
+        others = self.index.search(vector, scopes=scopes, k=outside_k, outside=True) if outside_k else []
         done = time.perf_counter()
         return {"results": [{"id": cid, "score": round(score, 5)} for cid, score in results],
+                "outside": [{"id": cid, "score": round(score, 5)} for cid, score in others],
                 "embed_ms": round((embedded - started) * 1000, 2), "search_ms": round((done - embedded) * 1000, 2),
                 "indexed": self.index.stats()["indexed"], "model": self.model, "dim": self.dim}
 
@@ -266,13 +272,14 @@ def make_handler(service: DenseService) -> type[BaseHTTPRequestHandler]:
                 if scopes is not None and not (isinstance(scopes, list) and all(isinstance(s, str) for s in scopes)):
                     raise ValueError("scopes must be a list of strings")
                 k = max(1, min(int(request.get("k") or 10), 100))
+                outside_k = max(0, min(int(request.get("outside_k") or 0), 100))
                 if not query.strip():
                     raise ValueError("query is required")
             except (ValueError, TypeError) as exc:
                 self._send(400, {"error": str(exc)})
                 return
             try:
-                self._send(200, service.search(query, scopes, k))
+                self._send(200, service.search(query, scopes, k, outside_k))
             except Exception as exc:  # noqa: BLE001 — the client falls back to lexical recall
                 LOGGER.warning("dense search failed: %s", type(exc).__name__)
                 self._send(500, {"error": type(exc).__name__})

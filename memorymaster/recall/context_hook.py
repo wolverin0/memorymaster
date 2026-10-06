@@ -2196,23 +2196,33 @@ def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_dat
 def _dense_prompt_rows(svc, query: str, plan) -> tuple[list[dict] | None, dict]:
     """Dense candidates for the prompt hook, authorized like every other stream.
 
-    Returns ``(rows, metrics)``; ``rows`` is ``None`` when the service could not
-    answer (the caller then runs lexical recall) and may be empty when no
-    authorized candidate reaches the score threshold (nothing is injected).
+    Candidates in the hook's scope need ``min_score``; candidates from other
+    projects need the higher ``outside_min_score`` and pass the same filter with
+    only the scope rule lifted. Returns ``(rows, metrics)``; ``rows`` is ``None``
+    when the service could not answer (the caller then runs lexical recall) and
+    may be empty when nothing qualifies (nothing is injected).
     """
+    import dataclasses
+
     from memorymaster.recall import dense_recall
 
     started = time.perf_counter()
     scopes = list(plan.scope_allowlist) if plan.scope_allowlist is not None else None
     try:
-        answer = dense_recall.search(query, scopes)
+        answer = dense_recall.search(query, scopes, outside_k=dense_recall.FETCH_K if scopes else 0)
     except dense_recall.DenseUnavailable as exc:
         return None, {"outcome": f"fallback:{exc}", "service_ms": dense_recall.elapsed_ms(started)}
-    threshold, cap = dense_recall.min_score(), dense_recall.max_claims()
+    threshold, outside_threshold = dense_recall.min_score(), dense_recall.outside_min_score()
+    open_plan = dataclasses.replace(plan, scope_allowlist=None)
+    candidates = sorted(
+        [(cid, score, False) for cid, score in answer.results if score >= threshold]
+        + [(cid, score, True) for cid, score in answer.outside if score >= outside_threshold],
+        key=lambda item: -item[1],
+    )
     rows: list[dict] = []
     filtered_out = 0
-    for cid, score in answer.results:
-        if score < threshold or len(rows) >= cap:
+    for cid, score, outside in candidates:
+        if len(rows) >= dense_recall.max_claims():
             break
         try:
             claim = svc.store.get_claim(cid, include_citations=True)
@@ -2220,9 +2230,10 @@ def _dense_prompt_rows(svc, query: str, plan) -> tuple[list[dict] | None, dict]:
             logger.debug("dense hydrate get_claim(%d) failed: %s", cid, exc)
             claim = None
         row = {**_row_for_graph_claim(claim, 0.0), "dense_score": score, "source": "dense"} if claim else None
-        if row is None or not _filter_prompt_rows([row], plan):
+        if row is None or not _filter_prompt_rows([row], open_plan if outside else plan):
             filtered_out += 1
             continue
+        row["dense_outside"] = outside
         rows.append(row)
     return rows, {
         "service_ms": dense_recall.elapsed_ms(started),
@@ -2231,10 +2242,14 @@ def _dense_prompt_rows(svc, query: str, plan) -> tuple[list[dict] | None, dict]:
         "indexed": answer.indexed,
         "candidates": len(answer.results),
         "above_threshold": sum(score >= threshold for _, score in answer.results),
+        "outside_above_threshold": sum(score >= outside_threshold for _, score in answer.outside),
+        "injected_outside": sum(bool(row["dense_outside"]) for row in rows),
         "filtered_out": filtered_out,
         "top_score": round(answer.results[0][1], 4) if answer.results else None,
+        "top_outside_score": round(answer.outside[0][1], 4) if answer.outside else None,
         "scores": [round(score, 4) for _, score in answer.results[:8]],
         "min_score": threshold,
+        "outside_min_score": outside_threshold,
     }
 
 

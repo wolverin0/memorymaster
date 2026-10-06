@@ -10,6 +10,8 @@ Policy, measured 2026-10-06 on 200 real prompts with graded judgments
   noise (top-5 noise 0.70 vs 0.61) for no nDCG gain (0.341 vs 0.337).
 * Only candidates with cosine >= 0.68 are injected, at most 6. That keeps 92%
   of the useful claims while injecting 3.9 claims per prompt instead of 5.9.
+* Claims from other projects need cosine >= 0.76 (operator decision: other
+  projects only on a very high score; see DEFAULT_OUTSIDE_MIN_SCORE).
 * When nothing passes, nothing is injected: on those prompts the lexical hook
   injected 134 claims of which 6 were useful.
 * When the service cannot answer, the hook falls back to lexical recall.
@@ -42,12 +44,18 @@ URL_ENV = "MEMORYMASTER_RECALL_DENSE_URL"
 TIMEOUT_ENV = "MEMORYMASTER_RECALL_DENSE_TIMEOUT_S"
 MIN_SCORE_ENV = "MEMORYMASTER_RECALL_DENSE_MIN_SCORE"
 MAX_CLAIMS_ENV = "MEMORYMASTER_RECALL_DENSE_MAX_CLAIMS"
+OUTSIDE_MIN_SCORE_ENV = "MEMORYMASTER_RECALL_DENSE_OUTSIDE_MIN_SCORE"
 LOG_ENV = "MEMORYMASTER_RECALL_DENSE_LOG"
 
 DEFAULT_URL = "http://127.0.0.1:8767"
 DEFAULT_TIMEOUT_S = 1.5
 DEFAULT_MIN_SCORE = 0.68
 DEFAULT_MAX_CLAIMS = 6
+# Claims from other projects (outside the hook's scope allowlist) only on a very high
+# score, decided by the operator 2026-10-06. Measured on the 200 labeled prompts:
+# outside-scope candidates at cosine >= 0.76 were useful 44% of the time (in-scope
+# >= 0.68: ~35%); admitting them moved nDCG@10 0.256 -> 0.286 for +0.2 claims/prompt.
+DEFAULT_OUTSIDE_MIN_SCORE = 0.76
 # Ask for more than we inject: scope/visibility filtering happens after the
 # service answers, and the log keeps the scores just under the threshold.
 FETCH_K = 12
@@ -65,6 +73,7 @@ class DenseAnswer:
     search_ms: float
     indexed: int
     model: str
+    outside: tuple[tuple[int, float], ...] = ()
 
 
 def enabled() -> bool:
@@ -82,21 +91,30 @@ def min_score() -> float:
     return _float_env(MIN_SCORE_ENV, DEFAULT_MIN_SCORE)
 
 
+def outside_min_score() -> float:
+    return _float_env(OUTSIDE_MIN_SCORE_ENV, DEFAULT_OUTSIDE_MIN_SCORE)
+
+
 def max_claims() -> int:
     return max(1, int(_float_env(MAX_CLAIMS_ENV, DEFAULT_MAX_CLAIMS)))
 
 
-def search(query: str, scopes: Sequence[str] | None, *, k: int = FETCH_K) -> DenseAnswer:
-    """Candidate ids by cosine, best first. Raises :class:`DenseUnavailable` on any failure."""
+def search(query: str, scopes: Sequence[str] | None, *, k: int = FETCH_K, outside_k: int = 0) -> DenseAnswer:
+    """Candidate ids by cosine, best first, inside ``scopes`` and (``outside_k``) outside them.
+
+    Raises :class:`DenseUnavailable` on any failure.
+    """
     url = os.environ.get(URL_ENV, DEFAULT_URL).rstrip("/") + "/search"
-    body = json.dumps({"query": query, "scopes": list(scopes) if scopes else None, "k": k}).encode("utf-8")
+    body = json.dumps({"query": query, "scopes": list(scopes) if scopes else None, "k": k,
+                       "outside_k": outside_k}).encode("utf-8")
     request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=_float_env(TIMEOUT_ENV, DEFAULT_TIMEOUT_S)) as response:
             payload = json.loads(response.read())
         results = tuple((int(item["id"]), float(item["score"])) for item in payload["results"])
+        outside = tuple((int(item["id"]), float(item["score"])) for item in payload.get("outside") or ())
         return DenseAnswer(results, float(payload.get("embed_ms") or 0.0), float(payload.get("search_ms") or 0.0),
-                           int(payload.get("indexed") or 0), str(payload.get("model") or ""))
+                           int(payload.get("indexed") or 0), str(payload.get("model") or ""), outside)
     except (urllib.error.URLError, TimeoutError, OSError, ValueError, KeyError, TypeError) as exc:
         raise DenseUnavailable(type(exc).__name__) from exc
 

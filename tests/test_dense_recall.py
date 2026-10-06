@@ -49,8 +49,8 @@ def claims(tmp_path: Path, monkeypatch) -> dict:
             "log": tmp_path / "metrics" / "recall-dense.jsonl"}
 
 
-def _answer(*pairs: tuple[int, float]) -> dense_recall.DenseAnswer:
-    return dense_recall.DenseAnswer(tuple(pairs), 30.0, 1.0, 3, "google/embeddinggemma-2")
+def _answer(*pairs: tuple[int, float], outside: tuple = ()) -> dense_recall.DenseAnswer:
+    return dense_recall.DenseAnswer(tuple(pairs), 30.0, 1.0, 3, "google/embeddinggemma-2", tuple(outside))
 
 
 def _events(path: Path) -> list[dict]:
@@ -91,6 +91,34 @@ def test_nothing_is_injected_when_no_candidate_qualifies(claims, monkeypatch) ->
                                          hook_data=claims["hook"])
     assert (text, rendered) == ("", [])
     assert _events(claims["log"])[-1]["outcome"] == "dense_empty"
+
+
+def test_another_projects_claim_needs_a_very_high_score(claims, monkeypatch) -> None:
+    # Operator 2026-10-06: other projects only on a very high score (>= 0.76 measured).
+    ids = claims["ids"]
+    monkeypatch.setenv(dense_recall.ENABLE_ENV, "1")
+    monkeypatch.setattr(dense_recall, "search", lambda query, scopes, **_: _answer(
+        (ids["recoil"], 0.70), outside=((ids["other"], 0.78),)))
+    _text, rendered = context_hook.recall("weapon recoil", db_path=claims["db"], return_ids=True,
+                                          hook_data=claims["hook"])
+    assert rendered == [ids["other"], ids["recoil"]]
+    assert _events(claims["log"])[-1]["injected_outside"] == 1
+    monkeypatch.setattr(dense_recall, "search", lambda query, scopes, **_: _answer(
+        (ids["recoil"], 0.70), outside=((ids["other"], 0.74),)))
+    _text, rendered = context_hook.recall("weapon recoil", db_path=claims["db"], return_ids=True,
+                                          hook_data=claims["hook"])
+    assert rendered == [ids["recoil"]]
+
+
+def test_another_projects_claim_still_passes_the_status_filter(claims, monkeypatch) -> None:
+    svc = MemoryService(claims["db"], workspace_root=Path(claims["db"]).parent)
+    draft = svc.store.create_claim(text="weapon recoil draft in another project",
+                                   citations=[CitationInput(source="test://dense")], scope="project:memorymaster")
+    monkeypatch.setenv(dense_recall.ENABLE_ENV, "1")
+    monkeypatch.setattr(dense_recall, "search", lambda query, scopes, **_: _answer(outside=((draft.id, 0.95),)))
+    _text, rendered = context_hook.recall("weapon recoil", db_path=claims["db"], return_ids=True,
+                                          hook_data=claims["hook"])
+    assert rendered == [] and _events(claims["log"])[-1]["filtered_out"] == 1
 
 
 def test_the_service_receives_the_hooks_scope_allowlist(claims, monkeypatch) -> None:
@@ -183,6 +211,8 @@ def test_index_search_honours_the_scope_allowlist(tmp_path) -> None:
     query = _fake_encode(["weapon recoil"], "query")[0]
     assert [cid for cid, _ in index.search(query, scopes=["project:b"], k=5)] == [2]
     assert {cid for cid, _ in index.search(query, scopes=None, k=5)} == {1, 2}
+    assert [cid for cid, _ in index.search(query, scopes=["project:b"], k=5, outside=True)] == [1]
+    assert index.search(query, scopes=None, k=5, outside=True) == []
 
 
 def test_the_client_talks_to_the_service_and_reports_a_dead_one(claims, monkeypatch) -> None:
@@ -193,8 +223,9 @@ def test_the_client_talks_to_the_service_and_reports_a_dead_one(claims, monkeypa
     thread.start()
     try:
         monkeypatch.setenv(dense_recall.URL_ENV, f"http://127.0.0.1:{server.server_address[1]}")
-        answer = dense_recall.search("weapon recoil", ["project:pubgclone"])
+        answer = dense_recall.search("weapon recoil", ["project:pubgclone"], outside_k=5)
         assert answer.indexed == 3 and answer.results[0][0] == claims["ids"]["recoil"]
+        assert [cid for cid, _ in answer.outside] == [claims["ids"]["other"]]
         assert {cid for cid, _ in answer.results} <= {claims["ids"]["recoil"], claims["ids"]["netcode"]}
     finally:
         server.shutdown()
