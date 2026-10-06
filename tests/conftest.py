@@ -213,6 +213,14 @@ def _no_operator_scope_aliases(tmp_path_factory, monkeypatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_operator_jev_settings(monkeypatch) -> None:
+    """Tests never inherit the operator's Jev mode (2026-10-06: a user-level
+    MEMORYMASTER_JEV_MODE=shadow added jev_ingest records and failed 10 Dreaming tests)."""
+    for name in [key for key in os.environ if key.upper().startswith("MEMORYMASTER_JEV_")]:
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _restore_cwd():
     """Every test ends in the directory it started in.
 
