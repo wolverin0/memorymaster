@@ -165,6 +165,34 @@ def ancestor_project_scopes(
     return scopes
 
 
+SCOPE_ALIASES_ENV = "MEMORYMASTER_SCOPE_ALIASES"
+_ALIAS_CACHE: dict[str, object] = {"key": None, "map": {}}
+
+
+def _scope_aliases() -> dict[str, str]:
+    """Folder slug -> project scope, from ~/.memorymaster/scope-aliases.json (operator-owned).
+
+    Re-read when the file changes; a missing or broken file means no aliases.
+    """
+    path = Path(os.environ.get(SCOPE_ALIASES_ENV) or Path.home() / ".memorymaster" / "scope-aliases.json")
+    try:
+        key = (str(path), path.stat().st_mtime_ns)
+    except OSError:
+        return {}
+    if _ALIAS_CACHE["key"] != key:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8")).get("aliases", {})
+        except (OSError, ValueError, AttributeError):
+            raw = {}
+        _ALIAS_CACHE["map"] = {
+            str(folder).strip().lower(): target.strip()
+            for folder, target in (raw.items() if isinstance(raw, dict) else [])
+            if isinstance(target, str) and target.strip().startswith("project:")
+        }
+        _ALIAS_CACHE["key"] = key
+    return _ALIAS_CACHE["map"]  # type: ignore[return-value]
+
+
 def scope_from_cwd(cwd: str | os.PathLike[str] | None) -> str:
     """Derive a ``project:<slug>`` scope from a CWD path.
 
@@ -184,7 +212,7 @@ def scope_from_cwd(cwd: str | os.PathLike[str] | None) -> str:
     slug = _SLUG_NORMALIZER_RE.sub("-", name.strip().lower())
     if not slug:
         return "global"
-    return f"project:{slug}"
+    return _scope_aliases().get(slug, f"project:{slug}")
 
 
 def cwd_from_transcript(transcript_path: str | os.PathLike[str] | None) -> str | None:

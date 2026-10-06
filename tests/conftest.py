@@ -207,6 +207,12 @@ def _no_live_shared_recall(monkeypatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_operator_scope_aliases(tmp_path_factory, monkeypatch) -> None:
+    """Tests never read the operator's ~/.memorymaster/scope-aliases.json (2026-10-06)."""
+    monkeypatch.setenv("MEMORYMASTER_SCOPE_ALIASES", str(tmp_path_factory.getbasetemp() / "no-scope-aliases.json"))
+
+
+@pytest.fixture(autouse=True)
 def _restore_cwd():
     """Every test ends in the directory it started in.
 
