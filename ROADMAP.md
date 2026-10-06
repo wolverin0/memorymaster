@@ -118,9 +118,21 @@ Measurements owed in production live in
   project. Claims the ingest filter, a Dreaming source review or a different
   confirmed value block stay in place (about 22). Rescope fixes `3e57567`,
   `0ed999a`, `8c84d02`, `3de7d05`. Backup `artifacts/scope-unify-20261005/pre-unify.db`.
-- [ ] 8. Graph observations produce nothing since 2026-08-31: about 150
-  discovery jobs per Dreaming run all end `no_supports`, 0 emitted, 31,345 jobs
-  accumulated. Find why discovery finds no supports, or stop enqueueing it.
+- [x] 8. Graph observations produce nothing since 2026-08-31 (`a2aac47`,
+  installed 2026-10-06). Cause: observations need confirmed claims with captured
+  evidence and edge supports; only 3 of 4,729 confirmed claims have evidence
+  (session claims never do), and no edge support was written after 2026-08-14.
+  Discovery is now enqueued only for scopes with supports or live observations
+  (0 of 146 today), counted as `discovery_skipped_no_supports`. Making session
+  claims observable needs evidence for them plus LLM graph extraction over ~4.7k
+  claims: a separate, costed decision.
+- [x] 8b. Recall boosts no longer outrank relevance (`fc623e6`, installed
+  2026-10-06). `boost_floor_ratio` default 0 -> 0.5: a 0.107-lexical claim had
+  beaten the 0.475-lexical answer on confidence and freshness alone (canary
+  mm-8aef rank 8 -> 5). 60 real prompts, blind Haiku labels: nDCG@5 0.593 ->
+  0.747, P@5 0.392 -> 0.431, 11 better, 4 worse. Rollback:
+  `artifacts/release-floorgate-20261006/rollback.ps1` or
+  `MEMORYMASTER_BOOST_FLOOR_RATIO=0`.
 - Operator-only, not blocking: approve or reject the 9 fuzzy near-duplicate
   proposals once they appear; the 3000-char cap itself belongs to Fleet T-0797.
 
