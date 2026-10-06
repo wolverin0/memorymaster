@@ -507,6 +507,9 @@ def test_dream_cycle_enforces_one_three_call_batch_per_scope(monkeypatch) -> Non
     calls: list[tuple[str, str]] = []
 
     class FakeRepository:
+        def discovery_has_work(self, **_kwargs):
+            return True
+
         def queue_discovery(self, **kwargs):
             calls.append(("queue", str(kwargs["tenant_id"])))
             return None, True
@@ -705,3 +708,26 @@ def test_dashboard_splits_completed_jobs_by_outcome(tmp_path) -> None:
     assert payload["job_outcomes"]["discover"]["components_found"] == 1
     assert payload["job_outcomes"]["discover"]["no_supports"] == 1
     assert payload["job_outcomes"]["discover"]["unrecorded"] == 0
+
+
+def test_discovery_is_not_enqueued_for_a_scope_with_nothing_to_discover(tmp_path) -> None:
+    # Found 2026-10-06: about 150 discovery jobs per Dreaming run all ended
+    # no_supports (25,576 accumulated) because session claims carry no captured
+    # evidence. A scope with supports, or with a live observation to recheck,
+    # still gets its job.
+    service, _capture, _sources = _graph_fixture(tmp_path)
+    repo = GraphObservationRepository(service.store)
+    assert repo.discovery_has_work(scope="project:test", tenant_id=None)
+    assert not repo.discovery_has_work(scope="project:empty", tenant_id=None)
+
+    worker = DreamWorker(
+        None, service, object(), object(),
+        now=lambda: datetime(2026, 10, 6, 3, tzinfo=timezone.utc),
+    )
+    worker._observation_scope_pairs = lambda _scope: [("project:test", None), ("project:empty", None)]
+    result = worker._run_graph_observations(owner="dream-worker", scope=None, synthesize=False)
+    assert (result["discovery_jobs_enqueued"], result["discovery_skipped_no_supports"]) == (1, 1)
+    with service.store.connect() as conn:
+        scopes = [row[0] for row in conn.execute(
+            "SELECT scope FROM graph_observation_jobs WHERE stage='discover'")]
+    assert scopes == ["project:test"]
