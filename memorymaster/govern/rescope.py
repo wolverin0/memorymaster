@@ -56,10 +56,14 @@ def rescope_claim(store, claim_id: int, target_scope: str, *, reason: str) -> in
             if (twin_value or "") != (old.object_value or ""):
                 raise RescopeConflict(f"Claim {claim_id}: {target_scope} already confirms a different "
                                       f"value for this triple (claim {twin_id}).")
-            store.mark_superseded(claim_id, twin_id, f"rescope {old.scope} -> {target_scope}: {reason} "
-                                  "(same confirmed claim already there)",
-                                  event_payload={"rescope": True, "from_scope": old.scope,
-                                                 "to_scope": target_scope, "merged_into_existing": True})
+            note = f"rescope {old.scope} -> {target_scope}: {reason} (same confirmed claim already there)"
+            payload = {"rescope": True, "from_scope": old.scope, "to_scope": target_scope,
+                       "merged_into_existing": True}
+            if store.get_claim(twin_id, include_citations=False).supersedes_claim_id in (None, claim_id):
+                store.mark_superseded(claim_id, twin_id, note, event_payload=payload)
+            else:  # the keeper already points back at another duplicate; one back-link is enough
+                lifecycle.transition_claim(store, claim_id, "superseded", reason=note, event_type="supersession",
+                                           replaced_by_claim_id=twin_id, event_payload=payload)
             return twin_id
     citations = [CitationInput(source=c.source, locator=c.locator, excerpt=c.excerpt) for c in old.citations]
     if not citations:

@@ -144,3 +144,16 @@ def test_a_claim_the_ingest_filter_now_refuses_stays_where_it_is(store, monkeypa
     with pytest.raises(rescope.RescopeConflict, match="citation_locator"):
         rescope.rescope_claim(store, old_id, "project:whatsappbot", reason="filter")
     assert store.get_claim(old_id, include_citations=False).status == "confirmed"
+
+
+def test_two_duplicates_can_both_merge_into_the_same_existing_claim(store) -> None:
+    # Found 2026-10-06: the second duplicate hit "already supersedes another claim"
+    # because supersedes_claim_id holds one id; the old claim's replaced_by is enough.
+    keeper = _confirmed(store, "project:whatsappbot-final", "http://localhost:3004/send")
+    first = _confirmed(store, "project:whatsappbot", "http://localhost:3004/send")
+    second = _confirmed(store, "project:whatsapp-bot", "http://localhost:3004/send")
+    assert rescope.rescope_claim(store, first, "project:whatsappbot-final", reason="dup") == keeper
+    assert rescope.rescope_claim(store, second, "project:whatsappbot-final", reason="dup") == keeper
+    for old in (first, second):
+        claim = store.get_claim(old, include_citations=False)
+        assert (claim.status, claim.replaced_by_claim_id) == ("superseded", keeper)
