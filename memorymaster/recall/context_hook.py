@@ -1427,6 +1427,34 @@ def _recall_impl(
     svc = MemoryService(db_target=db, workspace_root=Path.cwd(), read_only=True)
     prompt_plan = _prompt_recall_plan(query, limit=100)
 
+    # Dense prompt recall (EmbeddingGemma 2 service, MEMORYMASTER_RECALL_DENSE=1).
+    # Prompt hook only; when the service cannot answer, lexical recall below runs.
+    if _hook_data is not None:
+        from memorymaster.recall import dense_recall
+
+        if dense_recall.enabled():
+            dense_started = time.perf_counter()
+            with _phase_timer(phase_ms, "dense"):
+                dense_rows, dense_metrics = _dense_prompt_rows(svc, query, prompt_plan)
+            event = {"scope": _current_scope(), "query_fp": dense_recall.query_fingerprint(query),
+                     "query_chars": len(query), **dense_metrics}
+            if dense_rows is not None:
+                text, rendered = _finish_recall(
+                    query, dense_rows, budget=budget, svc=svc, phase_ms=phase_ms,
+                    rank_start=time.perf_counter(), hook_data=_hook_data, rendered_ids=_rendered_ids,
+                )
+                event.update({
+                    "outcome": "dense" if rendered else "dense_empty",
+                    "injected": len(rendered),
+                    "injected_ids": [getattr(row.get("claim"), "id", None) for row in rendered],
+                    "chars": len(text),
+                    "total_ms": dense_recall.elapsed_ms(dense_started),
+                })
+                dense_recall.record(event)
+                return text
+            event["total_ms"] = dense_recall.elapsed_ms(dense_started)
+            dense_recall.record(event)
+
     # Pre-extract salient tokens before hitting FTS5. Passing the full
     # prompt verbatim AND-joins every token in FTS5 and rejects nearly all
     # real conversational prompts (see artifacts/retrieval-eval-2026-04-22).
@@ -2132,28 +2160,82 @@ def _recall_impl(
         if _lr_fts_surplus:
             ranked = ranked[: max(0, len(ranked) - _lr_fts_surplus)]
 
+    text, _rendered = _finish_recall(
+        query, ranked, budget=budget, svc=svc, phase_ms=phase_ms, rank_start=_rank_start,
+        hook_data=_hook_data, rendered_ids=_rendered_ids,
+    )
+    return text
+
+
+def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_data, rendered_ids):
+    """Render the ranked rows within budget, apply S2, record ids and accesses."""
     # Build output — top claims within budget
     lines, rendered_rows = _render_recall_lines(ranked, budget)
     # S2 RECALL (Jev, 4.9.0): only the prompt hook opts in by passing its
     # payload; with the surface off this is a no-op and the block is unchanged.
-    if _hook_data is not None:
-        jev_rendering = _jev_recall_rendering(query, ranked, lines, rendered_rows, budget, _hook_data, phase_ms)
+    if hook_data is not None:
+        jev_rendering = _jev_recall_rendering(query, ranked, lines, rendered_rows, budget, hook_data, phase_ms)
         if jev_rendering is not None:
             lines, rendered_rows = jev_rendering
-    if _rendered_ids is not None:
+    if rendered_ids is not None:
         for row in rendered_rows:
             cid = getattr(row.get("claim"), "id", None)
             if isinstance(cid, int):
-                _rendered_ids.append(cid)
+                rendered_ids.append(cid)
 
     if rendered_rows:
         svc._record_accesses(rendered_rows, query_text=query)
 
     # Close the rank_and_build timer right before we emit output so the
     # measurement covers _relevance/RRF + the budget-trimming loop.
-    phase_ms["rank_and_build"] = (time.perf_counter() - _rank_start) * 1000.0
+    phase_ms["rank_and_build"] = (time.perf_counter() - rank_start) * 1000.0
 
-    return _recall_text(lines)
+    return _recall_text(lines), rendered_rows
+
+
+def _dense_prompt_rows(svc, query: str, plan) -> tuple[list[dict] | None, dict]:
+    """Dense candidates for the prompt hook, authorized like every other stream.
+
+    Returns ``(rows, metrics)``; ``rows`` is ``None`` when the service could not
+    answer (the caller then runs lexical recall) and may be empty when no
+    authorized candidate reaches the score threshold (nothing is injected).
+    """
+    from memorymaster.recall import dense_recall
+
+    started = time.perf_counter()
+    scopes = list(plan.scope_allowlist) if plan.scope_allowlist is not None else None
+    try:
+        answer = dense_recall.search(query, scopes)
+    except dense_recall.DenseUnavailable as exc:
+        return None, {"outcome": f"fallback:{exc}", "service_ms": dense_recall.elapsed_ms(started)}
+    threshold, cap = dense_recall.min_score(), dense_recall.max_claims()
+    rows: list[dict] = []
+    filtered_out = 0
+    for cid, score in answer.results:
+        if score < threshold or len(rows) >= cap:
+            break
+        try:
+            claim = svc.store.get_claim(cid, include_citations=True)
+        except Exception as exc:  # noqa: BLE001 — a bad id must not break recall
+            logger.debug("dense hydrate get_claim(%d) failed: %s", cid, exc)
+            claim = None
+        row = {**_row_for_graph_claim(claim, 0.0), "dense_score": score, "source": "dense"} if claim else None
+        if row is None or not _filter_prompt_rows([row], plan):
+            filtered_out += 1
+            continue
+        rows.append(row)
+    return rows, {
+        "service_ms": dense_recall.elapsed_ms(started),
+        "embed_ms": answer.embed_ms,
+        "search_ms": answer.search_ms,
+        "indexed": answer.indexed,
+        "candidates": len(answer.results),
+        "above_threshold": sum(score >= threshold for _, score in answer.results),
+        "filtered_out": filtered_out,
+        "top_score": round(answer.results[0][1], 4) if answer.results else None,
+        "scores": [round(score, 4) for _, score in answer.results[:8]],
+        "min_score": threshold,
+    }
 
 
 # The id lets the agent cite what it used and lets the Stop-hook joiner see it (T-0739):

@@ -221,6 +221,13 @@ def _no_operator_jev_settings(monkeypatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_operator_dense_recall(monkeypatch) -> None:
+    """Tests never reach the operator's dense-recall service (MEMORYMASTER_RECALL_DENSE=1 is user-level)."""
+    for name in [key for key in os.environ if key.upper().startswith("MEMORYMASTER_RECALL_DENSE")]:
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _restore_cwd():
     """Every test ends in the directory it started in.
 
