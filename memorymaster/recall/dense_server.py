@@ -11,7 +11,12 @@ Measured 2026-10-06 (200 real prompts, blind graded judgments): with the prompt
 hook's scope, nDCG@10 0.337 against 0.167 for the lexical hook; see
 artifacts/2026-10-06-embeddinggemma2-benchmark.html.
 
-    python -m memorymaster.recall.dense_server --db memorymaster.db --port 8767
+Deployment notes measured the same day: run it on CPU (``--device cpu``); with
+prompts seconds apart an idle desktop GPU stays in its P8 power state and
+answered in 80-322 ms against 54-109 ms on CPU. Under Task Scheduler give the
+task normal priority (4): the default (7, below normal) tripled CPU latency.
+
+    python -m memorymaster.recall.dense_server --db memorymaster.db --port 8767 --device cpu
 """
 
 from __future__ import annotations
@@ -121,7 +126,10 @@ class DenseIndex:
                 new_scopes.append(scope)
                 new_hashes.append(digest)
                 new_texts.append(text)
-        fresh = self._encode(new_texts, "document") if new_texts else None
+        # Small chunks: the encoder lock is released between them, so a burst of
+        # newly confirmed claims (CPU: ~11 claims/s) never holds a query past its timeout.
+        chunks = [self._encode(new_texts[i:i + EMBED_BATCH], "document") for i in range(0, len(new_texts), EMBED_BATCH)]
+        fresh = np.vstack(chunks) if chunks else None
         kept = self.vectors[keep_rows] if keep_rows else None
         parts = [part for part in (kept, fresh) if part is not None and len(part)]
         vectors = np.vstack(parts).astype(np.float32) if parts else np.zeros((0, 0), dtype=np.float32)

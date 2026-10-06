@@ -146,10 +146,21 @@ def _fake_encode(texts, kind):
 class _CountingEncoder:
     def __init__(self) -> None:
         self.embedded = 0
+        self.calls: list[int] = []
 
     def __call__(self, texts, kind):
         self.embedded += len(texts)
+        self.calls.append(len(texts))
         return _fake_encode(texts, kind)
+
+
+def test_a_burst_of_new_claims_is_embedded_in_small_chunks() -> None:
+    # One call per burst held the encoder lock for the whole burst: on CPU, 100
+    # newly confirmed claims would keep every prompt waiting ~9 s, past its timeout.
+    encoder = _CountingEncoder()
+    index = DenseIndex(encoder)
+    index.sync([(i, "project:a", f"claim number {i}") for i in range(20)])
+    assert encoder.calls == [8, 8, 4] and len(index.ids) == 20
 
 
 def test_the_index_reembeds_only_new_or_changed_claims(tmp_path) -> None:
