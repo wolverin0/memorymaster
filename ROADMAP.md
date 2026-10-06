@@ -133,6 +133,17 @@ Measurements owed in production live in
   0.747, P@5 0.392 -> 0.431, 11 better, 4 worse. Rollback:
   `artifacts/release-floorgate-20261006/rollback.ps1` or
   `MEMORYMASTER_BOOST_FLOOR_RATIO=0`.
+- [x] 8c. Dense prompt recall (`15749e6`, `f6eeec0`, installed 2026-10-06).
+  The prompt hook was purely lexical. On 200 real prompts with blind graded
+  Sonnet judgments, EmbeddingGemma 2 with the hook's scope scored nDCG@10 0.337
+  vs 0.167; MiniLM gave no gain. Service `MemoryMaster-Dense-Recall` (CPU,
+  127.0.0.1:8767) returns ids only; the hook authorizes them like any stream,
+  injects cosine >= 0.68 (max 6), nothing below, lexical when the service is
+  down. Live on the fixed set: nDCG@10 0.237 vs 0.167, useful claims per prompt
+  1.21 vs 0.90, injected 3.87 vs 5.94, chars 4.3k vs 6.5k. Metrics:
+  `python -m memorymaster.recall.dense_recall report`; quality:
+  `scripts/eval_prompt_recall.py`. Rollback: unset `MEMORYMASTER_RECALL_DENSE`
+  or `artifacts/release-denserecall-20261006/rollback.ps1`.
 - Operator-only, not blocking: approve or reject the 9 fuzzy near-duplicate
   proposals once they appear; the 3000-char cap itself belongs to Fleet T-0797.
 
