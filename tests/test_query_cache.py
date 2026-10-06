@@ -73,7 +73,7 @@ def test_config_change_invalidates_cache(env, monkeypatch):
     _q(svc)
     assert spy["n"] == 1
     # Changing a retrieval weight changes the config fingerprint -> new key -> miss.
-    monkeypatch.setenv("MEMORYMASTER_BOOST_FLOOR_RATIO", "0.5")
+    monkeypatch.setenv("MEMORYMASTER_BOOST_FLOOR_RATIO", "0.7")
     reset_config()
     _q(svc)
     assert spy["n"] == 2
