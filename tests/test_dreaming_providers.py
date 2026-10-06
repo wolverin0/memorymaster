@@ -501,3 +501,25 @@ def test_glm_consolidator_rejects_invalid_opencode_event_stream(
 ) -> None:
     with pytest.raises(ProviderCallError, match=message):
         opencode_response_text(stdout)
+
+
+def test_gemini_extractor_spaces_consecutive_calls_under_the_per_minute_limit() -> None:
+    body = {"candidates": [{"content": {"parts": [{"text": '{"candidates":[]}'}]}}],
+            "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1}}
+    now = [100.0]
+    sleeps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    extractor = GeminiExtractor(api_key="test-key", transport=lambda *_a: (200, body, {}),
+                                sleep=sleep, min_interval_s=4.5, clock=lambda: now[0])
+    messages = [{"id": "m1", "role": "user", "text": "hello"}]
+    extractor.extract(messages, scope="project:test", capture_hash="a")
+    now[0] += 1.0  # the first call took one second
+    extractor.extract(messages, scope="project:test", capture_hash="b")
+    now[0] += 10.0  # already past the interval: no wait
+    extractor.extract(messages, scope="project:test", capture_hash="c")
+
+    assert sleeps == [3.5]

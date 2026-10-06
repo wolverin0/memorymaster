@@ -422,11 +422,31 @@ class GeminiExtractor:
 
     provider = "google"
 
-    def __init__(self, *, api_key: str | None = None, model: str | None = None, transport: Transport = _default_transport, sleep: Callable[[float], None] = time.sleep) -> None:
+    # Measured 2026-10-06: every extraction 429 since 10-01 (8 runs) came with
+    # 15-19 calls in the preceding 60 s, and the 1+2+4 s retry backoff cannot
+    # outlast a per-minute window. Spacing calls keeps a run under that limit.
+    DEFAULT_MIN_INTERVAL_S = 4.5
+
+    def __init__(self, *, api_key: str | None = None, model: str | None = None, transport: Transport = _default_transport, sleep: Callable[[float], None] = time.sleep, min_interval_s: float | None = None, clock: Callable[[], float] = time.monotonic) -> None:
         self.api_key = api_key if api_key is not None else os.environ.get("GEMINI_API_KEY", "")
         self.model = model or os.environ.get("MEMORYMASTER_DREAM_EXTRACT_MODEL", "gemini-3.5-flash")
         self.transport = transport
         self.sleep = sleep
+        if min_interval_s is None:
+            try:
+                min_interval_s = float(os.environ.get("MEMORYMASTER_DREAM_GEMINI_MIN_INTERVAL_S", self.DEFAULT_MIN_INTERVAL_S))
+            except ValueError:
+                min_interval_s = self.DEFAULT_MIN_INTERVAL_S
+        self.min_interval_s = max(0.0, min_interval_s)
+        self.clock = clock
+        self._last_call_at: float | None = None
+
+    def _pace(self) -> None:
+        if self._last_call_at is not None:
+            wait = self.min_interval_s - (self.clock() - self._last_call_at)
+            if wait > 0:
+                self.sleep(wait)
+        self._last_call_at = self.clock()
 
     def extract(self, messages: list[dict[str, Any]], *, scope: str, capture_hash: str) -> ExtractionResult:
         if not self.api_key:
@@ -441,6 +461,7 @@ class GeminiExtractor:
             "Use scope_class personal only for stable user preference/profile/constraint knowledge."
         )
         payload = self._payload(prompt, messages, scope)
+        self._pace()
         started = time.monotonic()
         status, body = _post_with_retry(self.transport, self._url(), payload, {"Content-Type": "application/json"}, 90, self.sleep)
         raw = self._response_text(body)
