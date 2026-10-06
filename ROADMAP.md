@@ -108,9 +108,16 @@ Measurements owed in production live in
   labelled by Haiku; a claim moved only when the label was high confidence, the
   text names the project, and the scope already exists. Undo:
   `artifacts/curation-20261005/ROLLBACK.txt`.
-- [ ] 7g. Scope fragmentation: 267 project scopes, with variants such as
-  `whatsappbot` vs `whatsappbot-final` and worktree names. Merging them needs an
-  operator mapping.
+- [x] 7g. Scope fragmentation (operator decisions 2026-10-06). Spelling variants
+  unified (48 moved), worktree/branch scopes merged into their project (26), the
+  whatsappbot family consolidated into `project:whatsappbot-final` as the wisp lane
+  asked (1585; 1621 -> 3206), `PuntoFutura CRM` variants and the generic `project`
+  scope placed (13). Dubious pairs reviewed by Haiku stay separate; the 105 small
+  scopes stay as they are. Folder aliases (`8f6beb5`,
+  `~/.memorymaster/scope-aliases.json`) make worktrees read and write their
+  project. Claims the ingest filter, a Dreaming source review or a different
+  confirmed value block stay in place (about 22). Rescope fixes `3e57567`,
+  `0ed999a`, `8c84d02`, `3de7d05`. Backup `artifacts/scope-unify-20261005/pre-unify.db`.
 - [ ] 8. Graph observations produce nothing since 2026-08-31: about 150
   discovery jobs per Dreaming run all end `no_supports`, 0 emitted, 31,345 jobs
   accumulated. Find why discovery finds no supports, or stop enqueueing it.
