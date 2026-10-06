@@ -64,13 +64,18 @@ def rescope_claim(store, claim_id: int, target_scope: str, *, reason: str) -> in
     citations = [CitationInput(source=c.source, locator=c.locator, excerpt=c.excerpt) for c in old.citations]
     if not citations:
         citations = [CitationInput(source=f"claim://{claim_id}", locator="rescope")]
-    new = store.create_claim(
-        text=old.text, citations=citations, claim_type=old.claim_type, subject=old.subject,
-        predicate=old.predicate, object_value=old.object_value, scope=target_scope,
-        volatility=old.volatility, confidence=old.confidence, tenant_id=old.tenant_id,
-        event_time=old.event_time, valid_from=old.valid_from, valid_until=old.valid_until,
-        source_agent=old.source_agent, visibility=old.visibility, holder=old.holder,
-    )
+    try:
+        new = store.create_claim(
+            text=old.text, citations=citations, claim_type=old.claim_type, subject=old.subject,
+            predicate=old.predicate, object_value=old.object_value, scope=target_scope,
+            volatility=old.volatility, confidence=old.confidence, tenant_id=old.tenant_id,
+            event_time=old.event_time, valid_from=old.valid_from, valid_until=old.valid_until,
+            source_agent=old.source_agent, visibility=old.visibility, holder=old.holder,
+        )
+    except ValueError as exc:
+        # The ingest filters run again on the copy (e.g. a home path in an old citation
+        # locator): nothing was written, the original stays.
+        raise RescopeConflict(f"Claim {claim_id} cannot be copied to {target_scope}: {exc}") from exc
     try:
         for step in _PATH[old.status]:
             lifecycle.transition_claim(store, new.id, step, reason=f"rescope from #{claim_id}: {reason}",

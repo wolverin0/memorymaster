@@ -128,3 +128,19 @@ def test_a_move_that_fails_midway_leaves_no_live_orphan(store, monkeypatch) -> N
         live = conn.execute("SELECT COUNT(*) FROM claims WHERE scope = 'project:whatsappbot' "
                             "AND status != 'archived'").fetchone()[0]
     assert live == 0
+
+
+def test_a_claim_the_ingest_filter_now_refuses_stays_where_it_is(store, monkeypatch) -> None:
+    # Found 2026-10-06: an old claim whose citation locator holds a home path cannot be
+    # re-ingested (the sensitivity filter is right); the batch must skip it, not stop.
+    from memorymaster.core.security import SensitiveMetadataError
+
+    old_id = _claim(store, "confirmed")
+
+    def refuse(**_kwargs):
+        raise SensitiveMetadataError("citation_locator", ["home_path_unix"])
+
+    monkeypatch.setattr(store, "create_claim", refuse)
+    with pytest.raises(rescope.RescopeConflict, match="citation_locator"):
+        rescope.rescope_claim(store, old_id, "project:whatsappbot", reason="filter")
+    assert store.get_claim(old_id, include_citations=False).status == "confirmed"
