@@ -794,6 +794,35 @@ acceptance; delivery of this checkpoint is not, by itself, evidence of quality.
 Not changed (design decisions for the operator): renderer section priority, profile budget, the SessionStart cap in `~/.claude/hooks`, and the cadence/threshold mismatch. Zero authoritative-database mutations, zero forced jobs. Separately, under explicit operator approval, the Serena MCP configuration and hooks were changed today; that change is not part of this review.
 Evidence: `artifacts/operational-review/20261002/raw-evidence.json` (sha256 `e342be7a3913fdadfc52f049d967c77019d3b7fce2266d9e34c1a4d5f295c2e6`) and `installed-review.json` (sha256 `7f235ed198769c6f587919bbb9e68f7e523ed51576fd4ecbe82cb9e3a93147c1`). No feature-success watermark is advanced.
 
+## 2026-10-06 daily operational review
+
+**Completed with warnings. Three owned regressions fixed and installed; canary back to PASS.**
+ROADMAP and the effective installed configuration were read first; the authoritative
+and auxiliary SQLite were opened read-only for measurement. No steward, generation,
+sync or backup job was forced and no feature was enabled to produce a sample.
+
+| Area | Observed result and acceptance limit |
+|---|---|
+| Scheduled review (11:09Z, exit 1) | FAIL on retrieval_canary (mm-8aef missing), before the 11:14Z install. Installed review at 14:30Z: **WARN, exit 3, 0 mutations**; runtime 4.9.0, database (quick_check ok, FK 0, migration 28), activation, graph, private context, **canary rank 5** and checkpoint (14:25Z today) PASS; WARN compiled_profile (17 of 63 omitted, products by design) and jev_decisions. |
+| Canary cause (corrects 10-05) | Not clock decay alone: the answer had the best lexical score (0.475) but a 0.107-lexical claim outranked it on confidence and freshness. **Owned fix `fc623e6`:** `boost_floor_ratio` default 0 -> 0.5. 60 real prompts, blind Haiku labels: nDCG@5 0.593 -> 0.747, P@5 0.392 -> 0.431, 11 better, 4 worse, 11 tied (labels are a model proxy, not operator judgement). Rollback `artifacts/release-floorgate-20261006/rollback.ps1` or `MEMORYMASTER_BOOST_FLOOR_RATIO=0`. |
+| Declared vs actual activation | Profile 1, graph observations 1, Jev shadow, floor ratio unset (code default 0.5). Dreaming applies candidates; extract google/gemini-3.5-flash-lite, consolidate antigravity/gemini-3.7-flash-low as declared. 4.9.0 in both runtimes. GraphRAG recall, wiki absorption and workflow receipts: DISABLED. |
+| Providers (call records) | Since 10-05 14:30Z: google 41 ok, 2 x 429; antigravity 9 ok. Each Dreaming run's single 429 leaves one capture retryable and exits rc 1 (03:11Z 15 applied, 09:11Z 17 applied). Invoiced cost UNKNOWN; Jev estimate today $0.12. |
+| Graph observations | Enabled; **UNMEASURED, n=0**. Cause found: only 3 of 4,729 confirmed claims carry captured evidence and no edge support was written after 08-14. **Owned fix `a2aac47`:** discovery enqueued only with supports or live observations (0 of 146 scopes today; before, 144-145 `no_supports` jobs per run). First proof at the 15:11Z Dreaming run (due measurement `graph-discovery-skip`). |
+| Capture and queues | Capture jobs 94 graph + 1 claim blocked (old), 0 expired leases. Dreaming captures 339 applied, 43 captured, 345 `extracted` retained from 07-27..09-07 (unchanged), 1 retryable. |
+| Profile | Run 6 at watermark 148760 = target, not due; 63 active facts, manifest = user.md = 46, generated marker present (10-05 09:13Z). SessionStart in this session showed the profile trimmed at the 3000-char cap (Fleet T-0797). Agent consumption UNMEASURED. |
+| Jev | Shadow. 8 orphan send intents of 4,297 since 10-05 (0.19%): the decision write hit `OperationalError` while heavy writers ran (scope unification 00:46-00:52Z, steward plus full test suites 13:46-13:59Z). Fail-visible by design; also seen 10-03, before the shadow thread. Observed, not fixed. |
+| Steward | `steward-job-finish-outcome` **PASS**: runs at 03:48Z, 08:03Z and 14:20Z log outcome=ok, exit 0; task rc 0. The 10-05 19:52Z run has no job_finish and 01:52Z took 7,011 s, both during the unification. |
+| Recall latency | `textgen-live-recall` **PASS on median**: 1,509 -> 922 ms; clean hours today 119-680 ms. p90 13.6 -> 20.0 s tracks this lane's own heavy jobs, so the tail is UNMEASURED under normal load. |
+| Tests | Owned regression: a user-level `MEMORYMASTER_JEV_MODE` failed 10 Dreaming tests; `dc5203f` clears `MEMORYMASTER_JEV_*` per test. Full non-ML suite 6,882 passed, 0 failed after regenerating release truth. |
+| Checkpoint (F-08) | Trailing 7 days: 09-30 and 10-01 failed (no MemoryMaster pane, Orca timeout), 10-02..10-06 ok. Gate NOT MET until 10-08 if delivery holds. |
+| MCP and sync | Shared 8766 healthz 200 after the 11:14Z restart; Hermes 8765 (LAN listener) healthz/readyz 200, unauthenticated 401. Hermes delta DONE 10-05 03:13, 15:13 and 10-06 03:13 local, twins 0. |
+| Snapshot namespace and backup | Latest snapshot `mm-20260930.db`; stray 0-byte `part-wal` from 09-28 left in place. NAS `memorymaster-20261004T040106Z.db` verified 10-04 (predates curation). Local `artifacts/scope-unify-20261005/pre-unify.db`: quick_check ok, 149,477 claims. No verified backup of the post-unification state yet; weekly NAS run 10-11. |
+
+Evidence: `artifacts/operational-review/20261006/raw-evidence.json` (sha256
+`a94b870e843e24f3255ae09d7d1fd57ac980a5e8dbaa228261ad0e54986e4ccb`) and
+`installed-review.json` (sha256 `2f3fc63b2077b9b6806b3cb545f00a952aed49ea2fb72514c5f1f40ddbdf29fe`).
+No feature-success watermark is advanced.
+
 ## 2026-10-05 daily operational and weekly acceptance review
 
 **Completed with warnings. Two owned regressions fixed, one installed; weekly semantic acceptance remains UNMEASURED.**
