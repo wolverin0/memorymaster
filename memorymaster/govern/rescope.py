@@ -71,9 +71,16 @@ def rescope_claim(store, claim_id: int, target_scope: str, *, reason: str) -> in
         event_time=old.event_time, valid_from=old.valid_from, valid_until=old.valid_until,
         source_agent=old.source_agent, visibility=old.visibility, holder=old.holder,
     )
-    for step in _PATH[old.status]:
-        lifecycle.transition_claim(store, new.id, step, reason=f"rescope from #{claim_id}: {reason}",
+    try:
+        for step in _PATH[old.status]:
+            lifecycle.transition_claim(store, new.id, step, reason=f"rescope from #{claim_id}: {reason}",
+                                       event_type="transition")
+    except ValueError as exc:
+        # e.g. a Dreaming-sourced claim cannot be re-confirmed without a source review:
+        # retire the half-made copy so no live orphan is left, and keep the original.
+        lifecycle.transition_claim(store, new.id, "archived", reason=f"failed rescope of #{claim_id}: {exc}",
                                    event_type="transition")
+        raise RescopeConflict(f"Claim {claim_id} cannot be copied to {target_scope}: {exc}") from exc
     store.adopt_claim_history(new.id, claim_id)
     store.mark_superseded(claim_id, new.id, f"rescope {old.scope} -> {target_scope}: {reason}",
                           event_payload={"rescope": True, "from_scope": old.scope, "to_scope": target_scope})

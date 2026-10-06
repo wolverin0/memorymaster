@@ -107,3 +107,24 @@ def test_a_move_onto_a_different_confirmed_value_is_refused_without_side_effects
     assert store.get_claim(old, include_citations=False).status == "confirmed"
     with store.connect() as conn:
         assert conn.execute("SELECT COUNT(*) FROM claims WHERE scope = 'project:py-apps'").fetchone()[0] == 1
+
+
+def test_a_move_that_fails_midway_leaves_no_live_orphan(store, monkeypatch) -> None:
+    # Found 2026-10-06: a Dreaming-sourced claim cannot be re-confirmed without a source
+    # review, so the copy failed after creation and stayed as a live candidate.
+    old_id = _claim(store, "confirmed")
+    real = rescope.lifecycle.transition_claim
+
+    def refuse_copy(st, claim_id, to_status, **kwargs):
+        if claim_id != old_id and to_status == "confirmed":
+            raise ValueError("Dreaming confirmation requires a current source review")
+        return real(st, claim_id, to_status, **kwargs)
+
+    monkeypatch.setattr(rescope.lifecycle, "transition_claim", refuse_copy)
+    with pytest.raises(rescope.RescopeConflict, match="source review"):
+        rescope.rescope_claim(store, old_id, "project:whatsappbot", reason="midway")
+    assert store.get_claim(old_id, include_citations=False).status == "confirmed"
+    with store.connect() as conn:
+        live = conn.execute("SELECT COUNT(*) FROM claims WHERE scope = 'project:whatsappbot' "
+                            "AND status != 'archived'").fetchone()[0]
+    assert live == 0
