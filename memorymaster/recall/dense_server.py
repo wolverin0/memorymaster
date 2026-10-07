@@ -69,9 +69,10 @@ def read_confirmed_claims(db_path: str | Path) -> list[tuple[int, str, str]]:
 class DenseIndex:
     """One normalized vector per confirmed claim; re-embeds only new or changed text."""
 
-    def __init__(self, encode: Encoder, *, cache_path: Path | None = None) -> None:
+    def __init__(self, encode: Encoder, *, cache_path: Path | None = None, model_tag: str = "") -> None:
         self._encode = encode
         self._cache_path = cache_path
+        self._model_tag = model_tag
         self._lock = threading.Lock()
         self.ids = np.zeros(0, dtype=np.int64)
         self.scopes: list[str] = []
@@ -86,6 +87,10 @@ class DenseIndex:
             return
         try:
             data = np.load(self._cache_path, allow_pickle=False)
+            tag = str(data["model"]) if "model" in data.files else ""
+            if tag != self._model_tag:  # vectors from another model or dimension: re-embed
+                LOGGER.info("dense index cache ignored: model %r != %r", tag, self._model_tag)
+                return
             self.ids = data["ids"].astype(np.int64)
             self.hashes = [str(h) for h in data["hashes"]]
             self.scopes = [str(s) for s in data["scopes"]]
@@ -99,7 +104,7 @@ class DenseIndex:
         self._cache_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._cache_path.with_suffix(".tmp.npz")
         np.savez(tmp, ids=self.ids, hashes=np.array(self.hashes), scopes=np.array(self.scopes),
-                 vectors=self.vectors)
+                 vectors=self.vectors, model=np.array(self._model_tag))
         os.replace(tmp, self._cache_path)
 
     def sync(self, claims: Sequence[tuple[int, str, str]]) -> int:
@@ -152,7 +157,7 @@ class DenseIndex:
         if not len(ids):
             return []
         scores = vectors @ query_vector.astype(np.float32)
-        if scopes:
+        if scopes is not None:
             allowed = set(scopes)
             mask = np.fromiter((scope in allowed for scope in claim_scopes), dtype=bool, count=len(claim_scopes))
             scores = np.where(~mask if outside else mask, scores, -np.inf)
@@ -199,7 +204,7 @@ class DenseService:
         self.model = model
         self.dim = dim
         self.device = device
-        self.index = DenseIndex(encode, cache_path=cache_path)
+        self.index = DenseIndex(encode, cache_path=cache_path, model_tag=f"{model}:{dim}")
         self.sync_interval_s = sync_interval_s
         self.started = time.time()
         self.sync_errors = 0
@@ -246,6 +251,8 @@ class DenseService:
 
 def make_handler(service: DenseService) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
+        timeout = 5  # a client that sends less than its Content-Length cannot pin a thread
+
         def _send(self, status: int, payload: dict[str, Any]) -> None:
             body = json.dumps(payload).encode("utf-8")
             self.send_response(status)
@@ -265,8 +272,10 @@ def make_handler(service: DenseService) -> type[BaseHTTPRequestHandler]:
                 self._send(404, {"error": "not found"})
                 return
             try:
-                length = min(int(self.headers.get("Content-Length") or 0), 1_000_000)
+                length = max(0, min(int(self.headers.get("Content-Length") or 0), 1_000_000))
                 request = json.loads(self.rfile.read(length) or b"{}")
+                if not isinstance(request, dict):
+                    raise ValueError("body must be a JSON object")
                 query = str(request.get("query") or "")
                 scopes = request.get("scopes")
                 if scopes is not None and not (isinstance(scopes, list) and all(isinstance(s, str) for s in scopes)):

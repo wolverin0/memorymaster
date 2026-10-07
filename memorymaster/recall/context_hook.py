@@ -2221,9 +2221,13 @@ def _dense_prompt_rows(svc, query: str, plan) -> tuple[list[dict] | None, dict]:
     )
     rows: list[dict] = []
     filtered_out = 0
+    seen: set[int] = set()
     for cid, score, outside in candidates:
         if len(rows) >= dense_recall.max_claims():
             break
+        if cid in seen:  # a repeated id is injected once
+            continue
+        seen.add(cid)
         try:
             claim = svc.store.get_claim(cid, include_citations=True)
         except Exception as exc:  # noqa: BLE001 — a bad id must not break recall

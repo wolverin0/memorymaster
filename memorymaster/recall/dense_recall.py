@@ -30,7 +30,6 @@ import json
 import os
 import statistics
 import time
-import urllib.error
 import urllib.request
 from collections import Counter
 from collections.abc import Iterable, Sequence
@@ -60,6 +59,11 @@ DEFAULT_OUTSIDE_MIN_SCORE = 0.76
 # service answers, and the log keeps the scores just under the threshold.
 FETCH_K = 12
 LOG_MAX_BYTES = 20 * 1024 * 1024
+
+
+# The prompt text goes only to the loopback service, never through HTTP_PROXY or the
+# system proxy settings that urlopen would honour.
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 class DenseUnavailable(RuntimeError):
@@ -104,18 +108,21 @@ def search(query: str, scopes: Sequence[str] | None, *, k: int = FETCH_K, outsid
 
     Raises :class:`DenseUnavailable` on any failure.
     """
-    url = os.environ.get(URL_ENV, DEFAULT_URL).rstrip("/") + "/search"
-    body = json.dumps({"query": query, "scopes": list(scopes) if scopes else None, "k": k,
-                       "outside_k": outside_k}).encode("utf-8")
-    request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=_float_env(TIMEOUT_ENV, DEFAULT_TIMEOUT_S)) as response:
+        url = os.environ.get(URL_ENV, DEFAULT_URL).rstrip("/") + "/search"
+        body = json.dumps({"query": query, "scopes": list(scopes) if scopes else None, "k": k,
+                           "outside_k": outside_k}).encode("utf-8")
+        request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+        with _OPENER.open(request, timeout=_float_env(TIMEOUT_ENV, DEFAULT_TIMEOUT_S)) as response:
             payload = json.loads(response.read())
         results = tuple((int(item["id"]), float(item["score"])) for item in payload["results"])
         outside = tuple((int(item["id"]), float(item["score"])) for item in payload.get("outside") or ())
         return DenseAnswer(results, float(payload.get("embed_ms") or 0.0), float(payload.get("search_ms") or 0.0),
                            int(payload.get("indexed") or 0), str(payload.get("model") or ""), outside)
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError, KeyError, TypeError) as exc:
+    # Any failure means "no dense answer": a truncated body (IncompleteRead), a bad status
+    # line, an overflowing id or a malformed URL all fell through a narrower list (verifier,
+    # 2026-10-06) and cost the prompt its lexical fallback.
+    except Exception as exc:  # noqa: BLE001
         raise DenseUnavailable(type(exc).__name__) from exc
 
 
@@ -154,9 +161,10 @@ def read_events(path: Path, *, since: datetime | None = None) -> list[dict[str, 
         for raw in candidate.read_text(encoding="utf-8").splitlines():
             try:
                 event = json.loads(raw)
-            except ValueError:
+                stamp = datetime.fromisoformat(event["ts"])
+            except (ValueError, KeyError, TypeError):
                 continue
-            if since is not None and datetime.fromisoformat(event["ts"]) < since:
+            if since is not None and stamp < since:
                 continue
             events.append(event)
     return events

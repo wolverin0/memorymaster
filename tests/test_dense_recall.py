@@ -251,3 +251,76 @@ def test_the_report_summarizes_outcomes_latency_and_volume() -> None:
     report = dense_recall.summarize(events)
     assert report["recalls"] == 3 and report["fallback_rate"] == 0.333
     assert report["empty_rate"] == 0.5 and report["injected_mean"] == 2.0 and report["chars_mean"] == 1500
+
+
+# ---- defects found by the independent verifier, 2026-10-06
+
+def test_any_client_failure_becomes_a_fallback(monkeypatch) -> None:
+    import http.server
+
+    class Truncating(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.send_response(200)
+            self.send_header("Content-Length", "1000")
+            self.end_headers()
+            self.wfile.write(b'{"results": [')  # then hang up: IncompleteRead
+
+        def log_message(self, *_args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Truncating)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        monkeypatch.setenv(dense_recall.URL_ENV, f"http://127.0.0.1:{server.server_address[1]}")
+        with pytest.raises(dense_recall.DenseUnavailable):
+            dense_recall.search("weapon recoil", None)
+    finally:
+        server.shutdown()
+        server.server_close()
+    monkeypatch.setenv(dense_recall.URL_ENV, "not a url")
+    with pytest.raises(dense_recall.DenseUnavailable):
+        dense_recall.search("weapon recoil", None)
+
+
+def test_a_repeated_id_is_injected_once(claims, monkeypatch) -> None:
+    ids = claims["ids"]
+    monkeypatch.setenv(dense_recall.ENABLE_ENV, "1")
+    monkeypatch.setattr(dense_recall, "search", lambda query, scopes, **_: _answer(
+        (ids["recoil"], 0.80), (ids["recoil"], 0.79), (ids["netcode"], 0.70)))
+    _text, rendered = context_hook.recall("weapon recoil", db_path=claims["db"], return_ids=True,
+                                          hook_data=claims["hook"])
+    assert rendered == [ids["recoil"], ids["netcode"]]
+
+
+def test_the_service_rejects_a_non_object_body_and_an_empty_scope_list_matches_nothing(claims) -> None:
+    import urllib.error
+    import urllib.request
+
+    service = DenseService(claims["db"], _fake_encode, model="fake", dim=32, device="cpu")
+    service.sync_once()
+    assert service.search("weapon recoil", [], 5)["results"] == []
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(service))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        request = urllib.request.Request(f"http://127.0.0.1:{server.server_address[1]}/search", data=b"[1, 2]",
+                                         headers={"Content-Type": "application/json"}, method="POST")
+        with pytest.raises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(request, timeout=5)
+        assert error.value.code == 400
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_cache_from_another_model_is_not_reused(tmp_path) -> None:
+    cache = tmp_path / "index.npz"
+    DenseIndex(_fake_encode, cache_path=cache, model_tag="model-a:768").sync([(1, "project:a", "weapon recoil")])
+    encoder = _CountingEncoder()
+    index = DenseIndex(encoder, cache_path=cache, model_tag="model-b:768")
+    assert index.sync([(1, "project:a", "weapon recoil")]) == 1
+
+
+def test_the_report_skips_lines_without_a_timestamp(tmp_path) -> None:
+    log = tmp_path / "recall-dense.jsonl"
+    log.write_text('{"outcome": "dense"}\n{"ts": "2026-10-06T23:00:00+00:00", "outcome": "dense"}\n', encoding="utf-8")
+    assert len(dense_recall.read_events(log)) == 1
