@@ -74,7 +74,7 @@ take 0.06 s; both clients finished in 4.4 s (6.8 s before); server 472 MB ready,
   validation. **On the shared server it is mandatory**: any holder of the bearer
   token chooses a workspace through the header or argument, so without the
   allowlist a token holder can read/write any project scope. Set it to the roots
-  it serves (the `Py Apps` tree and `C:/Users/pauol/orca/workspaces`).
+  it serves (the `Py Apps` tree and `~/orca/workspaces`).
 - Default recall scopes — `_effective_scope_allowlist` builds
   `[project:<slug>, global, …enclosing-project and user scopes]` from the same
   workspace, so fixing the workspace fixes recall scope too (verified in the POC).
@@ -179,14 +179,14 @@ is read from the user environment, never written into these files.
 
 Claude Code (`.mcp.json` / `~/.claude.json`):
 ```json
-"memorymaster": {"command": "C:\\Users\\pauol\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+"memorymaster": {"command": "C:\\Users\\<you>\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
   "args": ["-I", "-m", "memorymaster.surfaces.mcp_stdio_proxy"],
   "env": {"MEMORYMASTER_SHARED_MCP_URL": "http://127.0.0.1:8766/mcp"}}
 ```
 Codex (`~/.codex/config.toml` **and** the Orca runtime copy):
 ```toml
 [mcp_servers.memorymaster]
-command = "C:\\Users\\pauol\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
+command = "C:\\Users\\<you>\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
 args = ["-I", "-m", "memorymaster.surfaces.mcp_stdio_proxy"]
 env = { MEMORYMASTER_SHARED_MCP_URL = "http://127.0.0.1:8766/mcp" }
 ```

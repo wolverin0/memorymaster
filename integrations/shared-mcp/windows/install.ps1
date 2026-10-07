@@ -11,8 +11,8 @@ param(
     [Parameter(Mandatory = $true)][string]$WheelSha256,
     [Parameter(Mandatory = $true)][string]$DbPath,
     [Parameter(Mandatory = $true)][string]$WorkspaceAllowlist,
-    [string]$ClientPython = 'C:\Users\pauol\AppData\Local\Programs\Python\Python312\python.exe',
-    [string]$Runtime = 'C:\Users\pauol\.memorymaster\runtime\graph-profile-20260813',
+    [string]$ClientPython = "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
+    [string]$Runtime = "$env:USERPROFILE\.memorymaster\runtime\graph-profile-20260813",
     [int]$Port = 8766
 )
 $ErrorActionPreference = 'Stop'
