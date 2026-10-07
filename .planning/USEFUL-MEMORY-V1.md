@@ -794,6 +794,34 @@ acceptance; delivery of this checkpoint is not, by itself, evidence of quality.
 Not changed (design decisions for the operator): renderer section priority, profile budget, the SessionStart cap in `~/.claude/hooks`, and the cadence/threshold mismatch. Zero authoritative-database mutations, zero forced jobs. Separately, under explicit operator approval, the Serena MCP configuration and hooks were changed today; that change is not part of this review.
 Evidence: `artifacts/operational-review/20261002/raw-evidence.json` (sha256 `e342be7a3913fdadfc52f049d967c77019d3b7fce2266d9e34c1a4d5f295c2e6`) and `installed-review.json` (sha256 `7f235ed198769c6f587919bbb9e68f7e523ed51576fd4ecbe82cb9e3a93147c1`). No feature-success watermark is advanced.
 
+## 2026-10-07 daily operational review
+
+**Completed with warnings. Two owned regressions fixed and installed; the post-unification backup is verified.**
+ROADMAP and the effective installed configuration were read first; the authoritative
+and auxiliary SQLite were opened read-only for measurement. No steward, generation,
+sync or backup job was forced and no feature was enabled to produce a sample.
+
+| Area | Observed result and acceptance limit |
+|---|---|
+| Due measurements | `boost-floor-canary` PASS (scheduled review: mm-8aef rank 5). `graph-discovery-skip` partial: the worker enqueued 0 and skipped 146 per run, but `improve()` still queued 1 `no_supports` job per run; fixed `520a736`. `gemini-extract-pacing` failed: the 03:11Z run was clean, but the 09:11Z run hit a 429 after 10 well-spaced calls carrying 256k input tokens. The key also limits tokens per minute; fixed `c7e0b92` (rolling 200k-token minute). Both fixes installed 14:31Z, with follow-up measurements due. |
+| Scheduled review | Installed run at 14:37Z: WARN, exit 3, 0 mutations. Canary PASS (rank 5). Compiled profile: 17 of 63 active facts are cut by the 3000-char budget (Fleet T-0797). Jev: 23 orphan intents in 24 h. |
+| Activation | Package 4.9.0 in all three runtimes (wheel `520a736`). User flags: GRAPH_OBSERVATIONS=1, COMPILED_PROFILE=1, JEV_MODE=shadow, JEV_HOOK_DEADLINE_MS=1500, RECALL_DENSE=1. Extraction: google/gemini-3.5-flash-lite. Consolidation: antigravity/gemini-3.7-flash-low. |
+| Providers since 10-06 14:30Z | google 36 ok, 1 × 429. antigravity 14 ok. |
+| Dreaming | 15:11Z, 21:11Z and 03:11Z runs ok. 09:11Z partial (the 429). Leases 0. Captures: 316 applied, 40 captured, 1 retryable. Of 348 `extracted`, 345 are retained legacy (07-27..09-07) and 3 await consolidation budget (resume-eligible). |
+| Graph | 348 supports. 3 observations (last 08-31). No open discovery jobs, 0 expired leases. |
+| Capture | Unchanged: 94 extract_graph blocked, 1 extract_claims blocked. 0 expired leases. |
+| Profile | Run 6 watermark 148760 = target. user.md and user-profile.json generated 10-05 09:13Z, with marker. 46 facts, all with exact supports. SessionStart injection seen in this session. |
+| Dense prompt recall (T-1042) | Enabled 00:28Z after regression and verifier. Of 125 recalls: 116 dense, 8 empty, 1 fallback (0.8%). Injected 4.9 claims and 5.8k chars per recall (lexical: 5.9 and 6.5k). Embed on GPU p50 123 ms (max 565 ms). Service+hydration p50 475 ms, p95 3.6 s: the time is spent in the shared server, not the model. |
+| Observed failure: recall skipped | Hook `via=skipped_busy` (shared server did not answer within 4 s, so no recall that prompt): 39% on 10-05 and 22% on 10-06, both lexical; 20% on 10-07, dense. This predates dense. Host memory: 5.9 GB free of 64, 116/172 GB committed; 196 node processes take 7.1 GB, vmmem 7.4 GB. Not fixed here; this is the leading recall loss. |
+| Observed failure: Jev | Recall orphans rose to 5 of 75 sends (6.7%) in the dense window, against 0.47% in 09-24..10-06. Timeouts rose from 10-06 (before dense), and most are `not_sent`: the 1.5 s deadline expires before the send. Stalls of up to 68 s in `engine_ms` coincide with the memory pressure. Cause is environmental, not the dense path. A burst of 11 `session`/`hints` orphans at 05:31Z. |
+| Steward | Last 4 runs exit 0 (22-76 min). A run is in progress. |
+| MCP and sync | Shared 8766, Hermes 8765 and dense 8767 healthy. HermesSync-AM exit 0 at 04:00 local. 0 live tenant twins (the 4,789 shared keys are archived or superseded). |
+| Backup | Post-unification NAS backup verified: `memorymaster-20261007T040331Z.db` at 04:13Z, counts OK against the live DB, sha256 verified on the NAS. Run by infra's one-shot recovery task after the request. O-0259 closed. |
+| Not measured | Whether dense recall changes agent outcomes (the T-0739 usage re-measure is due 10-11). Dense 7-day metrics are due 10-13. |
+
+Evidence: `artifacts/operational-review/20261007/installed-review.json` (sha256
+`ccaf3518…2c6674f9`) and `raw-evidence.json` (`66e819d2…b119d77`).
+
 ## 2026-10-06 daily operational review
 
 **Completed with warnings. Three owned regressions fixed and installed; canary back to PASS.**
