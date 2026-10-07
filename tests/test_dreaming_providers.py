@@ -523,3 +523,25 @@ def test_gemini_extractor_spaces_consecutive_calls_under_the_per_minute_limit() 
     extractor.extract(messages, scope="project:test", capture_hash="c")
 
     assert sleeps == [3.5]
+
+
+def test_gemini_extractor_keeps_a_rolling_minute_under_the_token_budget() -> None:
+    # 2026-10-07: a 429 after only 10 calls that carried 256k input tokens in 60 s.
+    body = {"candidates": [{"content": {"parts": [{"text": '{"candidates":[]}'}]}}],
+            "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1}}
+    now = [0.0]
+    sleeps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(round(seconds, 2))
+        now[0] += seconds
+
+    extractor = GeminiExtractor(api_key="test-key", transport=lambda *_a: (200, body, {}), sleep=sleep,
+                                min_interval_s=0, clock=lambda: now[0], tokens_per_minute=10_000)
+    big = [{"id": "m1", "role": "user", "text": "x" * 24_000}]  # ~6k estimated tokens
+    extractor.extract(big, scope="project:test", capture_hash="a")
+    now[0] += 10.0
+    extractor.extract(big, scope="project:test", capture_hash="b")  # 12k > 10k: waits for the first to age out
+
+    assert sleeps == [50.05]
+    assert len(extractor._sent) == 1

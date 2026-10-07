@@ -188,6 +188,11 @@ def _post_with_retry(transport: Transport, url: str, payload: dict[str, Any], he
     )
 
 
+def _estimated_input_tokens(payload: dict[str, Any]) -> int:
+    """About four characters per token; enough to keep a per-minute token budget."""
+    return (len(json.dumps(payload, ensure_ascii=False)) + 3) // 4
+
+
 def _json_object(raw: str) -> dict[str, Any]:
     try:
         parsed = json.loads(raw)
@@ -422,12 +427,16 @@ class GeminiExtractor:
 
     provider = "google"
 
-    # Measured 2026-10-06: every extraction 429 since 10-01 (8 runs) came with
-    # 15-19 calls in the preceding 60 s, and the 1+2+4 s retry backoff cannot
-    # outlast a per-minute window. Spacing calls keeps a run under that limit.
+    # The extraction key has two per-minute limits and the 1+2+4 s retry backoff
+    # outlasts neither. Requests: through 10-06 every 429 came after 14-18 calls
+    # in 60 s, often with few tokens (34k). Input tokens: on 10-07 a 429 came after
+    # only 10 calls carrying 256k tokens (10-04 and 10-05: ~247k). Calls are
+    # therefore spaced AND kept under a rolling 60 s input-token budget.
     DEFAULT_MIN_INTERVAL_S = 4.5
+    DEFAULT_TOKENS_PER_MINUTE = 200_000
+    TOKEN_WINDOW_S = 60.0
 
-    def __init__(self, *, api_key: str | None = None, model: str | None = None, transport: Transport = _default_transport, sleep: Callable[[float], None] = time.sleep, min_interval_s: float | None = None, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, *, api_key: str | None = None, model: str | None = None, transport: Transport = _default_transport, sleep: Callable[[float], None] = time.sleep, min_interval_s: float | None = None, clock: Callable[[], float] = time.monotonic, tokens_per_minute: int | None = None) -> None:
         self.api_key = api_key if api_key is not None else os.environ.get("GEMINI_API_KEY", "")
         self.model = model or os.environ.get("MEMORYMASTER_DREAM_EXTRACT_MODEL", "gemini-3.5-flash")
         self.transport = transport
@@ -440,13 +449,29 @@ class GeminiExtractor:
         self.min_interval_s = max(0.0, min_interval_s)
         self.clock = clock
         self._last_call_at: float | None = None
+        if tokens_per_minute is None:
+            try:
+                tokens_per_minute = int(os.environ.get("MEMORYMASTER_DREAM_GEMINI_TPM_BUDGET", self.DEFAULT_TOKENS_PER_MINUTE))
+            except ValueError:
+                tokens_per_minute = self.DEFAULT_TOKENS_PER_MINUTE
+        self.tokens_per_minute = max(0, tokens_per_minute)
+        self._sent: list[tuple[float, int]] = []  # (sent at, estimated input tokens) within the window
 
-    def _pace(self) -> None:
+    def _pace(self, tokens: int = 0) -> None:
         if self._last_call_at is not None:
             wait = self.min_interval_s - (self.clock() - self._last_call_at)
             if wait > 0:
                 self.sleep(wait)
+        if self.tokens_per_minute:
+            while True:
+                now = self.clock()
+                self._sent = [(at, n) for at, n in self._sent if now - at < self.TOKEN_WINDOW_S]
+                # A single call over the whole budget still goes out, once the window is empty.
+                if not self._sent or sum(n for _, n in self._sent) + tokens <= self.tokens_per_minute:
+                    break
+                self.sleep(self.TOKEN_WINDOW_S - (now - self._sent[0][0]) + 0.05)
         self._last_call_at = self.clock()
+        self._sent.append((self._last_call_at, tokens))
 
     def extract(self, messages: list[dict[str, Any]], *, scope: str, capture_hash: str) -> ExtractionResult:
         if not self.api_key:
@@ -461,7 +486,7 @@ class GeminiExtractor:
             "Use scope_class personal only for stable user preference/profile/constraint knowledge."
         )
         payload = self._payload(prompt, messages, scope)
-        self._pace()
+        self._pace(_estimated_input_tokens(payload))
         started = time.monotonic()
         status, body = _post_with_retry(self.transport, self._url(), payload, {"Content-Type": "application/json"}, 90, self.sleep)
         raw = self._response_text(body)
