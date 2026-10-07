@@ -26,7 +26,6 @@ import hashlib
 import json
 import logging
 import os
-import sqlite3
 import threading
 import time
 from collections.abc import Callable, Sequence
@@ -35,6 +34,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from memorymaster.stores._storage_shared import connect_ro
 
 LOGGER = logging.getLogger("memorymaster.dense_server")
 
@@ -55,8 +56,7 @@ def _text_hash(text: str) -> str:
 
 def read_confirmed_claims(db_path: str | Path) -> list[tuple[int, str, str]]:
     """``(id, scope, text)`` of every confirmed claim, read-only."""
-    uri = f"file:{Path(db_path).as_posix()}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True, timeout=30)
+    conn = connect_ro(Path(db_path).as_posix(), query_ms=30_000)
     try:
         return [
             (int(row[0]), str(row[1] or ""), str(row[2] or ""))
