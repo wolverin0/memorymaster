@@ -20,7 +20,6 @@ import statistics
 import subprocess
 import sys
 import tempfile
-import tomllib
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -436,10 +435,12 @@ def run(fixture_path: Path, output_path: Path | None = None) -> dict[str, Any]:
         git_head = None
     else:
         try:
+            import tomllib  # Python 3.11+; the package supports 3.10, where the version is just unreported
+
             source_version = tomllib.loads(
                 (source_tree / "pyproject.toml").read_text(encoding="utf-8")
             )["project"]["version"]
-        except (KeyError, OSError, tomllib.TOMLDecodeError):
+        except (ImportError, KeyError, OSError, ValueError):  # TOMLDecodeError subclasses ValueError
             source_version = None
         git_head = subprocess.run(
             ["git", "-C", str(source_tree), "rev-parse", "HEAD"],
