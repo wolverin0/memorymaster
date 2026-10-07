@@ -49,7 +49,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install -e ".[dev,mcp,security,postgres]"
+        # The ml extra (scikit-learn) is declared here: it used to arrive transitively,
+        # and when pip-audit left the dev extra the ml tests silently ran without it.
+        run: pip install -e ".[dev,mcp,security,postgres,ml]"
       - name: Run ML/vector tests
         run: pytest tests/ -m ml -q --tb=short
         env:
