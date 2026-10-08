@@ -259,7 +259,19 @@ def _serve(app: Any, *, host: str, port: int) -> None:
     # Windows: uvicorn's default ProactorEventLoop closes the LISTENING socket when an
     # accept completes with an error (a client reset before accept, WinError 64), leaving
     # a live process that serves nothing and never restarts. The selector loop does not.
-    asyncio.run(serve_with_stall_dump(), loop_factory=asyncio.SelectorEventLoop)
+    # asyncio.run(loop_factory=) is 3.12+; Runner (3.11+) is what it wraps. The package supports 3.10.
+    if sys.version_info >= (3, 11):
+        with asyncio.Runner(loop_factory=asyncio.SelectorEventLoop) as runner:
+            runner.run(serve_with_stall_dump())
+        return
+    loop = asyncio.SelectorEventLoop()
+    try:
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(serve_with_stall_dump())
+        loop.run_until_complete(loop.shutdown_asyncgens())
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
 
 
 STALL_DUMP_ENV = "MEMORYMASTER_MCP_STALL_DUMP_SECONDS"

@@ -294,17 +294,12 @@ def test_windows_http_server_uses_a_selector_event_loop(monkeypatch):
             seen["loop"] = config.loop
 
         async def serve(self):
-            return None
-
-    def fake_run(coro, *, loop_factory=None):
-        seen["factory"] = loop_factory
-        coro.close()
+            seen["running"] = isinstance(asyncio.get_running_loop(), asyncio.SelectorEventLoop)
 
     monkeypatch.setattr(mcp_http.os, "name", "nt")
     monkeypatch.setattr(uvicorn, "Server", FakeServer)
-    monkeypatch.setattr(asyncio, "run", fake_run)
-    mcp_http._serve(object(), host="127.0.0.1", port=1)
-    assert seen == {"loop": "none", "factory": asyncio.SelectorEventLoop}
+    mcp_http._serve(object(), host="127.0.0.1", port=1)  # really runs: also proves 3.10/3.11 compatibility
+    assert seen == {"loop": "none", "running": True}
 
 
 # --- supervisor launcher ----------------------------------------------------------------------
