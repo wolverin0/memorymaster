@@ -337,3 +337,13 @@ def test_repeated_improve_advances_beyond_existing_graph_job_prefix(public_env) 
             "SELECT COUNT(*) FROM capture_jobs WHERE stage='extract_graph'"
         ).fetchone()[0]
     assert total == 201
+
+
+def test_improve_does_not_queue_discovery_for_a_scope_with_nothing_to_discover(public_env) -> None:
+    # 2026-10-07: after a2aac47 the worker stopped, but this path still added one
+    # `no_supports` discovery job per Dreaming run for a scope without supports.
+    db, workspace = public_env
+    first = improve(db=db, workspace=workspace)
+    second = improve(db=db, workspace=workspace)
+    assert first.queued["observation_discover"] == 0
+    assert second.already_pending["observation_discover"] == 0

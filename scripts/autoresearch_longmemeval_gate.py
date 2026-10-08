@@ -1,4 +1,12 @@
-"""Run a deterministic LongMemEval slice and persist its gate metrics."""
+"""Run a deterministic LongMemEval slice, persist its gate metrics and enforce an acceptance policy.
+
+Exit 0 means the measurement completed AND satisfied the policy; exit 1 means it
+completed but violated it (the violations are listed in the output). Before
+2026-10-03 the gate always exited 0, so a degraded ranking still "passed".
+Always enforced: a complete slice (questions == --limit) and no provider calls
+(unless --max-provider-calls is raised). Opt-in: --require-rankings-match,
+--min-mrr, --min-recall-at-5.
+"""
 
 from __future__ import annotations
 
@@ -66,12 +74,31 @@ def _persist_gate_summary(
     )
 
 
+def _violations(result: dict[str, float | int], args: argparse.Namespace) -> list[str]:
+    found: list[str] = []
+    if result["questions"] != args.limit:
+        found.append(f"incomplete: {result['questions']} questions, expected {args.limit}")
+    if result["provider_calls"] > args.max_provider_calls:
+        found.append(f"provider_calls {result['provider_calls']} > {args.max_provider_calls}")
+    if args.require_rankings_match and not result["rankings_match"]:
+        found.append("rankings differ from the baseline window")
+    if args.min_mrr is not None and result["mrr"] < args.min_mrr:
+        found.append(f"mrr {result['mrr']:.4f} < {args.min_mrr}")
+    if args.min_recall_at_5 is not None and result["recall_at_5"] < args.min_recall_at_5:
+        found.append(f"recall_at_5 {result['recall_at_5']:.4f} < {args.min_recall_at_5}")
+    return found
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=25)
     parser.add_argument("--offset", type=int, default=0)
+    parser.add_argument("--require-rankings-match", action="store_true")
+    parser.add_argument("--min-mrr", type=float)
+    parser.add_argument("--min-recall-at-5", type=float)
+    parser.add_argument("--max-provider-calls", type=int, default=0)
     args = parser.parse_args()
     if args.limit <= 0:
         parser.error("--limit must be greater than zero")
@@ -96,9 +123,12 @@ def main() -> int:
         "offset": int(args.offset),
         "provider_calls": int(retrieval["llm_rerank"]["approx_calls"]),
     }
+    violations = _violations(result, args)
+    result["verdict"] = "fail" if violations else "pass"
+    result["violations"] = violations
     _persist_gate_summary(args.output, current, result)
     print(json.dumps(result, sort_keys=True))
-    return 0
+    return 1 if violations else 0
 
 
 if __name__ == "__main__":

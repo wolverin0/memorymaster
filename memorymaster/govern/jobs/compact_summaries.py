@@ -80,6 +80,14 @@ def _build_claim_text_block(claims: list[Any]) -> str:
     return redacted_text
 
 
+def _partition_by_scope_and_tenant(claims: list[Any]) -> list[list[Any]]:
+    """Split claims by (scope, tenant_id); clustering happens inside each part only."""
+    parts: dict[tuple[str, str | None], list[Any]] = {}
+    for claim in claims:
+        parts.setdefault((claim.scope or "project", getattr(claim, "tenant_id", None)), []).append(claim)
+    return list(parts.values())
+
+
 def _cluster_by_subject(claims: list[Any]) -> dict[str, list[Any]]:
     """Group claims by their subject field (simple string matching)."""
     clusters: dict[str, list[Any]] = {}
@@ -276,15 +284,17 @@ def run(
 
     log.info("Found %d unsummarized archived claims", len(archived_claims))
 
-    # 2. Cluster claims
-    if embedding_provider is not None and embedding_provider.is_semantic:
-        clusters = _cluster_by_embedding(
-            archived_claims, store, embedding_provider,
-            similarity_threshold=similarity_threshold,
-        )
-    else:
-        subject_clusters = _cluster_by_subject(archived_claims)
-        clusters = list(subject_clusters.values())
+    # 2. Cluster claims, never across a scope or tenant: archived claims come from every
+    # scope, and one confirmed summary must not mix projects or owners (2026-10-04).
+    clusters: list[list[Any]] = []
+    for partition in _partition_by_scope_and_tenant(archived_claims):
+        if embedding_provider is not None and embedding_provider.is_semantic:
+            clusters.extend(_cluster_by_embedding(
+                partition, store, embedding_provider,
+                similarity_threshold=similarity_threshold,
+            ))
+        else:
+            clusters.extend(_cluster_by_subject(partition).values())
 
     # Filter to clusters meeting min_cluster threshold
     eligible_clusters = [c for c in clusters if len(c) >= min_cluster]
@@ -377,6 +387,7 @@ def run(
                     object_value=object_value,
                     scope=sub_cluster[0].scope or "project",
                     confidence=confidence,
+                    tenant_id=getattr(sub_cluster[0], "tenant_id", None),
                 )
 
                 # Transition summary claim to confirmed status

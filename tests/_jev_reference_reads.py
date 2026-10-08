@@ -157,8 +157,11 @@ def _exposure_use(surface: str, items: Sequence[Mapping[str, Any]], by_decision:
         exposed[_arm(decision)].add((item["decision_id"], item["item_ref"]))
     result: dict[str, dict[str, Any]] = {}
     for arm, pairs in exposed.items():
-        used = sum(1 for d, ref in pairs if (d, ref, "used_in_turn") in outcome_set)
-        result[arm] = {"exposed": len(pairs), "used": used, "rate": used / len(pairs) if pairs else None}
+        strong = {(d, ref) for d, ref in pairs if (d, ref, "used_in_turn") in outcome_set}
+        # T-0739: weak-only evidence, reported beside the strong rate and never counted twice.
+        weak = {(d, ref) for d, ref in pairs if (d, ref, "used_in_turn_weak") in outcome_set} - strong
+        result[arm] = {"exposed": len(pairs), "used": len(strong), "rate": len(strong) / len(pairs) if pairs else None,
+                       "used_weak": len(weak), "rate_weak": len(weak) / len(pairs) if pairs else None}
     return result
 
 

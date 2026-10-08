@@ -1,0 +1,28 @@
+{
+  "cohort_sha256": "62c0b9dc8285a2d17310ab02cb6dc1791c123907405ec6dfad9087a0011f785f",
+  "n": 20,
+  "rg_file_hit_at_5": 7,
+  "gitnexus_file_hit_at_5": 9,
+  "gitnexus_file_hit_any": 9,
+  "serena_known_target_success": 19,
+  "serena_exact_discovery": 5,
+  "exact_n": 5,
+  "limitations": [
+    "rg baseline is a fixed OR-keyword heuristic, not an agent baseline",
+    "Serena known-target calls receive gold path/name; payload saving is conditional, not discovery success",
+    "Character counts are not billed tokens",
+    "Not an end-to-end coding or per-client A/B benchmark"
+  ],
+  "serena_live_body_exact": 19,
+  "payload_comparison_n": 19,
+  "whole_file_chars": 383880,
+  "symbol_response_chars": 30477,
+  "symbol_payload_reduction_vs_known_whole_file": 0.9206080025007815,
+  "repair": "Windows paths parsed and normalized; overflow text is not a delivered symbol body. Initial comparator retained; no provider rerun.",
+  "baseline_rg_p50_ms": 47.0,
+  "baseline_rg_p95_ms": 62.0,
+  "gitnexus_p50_ms": 210.5,
+  "gitnexus_p95_ms": 390.0,
+  "serena_known_target_p50_ms": 70.5,
+  "serena_known_target_p95_ms": 141.0
+}

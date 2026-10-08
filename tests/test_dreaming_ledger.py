@@ -119,6 +119,22 @@ def test_status_warns_on_stale_scheduler_and_low_structured_yield(tmp_path: Path
     assert "zai_structured_yield_low" in status["warnings"]
 
 
+def test_scheduler_interval_follows_the_configured_cadence(tmp_path: Path, monkeypatch) -> None:
+    # A 4-hourly Windows task is not stale 3 h after its last run once the cadence is declared.
+    now = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
+    ledger = DreamLedger(tmp_path / "dream.db")
+    run_id = ledger.start_run(False, "gemini-3.5-flash", "glm-5.2", now=now - timedelta(hours=3))
+    ledger.finish_run(run_id, "ok", {}, now=now - timedelta(hours=3))
+
+    monkeypatch.delenv("MEMORYMASTER_DREAM_INTERVAL_MINUTES", raising=False)
+    assert "scheduler_stale" in ledger.status(now=now)["warnings"]
+    monkeypatch.setenv("MEMORYMASTER_DREAM_INTERVAL_MINUTES", "240")
+    assert "scheduler_stale" not in ledger.status(now=now)["warnings"]
+    assert "scheduler_stale" in ledger.status(now=now, interval_minutes=60)["warnings"]  # explicit wins
+    monkeypatch.setenv("MEMORYMASTER_DREAM_INTERVAL_MINUTES", "not-a-number")
+    assert "scheduler_stale" in ledger.status(now=now)["warnings"]
+
+
 def test_status_separates_lifetime_and_recent_provider_yield(tmp_path: Path) -> None:
     now = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
     ledger = DreamLedger(tmp_path / "dream.db")

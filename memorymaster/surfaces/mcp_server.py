@@ -1,5 +1,5 @@
 from dataclasses import asdict, dataclass
-from functools import wraps
+from functools import partial, wraps
 import hashlib
 import http.client
 import importlib
@@ -7,9 +7,12 @@ import inspect
 import json
 import logging
 import os
+from os import environ as _environ
+import re
 from pathlib import Path
 import threading
 import time
+from collections.abc import Mapping
 from typing import Any, TypeVar
 from urllib.parse import urlparse
 
@@ -26,6 +29,7 @@ from memorymaster.surfaces import mcp_path_policy
 from pydantic import BaseModel, ValidationError
 
 from memorymaster.core.models import CitationInput
+from memorymaster.core.structured_log import timed_event
 from memorymaster.surfaces.unknown_args import record_unknown_arguments
 from memorymaster.core.scope_utils import (
     ancestor_project_scopes,
@@ -271,7 +275,12 @@ def _check_ingest_rate_limit(
         return _check_durable_ingest_quota(source_agent, cost)
 
     timestamp = _monotonic() if now is None else now
-    key = _empty_to_none(source_agent) or _ANONYMOUS_SOURCE_AGENT
+    agent = key = _empty_to_none(source_agent) or _ANONYMOUS_SOURCE_AGENT
+    client = _client_workspace_header()
+    if client:
+        # One shared server serves every session under the same source_agent name;
+        # each client workspace keeps its own per-agent bucket, the global cap stays shared.
+        key = f"{key}\x00{client}"
     global_limit = limit * _GLOBAL_RATE_MULTIPLIER
     with _INGEST_RATE_BUCKETS_LOCK:
         agent_tokens = _refill_bucket(key, limit, timestamp)
@@ -291,11 +300,11 @@ def _check_ingest_rate_limit(
                 _INGEST_RATE_BUCKETS[_GLOBAL_RATE_AGENT] = (global_tokens, timestamp)
                 _evict_rate_buckets()
                 return _structured_error(
-                    f"ingest_claim rate limit exceeded for source_agent '{key}'.",
+                    f"ingest_claim rate limit exceeded for source_agent '{agent}'.",
                     "RATE_LIMITED",
                     "source_agent",
                     retry_after_ms=retry_after_ms,
-                    source_agent=key,
+                    source_agent=agent,
                     limit_per_min=limit,
                 )
 
@@ -834,18 +843,103 @@ def _normalize_team_arguments(
         raise PermissionError("Semantic MCP retrieval remains disabled in team mode pending planner containment.")
 
 
+CLIENT_WORKSPACE_HEADER = "x-mm-workspace"
+# HTTP headers are Latin-1: the relay sends a non-ASCII path as RFC 8187 "utf-8''<percent-encoded>".
+_ENCODED_WORKSPACE_PREFIX = "utf-8''"
+# Tool arguments that name the client's project directory.
+_CLIENT_PATH_ARGUMENTS = ("workspace", "project_root")
+_UNEXPANDED_WORKSPACE = re.compile(r"\$\{|\{env:|^\$[A-Za-z_]|%[A-Za-z_]\w*%")
+
+
+def _current_http_request() -> Any:
+    """The HTTP request behind this tool call, or None over stdio."""
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+
+        return request_ctx.get().request
+    except (ImportError, LookupError, AttributeError):
+        return None
+
+
+def _check_client_workspace(workspace: str, *, shared: bool) -> None:
+    """Refuse a workspace that would silently mis-scope memory."""
+    if _UNEXPANDED_WORKSPACE.search(workspace):
+        raise PermissionError(
+            f"Workspace {workspace!r} is an unexpanded config variable; fix the client's MCP config."
+        )
+    if shared and (workspace in {"", _DEFAULT_WORKSPACE} or not os.path.isabs(workspace)):
+        raise PermissionError(
+            "Shared MemoryMaster server: declare an absolute client workspace (X-MM-Workspace header "
+            "or workspace argument); the server's own directory is never used as a project."
+        )
+
+
+def _client_workspace_header() -> str:
+    """Workspace the HTTP client declared for this request, or "" (stdio, no header).
+
+    A shared HTTP server has one process cwd for every client, so the default
+    workspace "." would put every repository in the same project scope (T-0726).
+    """
+    headers = getattr(_current_http_request(), "headers", None)
+    value = str(headers.get(CLIENT_WORKSPACE_HEADER, "") or "").strip() if headers is not None else ""
+    if value.lower().startswith(_ENCODED_WORKSPACE_PREFIX):
+        from urllib.parse import unquote
+
+        value = unquote(value[len(_ENCODED_WORKSPACE_PREFIX):], encoding="utf-8", errors="strict").strip()
+    return value
+
+
+_TOOL_LOG = logging.getLogger("memorymaster.mcp.tools")
+
+
+def _scope_for_log(arguments: Mapping[str, Any]) -> str | None:
+    """The scope a tool call targets, for the structured log only; never raises."""
+    explicit = str(arguments.get("scope", "") or "").strip()
+    if explicit and explicit != "project":
+        return explicit
+    workspace = str(arguments.get("workspace", "") or arguments.get("project_root", "") or "").strip()
+    if not workspace or workspace == _DEFAULT_WORKSPACE:
+        return None
+    try:
+        return _project_scope(workspace)
+    except Exception:  # noqa: BLE001 - a log field must not fail the call
+        return None
+
+
 def _authorized_tool_callable(func: Any, policy: McpToolPolicy) -> Any:
     call_signature = inspect.signature(func)
 
     @wraps(func)
     def guarded(*args: Any, **kwargs: Any) -> Any:
+        if not _TOOL_LOG.isEnabledFor(logging.INFO):  # stdio: logging is not configured, skip the bookkeeping
+            return _invoke(None, args, kwargs)
+        # One JSON line per call on the shared server (T-0764): refusals and {"ok": false} count too.
+        with timed_event(_TOOL_LOG, "mcp_tool", surface="mcp", tool=func.__name__) as fields:
+            result = _invoke(fields, args, kwargs)
+            if isinstance(result, dict) and result.get("ok") is False:
+                fields["outcome"] = "failed"
+                fields["error_code"] = result.get("code")
+            return result
+
+    def _invoke(fields: dict[str, Any] | None, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
         bound = call_signature.bind_partial(*args, **kwargs)
         bound.apply_defaults()
+        client_paths = [name for name in _CLIENT_PATH_ARGUMENTS if name in bound.arguments]
+        for name in client_paths:
+            if str(bound.arguments[name] or "") in {"", _DEFAULT_WORKSPACE}:
+                declared = _client_workspace_header()
+                if declared:
+                    # Team mode still validates this against the authenticated workspace below.
+                    bound.arguments[name] = declared
         context = resolve_request_context(
             db_target=str(bound.arguments.get("db", "") or ""),
             workspace=str(bound.arguments.get("workspace", "") or ""),
         )
         authorize_context_action(context, policy.action)
+        # Over HTTP one process serves every repository; its cwd is never a project (T-0726).
+        shared = _current_http_request() is not None and context.mode is AuthMode.LOCAL_TRUSTED
+        for name in client_paths:
+            _check_client_workspace(str(bound.arguments[name] or ""), shared=shared)
         if context.mode is AuthMode.TEAM:
             _normalize_team_arguments(bound, context, func.__name__)
         if context.mode is AuthMode.TEAM and not policy.team_enabled:
@@ -854,12 +948,43 @@ def _authorized_tool_callable(func: Any, policy: McpToolPolicy) -> Any:
             )
         if bool(bound.arguments.get("allow_sensitive", False)) and not context.allow_sensitive:
             raise PermissionError("Authenticated MCP context does not allow sensitive-data access.")
+        if fields is not None:
+            fields["mode"] = context.mode.value
+            fields["scope"] = _scope_for_log(bound.arguments)
         with bind_request_context(context):
             return func(*bound.args, **bound.kwargs)
 
     setattr(guarded, "__mcp_action__", policy.action)
     setattr(guarded, "__mcp_team_enabled__", policy.team_enabled)
     return guarded
+
+
+_HTTP_TOOL_THREADS = 16
+_http_tool_limiter: Any = None
+
+
+def _off_event_loop_over_http(guarded: Any) -> Any:
+    """Run a synchronous tool in a worker thread when it is served over HTTP.
+
+    FastMCP calls a sync tool inline on the event loop. With one shared server
+    for every session, one slow call (a busy SQLite writer, a cold model load,
+    the steward) would stall every other session and the health probes. stdio
+    keeps the inline call: one process per client, unchanged behaviour.
+    """
+
+    @wraps(guarded)
+    async def call(*args: Any, **kwargs: Any) -> Any:
+        if _current_http_request() is None:
+            return guarded(*args, **kwargs)
+        import anyio
+
+        global _http_tool_limiter
+        if _http_tool_limiter is None:
+            _http_tool_limiter = anyio.CapacityLimiter(_HTTP_TOOL_THREADS)
+        # anyio runs the thread in a copy of this context: request_ctx stays visible.
+        return await anyio.to_thread.run_sync(partial(guarded, *args, **kwargs), limiter=_http_tool_limiter)
+
+    return call
 
 
 if FastMCP is not None:
@@ -888,7 +1013,9 @@ if FastMCP is not None:
                 policy = MCP_TOOL_POLICIES.get(func.__name__)
                 if policy is None:
                     raise RuntimeError(f"MCP tool '{func.__name__}' has no authorization policy.")
-                return register(_authorized_tool_callable(func, policy))
+                guarded = _authorized_tool_callable(func, policy)
+                register(_off_event_loop_over_http(guarded))
+                return guarded  # direct in-process callers keep the synchronous tool
 
             return decorator
 
@@ -970,8 +1097,8 @@ if FastMCP is not None:
             producer_session_hash=producer_session_hash or None,
             producer_turn_id=producer_turn_id or None,
             producer_metadata=metadata,
-            db=db,
-            workspace=workspace,
+            db=_resolve_db(db),
+            workspace=_resolve_workspace(workspace),
         )
         return {"ok": True, **asdict(receipt)}
 
@@ -1010,8 +1137,8 @@ if FastMCP is not None:
             session_id=session_id or None,
             source_agent=source_agent or "memorymaster-mcp",
             platform=platform,
-            db=db,
-            workspace=workspace,
+            db=_resolve_db(db),
+            workspace=_resolve_workspace(workspace),
             tenant_id=tenant_id,
         )
         # S2 RECALL (Jev): no-op unless MEMORYMASTER_JEV_RECALL/_MODE is on; only
@@ -1052,8 +1179,8 @@ if FastMCP is not None:
             claim_id=claim_id or None,
             source_item_id=source_item_id or None,
             apply=apply,
-            db=db,
-            workspace=workspace,
+            db=_resolve_db(db),
+            workspace=_resolve_workspace(workspace),
         )
         return {"ok": True, **asdict(receipt)}
 
@@ -1076,8 +1203,8 @@ if FastMCP is not None:
             session_id=session_id or None,
             source_agent=source_agent or "memorymaster-mcp",
             platform=platform,
-            db=db,
-            workspace=workspace,
+            db=_resolve_db(db),
+            workspace=_resolve_workspace(workspace),
             tenant_id=(current_request_context().tenant_id if current_request_context() else None),
         )
         return {"ok": True, **asdict(receipt)}
@@ -1096,8 +1223,8 @@ if FastMCP is not None:
             claim_id=claim_id or None,
             source_item_id=source_item_id or None,
             apply=False,
-            db=db,
-            workspace=workspace,
+            db=_resolve_db(db),
+            workspace=_resolve_workspace(workspace),
         )
         return {"ok": True, **asdict(receipt)}
 
@@ -2143,6 +2270,7 @@ if FastMCP is not None:
         """
         import re as _re
         from pathlib import Path as _Path
+        mcp_path_policy.validate_workspace_path(project_root, actor="mcp_caller")
         candidates = [
             _Path(project_root) / "vault" / "active_tasks.md",
             _Path(project_root) / "active_tasks.md",
@@ -2881,9 +3009,28 @@ if FastMCP is not None:
         }
 
 
+_NATIVE_THREAD_VARS = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
+
+
+def _limit_native_threads() -> None:
+    # One server per client session: default per-core BLAS/OpenMP pools reserved
+    # ~1.9 GB of private commit each once torch loaded (T-0725). Must run before
+    # any native ML import; an explicit operator value still wins.
+    for name in _NATIVE_THREAD_VARS:
+        _environ.setdefault(name, "1")
+
+
 def main() -> int:
+    _limit_native_threads()
     if FastMCP is None:  # pragma: no cover
         raise RuntimeError("MCP support is not installed. Install with: pip install 'memorymaster[mcp]'")
+    _preload_native_ml()
+    mcp.run()
+    return 0
+
+
+def _preload_native_ml() -> None:
+    """Import native ML before any server I/O loop starts (stdio and HTTP)."""
     from memorymaster.recall.embeddings import sentence_transformers_required
 
     if os.name == "nt" and sentence_transformers_required():
@@ -2896,8 +3043,6 @@ def main() -> int:
         except Exception:
             # Optional/misconfigured ML must not prevent the MCP fallback path.
             logger.debug("Optional semantic imports unavailable during stdio startup")
-    mcp.run()
-    return 0
 
 
 if __name__ == "__main__":

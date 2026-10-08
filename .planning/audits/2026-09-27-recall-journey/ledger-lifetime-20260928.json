@@ -1,0 +1,132 @@
+{
+  "release_selection": {
+    "decision": "REJECTED before installation; original ledger retained",
+    "reason": "No measured C-volume wall-time benefit; scoped NORMAL/WAL connection reuse can defer last-close checkpoint until after paid send, weakening relative power-loss protection in the quiet single-connection case. Original behavior has no unconditional power-loss guarantee either.",
+    "experimental_tests": "Archived with patch and first experimental wheel in local acceptance artifacts; removed from final source because experiment was rejected.",
+    "source_behavior_changed_in_final_package": false,
+    "engine_file": "Documentation/comment correction only; executable behavior unchanged."
+  },
+  "date": "2026-09-28",
+  "scope": "Disposable SQLite decision-ledger latency and lifecycle correction",
+  "provider": "In-process FakeTransport only; zero real provider calls or paid requests",
+  "database": "Disposable SQLite files created under the test/system temp directory; no authoritative database used",
+  "change": {
+    "source": [
+      "memorymaster/decisions/ledger.py",
+      "memorymaster/decisions/engine.py"
+    ],
+    "test": "tests/test_decision_ledger_connection_lifetime.py",
+    "behavior": "One thread-local SQLite connection per bounded decision, separate committed transactions for send intent and final receipt, synchronous close at the outer bounded exit",
+    "deterministic_red": "The lifecycle regression expected one bounded open but the original code opened four connections in one decision; 1 failed, 2 passed before the fix",
+    "deterministic_green": "Six lifecycle tests pass, including committed intent visibility to a separate connection, nested scope, rollback recovery, late-thread isolation, 20-scope handle cleanup, and close-error containment"
+  },
+  "uninstrumented_timeout_stress": {
+    "method": "DecisionEngine with a seeded disposable ledger, a 2200 ms in-process FakeTransport, one call per trial, perf_counter around decide, three trials per deadline; each final decision logged timeout and the fake received one call. Each trial waited for late answers before deleting its disposable directory.",
+    "limit_ms": "Configured hook deadline plus 100 ms slack",
+    "slow_temp_volume": "Inherited TEMP/TMP volume T:; disposable fixtures only",
+    "current_trials_ms": {
+      "300": [
+        485.8,
+        452.5,
+        584.7
+      ],
+      "400": [
+        597.0,
+        585.8,
+        574.1
+      ],
+      "1500": [
+        1760.4,
+        1696.2,
+        1691.0
+      ]
+    },
+    "verdict": "FAIL on inherited T: temp volume: all nine measured calls exceeded their deadline plus 100 ms slack",
+    "prior_unseeded_single_trials_ms": {
+      "300": 516.4,
+      "400": 674.0,
+      "1500": 1713.1
+    },
+    "comparison_limit": "Prior single T: trials did not seed the ledger, so they are not paired performance evidence. The deterministic connection-count regression proves reduced open/close churn, not a total deadline guarantee."
+  },
+  "local_system_temp_stress": {
+    "volume": "Local C: system temp directory, explicitly selected instead of inherited TEMP/TMP; disposable fixtures only",
+    "method": "Same seeded and uninstrumented DecisionEngine/FakeTransport procedure as T: trials. Original baseline loaded from git show HEAD:memorymaster/decisions/ledger.py into an isolated temporary module in a separate Python child; no shared source was edited.",
+    "command_shape": "PowerShell here-string piped to python; for deadline in (300, 400, 1500) and trial in range(3), TemporaryDirectory(dir=LOCALAPPDATA/Temp), seed DecisionLedger, make_engine with FakeTransport(delay=2.2), perf_counter around decide_recall, wait_for_late_answers, assert/query the persisted timeout row. Baseline child first loaded git show HEAD:memorymaster/decisions/ledger.py with importlib.util.spec_from_file_location.",
+    "current_trials_ms": {
+      "300": [
+        360.23,
+        371.99,
+        357.1
+      ],
+      "400": [
+        463.93,
+        477.0,
+        472.45
+      ],
+      "1500": [
+        1567.11,
+        1565.11,
+        1546.38
+      ]
+    },
+    "original_baseline_trials_ms": {
+      "300": [
+        368.52,
+        368.8,
+        367.06
+      ],
+      "400": [
+        466.47,
+        469.58,
+        474.2
+      ],
+      "1500": [
+        1562.31,
+        1565.09,
+        1566.08
+      ]
+    },
+    "row_and_transport_checks": "All 18 current/baseline trials returned a logged timeout fallback, persisted transport_outcome=timeout, and made exactly one in-process fake transport call.",
+    "verdict": "PASS for the nine current C: trials against deadline plus 100 ms; the nine original baseline C: trials also PASS. There is no reliable end-to-end latency improvement in these measurements.",
+    "interpretation_limit": "This is observed behavior on the local C: volume and does not establish a universal wall-clock guarantee or a production deployment result."
+  },
+  "focused_validation": [
+    {
+      "command": "python -m pytest tests/test_decision_ledger_connection_lifetime.py tests/test_decisions_engine.py::test_invalid_scores_are_logged_and_budgeted tests/test_decisions_engine.py::test_open_breaker_sends_one_shadow_probe_per_interval_across_processes tests/test_decisions_ledger.py::test_registered_questions_are_read_first_and_need_no_write_lock -q",
+      "result": "14 passed"
+    },
+    {
+      "command": "python -m pytest tests/test_public_demo.py -q",
+      "result": "2 passed"
+    },
+    {
+      "command": "python -m ruff check memorymaster/decisions/ledger.py memorymaster/decisions/engine.py tests/test_decision_ledger_connection_lifetime.py",
+      "result": "All checks passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "Exit 0"
+    },
+    {
+      "command": "gitnexus_detect_changes(scope=all)",
+      "result": "Low risk; changed files include concurrent coordinator-owned changes; index symbol mapping over-reports module-docstring line shifts"
+    }
+  ],
+  "close_exception_regression": {
+    "injected_error": "sqlite3.OperationalError after closing the bounded connection",
+    "before": "1 failed: the close error escaped DecisionEngine.decide during ExitStack unwinding",
+    "after": "Included in the 14 passing focused tests; decide returned its logged missing_key fallback"
+  },
+  "rejected_approaches": [
+    {
+      "approach": "Daemon thread per decision for final WAL close",
+      "reason": "Independent review showed 20 slow closes produced 20 concurrent threads and open handles; existing breaker and invalid-score tests also intermittently returned ledger_unavailable as close/checkpoint overlapped later decisions"
+    },
+    {
+      "approach": "One worker with eight-slot close queue and synchronous saturation fallback",
+      "reason": "Bounded resource count but the existing breaker regression still returned ledger_unavailable due to asynchronous WAL checkpoint overlap"
+    }
+  ],
+  "remaining_limit": "Filesystem COMMIT and final WAL close remain synchronous and cannot be capped by SQLite lock retry deadline. C: local-temp trials met the limit while inherited T: temp trials failed; the same C: original baseline also met it. No deadline constant, test threshold, WAL durability setting, or send-intent order was weakened."
+}

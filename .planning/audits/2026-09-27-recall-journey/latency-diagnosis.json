@@ -1,0 +1,42 @@
+{
+  "configured_hook_deadline_ms": 1500,
+  "interpretation": "Elapsed time includes work before send, transport wait until hook deadline, and durable decision-row commit/close after timeout. SQLite durability may push return beyond hook deadline even with a 100 ms slack.",
+  "ledger_setup": "question versions registered before timing; disposable SQLite WAL",
+  "measurement": {
+    "deadline_plus_slack_ms": 1600,
+    "decision_fallback_reason": "timeout",
+    "decision_row": {
+      "attempt_count": 1,
+      "engine_ms": 1562,
+      "fallback_reason": "timeout",
+      "transport_outcome": "timeout"
+    },
+    "elapsed_decide_ms": 1792.7,
+    "late_answer_rows_after_wait": 1,
+    "logged_at_return": true,
+    "timed_write_phases": [
+      {
+        "begin_ms": 0.0,
+        "close_ms": 131.8,
+        "commit_ms": 134.5,
+        "connect_ms": 0.7,
+        "dml_ms": 0.0,
+        "operation": "send intent"
+      },
+      {
+        "begin_ms": 0.0,
+        "close_ms": 122.6,
+        "commit_ms": 117.6,
+        "connect_ms": 1.8,
+        "dml_ms": 0.2,
+        "operation": "decision write"
+      }
+    ],
+    "transport_calls_at_return": 1,
+    "within_deadline_plus_slack": false
+  },
+  "method": "Wrapped DecisionLedger._write in process with equivalent connect, BEGIN IMMEDIATE, work, COMMIT, close control flow and perf_counter phase timestamps. The wrapper is profiling instrumentation, so compare against uninstrumented test before treating as acceptance.",
+  "revision": "f2c0521",
+  "test_kind": "disposable in-process fake; no provider or production database",
+  "transport_delay_ms": 2200
+}

@@ -117,3 +117,65 @@ def test_build_command_forwards_exact_chunk_and_judge(tmp_path: Path) -> None:
     assert command[command.index("--limit") + 1] == "10"
     assert command[command.index("--judge-model") + 1] == "openai/gpt-5.4-mini"
     assert command[command.index("--judge-effort") + 1] == "medium"
+
+
+def _fingerprint_inputs(tmp_path: Path, qa, dataset_text: str = "[]", revision: str = "rev-a") -> dict[str, str]:
+    dataset, retrieval = tmp_path / "dataset.json", tmp_path / "retrieval.json"
+    dataset.write_text(dataset_text, encoding="utf-8")
+    retrieval.write_text("{}", encoding="utf-8")
+    return qa.input_fingerprint(dataset=dataset, retrieval_results=retrieval, judge_model="openai/gpt-5.4-mini",
+                                judge_effort="medium", revision=revision)
+
+
+def _resume(qa, path: Path, fingerprint: dict[str, str]):
+    return qa._load_valid_chunk(path, ["q0", "q1"], judge_model="openai/gpt-5.4-mini", judge_effort="medium",
+                                fingerprint=fingerprint)
+
+
+def test_resume_accepts_a_chunk_produced_from_the_same_inputs(tmp_path: Path) -> None:
+    qa = _load_module()
+    chunk = tmp_path / "run-000.json"
+    _write_json(chunk, _chunk(["q0", "q1"], [True, False]))
+    fingerprint = _fingerprint_inputs(tmp_path, qa)
+    _write_json(qa._inputs_path(chunk), fingerprint)
+    assert _resume(qa, chunk, fingerprint)["qa"]["correct"] == 1
+
+
+@pytest.mark.parametrize(
+    ("dataset_text", "revision", "changed"),
+    [
+        ('[{"question_id": "q0", "answer": "edited"}]', "rev-a", "dataset_sha256"),  # same IDs, other dataset
+        ("[]", "rev-b", "candidate_revision"),  # chunk from another candidate
+    ],
+)
+def test_resume_rejects_a_chunk_whose_inputs_changed(tmp_path: Path, dataset_text, revision, changed) -> None:
+    qa = _load_module()
+    chunk = tmp_path / "run-000.json"
+    _write_json(chunk, _chunk(["q0", "q1"], [True, True]))
+    _write_json(qa._inputs_path(chunk), _fingerprint_inputs(tmp_path, qa))
+    current = _fingerprint_inputs(tmp_path, qa, dataset_text=dataset_text, revision=revision)
+    with pytest.raises(ValueError, match=changed):
+        _resume(qa, chunk, current)
+
+
+def test_resume_rejects_a_legacy_chunk_without_a_fingerprint(tmp_path: Path) -> None:
+    qa = _load_module()
+    chunk = tmp_path / "run-000.json"
+    _write_json(chunk, _chunk(["q0", "q1"], [True, True]))
+    with pytest.raises(ValueError, match="no input fingerprint"):
+        _resume(qa, chunk, _fingerprint_inputs(tmp_path, qa))
+
+
+def test_a_freshly_produced_chunk_records_its_fingerprint(monkeypatch, tmp_path: Path) -> None:
+    qa = _load_module()
+    chunk = tmp_path / "run-000.json"
+    fingerprint = _fingerprint_inputs(tmp_path, qa)
+
+    def fake_run(command, **kwargs):
+        _write_json(chunk, _chunk(["q0", "q1"], [True, True]))
+        return type("Done", (), {"returncode": 0})()
+
+    monkeypatch.setattr(qa.subprocess, "run", fake_run)
+    qa._run_chunk(["bench"], output=chunk, expected_ids=["q0", "q1"], judge_model="openai/gpt-5.4-mini",
+                  judge_effort="medium", max_attempts=1, fingerprint=fingerprint)
+    assert json.loads(qa._inputs_path(chunk).read_text(encoding="utf-8")) == fingerprint

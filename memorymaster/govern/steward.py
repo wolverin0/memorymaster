@@ -1415,6 +1415,16 @@ def is_jev_proposal(payload: Any) -> bool:
     return isinstance(payload, dict) and str(payload.get("source") or "").strip().lower() == "jev"
 
 
+# Proposal sources that wait for a human verdict: Jev's model judgments (F-21) and
+# rapidfuzz near-duplicates (T-0773, "only proposes, never merges"). Automation
+# (curation_drain) must never approve them.
+OPERATOR_ONLY_SOURCES = frozenset({"jev", "fuzzy"})
+
+
+def is_operator_only_proposal(payload: Any) -> bool:
+    return isinstance(payload, dict) and str(payload.get("source") or "").strip().lower() in OPERATOR_ONLY_SOURCES
+
+
 def _apply_steward_approval(
     service: MemoryService,
     target_claim_id: int,
@@ -1503,7 +1513,7 @@ def resolve_steward_proposal(
         raise ValueError("Selected proposal has invalid claim_id.")
 
     payload = target.get("payload") if isinstance(target.get("payload"), dict) else {}
-    if (actor == "automation" or not allow_jev) and is_jev_proposal(payload):
+    if (actor == "automation" and is_operator_only_proposal(payload)) or (not allow_jev and is_jev_proposal(payload)):
         # Jev proposals are model judgments awaiting a human verdict; letting
         # automation or an agent resolve them would turn a proposal into a live action.
         raise JevProposalOperatorOnly(

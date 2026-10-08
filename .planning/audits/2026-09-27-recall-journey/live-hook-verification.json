@@ -1,0 +1,102 @@
+{
+  "settings_sha256": "5d55b5e30704f754f498e5bcb52a414ac6b8ca06440579f6ea7e0f1f99b7e917",
+  "settings_unchanged": true,
+  "jev_mode": "live",
+  "jev_deadline_ms": "1500",
+  "hook_timeout_s": 10,
+  "fresh_process_per_session": true,
+  "agent_harness_session_started": false,
+  "database_access": "recall read_only=True; independent claim matching mode=ro/query_only; normal decision telemetry enabled",
+  "runs": [
+    {
+      "case": 1,
+      "query_origin": "historical prompt",
+      "session_key_sha256": "0521ad9bb4d451d93449e8bc7a72fd65ea6bf4ccaab4bfb3ae708ac09c5d48ec",
+      "since": "2026-09-28T02:16:07.392899+00:00",
+      "exit_code": 0,
+      "wall_ms": 3867.267,
+      "within_installed_hook_timeout": true,
+      "valid_hook_json": true,
+      "context_chars": 1985,
+      "full_claims_matched": 2,
+      "full_long_claims": 2,
+      "full_unicode_claims": 2,
+      "stderr_nonempty": false,
+      "decisions": [
+        {
+          "surface": "recall",
+          "mode": "live",
+          "fallback_reason": null,
+          "transport_outcome": "ok",
+          "attempt_count": 1,
+          "latency_ms": 500,
+          "engine_ms": 547,
+          "tokens_in": 5232,
+          "tokens_out": 1054,
+          "cost_usd": 0.000219744,
+          "model_served": "jev-1.13.0"
+        }
+      ]
+    },
+    {
+      "case": 2,
+      "query_origin": "historical prompt",
+      "session_key_sha256": "3db9dec7f2c47b187712b2efe59d3074002d8931c3c46888d8deb02c7acd8c81",
+      "since": "2026-09-28T02:16:11.355817+00:00",
+      "exit_code": 0,
+      "wall_ms": 5357.969,
+      "within_installed_hook_timeout": true,
+      "valid_hook_json": true,
+      "context_chars": 2260,
+      "full_claims_matched": 2,
+      "full_long_claims": 2,
+      "full_unicode_claims": 2,
+      "stderr_nonempty": false,
+      "decisions": [
+        {
+          "surface": "recall",
+          "mode": "live",
+          "fallback_reason": null,
+          "transport_outcome": "ok",
+          "attempt_count": 1,
+          "latency_ms": 547,
+          "engine_ms": 610,
+          "tokens_in": 4210,
+          "tokens_out": 936,
+          "cost_usd": 0.00017682,
+          "model_served": "jev-1.13.0"
+        }
+      ]
+    },
+    {
+      "case": 3,
+      "query_origin": "content-derived canary",
+      "session_key_sha256": "bab2c746641dae13d1c23b439d63365a653b994878615c1aca28387b1ea42489",
+      "since": "2026-09-28T02:16:16.721840+00:00",
+      "exit_code": 0,
+      "wall_ms": 5699.663,
+      "within_installed_hook_timeout": true,
+      "valid_hook_json": true,
+      "context_chars": 1789,
+      "full_claims_matched": 2,
+      "full_long_claims": 2,
+      "full_unicode_claims": 2,
+      "stderr_nonempty": false,
+      "decisions": [
+        {
+          "surface": "recall",
+          "mode": "live",
+          "fallback_reason": null,
+          "transport_outcome": "ok",
+          "attempt_count": 1,
+          "latency_ms": 516,
+          "engine_ms": 578,
+          "tokens_in": 5326,
+          "tokens_out": 1152,
+          "cost_usd": 0.000223692,
+          "model_served": "jev-1.13.0"
+        }
+      ]
+    }
+  ]
+}

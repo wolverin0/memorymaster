@@ -406,6 +406,7 @@ class DreamWorker:
         # counters below are the ones that say whether anything was found.
         totals = {
             "discovery_jobs_enqueued": 0,
+            "discovery_skipped_no_supports": 0,
             "components_found": 0,
             "discovery_no_supports": 0,
             "discovery_no_components": 0,
@@ -416,6 +417,9 @@ class DreamWorker:
         cycle_hour = self.now().astimezone(timezone.utc).strftime("%Y-%m-%dT%H")
         scope_pairs = self._observation_scope_pairs(scope)
         for target_scope, tenant_id in scope_pairs:
+            if not engine.repo.discovery_has_work(scope=target_scope, tenant_id=tenant_id):
+                totals["discovery_skipped_no_supports"] += 1
+                continue
             _job, created = engine.repo.queue_discovery(
                 tenant_id=tenant_id,
                 scope=target_scope,

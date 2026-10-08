@@ -26,13 +26,12 @@ written unless ``MEMORYMASTER_DECISIONS_LOG_OFF`` is set.
 Never act unlogged: when the decision row cannot be written the returned decision
 carries the legacy action and ``ledger_unavailable`` (no Jev action, no answers),
 whatever Jev answered.  Nothing is sent after the ledger refused a question
-registration.  A hook decision (any ``kind`` but ``batch``) is bounded: its ledger
-connections wait at most ``MEMORYMASTER_DECISIONS_HOOK_BUSY_MS`` for another
-writer, egress redaction stops (``timeout``, nothing sent) once the deadline has
-passed, its request gets only the time left before the deadline (counted from the
-start of ``decide``), and the final write only what remains of the deadline plus
-``HOOK_SLACK_S``, so ``decide`` returns within the deadline + 100 ms even while
-another process holds the ledger's write lock.
+registration.  A hook decision (any ``kind`` but ``batch``) bounds waits for
+another ledger writer to ``MEMORYMASTER_DECISIONS_HOOK_BUSY_MS`` and stops
+egress redaction (``timeout``, nothing sent) after its deadline.  The request
+gets only the remaining time, and lock retries on the final write are capped by
+the deadline plus ``HOOK_SLACK_S``.  SQLite COMMIT and final WAL close can still
+take longer on a slow filesystem; this is not a total wall-clock guarantee.
 
 Surfaces that fall back before asking log through public APIs:
 :meth:`DecisionEngine.record_skip` (one ``skip:<reason>`` row, nothing sent) and
@@ -65,8 +64,8 @@ from memorymaster.decisions.questions import (
 _log = logging.getLogger(__name__)
 STATE_SCHEMA_VERSION = 1
 LATE_GRACE_S = 0.05
-# A hook decision returns within its deadline + HOOK_SLACK_S; the final row write
-# keeps FINAL_WRITE_MARGIN_S of that for itself.
+# Lock retries for the final hook row have HOOK_SLACK_S and reserve
+# FINAL_WRITE_MARGIN_S; filesystem COMMIT and close may exceed this budget.
 HOOK_SLACK_S = 0.1
 FINAL_WRITE_MARGIN_S = 0.02
 _DEFAULT_EXPLORATION = {"recall": "ranking", "ingest": "binary"}

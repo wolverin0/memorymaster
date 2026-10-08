@@ -7,6 +7,7 @@ user's home is written.
 from __future__ import annotations
 
 import json
+import re
 import math
 import time
 from pathlib import Path
@@ -149,6 +150,9 @@ def hook_data(tmp_path):
     return {"session_id": SESSION, "cwd": str(tmp_path / "workspace" / "memorymaster"), "prompt": QUERY}
 
 
+_ID_PREFIX = re.compile(r"^- \[mm-[0-9a-z]+\] ")
+
+
 def legacy_recall(db):
     return context_hook.recall(QUERY, db_path=str(db), skip_qdrant=True, return_ids=True)
 
@@ -163,7 +167,12 @@ def test_off_mode_output_is_byte_identical_and_sends_nothing(tmp_path, monkeypat
                                              hook_data=hook_data(tmp_path))
     assert plain_ids and hooked == plain and hooked_ids == plain_ids
     by_id = dict(zip(fixture_ids, TEXTS))
-    assert hooked == "\n".join(["# Memory Context", ""] + [f"- {by_id[i]}" for i in plain_ids])
+    header = list(context_hook.RECALL_HEADER)
+    lines = hooked.splitlines()
+    assert lines[:len(header)] == header
+    # T-0739: every bullet carries its citable id, then the unchanged claim text.
+    assert all(_ID_PREFIX.match(line) for line in lines[len(header):])
+    assert [_ID_PREFIX.sub("- ", line) for line in lines[len(header):]] == [f"- {by_id[i]}" for i in plain_ids]
     assert not (tmp_path / "decisions.db").exists()
 
 
@@ -184,11 +193,14 @@ def test_live_orders_by_relevance_adapts_k_and_labels_flags(tmp_path, monkeypatc
                                    hook_data=hook_data(tmp_path))
 
     assert ids == [best, second, third]
+    header = list(context_hook.RECALL_HEADER)
     lines = out.splitlines()
-    assert lines[:2] == ["# Memory Context", ""] and len(lines) == 5
-    assert lines[2].startswith("- " + jev.LABEL_CONFLICT + " ")
-    assert lines[3].startswith("- " + jev.LABEL_INSTRUCTION + " ")
-    assert "[flag:" not in lines[4]
+    assert lines[:len(header)] == header and len(lines) == len(header) + 3
+    assert all(_ID_PREFIX.match(line) for line in lines[len(header):])
+    bullets = [_ID_PREFIX.sub("- ", line) for line in lines[len(header):]]  # T-0739: id first, then labels
+    assert bullets[0].startswith("- " + jev.LABEL_CONFLICT + " ")
+    assert bullets[1].startswith("- " + jev.LABEL_INSTRUCTION + " ")
+    assert "[flag:" not in bullets[2]
     # One request, hook deadline, zero retries; state = request + project label only.
     assert len(transport.calls) == 1
     call = transport.calls[0]
@@ -274,12 +286,42 @@ def test_shadow_mode_keeps_legacy_and_logs_jev_action(tmp_path, monkeypatch):
     install_engine(monkeypatch, tmp_path, ScriptedTransport(recall_answers(plan)), MEMORYMASTER_JEV_MODE="shadow")
 
     out = context_hook.recall(QUERY, db_path=str(db), skip_qdrant=True, hook_data=hook_data(tmp_path))
+    jev.wait_shadow_decisions()
 
     assert out == legacy_out
     decision = ledger_rows(tmp_path, "SELECT * FROM decisions")[0]
     assert decision["mode"] == "shadow" and decision["fallback_reason"] is None
     assert json.loads(decision["action_taken"]) == [f"claim:{cid}" for cid in legacy_ids]
     assert json.loads(decision["jev_action"]) == [f"claim:{cid}" for cid in reversed(legacy_ids)][:5]
+
+
+def test_shadow_mode_never_makes_the_prompt_wait_for_jev(tmp_path, monkeypatch):
+    # Operator ruling 2026-10-05: shadow records what Jev would choose but must not slow the
+    # prompt; inline shadow kept the live hook p50 at ~1.2 s against ~65 ms without Jev.
+    import threading
+    import time
+
+    db, _ = build_db(tmp_path, TEXTS)
+    legacy_out, legacy_ids = legacy_recall(db)
+    plan = {cid: {"relevant": 0.5, "usable": 0.9} for cid in legacy_ids}
+    install_engine(monkeypatch, tmp_path, ScriptedTransport(recall_answers(plan)), MEMORYMASTER_JEV_MODE="shadow")
+    release = threading.Event()
+    real_decide = decisions_engine.decide
+
+    def slow_decide(*args, **kwargs):
+        release.wait(10)
+        return real_decide(*args, **kwargs)
+
+    monkeypatch.setattr(decisions_engine, "decide", slow_decide)
+    started = time.perf_counter()
+    out = context_hook.recall(QUERY, db_path=str(db), skip_qdrant=True, hook_data=hook_data(tmp_path))
+    elapsed = time.perf_counter() - started
+    release.set()
+    jev.wait_shadow_decisions()
+
+    assert out == legacy_out
+    assert elapsed < 5
+    assert ledger_rows(tmp_path, "SELECT mode FROM decisions")[0]["mode"] == "shadow"
 
 
 def test_exploration_is_logged_with_engine_propensities(tmp_path, monkeypatch):
@@ -495,6 +537,7 @@ def test_mcp_paths_never_send_private_or_sensitive_claims(tmp_path, monkeypatch,
     install_engine(monkeypatch, tmp_path, transport, MEMORYMASTER_JEV_MODE=mode)
 
     out = call(**args)
+    jev.wait_shadow_decisions()
 
     assert len(transport.calls) == 1
     sent = json.dumps(transport.calls[0]["payload"])
@@ -687,7 +730,13 @@ def test_prompt_hook_jev_time_stays_within_one_hook_deadline(tmp_path, monkeypat
     legacy_out = context_hook.recall(QUERY, db_path=str(db), skip_qdrant=True, hook_data=data)
     baseline = time.perf_counter() - started
     transport = ScriptedTransport(with_route(recall_answers({})), delay=3.0)
-    install_engine(monkeypatch, tmp_path, transport, MEMORYMASTER_JEV_HOOK_DEADLINE_MS="900")  # production value
+    engine = install_engine(monkeypatch, tmp_path, transport, MEMORYMASTER_JEV_HOOK_DEADLINE_MS="900")
+    # This checks a delayed transport, not cold schema creation. An empty
+    # ledger can exhaust the production 900 ms before sending on slow disks.
+    # Pre-send deadlines have separate decision-engine regression coverage.
+    from memorymaster.decisions import questions
+
+    assert engine.ledger.register_questions(questions.all_specs())
 
     started = time.perf_counter()
     out = context_hook.recall(QUERY, db_path=str(db), skip_qdrant=True, hook_data=data)
@@ -718,6 +767,7 @@ def test_shadow_delivery_prediction_covers_legacy_blocks_longer_than_the_pool(tm
     install_engine(monkeypatch, tmp_path, ScriptedTransport(recall_answers(plan)), MEMORYMASTER_JEV_MODE="shadow")
 
     assert context_hook._jev_recall_rendering(QUERY, rows, lines, rendered, budget, data, {}) is None
+    jev.wait_shadow_decisions()
 
     items = ledger_rows(tmp_path, "SELECT item_ref, MAX(delivered) AS d FROM decision_items WHERE exposed = 1 "
                                   "GROUP BY item_ref")

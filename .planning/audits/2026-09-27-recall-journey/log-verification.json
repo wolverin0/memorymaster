@@ -1,0 +1,9 @@
+{
+  "fresh_session_hook_events": [
+    "start",
+    "done"
+  ],
+  "recall_done_seen": true,
+  "session_error_events": 0,
+  "hook_stderr_nonempty_count": 0
+}

@@ -18,6 +18,7 @@ Usage (from CLAUDE.md):
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import math
 import os
@@ -825,6 +826,14 @@ def _recall_weight(name: str) -> float:
 # falling back to ``project:memorymaster`` so the typical deployment gets a
 # sensible default without forcing every caller to wire env plumbing.
 _DEFAULT_CURRENT_SCOPE = "project:memorymaster"
+# The project of the prompt being recalled, from the hook payload's cwd (2026-10-05):
+# writes already took their scope from the session's cwd, but recall searched the
+# fixed default above, so every project read MemoryMaster's claims and none of its own.
+_REQUEST_SCOPE: contextvars.ContextVar[str | None] = contextvars.ContextVar("mm_prompt_scope", default=None)
+# Scopes of the prompt folder's parent and grandparent: project:py-apps holds what the
+# Py Apps projects share, and a worktree (E:/Pedrito/worktrees/x) belongs to its repo.
+_REQUEST_SHARED_SCOPES: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
+    "mm_prompt_shared_scopes", default=())
 
 
 def _recall_scope_boost() -> float:
@@ -853,10 +862,12 @@ def _current_scope() -> str:
     Reads ``MEMORYMASTER_SCOPE_DEFAULT`` first; falls back to
     :data:`_DEFAULT_CURRENT_SCOPE` when unset or empty.
     """
+    # An explicit MEMORYMASTER_SCOPE_DEFAULT pins the scope; otherwise the prompt's
+    # own project (its cwd) wins over the built-in default.
     raw = os.environ.get("MEMORYMASTER_SCOPE_DEFAULT")
-    if raw is None or raw.strip() == "":
-        return _DEFAULT_CURRENT_SCOPE
-    return raw.strip()
+    if raw is not None and raw.strip():
+        return raw.strip()
+    return _REQUEST_SCOPE.get() or _DEFAULT_CURRENT_SCOPE
 
 
 # Query expansion via entity-matched synonyms (roadmap 1.5).
@@ -1167,6 +1178,17 @@ def recall(
     # bullet-order so the caller gets exact mapping without parsing the
     # rendered markdown.
     rendered_ids: list[int] = []
+    cwd = hook_data.get("cwd") if isinstance(hook_data, dict) else None
+    if cwd:
+        from memorymaster.core.scope_utils import scope_from_cwd
+
+        scope_token = _REQUEST_SCOPE.set(scope_from_cwd(cwd))
+        parents = list(Path(str(cwd)).parents)[:2]
+        shared = tuple(dict.fromkeys(s for s in (scope_from_cwd(str(p)) for p in parents)
+                                     if s.startswith("project:")))
+        shared_token = _REQUEST_SHARED_SCOPES.set(shared)
+    else:
+        scope_token = shared_token = None
 
     try:
         rendered = _recall_impl(
@@ -1184,6 +1206,9 @@ def recall(
             return rendered, rendered_ids
         return rendered
     finally:
+        if scope_token is not None:
+            _REQUEST_SCOPE.reset(scope_token)
+            _REQUEST_SHARED_SCOPES.reset(shared_token)
         _emit_recall_latency(phase_ms, total_start)
 
 
@@ -1191,7 +1216,7 @@ def _prompt_recall_plan(query_text: str, *, limit: int):
     """Build the immutable trusted policy shared by every prompt stream."""
     from memorymaster.recall.planner import RetrievalRequest, build_retrieval_plan
 
-    scopes = [_current_scope(), "global"]
+    scopes = [_current_scope(), *_REQUEST_SHARED_SCOPES.get(), "global"]
     include_legacy = os.environ.get(
         "MEMORYMASTER_QUERY_INCLUDE_LEGACY_PROJECT", "1"
     ).strip().lower() not in {"0", "false", "no"}
@@ -1210,12 +1235,21 @@ def _prompt_recall_plan(query_text: str, *, limit: int):
 
 def _prompt_claim_allowed(claim, plan) -> bool:
     """Fail closed for claims introduced by any prompt-recall stream."""
+    from types import SimpleNamespace
+
     from memorymaster.core.security import is_sensitive_claim
+    from memorymaster.core.temporal_policy import claim_is_temporally_current
 
     if claim is None or getattr(claim, "status", "") not in set(plan.statuses):
         return False
     scopes = plan.scope_allowlist
     if scopes is not None and (getattr(claim, "scope", "") or "").strip() not in scopes:
+        return False
+    bounds = SimpleNamespace(
+        valid_from=getattr(claim, "valid_from", None),
+        valid_until=getattr(claim, "valid_until", None),
+    )
+    if not claim_is_temporally_current(bounds):
         return False
     visibility = (getattr(claim, "visibility", "public") or "public").strip().lower()
     return visibility == "public" and not is_sensitive_claim(claim)
@@ -1392,6 +1426,34 @@ def _recall_impl(
     # after top-level ranking and budget selection, through the RO spool path.
     svc = MemoryService(db_target=db, workspace_root=Path.cwd(), read_only=True)
     prompt_plan = _prompt_recall_plan(query, limit=100)
+
+    # Dense prompt recall (EmbeddingGemma 2 service, MEMORYMASTER_RECALL_DENSE=1).
+    # Prompt hook only; when the service cannot answer, lexical recall below runs.
+    if _hook_data is not None:
+        from memorymaster.recall import dense_recall
+
+        if dense_recall.enabled():
+            dense_started = time.perf_counter()
+            with _phase_timer(phase_ms, "dense"):
+                dense_rows, dense_metrics = _dense_prompt_rows(svc, query, prompt_plan)
+            event = {"scope": _current_scope(), "query_fp": dense_recall.query_fingerprint(query),
+                     "query_chars": len(query), **dense_metrics}
+            if dense_rows is not None:
+                text, rendered = _finish_recall(
+                    query, dense_rows, budget=budget, svc=svc, phase_ms=phase_ms,
+                    rank_start=time.perf_counter(), hook_data=_hook_data, rendered_ids=_rendered_ids,
+                )
+                event.update({
+                    "outcome": "dense" if rendered else "dense_empty",
+                    "injected": len(rendered),
+                    "injected_ids": [getattr(row.get("claim"), "id", None) for row in rendered],
+                    "chars": len(text),
+                    "total_ms": dense_recall.elapsed_ms(dense_started),
+                })
+                dense_recall.record(event)
+                return text
+            event["total_ms"] = dense_recall.elapsed_ms(dense_started)
+            dense_recall.record(event)
 
     # Pre-extract salient tokens before hitting FTS5. Passing the full
     # prompt verbatim AND-joins every token in FTS5 and rejects nearly all
@@ -2098,35 +2160,116 @@ def _recall_impl(
         if _lr_fts_surplus:
             ranked = ranked[: max(0, len(ranked) - _lr_fts_surplus)]
 
+    text, _rendered = _finish_recall(
+        query, ranked, budget=budget, svc=svc, phase_ms=phase_ms, rank_start=_rank_start,
+        hook_data=_hook_data, rendered_ids=_rendered_ids,
+    )
+    return text
+
+
+def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_data, rendered_ids):
+    """Render the ranked rows within budget, apply S2, record ids and accesses."""
     # Build output — top claims within budget
     lines, rendered_rows = _render_recall_lines(ranked, budget)
     # S2 RECALL (Jev, 4.9.0): only the prompt hook opts in by passing its
     # payload; with the surface off this is a no-op and the block is unchanged.
-    if _hook_data is not None:
-        jev_rendering = _jev_recall_rendering(query, ranked, lines, rendered_rows, budget, _hook_data, phase_ms)
+    if hook_data is not None:
+        jev_rendering = _jev_recall_rendering(query, ranked, lines, rendered_rows, budget, hook_data, phase_ms)
         if jev_rendering is not None:
             lines, rendered_rows = jev_rendering
-    if _rendered_ids is not None:
+    if rendered_ids is not None:
         for row in rendered_rows:
             cid = getattr(row.get("claim"), "id", None)
             if isinstance(cid, int):
-                _rendered_ids.append(cid)
+                rendered_ids.append(cid)
 
     if rendered_rows:
         svc._record_accesses(rendered_rows, query_text=query)
 
     # Close the rank_and_build timer right before we emit output so the
     # measurement covers _relevance/RRF + the budget-trimming loop.
-    phase_ms["rank_and_build"] = (time.perf_counter() - _rank_start) * 1000.0
+    phase_ms["rank_and_build"] = (time.perf_counter() - rank_start) * 1000.0
 
-    return _recall_text(lines)
+    return _recall_text(lines), rendered_rows
+
+
+def _dense_prompt_rows(svc, query: str, plan) -> tuple[list[dict] | None, dict]:
+    """Dense candidates for the prompt hook, authorized like every other stream.
+
+    Candidates in the hook's scope need ``min_score``; candidates from other
+    projects need the higher ``outside_min_score`` and pass the same filter with
+    only the scope rule lifted. Returns ``(rows, metrics)``; ``rows`` is ``None``
+    when the service could not answer (the caller then runs lexical recall) and
+    may be empty when nothing qualifies (nothing is injected).
+    """
+    import dataclasses
+
+    from memorymaster.recall import dense_recall
+
+    started = time.perf_counter()
+    scopes = list(plan.scope_allowlist) if plan.scope_allowlist is not None else None
+    try:
+        answer = dense_recall.search(query, scopes, outside_k=dense_recall.FETCH_K if scopes else 0)
+    except dense_recall.DenseUnavailable as exc:
+        return None, {"outcome": f"fallback:{exc}", "service_ms": dense_recall.elapsed_ms(started)}
+    threshold, outside_threshold = dense_recall.min_score(), dense_recall.outside_min_score()
+    open_plan = dataclasses.replace(plan, scope_allowlist=None)
+    candidates = sorted(
+        [(cid, score, False) for cid, score in answer.results if score >= threshold]
+        + [(cid, score, True) for cid, score in answer.outside if score >= outside_threshold],
+        key=lambda item: -item[1],
+    )
+    rows: list[dict] = []
+    filtered_out = 0
+    seen: set[int] = set()
+    for cid, score, outside in candidates:
+        if len(rows) >= dense_recall.max_claims():
+            break
+        if cid in seen:  # a repeated id is injected once
+            continue
+        seen.add(cid)
+        try:
+            claim = svc.store.get_claim(cid, include_citations=True)
+        except Exception as exc:  # noqa: BLE001 — a bad id must not break recall
+            logger.debug("dense hydrate get_claim(%d) failed: %s", cid, exc)
+            claim = None
+        row = {**_row_for_graph_claim(claim, 0.0), "dense_score": score, "source": "dense"} if claim else None
+        if row is None or not _filter_prompt_rows([row], open_plan if outside else plan):
+            filtered_out += 1
+            continue
+        row["dense_outside"] = outside
+        rows.append(row)
+    return rows, {
+        "service_ms": dense_recall.elapsed_ms(started),
+        "embed_ms": answer.embed_ms,
+        "search_ms": answer.search_ms,
+        "indexed": answer.indexed,
+        "candidates": len(answer.results),
+        "above_threshold": sum(score >= threshold for _, score in answer.results),
+        "outside_above_threshold": sum(score >= outside_threshold for _, score in answer.outside),
+        "injected_outside": sum(bool(row["dense_outside"]) for row in rows),
+        "filtered_out": filtered_out,
+        "top_score": round(answer.results[0][1], 4) if answer.results else None,
+        "top_outside_score": round(answer.outside[0][1], 4) if answer.outside else None,
+        "scores": [round(score, 4) for _, score in answer.results[:8]],
+        "min_score": threshold,
+        "outside_min_score": outside_threshold,
+    }
+
+
+# The id lets the agent cite what it used and lets the Stop-hook joiner see it (T-0739):
+# without it the usage detector could only match 8 verbatim words (base rate 0.0006).
+RECALL_HEADER = ("# Memory Context", "When a memory below informs your reply, cite its [mm-id].", "")
 
 
 def _recall_chunk(claim, labels: tuple[str, ...] = ()) -> str:
-    """One injected bullet: the claim text (300 chars), Jev flags first when any."""
-    text = claim.text[:300]
+    """One complete evidence bullet; the packing step decides whether it fits."""
+    text = claim.text
     if labels:
         text = " ".join(labels) + " " + text
+    human_id = getattr(claim, "human_id", None)
+    if isinstance(human_id, str) and human_id:
+        text = f"[{human_id}] {text}"
     # Only surface the "(compiled in [[slug]])" wiki breadcrumb when the
     # Obsidian markdown view is explicitly enabled — otherwise it points at
     # an archived/absent vault (the wiki layer is opt-in as of 2026-07-06;
@@ -2138,30 +2281,35 @@ def _recall_chunk(claim, labels: tuple[str, ...] = ()) -> str:
 
 
 def _render_recall_lines(rows, budget: int, labels=None) -> tuple[list[str], list[dict]]:
-    """Header plus bullets in ``rows`` order until the token budget is spent."""
-    lines = ["# Memory Context", ""]
+    """Pack complete bullets, counting framing in the four-character estimate.
+
+    A claim that cannot fit must not hide later, smaller claims. Returning an
+    ID for a silently truncated claim makes recall evaluation and exposure
+    receipts misleading, so each included claim retains its full text.
+    """
+    lines = list(RECALL_HEADER)
     rendered_rows: list[dict] = []
-    tokens_used = 0
-    chars_per_token = 4
+    chars_used = len("\n".join(lines))
+    char_budget = max(0, budget) * 4
     for row in rows:
         claim = row.get("claim")
         if not hasattr(claim, "text"):
             continue
         flags = labels.get(getattr(claim, "id", None), ()) if labels else ()
         chunk = _recall_chunk(claim, flags)
-        chunk_tokens = len(chunk) // chars_per_token
-        if tokens_used + chunk_tokens > budget:
-            break
+        chunk_chars = len(chunk) + 1  # join separator, including the first bullet
+        if chars_used + chunk_chars > char_budget:
+            continue
         lines.append(chunk)
         rendered_rows.append(row)
-        tokens_used += chunk_tokens
+        chars_used += chunk_chars
     return lines, rendered_rows
 
 
 def _recall_text(lines: list[str]) -> str:
-    if len(lines) <= 2:
+    if len(lines) <= len(RECALL_HEADER):
         return ""
-    return "\n".join(lines).encode("ascii", errors="replace").decode("ascii")
+    return "\n".join(lines)
 
 
 def _jev_recall_rendering(query, ranked, legacy_lines, legacy_rows, budget, hook_data, phase_ms):
@@ -2184,9 +2332,17 @@ def _jev_recall_rendering(query, ranked, legacy_lines, legacy_rows, budget, hook
 
         pool = [row for row in ranked
                 if hasattr(row.get("claim"), "text") and isinstance(getattr(row.get("claim"), "id", None), int)]
+        # JEV can only choose complete bullets that individually fit, even
+        # with all labels. One oversized claim must not zero the entire cap.
+        header_chars = len("\n".join(RECALL_HEADER)) + 1
+        pool = [row for row in pool
+                if header_chars + len(_recall_chunk(row["claim"], jev.WORST_CASE_LABELS)) + 1 <= max(0, budget) * 4]
         pool = pool[: jev.RECALL_TOP_N]
         by_id = {row["claim"].id: row for row in pool}
-        cap = jev.budget_cap([len(_recall_chunk(row["claim"], jev.WORST_CASE_LABELS)) // 4 for row in pool], budget)
+        cap = jev.budget_cap(
+            [(len(_recall_chunk(row["claim"], jev.WORST_CASE_LABELS)) + 4) // 4 for row in pool],
+            budget, overhead=(header_chars + 3) // 4,
+        )
         legacy_by_id = {row["claim"].id: row for row in legacy_rows
                         if isinstance(getattr(row.get("claim"), "id", None), int)}
         legacy_ids = list(legacy_by_id)

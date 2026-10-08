@@ -196,6 +196,19 @@ class GraphObservationRepository:
             ontology_version=ontology_version,
         )
 
+    def discovery_has_work(self, *, scope: str, tenant_id: str | None) -> bool:
+        """A scope needs discovery only with eligible supports or live observations to recheck.
+
+        Measured 2026-10-06: 25,576 of 32,528 discovery jobs ended ``no_supports`` because
+        only 3 confirmed claims carry captured evidence; session claims never do.
+        """
+        if self.load_active_supports(scope=scope, tenant_id=tenant_id):
+            return True
+        return any(
+            row["status"] in {"candidate", "confirmed"}
+            for row in self.scope_observations(scope=scope, tenant_id=tenant_id)
+        )
+
     def _expire_leases(self, conn: Any, stamp: str) -> None:
         conn.execute(
             """UPDATE graph_observation_jobs

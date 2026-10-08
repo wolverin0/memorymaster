@@ -1,6 +1,6 @@
 <!-- doc-head: scoped development and verification for MemoryMaster -->
 # Development guidance
-Covers: local setup, disposable lifecycle checks, CI, runtime evidence, and GitNexus.
+Covers: local setup, disposable lifecycle checks, CI, runtime evidence, GitNexus and Serena.
 Key terms: source versus installed runtime, risk-based tests, SQLite, agent instructions.
 Read when: implementing changes or choosing the smallest sufficient verification.
 <!-- /doc-head -->
@@ -50,6 +50,12 @@ tags and date, and a wikilink for bodies over 300 characters. Generated
 `obsidian-vault/bases/*.base` files are rebuilt by wiki absorb, not hand-edited.
 
 ## Code intelligence
+
+Use [the shared navigation workflow](code-navigation.md) for AGY, Claude Code and
+Codex. Run `python scripts/check_code_navigation.py` before trusting this
+checkout's index. Dirty/new code still requires live-source verification even
+when indexed HEAD matches. Serena supplies bounded live symbol/reference reads;
+an empty GitNexus incoming set is not proof that no callers exist.
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence

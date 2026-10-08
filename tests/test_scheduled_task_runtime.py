@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
@@ -208,4 +210,5 @@ def test_scheduled_main_logs_bound_dream_execution(tmp_path: Path, monkeypatch) 
 
     assert result == 0
     assert seen == ["gemini"]
-    assert "dream start" in log_path.read_text(encoding="utf-8")
+    events = [json.loads(line)["event"] for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert events[0] == "job_start" and events[-1] == "job_finish"  # JSON lines since T-0764

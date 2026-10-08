@@ -25,6 +25,9 @@ requires-python = ">=3.10"
 dependencies = [
     "requests>=2.31",
     "tenacity>=8.2",
+    # JSON-lines logs for the shared MCP server and scheduled jobs (core/structured_log.py,
+    # which falls back to a stdlib JSON formatter when structlog is absent).
+    "structlog>=24.1",
     # Jev decisions use the standard library (http.client + ssl): no HTTP client dependency.
 ]
 
@@ -46,7 +49,9 @@ vector = ["sentence-transformers>=3.0", "qdrant-client>=1.9"]
 # "single-file SQLite + optional Qdrant" story. Gated at runtime by
 # MEMORYMASTER_RECALL_GRAPH=1; off by default.
 graph = ["kuzu>=0.4"]
-dev = ["pytest>=8.2", "pytest-cov>=6.0", "pytest-timeout>=2.3", "pip-audit>=2.10", "PyYAML>=6.0,<7"]
+# Steward near-duplicate proposals (govern/fuzzy_dedupe.py, T-0773).
+dedupe = ["rapidfuzz>=3.9", "numpy>=1.26"]  # process.cdist returns a numpy matrix
+dev = ["pytest>=8.2", "pytest-cov>=6.0", "pytest-timeout>=2.3", "nox>=2026.8", "uv>=0.12", "PyYAML>=6.0,<7", "rapidfuzz>=3.9", "numpy>=1.26"]
 # Streamable HTTP and its ASGI app landed in the 1.8 line. Stdio remains the
 # default transport; the higher floor makes the explicit HTTP entrypoint real.
 mcp = ["mcp>=1.8.1,<2"]

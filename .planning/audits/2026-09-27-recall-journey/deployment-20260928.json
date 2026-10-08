@@ -1,0 +1,168 @@
+{
+  "source_commit": "190d020",
+  "wheel_sha256": "42d64016b07debb32ada961c368cca4af8f7350a944b470bb1283a31736c166b",
+  "rollback_sha256": "3db620800859ea0dfd7f63b888d2c2e1f4a63fce4a23609c0a5500d41bedf640",
+  "package_runtimes": [
+    {
+      "version": "4.9.0",
+      "files_checked": 438,
+      "mismatches": []
+    },
+    {
+      "version": "4.9.0",
+      "files_checked": 438,
+      "mismatches": []
+    }
+  ],
+  "installed_journeys": {
+    "general": {
+      "summary": {
+        "cases_total": 5,
+        "cases_without_error": 5,
+        "candidate_cases_total": 4,
+        "candidate_coverage": 1.0,
+        "ranked_hit_at_5": 1.0,
+        "rendered_hit_at_5": 1.0,
+        "ranked_precision_at_5_fixed": 0.2,
+        "rendered_precision_at_5_fixed": 0.2,
+        "answer_cases_total": 4,
+        "answer_present_rate": 1.0,
+        "forbidden_exclusion_rate": 1.0,
+        "citation_checked_claims_total": 8,
+        "citation_source_correct_rate": 1.0,
+        "latency_p50_ms": 15.929,
+        "latency_p95_ms": 78.64,
+        "budget_chars_estimate_min": 640,
+        "budget_chars_estimate_max": 800,
+        "recall_budget_compliance_rate": 1.0
+      },
+      "hook_sha256": "e5ad5d2873cc0688bce69fdceb4d6969eadddd65637ce01df6b6f3906d5bf633",
+      "provider_calls": 0,
+      "scope": "disposable governed fixture, not semantic utility"
+    },
+    "scheduled": {
+      "summary": {
+        "cases_total": 5,
+        "cases_without_error": 5,
+        "candidate_cases_total": 4,
+        "candidate_coverage": 1.0,
+        "ranked_hit_at_5": 1.0,
+        "rendered_hit_at_5": 1.0,
+        "ranked_precision_at_5_fixed": 0.2,
+        "rendered_precision_at_5_fixed": 0.2,
+        "answer_cases_total": 4,
+        "answer_present_rate": 1.0,
+        "forbidden_exclusion_rate": 1.0,
+        "citation_checked_claims_total": 8,
+        "citation_source_correct_rate": 1.0,
+        "latency_p50_ms": 18.305,
+        "latency_p95_ms": 77.639,
+        "budget_chars_estimate_min": 640,
+        "budget_chars_estimate_max": 800,
+        "recall_budget_compliance_rate": 1.0
+      },
+      "hook_sha256": "e5ad5d2873cc0688bce69fdceb4d6969eadddd65637ce01df6b6f3906d5bf633",
+      "provider_calls": 0,
+      "scope": "disposable governed fixture, not semantic utility"
+    }
+  },
+  "live_recall": {
+    "mode": "live",
+    "deadline_ms": "1500",
+    "settings_unchanged": true,
+    "claim_database_access": "read only; normal hook/decision telemetry enabled",
+    "citation_limit": "persisted citation presence, not semantic support correctness",
+    "cost_limit": "ledger token-rate cost, not provider invoice",
+    "runs": [
+      {
+        "session_sha256": "7bb6f118e699abf64b066ba67bc8270e82c2b68fc86937012240962cf0c0cb97",
+        "exit_code": 0,
+        "wall_ms": 2299.0,
+        "within_10s": true,
+        "valid_delivery": true,
+        "context_chars": 2817,
+        "stderr_nonempty": false,
+        "whole_exposed_public_claims_matched": 2,
+        "matched_long_claims": 2,
+        "matched_claims_with_persisted_citation": 2,
+        "hook_start_logged": true,
+        "hook_done_logged": true,
+        "decisions": [
+          {
+            "mode": "live",
+            "fallback_reason": null,
+            "transport_outcome": "ok",
+            "attempt_count": 1,
+            "latency_ms": 406,
+            "engine_ms": 453,
+            "tokens_in": 5232,
+            "tokens_out": 1054,
+            "cost_usd": 0.000219744,
+            "model_served": "jev-1.13.0"
+          }
+        ]
+      },
+      {
+        "session_sha256": "305f41ce61ad0b8ed0b87c3ecdd9164075e1670fa90070068100f732566de6d3",
+        "exit_code": 0,
+        "wall_ms": 2598.6,
+        "within_10s": true,
+        "valid_delivery": true,
+        "context_chars": 2260,
+        "stderr_nonempty": false,
+        "whole_exposed_public_claims_matched": 2,
+        "matched_long_claims": 2,
+        "matched_claims_with_persisted_citation": 2,
+        "hook_start_logged": true,
+        "hook_done_logged": true,
+        "decisions": [
+          {
+            "mode": "live",
+            "fallback_reason": null,
+            "transport_outcome": "ok",
+            "attempt_count": 1,
+            "latency_ms": 422,
+            "engine_ms": 485,
+            "tokens_in": 4210,
+            "tokens_out": 936,
+            "cost_usd": 0.00017682,
+            "model_served": "jev-1.13.0"
+          }
+        ]
+      }
+    ]
+  },
+  "mcp": {
+    "/healthz": {
+      "status": 200,
+      "ms": 2.3
+    },
+    "/readyz": {
+      "status": 200,
+      "ms": 1.1
+    },
+    "/mcp": {
+      "status": 401,
+      "ms": 0.7
+    },
+    "authenticated": {
+      "initialized": true,
+      "tools_count": 51
+    },
+    "new_log_lines": 8,
+    "new_error_lines": 0
+  },
+  "restart_scope": "Fresh hooks load installed package. No long-lived service executable behavior changed; existing MCP health separately verified.",
+  "artifact_sha256": {
+    "selected-package-after.json": "8011dede5a4fc1c8b26169fd2a04209b661f94919bd76115e39d4b88070bcd63",
+    "installed-live-probe.json": "b17b66717cd86eff49784572d1b66ec6a32c916297a9a01f6ed3d4512db43d62",
+    "http-health.json": "f71f17093616087164ec87f7862970cc21059363ea593d7f9907cc502251930a",
+    "installed-general-journey.json": "79e581c756f116b9b52abd393ff0752df29d3f7bc67d383bb60ecf9e624ebeea",
+    "installed-scheduled-journey.json": "31bad414548d36970b116660b689f327ef5c3dec0e5bfab8b3e57033936eca1b",
+    "install-general.log": "513ed40bcc39e8729fc050872adab301451bd77a037d02fe1415442959dd4ee5",
+    "install-scheduled.log": "3c676a4a1301e280e2cda38c75d0b57f0608af58465ab2c1cdde02392fbf5b03"
+  },
+  "production_settings_changed": false,
+  "authoritative_database_mutations_by_checks": 0,
+  "normal_hook_telemetry_written": true
+}

@@ -21,6 +21,7 @@ from memorymaster.surfaces import mcp_server
 
 def _run_main(monkeypatch):
     loaded: list[str] = []
+    monkeypatch.setattr(mcp_server, "_environ", {})  # main() caps native threads (T-0725)
     monkeypatch.setattr(mcp_server, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr("importlib.import_module", lambda name: loaded.append(name))
     monkeypatch.setattr(mcp_server, "mcp", SimpleNamespace(run=lambda: None))

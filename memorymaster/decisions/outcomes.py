@@ -51,7 +51,23 @@ TURN_WINDOW = timedelta(hours=12)
 SKILL_WINDOW = timedelta(hours=6)
 NGRAM = 8
 MIN_CONTENT_TOKENS = 4
+#: Weak, separately labelled evidence (T-0739): a shared 4-gram AND a shared entity-like token.
+#: Kept out of ``used_in_turn`` so calibration still trains on strong labels only.
+WEAK_USAGE_KIND = "used_in_turn_weak"
+WEAK_NGRAM = 4
+WEAK_MIN_CONTENT_TOKENS = 2  # the shared entity supplies the specificity
 _TOKEN = re.compile(r"\w+", re.UNICODE)
+# Entity-like tokens are classified per whitespace/punctuation-split token with anchored
+# patterns on bounded lengths, so a long turn costs linear time (review F2/F5).
+_ENTITY_SPLIT = re.compile(r"[\s,;()\[\]{}<>\"'`|=]+")
+_ENTITY_EDGE = ".,:;!?*"
+_MAX_ENTITY_LEN = 120
+_PLAIN_PAIR = re.compile(r"[a-z]+/[a-z]+")  # "and/or" is prose, not a path
+_SNAKE = re.compile(r"[A-Za-z0-9]_[A-Za-z0-9]")
+_DOTTED = re.compile(r"v?\d+(?:\.\d+)+|[\w-]*[A-Za-z][\w-]*(?:\.[\w-]+)+")
+_CAMEL = re.compile(r"[A-Za-z][a-z0-9]*[A-Z][A-Za-z0-9]*")
+_ACRONYM = re.compile(r"[A-Z][A-Z0-9]{2,}")
+_CODE_WORD = re.compile(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*")  # "T-0739", "sha256": needs a digit and a letter
 _STOPWORDS = frozenset(
     "a an the and or but if then else of to in on at by for from with without into onto over under as is are was "
     "were be been being it its this that these those there here we you he she they i me my our your their us them "
@@ -103,16 +119,51 @@ def _tokens(text: str) -> list[str]:
     return [t.lower() for t in _TOKEN.findall(text or "")]
 
 
-def distinctive_ngrams(text: str, n: int = NGRAM) -> set[str]:
-    """Word n-grams with at least ``MIN_CONTENT_TOKENS`` non-stopword, non-numeric tokens."""
+def distinctive_ngrams(text: str, n: int = NGRAM, min_content: int = MIN_CONTENT_TOKENS) -> set[str]:
+    """Word n-grams with at least ``min_content`` non-stopword, non-numeric tokens."""
     tokens = _tokens(text)
     grams: set[str] = set()
     for start in range(0, len(tokens) - n + 1):
         window = tokens[start:start + n]
         content = sum(1 for t in window if t not in _STOPWORDS and not t.isdigit())
-        if content >= MIN_CONTENT_TOKENS:
+        if content >= min_content:
             grams.add(" ".join(window))
     return grams
+
+
+def _is_entity(token: str) -> bool:
+    if "/" in token or "\\" in token:
+        return not _PLAIN_PAIR.fullmatch(token.lower())
+    if _SNAKE.search(token) or _DOTTED.fullmatch(token) or _CAMEL.fullmatch(token) or _ACRONYM.fullmatch(token):
+        return True
+    return bool(_CODE_WORD.fullmatch(token)) and any(c.isdigit() for c in token) and any(c.isalpha() for c in token)
+
+
+def entity_tokens(text: str) -> set[str]:
+    """Identifier-like tokens: paths, snake_case, dotted names/versions, CamelCase, ACRONYMS, code words.
+
+    Pure numbers (years), hyphenated prose ("well-known") and "and/or" do not count.
+    """
+    found: set[str] = set()
+    for raw in _ENTITY_SPLIT.split(text or ""):
+        token = raw.strip(_ENTITY_EDGE)
+        if 4 <= len(token) <= _MAX_ENTITY_LEN and not token.isdigit() and _is_entity(token):
+            found.add(token.lower())
+    return found
+
+
+def detect_weak_usage(claim_text: str, haystack: str, *, haystack_grams: set[str] | None = None,
+                      haystack_entities: set[str] | None = None) -> bool:
+    """Weak evidence of use: a shared distinctive 4-gram AND a shared entity-like token.
+
+    Callers joining many exposures to one turn pass the turn-side sets once.
+    """
+    grams = distinctive_ngrams(claim_text, WEAK_NGRAM, WEAK_MIN_CONTENT_TOKENS)
+    turn_grams = haystack_grams if haystack_grams is not None else _haystack_ngrams(haystack, WEAK_NGRAM)
+    if not grams or not grams & turn_grams:
+        return False
+    turn_entities = haystack_entities if haystack_entities is not None else entity_tokens(haystack)
+    return bool(entity_tokens(claim_text) & turn_entities)
 
 
 def _haystack_ngrams(text: str, n: int = NGRAM) -> set[str]:
@@ -121,12 +172,18 @@ def _haystack_ngrams(text: str, n: int = NGRAM) -> set[str]:
 
 
 def detect_usage(human_id: str | None, claim_text: str, haystack: str,
-                 haystack_grams: set[str] | None = None) -> str | None:
-    """Return ``"human_id"``, ``"ngram"`` or ``None``."""
+                 haystack_grams: set[str] | None = None, *, claim_id: int | None = None) -> str | None:
+    """Strong evidence of use: ``"human_id"``, ``"claim_id"`` (``#<id>``), ``"ngram"`` or ``None``."""
     if human_id:
-        pattern = re.compile(rf"(?<![\w-]){re.escape(human_id)}(?![\w-])", re.IGNORECASE)
+        # Not a prefix of a derived (mm-a3f8.1) or collision-suffixed (mm-a3f8~2) id; a full stop may follow.
+        pattern = re.compile(rf"(?<![\w-]){re.escape(human_id)}(?![\w~-]|\.\w)", re.IGNORECASE)
         if pattern.search(haystack or ""):
             return "human_id"
+    # The session-start block lists claims as "#<id>". Only a free-standing token counts:
+    # not a markdown anchor "](#1)", an HTML entity "&#1;", a colour "#148;" or "PR #12" / "issue #12".
+    if claim_id is not None and re.search(
+            rf"(?<![^\s(\[])(?<!\]\()(?<!PR )(?<!pr )(?<!ssue )#{int(claim_id)}(?![\w;])", haystack or ""):
+        return "claim_id"
     grams = distinctive_ngrams(claim_text)
     if grams and grams & (haystack_grams if haystack_grams is not None else _haystack_ngrams(haystack)):
         return "ngram"
@@ -172,25 +229,41 @@ def record_turn_usage(ledger: DecisionLedger, session_key: str, transcript_turn:
         return 0
     haystack = _turn_text(transcript_turn)
     haystack_grams = _haystack_ngrams(haystack)
-    cache: dict[str, Any] = {}
+    # Turn-side weak features, computed once per turn (review F2: per-exposure recomputation
+    # pushed a large turn past the Stop hook's budget and lost the strong labels with it).
+    weak_grams: set[str] | None = None
+    weak_entities: set[str] | None = None
+    verdicts: dict[str, tuple[str, str, str, str] | None] = {}
     rows: list[OutcomeRecord] = []
     for exposure in exposures:
         ref = exposure["item_ref"]
-        if ref not in cache:
+        if ref not in verdicts:  # the same claim exposed by several decisions is judged once
             try:
-                cache[ref] = lookup(ref)
+                found = lookup(ref)
             except Exception:
-                cache[ref] = None
-        found = cache[ref]
-        if not found:
+                found = None
+            verdict = None
+            if found:
+                human_id, text = found
+                tail = ref.split(":", 1)[1] if ref.startswith("claim:") else ""
+                via = detect_usage(human_id, text or "", haystack, haystack_grams,
+                                   claim_id=int(tail) if tail.isdigit() else None)
+                if via is not None:
+                    verdict = ("used_in_turn", "used_in_turn.v1", "detector", via)
+                else:
+                    if weak_grams is None:
+                        weak_grams = _haystack_ngrams(haystack, WEAK_NGRAM)
+                        weak_entities = entity_tokens(haystack)
+                    if detect_weak_usage(text or "", haystack, haystack_grams=weak_grams,
+                                         haystack_entities=weak_entities):
+                        verdict = (WEAK_USAGE_KIND, "used_in_turn_weak.v1", "detector_weak", "ngram4+entity")
+            verdicts[ref] = verdict
+        if verdicts[ref] is None:
             continue
-        human_id, text = found
-        via = detect_usage(human_id, text or "", haystack, haystack_grams)
-        if via is None:
-            continue
+        kind, version, source, via = verdicts[ref]
         rows.append(OutcomeRecord(
-            exposure["decision_id"], ref, "used_in_turn", 1.0, was_exposed=1, outcome_window="turn",
-            reward_version="used_in_turn.v1", label_source="detector", observed_at=observed_raw,
+            exposure["decision_id"], ref, kind, 1.0, was_exposed=1, outcome_window="turn",
+            reward_version=version, label_source=source, observed_at=observed_raw,
             lag_s=_lag(observed, _parse_ts(exposure["ts"])),
             details_json=_dumps({"turn_id": transcript_turn.get("turn_id"), "via": via}),
         ))

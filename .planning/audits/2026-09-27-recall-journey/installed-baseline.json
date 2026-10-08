@@ -1,0 +1,13 @@
+{
+  "installed_version": "4.9.0",
+  "hook_source_sha256": "8e5e0a82fd4cdf6959d61f825b43433c90aeefce9b2ef3c311f340ec628ef7ad",
+  "base_source_sha256": "8e5e0a82fd4cdf6959d61f825b43433c90aeefce9b2ef3c311f340ec628ef7ad",
+  "installed_source_matches_base": true,
+  "db_access": "SQLite mode=ro and PRAGMA query_only=ON",
+  "scope": "project:memorymaster",
+  "claim_filter": "confirmed and public; aggregate prevalence only, not temporal/support acceptance",
+  "confirmed_public_count": 527,
+  "over_300_chars": 128,
+  "contains_non_ascii": 99,
+  "quality": "UNMEASURED; length/encoding exposure is not a utility label"
+}

@@ -1,0 +1,50 @@
+{
+  "scope": "source-tested isolated recall renderer; no deployment or production mutation",
+  "affected_suite_initial": {
+    "passed": 179,
+    "failed": 1,
+    "seconds": 778.07,
+    "failed_test": "test_prompt_hook_jev_time_stays_within_one_hook_deadline"
+  },
+  "deadline_causal_control": {
+    "original_renderer_functions_in_same_worktree": "same failure, 0 sends",
+    "original_checkout_isolated": "passed, 10.07s",
+    "candidate_before_repair": "same failure, 12.29s",
+    "candidate_after_ledger_fixture_prewarm": "passed with exact 1 send and unchanged 900 ms deadline"
+  },
+  "supplemental_engine_timing": {
+    "candidate_failed": 3,
+    "original_checkout_failed": 3,
+    "candidate_elapsed_seconds": [
+      0.7332276,
+      1.3930281,
+      0.8445572
+    ],
+    "original_elapsed_seconds": [
+      0.4969309,
+      0.5336962,
+      0.7924861
+    ],
+    "classification": "baseline elapsed-time failures; legacy/timeout assertions passed; no production engine edits"
+  },
+  "public_final": {
+    "passed": 13,
+    "failed": 0,
+    "seconds": 158.29
+  },
+  "rendering_focused": {
+    "passed": 14,
+    "failed": 0,
+    "independent_review": "pass"
+  },
+  "evaluator_final": {
+    "passed": 4,
+    "failed": 0,
+    "owner_report": "fresh final tests; paired evaluator and fixture hashes independently verified"
+  },
+  "ruff": "pass",
+  "release_truth": "generated and check passed",
+  "gitnexus": "impact LOW; precommit detect_changes LOW; raw diff reviewed because automatic symbol mapping overreports file-level changes",
+  "production_quality": "UNMEASURED",
+  "live_provider_cost": "unknown; local fixture has 0 provider calls"
+}

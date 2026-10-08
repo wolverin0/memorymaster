@@ -166,6 +166,7 @@ def test_invalid_scopes_type_raises(vault: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.ml  # TF-IDF needs scikit-learn (the ml extra); nox unit does not install it
 def test_multiscope_filters_to_claim_scope(vault: Path, tf_idf_only) -> None:
     """A claim scoped to project:a must be scored against project-a articles
     ONLY, even when project-b ships an article with the exact same slug."""
@@ -203,6 +204,7 @@ def test_multiscope_filters_to_claim_scope(vault: Path, tf_idf_only) -> None:
     )
 
 
+@pytest.mark.ml  # TF-IDF needs scikit-learn (the ml extra); nox unit does not install it
 def test_explicit_slug_respects_claim_scope(
     vault: Path, tf_idf_only,
 ) -> None:
@@ -235,6 +237,7 @@ def test_explicit_slug_respects_claim_scope(
     )
 
 
+@pytest.mark.ml  # TF-IDF needs scikit-learn (the ml extra); nox unit does not install it
 def test_claim_without_scope_in_multiscope_returns_zero(
     vault: Path, tf_idf_only,
 ) -> None:
@@ -258,6 +261,7 @@ def test_claim_without_scope_in_multiscope_returns_zero(
     assert sim > 0.3
 
 
+@pytest.mark.ml  # TF-IDF needs scikit-learn (the ml extra); nox unit does not install it
 def test_single_scope_legacy_load_still_works(vault: Path, tf_idf_only) -> None:
     """Backwards compat: calling ``load_wiki_corpus(scope=..., wiki_root=...)``
     without ``scopes`` keeps the original single-scope behaviour — articles

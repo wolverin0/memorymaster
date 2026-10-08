@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 import time
 
 from memorymaster.surfaces.cli_handlers_basic import (
@@ -735,7 +736,10 @@ def _handle_recall(args: argparse.Namespace, service, parser: argparse.ArgumentP
     from memorymaster.recall.context_hook import recall as _recall
     output = _recall(args.query, db_path=str(effective_db), budget=args.budget, format=args.output_format)
     if output:
-        print(output)
+        # Keep Unicode intact for hooks/API callers; legacy console encodings
+        # escape only unsupported characters here instead of corrupting recall.
+        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+        print(output.encode(encoding, errors="backslashreplace").decode(encoding))
     else:
         print("(no relevant context found)")
     return 0

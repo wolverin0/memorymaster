@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.metadata
 import json
 import os
 import re
@@ -25,9 +24,11 @@ TRUSTED_VALIDATOR_PATH = Path(__file__).with_name("validate_sbom.py").resolve()
 TRUSTED_PROJECT_NAME = "memorymaster"
 _GITLEAKS_CONFIG_PATH = "<trusted-gitleaks-config>"
 _GITLEAKS_IGNORE_PATH = "<reviewed-gitleaks-fingerprints>"
-_PIP_REQUIREMENTS_PATH = "<trusted-release-requirements>"
+_AUDIT_PROJECT_PATH = "<trusted-release-audit-project>"
+_AUDIT_CACHE_PATH = "<scratch-uv-cache>"
 _GITLEAKS_EXECUTABLE = "<approved-gitleaks>"
 _DOCKER_EXECUTABLE = "<approved-docker>"
+_UV_EXECUTABLE = "<approved-uv>"
 MAX_LOCAL_IMAGES = 3
 MAX_PROJECT_FILE_BYTES = 1024 * 1024
 MAX_EVIDENCE_FILE_BYTES = 512 * 1024 * 1024
@@ -181,6 +182,17 @@ def _release_requirements(repo_root: Path) -> tuple[str, ...]:
     return tuple(dict.fromkeys(value.strip() for value in requirements))
 
 
+def _audit_pyproject(requirements: Sequence[str]) -> str:
+    """A throwaway project whose dependencies are exactly the audited release requirements."""
+    return (
+        "[project]\n"
+        f'name = "{TRUSTED_PROJECT_NAME}-release-audit"\n'
+        'version = "0"\n'
+        'requires-python = ">=3.10"\n'
+        f"dependencies = {json.dumps(list(requirements))}\n"
+    )
+
+
 def _reviewed_gitleaks_fingerprints(repo_root: Path) -> str:
     payload = _read_limited(repo_root / _GITLEAKS_REVIEW_FILE, 64 * 1024)
     entries = payload.splitlines()
@@ -248,36 +260,26 @@ def _python_commands(
     expected_version: str,
 ) -> tuple[CommandSpec, ...]:
     return (
+        # One uv audit over a generated project whose dependencies are exactly the base
+        # requirements plus the release extras: the scope of the two former pip-audit runs.
+        # It resolves against OSV, exits nonzero on any known vulnerability, and never
+        # writes a lockfile into the repository (T-0764).
         CommandSpec(
-            "pip_audit_project",
+            "uv_audit_release",
             (
-                sys.executable,
-                "-I",
-                "-m",
-                "pip_audit",
-                "--strict",
-                "--vulnerability-service",
+                _UV_EXECUTABLE,
+                "audit",
+                "--preview-features",
+                "audit-command",
+                "--service-format",
                 "osv",
-                "--progress-spinner",
-                "off",
-                str(repo_root),
-            ),
-            900,
-        ),
-        CommandSpec(
-            "pip_audit_release_extras",
-            (
-                sys.executable,
-                "-I",
-                "-m",
-                "pip_audit",
-                "--strict",
-                "--vulnerability-service",
-                "osv",
-                "--progress-spinner",
-                "off",
-                "--requirement",
-                _PIP_REQUIREMENTS_PATH,
+                "--no-python-downloads",
+                "--python-version",
+                f"{sys.version_info[0]}.{sys.version_info[1]}",
+                "--cache-dir",
+                _AUDIT_CACHE_PATH,
+                "--project",
+                _AUDIT_PROJECT_PATH,
             ),
             900,
         ),
@@ -391,7 +393,8 @@ def _run_one(
 def _materialize_policy(plan: Sequence[CommandSpec], directory: Path) -> tuple[CommandSpec, ...]:
     config_path = directory / "gitleaks.toml"
     ignore_path = directory / "gitleaksignore"
-    requirements_path = directory / "release-requirements.txt"
+    audit_project = directory / "release-audit-project"
+    audit_cache = directory / "uv-cache"
     gitleaks = next((spec for spec in plan if spec.name == "gitleaks_history"), None)
     if gitleaks is None:
         raise ValueError("gitleaks command unavailable")
@@ -399,15 +402,14 @@ def _materialize_policy(plan: Sequence[CommandSpec], directory: Path) -> tuple[C
     config_path.write_text(TRUSTED_GITLEAKS_CONFIG, encoding="utf-8")
     reviewed_fingerprints = _reviewed_gitleaks_fingerprints(Path(gitleaks.argv[-1]))
     ignore_path.write_text(reviewed_fingerprints, encoding="utf-8")
-    requirements_path.write_text("\n".join(requirements) + "\n", encoding="utf-8")
-    (directory / "pip.conf").write_text(
-        "[global]\ndisable-pip-version-check = true\n",
-        encoding="utf-8",
-    )
+    audit_project.mkdir()
+    audit_cache.mkdir()
+    (audit_project / "pyproject.toml").write_text(_audit_pyproject(requirements), encoding="utf-8")
     replacements = {
         _GITLEAKS_CONFIG_PATH: str(config_path),
         _GITLEAKS_IGNORE_PATH: str(ignore_path),
-        _PIP_REQUIREMENTS_PATH: str(requirements_path),
+        _AUDIT_PROJECT_PATH: str(audit_project),
+        _AUDIT_CACHE_PATH: str(audit_cache),
     }
     return tuple(replace(spec, argv=tuple(replacements.get(value, value) for value in spec.argv)) for spec in plan)
 
@@ -544,11 +546,13 @@ def _materialize_tools(
         "gitleaks": _trusted_executable("gitleaks", repo_root, resolver),
         "docker": _trusted_executable("docker", repo_root, resolver),
         "git": _trusted_executable("git", repo_root, resolver),
+        "uv": _trusted_executable("uv", repo_root, resolver),
         "python": Path(sys.executable).resolve(strict=True),
     }
     replacements = {
         _GITLEAKS_EXECUTABLE: str(tools["gitleaks"]),
         _DOCKER_EXECUTABLE: str(tools["docker"]),
+        _UV_EXECUTABLE: str(tools["uv"]),
     }
     config = _validated_docker_config(docker_config, repo_root)
     materialized = tuple(
@@ -580,7 +584,7 @@ def _materialized_argv(
 
 
 def _filtered_path(repo_root: Path, tools: dict[str, Path]) -> str:
-    entries = [str(tools[name].parent) for name in ("gitleaks", "docker", "git") if name in tools]
+    entries = [str(tools[name].parent) for name in ("gitleaks", "docker", "git", "uv") if name in tools]
     system_root = os.environ.get("SYSTEMROOT") or os.environ.get("WINDIR")
     if system_root:
         entries.append(str(Path(system_root) / "System32"))
@@ -610,7 +614,7 @@ def _sterile_environment(directory: Path, repo_root: Path, tools: dict[str, Path
             "TMP": str(directory),
             "TMPDIR": str(directory),
             "NO_COLOR": "1",
-            "PIP_CONFIG_FILE": str(directory / "pip.conf"),
+            "UV_NO_CONFIG": "1",  # no user/system uv.toml may redirect indexes or the vulnerability service
         }
     )
     return environment
@@ -623,17 +627,14 @@ def _collect_evidence(
     image_ids: tuple[str, ...],
     tools: dict[str, Path],
 ) -> ExecutionEvidence:
-    try:
-        pip_audit_version = importlib.metadata.version("pip-audit")
-    except importlib.metadata.PackageNotFoundError:
-        raise ValueError("pip-audit unavailable") from None
     return ExecutionEvidence(
         repository_commit=_repository_commit(repo_root),
         release_artifact_sha256=_sha256_file(artifact_path),
         sbom_sha256=_sha256_file(sbom_path),
         image_ids=image_ids,
         tool_sha256={name: _sha256_file(path) for name, path in tools.items()},
-        tool_versions={"pip-audit": pip_audit_version, "python": sys.version.split()[0]},
+        # uv is identified by its SHA-256 in tool_sha256, like the other native tools.
+        tool_versions={"python": sys.version.split()[0]},
     )
 
 

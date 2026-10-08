@@ -282,3 +282,33 @@ class TestMaxClusterSplitting:
         # Should create 2 summaries (8 / 4 = 2 sub-clusters)
         assert result.summaries_created == 2
         assert result.source_claims_summarized == 8
+
+
+@patch("memorymaster.govern.jobs.compact_summaries._call_llm")
+def test_clusters_never_cross_scope_or_tenant(mock_llm, store):
+    # Found 2026-10-04 (autoresearch catalog K): archived claims were loaded from every
+    # scope and tenant and clustered by subject alone, so one confirmed summary mixed
+    # projects and owners and took the first claim's scope.
+    mock_llm.return_value = json.dumps({"summary_text": "DNS summary", "subject": "dns-config",
+                                        "predicate": "summary_of", "object_value": "dns", "confidence": 0.9})
+    from memorymaster.core.lifecycle import transition_claim
+
+    groups = {("project:a", None): [], ("project:b", None): [], ("project:a", "personal"): []}
+    for (scope, tenant), ids in groups.items():
+        for i in range(3):
+            claim = store.create_claim(text=f"DNS record {i} in {scope} {tenant}", citations=[CitationInput(source="test")],
+                                       subject="dns-config", predicate=f"record_{i}", object_value=f"v{i}",
+                                       scope=scope, tenant_id=tenant)
+            for status, event in (("confirmed", "transition"), ("stale", "decay"), ("archived", "compactor")):
+                transition_claim(store, claim.id, to_status=status, reason="test", event_type=event)
+            ids.append(claim.id)
+
+    result = run(store, provider="gemini", api_key="fake-key", min_cluster=3, dry_run=False)
+
+    assert result.summaries_created == 3
+    summaries = [c for c in store.list_claims(status="confirmed", limit=50) if c.claim_type == "summary"]
+    for summary in summaries:
+        sources = {link.target_id for link in store.get_claim_links(summary.id) if link.link_type == "derived_from"}
+        assert sources in [set(ids) for ids in groups.values()]
+        key = next(k for k, ids in groups.items() if set(ids) == sources)
+        assert (summary.scope, summary.tenant_id) == key

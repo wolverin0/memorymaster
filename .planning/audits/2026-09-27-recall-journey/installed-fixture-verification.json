@@ -1,0 +1,93 @@
+﻿{
+    "schema":  "memorymaster.installed_recall_journey_verification.v1",
+    "date":  "2026-09-27",
+    "isolated_worktree":  "memorymaster-recall-journey-20260927",
+    "wheel_sha256":  "3db620800859ea0dfd7f63b888d2c2e1f4a63fce4a23609c0a5500d41bedf640",
+    "manifest_sha256":  "15a0e0dfc1acab7a5affb12e65da2b87be1ca675222b64085dd7114ba51f0647",
+    "installed_files":  {
+                            "general_python312_mismatches":  0,
+                            "hash_entries_checked":  438,
+                            "source_context_hook_matches_manifest":  true,
+                            "scheduled_graph_profile_mismatches":  0,
+                            "source_context_hook_sha256":  "9e2fbdf65f5a5ffedf8bd572eb3f10971106511701bd78c232c2be8e9af3a72a",
+                            "manifest_expected":  438
+                        },
+    "runs":  {
+                 "scheduled_graph_profile":  {
+                                                 "ranked_hit_at_5":  1.0,
+                                                 "recall_budget_compliance_rate":  1.0,
+                                                 "answer_present_rate":  1.0,
+                                                 "git_head":  null,
+                                                 "source_context_hook_sha256":  "9e2fbdf65f5a5ffedf8bd572eb3f10971106511701bd78c232c2be8e9af3a72a",
+                                                 "source_label":  "installed_runtime",
+                                                 "positive_answer_cases":  4,
+                                                 "cases_without_error":  5,
+                                                 "command":  "scheduled_graph_profile-python scripts/eval_recall_journey.py --installed --json-out \u003cmain artifacts\u003e/installed-scheduled-eval.json",
+                                                 "jev_surfaces":  "off",
+                                                 "source_package_file":  "memorymaster/__init__.py",
+                                                 "oversized_render_drops_overflow":  true,
+                                                 "all_forbidden_controls_clear":  true,
+                                                 "provider_call_count":  0,
+                                                 "retired_support_negative_control":  true,
+                                                 "rendered_hit_at_5":  1.0,
+                                                 "distribution_version":  "4.9.0",
+                                                 "network_policy":  "socket egress blocked during run",
+                                                 "unicode_tail_present":  true,
+                                                 "cases_total":  5,
+                                                 "forbidden_exclusion_rate":  1.0,
+                                                 "pyproject_version":  null,
+                                                 "source_package_sha256":  "48d1e9a713e68c1adb156e8af83ad8027973d8ed7f6b22c69fa4040b5c72876b",
+                                                 "status":  "PASS",
+                                                 "sqlite_mode":  "disposable temp database; authoritative database untouched",
+                                                 "candidate_coverage":  1.0
+                                             },
+                 "general_python312":  {
+                                           "ranked_hit_at_5":  1.0,
+                                           "recall_budget_compliance_rate":  1.0,
+                                           "answer_present_rate":  1.0,
+                                           "git_head":  null,
+                                           "source_context_hook_sha256":  "9e2fbdf65f5a5ffedf8bd572eb3f10971106511701bd78c232c2be8e9af3a72a",
+                                           "source_label":  "installed_runtime",
+                                           "positive_answer_cases":  4,
+                                           "cases_without_error":  5,
+                                           "command":  "general_python312-python scripts/eval_recall_journey.py --installed --json-out \u003cmain artifacts\u003e/installed-general-eval.json",
+                                           "jev_surfaces":  "off",
+                                           "source_package_file":  "memorymaster/__init__.py",
+                                           "oversized_render_drops_overflow":  true,
+                                           "all_forbidden_controls_clear":  true,
+                                           "provider_call_count":  0,
+                                           "retired_support_negative_control":  true,
+                                           "rendered_hit_at_5":  1.0,
+                                           "distribution_version":  "4.9.0",
+                                           "network_policy":  "socket egress blocked during run",
+                                           "unicode_tail_present":  true,
+                                           "cases_total":  5,
+                                           "forbidden_exclusion_rate":  1.0,
+                                           "pyproject_version":  null,
+                                           "source_package_sha256":  "48d1e9a713e68c1adb156e8af83ad8027973d8ed7f6b22c69fa4040b5c72876b",
+                                           "status":  "PASS",
+                                           "sqlite_mode":  "disposable temp database; authoritative database untouched",
+                                           "candidate_coverage":  1.0
+                                       }
+             },
+    "harness_repair":  {
+                           "status":  "PASS",
+                           "behavior":  "--installed launches with -I and leaves interpreter sys.path order intact; installed metadata uses the imported package file and does not claim checkout git or pyproject identity.",
+                           "regression_test":  "tests/test_recall_journey_eval.py::test_installed_mode_preserves_interpreter_import_order",
+                           "regression_result":  "5 passed in tests/test_recall_journey_eval.py"
+                       },
+    "initial_attempt":  {
+                            "status":  "HARNESS_INDUCED_FAILURE",
+                            "method":  "--source-root set directly to installed site-packages",
+                            "error":  "TypeError: dataclass() got an unexpected keyword argument slots",
+                            "reason":  "The harness prepended site-packages ahead of the standard library, selecting the dataclasses backport. The installed package itself matched all manifest hashes; corrected isolated --installed mode then passed both runtime evaluators."
+                        },
+    "renderer_tests":  {
+                           "status":  "PASS",
+                           "command":  "python312 -I -m pytest --confcutdir=\u003csystem-temp\u003e --import-mode=importlib \u003csystem-temp\u003e/test_recall_rendering_integrity.py -q",
+                           "result":  "14 passed in 0.62s",
+                           "installed_import":  "Lib/site-packages/memorymaster/__init__.py",
+                           "isolation":  "The single test file was copied to a system-temp directory and pytest ran with -I, outside the checkout import path.",
+                           "scheduled_runtime_pytest":  "Not installed; no package was added."
+                       }
+}

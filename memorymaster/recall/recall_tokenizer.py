@@ -36,6 +36,7 @@ import logging
 import math
 import re
 import sqlite3
+from collections import Counter
 from functools import lru_cache
 
 logger = logging.getLogger(__name__)
@@ -179,6 +180,30 @@ def _stem(tok: str) -> str | None:
 _NON_CANONICAL_STATUSES = ("archived", "superseded")
 
 
+def read_text_generation(db_path: str) -> int:
+    """Cache key for the corpus statistics: changes only when they can (migration 28).
+
+    ``text_generation`` advances on claim inserts, deletes, text or status changes and
+    alias changes. A database without it falls back to ``corpus_generation``, which
+    is coarser (it also moves on confidence and validation writes) but never stale.
+    """
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return 0
+    try:
+        row = conn.execute("SELECT value FROM cache_meta WHERE key = 'text_generation'").fetchone()
+    except sqlite3.Error:
+        row = None
+    finally:
+        conn.close()
+    if row is not None:
+        return int(row[0])
+    from memorymaster.recall.query_cache import read_generation
+
+    return read_generation(db_path)
+
+
 @lru_cache(maxsize=16)
 def _corpus_stats(
     db_path: str, generation: int | None = None
@@ -203,20 +228,29 @@ def _corpus_stats(
                 _NON_CANONICAL_STATUSES,
             ).fetchone()[0]
         )
-        df: dict[str, int] = {}
         rows = conn.execute(
             f"SELECT text FROM claims "
             f"WHERE text IS NOT NULL AND status NOT IN ({placeholders})",
             _NON_CANONICAL_STATUSES,
         )
+        # Same document frequencies as counting _candidate_tokens per claim, with
+        # less work per claim: _strip can only change text holding a URL, a path or
+        # code, and each claim counts a token once, so dedupe first and let
+        # Counter do the counting in C. Cold recall scanned ~46k live claims.
+        # _WORD matches start with a letter and are at least _MIN long, and lower()
+        # neither shortens text nor turns a letter into a digit, so the length and
+        # digit filters of _candidate_tokens cannot drop anything here.
+        counts: Counter[str] = Counter()
+        findall, stop, lower = _WORD.findall, _STOP, str.lower
         for (text,) in rows:
-            seen: set[str] = set()
-            for tok in _candidate_tokens(text or ""):
-                if tok in seen:
-                    continue
-                seen.add(tok)
-                df[tok] = df.get(tok, 0) + 1
-        return (total, df)
+            if not text:
+                continue
+            if "http" in text or "/" in text or "`" in text or "\\" in text:
+                text = _strip(text)
+            tokens = set(map(lower, findall(text)))
+            tokens.difference_update(stop)
+            counts.update(tokens)
+        return (total, dict(counts))
     except sqlite3.Error as exc:
         logger.debug("recall_tokenizer: corpus scan failed: %s", exc)
         return (0, {})
@@ -281,9 +315,7 @@ def extract_query_tokens(raw_prompt: str, db_path: str, max_tokens: int = 6) -> 
     if not tokens:
         return ""
 
-    from memorymaster.recall.query_cache import read_generation
-
-    generation = read_generation(db_path)
+    generation = read_text_generation(db_path)
     total_docs, df = _corpus_stats(db_path, generation)
     aliases = _alias_set(db_path, generation)
 

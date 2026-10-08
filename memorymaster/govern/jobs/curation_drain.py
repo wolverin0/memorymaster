@@ -157,12 +157,17 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
 
 
 def drain_proposals(service: Any, *, limit: int = 100, apply: bool = False) -> dict[str, Any]:
-    from memorymaster.govern.steward import is_jev_proposal, list_steward_proposals, resolve_steward_proposal
+    from memorymaster.govern.steward import (
+        is_jev_proposal,
+        is_operator_only_proposal,
+        list_steward_proposals,
+        resolve_steward_proposal,
+    )
 
     # Jev proposals stay for the operator; they must not use up ``limit``.
     proposals = list_steward_proposals(
         service, limit=limit, include_resolved=False,
-        exclude_from_limit=lambda proposal: is_jev_proposal(proposal.get("payload")),
+        exclude_from_limit=lambda proposal: is_operator_only_proposal(proposal.get("payload")),
     )
     summary: dict[str, Any] = {
         "scanned": len(proposals),
@@ -173,11 +178,12 @@ def drain_proposals(service: Any, *, limit: int = 100, apply: bool = False) -> d
         "dry_run": not apply,
     }
     for proposal in proposals:
-        if is_jev_proposal(proposal.get("payload")):
-            # F-21: las propuestas de Jev son juicios de modelo que esperan
+        if is_operator_only_proposal(proposal.get("payload")):
+            # F-21: las propuestas de Jev (y las de rapidfuzz, T-0773) esperan
             # veredicto humano; el dren nunca las aprueba (quedan en la cola).
             summary["kept_for_operator"] += 1
-            summary["kept_jev"] += 1
+            if is_jev_proposal(proposal.get("payload")):
+                summary["kept_jev"] += 1
             continue
         claim_id = proposal.get("claim_id")
         claim = service.store.get_claim(int(claim_id), include_citations=False) if claim_id else None

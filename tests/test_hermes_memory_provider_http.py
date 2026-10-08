@@ -92,6 +92,11 @@ def mcp_http_server(tmp_path: Path):
             "MEMORYMASTER_MCP_WORKSPACE": str(workspace),
             "MEMORYMASTER_MCP_ALLOWED_SCOPES": "project:workspace",
             "MEMORYMASTER_MCP_DB": str(db),
+            # This fixture tests the HTTP journey, not semantic recall. With an auto provider the
+            # Windows server pre-imports sentence-transformers at boot (T-0726): 1.2 s -> 7.3 s
+            # locally, past the 30 s budget on loaded CI runners.
+            "MEMORYMASTER_EMBEDDING_PROVIDER": "hash",
+            "MEMORYMASTER_RECALL_RERANK_LOCAL": "0",
             "PYTHONPATH": os.pathsep.join(
                 filter(
                     None,
@@ -101,6 +106,7 @@ def mcp_http_server(tmp_path: Path):
         }
     )
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    server_log = (tmp_path / "server-stderr.log").open("wb")
     process = subprocess.Popen(
         [
             sys.executable,
@@ -118,15 +124,24 @@ def mcp_http_server(tmp_path: Path):
         cwd=workspace,
         env=environment,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=server_log,
         creationflags=flags,
     )
     health = f"http://127.0.0.1:{port}/healthz"
     if not _wait_until_healthy(health):
-        raise AssertionError("disposable MemoryMaster MCP server did not start")
+        exit_code = process.poll()
+        if exit_code is None:
+            process.kill()
+            process.wait(timeout=5.0)
+        server_log.close()
+        tail = (tmp_path / "server-stderr.log").read_bytes()[-3000:].decode("utf-8", "replace")
+        raise AssertionError(
+            f"disposable MemoryMaster MCP server did not start (exit code {exit_code}); stderr tail:\n{tail}"
+        )
     yield f"http://127.0.0.1:{port}/mcp", token, db, workspace
     process.terminate()
     process.wait(timeout=3.0)
+    server_log.close()
 
 
 def test_authenticated_mcp_http_delivers_disposable_capture(

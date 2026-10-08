@@ -1,7 +1,7 @@
-<!-- doc-head: sole roadmap; 4.9.0 live Jev decisions + weekly-review cure in progress (checklist under Now) -->
+<!-- doc-head: sole roadmap; installed recall integrity, temporal guard and verified delivery -->
 # MemoryMaster roadmap
 # Covers: live Jev decision ledger (4.9.0 checklist), useful-memory delivery/evaluation, workflow analytics, governed observations and deferrals.
-# Key terms: Workflow Intelligence, governed skills, graph observations, user profile, sustainability.
+# Key terms: Workflow Intelligence, governed skills, graph observations, user profile, code navigation.
 # Read when: choosing release scope, accepting a feature, or checking deferrals.
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
 # Safety: SQLite remains authority; generated user.md is disposable and feature-off by default.
@@ -35,6 +35,189 @@ its governed-claims authority:
 | Memory Hub, loadouts, team ACLs, proxy replacement, cloud database | Deferred: no personal SQLite requirement justifies multi-user/cloud infrastructure or a second agent gateway. |
 
 ## Now
+
+### Engineering-owner plan (operator grant 2026-10-03)
+
+The operator handed this lane full autonomy: plan, execute, test. One item at a
+time; every item ships with a red-then-green test, a rollback and a live check.
+Measurements owed in production live in
+`~/.memorymaster/checkpoints/due-measurements.json`; the daily checkpoint runs them.
+
+- [x] 1. Evaluators enforce a policy: the LongMemEval gate fails on an
+  incomplete slice or excess provider calls; resumed QA chunks must match their
+  inputs (`3e0fcc4`).
+- [x] 2. The shared MCP server dumps every thread stack when its loop stalls,
+  so the next stall names its blocking call (`015f6ab`). Cause still owed.
+- [x] 3. Compiled profile renders constraints and working style before
+  products; a session now sees 4 of 15 constraints instead of 0 (`51c8792`).
+- [x] 4. The session-start hook template carries the 3000-char cap; `setup`
+  overwrites the installed copy with the template, so a reinstall would have
+  doubled session context. Tests no longer reach the live shared server
+  (`27c9750`).
+- [x] 5. Shared-server stalls: memory pressure pages the server out (612 MB
+  private, 65 MB working set, 3.9 GB free of 64); it stops answering ~33 s and
+  recovers alone. The supervisor now kills only a 120 s outage (`6f4e978`,
+  installed). Torch stays preloaded on purpose (lazy import stalls, T-0726).
+  Proof owed: `shared-mcp-outage-window` measurement, 2026-10-05.
+- [x] 6. Hermes duplicates. Real size was 17,187, not 280: Windows stamped
+  tenant `personal` on its old claims, Hermes held them tenant-less, and the
+  merge (tenant is identity, on purpose) inserted every update again. Archived
+  through the lifecycle with a VM backup kept; a post-merge step archives new
+  twins (`abf6337`, installed on Hermes). Duplicates 17,300 -> 113.
+- [x] 7. Autoresearch first run: all 8 deliverables are in
+  `.planning/audits/2026-10-04-autoresearch/REPORT.md` (`b0b8f81`).
+  - Three guarded benchmarks were added, along with fixes to the perf gate
+    (`bc8493e`) and a compaction tenant leak (`0aec7bb`).
+  - Key measurement: warm recall at 45k claims takes 69 ms, but the first call
+    after a single write takes 681 ms. That is the cold tokenizer rescan, and it
+    matches the live 660 ms median.
+  - The campaigns (A tokenizer, B packing, D warm recall) are waiting for
+    operator approval to install codex-autoresearch.
+- [x] 7a. Campaign A (cold tokenizer), operator-approved and merged
+  (`3d314a5`, `6415b33`).
+  - Cold time at 20k fell from 253 to 135 ms (−47 %), with identical tokens
+    and alternated rounds in the same session.
+  - Installed in both runtimes, and the shared server was restarted.
+  - Live warm recall afterwards: 420-789 ms.
+  - Found along the way: the first recall after a server boot takes about
+    20 s (lazy loading), and requests that arrive meanwhile queue behind it.
+- [x] 7b. The tokenizer keys on a text-only generation (migration 28, `af2d72a`).
+  - On a 20k corpus, recall after a confidence write fell from 154 ms to 37 ms
+    (warm is 32 ms), with identical rankings.
+  - Merge tolerates a merge-compatible version gap (`e946d86`).
+  - Live on Windows and Hermes from 2026-10-05T00:23Z, with backups and
+    rollbacks.
+  - Proof owed: `textgen-live-recall`, 2026-10-06.
+- [x] 7c. The shared server warms the token statistics at boot and after text
+  changes (`88f75d0`).
+  - Live, the first recall after a restart fell from 2,452 ms to 803 ms.
+  - A profile without Jev puts warm recall at 65 ms. The live remainder
+    (400-600 ms) is Jev's provider calls.
+- [x] 7d. Campaign B: JSON context packing serialises each claim once
+  (`2942699`). 200 rows: 391 to 15 ms, byte-identical output, installed.
+  - The pack bench now freezes the clock (`4bfe5d2`): `age_days` had made its
+    fingerprint drift daily.
+- [x] 7e. Prompt recall reads the project the prompt came from (`97f855d`,
+  `367e8a9`, installed 2026-10-05). It used to read only `project:memorymaster`
+  and `global`, so no project ever received its own memories, which explains the
+  1-in-1,066 use rate. Recall now reads the cwd scope plus its parent and
+  grandparent folders (Py Apps projects also read `project:py-apps`). Rollback:
+  `artifacts/release-scope-20261005/rollback.ps1`.
+- [x] 7f. Curation: 774 project-specific claims moved out of `project:py-apps`
+  into their projects (`d3cb153`, copy and supersession). 7,152 claims were
+  labelled by Haiku; a claim moved only when the label was high confidence, the
+  text names the project, and the scope already exists. Undo:
+  `artifacts/curation-20261005/ROLLBACK.txt`.
+- [x] 7g. Scope fragmentation (operator decisions 2026-10-06). Spelling variants
+  unified (48 moved), worktree/branch scopes merged into their project (26), the
+  whatsappbot family consolidated into `project:whatsappbot-final` as the wisp lane
+  asked (1585; 1621 -> 3206), `PuntoFutura CRM` variants and the generic `project`
+  scope placed (13). Dubious pairs reviewed by Haiku stay separate; the 105 small
+  scopes stay as they are. Folder aliases (`8f6beb5`,
+  `~/.memorymaster/scope-aliases.json`) make worktrees read and write their
+  project. Claims the ingest filter, a Dreaming source review or a different
+  confirmed value block stay in place (about 22). Rescope fixes `3e57567`,
+  `0ed999a`, `8c84d02`, `3de7d05`. Backup `artifacts/scope-unify-20261005/pre-unify.db`.
+- [x] 8. Graph observations produce nothing since 2026-08-31 (`a2aac47`,
+  installed 2026-10-06). Cause: observations need confirmed claims with captured
+  evidence and edge supports; only 3 of 4,729 confirmed claims have evidence
+  (session claims never do), and no edge support was written after 2026-08-14.
+  Discovery is now enqueued only for scopes with supports or live observations
+  (0 of 146 today), counted as `discovery_skipped_no_supports`. Making session
+  claims observable needs evidence for them plus LLM graph extraction over ~4.7k
+  claims: a separate, costed decision.
+- [x] 8b. Recall boosts no longer outrank relevance (`fc623e6`, installed
+  2026-10-06). `boost_floor_ratio` default 0 -> 0.5: a 0.107-lexical claim had
+  beaten the 0.475-lexical answer on confidence and freshness alone (canary
+  mm-8aef rank 8 -> 5). 60 real prompts, blind Haiku labels: nDCG@5 0.593 ->
+  0.747, P@5 0.392 -> 0.431, 11 better, 4 worse. Rollback:
+  `artifacts/release-floorgate-20261006/rollback.ps1` or
+  `MEMORYMASTER_BOOST_FLOOR_RATIO=0`.
+- [x] 8c. Dense prompt recall (`15749e6`, `f6eeec0`, `2bd8ab1`, `3a30be8`; enabled
+  2026-10-07 00:28Z after the fixed-set regression and an independent verifier,
+  card T-1042). The prompt hook was purely lexical. On 200 real prompts with
+  blind graded Sonnet judgments, EmbeddingGemma 2 (Apache 2.0, verified) with
+  the hook's scope scored nDCG@10 0.337 vs 0.167; MiniLM gave no gain. Service
+  `MemoryMaster-Dense-Recall` (GPU by operator decision, 127.0.0.1:8767)
+  returns ids only; the hook authorizes them like any stream and injects
+  current project + project:py-apps at cosine >= 0.68, other projects only at
+  >= 0.76, max 6, nothing below, lexical when the service is down. Live fixed
+  set: nDCG@10 0.253 vs 0.167, useful claims per prompt 1.27 vs 0.90, injected
+  4.0 vs 5.94, chars 4.2k vs 6.5k. Metrics: `python -m
+  memorymaster.recall.dense_recall report`; quality:
+  `scripts/eval_prompt_recall.py`. Rollback: unset `MEMORYMASTER_RECALL_DENSE`
+  and restart MCP-Shared, or `artifacts/release-denserecall-20261006/rollback.ps1`.
+- Operator-only, not blocking: approve or reject the 9 fuzzy near-duplicate
+  proposals once they appear; the 3000-char cap itself belongs to Fleet T-0797.
+
+### Shared CLI code navigation (2026-09-28)
+
+- [x] Refresh the current GitNexus index while preserving embeddings and excluding
+  research clones; install a bounded Serena navigation profile for AGY, Claude
+  Code and both native/Orca Codex configurations.
+- [x] Extend the same navigation setup to OpenCode; correct its MCP launcher
+  and workspace cwd, then verify three actual MCP calls and live source lines.
+  Evidence: `opencode-checks.json` beside the shared navigation report.
+- [x] Exercise fresh clients and a frozen 20-task source-verified cohort; verify
+  dirty-source refresh, project switching, references and output limits.
+  GitNexus file hit@5 is 9/20, lexical heuristic 7/20; Serena exact-name lookup
+  is 5/5. Nineteen known-target bodies fit the limit; one overflows. Conditional
+  payload reduction is 92.06%; total agent-token savings remain unmeasured.
+- [x] Add a read-only checkout/index preflight with disposable regression tests.
+  Keep Graphify out of default routing: its old graph returns cloned upstreams.
+  MemoryMaster's governed GraphRAG activation remains a separate decision.
+- Evidence and operational guidance:
+  `.planning/audits/2026-09-28-code-intelligence/REPORT.md`,
+  `docs/code-navigation.md`.
+
+### Recall journey and delivery integrity (2026-09-27)
+
+Operator-approved follow-up to the upstream comparison: measure authorized
+candidates, ranking, rendered memory and the decoded hook delivery on the same
+frozen cases, then correct the observed loss. Work is isolated on
+`fix/recall-journey-20260927`; SQLite remains authoritative.
+
+- [x] Reproduce renderer loss: 300-character truncation, Unicode replacement,
+  first-oversized-row starvation and framing omitted from the budget estimate.
+- [x] Preserve complete claim text and Unicode; skip non-fitting claims; include
+  framing and flags in the estimate and keep JEV exposure capacity conservative.
+  Legacy console encoding is handled only at the CLI output boundary.
+- [x] Finish paired fixture receipts, affected regressions and independent review:
+  complete text delivered in 3/4 -> 4/4 positive fixture cases; ranking unchanged.
+  Initial affected run 179 pass / 1 fail; isolated test-setup repair passes.
+  Three supplemental engine timing failures also reproduce on the baseline.
+- [x] Record deployment recommendation and measurement limits in
+  `.planning/audits/2026-09-27-recall-journey/REPORT.md`.
+  Initial source checkpoint: fresh public lifecycle checks 13 passed; fixture
+  delivery is not evidence of real semantic quality.
+- [x] Operator-authorized integration and installation: `main` fast-forward to
+  `f2c0521`; both runtimes match all 438 packaged files; two-file package delta,
+  prior wheel and hash-checking rollback retained. Settings/schema unchanged.
+- [x] Installed recall delivery: three fresh hook processes pass within 10 s;
+  a new ephemeral Claude session consumed a complete 1100-character Unicode
+  claim. No resumable transcript created. MCP health/auth/tools checks pass.
+- [x] Diagnose baseline timing failures: durable SQLite commit/close dominates;
+  1500 ms stress case took 1792.7 ms with correct fallback. Strict deadline
+  acceptance remains FAIL; real semantic quality remains UNMEASURED.
+- [x] Follow-up temporal boundary: expired/future/malformed validity cannot
+  re-enter prompt recall from optional candidate streams; 7 regression cases
+  pass, with 5 inverse failures on the original filter.
+- [x] Evaluate and reject scoped ledger connection reuse: no measured latency
+  gain on the installed volume, and it can postpone a pre-send checkpoint.
+  Original ledger retained; experimental tests/receipts preserved, not deployed.
+- [x] Resolve timing confound (2026-09-28): inherited `T:` temp fails 9 stress
+  cases; explicit `C:` temp, matching the installed ledger volume, passes 9/9
+  for both original and experimental source. No demonstrated wall-time speedup or
+  universal deadline guarantee; full measurements remain in the existing report.
+- [x] Check real activation: JEV already live (1,256 receipts/24 h, 9 timeouts,
+  1 orphan intent). Skills has no authorized catalog; GraphRAG stays disabled.
+  Cost is a ledger estimate; semantic benefit remains unmeasured.
+- [x] Complete follow-up acceptance gate: 6,707 non-ML tests passed, 0 failed;
+  75 skipped, 90 deselected, 1 expected failure. Preserve 11 initial incomplete-
+  mock failures and complete repaired-shard reruns; independent review passes.
+- [x] Install temporal follow-up `190d020` in both runtimes: 438/438 files match
+  each; installed fixture journeys 5/5 each, two live JEV recall hooks pass,
+  MCP health/auth/51 tools pass. Settings unchanged; graph recall remains off.
 
 ### Live Jev decisions and weekly-review cure (4.9.0, operator order 2026-09-23)
 
@@ -124,15 +307,23 @@ A box is ticked only with evidence (command, count or receipt) in the ledger.
 - [x] S1 backlog of tenant `personal` judged once (2026-09-24): 24,447 asked, 104 re-confirmed, 48 no longer useful, 24,295 kept stale, 122 sensitive skipped, US$0.48; it stopped on the 600 RPM cap, which `budget_exhausted` also reports.
 - [x] Merged as `f89324b` (2026-09-24) with all 15 checks green, after CI found: Windows runners missing wall-clock bounds (non-deadline tests now get an untimed hook deadline; wall-clock limits run only on the release machine), the Docker image refusing to start (a wildcard bind needs `MEMORYMASTER_DASHBOARD_ALLOWED_ORIGINS`; image and Compose default to the loopback publish) and Helm probes that the Host check would reject (probes send `Host: 127.0.0.1:8765`; executable contract test).
 - [x] Deployed `f89324b` in both runtimes (installed identity PASS, 434 files, 0 mismatches); Hermes MCP-HTTP restarted (healthz/readyz 200, unauthenticated 401); the operational review no longer pins `expected_version` and passes runtime against `pyproject` (4.9.0).
-- [x] Snapshot disk: the drive holding `MEMORYMASTER_SNAPSHOT_DIR` logged bad blocks since 2026-09-16 and the pre-4.9.0 copy on it failed quick_check; a verified post-4.9.0 copy was written to another disk and infra moved the snapshot directory to `~/.memorymaster/snapshots`.
+- [x] Snapshot history corrected (2026-09-28): the earlier pre-4.9.0 copy failed
+  quick_check. The later **2026-09-24 operator decision** keeps snapshots on the
+  `T:` archive volume, away from the `C:` system SSD; current user configuration
+  and observed steward/MCP processes match that choice. The prior claim that
+  the configured target is the user-profile default was obsolete. The September
+  24 moved-copy hash/quick-check receipt is dated evidence, not a fresh restore
+  or independent current physical-disk health check.
 - [ ] Encrypted backup and restore drill (`govern/recovery.py`) hold the whole database in memory (plaintext and ciphertext, ~18 GB for today's 7.6 GB); they need a streaming format before use at this size. The scheduled NAS backup does not use them.
-- [ ] A stale `memorymaster.egg-info` (4.8.9, gitignored) in the main checkout shadows package metadata for `python -m` runs started from that folder; the scheduled review is unaffected (no working directory).
+- [x] Removed stale metadata shadowing (2026-09-28): moved the ignored 4.8.9 `memorymaster.egg-info` intact to local acceptance artifacts; metadata lookup from the main checkout now returns installed 4.9.0. Scheduled review was unaffected.
 
 **Phase 4 — re-test and independent review**
 - [x] Full non-ML gate (incl. the disposable public demo) on the installed revision `7d536a8`, four sequential shards: 6676 passed, 0 failed, 74 skipped, 1 xfailed.
 - [x] Live read-only checks 2026-09-24T01:24Z: operational review (database PASS, retrieval canary PASS, runtime pinned to 4.9.0 until main carries it, compiled_profile WARN while run 5 maps from claims, checkpoint WARN until the first Orca delivery, jev_decisions WARN: dedup/skills idle, 5 orphan intents traced to the memory-reaper kill and one killed recall hook); Hermes MCP health 200 / unauth 401 / 51 tools; ledger read through the dashboard tab and `jev-status`.
 - [x] Independent adversarial review of the new code; no open high findings (high: `799dc1f`; medium/low: `80277a4`, `2af6f81`, `25bb5af`, `8e85b3b`).
-- [ ] Reports at 24 h, 72 h and 7 days from dashboard numbers.
+- [x] Reports at 24 h, 72 h and 7 days from dashboard numbers (2026-09-30, `artifacts/2026-09-30-jev-live-week-report.html`): every first-24 h operational criterion passed for the whole week (fallback <=6 %, US$1.18/week vs US$2/day cap, 0 ledger write failures, 0 leaked egress). Usefulness was unmeasurable: the recall block showed no claim ids, so `used_in_turn` was 2/2811.
+- [ ] T-0739 (installed 2026-10-01T02:32Z, wheel `072fd1ff`): `[mm-id]` on every injected claim plus a cite instruction (+29 tokens/block, +5.1 %); detector by id, `#<id>` and 8-gram, plus a separately labelled weak path (`used_in_turn_weak`, never a calibration label). Re-measure with `jev-status` after 2026-10-04T02:32Z: use rate per path and positive outcomes per question (>=100 to start calibration).
+  Measured 2026-10-04 (72 h): recall 1 strong + 18 weak uses of 1,066 exposed (0.09 % strong, as before: 2/2811); session 3 + 14 of 277 (1.1 %); hints 0 of 1,576; skills 0 of 11. Positives per question: recall.relevant about 1 of 1,144, session.relevant_to_project about 3 of 272. Calibration **cannot start** at this rate (>=100 needed). Cost $0.02-0.06/day of a $2 cap; context +29 tokens/block. Open question: hints are exposed 1,576 times with zero use.
 
 **Phase 5 — learning loop**
 - [ ] Weekly per-question calibration (split-half, 95 % lower bound, ≥100 outcomes).

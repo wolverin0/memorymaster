@@ -1,0 +1,95 @@
+{
+  "original_shards": [
+    {
+      "shard": 1,
+      "exit_code": 0,
+      "seconds": 422.2,
+      "summary": "1307 passed, 13 skipped, 30 deselected, 15 warnings in 419.91s (0:06:59)"
+    },
+    {
+      "shard": 2,
+      "exit_code": 1,
+      "seconds": 441.9,
+      "summary": "4 failed, 2202 passed, 7 skipped, 24 deselected, 1 xfailed, 15 warnings in 439.88s (0:07:19)"
+    },
+    {
+      "shard": 3,
+      "exit_code": 0,
+      "seconds": 425.5,
+      "summary": "1640 passed, 1 skipped, 10 deselected, 15 warnings in 423.44s (0:07:03)"
+    },
+    {
+      "shard": 4,
+      "exit_code": 1,
+      "seconds": 322.0,
+      "summary": "7 failed, 1547 passed, 54 skipped, 26 deselected, 17 warnings in 319.93s (0:05:19)"
+    }
+  ],
+  "fixture_only_changes": [
+    "tests/test_bm25_per_field.py",
+    "tests/test_context_hook.py",
+    "tests/test_local_rerank.py",
+    "tests/test_recall_latency.py"
+  ],
+  "replacement_shards": [
+    {
+      "shard": 2,
+      "exit_code": 0,
+      "seconds": 428.0,
+      "summary": "2206 passed, 7 skipped, 24 deselected, 1 xfailed, 15 warnings in 425.85s (0:07:05)"
+    },
+    {
+      "shard": 4,
+      "exit_code": 0,
+      "seconds": 328.4,
+      "summary": "1554 passed, 54 skipped, 26 deselected, 17 warnings in 325.95s (0:05:25)"
+    }
+  ],
+  "accepted_shards": [
+    {
+      "shard": 1,
+      "exit_code": 0,
+      "seconds": 422.2,
+      "summary": "1307 passed, 13 skipped, 30 deselected, 15 warnings in 419.91s (0:06:59)"
+    },
+    {
+      "shard": 2,
+      "exit_code": 0,
+      "seconds": 428.0,
+      "summary": "2206 passed, 7 skipped, 24 deselected, 1 xfailed, 15 warnings in 425.85s (0:07:05)"
+    },
+    {
+      "shard": 3,
+      "exit_code": 0,
+      "seconds": 425.5,
+      "summary": "1640 passed, 1 skipped, 10 deselected, 15 warnings in 423.44s (0:07:03)"
+    },
+    {
+      "shard": 4,
+      "exit_code": 0,
+      "seconds": 328.4,
+      "summary": "1554 passed, 54 skipped, 26 deselected, 17 warnings in 325.95s (0:05:25)"
+    }
+  ],
+  "changed_during_replacement": [],
+  "claims": "Executable source unchanged throughout all selected shards; only four fixture files changed and their complete shards were repeated. Original failures retained.",
+  "totals": {
+    "passed": 6707,
+    "failed": 0,
+    "skipped": 75,
+    "deselected": 90,
+    "xfailed": 1
+  },
+  "test_files": 534,
+  "provider_policy": "Inherited live mode and keys removed; fake provider opt-ins preserved; ML tests deselected",
+  "fixture_volume": "C:",
+  "logs_sha256": {
+    "shard-1.log": "29567eea987a764e9820a2f9fd0abc8f1a67f16f1b13366afac3cbd7118fc7fa",
+    "shard-2-fixture-repair.log": "636bfa1fb536869acb47d31ecad5ad9119d702070f48913dc7b773889e9805d1",
+    "shard-2.log": "256a9d4a524f8d003099533629b7b019fba2fe84c6c2086ef350f79cda2b9eab",
+    "shard-3.log": "cdee93eb85ed0bbbf98a5128cbe2056d0daa6ab8a0b6ce6328d6253e1cea2f04",
+    "shard-4-fixture-repair.log": "4328f6f7821c4d258fac0823fca4d70ecedd0ddf8211a40b6d5632de8736692f",
+    "shard-4.log": "8d5f8f4bb9395645448b2290c34a8fc2f95e38c364c48bd6e196a6f0527e6a30"
+  },
+  "consolidated_receipt_sha256": "02c006c9fba6ac927aaf680149ea9715d9672d70a6e76488fdc3ce316bc5d6b0"
+}

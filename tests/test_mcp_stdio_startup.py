@@ -7,6 +7,12 @@ from memorymaster.recall import embeddings
 from memorymaster.surfaces import mcp_server
 
 
+@pytest.fixture(autouse=True)
+def _isolated_thread_env(monkeypatch):
+    # main() caps native threads in the process env (T-0725); keep it out of this one.
+    monkeypatch.setattr(mcp_server, "_environ", {})
+
+
 @pytest.mark.parametrize("failure", [None, ImportError, OSError, RuntimeError])
 def test_windows_stdio_initializes_optional_native_imports_before_reader(monkeypatch, failure):
     loaded = []

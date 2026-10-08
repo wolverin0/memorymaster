@@ -83,6 +83,19 @@ try:
 except Exception as e:
     print(f"[MemoryMaster] jev dedup error: {e}", file=sys.stderr)
 
+# T-0773: rapidfuzz near-duplicates among live claims (paraphrases the Jaccard
+# dedupe misses). Files `source: fuzzy` steward proposals only, never a status
+# change; curation_drain and automation never approve them. Off with
+# MEMORYMASTER_FUZZY_DEDUP=0; capped by MEMORYMASTER_FUZZY_DEDUP_PER_CYCLE (50).
+try:
+    from memorymaster.govern import fuzzy_dedupe
+
+    fuzzy = fuzzy_dedupe.run(svc.store)
+    if fuzzy.get("proposed") or fuzzy.get("stopped"):
+        print(f"[MemoryMaster] fuzzy dedup: {fuzzy}")
+except Exception as e:
+    print(f"[MemoryMaster] fuzzy dedup error: {e}", file=sys.stderr)
+
 # Auto-archive: stale claims never accessed, older than 14 days
 try:
     from memorymaster.govern.jobs import scheduled_archive

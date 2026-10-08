@@ -166,4 +166,7 @@ def test_dev_extra_installs_supply_chain_contract_runtime() -> None:
     source = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     match = re.search(r"^dev\s*=\s*\[(.*?)\]", source, re.MULTILINE | re.DOTALL)
     assert match is not None
-    assert '"pip-audit>=' in match.group(1)
+    # The dependency audit runs through `uv audit` (T-0764); uv 0.12 is the first line with it.
+    assert '"uv>=0.12"' in match.group(1)
+    assert "pip-audit" not in match.group(1)
+    assert '"nox>=' in match.group(1)  # test sessions (unit / ml) are defined in noxfile.py

@@ -58,8 +58,9 @@ def _cfg(monkeypatch):
 
 
 def test_without_gate_fresh_decoy_outranks_true_match(monkeypatch):
-    """Baseline: with the gate off (default), the fresh/confident decoy wins
+    """Baseline: with the gate off, the fresh/confident decoy wins
     even though the true match is the better lexical hit."""
+    monkeypatch.setenv("MEMORYMASTER_BOOST_FLOOR_RATIO", "0")
     reset_config()
     ranked = rank_claims(_QUERY, _claims(), mode="hybrid", limit=2)
     assert ranked[0].id == 2  # decoy outranks the true match — the bug we fix
@@ -84,7 +85,15 @@ def test_gate_breakdown_flags_suppressed_boosts(monkeypatch):
     assert rows[2].breakdown["final"] == pytest.approx(rows[2].breakdown["relevance"])
 
 
-def test_gate_disabled_by_default_applies_all_boosts(monkeypatch):
+def test_gate_disabled_at_zero_applies_all_boosts(monkeypatch):
+    monkeypatch.setenv("MEMORYMASTER_BOOST_FLOOR_RATIO", "0")
     reset_config()
     rows = rank_claim_rows(_QUERY, _claims(), mode="hybrid", limit=2)
     assert all(r.breakdown["boosts_applied"] for r in rows)  # floor_ratio=0 -> never gated
+
+
+def test_gate_is_on_by_default(monkeypatch):
+    """Default 0.5 (2026-10-06): a weak-but-fresh decoy must not beat the true match."""
+    reset_config()
+    ranked = rank_claims(_QUERY, _claims(), mode="hybrid", limit=2)
+    assert ranked[0].id != 2

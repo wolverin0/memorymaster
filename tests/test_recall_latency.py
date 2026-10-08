@@ -29,6 +29,8 @@ def _mock_claim(cid: int, text: str = "working on memorymaster project", subject
     c.visibility = "public"
     c.object_value = None
     c.predicate = None
+    c.valid_from = None
+    c.valid_until = None
     c.confidence = 0.9
     c.wiki_article = None
     return c

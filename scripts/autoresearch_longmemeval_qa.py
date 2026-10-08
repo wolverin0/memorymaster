@@ -49,13 +49,51 @@ def _chunk_path(chunks_dir: Path, prefix: str, offset: int) -> Path:
     return chunks_dir / f"{prefix}-{offset:03d}.json"
 
 
+def _inputs_path(chunk: Path) -> Path:
+    return chunk.with_name(f"{chunk.stem}.inputs.json")
+
+
+def _candidate_revision() -> str:
+    """HEAD plus a hash of uncommitted changes to the code under test (resume must not mix candidates)."""
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=False)
+    diff = subprocess.run(["git", "diff", "HEAD", "--", "memorymaster", "tests/bench_longmemeval.py"],
+                          cwd=ROOT, capture_output=True, check=False)
+    return f"{head.stdout.strip() or 'unknown'}+{hashlib.sha256(diff.stdout).hexdigest()[:16]}"
+
+
+def input_fingerprint(*, dataset: Path, retrieval_results: Path, judge_model: str, judge_effort: str,
+                      revision: str) -> dict[str, str]:
+    """Everything a chunk's answers depend on. A resumed chunk must carry exactly this.
+
+    Checking question IDs and the judge alone let a chunk produced from another
+    dataset revision, retrieval run, prompt or candidate be reused silently.
+    """
+    return {
+        "dataset_sha256": _sha256(dataset),
+        "retrieval_sha256": _sha256(retrieval_results),
+        "benchmark_sha256": _sha256(BENCHMARK),  # holds the QA prompt
+        "judge_model": judge_model,
+        "judge_effort": judge_effort,
+        "candidate_revision": revision,
+    }
+
+
 def _load_valid_chunk(
     path: Path,
     expected_ids: list[str],
     *,
     judge_model: str,
     judge_effort: str,
+    fingerprint: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    if fingerprint is not None:
+        try:
+            recorded = _read_json(_inputs_path(path))
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"chunk has no input fingerprint: {path}") from exc
+        if recorded != fingerprint:
+            changed = sorted(k for k in fingerprint if not isinstance(recorded, dict) or recorded.get(k) != fingerprint[k])
+            raise ValueError(f"chunk inputs changed ({', '.join(changed)}): {path}")
     wrapper = _read_json(path)
     if not isinstance(wrapper, dict) or not isinstance(wrapper.get("qa"), dict):
         raise ValueError(f"chunk is not a QA result: {path}")
@@ -132,6 +170,7 @@ def _run_chunk(
     judge_model: str,
     judge_effort: str,
     max_attempts: int,
+    fingerprint: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     env = {key: value for key, value in os.environ.items() if key not in API_KEY_NAMES}
     for attempt in range(1, max_attempts + 1):
@@ -139,12 +178,15 @@ def _run_chunk(
         try:
             if completed.returncode != 0:
                 raise RuntimeError(f"benchmark exited {completed.returncode}")
-            return _load_valid_chunk(
+            wrapper = _load_valid_chunk(
                 output,
                 expected_ids,
                 judge_model=judge_model,
                 judge_effort=judge_effort,
             )
+            if fingerprint is not None:
+                _write_json_atomic(_inputs_path(output), fingerprint)
+            return wrapper
         except (OSError, ValueError, RuntimeError) as exc:
             _archive_failed_chunk(output, attempt)
             if attempt == max_attempts:
@@ -246,6 +288,9 @@ def main() -> int:
         raise SystemExit("--chunk-size and --max-attempts must be greater than zero")
     expected_ids = _expected_ids(args.dataset, args.expected_questions)
     args.chunks_dir.mkdir(parents=True, exist_ok=True)
+    fingerprint = input_fingerprint(dataset=args.dataset, retrieval_results=args.retrieval_results,
+                                    judge_model=args.judge_model, judge_effort=args.judge_effort,
+                                    revision=_candidate_revision())
     wrappers: list[tuple[Path, dict[str, Any]]] = []
     for offset in range(0, len(expected_ids), args.chunk_size):
         chunk_ids = expected_ids[offset : offset + args.chunk_size]
@@ -256,6 +301,7 @@ def main() -> int:
                 chunk_ids,
                 judge_model=args.judge_model,
                 judge_effort=args.judge_effort,
+                fingerprint=fingerprint,
             )
             print(f"[qa-chunks] resumed verified chunk {offset}/{len(expected_ids)}")
         except (FileNotFoundError, OSError, ValueError):
@@ -277,6 +323,7 @@ def main() -> int:
                 judge_model=args.judge_model,
                 judge_effort=args.judge_effort,
                 max_attempts=args.max_attempts,
+                fingerprint=fingerprint,
             )
         wrappers.append((path, wrapper))
         print(f"[qa-chunks] {min(offset + len(chunk_ids), len(expected_ids))}/{len(expected_ids)} durable")

@@ -194,6 +194,53 @@ def _prune_case_root(root: Path) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_live_shared_recall(monkeypatch) -> None:
+    """Keep hook recall off the operator's running shared MCP server.
+
+    WHY: since T-0594 the installed recall hook asks the shared server first
+    whenever a token resolves, which it does on the operator's machine. A test
+    that runs the hook then got live recall instead of its fake (found
+    2026-10-03 in test_installed_hook_round_trip). Tests of the remote path
+    pass their own environ.
+    """
+    monkeypatch.setenv("MEMORYMASTER_HOOK_RECALL_REMOTE", "0")
+
+
+@pytest.fixture(autouse=True)
+def _no_operator_scope_aliases(tmp_path_factory, monkeypatch) -> None:
+    """Tests never read the operator's ~/.memorymaster/scope-aliases.json (2026-10-06)."""
+    monkeypatch.setenv("MEMORYMASTER_SCOPE_ALIASES", str(tmp_path_factory.getbasetemp() / "no-scope-aliases.json"))
+
+
+@pytest.fixture(autouse=True)
+def _no_operator_jev_settings(monkeypatch) -> None:
+    """Tests never inherit the operator's Jev mode (2026-10-06: a user-level
+    MEMORYMASTER_JEV_MODE=shadow added jev_ingest records and failed 10 Dreaming tests)."""
+    for name in [key for key in os.environ if key.upper().startswith("MEMORYMASTER_JEV_")]:
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_operator_dense_recall(monkeypatch) -> None:
+    """Tests never reach the operator's dense-recall service (MEMORYMASTER_RECALL_DENSE=1 is user-level)."""
+    for name in [key for key in os.environ if key.upper().startswith("MEMORYMASTER_RECALL_DENSE")]:
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _restore_cwd():
+    """Every test ends in the directory it started in.
+
+    WHY: in the full `nox -s unit` run (2026-10-05) a test left the process in
+    another directory, and the supply-chain contracts that read `.dockerignore`
+    and the default `--repo-root .` failed with FileNotFoundError; alone they pass.
+    """
+    start = os.getcwd()
+    yield
+    os.chdir(start)
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_snapshot_dir(tmp_path_factory, monkeypatch) -> None:
     """Keep the integrity phase's VACUUM INTO snapshots out of the real home.
 

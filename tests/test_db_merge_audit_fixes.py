@@ -213,3 +213,61 @@ def test_non_portable_columns_excluded_from_insert(tmp_path):
     assert "human_id" not in cols
     assert "supersedes_claim_id" not in cols
     assert "replaced_by_claim_id" not in cols
+
+
+def test_quarantined_target_row_still_blocks_a_duplicate_insert(tmp_path):
+    """T-0530: a target claim whose citation is unsafe is quarantined from
+    mutation, but leaving it out of the identity sets made every re-exported
+    copy (citation already sanitized at export) look new: Hermes had gained 280
+    duplicate rows that way by 2026-10-03."""
+    tgt, src = tmp_path / "t.db", tmp_path / "s.db"
+    _init(tgt)
+    _init(src)
+    text = "The staging deploy reads its database settings from the shared runbook"
+    target_id = _ins(tgt, text=text)
+    with sqlite3.connect(tgt) as c:
+        c.execute(
+            "INSERT INTO citations(claim_id, source, excerpt, created_at) VALUES (?,?,?,?)",
+            (target_id, "runbook", "login with password: Hunter2Hunter2Secret!", T),
+        )
+    _ins(src, text=text)
+    merge_databases(str(tgt), str(src))
+    assert [r["text"] for r in _rows(tgt)] == [text]
+
+
+def test_export_delta_carries_the_source_schema_version(tmp_path, caplog):
+    """T-0530: deltas had no schema_versions, so every merge warned 'Schema
+    version unknown (source=None)' and a real 4.5.0/4.9.0 gap stayed hidden."""
+    from memorymaster.bridges.delta_sync import export_delta
+
+    src, delta, same, older = (tmp_path / n for n in ("s.db", "d.db", "t.db", "old.db"))
+    _init(src, version=27)
+    _init(same, version=27)
+    _init(older, version=16)
+    _ins(src, text="fresh fact", ikey="k-fresh")
+    export_delta(str(src), "", str(delta))
+    with sqlite3.connect(delta) as c:
+        assert c.execute("SELECT MAX(version) FROM schema_versions").fetchone()[0] == 27
+    caplog.set_level("WARNING")
+    merge_databases(str(same), str(delta))
+    assert "Schema version unknown" not in caplog.text
+    with pytest.raises(ValueError, match="schema version"):
+        merge_databases(str(older), str(delta))
+
+
+def test_a_merge_compatible_migration_gap_does_not_block_sync(tmp_path):
+    """Migration 28 only adds a counter and triggers; a v27 delta must still merge into
+    a v28 database (and back), or the first sync after a one-sided upgrade fails and
+    the rows of that delta are never re-exported. A gap crossing a migration that is
+    not declared merge-compatible still refuses."""
+    v27, v28, v16 = (tmp_path / n for n in ("a.db", "b.db", "c.db"))
+    _init(v27, version=27)
+    _init(v28, version=28)
+    _init(v16, version=16)
+    _ins(v27, text="from the older side", ikey="k-27")
+    _ins(v28, text="from the newer side", ikey="k-28")
+    merge_databases(str(v28), str(v27))
+    merge_databases(str(v27), str(v28))
+    assert {r["text"] for r in _rows(v28)} == {r["text"] for r in _rows(v27)}
+    with pytest.raises(ValueError, match="schema version"):
+        merge_databases(str(v16), str(v28))

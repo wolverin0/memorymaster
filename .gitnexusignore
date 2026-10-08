@@ -1,0 +1,11 @@
+# Index maintained project code and documentation, not upstream research copies.
+repos/**
+repo/**
+cloned/**
+delta-exchange/**
+artifacts/**
+graphify-out/**
+**/graphify-out/**
+.claude/worktrees/**
+.venv*/**
+node_modules/**

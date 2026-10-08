@@ -604,6 +604,11 @@ def _queue_observation_discovery(
     service: MemoryService, *, scope: str, tenant_id: str | None
 ) -> tuple[int, int]:
     repository = GraphObservationRepository(service.store)
+    # Same guard as the Dreaming worker (a2aac47): a scope with no eligible supports
+    # and no live observations would only add a `no_supports` job. Measured 2026-10-07:
+    # after a2aac47 this path still added one such job per Dreaming run.
+    if not repository.discovery_has_work(scope=scope, tenant_id=tenant_id):
+        return 0, 0
     _job, created = repository.queue_discovery(
         tenant_id=tenant_id,
         scope=scope,

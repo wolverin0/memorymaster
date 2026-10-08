@@ -203,8 +203,11 @@ class Config:
     # Floor-ratio gate (gbrain v0.35.6 "hybrid.floor_ratio"): metadata boosts
     # (confidence/freshness/tier/pinned) only apply to candidates whose
     # query-relevance (lexical+vector) is >= boost_floor_ratio * top relevance.
-    # 0.0 = disabled (boosts always apply) — preserves pre-v3.22 behaviour.
-    boost_floor_ratio: float = 0.0
+    # 0.0 = disabled (boosts always apply). Default 0.5 since 2026-10-06: on 60
+    # real prompts labelled blind by Haiku, nDCG@5 0.593 -> 0.747, P@5 0.392 ->
+    # 0.431, 11 queries better and 4 worse; a 0.107-lexical claim had outranked
+    # the 0.475-lexical answer on confidence and freshness alone.
+    boost_floor_ratio: float = 0.5
 
     # --- Initial confidence priors calibrated from validator outcomes ---
     default_initial_confidence: float = DEFAULT_INITIAL_CONFIDENCE

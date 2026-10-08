@@ -1,10 +1,10 @@
 # Supply-chain security checks
 # Covers: the fail-closed local release gate for secrets, dependencies, SBOMs, and images.
-# Key terms: Gitleaks, pip-audit, CycloneDX, Docker Scout, immutable image, Docker config.
+# Key terms: Gitleaks, uv audit (replaced pip-audit 2026-10-01, T-0764), CycloneDX, Docker Scout, immutable image, Docker config.
 # Read when: preparing release evidence or changing scanner policy and authentication boundaries.
 # Authentication: Docker config is scoped only to the Docker Scout subprocess.
 # Privacy: scanner streams and Docker configuration paths are excluded from persisted reports.
-# Updated: 2026-08-04 after authenticated immutable-image validation exposed the sterile-config boundary.
+# Updated: 2026-10-01: one hash-pinned `uv audit` replaces both pip-audit runs (same scope, 1.8 s vs 82.6 s).
 
 MemoryMaster's local release gate combines five fail-closed checks:
 
@@ -12,11 +12,13 @@ MemoryMaster's local release gate combines five fail-closed checks:
    reviewed synthetic test-fixture findings are admitted only by exact
    commit/path/rule/line fingerprints; path, rule, and wildcard suppressions
    are rejected.
-2. `pip-audit` audits the trusted project in strict mode against the explicit
-   OSV vulnerability service.
-3. A second dependency audit covers the personal/local minimal release extras:
-   `mcp` and `security`. Qdrant is an optional semantic profile with a separate
-   runtime evidence gate.
+2. `uv audit` (uv >= 0.12, `--preview-features audit-command`) audits a
+   generated throwaway project whose dependencies are exactly the base
+   requirements plus the personal/local minimal release extras `mcp` and
+   `security`, against OSV. This one run covers the scope of the two former
+   pip-audit runs (project, then release extras); any known vulnerability
+   exits nonzero. Qdrant and other optional extras stay out, as before.
+3. (merged into 2 on 2026-10-01)
 4. The CycloneDX validator binds the SBOM's root component and SHA-256 hash to
    the exact `memorymaster` wheel and its wheel metadata.
 5. Docker Scout scans at most three already-local immutable `sha256:<image-id>`
@@ -24,7 +26,7 @@ MemoryMaster's local release gate combines five fail-closed checks:
 
 The runner discards scanner stdout/stderr and emits only fixed check results
 plus safe evidence hashes: repository commit, release-wheel SHA-256, SBOM
-SHA-256, immutable image IDs, native-tool hashes, and Python/`pip-audit`
+SHA-256, immutable image IDs, native-tool hashes (including `uv`), and Python
 versions. Missing tools, unavailable evidence, timeouts, nonzero exits,
 mutable image tags, and invalid or mismatched SBOMs all fail the gate.
 
@@ -101,8 +103,10 @@ validated copy of `.gitleaks-reviewed-fingerprints`,
 The review file accepts only exact fingerprints under `tests/`; duplicates,
 path traversal, non-test paths, wildcards, and malformed entries fail closed.
 Repository `.gitleaks.toml`, `.gitleaksignore`, and environment overrides are
-ignored. `pip-audit` is pinned to the `osv` service and a temporary pip
-configuration. Scanner streams go to `DEVNULL`, per-command timeouts and a
+ignored. `uv` is a resolved, hash-recorded native tool; its audit uses the
+`osv` service, never downloads Python, keeps its cache and generated project
+in the scratch directory (no repository `uv.lock`), and runs with
+`UV_NO_CONFIG=1` and no other `UV_*` variables. Scanner streams go to `DEVNULL`, per-command timeouts and a
 one-hour global deadline apply, and the Docker build context is an exact
 allowlist of Dockerfile inputs.
 

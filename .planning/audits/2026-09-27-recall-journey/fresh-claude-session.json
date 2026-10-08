@@ -1,0 +1,50 @@
+{
+  "fresh_claude_session": true,
+  "no_session_persistence": true,
+  "tools_disabled": true,
+  "only_installed_recall_hook": true,
+  "exit_code": 0,
+  "wall_ms": 12508.57,
+  "session_id": "dd8a5a2f-4e15-4c85-b60e-058289643be3",
+  "saw_memory_context": true,
+  "memory_bullet_count": 3,
+  "copied_bullet_chars": 1100,
+  "matched_complete_claim_ids": [
+    132958
+  ],
+  "complete_long_unicode_claim": true,
+  "model_usage": {
+    "claude-sonnet-5": {
+      "inputTokens": 2,
+      "outputTokens": 532,
+      "cacheReadInputTokens": 3397,
+      "cacheCreationInputTokens": 3847,
+      "webSearchRequests": 0,
+      "costUSD": 0.0213914,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000,
+      "thinkingTokens": 0,
+      "canonicalModel": "claude-sonnet-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "reported_total_cost_usd": 0.0213914,
+  "is_error": false,
+  "resumable_transcript_files_found": 0,
+  "jev_decisions": [
+    {
+      "surface": "recall",
+      "mode": "live",
+      "fallback_reason": null,
+      "transport_outcome": "ok",
+      "attempt_count": 1,
+      "latency_ms": 484,
+      "engine_ms": 531,
+      "tokens_in": 4660,
+      "tokens_out": 1054,
+      "cost_usd": 0.00019572,
+      "model_served": "jev-1.13.0"
+    }
+  ]
+}
