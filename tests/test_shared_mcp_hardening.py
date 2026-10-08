@@ -162,9 +162,10 @@ def test_project_root_takes_the_declared_workspace_and_fails_closed(local_truste
         return project_root
 
     guarded = mcp_server._authorized_tool_callable(read_tasks, mcp_server.McpToolPolicy("query", team_enabled=True))
-    token = _over_http({"x-mm-workspace": "G:/repos/alpha"})
+    workspace = "G:/repos/alpha" if os.name == "nt" else "/repos/alpha"  # absolute on this platform
+    token = _over_http({"x-mm-workspace": workspace})
     try:
-        assert guarded() == "G:/repos/alpha"
+        assert guarded() == workspace
     finally:
         _reset(token)
     token = _over_http({})
@@ -503,6 +504,7 @@ def test_relay_cache_survives_a_corrupt_file(tmp_path):
     assert cache.get("u", "tools/list") == {"tools": []}
 
 
+@pytest.mark.skipif(os.name != "nt", reason="drive letters and case-insensitive roots are Windows path semantics")
 @pytest.mark.parametrize(
     ("workspace", "outside"),
     [

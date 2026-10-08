@@ -35,6 +35,8 @@ QUERIES = ("why does the hermes sync quarantine rows every cycle",
            "cómo se configura el backup de la base sqlite",
            "mikrotik router failover dns cloudflare tunnel",
            "steward decision on duplicate claims in project scope")
+# -P (3.11+) keeps the cwd off the child's sys.path; CHILD puts the repo first explicitly either way.
+SAFE_PATH = ("-P",) if sys.version_info >= (3, 11) else ()
 CHILD = """
 import json, sys, time
 sys.path.insert(0, sys.argv[1])
@@ -127,7 +129,7 @@ def _measure(sizes: list[int], repeats: int, cache_dir: str | None) -> dict:
             cold, warm, tokens = [], [], None
             for r in range(repeats):
                 queries = [QUERIES[r % len(QUERIES)], QUERIES[(r + 1) % len(QUERIES)]]
-                out = subprocess.run([sys.executable, "-P", "-c", CHILD, str(ROOT), str(db), json.dumps(queries)],
+                out = subprocess.run([sys.executable, *SAFE_PATH, "-c", CHILD, str(ROOT), str(db), json.dumps(queries)],
                                      capture_output=True, text=True, env=env, timeout=600, check=True)
                 row = json.loads(out.stdout.strip().splitlines()[-1])
                 cold.append(row["cold_ms"])
