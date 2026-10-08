@@ -92,6 +92,11 @@ def mcp_http_server(tmp_path: Path):
             "MEMORYMASTER_MCP_WORKSPACE": str(workspace),
             "MEMORYMASTER_MCP_ALLOWED_SCOPES": "project:workspace",
             "MEMORYMASTER_MCP_DB": str(db),
+            # This fixture tests the HTTP journey, not semantic recall. With an auto provider the
+            # Windows server pre-imports sentence-transformers at boot (T-0726): 1.2 s -> 7.3 s
+            # locally, past the 30 s budget on loaded CI runners.
+            "MEMORYMASTER_EMBEDDING_PROVIDER": "hash",
+            "MEMORYMASTER_RECALL_RERANK_LOCAL": "0",
             "PYTHONPATH": os.pathsep.join(
                 filter(
                     None,
