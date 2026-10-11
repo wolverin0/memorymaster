@@ -574,3 +574,205 @@ def test_stall_dump_threshold_defaults_and_disables(monkeypatch):
     assert mcp_http._stall_dump_seconds() == 15.0
     monkeypatch.setenv(mcp_http.STALL_DUMP_ENV, "0")
     assert mcp_http._stall_dump_seconds() == 0.0
+
+
+# --- T-1276: the supervisor must never start a second server over a live orphan ----------------
+# 2026-10-11 01:19Z: the wedged server ignored child.kill() for 30 s, the supervisor logged
+# "did not exit after kill; starting a new one anyway" and spawned replacements against the port the
+# orphan still held: ~54 restarts, ~75 minutes without a shared server.
+
+
+class _Expired(Exception):
+    """Stands in for subprocess.TimeoutExpired inside the launcher's namespace."""
+
+
+class _Stop(Exception):
+    pass
+
+
+def _orphan_rig(launcher, monkeypatch, tmp_path, *, dies_on_taskkill_call, kill_raises=None):
+    """Supervisor wired to fakes: the first child ignores kill(); taskkill kills it on call N.
+
+    ``dies_on_taskkill_call=None`` means the orphan survives every taskkill (unkillable).
+    ``run()`` raises _Stop once the supervisor tries a second Popen or after the backoff sleeps
+    pass ``state['max_backoffs']``.
+    """
+    g = launcher["_supervise"].__globals__
+    clock = {"now": 0.0}
+    state = {"popens": [], "taskkills": [], "backoff_sleeps": 0, "max_backoffs": 6,
+             "alive_at_popen": [], "orphan_alive": True, "kill_calls": 0}
+
+    class FakeChild:
+        def __init__(self, argv, **kwargs):
+            state["alive_at_popen"].append(state["orphan_alive"])
+            if len(state["popens"]) >= 1:
+                state["second_popen"] = True
+                raise _Stop
+            self.pid, self.argv = 4242, argv
+            state["popens"].append(self)
+
+        @property
+        def returncode(self):
+            return None if state["orphan_alive"] else -9
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            state["kill_calls"] += 1  # TerminateProcess is accepted but the process stays wedged
+            if kill_raises is not None:
+                raise kill_raises
+
+        def wait(self, timeout=None):
+            if state["orphan_alive"]:
+                raise _Expired(timeout)
+            return self.returncode
+
+    def run_cmd(argv, **kwargs):
+        state["taskkills"].append(list(argv))
+        if dies_on_taskkill_call is not None and len(state["taskkills"]) >= dies_on_taskkill_call:
+            state["orphan_alive"] = False
+        return SimpleNamespace(returncode=0)
+
+    def sleep(seconds):
+        clock["now"] += seconds
+        if seconds >= g.get("KILL_RETRY_BACKOFF_SECONDS", 15) and state["orphan_alive"]:
+            state["backoff_sleeps"] += 1
+            if state["backoff_sleeps"] >= state["max_backoffs"]:
+                raise _Stop
+
+    for name in ("MEMORYMASTER_MCP_HTTP_TOKEN", "MEMORYMASTER_MCP_WORKSPACE_ALLOWLIST", "MEMORYMASTER_MCP_DB_ALLOWLIST"):
+        monkeypatch.setenv(name, "x")
+    monkeypatch.setenv("MEMORYMASTER_DEFAULT_DB", str(tmp_path / "memorymaster.db"))
+    monkeypatch.chdir(tmp_path.parent)
+    g["_single_instance"] = lambda: True
+    g["_load_shared_environment"] = lambda: []
+    g["_healthy"] = lambda: False
+    g["time"] = SimpleNamespace(sleep=sleep, monotonic=lambda: clock["now"], strftime=lambda f, *_: "t", gmtime=lambda: None)
+    g["subprocess"] = SimpleNamespace(Popen=FakeChild, run=run_cmd, DEVNULL=None, TimeoutExpired=_Expired,
+                                      CREATE_NO_WINDOW=0)
+    return g["_supervise"], state
+
+
+def test_supervisor_escalates_to_taskkill_and_only_then_replaces_a_wedged_server(launcher, monkeypatch, tmp_path):
+    run, state = _orphan_rig(launcher, monkeypatch, tmp_path, dies_on_taskkill_call=1)
+    with pytest.raises(_Stop):
+        run()
+    # kill() timed out -> taskkill /PID <pid> /F /T
+    assert state["taskkills"][0][:3] == ["taskkill", "/PID", "4242"]
+    assert {"/F", "/T"} <= set(state["taskkills"][0])
+    assert state.get("second_popen") and state["alive_at_popen"] == [True, False]  # 2nd Popen saw a dead orphan
+
+
+def test_supervisor_backs_off_without_spawning_while_the_orphan_survives_taskkill(launcher, monkeypatch, tmp_path):
+    run, state = _orphan_rig(launcher, monkeypatch, tmp_path, dies_on_taskkill_call=None)
+    with pytest.raises(_Stop):
+        run()
+    assert len(state["popens"]) == 1 and "second_popen" not in state  # never a second child over the held port
+    assert state["backoff_sleeps"] >= 6  # kept retrying the kill loop instead of giving up
+    assert len(state["taskkills"]) >= 2  # escalation is retried, not tried once
+
+
+@pytest.mark.parametrize("error", [PermissionError("access denied"), ProcessLookupError("gone")])
+def test_supervisor_survives_kill_raising_and_still_escalates_to_taskkill(launcher, monkeypatch, tmp_path, error):
+    run, state = _orphan_rig(launcher, monkeypatch, tmp_path, dies_on_taskkill_call=2, kill_raises=error)
+    with pytest.raises(_Stop):  # _Stop is the fake's second Popen: supervision kept running, not the OSError
+        run()
+    assert state["kill_calls"] >= 1 and len(state["taskkills"]) == 2  # kill() raised; taskkill still ran, retried
+    assert state["alive_at_popen"] == [True, False]  # no second Popen while the orphan was alive
+
+
+def test_supervisor_replaces_the_server_once_a_later_retry_finally_kills_it(launcher, monkeypatch, tmp_path):
+    run, state = _orphan_rig(launcher, monkeypatch, tmp_path, dies_on_taskkill_call=3)
+    with pytest.raises(_Stop):
+        run()
+    assert len(state["taskkills"]) == 3
+    assert state["alive_at_popen"] == [True, False]
+
+
+@pytest.mark.parametrize(
+    "raised, expected",
+    [(TimeoutError("timed out"), "timeout"), (ConnectionRefusedError(), "refused"),
+     (urllib.error.HTTPError("u", 503, "x", {}, None), "http 503")],
+)
+def test_supervisor_health_probe_records_why_it_failed(launcher, monkeypatch, raised, expected):
+    g = launcher["_healthy"].__globals__
+
+    def fail(*args, **kwargs):
+        raise raised
+
+    g["urllib"] = SimpleNamespace(request=SimpleNamespace(urlopen=fail), error=urllib.error)
+    assert launcher["_healthy"]() is False
+    assert g["_LAST_PROBE_FAILURE"] == expected
+
+
+@pytest.mark.skipif(os.name != "nt", reason="taskkill")
+def test_kill_pid_really_kills_a_long_lived_process_tree(launcher):
+    import subprocess
+    import sys
+
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])  # our own throwaway child
+    try:
+        assert child.poll() is None
+        launcher["_kill_pid"](child.pid)
+        child.wait(timeout=20)
+        assert child.poll() is not None
+    finally:
+        if child.poll() is None:
+            child.kill()
+
+
+# --- T-1276: a slow decisions.db write never reaches /healthz ------------------------------------
+
+
+def test_slow_decisions_write_on_the_shadow_thread_does_not_delay_healthz(monkeypatch, tmp_path):
+    """REGRESSION GUARD, not a root-cause proof: the 2026-10-11 healthz stall stays unexplained.
+
+    The stall dump showed a ``jev-recall-shadow`` thread parked in the ledger INSERT while the loop
+    stopped answering /healthz, but the loop thread itself was in a trivial uvicorn call, so the write
+    was never shown to block it. This pins the invariant that a blocked decisions.db writer on that
+    thread (here: a real sqlite write lock held by another connection) cannot reach the loop.
+    """
+    import time
+
+    import httpx
+
+    import memorymaster.recall.context_hook as context_hook
+    from memorymaster.decisions.ledger import DecisionLedger, DecisionRecord
+    from memorymaster.recall import jev_surfaces
+
+    ledger = DecisionLedger(tmp_path / "decisions.db", busy_timeout_ms=4000)
+    assert ledger.write_decision(DecisionRecord(decision_id="seed", surface="recall")) is True  # creates the schema
+    blocker = sqlite3.connect(tmp_path / "decisions.db", isolation_level=None)
+    blocker.execute("BEGIN IMMEDIATE")  # another process holding the ledger write lock
+    wrote: list[bool] = []
+
+    def recall(query, **kwargs):  # what hook_recall -> jev_surfaces does in shadow mode
+        jev_surfaces._start_shadow(lambda: wrote.append(
+            ledger.write_decision(DecisionRecord(decision_id="slow", surface="recall"))))
+        return "ctx"
+
+    monkeypatch.setattr(context_hook, "recall", recall)
+    monkeypatch.setenv("MEMORYMASTER_MCP_AUTH_MODE", "local-trusted")
+    app = mcp_http.create_http_app(token="secret", db_target=str(tmp_path / "m.db"), workspace=".")
+
+    async def main() -> float:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
+            hook = await client.post("/hook/recall", json={"query": "q"}, headers={"Authorization": "Bearer secret"})
+            assert hook.status_code == 200 and hook.json() == {"ctx": "ctx"}
+            await anyio.sleep(0.3)
+            assert jev_surfaces._SHADOW_THREADS[-1].is_alive()  # the writer really is stuck on the lock
+            started = time.perf_counter()
+            health = await client.get("/healthz")
+            assert health.status_code == 200
+            return time.perf_counter() - started
+
+    try:
+        elapsed = anyio.run(main)
+        assert elapsed < 1.0, f"/healthz took {elapsed:.2f}s while the ledger write was blocked"
+    finally:
+        blocker.execute("ROLLBACK")
+        blocker.close()
+        jev_surfaces.wait_shadow_decisions(10.0)
+    assert wrote == [True]  # the write completed once the lock cleared
