@@ -18,10 +18,12 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -41,6 +43,12 @@ PROBE_FAILURES_BEFORE_RESTART = 3
 # A paged-out server on a RAM-starved box stops answering for ~30 s and then recovers;
 # killing it costs a ~95 s restart (torch pre-import). Kill only a sustained outage (2026-10-03).
 UNHEALTHY_SECONDS_BEFORE_RESTART = 120
+# A wedged server can ignore TerminateProcess for minutes (2026-10-11: 54 replacements were spawned over one
+# live orphan that held the port, ~75 min without a server). No new child starts until the old pid is dead.
+KILL_WAIT_SECONDS = 30
+TASKKILL_TIMEOUT_SECONDS = 30
+KILL_RETRY_BACKOFF_SECONDS = 15
+_LAST_PROBE_FAILURE = ""  # why the latest /healthz probe failed: timeout | refused | http <code> | <ExcName>
 
 
 def _log_stream():
@@ -89,12 +97,70 @@ def _single_instance() -> bool:
     return bool(handle) and ctypes.get_last_error() != 183  # ERROR_ALREADY_EXISTS
 
 
+def _probe_failure_reason(exc: BaseException) -> str:
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"http {exc.code}"
+    reason = getattr(exc, "reason", exc)  # urlopen wraps socket errors in URLError
+    if isinstance(reason, (TimeoutError, socket.timeout)):
+        return "timeout"
+    if isinstance(reason, ConnectionRefusedError):
+        return "refused"
+    return type(reason).__name__
+
+
 def _healthy() -> bool:
+    global _LAST_PROBE_FAILURE
     try:
         with urllib.request.urlopen(HEALTH_URL, timeout=5) as response:
-            return response.status == 200
-    except Exception:  # noqa: BLE001 - any failure is "not healthy"
+            if response.status == 200:
+                return True
+            _LAST_PROBE_FAILURE = f"http {response.status}"
+            return False
+    except Exception as exc:  # noqa: BLE001 - any failure is "not healthy"
+        _LAST_PROBE_FAILURE = _probe_failure_reason(exc)
         return False
+
+
+def _kill_pid(pid: int) -> None:
+    """Hard-kill ``pid`` and its whole process tree (``taskkill /F /T``); never raises."""
+    try:
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/F", "/T"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=TASKKILL_TIMEOUT_SECONDS, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # pythonw: no console flash
+        )
+    except Exception as exc:  # noqa: BLE001 - the caller re-checks liveness and retries
+        _say(f"taskkill for pid {pid} failed: {exc!r}")
+
+
+def _wait_dead(child, seconds: float) -> bool:
+    try:
+        child.wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        pass
+    return child.poll() is not None
+
+
+def _stop_child(child) -> None:
+    """Return only when ``child`` is confirmed dead; a live orphan keeps the port, so never give up.
+
+    kill -> bounded wait -> ``taskkill /F /T`` -> re-check; if it is STILL alive, log it, back off
+    and run the kill loop again instead of letting the caller spawn a second server.
+    """
+    while True:
+        if child.poll() is not None:
+            return
+        child.kill()
+        if _wait_dead(child, KILL_WAIT_SECONDS):
+            return
+        _say(f"server pid {child.pid} did not exit after kill; escalating to taskkill /F /T")
+        _kill_pid(child.pid)
+        if _wait_dead(child, KILL_WAIT_SECONDS):
+            return
+        _say(f"server pid {child.pid} is STILL alive after taskkill; not starting a new server, "
+             f"retrying in {KILL_RETRY_BACKOFF_SECONDS}s")
+        time.sleep(KILL_RETRY_BACKOFF_SECONDS)
 
 
 def _supervise() -> int:
@@ -127,13 +193,10 @@ def _supervise() -> int:
                 unhealthy_since = time.monotonic()
             outage = time.monotonic() - unhealthy_since + PROBE_EVERY_SECONDS
             if failures >= PROBE_FAILURES_BEFORE_RESTART and outage >= UNHEALTHY_SECONDS_BEFORE_RESTART:
-                _say(f"server pid {child.pid} failed {failures} health probes; killing it")
-                child.kill()
-                try:
-                    child.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    _say(f"server pid {child.pid} did not exit after kill; starting a new one anyway")
-                    break
+                _say(f"server pid {child.pid} failed {failures} health probes "
+                     f"(last: {_LAST_PROBE_FAILURE or 'unknown'}); killing it")
+                _stop_child(child)
+                break
         _say(f"server pid {child.pid} exited with {child.returncode}")
         backoff = 5.0 if time.monotonic() - started > 600 else min(backoff * 2, 60.0)
         time.sleep(backoff)
