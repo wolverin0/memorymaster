@@ -590,7 +590,7 @@ class _Stop(Exception):
     pass
 
 
-def _orphan_rig(launcher, monkeypatch, tmp_path, *, dies_on_taskkill_call):
+def _orphan_rig(launcher, monkeypatch, tmp_path, *, dies_on_taskkill_call, kill_raises=None):
     """Supervisor wired to fakes: the first child ignores kill(); taskkill kills it on call N.
 
     ``dies_on_taskkill_call=None`` means the orphan survives every taskkill (unkillable).
@@ -620,6 +620,8 @@ def _orphan_rig(launcher, monkeypatch, tmp_path, *, dies_on_taskkill_call):
 
         def kill(self):
             state["kill_calls"] += 1  # TerminateProcess is accepted but the process stays wedged
+            if kill_raises is not None:
+                raise kill_raises
 
         def wait(self, timeout=None):
             if state["orphan_alive"]:
@@ -669,6 +671,15 @@ def test_supervisor_backs_off_without_spawning_while_the_orphan_survives_taskkil
     assert len(state["popens"]) == 1 and "second_popen" not in state  # never a second child over the held port
     assert state["backoff_sleeps"] >= 6  # kept retrying the kill loop instead of giving up
     assert len(state["taskkills"]) >= 2  # escalation is retried, not tried once
+
+
+@pytest.mark.parametrize("error", [PermissionError("access denied"), ProcessLookupError("gone")])
+def test_supervisor_survives_kill_raising_and_still_escalates_to_taskkill(launcher, monkeypatch, tmp_path, error):
+    run, state = _orphan_rig(launcher, monkeypatch, tmp_path, dies_on_taskkill_call=2, kill_raises=error)
+    with pytest.raises(_Stop):  # _Stop is the fake's second Popen: supervision kept running, not the OSError
+        run()
+    assert state["kill_calls"] >= 1 and len(state["taskkills"]) == 2  # kill() raised; taskkill still ran, retried
+    assert state["alive_at_popen"] == [True, False]  # no second Popen while the orphan was alive
 
 
 def test_supervisor_replaces_the_server_once_a_later_retry_finally_kills_it(launcher, monkeypatch, tmp_path):

@@ -151,7 +151,10 @@ def _stop_child(child) -> None:
     while True:
         if child.poll() is not None:
             return
-        child.kill()
+        try:
+            child.kill()
+        except OSError as exc:  # access denied / already gone: fall through to taskkill + the liveness re-check
+            _say(f"kill of server pid {child.pid} raised {exc!r}; escalating")
         if _wait_dead(child, KILL_WAIT_SECONDS):
             return
         _say(f"server pid {child.pid} did not exit after kill; escalating to taskkill /F /T")
