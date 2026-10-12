@@ -149,8 +149,14 @@ class AntigravityClient:
             "--print-timeout", f"{self.timeout}s",
         ]
         payload = json.dumps({"event": "user", "message": {"content": prompt}}) + "\n"
+        # T-1285: agy usa USERPROFILE; HOME solo no aísla la poda de sesiones.
+        batch_home = Path.home() / ".gemini-batch" / "memorymaster"
+        batch_home.mkdir(parents=True, exist_ok=True)
+        env = dict(os.environ)
+        env["USERPROFILE"] = str(batch_home)
+        env["HOME"] = str(batch_home)
         try:
-            completed = self.runner(command, payload, self.timeout, self.work_dir, dict(os.environ))
+            completed = self.runner(command, payload, self.timeout, self.work_dir, env)
         except subprocess.TimeoutExpired as exc:
             raise AntigravityError(
                 f"`agy` no respondio en {self.timeout}s con el modelo {self.model}"

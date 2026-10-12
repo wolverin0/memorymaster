@@ -127,6 +127,28 @@ def test_a_successful_call_reports_usage(tmp_path: Path):
     assert r.model == "gemini-3.7-flash-low"
 
 
+def test_batch_call_uses_isolated_profile_and_preserves_environment(
+    tmp_path: Path, monkeypatch
+):
+    batch_home = tmp_path / ".gemini-batch" / "memorymaster"
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("PATH", "sentinel-path")
+    monkeypatch.setenv("T1291_SENTINEL", "kept")
+    captured = {}
+
+    def run(command, prompt, timeout, cwd, env):
+        captured["env"] = env
+        return subprocess.CompletedProcess(command, 0, _envelope(), "")
+
+    _client(runner=run, work_dir=tmp_path).complete("hola")
+
+    assert captured["env"]["USERPROFILE"] == str(batch_home)
+    assert captured["env"]["HOME"] == str(batch_home)
+    assert batch_home.is_dir()
+    assert captured["env"]["PATH"] == "sentinel-path"
+    assert captured["env"]["T1291_SENTINEL"] == "kept"
+
+
 def test_the_model_and_stream_format_reach_the_command_line(tmp_path: Path):
     """Desde la migracion a stdin (2026-08-29) el formato es stream-json en AMBOS
     sentidos: sin `--input-format stream-json` el CLI no lee el prompt de stdin,
