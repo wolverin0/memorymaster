@@ -44,9 +44,10 @@ and principal selector, and separate live-data authorization.
 
 The UserPromptSubmit recall hook (T-1351, decided 2026-10-13) injects at most
 2 claims per prompt, dense and lexical (`MEMORYMASTER_RECALL_HOOK_MAX_CLAIMS`).
-Dense candidates need cosine >= 0.70 (other projects >= 0.78); lexical rows
-need relevance >= 0.5 (`MEMORYMASTER_RECALL_DENSE_MIN_SCORE`,
-`..._OUTSIDE_MIN_SCORE`, `MEMORYMASTER_RECALL_LEXICAL_MIN_RELEVANCE`). A claim
+Dense thresholds stay at cosine >= 0.68 (other projects >= 0.76): raising them
+bought no precision on the fixed set, only fewer injections. All three are
+configurable (`MEMORYMASTER_RECALL_DENSE_MIN_SCORE`, `..._OUTSIDE_MIN_SCORE`,
+`MEMORYMASTER_RECALL_LEXICAL_MIN_RELEVANCE`, the last off by default). A claim
 injected in a session is not injected again in it: the ids (never text) are kept
 per session under `~/.memorymaster/hook_state/recall_seen/`, at most 200 ids per
 session and 400 sessions, expiring after 12 hours and cleared by SessionStart.

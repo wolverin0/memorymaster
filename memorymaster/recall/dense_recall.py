@@ -50,12 +50,12 @@ LOG_ENV = "MEMORYMASTER_RECALL_DENSE_LOG"
 
 DEFAULT_URL = "http://127.0.0.1:8767"
 DEFAULT_TIMEOUT_S = 1.5
-DEFAULT_MIN_SCORE = 0.70
+DEFAULT_MIN_SCORE = 0.68
 # Claims from other projects (outside the hook's scope allowlist) only on a very high
 # score, decided by the operator 2026-10-06. Measured on the 200 labeled prompts:
 # outside-scope candidates at cosine >= 0.76 were useful 44% of the time (in-scope
 # >= 0.68: ~35%); admitting them moved nDCG@10 0.256 -> 0.286 for +0.2 claims/prompt.
-DEFAULT_OUTSIDE_MIN_SCORE = 0.78
+DEFAULT_OUTSIDE_MIN_SCORE = 0.76
 # Ask for more than we inject: scope/visibility filtering happens after the
 # service answers, and the log keeps the scores just under the threshold.
 FETCH_K = 12

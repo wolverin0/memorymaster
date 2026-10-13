@@ -3,7 +3,7 @@
 The lexical prompt hook scored nDCG@10 0.167 on 200 real prompts and injected
 5.9 claims per prompt, 72% of its top 5 useless; the dense service scored 0.337
 with the same scope. These tests pin the policy that produced that result:
-dense candidates replace the lexical pool, only scores >= 0.68 (raised to 0.70 on 2026-10-13, T-1351) are injected,
+dense candidates replace the lexical pool, only scores >= 0.68 are injected,
 every candidate passes the same authorization as any other stream, nothing is
 injected when nothing qualifies, and lexical recall runs when the service is down.
 """

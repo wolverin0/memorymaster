@@ -41,7 +41,7 @@ SESSION_DEDUP_ENV = "MEMORYMASTER_RECALL_SESSION_DEDUP"
 SEEN_DIR_ENV = "MEMORYMASTER_RECALL_SEEN_DIR"
 
 DEFAULT_MAX_CLAIMS = 2
-DEFAULT_LEXICAL_MIN_RELEVANCE = 0.5  # measured: 0.5 costs ~3% nDCG; 1 costs 18%, 2 costs 53% (no precision gain)
+DEFAULT_LEXICAL_MIN_RELEVANCE = 0.0  # off: floors 0.5/1/2 cost 3%/18%/53% nDCG and buy no precision
 SEEN_TTL_SECONDS = 12 * 3600
 SEEN_MAX_IDS = 200  # per session; the oldest are forgotten first
 SEEN_MAX_FILES = 400  # sessions kept on disk

@@ -84,10 +84,13 @@ def test_recall_without_hook_data_is_not_capped(world) -> None:
     assert len(ids) == 4  # MCP/CLI callers keep the full block
 
 
-def test_the_default_dense_threshold_is_above_the_old_068(world, monkeypatch) -> None:
-    assert dense_recall.min_score() > 0.68 and dense_recall.outside_min_score() > 0.76
+def test_dense_thresholds_keep_the_operators_values_and_are_configurable(world, monkeypatch) -> None:
+    # Operator 2026-10-13 (team-lead ruling): a higher threshold bought no precision; outside stays >= 0.76.
+    assert dense_recall.min_score() == 0.68 and dense_recall.outside_min_score() == 0.76
     _dense(monkeypatch, [(world["ids"][0], 0.69)])
-    assert _recall(world, "a") == []
+    assert _recall(world, "a") == [world["ids"][0]]
+    monkeypatch.setenv(dense_recall.MIN_SCORE_ENV, "0.72")
+    assert _recall(world, "b") == []
 
 
 def test_the_lexical_floor_drops_weak_rows(world, monkeypatch) -> None:
