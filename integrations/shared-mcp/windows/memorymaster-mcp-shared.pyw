@@ -6,7 +6,9 @@ Every client session reaches the server through the stdio relay
 Default mode (what the MemoryMaster-MCP-Shared scheduled task runs) is a tiny
 stdlib-only supervisor: one instance per user, it starts the server as a child
 (`--serve`), probes /healthz and restarts the child when it exits or stops
-answering, so a dead server never stays dead. The child exits with its supervisor.
+answering, so a dead server never stays dead. A child that never answers at all is killed after
+FIRST_ANSWER_DEADLINE_SECONDS (growing for consecutive ones); a stuck kill never freezes supervision.
+The child exits with its supervisor.
 
 Configuration lives only in HKCU\\Software\\MemoryMaster\\SharedMcp, so the token is
 never in a command line or a file; Hermes (team mode, own key) is untouched. The
@@ -37,7 +39,12 @@ REQUIRED = (
     "MEMORYMASTER_DEFAULT_DB",
 )
 OPTIONAL = ("MEMORYMASTER_LOG_DIR",)
-STARTUP_GRACE_SECONDS = 300  # model pre-import + first bind can take minutes on a busy box
+STARTUP_GRACE_SECONDS = 300  # model pre-import + first bind can take minutes on a busy box (measured max 297 s)
+# A child that has not answered /healthz at all is killed and relaunched after this many seconds, then 2x, 4x...
+# capped at STARTUP_GRACE_SECONDS for each consecutive one that also never answers. 2026-10-13: a child that never
+# bound the port lived 19 min. Healthy boots take 9-297 s (median 47) and the host stalls in storms, so a fixed 60 s
+# would kill slow-but-alive boots forever (54 restarts on 2026-10-11); a child that answers resets the ladder.
+FIRST_ANSWER_DEADLINE_SECONDS = 60
 PROBE_EVERY_SECONDS = 10
 PROBE_FAILURES_BEFORE_RESTART = 3
 # A paged-out server on a RAM-starved box stops answering for ~30 s and then recovers;
@@ -47,8 +54,10 @@ UNHEALTHY_SECONDS_BEFORE_RESTART = 120
 # live orphan that held the port, ~75 min without a server). No new child starts until the old pid is dead.
 KILL_WAIT_SECONDS = 30
 TASKKILL_TIMEOUT_SECONDS = 30
+TASKKILL_ABANDON_GRACE_SECONDS = 15  # subprocess.run kills a timed-out taskkill then waits for it with no timeout
 KILL_RETRY_BACKOFF_SECONDS = 15
 _LAST_PROBE_FAILURE = ""  # why the latest /healthz probe failed: timeout | refused | http <code> | <ExcName>
+_TASKKILL_WORKER: threading.Thread | None = None  # a taskkill call that has not returned yet; at most one at a time
 
 
 def _log_stream():
@@ -58,9 +67,9 @@ def _log_stream():
     return (base / "mcp-shared.log").open("a", encoding="utf-8", buffering=1)
 
 
-def _say(message: str) -> None:
+def _say(message: str, level: str = "info") -> None:
     # Same JSON-lines shape as the server's records in this log (memorymaster/core/structured_log.py).
-    print(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "level": "info",
+    print(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "level": level,
                       "logger": "memorymaster.mcp.supervisor", "component": "mcp-supervisor",
                       "event": message, "pid": os.getpid()}), flush=True)
 
@@ -122,16 +131,35 @@ def _healthy() -> bool:
 
 
 def _kill_pid(pid: int) -> None:
-    """Hard-kill ``pid`` and its whole process tree (``taskkill /F /T``); never raises."""
-    try:
-        subprocess.run(
-            ["taskkill", "/PID", str(pid), "/F", "/T"],
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            timeout=TASKKILL_TIMEOUT_SECONDS, check=False,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # pythonw: no console flash
-        )
-    except Exception as exc:  # noqa: BLE001 - the caller re-checks liveness and retries
-        _say(f"taskkill for pid {pid} failed: {exc!r}")
+    """Hard-kill ``pid`` and its whole process tree (``taskkill /F /T``); never raises, never blocks for long.
+
+    ``subprocess.run(timeout=)`` kills a timed-out taskkill and then waits for it with no timeout, so a taskkill
+    stuck in the same stall would freeze supervision (2026-10-13: 57 s for a 30 s timeout). The call runs on a
+    worker thread that is abandoned after the timeout plus a margin; one blocked worker at a time is ever left.
+    """
+    global _TASKKILL_WORKER
+    if _TASKKILL_WORKER is not None and _TASKKILL_WORKER.is_alive():
+        _say(f"an earlier taskkill is still blocked; not starting another for pid {pid}", "error")
+        return
+
+    def work() -> None:
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/F", "/T"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=TASKKILL_TIMEOUT_SECONDS, check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # pythonw: no console flash
+            )
+        except subprocess.TimeoutExpired:
+            _say(f"taskkill for pid {pid} TIMED OUT after {TASKKILL_TIMEOUT_SECONDS}s", "error")
+        except Exception as exc:  # noqa: BLE001 - the caller re-checks liveness and retries
+            _say(f"taskkill for pid {pid} failed: {exc!r}", "error")
+
+    _TASKKILL_WORKER = threading.Thread(target=work, name="taskkill", daemon=True)
+    _TASKKILL_WORKER.start()
+    _TASKKILL_WORKER.join(TASKKILL_TIMEOUT_SECONDS + TASKKILL_ABANDON_GRACE_SECONDS)
+    if _TASKKILL_WORKER.is_alive():
+        _say(f"taskkill for pid {pid} is blocked past its own timeout; abandoning it", "error")
 
 
 def _wait_dead(child, seconds: float) -> bool:
@@ -146,11 +174,14 @@ def _stop_child(child) -> None:
     """Return only when ``child`` is confirmed dead; a live orphan keeps the port, so never give up.
 
     kill -> bounded wait -> ``taskkill /F /T`` -> re-check; if it is STILL alive, log it, back off
-    and run the kill loop again instead of letting the caller spawn a second server.
+    and run the kill loop again instead of letting the caller spawn a second server. Every step is
+    bounded, so supervision keeps turning (and logging) while an orphan refuses to die.
     """
+    first_kill, rounds = time.monotonic(), 0
     while True:
         if child.poll() is not None:
             return
+        rounds += 1
         try:
             child.kill()
         except OSError as exc:  # access denied / already gone: fall through to taskkill + the liveness re-check
@@ -161,8 +192,9 @@ def _stop_child(child) -> None:
         _kill_pid(child.pid)
         if _wait_dead(child, KILL_WAIT_SECONDS):
             return
-        _say(f"server pid {child.pid} is STILL alive after taskkill; not starting a new server, "
-             f"retrying in {KILL_RETRY_BACKOFF_SECONDS}s")
+        _say(f"server pid {child.pid} is STILL alive after taskkill (round {rounds}, "
+             f"{time.monotonic() - first_kill:.0f}s since the first kill); not starting a new server, "
+             f"retrying in {KILL_RETRY_BACKOFF_SECONDS}s", "error")
         time.sleep(KILL_RETRY_BACKOFF_SECONDS)
 
 
@@ -175,22 +207,30 @@ def _supervise() -> int:
         _say(f"refusing to start, missing {', '.join(missing)} in HKCU\\{SHARED_KEY}")
         return 2
     os.chdir(Path(os.environ["MEMORYMASTER_DEFAULT_DB"]).parent)  # relative tool paths never land in System32
-    backoff = 5.0
+    backoff, silent_children = 5.0, 0
     while True:
         started = time.monotonic()
         child = subprocess.Popen(
             [sys.executable, os.path.abspath(__file__), "--serve", "--parent-pid", str(os.getpid())],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
+        first_answer_deadline = min(FIRST_ANSWER_DEADLINE_SECONDS * 2 ** silent_children, STARTUP_GRACE_SECONDS)
         _say(f"started server pid {child.pid}")
         seen_healthy, failures, unhealthy_since = False, 0, None
         while child.poll() is None:
             time.sleep(PROBE_EVERY_SECONDS)
             if _healthy():
-                seen_healthy, failures, unhealthy_since = True, 0, None
+                seen_healthy, failures, unhealthy_since, silent_children = True, 0, None, 0
                 continue
-            if not seen_healthy and time.monotonic() - started < STARTUP_GRACE_SECONDS:
-                continue
+            if not seen_healthy:  # wall clock since Popen, not a probe count: a starved loop must not stretch it
+                waited = time.monotonic() - started
+                if waited < first_answer_deadline:
+                    continue
+                _say(f"server pid {child.pid} never answered /healthz in {waited:.0f}s "
+                     f"(deadline {first_answer_deadline}s, last: {_LAST_PROBE_FAILURE or 'unknown'}); killing it")
+                silent_children += 1
+                _stop_child(child)
+                break
             failures += 1
             if unhealthy_since is None:
                 unhealthy_since = time.monotonic()
