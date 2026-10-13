@@ -109,6 +109,21 @@ def test_shared_server_route_serves_the_warm_recall_behind_the_token(monkeypatch
     assert bad.status_code == 400
 
 
+def test_shared_server_stays_silent_for_a_switched_off_lane(monkeypatch, tmp_path):
+    """T-1351: older hooks still ask the server; a lane switched off in recall-hook.json gets nothing."""
+    import memorymaster.recall.context_hook as context_hook
+
+    config = tmp_path / "recall-hook.json"
+    config.write_text(json.dumps({"disabled_cwds": ["whatsappbot-final"]}), encoding="utf-8")
+    monkeypatch.setenv("MEMORYMASTER_RECALL_HOOK_CONFIG", str(config))
+    monkeypatch.setattr(context_hook, "recall", lambda q, **kw: "warm ctx")
+    client = _client(monkeypatch, "local-trusted")
+    auth = {"Authorization": "Bearer secret"}
+    off = client.post("/hook/recall", json={"query": "q", "hook_data": {"cwd": "G:/x/whatsappbot-final"}}, headers=auth)
+    on = client.post("/hook/recall", json={"query": "q", "hook_data": {"cwd": "G:/x/memorymaster"}}, headers=auth)
+    assert off.json() == {"ctx": ""} and on.json() == {"ctx": "warm ctx"}
+
+
 def test_team_mode_server_has_no_hook_recall_route(monkeypatch):
     client = _client(monkeypatch, "team")
     response = client.post("/hook/recall", json={"query": "q"}, headers={"Authorization": "Bearer secret"})

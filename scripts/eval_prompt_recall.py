@@ -49,6 +49,8 @@ def main(argv: list[str] | None = None) -> int:
 
     os.environ["MEMORYMASTER_RECALL_DENSE"] = "1" if args.mode == "dense" else "0"
     os.environ["MEMORYMASTER_RECALL_DENSE_LOG"] = os.devnull  # evaluation calls are not production traffic
+    # every prompt is its own conversation: no per-session dedup, nothing written to hook_state
+    os.environ["MEMORYMASTER_RECALL_SESSION_DEDUP"] = "0"
     from memorymaster.core.service import MemoryService
     from memorymaster.recall import context_hook as hook
 

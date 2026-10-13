@@ -3,7 +3,7 @@
 The lexical prompt hook scored nDCG@10 0.167 on 200 real prompts and injected
 5.9 claims per prompt, 72% of its top 5 useless; the dense service scored 0.337
 with the same scope. These tests pin the policy that produced that result:
-dense candidates replace the lexical pool, only scores >= 0.68 are injected,
+dense candidates replace the lexical pool, only scores >= 0.68 (raised to 0.70 on 2026-10-13, T-1351) are injected,
 every candidate passes the same authorization as any other stream, nothing is
 injected when nothing qualifies, and lexical recall runs when the service is down.
 """
@@ -106,7 +106,7 @@ def test_another_projects_claim_needs_a_very_high_score(claims, monkeypatch) -> 
     monkeypatch.setattr(dense_recall, "search", lambda query, scopes, **_: _answer(
         (ids["recoil"], 0.70), outside=((ids["other"], 0.74),)))
     _text, rendered = context_hook.recall("weapon recoil", db_path=claims["db"], return_ids=True,
-                                          hook_data=claims["hook"])
+                                          hook_data={**claims["hook"], "session_id": "s-again"})
     assert rendered == [ids["recoil"]]
 
 
@@ -144,7 +144,7 @@ def test_an_unavailable_service_falls_back_to_lexical_recall(claims, monkeypatch
 
     monkeypatch.setattr(dense_recall, "search", down)
     fallback = context_hook.recall("weapon recoil spread", db_path=claims["db"], return_ids=True,
-                                   hook_data=claims["hook"])
+                                   hook_data={**claims["hook"], "session_id": "s-fallback"})
     assert fallback == lexical and lexical[1]
     assert _events(claims["log"])[-1]["outcome"] == "fallback:URLError"
 

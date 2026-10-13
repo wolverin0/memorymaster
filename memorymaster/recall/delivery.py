@@ -9,6 +9,8 @@ import tempfile
 import time
 from typing import Callable
 
+from memorymaster.recall import hook_policy
+
 AUTOMATED_PREFIXES = (
     "[SYSTEM NOTIFICATION - NOT USER INPUT]", "<task-notification>",
     "AUTO-SAVE checkpoint", "FLEET agents=",
@@ -38,6 +40,7 @@ def reset_session(session_id: str, *, state_dir: Path | None = None) -> None:
         _state_path(session_id, state_dir).unlink(missing_ok=True)
     except OSError:
         pass
+    hook_policy.forget(session_id)  # the claims injected before are gone from the context too
 
 
 def _recent(path: Path, fingerprint: str, now: float) -> bool:

@@ -39,3 +39,33 @@ wiki, caches, and backups that cannot be proven complete. Backups expire by
 policy; they are never deleted immediately by an erasure request. Any apply
 workflow requires a verified backup, legal/product approval, an exact tenant
 and principal selector, and separate live-data authorization.
+
+## Prompt recall hook: volume, repeats and the per-lane switch
+
+The UserPromptSubmit recall hook (T-1351, decided 2026-10-13) injects at most
+2 claims per prompt, dense and lexical (`MEMORYMASTER_RECALL_HOOK_MAX_CLAIMS`).
+Dense candidates need cosine >= 0.70 (other projects >= 0.78); lexical rows
+need relevance >= 0.5 (`MEMORYMASTER_RECALL_DENSE_MIN_SCORE`,
+`..._OUTSIDE_MIN_SCORE`, `MEMORYMASTER_RECALL_LEXICAL_MIN_RELEVANCE`). A claim
+injected in a session is not injected again in it: the ids (never text) are kept
+per session under `~/.memorymaster/hook_state/recall_seen/`, at most 200 ids per
+session and 400 sessions, expiring after 12 hours and cleared by SessionStart.
+`MEMORYMASTER_RECALL_SESSION_DEDUP=0` disables it. The MCP-Shared service
+applies the cap and the dedup, so restart it after deploying.
+
+Turn the hook off for some projects, default on, without touching code or
+restarting anything: write `~/.memorymaster/recall-hook.json`. The wisp lane:
+
+```json
+{"disabled_cwds": ["whatsappbot-final", "whatsappbot", "bot-rf-optimizer"]}
+```
+
+An entry with no path separator matches any folder of the session's cwd (so
+worktrees under that repo are off too); an entry with separators matches that
+path and its subtree. `{"enabled": false}` turns the hook off everywhere. The
+file is read on every prompt; delete it (or the entries) to turn the hook back
+on. A skipped prompt shows `via=off` in the hook path and injects nothing.
+
+Measure the effect with `scripts/eval_prompt_recall.py` (fixed 200-prompt set,
+dense and lexical) and, after a week, with `scripts/review_recall_citations.py`
+(citation rate and injected characters per prompt, lanes on vs off).
