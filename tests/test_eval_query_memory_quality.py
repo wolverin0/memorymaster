@@ -1,4 +1,4 @@
-"""Hit@k, rank and zero-result math of scripts/eval_recall_quality.py.
+"""Hit@k, rank and zero-result math of scripts/eval_query_memory_quality.py.
 
 The retrieval run uses a disposable database (pattern of test_public_demo.py)
 and legacy lexical ranking only, so no embedding model is loaded.
@@ -16,14 +16,14 @@ import pytest
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
 
-SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "eval_recall_quality.py"
+SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "eval_query_memory_quality.py"
 
 
 @pytest.fixture(scope="module")
 def eval_module():
-    spec = importlib.util.spec_from_file_location("eval_recall_quality", SCRIPT)
+    spec = importlib.util.spec_from_file_location("eval_query_memory_quality", SCRIPT)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["eval_recall_quality"] = module
+    sys.modules["eval_query_memory_quality"] = module
     spec.loader.exec_module(module)
     return module
 
