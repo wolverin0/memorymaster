@@ -52,6 +52,7 @@ def handle_recall(
         token_budget=args.budget,
         trust_mode=args.trust_mode,
         output_format=args.output_format,
+        retrieval_mode=args.retrieval_mode,
         session_id=args.session_id,
         source_agent=args.source_agent,
         platform=args.platform,
