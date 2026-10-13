@@ -3,8 +3,10 @@
 Operator decision 2026-10-13 (T-1354): claims whose ``source_agent`` is
 ``llm-stop-hook`` stay ``candidate``. A blind-labelled review rated 30% of the
 hook's confirmed claims as obvious or low value, so no automatic path may
-promote them. A steward proposal approved by the operator, or any other
-explicit human/agent action, may still confirm them.
+promote them. Only an explicit operator/agent call to the lifecycle API
+(``transition_claim`` with an ``operator``/``agent`` actor) may still confirm
+them; no MCP, CLI or dashboard surface exposes that today, and steward proposals
+never target ``confirmed``.
 
 Every automatic promoter consults this module: ``core.lifecycle.transition_claim``
 enforces it for all lifecycle jobs (validator, jev revalidation, curation drain,

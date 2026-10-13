@@ -312,3 +312,44 @@ def test_clusters_never_cross_scope_or_tenant(mock_llm, store):
         assert sources in [set(ids) for ids in groups.values()]
         key = next(k for k, ids in groups.items() if set(ids) == sources)
         assert (summary.scope, summary.tenant_id) == key
+
+
+def _archived_with_author(store, text, source_agent, i):
+    from memorymaster.core.lifecycle import transition_claim
+
+    claim = store.create_claim(text=text, citations=[CitationInput(source="test")], subject="topic",
+                               predicate=f"p{i}", object_value=f"v{i}", source_agent=source_agent)
+    for status, event in (("confirmed", "transition"), ("stale", "decay"), ("archived", "compactor")):
+        transition_claim(store, claim.id, to_status=status, reason="test", event_type=event,
+                         event_payload={"actor": "operator"})
+    return claim.id
+
+
+@patch("memorymaster.govern.jobs.compact_summaries._call_llm")
+def test_summary_of_only_non_promotable_sources_stays_candidate(mock_llm, store):
+    # T-1354: a summary of llm-stop-hook claims had source_agent=None and was confirmed.
+    mock_llm.return_value = json.dumps({"summary_text": "Hook summary", "subject": "topic",
+                                        "predicate": "summary_of", "object_value": "x", "confidence": 0.9})
+    for i in range(3):
+        _archived_with_author(store, f"hook fact {i}", "llm-stop-hook", i)
+
+    result = run(store, provider="gemini", api_key="fake-key", min_cluster=3)
+
+    assert result.summaries_created == 1
+    summaries = [c for c in store.list_claims(limit=50, include_archived=True) if c.claim_type == "summary"]
+    assert len(summaries) == 1
+    assert summaries[0].status == "candidate" and summaries[0].source_agent == "llm-stop-hook"
+
+
+@patch("memorymaster.govern.jobs.compact_summaries._call_llm")
+def test_summary_of_mixed_sources_is_still_confirmed(mock_llm, store):
+    mock_llm.return_value = json.dumps({"summary_text": "Mixed summary", "subject": "topic",
+                                        "predicate": "summary_of", "object_value": "x", "confidence": 0.9})
+    for i, agent in enumerate(["llm-stop-hook", "llm-stop-hook", "claude-session"]):
+        _archived_with_author(store, f"mixed fact {i}", agent, i)
+
+    run(store, provider="gemini", api_key="fake-key", min_cluster=3)
+
+    summaries = [c for c in store.list_claims(limit=50, include_archived=True) if c.claim_type == "summary"]
+    assert len(summaries) == 1 and summaries[0].status == "confirmed"
+

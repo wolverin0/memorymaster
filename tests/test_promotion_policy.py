@@ -123,22 +123,48 @@ def test_policy_can_be_disabled_by_configuration(svc, monkeypatch):
 
 # --- validator cycle ---------------------------------------------------------
 
-def test_validator_holds_stop_hook_candidate_and_still_promotes_others(svc):
+def test_validator_leaves_stop_hook_candidate_and_still_promotes_others(svc):
     held = _claim(svc, "Release deadline is 2026-04-01 according to the stop hook",
                   source_agent=HOOK, subject="rel-a", predicate="deadline", object_value="2026-04-01")
     other = _claim(svc, "Release deadline is 2026-04-01 according to a session",
                    source_agent="claude-session", subject="rel-b", predicate="deadline",
                    object_value="2026-04-01")
 
-    first = validator.run(svc.store, min_citations=1, min_score=0.5)
-    second = validator.run(svc.store, min_citations=1, min_score=0.5)
+    validator.run(svc.store, min_citations=1, min_score=0.5)
+    validator.run(svc.store, min_citations=1, min_score=0.5)
 
     assert _status_of(svc, other) == "confirmed", "control claim must still be promoted"
     assert _status_of(svc, held) == "candidate", "stop-hook claim must not be confirmed or conflicted"
-    assert first["held_by_source_policy"] == 1 and second["held_by_source_policy"] == 1
-    holds = [e for e in svc.store.list_events(claim_id=held, event_type="validator", limit=20)
-             if e.details == "promotion_blocked_source_policy"]
-    assert len(holds) == 1, "the hold is audited once, not once per cycle"
+
+
+def test_held_stop_hook_candidates_do_not_starve_ordinary_ones(svc):
+    """Five hook candidates outrank (confidence 0.95) the one session candidate (0.7);
+    with limit=3 the old fetch-then-hold filled the window with held claims forever."""
+    for i in range(5):
+        _claim(svc, f"stop hook candidate number {i} with high confidence", source_agent=HOOK,
+               subject=f"hook-{i}", predicate="p", object_value="v", confidence=0.95)
+    ordinary = _claim(svc, "ordinary session candidate with lower confidence", source_agent="claude-session",
+                      subject="ord", predicate="p", object_value="v", confidence=0.7)
+
+    for _ in range(2):
+        validator.run(svc.store, limit=3, min_citations=1, min_score=0.5)
+
+    assert _status_of(svc, ordinary) == "confirmed"
+
+
+def test_find_by_status_excludes_sources_before_the_limit(svc):
+    for i in range(3):
+        _claim(svc, f"hook candidate {i} filling the window", source_agent=HOOK, confidence=0.95)
+    ordinary = _claim(svc, "ordinary candidate behind the hook ones", source_agent="claude-session",
+                      confidence=0.5)
+    _claim(svc, "candidate without any author", source_agent=None, confidence=0.4)
+
+    plain = svc.store.find_by_status("candidate", limit=3)
+    filtered = svc.store.find_by_status("candidate", limit=3, exclude_source_agents={HOOK})
+
+    assert ordinary not in {c.id for c in plain}
+    assert ordinary in {c.id for c in filtered} and len(filtered) == 2
+    assert all(c.source_agent != HOOK for c in filtered)
 
 
 def test_validator_revalidation_does_not_reconfirm_stale_stop_hook_claim(svc):
@@ -152,6 +178,10 @@ def test_validator_revalidation_does_not_reconfirm_stale_stop_hook_claim(svc):
 
     assert _status_of(svc, cid) == "stale"
     assert result["confirmed"] == 0
+    assert result["held_by_source_policy"] == 1
+    holds = [e for e in svc.store.list_events(claim_id=cid, event_type="validator", limit=20)
+             if e.details == "promotion_blocked_source_policy"]
+    assert len(holds) == 1
 
 
 # --- jev revalidation selection ----------------------------------------------

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
+from collections.abc import Collection
 from typing import Any, Iterable
 
 from memorymaster.core.lifecycle import can_transition
@@ -2084,6 +2085,7 @@ class PostgresStore(SQLiteStore):
         tenant_id: str | None = None,
         holder: str | None = None,
         relaxed_out: dict[str, object] | None = None,
+        exclude_source_agents: Collection[str] | None = None,
     ) -> list[Claim]:
         clauses: list[str] = []
         params: list[object] = []
@@ -2108,6 +2110,12 @@ class PostgresStore(SQLiteStore):
         if not include_archived and status != "archived":
             clauses.append("status <> 'archived'")
 
+        # Parity with SQLiteStore.list_claims: excluded in SQL so a batch limit
+        # is spent on claims the caller can use.
+        excluded = sorted(exclude_source_agents or ())
+        if excluded:
+            clauses.append(f"TRIM(COALESCE(source_agent, '')) NOT IN ({','.join('%s' for _ in excluded)})")
+            params.extend(excluded)
 
         if scope_allowlist:
             normalized_scopes = [scope.strip() for scope in scope_allowlist if scope and scope.strip()]
@@ -2805,12 +2813,19 @@ class PostgresStore(SQLiteStore):
                 f"Claim {new_id} was modified by another writer. Reload and retry."
             )
 
-    def find_by_status(self, status: str, limit: int = 100, include_citations: bool = False) -> list[Claim]:
+    def find_by_status(
+        self,
+        status: str,
+        limit: int = 100,
+        include_citations: bool = False,
+        exclude_source_agents: Collection[str] | None = None,
+    ) -> list[Claim]:
         return self.list_claims(
             status=status,
             limit=limit,
             include_archived=True,
             include_citations=include_citations,
+            exclude_source_agents=exclude_source_agents,
         )
 
     def find_archive_candidates(

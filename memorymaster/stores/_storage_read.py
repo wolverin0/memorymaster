@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from collections.abc import Collection
 from typing import TYPE_CHECKING
 
 from memorymaster.core.models import (
@@ -460,10 +461,16 @@ class _ReadMixin:
         holder: str | None = None,
         ids: list[int] | None = None,
         relaxed_out: dict[str, object] | None = None,
+        exclude_source_agents: Collection[str] | None = None,
     ) -> list[Claim]:
         clauses, params = self._build_list_clauses(
             status, status_in, include_archived, scope_allowlist, tenant_id, holder, ids
         )
+        # Excluded in SQL so a batch limit is spent on claims the caller can use.
+        excluded = sorted(exclude_source_agents or ())
+        if excluded:
+            clauses.append(f"TRIM(COALESCE(source_agent, '')) NOT IN ({','.join('?' for _ in excluded)})")
+            params.extend(excluded)
 
         fts_query = ""
         if text_query:
@@ -649,12 +656,19 @@ class _ReadMixin:
         return result
 
 
-    def find_by_status(self, status: str, limit: int = 100, include_citations: bool = False) -> list[Claim]:
+    def find_by_status(
+        self,
+        status: str,
+        limit: int = 100,
+        include_citations: bool = False,
+        exclude_source_agents: Collection[str] | None = None,
+    ) -> list[Claim]:
         return self.list_claims(
             status=status,
             limit=limit,
             include_archived=True,
             include_citations=include_citations,
+            exclude_source_agents=exclude_source_agents,
         )
 
 

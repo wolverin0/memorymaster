@@ -5,7 +5,11 @@ import contextlib
 from memorymaster.core.config import get_config
 from memorymaster.core.lifecycle import transition_claim
 from memorymaster.core.models import Claim
-from memorymaster.core.promotion_policy import PromotionPolicyBlocked, auto_promotion_blocked
+from memorymaster.core.promotion_policy import (
+    PromotionPolicyBlocked,
+    auto_promotion_blocked,
+    non_auto_promotable_sources,
+)
 from memorymaster.govern.steward_classifier import load_classifier, predict_promote_probability
 
 # Calibrated-classifier decision threshold — the (precision>=0.95, max recall)
@@ -184,7 +188,11 @@ def run(
     candidate_claims = sorted(
         (
             claim
-            for claim in store.find_by_status("candidate", limit=limit)
+            # Held authors are excluded at fetch time: they would otherwise fill
+            # the confidence-ordered window and starve every other candidate.
+            for claim in store.find_by_status(
+                "candidate", limit=limit, exclude_source_agents=non_auto_promotable_sources()
+            )
             if (claim.claim_type or "").strip().lower() != "observation"
         ),
         key=_candidate_recency_key,

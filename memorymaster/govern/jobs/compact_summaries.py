@@ -22,6 +22,7 @@ from memorymaster.govern.llm_steward import (
     _parse_extractions,
 )
 from memorymaster.core.models import CitationInput
+from memorymaster.core.promotion_policy import auto_promotion_blocked
 from memorymaster.core.security import redact_text
 
 log = logging.getLogger(__name__)
@@ -58,6 +59,18 @@ class CompactSummaryResult:
     errors: int
     dry_run: bool
     details: list[dict[str, Any]]
+
+
+def _inherited_source_agent(sources: list[Any]) -> str | None:
+    """The author a summary inherits when EVERY source claim is non-auto-promotable.
+
+    A summary of hook claims must not launder them into confirmed through a
+    NULL author; mixed clusters keep the compactor's own (unset) author.
+    """
+    agents = {str(c.source_agent or "").strip() for c in sources}
+    if agents and all(auto_promotion_blocked(agent) for agent in agents):
+        return sorted(agents)[0]
+    return None
 
 
 def _build_claim_text_block(claims: list[Any]) -> str:
@@ -373,6 +386,8 @@ def run(
                     details.append(detail)
                     continue
 
+                inherited_agent = _inherited_source_agent(sub_cluster)
+
                 # Create the summary claim
                 summary_claim = store.create_claim(
                     text=summary_text,
@@ -388,17 +403,20 @@ def run(
                     scope=sub_cluster[0].scope or "project",
                     confidence=confidence,
                     tenant_id=getattr(sub_cluster[0], "tenant_id", None),
+                    source_agent=inherited_agent,
                 )
 
-                # Transition summary claim to confirmed status
+                # Transition summary claim to confirmed status, unless its sources
+                # are all authors that never auto-promote (T-1354): it stays candidate.
                 from memorymaster.core.lifecycle import transition_claim
-                transition_claim(
-                    store,
-                    claim_id=summary_claim.id,
-                    to_status="confirmed",
-                    reason="compact-summary: LLM-generated summary of archived claims",
-                    event_type="compactor",
-                )
+                if not auto_promotion_blocked(inherited_agent):
+                    transition_claim(
+                        store,
+                        claim_id=summary_claim.id,
+                        to_status="confirmed",
+                        reason="compact-summary: LLM-generated summary of archived claims",
+                        event_type="compactor",
+                    )
 
                 # Create derived_from links from summary -> each source claim
                 links_created = 0
