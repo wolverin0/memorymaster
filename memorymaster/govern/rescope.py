@@ -82,8 +82,10 @@ def rescope_claim(store, claim_id: int, target_scope: str, *, reason: str) -> in
         raise RescopeConflict(f"Claim {claim_id} cannot be copied to {target_scope}: {exc}") from exc
     try:
         for step in _PATH[old.status]:
+            # Explicit operator move: it only restores a status the claim already held,
+            # so the non-auto-promotable source policy (T-1354) must not block the replay.
             lifecycle.transition_claim(store, new.id, step, reason=f"rescope from #{claim_id}: {reason}",
-                                       event_type="transition")
+                                       event_type="transition", event_payload={"actor": "operator"})
     except ValueError as exc:
         # e.g. a Dreaming-sourced claim cannot be re-confirmed without a source review:
         # retire the half-made copy so no live orphan is left, and keep the original.
