@@ -211,6 +211,24 @@ def test_a_path_entry_matches_that_tree_only(tmp_path, monkeypatch) -> None:
     assert not hook_policy.disabled_for("G:/other/Py Apps/wisp")
 
 
+def test_a_bare_name_matches_whole_folders_never_substrings(tmp_path, monkeypatch) -> None:
+    _config(tmp_path, monkeypatch, {"disabled_cwds": ["whatsappbot"]})
+    assert hook_policy.disabled_for("G:/Py Apps/whatsappbot")
+    assert hook_policy.disabled_for(r"G:\Py Apps\whatsappbot\sub\dir")
+    assert not hook_policy.disabled_for("G:/Py Apps/whatsappbot-final")  # sibling repo sharing the prefix
+    assert not hook_policy.disabled_for("G:/Py Apps/old-whatsappbot")  # nor a suffix
+    assert not hook_policy.disabled_for("G:/Py Apps/whatsappbot-final/.claude/worktrees/whatsappbot2")
+
+
+def test_a_path_entry_disables_only_its_own_tree(tmp_path, monkeypatch) -> None:
+    _config(tmp_path, monkeypatch, {"disabled_cwds": ["G:/Py Apps/whatsappbot"]})
+    assert hook_policy.disabled_for("G:/Py Apps/whatsappbot")
+    assert hook_policy.disabled_for("G:/Py Apps/whatsappbot/src")
+    assert not hook_policy.disabled_for("G:/Py Apps/whatsappbot-final")
+    assert not hook_policy.disabled_for("G:/Py Apps/memorymaster/whatsappbot")  # same name elsewhere
+    assert not hook_policy.disabled_for("G:/Py Apps")  # the parent is not inside the tree
+
+
 def test_the_whole_hook_can_be_turned_off(tmp_path, monkeypatch) -> None:
     _config(tmp_path, monkeypatch, {"enabled": False})
     assert hook_policy.disabled_for("G:/anything")
