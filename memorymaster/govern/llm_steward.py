@@ -26,6 +26,7 @@ from typing import Any
 
 from memorymaster.stores._storage_shared import open_conn
 from memorymaster.core import observability
+from memorymaster.core.promotion_policy import auto_promotion_blocked, non_auto_promotable_sources
 from memorymaster.core.security import sanitize_claim_input
 
 # P2 phase0 cycle cut: KeyRotator/DEFAULT_COOLDOWN_SECONDS now live in
@@ -505,6 +506,10 @@ def _confirm_candidate_cas(
     # Dreaming is reviewed against sources, then promoted unchanged by validator.
     if is_dream_claim(conn, claim_id):
         return False
+    # Backstop for the candidate query's source policy filter (T-1354).
+    row = conn.execute("SELECT source_agent FROM claims WHERE id = ?", (claim_id,)).fetchone()
+    if row is not None and auto_promotion_blocked(row[0]):
+        return False
     cur = conn.execute(
         "UPDATE claims SET status = 'confirmed', subject = ?, predicate = ?, "
         "object_value = ?, confidence = ?, version = version + 1 "
@@ -595,19 +600,29 @@ def run_steward(
 
     # Optional scope filter: when set, only that exact scope's candidates are
     # processed. When None, behaviour is unchanged (all scopes, id order).
+    # T-1354: authors in the non-auto-promotable set stay candidates. Excluding
+    # them here (not only at the confirm) keeps them from consuming the batch
+    # limit, the LLM calls and the extra-extraction inserts, which would
+    # otherwise write NEW confirmed rows derived from them.
+    blocked = sorted(non_auto_promotable_sources())
+    policy_sql = (
+        f"AND TRIM(COALESCE(source_agent, '')) NOT IN ({', '.join('?' for _ in blocked)}) "
+        if blocked
+        else ""
+    )
     if scope is not None:
         candidates = conn.execute(
             "SELECT id, text, scope, version FROM claims WHERE status = 'candidate' "
             "AND COALESCE(claim_type, '') <> 'observation' "
-            "AND text IS NOT NULL AND scope = ? ORDER BY id LIMIT ?",
-            (scope, limit),
+            f"AND text IS NOT NULL AND scope = ? {policy_sql}ORDER BY id LIMIT ?",
+            (scope, *blocked, limit),
         ).fetchall()
     else:
         candidates = conn.execute(
             "SELECT id, text, scope, version FROM claims WHERE status = 'candidate' "
             "AND COALESCE(claim_type, '') <> 'observation' "
-            "AND text IS NOT NULL ORDER BY id LIMIT ?",
-            (limit,),
+            f"AND text IS NOT NULL {policy_sql}ORDER BY id LIMIT ?",
+            (*blocked, limit),
         ).fetchall()
 
     confirmed_claim_ids: list[int] = []

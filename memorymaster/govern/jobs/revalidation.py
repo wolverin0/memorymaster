@@ -52,6 +52,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator, Mapping
 
+from memorymaster.core.promotion_policy import non_auto_promotable_sources
+
 logger = logging.getLogger(__name__)
 
 SURFACE = "revalidate"
@@ -75,6 +77,7 @@ _STALE_PAGE_SQL = """
     SELECT id, updated_at, version, text FROM claims
     WHERE status = 'stale' AND COALESCE(visibility, 'public') = 'public' AND tenant_id IS ?
       AND LOWER(TRIM(COALESCE(claim_type, ''))) <> 'observation'
+      {blocked_clause}
       AND (updated_at > ? OR (updated_at = ? AND id > ?))
     ORDER BY updated_at ASC, id ASC
     LIMIT ?
@@ -245,8 +248,20 @@ class _Selection:
         self.stop_reason: str | None = None
 
     def _page(self, cursor: tuple[str, int], size: int) -> list[tuple[int, str, Any, str]]:
+        # T-1354: re-confirming is promotion, so never pay Jev to ask about a claim
+        # whose author does not reach confirmed automatically (the lifecycle
+        # refuses that transition anyway).
+        blocked = sorted(non_auto_promotable_sources())
+        clause = (
+            f"AND TRIM(COALESCE(source_agent, '')) NOT IN ({', '.join('?' for _ in blocked)})"
+            if blocked
+            else ""
+        )
+        sql = _STALE_PAGE_SQL.format(blocked_clause=clause)
         with contextlib.closing(self.store.connect()) as conn:
-            rows = conn.execute(_STALE_PAGE_SQL, (self.tenant, cursor[0], cursor[0], cursor[1], size)).fetchall()
+            rows = conn.execute(
+                sql, (self.tenant, *blocked, cursor[0], cursor[0], cursor[1], size)
+            ).fetchall()
         return [(int(row[0]), str(row[1] or ""), row[2], _sha256(row[3])) for row in rows]
 
     def __iter__(self) -> Iterator[_Job]:

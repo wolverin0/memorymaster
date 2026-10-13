@@ -5,6 +5,7 @@ import contextlib
 from memorymaster.core.config import get_config
 from memorymaster.core.lifecycle import transition_claim
 from memorymaster.core.models import Claim
+from memorymaster.core.promotion_policy import PromotionPolicyBlocked, auto_promotion_blocked
 from memorymaster.govern.steward_classifier import load_classifier, predict_promote_probability
 
 # Calibrated-classifier decision threshold — the (precision>=0.95, max recall)
@@ -86,6 +87,22 @@ def _candidate_recency_key(claim: Claim) -> tuple[str, int]:
     return (claim.created_at, claim.id)
 
 
+_SOURCE_POLICY_HOLD = "promotion_blocked_source_policy"
+
+
+def _record_source_policy_hold(store, claim: Claim, score: float, citation_count: int) -> None:
+    """Audit the hold once, not on every cycle the claim stays a candidate."""
+    latest = store.list_events(claim_id=claim.id, event_type="validator", limit=1)
+    if latest and latest[0].details == _SOURCE_POLICY_HOLD:
+        return
+    store.record_event(
+        claim_id=claim.id,
+        event_type="validator",
+        details=_SOURCE_POLICY_HOLD,
+        payload={"score": score, "citation_count": citation_count, "claim_status": claim.status},
+    )
+
+
 def _retire_duplicate(store, claim: Claim, duplicate: Claim) -> str:
     reason = f"duplicate_of_confirmed_claim:{duplicate.id}"
     if duplicate.supersedes_claim_id in {None, claim.id}:
@@ -152,6 +169,7 @@ def run(
             "pending": 0,
             "skill_pending_approval": 0,
             "blocked_pending_supersession": 0,
+            "held_by_source_policy": 0,
             "staled": 0,
             "revalidated_healthy": 0,
             "observation_checked": 0,
@@ -184,6 +202,7 @@ def run(
     pending_supersession = _pending_supersession(store)
     confirmed = 0
     blocked_pending_supersession = 0
+    held_by_source_policy = 0
     conflicted = 0
     superseded = 0
     archived_duplicates = 0
@@ -252,6 +271,15 @@ def run(
             outcome = _retire_duplicate(store, claim, duplicate)
             superseded += int(outcome == "superseded")
             archived_duplicates += int(outcome == "archived")
+            continue
+
+        # Source policy (T-1354): some authors never reach confirmed through an
+        # automatic path. Held before the confirm try/except below, which would
+        # otherwise read the refusal as a tuple conflict and mark it conflicted.
+        if claim.status != "confirmed" and auto_promotion_blocked(claim.source_agent):
+            _record_source_policy_hold(store, claim, score, citation_count)
+            pending += 1
+            held_by_source_policy += 1
             continue
 
         # Calibrated-classifier gate (task #129): when the artifact is present
@@ -325,6 +353,8 @@ def run(
                     event_type="validator",
                 )
                 confirmed += 1
+            except PromotionPolicyBlocked:
+                raise
             except Exception:
                 # Tuple uniqueness conflict — another confirmed claim has the same
                 # (subject, predicate, scope). Mark as conflicted instead of crashing.
@@ -367,6 +397,7 @@ def run(
         "pending": pending,
         "skill_pending_approval": skill_pending_approval,
         "blocked_pending_supersession": blocked_pending_supersession,
+        "held_by_source_policy": held_by_source_policy,
         "staled": staled,
         "revalidated_healthy": revalidated_healthy,
         "observation_checked": observation_review["checked"],
