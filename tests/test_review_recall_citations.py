@@ -178,3 +178,58 @@ def test_instruction_split_empty_injection_and_silent_lane_activity(tmp_path):
     assert result["diagnostics"]["injections_without_ids"] == 1
     assert result["diagnostics"]["claims_in_injections_without_ids"] == 2
     assert result["lanes_without_observed_injection_prompts_total"] == {"silent": 0}
+
+
+def persisted_stub(target, preview):
+    return ("<persisted-output>\nOutput too large (10.2KB). Full output saved to: "
+            f"{target}\n\nPreview (first 2KB):\n{preview}")
+
+
+def test_persisted_output_payload_is_read_in_full(tmp_path):
+    home, mapping = setup_review(tmp_path, [])
+    full = home / ".claude/projects/G---Py-Apps-demo/s/tool-results/hook-1-additionalContext.txt"
+    full.parent.mkdir(parents=True)
+    full.write_text(CONTEXT, encoding="utf-8")
+    preview = "[MemoryMaster recall]\n# Memory Context\n- [mm-a1] alpha\n- [mm-b2] be"  # cut mid-line
+    write_rows(home / ".claude/projects/G---Py-Apps-demo/session.jsonl", [
+        user("p"), hook(persisted_stub(full, preview)), assistant("[mm-c3]"),
+    ])
+    result = review(home, mapping, days=7, now=NOW)
+    assert result["lanes"]["demo"]["injected_claims"] == 3
+    assert result["lanes"]["demo"]["cited_claims"] == 1
+    assert result["diagnostics"]["persisted_recall_full"] == 1
+
+
+def test_persisted_output_outside_projects_falls_back_to_preview(tmp_path):
+    home, mapping = setup_review(tmp_path, [])
+    outside = tmp_path / "elsewhere.txt"
+    outside.write_text(CONTEXT, encoding="utf-8")
+    preview = "[MemoryMaster recall]\n# Memory Context\n- [mm-a1] alpha"
+    write_rows(home / ".claude/projects/G---Py-Apps-demo/session.jsonl", [
+        user("p"), hook(persisted_stub(outside, preview)),
+        user("q"), hook(persisted_stub(outside, "<unrelated hook preview>")),
+    ])
+    result = review(home, mapping, days=7, now=NOW)
+    assert result["lanes"]["demo"]["injected_claims"] == 1
+    assert result["diagnostics"]["persisted_recall_preview_only"] == 1
+
+
+def test_os_username_scope_is_scrubbed_and_diagnostics_are_windowed(tmp_path):
+    mapping = tmp_path / "lanes.json"
+    mapping.write_text(json.dumps({"lanes": []}))
+    home = tmp_path / "alice"
+    write_rows(home / ".memorymaster/metrics/recall-dense.jsonl", [
+        {"ts": STAMP, "scope": "project:alice", "injected_ids": [1]},
+    ])
+    plain = "[MemoryMaster recall]\n# Memory Context\n\n- legacy bullet"
+    write_rows(home / ".claude/projects/G---Py-Apps-old/session.jsonl", [
+        {**user("p"), "timestamp": "2026-09-01T12:00:00Z"},
+        {**hook(plain), "timestamp": "2026-09-01T12:00:01Z"},
+        {**user("q"), "timestamp": "2026-09-01T12:00:02Z"},
+        {"type": "system", "subtype": "compact_boundary", "timestamp": "2026-09-01T12:00:03Z"},
+    ])
+    result = review(home, mapping, days=7, now=NOW)
+    assert "other:user-home" in result["dense_cross_check"]["lanes"]
+    assert "alice" not in json.dumps(result)
+    assert result["diagnostics"]["injections_without_ids"] == 0
+    assert result["diagnostics"]["compaction_boundaries"] == 0

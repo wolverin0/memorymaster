@@ -61,7 +61,15 @@ def slug_to_lane(slug, repos):
     return best[1] if best else None
 
 
-def lane_for_project_dir(name, repos):
+def other_lane(slug, home_name):
+    """other:<slug>, with anything derived from the OS username scrubbed."""
+    slug = slug.lower()
+    if home_name and home_name.lower() in slug.replace("_", "-").split("-"):
+        return "other:user-home"
+    return f"other:{slug}"
+
+
+def lane_for_project_dir(name, repos, home_name=""):
     """Transcript dir name -> lane. Never returns the raw dir (it carries the username)."""
     index = name.find(PROJECT_ANCHOR)
     if index < 0:
@@ -75,14 +83,14 @@ def lane_for_project_dir(name, repos):
     slug = rest.split("--")[0]
     if not slug:
         return "other:py-apps-root"
-    return slug_to_lane(slug, repos) or f"other:{slug.lower()}"
+    return slug_to_lane(slug, repos) or other_lane(slug, home_name)
 
 
-def lane_for_scope(scope, repos):
+def lane_for_scope(scope, repos, home_name=""):
     if isinstance(scope, str) and scope.startswith("project:"):
         slug = scope.split(":", 1)[1]
-        return slug_to_lane(slug, repos) or f"other:{slug.lower()}"
-    return f"other:{scope}" if isinstance(scope, str) else "other:unknown"
+        return slug_to_lane(slug, repos) or other_lane(slug, home_name)
+    return other_lane(scope, home_name) if isinstance(scope, str) else "other:unknown"
 
 
 def is_real_prompt(row):
@@ -116,7 +124,29 @@ def assistant_text(row):
     )
 
 
-def recall_texts(row):
+PERSISTED = "<persisted-output>"
+PERSISTED_PATH_RE = re.compile(r"Full output saved to:\s*(.+)")
+
+
+def read_persisted(item, root, diagnostics):
+    """Full recall payload behind a "<persisted-output>" stub (read-only), else the preview."""
+    preview = item.find(MARKER)
+    if preview < 0:
+        return None
+    found = PERSISTED_PATH_RE.search(item)
+    if found and root is not None:
+        try:
+            target = Path(found.group(1).strip()).resolve()
+            if target.is_file() and target.is_relative_to(root.resolve()):
+                diagnostics["persisted_recall_full"] += 1
+                return target.read_text(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+    diagnostics["persisted_recall_preview_only"] += 1
+    return item[preview:]
+
+
+def recall_texts(row, root=None, diagnostics=None):
     """Recall payloads of a UserPromptSubmit hook attachment, else []."""
     attachment = row.get("attachment")
     if row.get("type") != "attachment" or not isinstance(attachment, dict):
@@ -127,7 +157,18 @@ def recall_texts(row):
         return []
     content = attachment.get("content")
     items = [content] if isinstance(content, str) else content if isinstance(content, list) else []
-    return [item for item in items if isinstance(item, str) and item.lstrip().startswith(MARKER)]
+    texts = []
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        head = item.lstrip()
+        if head.startswith(MARKER):
+            texts.append(item)
+        elif head.startswith(PERSISTED):
+            full = read_persisted(item, root, diagnostics if diagnostics is not None else Counter())
+            if full is not None and full.lstrip().startswith(MARKER):
+                texts.append(full)
+    return texts
 
 
 class Turn:
@@ -139,7 +180,7 @@ class Turn:
         self.ids, self.cited, self.lenient = set(), set(), set()
 
 
-def scan_claude_file(path, diagnostics, turns, soft_notifications=False):
+def scan_claude_file(path, diagnostics, turns, in_window, root=None, soft_notifications=False):
     """Append every turn of the file to turns[side]; side True is inline sidechain rows."""
     state = {False: None, True: None}
     with path.open(encoding="utf-8", errors="replace") as stream:
@@ -159,11 +200,12 @@ def scan_claude_file(path, diagnostics, turns, soft_notifications=False):
             side = bool(row.get("isSidechain"))
             kind = row.get("type")
             ts = parse_time(row.get("timestamp"))
+            counted = ts is not None and in_window(ts)  # diagnostics cover the window only
             if kind == "system" and row.get("subtype") == "compact_boundary":
-                diagnostics["compaction_boundaries"] += 1
+                diagnostics["compaction_boundaries"] += counted
                 state[side] = None
             elif kind == "user" and row.get("isCompactSummary"):
-                diagnostics["compaction_boundaries"] += 1
+                diagnostics["compaction_boundaries"] += counted
                 state[False] = state[True] = None
             elif is_real_prompt(row):
                 if (soft_notifications and state[side] is not None
@@ -173,7 +215,7 @@ def scan_claude_file(path, diagnostics, turns, soft_notifications=False):
                 state[side] = Turn(key, ts, real=True)
                 turns[side].append(state[side])
             elif kind == "attachment":
-                texts = recall_texts(row)
+                texts = recall_texts(row, root, diagnostics if counted else None)
                 if not texts:
                     continue
                 turn = state[side]
@@ -184,7 +226,7 @@ def scan_claude_file(path, diagnostics, turns, soft_notifications=False):
                     turn.ts = ts
                 for text in texts:
                     found = INJECTED_RE.findall(text)
-                    if not found:
+                    if not found and counted:
                         diagnostics["injections_without_ids"] += 1
                         diagnostics["claims_in_injections_without_ids"] += len(BULLET_RE.findall(text))
                     turn.ids.update(found)
@@ -257,7 +299,7 @@ def summarize(lane_turns):
     return lanes, aggregate(everything), by_instruction
 
 
-def scan_dense(path, cutoff, repos, diagnostics):
+def scan_dense(path, cutoff, repos, diagnostics, home_name=""):
     lanes = {}
     if not path.exists():
         return {"lanes": lanes, "total": {"events": 0, "injected_claims": 0}}
@@ -271,7 +313,7 @@ def scan_dense(path, cutoff, repos, diagnostics):
             ts = parse_time(row.get("ts")) if isinstance(row, dict) else None
             if ts is None or ts < cutoff:
                 continue
-            lane = lane_for_scope(row.get("scope"), repos)
+            lane = lane_for_scope(row.get("scope"), repos, home_name)
             entry = lanes.setdefault(lane, {"events": 0, "injecting_events": 0, "injected_claims": 0,
                                             "outcomes": {}})
             ids = row.get("injected_ids") or []
@@ -332,10 +374,10 @@ def collect_transcripts(home, repos, cutoff, now, diagnostics, soft_notification
                     continue
             except OSError:
                 continue
-            lane = lane_for_project_dir(path.relative_to(projects).parts[0], repos)
+            lane = lane_for_project_dir(path.relative_to(projects).parts[0], repos, home.name)
             files["subagent" if is_sub else "main"] += 1
             file_turns = {False: [], True: []}
-            scan_claude_file(path, diagnostics, file_turns, soft_notifications)
+            scan_claude_file(path, diagnostics, file_turns, in_window, projects, soft_notifications)
             for side in (False, True):
                 bucket = is_sub or side  # inline sidechain rows are subagent activity
                 kept = [t for t in file_turns[side] if t.ts is not None and in_window(t.ts)]
@@ -351,7 +393,8 @@ def review(home, mapping_path, days=7, now=None, sensitivity=False):
     lane_names, repos = load_lane_map(mapping_path)
     diagnostics = Counter({"malformed_transcript_lines": 0, "malformed_dense_lines": 0,
                            "compaction_boundaries": 0, "injections_without_ids": 0,
-                           "claims_in_injections_without_ids": 0})
+                           "claims_in_injections_without_ids": 0,
+                           "persisted_recall_full": 0, "persisted_recall_preview_only": 0})
     main_lanes, main_total, main_split, sub_lanes, sub_total, _, files = collect_transcripts(
         home, repos, cutoff, now, diagnostics)
     silent = sorted(name for name in lane_names
@@ -373,7 +416,7 @@ def review(home, mapping_path, days=7, now=None, sensitivity=False):
             name: main_lanes.get(name, {}).get("prompts_total", 0) for name in silent},
         "unmapped_lanes_with_prompts_but_no_injection": other_silent,
         "dense_cross_check": scan_dense(home / ".memorymaster" / "metrics" / "recall-dense.jsonl",
-                                        cutoff, repos, diagnostics),
+                                        cutoff, repos, diagnostics, home.name),
         "providers": {"codex": probe_codex(home / ".codex" / "sessions", cutoff, diagnostics)},
         "diagnostics": dict(diagnostics),
     }
