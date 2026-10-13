@@ -24,7 +24,7 @@ from memorymaster.core.promotion_policy import (
 )
 from memorymaster.core.service import MemoryService
 from memorymaster.govern import llm_steward
-from memorymaster.govern.jobs import curation_drain, revalidation, validator
+from memorymaster.govern.jobs import revalidation, validator
 from memorymaster.govern.llm_steward import ExtractionResult, run_steward
 
 HOOK = "llm-stop-hook"
@@ -152,23 +152,6 @@ def test_validator_revalidation_does_not_reconfirm_stale_stop_hook_claim(svc):
 
     assert _status_of(svc, cid) == "stale"
     assert result["confirmed"] == 0
-
-
-# --- curation drain ----------------------------------------------------------
-
-def test_curation_drain_does_not_promote_or_supersede_for_a_stop_hook_winner(svc):
-    rival = _claim(svc, "la confirmada vieja con menos confianza", source_agent="claude-session",
-                   subject="s", predicate="p", object_value="v1", confidence=0.3)
-    transition_claim(svc.store, rival, "confirmed", reason="fixture")
-    winner = _claim(svc, "la conflictiva nueva del stop hook con mas confianza", source_agent=HOOK,
-                    subject="s", predicate="p", object_value="v2", confidence=0.95)
-    transition_claim(svc.store, winner, "conflicted", reason="fixture")
-
-    summary = curation_drain.drain_conflicts(svc, apply=True)
-
-    assert summary["held_by_source_policy"] == 1 and summary["resolved_won"] == 0
-    assert _status_of(svc, winner) == "conflicted"
-    assert _status_of(svc, rival) == "confirmed", "rival must not be superseded for a promotion that cannot happen"
 
 
 # --- jev revalidation selection ----------------------------------------------

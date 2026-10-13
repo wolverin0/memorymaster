@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from memorymaster.core.lifecycle import ALLOWED_TRANSITIONS, can_transition, transition_claim
+from memorymaster.core.promotion_policy import PromotionPolicyBlocked
 
 
 class TestCanTransition:
@@ -73,3 +74,25 @@ class TestTransitionClaim:
         store.apply_status_transition.assert_called_once()
         kwargs = store.apply_status_transition.call_args
         assert kwargs[1]["replaced_by_claim_id"] == 2
+
+    def test_non_auto_promotable_author_cannot_be_confirmed_automatically(self):
+        store, claim = self._mock_store("candidate")
+        claim.source_agent = "llm-stop-hook"
+        with pytest.raises(PromotionPolicyBlocked):
+            transition_claim(store, claim_id=1, to_status="confirmed", reason="validated")
+        store.apply_status_transition.assert_not_called()
+
+    def test_non_auto_promotable_author_confirms_with_explicit_actor(self):
+        store, claim = self._mock_store("candidate")
+        claim.source_agent = "llm-stop-hook"
+        transition_claim(
+            store, claim_id=1, to_status="confirmed", reason="operator",
+            event_payload={"actor": "operator"},
+        )
+        store.apply_status_transition.assert_called_once()
+
+    def test_non_auto_promotable_author_can_still_leave_confirmed(self):
+        store, claim = self._mock_store("confirmed")
+        claim.source_agent = "llm-stop-hook"
+        transition_claim(store, claim_id=1, to_status="stale", reason="decay")
+        store.apply_status_transition.assert_called_once()
