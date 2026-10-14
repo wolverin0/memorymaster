@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import sys
 import textwrap
+import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -398,11 +399,20 @@ _CONTENDED_WRITER = textwrap.dedent(
 
 
 def _record_ledger_errors(ledger: DecisionLedger, causes: list) -> None:
-    """Append ``(class, message, 0)`` for every exception the ledger's connect/retry plumbing raises."""
+    """Append ``(class, message, where)`` for every exception the ledger's connect/retry plumbing raises.
+
+    ``where`` is the innermost ledger/shared-envelope frame (``file:line``) that raised, so a failure on
+    CI says whether the open, the ``user_version`` check, the schema probe or the SELECT locked out.
+    ``_connect`` runs its steps through ``_retry_locked``, so one failed read notes the inner step and
+    then ``_connect`` itself: read the first entry for the cause.
+    """
     connect, retry = ledger._connect, ledger._retry_locked
 
     def note(exc: BaseException) -> None:
-        causes.append((type(exc).__name__, str(exc)[:80], 0))
+        frames = [f for f in traceback.extract_tb(exc.__traceback__)
+                  if os.path.basename(f.filename) in ("ledger.py", "_storage_shared.py")]
+        where = f"{os.path.basename(frames[-1].filename)}:{frames[-1].lineno}" if frames else "?"
+        causes.append((type(exc).__name__, str(exc)[:80], where))
 
     def spying_connect():
         try:
@@ -444,13 +454,14 @@ def test_bounded_reads_survive_concurrent_hook_writers(tmp_path):
     timing = not os.environ.get("MEMORYMASTER_SKIP_PERF")
     bound_ms, min_reads = (250, 50) if timing else (5000, 10)
     misses, reads = 0, 0
-    causes: list[tuple[str, str, int]] = []  # what a miss was, so a CI failure is diagnosable
+    missed: list[tuple[int, list]] = []  # (ms until the read gave up, what raised): a CI failure is diagnosable
     try:
         time.sleep(0.4)  # let the writers start contending
         end = time.monotonic() + 2.0
         while time.monotonic() < end:
             reader = DecisionLedger(path)  # a fresh hook process each time
-            _record_ledger_errors(reader, causes)
+            errors: list = []
+            _record_ledger_errors(reader, errors)
             started = time.perf_counter()
             with reader.bounded(bound_ms):
                 try:
@@ -458,15 +469,16 @@ def test_bounded_reads_survive_concurrent_hook_writers(tmp_path):
                 except ld.LedgerReadError:
                     value = None
             reads += 1
-            misses += value != "2030-01-01T00:00:00+00:00"
-            if value is None and causes:
-                causes[-1] = (*causes[-1][:2], int((time.perf_counter() - started) * 1000))
+            if value != "2030-01-01T00:00:00+00:00":
+                misses += 1
+                missed.append((int((time.perf_counter() - started) * 1000), errors))
     finally:
         outputs = [p.communicate(timeout=60) for p in writers]
     assert all(p.returncode == 0 for p in writers), [err for _, err in outputs]
-    # (error class, message, ms until the read gave up): ~bound_ms is the bound, a fast one is an
-    # error the bounded retry does not classify as a lock
-    assert reads > min_reads and misses == 0, (misses, reads, causes)
+    # A miss after ~bound_ms retried the whole bound and never got in (lockout/starvation, CI
+    # Windows 2026-10-14: "database is locked" for 5151 ms of a 5000 ms bound); a fast one is an
+    # error the bounded retry does not classify as a lock.
+    assert reads > min_reads and misses == 0, (misses, reads, bound_ms, missed)
 
 
 def test_registered_questions_are_read_first_and_need_no_write_lock(tmp_path):
