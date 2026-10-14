@@ -397,6 +397,30 @@ _CONTENDED_WRITER = textwrap.dedent(
 )
 
 
+def _record_ledger_errors(ledger: DecisionLedger, causes: list) -> None:
+    """Append ``(class, message, 0)`` for every exception the ledger's connect/retry plumbing raises."""
+    connect, retry = ledger._connect, ledger._retry_locked
+
+    def note(exc: BaseException) -> None:
+        causes.append((type(exc).__name__, str(exc)[:80], 0))
+
+    def spying_connect():
+        try:
+            return connect()
+        except Exception as exc:
+            note(exc)
+            raise
+
+    def spying_retry(work):
+        try:
+            return retry(work)
+        except Exception as exc:
+            note(exc)
+            raise
+
+    ledger._connect, ledger._retry_locked = spying_connect, spying_retry
+
+
 def test_bounded_reads_survive_concurrent_hook_writers(tmp_path):
     """Hook processes open, write and close the ledger all the time; a bounded read in
     between (WAL recovery, header reads) must be retried within the bound, never
@@ -415,15 +439,19 @@ def test_bounded_reads_survive_concurrent_hook_writers(tmp_path):
         for w in range(6)
     ]
     # The 250 ms hook bound is a wall-clock limit: under MEMORYMASTER_SKIP_PERF (shared CI
-    # runners, one miss in 81 on Windows 2026-09-24) the retry is exercised with a wider bound.
+    # runners; one miss in 81 on Windows 2026-09-24 and again at a 2 s bound on 2026-10-13/14, where
+    # the Windows suite runs 5-9x slower than Ubuntu) the retry is exercised with a wider bound.
     timing = not os.environ.get("MEMORYMASTER_SKIP_PERF")
-    bound_ms, min_reads = (250, 50) if timing else (2000, 20)
+    bound_ms, min_reads = (250, 50) if timing else (5000, 10)
     misses, reads = 0, 0
+    causes: list[tuple[str, str, int]] = []  # what a miss was, so a CI failure is diagnosable
     try:
         time.sleep(0.4)  # let the writers start contending
         end = time.monotonic() + 2.0
         while time.monotonic() < end:
             reader = DecisionLedger(path)  # a fresh hook process each time
+            _record_ledger_errors(reader, causes)
+            started = time.perf_counter()
             with reader.bounded(bound_ms):
                 try:
                     value = reader.get_watermark("breaker:recall", strict=True)
@@ -431,10 +459,14 @@ def test_bounded_reads_survive_concurrent_hook_writers(tmp_path):
                     value = None
             reads += 1
             misses += value != "2030-01-01T00:00:00+00:00"
+            if value is None and causes:
+                causes[-1] = (*causes[-1][:2], int((time.perf_counter() - started) * 1000))
     finally:
         outputs = [p.communicate(timeout=60) for p in writers]
     assert all(p.returncode == 0 for p in writers), [err for _, err in outputs]
-    assert reads > min_reads and misses == 0, (misses, reads)
+    # (error class, message, ms until the read gave up): ~bound_ms is the bound, a fast one is an
+    # error the bounded retry does not classify as a lock
+    assert reads > min_reads and misses == 0, (misses, reads, causes)
 
 
 def test_registered_questions_are_read_first_and_need_no_write_lock(tmp_path):
