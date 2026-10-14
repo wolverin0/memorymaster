@@ -5,6 +5,11 @@ import os
 from typing import Callable, Optional
 
 from memorymaster.core.models import Claim
+from memorymaster.core.promotion_policy import (
+    PromotionPolicyBlocked,
+    auto_promotion_blocked,
+    is_explicit_actor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +70,12 @@ def transition_claim(
     event_payload: dict[str, object] | None = None,
 ) -> Claim:
     """``event_payload`` adds fields to the transition event's payload (e.g.
-    the steward resolution ``actor``, review F-21)."""
+    the steward resolution ``actor``, review F-21).
+
+    Confirming a claim whose author is in the non-auto-promotable set
+    (``core.promotion_policy``) raises :class:`PromotionPolicyBlocked` unless
+    ``event_payload["actor"]`` marks an explicit decision (``operator``/``agent``).
+    """
     claim = store.get_claim(claim_id, include_citations=False)
     if claim is None:
         raise ValueError(f"Claim {claim_id} does not exist.")
@@ -75,6 +85,15 @@ def transition_claim(
         raise ValueError(f"Invalid transition: {claim.status} -> {to_status}")
     if to_status == "superseded" and replaced_by_claim_id is None:
         raise ValueError("Superseded transition requires replaced_by_claim_id.")
+    if (
+        to_status == "confirmed"
+        and auto_promotion_blocked(claim.source_agent)
+        and not is_explicit_actor(event_payload)
+    ):
+        raise PromotionPolicyBlocked(
+            f"Claim {claim_id} source_agent '{claim.source_agent}' is not auto-promotable; "
+            "confirm it with an explicit operator/agent actor."
+        )
     extra = {"event_payload": event_payload} if event_payload else {}
     updated = store.apply_status_transition(
         claim,

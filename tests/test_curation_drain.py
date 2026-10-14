@@ -178,3 +178,27 @@ def test_proposal_drain_keeps_operator_claims(svc, monkeypatch):
 
     assert r["kept_for_operator"] == 1
     assert aprobadas == [2], f"se aprobo una propuesta del operador: {aprobadas}"
+
+
+# --- T-1354: autores que no se auto-promueven ------------------------------
+
+def test_a_stop_hook_winner_is_not_promoted_and_does_not_supersede_the_rival(svc):
+    rival = _claim(svc, "la confirmada vieja con menos confianza",
+                   subject="s", predicate="p", object_value="v1", confidence=0.3)
+    _status(svc, rival, "confirmed")
+    ganador = svc.ingest(
+        text="la conflictiva nueva del stop hook con mas confianza",
+        citations=[CitationInput(source="session://t", locator="turn", excerpt="stop hook")],
+        subject="s", predicate="p", object_value="v2", scope="project:x", confidence=0.95,
+        source_agent="llm-stop-hook",
+    ).id
+    _status(svc, ganador, "conflicted")
+
+    r = curation_drain.drain_conflicts(svc, apply=True)
+
+    assert r["held_by_source_policy"] == 1 and r["resolved_won"] == 0
+    assert _get(svc, ganador).status == "conflicted"
+    assert _get(svc, rival).status == "confirmed", (
+        "la rival no puede quedar superseded por una promocion que no va a ocurrir"
+    )
+

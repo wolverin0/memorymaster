@@ -39,6 +39,7 @@ import logging
 import re
 from typing import Any
 
+from memorymaster.core.promotion_policy import auto_promotion_blocked
 from memorymaster.govern.conflict_resolver import (
     SupersessionRaceLost,
     _pick_winner,
@@ -103,6 +104,7 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
         "resolved_won": 0,
         "resolved_orphan": 0,
         "kept_for_operator": 0,
+        "held_by_source_policy": 0,
         "skipped_race": 0,
         "dry_run": not apply,
     }
@@ -136,6 +138,12 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
             else:
                 # (b) el conflicted gana: primero la supersesion (libera la
                 # tupla del indice unico de confirmadas), despues la promocion.
+                if auto_promotion_blocked(claim.source_agent):
+                    # T-1354: este autor no se promueve a confirmed por un camino
+                    # automatico. Se corta ANTES de la supersesion: superar a la
+                    # rival y despues fallar la promocion dejaria la tupla vacia.
+                    summary["held_by_source_policy"] += 1
+                    continue
                 if apply:
                     supersede_claim(
                         store,

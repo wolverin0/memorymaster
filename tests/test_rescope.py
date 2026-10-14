@@ -27,13 +27,14 @@ def store(tmp_path: Path, monkeypatch):
     return svc.store
 
 
-def _claim(store, status: str):
+def _claim(store, status: str, source_agent: str | None = None):
     claim = store.create_claim(text="whatsappbot reclamos are triaged before 9am", subject="whatsappbot",
                                predicate="triage_time", object_value="before 9am", confidence=0.83,
                                citations=[CitationInput(source="session://x", locator="turn:4", excerpt="triage")],
-                               scope="project:py-apps")
+                               scope="project:py-apps", source_agent=source_agent)
     for step in {"candidate": (), "confirmed": ("confirmed",), "stale": ("confirmed", "stale")}[status]:
-        lifecycle.transition_claim(store, claim.id, step, reason="fixture", event_type="validator")
+        lifecycle.transition_claim(store, claim.id, step, reason="fixture", event_type="validator",
+                                   event_payload={"actor": "operator"} if source_agent else None)
     return claim.id
 
 
@@ -157,3 +158,15 @@ def test_two_duplicates_can_both_merge_into_the_same_existing_claim(store) -> No
     for old in (first, second):
         claim = store.get_claim(old, include_citations=False)
         assert (claim.status, claim.replaced_by_claim_id) == ("superseded", keeper)
+
+
+@pytest.mark.parametrize("status", ["candidate", "confirmed", "stale"])
+def test_a_stop_hook_claim_keeps_its_status_through_a_move(store, status) -> None:
+    # T-1354: the replay used to go through the auto-promotion policy and raised
+    # RescopeConflict for an old confirmed/stale llm-stop-hook row.
+    old_id = _claim(store, status, source_agent="llm-stop-hook")
+    new_id = rescope.rescope_claim(store, old_id, "project:y", reason="move")
+    old, new = store.get_claim(old_id), store.get_claim(new_id)
+    assert (new.scope, new.status, new.source_agent) == ("project:y", status, "llm-stop-hook")
+    assert (old.status, old.replaced_by_claim_id) == ("superseded", new_id)
+
