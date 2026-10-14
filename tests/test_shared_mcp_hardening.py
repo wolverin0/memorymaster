@@ -590,17 +590,20 @@ class _Stop(Exception):
     pass
 
 
-def _orphan_rig(launcher, monkeypatch, tmp_path, *, dies_on_taskkill_call, kill_raises=None):
+def _orphan_rig(launcher, monkeypatch, tmp_path, *, dies_on_taskkill_call, kill_raises=None,
+                hang_taskkill=False, expire_first_taskkills=0):
     """Supervisor wired to fakes: the first child ignores kill(); taskkill kills it on call N.
 
     ``dies_on_taskkill_call=None`` means the orphan survives every taskkill (unkillable).
     ``run()`` raises _Stop once the supervisor tries a second Popen or after the backoff sleeps
-    pass ``state['max_backoffs']``.
+    pass ``state['max_backoffs']``. ``hang_taskkill`` makes every taskkill call block until
+    ``state['release']`` is set (subprocess.run's unbounded post-timeout wait on a taskkill that cannot be
+    killed); ``expire_first_taskkills=N`` makes the first N calls raise TimeoutExpired.
     """
     g = launcher["_supervise"].__globals__
     clock = {"now": 0.0}
     state = {"popens": [], "taskkills": [], "backoff_sleeps": 0, "max_backoffs": 6,
-             "alive_at_popen": [], "orphan_alive": True, "kill_calls": 0}
+             "alive_at_popen": [], "orphan_alive": True, "kill_calls": 0, "release": threading.Event()}
 
     class FakeChild:
         def __init__(self, argv, **kwargs):
@@ -630,6 +633,10 @@ def _orphan_rig(launcher, monkeypatch, tmp_path, *, dies_on_taskkill_call, kill_
 
     def run_cmd(argv, **kwargs):
         state["taskkills"].append(list(argv))
+        if hang_taskkill:
+            state["release"].wait(30)  # bounded so a regression leaves no immortal thread behind
+        if len(state["taskkills"]) <= expire_first_taskkills:
+            raise _Expired(kwargs.get("timeout"))
         if dies_on_taskkill_call is not None and len(state["taskkills"]) >= dies_on_taskkill_call:
             state["orphan_alive"] = False
         return SimpleNamespace(returncode=0)
@@ -688,6 +695,146 @@ def test_supervisor_replaces_the_server_once_a_later_retry_finally_kills_it(laun
         run()
     assert len(state["taskkills"]) == 3
     assert state["alive_at_popen"] == [True, False]
+
+
+# --- T-1346: a child that never answers is not given 7+ minutes, and a hung taskkill cannot freeze supervision ----
+# 2026-10-13 13:20Z: pid 263296 never bound the port and survived 19 min; 13:12Z: taskkill /F /T needed 57 s
+# for a 30 s timeout. subprocess.run(timeout=) kills the stuck taskkill and then waits for it with NO timeout.
+
+
+def _supervise_in_thread(run):
+    outcome: dict = {}
+
+    def target():
+        try:
+            run()
+        except BaseException as exc:  # noqa: BLE001 - the test inspects it
+            outcome["exc"] = exc
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    return thread, outcome
+
+
+def test_supervisor_does_not_block_behind_a_taskkill_that_never_returns(launcher, monkeypatch, tmp_path, capsys):
+    run, state = _orphan_rig(launcher, monkeypatch, tmp_path, dies_on_taskkill_call=None, hang_taskkill=True)
+    g = launcher["_supervise"].__globals__
+    g["TASKKILL_TIMEOUT_SECONDS"], g["TASKKILL_ABANDON_GRACE_SECONDS"] = 0.05, 0.05  # real-time waits in the fake
+    state["max_backoffs"] = 3
+    thread, outcome = _supervise_in_thread(run)
+    try:
+        thread.join(timeout=10)
+        stalled = thread.is_alive()
+    finally:
+        state["release"].set()  # unblock the fake taskkill so no thread outlives the test
+        thread.join(timeout=10)
+    out = capsys.readouterr().out
+    assert not stalled, "supervision froze behind a taskkill that never returned"
+    assert isinstance(outcome.get("exc"), _Stop)  # ended by the rig's backoff budget, not by a hang or a crash
+    assert len(state["popens"]) == 1 and "second_popen" not in state  # the orphan still holds the port
+    assert state["backoff_sleeps"] >= 3  # kept supervising: three full kill rounds
+    assert len(state["taskkills"]) == 1  # no pile of taskkills queued behind the blocked one
+    assert "is blocked past its own timeout; abandoning it" in out
+    assert "an earlier taskkill is still blocked" in out
+    assert "is STILL alive" in out and "round 3" in out
+
+
+def test_supervisor_logs_a_taskkill_timeout_and_retries_until_the_orphan_dies(launcher, monkeypatch, tmp_path, capsys):
+    run, state = _orphan_rig(launcher, monkeypatch, tmp_path, dies_on_taskkill_call=3, expire_first_taskkills=2)
+    g = launcher["_supervise"].__globals__
+    g["TASKKILL_TIMEOUT_SECONDS"] = 30
+    with pytest.raises(_Stop):
+        run()
+    out = capsys.readouterr().out
+    assert out.count("TIMED OUT after 30s") == 2  # each expiry is named, not buried in a repr
+    assert len(state["taskkills"]) == 3
+    assert state["alive_at_popen"] == [True, False]  # the replacement waited for the orphan to die
+
+
+def _boot_rig(launcher, monkeypatch, tmp_path, children, horizon=None):
+    """Supervisor on a fake clock. ``children`` is one ``(answers_after, dies_at)`` per Popen, in seconds since
+    that child started (None = never). The rig raises _Stop on the Popen after the last child."""
+    g = launcher["_supervise"].__globals__
+    clock = {"now": 0.0}
+    kids: list[dict] = []
+
+    class FakeChild:
+        def __init__(self, argv, **kwargs):
+            if len(kids) >= len(children):
+                raise _Stop
+            self.pid, self.returncode = 5000 + len(kids), None
+            self.info = {"start": clock["now"], "killed_at": None,
+                         "answers_after": children[len(kids)][0], "dies_at": children[len(kids)][1]}
+            kids.append(self.info)
+
+        def poll(self):
+            dies_at = self.info["dies_at"]
+            if self.returncode is None and dies_at is not None and clock["now"] - self.info["start"] >= dies_at:
+                self.returncode = 1
+            return self.returncode
+
+        def kill(self):
+            self.returncode, self.info["killed_at"] = -9, clock["now"]
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+    def sleep(seconds):
+        clock["now"] += seconds
+        if horizon is not None and kids and clock["now"] - kids[-1]["start"] > horizon:
+            raise _Stop
+
+    def healthy():
+        info = kids[-1]
+        return info["answers_after"] is not None and clock["now"] - info["start"] >= info["answers_after"]
+
+    for name in ("MEMORYMASTER_MCP_HTTP_TOKEN", "MEMORYMASTER_MCP_WORKSPACE_ALLOWLIST", "MEMORYMASTER_MCP_DB_ALLOWLIST"):
+        monkeypatch.setenv(name, "x")
+    monkeypatch.setenv("MEMORYMASTER_DEFAULT_DB", str(tmp_path / "memorymaster.db"))
+    monkeypatch.chdir(tmp_path.parent)
+    g["_single_instance"] = lambda: True
+    g["_load_shared_environment"] = lambda: []
+    g["_healthy"] = healthy
+    g["time"] = SimpleNamespace(sleep=sleep, monotonic=lambda: clock["now"], strftime=lambda f, *_: "t", gmtime=lambda: None)
+    g["subprocess"] = SimpleNamespace(Popen=FakeChild, DEVNULL=None, TimeoutExpired=_Expired)
+    return g["_supervise"], kids
+
+
+def _kill_after(kids):
+    return [None if k["killed_at"] is None else round(k["killed_at"] - k["start"]) for k in kids]
+
+
+def test_supervisor_kills_a_child_that_never_answers_within_the_first_answer_deadline(launcher, monkeypatch, tmp_path):
+    run, kids = _boot_rig(launcher, monkeypatch, tmp_path, [(None, None)])
+    with pytest.raises(_Stop):
+        run()
+    g = launcher["_supervise"].__globals__
+    assert g["FIRST_ANSWER_DEADLINE_SECONDS"] == 60
+    # killed on the first probe after 60 s (not after the 300 s grace plus a 120 s outage window = ~410 s)
+    assert 60 <= kids[0]["killed_at"] - kids[0]["start"] <= 60 + 2 * g["PROBE_EVERY_SECONDS"]
+
+
+def test_consecutive_children_that_never_answer_get_longer_deadlines_up_to_the_startup_grace(launcher, monkeypatch, tmp_path):
+    # A slow import under an I/O storm must not be killed every 60 s forever (54 restarts on 2026-10-11).
+    run, kids = _boot_rig(launcher, monkeypatch, tmp_path, [(None, None)] * 5)
+    with pytest.raises(_Stop):
+        run()
+    assert _kill_after(kids) == [60, 120, 240, 300, 300]
+
+
+def test_a_slow_boot_after_a_killed_one_is_not_killed_once_it_answers(launcher, monkeypatch, tmp_path):
+    # Measured healthy boots reach 297 s; the second child's 100 s boot fits its 120 s deadline.
+    run, kids = _boot_rig(launcher, monkeypatch, tmp_path, [(None, None), (100, None)], horizon=400)
+    with pytest.raises(_Stop):
+        run()
+    assert _kill_after(kids) == [60, None]
+
+
+def test_a_healthy_run_resets_the_first_answer_deadline(launcher, monkeypatch, tmp_path):
+    run, kids = _boot_rig(launcher, monkeypatch, tmp_path, [(None, None), (20, 40), (None, None), (None, None)])
+    with pytest.raises(_Stop):
+        run()
+    assert _kill_after(kids) == [60, None, 60, 120]  # child 2 lived and died on its own, so child 3 starts over at 60
 
 
 @pytest.mark.parametrize(
