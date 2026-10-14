@@ -5,7 +5,7 @@ Complete inventory of `MEMORYMASTER_*` variables referenced in the package,
 script after adding or removing a variable. For what each does, follow the
 listed source files (most are read next to a docstring or comment).
 
-Total: 271 variables.
+Total: 297 variables.
 
 | Variable | Referenced in |
 |---|---|
@@ -55,7 +55,7 @@ Total: 271 variables.
 | `MEMORYMASTER_DEDUPE_ENABLED` | `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py`, `memorymaster/govern/candidate_dedupe.py` |
 | `MEMORYMASTER_DEDUPE_JACCARD_HIGH` | `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py`, `memorymaster/govern/candidate_dedupe.py` |
 | `MEMORYMASTER_DEDUPE_SHADOW` | `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py`, `memorymaster/govern/candidate_dedupe.py` |
-| `MEMORYMASTER_DEFAULT_DB` | `memorymaster/config_templates/hooks/memorymaster-dream-sync.py`, `memorymaster/config_templates/hooks/memorymaster-pretooluse-recall.py`, `memorymaster/config_templates/hooks/memorymaster-recall.py`, `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py` (+6 more) |
+| `MEMORYMASTER_DEFAULT_DB` | `memorymaster/config_templates/hooks/memorymaster-dream-sync.py`, `memorymaster/config_templates/hooks/memorymaster-pretooluse-recall.py`, `memorymaster/config_templates/hooks/memorymaster-recall.py`, `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py` (+7 more) |
 | `MEMORYMASTER_DEFAULT_PROJECT_SCOPE` | `memorymaster/surfaces/mcp_server.py` |
 | `MEMORYMASTER_DISABLE_ST` | `memorymaster/knowledge/wiki_similarity.py` |
 | `MEMORYMASTER_DREAM_CAPTURE_MAX_BYTES` | `memorymaster/dreaming/worker.py` |
@@ -67,8 +67,11 @@ Total: 271 variables.
 | `MEMORYMASTER_DREAM_EXTRACT_MODEL` | `memorymaster/capture/worker.py`, `memorymaster/dreaming/providers.py`, `memorymaster/surfaces/scheduled_task.py`, `memorymaster/surfaces/setup_hooks.py` |
 | `MEMORYMASTER_DREAM_EXTRACT_PROVIDER` | `memorymaster/capture/worker.py`, `memorymaster/dreaming/providers.py`, `memorymaster/surfaces/scheduled_task.py`, `memorymaster/surfaces/setup_hooks.py` |
 | `MEMORYMASTER_DREAM_EXTRACT_VARIANT` | `memorymaster/capture/worker.py`, `memorymaster/dreaming/providers.py`, `memorymaster/surfaces/scheduled_task.py`, `memorymaster/surfaces/setup_hooks.py` |
+| `MEMORYMASTER_DREAM_GEMINI_MIN_INTERVAL_S` | `memorymaster/dreaming/providers.py` |
+| `MEMORYMASTER_DREAM_GEMINI_TPM_BUDGET` | `memorymaster/dreaming/providers.py` |
 | `MEMORYMASTER_DREAM_HELD_RETAIN_DAYS` | `memorymaster/dreaming/held.py` |
 | `MEMORYMASTER_DREAM_IDLE_MINUTES` | `memorymaster/dreaming/worker.py` |
+| `MEMORYMASTER_DREAM_INTERVAL_MINUTES` | `memorymaster/dreaming/ledger.py` |
 | `MEMORYMASTER_DREAM_LEASE_TTL_SECONDS` | `memorymaster/dreaming/worker.py` |
 | `MEMORYMASTER_DREAM_MAX_CANDIDATE_WRITES_DAILY` | `memorymaster/dreaming/worker.py` |
 | `MEMORYMASTER_DREAM_MAX_CAPTURE_ERRORS` | `memorymaster/dreaming/worker.py` |
@@ -89,9 +92,12 @@ Total: 271 variables.
 | `MEMORYMASTER_EVERYTHING_ES_PATH` | `memorymaster/bridges/local_search/everything.py`, `memorymaster/surfaces/setup_hooks.py` |
 | `MEMORYMASTER_EVERYTHING_TIMEOUT` | `memorymaster/bridges/local_search/everything.py` |
 | `MEMORYMASTER_FRESHNESS_HALFLIFE` | `memorymaster/core/config.py` |
+| `MEMORYMASTER_FUZZY_DEDUP` | `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py`, `memorymaster/govern/fuzzy_dedupe.py` |
+| `MEMORYMASTER_FUZZY_DEDUP_PER_CYCLE` | `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py`, `memorymaster/govern/fuzzy_dedupe.py` |
 | `MEMORYMASTER_GRAPH_OBSERVATIONS` | `memorymaster/dreaming/worker.py`, `memorymaster/operations/operational_review.py` |
 | `MEMORYMASTER_HEBBIAN_DECAY` | `memorymaster/core/service.py`, `memorymaster/govern/jobs/decay.py` |
 | `MEMORYMASTER_HEBBIAN_DECAY_LAMBDA` | `memorymaster/govern/jobs/decay.py` |
+| `MEMORYMASTER_HOOK_RECALL_REMOTE` | `memorymaster/recall/remote.py` |
 | `MEMORYMASTER_INITDB_FASTPATH` | `memorymaster/stores/migrations/__init__.py`, `memorymaster/stores/storage.py` |
 | `MEMORYMASTER_INTAKE_DEFAULT_SOURCE_AGENT` | `memorymaster/core/intake_policy.py` |
 | `MEMORYMASTER_INTAKE_MAX_PER_STOP` | `memorymaster/core/intake_policy.py` |
@@ -145,12 +151,13 @@ Total: 271 variables.
 | `MEMORYMASTER_MCP_ADMIN_MODE` | `memorymaster/surfaces/mcp_path_policy.py`, `memorymaster/surfaces/mcp_server.py` |
 | `MEMORYMASTER_MCP_ALLOWED_SCOPES` | `memorymaster/core/access_control.py` |
 | `MEMORYMASTER_MCP_ALLOW_SENSITIVE` | `memorymaster/core/access_control.py` |
-| `MEMORYMASTER_MCP_AUTH_MODE` | `memorymaster/core/access_control.py`, `memorymaster/surfaces/setup_hooks.py` |
+| `MEMORYMASTER_MCP_AUTH_MODE` | `memorymaster/core/access_control.py`, `memorymaster/surfaces/mcp_http.py`, `memorymaster/surfaces/setup_hooks.py` |
 | `MEMORYMASTER_MCP_DB` | `memorymaster/core/access_control.py` |
 | `MEMORYMASTER_MCP_DB_ALLOWLIST` | `memorymaster/surfaces/mcp_path_policy.py`, `memorymaster/surfaces/mcp_server.py` |
 | `MEMORYMASTER_MCP_HTTP_ALLOWED_HOSTS` | `memorymaster/surfaces/mcp_http.py` |
-| `MEMORYMASTER_MCP_HTTP_TOKEN` | `memorymaster/surfaces/mcp_http.py` |
+| `MEMORYMASTER_MCP_HTTP_TOKEN` | `memorymaster/core/shared_mcp.py`, `memorymaster/surfaces/mcp_http.py`, `memorymaster/surfaces/mcp_stdio_proxy.py` |
 | `MEMORYMASTER_MCP_PRINCIPAL` | `memorymaster/core/access_control.py` |
+| `MEMORYMASTER_MCP_STALL_DUMP_SECONDS` | `memorymaster/surfaces/mcp_http.py` |
 | `MEMORYMASTER_MCP_TENANT_ID` | `memorymaster/core/access_control.py` |
 | `MEMORYMASTER_MCP_TOOL_PROFILE` | `memorymaster/surfaces/mcp_server.py` |
 | `MEMORYMASTER_MCP_WORKSPACE` | `memorymaster/core/access_control.py` |
@@ -174,13 +181,16 @@ Total: 271 variables.
 | `MEMORYMASTER_PROFILE_MAX_MAP_CALLS` | `memorymaster/profile/engine.py` |
 | `MEMORYMASTER_PROFILE_MAX_MESSAGES` | `memorymaster/profile/engine.py` |
 | `MEMORYMASTER_PROFILE_MIN_SESSIONS` | `memorymaster/profile/engine.py` |
-| `MEMORYMASTER_PROFILE_OUTPUT_DIR` | `memorymaster/profile/engine.py` |
+| `MEMORYMASTER_PROFILE_OUTPUT_DIR` | `memorymaster/operations/operational_review.py`, `memorymaster/profile/engine.py` |
 | `MEMORYMASTER_PROFILE_PREFERENCE_TTL_DAYS` | `memorymaster/profile/engine.py` |
 | `MEMORYMASTER_PROFILE_PROVIDER_TIMEOUT` | `memorymaster/profile/providers.py` |
 | `MEMORYMASTER_PROFILE_REDUCE_BATCH` | `memorymaster/profile/engine.py` |
 | `MEMORYMASTER_PROFILE_REDUCE_MODEL` | `memorymaster/profile/providers.py` |
 | `MEMORYMASTER_PROFILE_TOKEN_BUDGET` | `memorymaster/profile/engine.py` |
 | `MEMORYMASTER_PROVIDER_FAILURE_EVENT_INTERVAL_SECONDS` | `memorymaster/core/provider_health.py` |
+| `MEMORYMASTER_PROXY_CACHE` | `memorymaster/surfaces/mcp_stdio_proxy.py` |
+| `MEMORYMASTER_PROXY_ROOTS` | `memorymaster/surfaces/mcp_stdio_proxy.py` |
+| `MEMORYMASTER_PROXY_WORKSPACE` | `memorymaster/surfaces/mcp_stdio_proxy.py` |
 | `MEMORYMASTER_QDRANT_DRIFT_MAX` | `memorymaster/core/service.py`, `memorymaster/govern/jobs/qdrant_reconcile.py`, `memorymaster/surfaces/cli.py` |
 | `MEMORYMASTER_QDRANT_GOVERNED_READS` | `memorymaster/surfaces/mcp_server.py` |
 | `MEMORYMASTER_QDRANT_OUTBOX_DIR` | `memorymaster/recall/qdrant_outbox.py` |
@@ -195,6 +205,13 @@ Total: 271 variables.
 | `MEMORYMASTER_RECALL_AUTO_GATE_THRESHOLD_` | `memorymaster/recall/context_hook.py` |
 | `MEMORYMASTER_RECALL_CLOSETS` | `memorymaster/knowledge/closets.py`, `memorymaster/recall/context_hook.py` |
 | `MEMORYMASTER_RECALL_CLOSETS_BOOST_ONLY` | `memorymaster/recall/context_hook.py` |
+| `MEMORYMASTER_RECALL_DENSE` | `memorymaster/recall/context_hook.py`, `memorymaster/recall/dense_recall.py` |
+| `MEMORYMASTER_RECALL_DENSE_LOG` | `memorymaster/recall/dense_recall.py` |
+| `MEMORYMASTER_RECALL_DENSE_MAX_CLAIMS` | `memorymaster/recall/dense_recall.py` |
+| `MEMORYMASTER_RECALL_DENSE_MIN_SCORE` | `memorymaster/recall/dense_recall.py` |
+| `MEMORYMASTER_RECALL_DENSE_OUTSIDE_MIN_SCORE` | `memorymaster/recall/dense_recall.py` |
+| `MEMORYMASTER_RECALL_DENSE_TIMEOUT_S` | `memorymaster/recall/dense_recall.py` |
+| `MEMORYMASTER_RECALL_DENSE_URL` | `memorymaster/recall/dense_recall.py` |
 | `MEMORYMASTER_RECALL_FUSION` | `memorymaster/recall/context_hook.py` |
 | `MEMORYMASTER_RECALL_GRAPH` | `memorymaster/recall/context_hook.py`, `memorymaster/recall/graph_store.py` |
 | `MEMORYMASTER_RECALL_GRAPH_CANDIDATES` | `memorymaster/recall/context_hook.py` |
@@ -208,11 +225,17 @@ Total: 271 variables.
 | `MEMORYMASTER_RECALL_GRAPH_MAX_HOPS` | `memorymaster/recall/context_hook.py` |
 | `MEMORYMASTER_RECALL_GRAPH_MODE` | `memorymaster/core/service.py`, `memorymaster/recall/graph_expansion.py` |
 | `MEMORYMASTER_RECALL_GRAPH_PATH` | `memorymaster/recall/context_hook.py` |
+| `MEMORYMASTER_RECALL_HOOK` | `memorymaster/recall/hook_policy.py` |
+| `MEMORYMASTER_RECALL_HOOK_CONFIG` | `memorymaster/recall/hook_policy.py` |
+| `MEMORYMASTER_RECALL_HOOK_MAX_CLAIMS` | `memorymaster/recall/hook_policy.py` |
+| `MEMORYMASTER_RECALL_LEXICAL_MIN_RELEVANCE` | `memorymaster/recall/hook_policy.py` |
 | `MEMORYMASTER_RECALL_QUERY_EXPANSION` | `memorymaster/recall/context_hook.py`, `memorymaster/recall/query_expansion.py` |
 | `MEMORYMASTER_RECALL_RERANK_LOCAL` | `memorymaster/recall/context_hook.py`, `memorymaster/recall/local_rerank.py` |
 | `MEMORYMASTER_RECALL_RERANK_LOCAL_MAX_PAIRS` | `memorymaster/recall/local_rerank.py` |
 | `MEMORYMASTER_RECALL_RERANK_LOCAL_OVERFETCH` | `memorymaster/recall/local_rerank.py` |
 | `MEMORYMASTER_RECALL_SCOPE_BOOST` | `memorymaster/recall/context_hook.py` |
+| `MEMORYMASTER_RECALL_SEEN_DIR` | `memorymaster/recall/hook_policy.py` |
+| `MEMORYMASTER_RECALL_SESSION_DEDUP` | `memorymaster/recall/hook_policy.py` |
 | `MEMORYMASTER_RECALL_STATE_DIR` | `memorymaster/recall/delivery.py` |
 | `MEMORYMASTER_RECALL_TWO_PASS` | `memorymaster/recall/context_hook.py` |
 | `MEMORYMASTER_RECALL_TWO_PASS_MAX` | `memorymaster/recall/context_hook.py` |
@@ -238,10 +261,12 @@ Total: 271 variables.
 | `MEMORYMASTER_RRF_TIEBREAKER` | `memorymaster/core/config.py` |
 | `MEMORYMASTER_RRF_TIEBREAKER_THRESHOLD` | `memorymaster/core/config.py` |
 | `MEMORYMASTER_RULE_CONFIDENCE_BOOTSTRAP` | `memorymaster/knowledge/rule_miner.py` |
+| `MEMORYMASTER_SCOPE_ALIASES` | `memorymaster/core/scope_utils.py` |
 | `MEMORYMASTER_SCOPE_DEFAULT` | `memorymaster/recall/context_hook.py` |
 | `MEMORYMASTER_SCOPE_DISAMBIGUATE` | `memorymaster/surfaces/mcp_server.py` |
 | `MEMORYMASTER_SESSION_DIVERSITY_CAP` | `memorymaster/core/config.py` |
 | `MEMORYMASTER_SESSION_END_CAPTURE` | `memorymaster/config_templates/hooks/memorymaster-session-end.py` |
+| `MEMORYMASTER_SHARED_MCP_URL` | `memorymaster/recall/remote.py`, `memorymaster/surfaces/mcp_stdio_proxy.py` |
 | `MEMORYMASTER_SKILL_REVIEW` | `memorymaster/govern/skill_review_phase.py` |
 | `MEMORYMASTER_SKILL_REVIEW_LIMIT` | `memorymaster/govern/skill_review_phase.py` |
 | `MEMORYMASTER_SNAPSHOT_DIR` | `memorymaster/govern/jobs/integrity.py`, `memorymaster/profile/engine.py`, `memorymaster/stores/snapshot.py` |
@@ -258,6 +283,7 @@ Total: 271 variables.
 | `MEMORYMASTER_STOP_EXTRACT` | `memorymaster/config_templates/hooks/memorymaster-auto-ingest.py` |
 | `MEMORYMASTER_STOP_RULE_MINING` | `memorymaster/config_templates/hooks/memorymaster-auto-ingest.py` |
 | `MEMORYMASTER_STORE_BACKEND` | `memorymaster/core/access_control.py` |
+| `MEMORYMASTER_TOKENIZER_WARM_SECONDS` | `memorymaster/surfaces/mcp_http.py` |
 | `MEMORYMASTER_TRANSCRIPTION_PROVIDER` | `memorymaster/capture/worker.py`, `memorymaster/surfaces/setup_hooks.py` |
 | `MEMORYMASTER_UNKNOWN_ARGS_DISABLED` | `memorymaster/surfaces/unknown_args.py` |
 | `MEMORYMASTER_UNKNOWN_ARGS_LOG` | `memorymaster/surfaces/unknown_args.py` |

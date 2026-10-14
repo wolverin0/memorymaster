@@ -21,6 +21,7 @@ import urllib.request
 from typing import NamedTuple
 
 from memorymaster.core.shared_mcp import DEFAULT_URL, resolve_token
+from memorymaster.recall import hook_policy
 
 HOOK_RECALL_PATH = "/hook/recall"
 DEFAULT_TIMEOUT_SECONDS = 4.0
@@ -73,12 +74,16 @@ def remote_recall(
 
 
 def hook_recall(query: str, hook_data: dict | None, *, db_path: str, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> tuple[str, str]:
-    """Recall for the UserPromptSubmit hook: ``(ctx, via)``, ``via`` in shared/local/skipped_busy.
+    """Recall for the UserPromptSubmit hook: ``(ctx, via)``, ``via`` in shared/local/skipped_busy/off.
+
+    ``off``: the hook is switched off for this cwd (``hook_policy``); nothing is recalled.
 
     The warm shared server first. If nothing reached it, recall locally (the
     pre-T-0594 behaviour). If it was reached but did not answer in time, skip:
     a cold local recall on a busy machine is what used to hit the hook timeout.
     """
+    if hook_policy.disabled_for((hook_data or {}).get("cwd")):  # per-lane A/B switch (T-1351)
+        return "", "off"
     answer = remote_recall(query, hook_data, timeout=timeout)
     if answer.ctx is not None:
         return answer.ctx, "shared"

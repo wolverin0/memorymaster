@@ -28,6 +28,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from memorymaster.core.hook_log import log_hook
+from memorymaster.recall import hook_policy
 
 logger = logging.getLogger(__name__)
 
@@ -1435,7 +1436,7 @@ def _recall_impl(
         if dense_recall.enabled():
             dense_started = time.perf_counter()
             with _phase_timer(phase_ms, "dense"):
-                dense_rows, dense_metrics = _dense_prompt_rows(svc, query, prompt_plan)
+                dense_rows, dense_metrics = _dense_prompt_rows(svc, query, prompt_plan, _session_seen(_hook_data))
             event = {"scope": _current_scope(), "query_fp": dense_recall.query_fingerprint(query),
                      "query_chars": len(query), **dense_metrics}
             if dense_rows is not None:
@@ -2160,6 +2161,9 @@ def _recall_impl(
         if _lr_fts_surplus:
             ranked = ranked[: max(0, len(ranked) - _lr_fts_surplus)]
 
+    if _hook_data is not None and (floor := hook_policy.lexical_min_relevance()) > 0:
+        ranked = [row for row in ranked if _relevance(row) >= floor]  # the prompt hook's lexical threshold (T-1351)
+
     text, _rendered = _finish_recall(
         query, ranked, budget=budget, svc=svc, phase_ms=phase_ms, rank_start=_rank_start,
         hook_data=_hook_data, rendered_ids=_rendered_ids,
@@ -2167,21 +2171,37 @@ def _recall_impl(
     return text
 
 
+def _session_seen(hook_data: dict | None) -> frozenset[int]:
+    """Claim ids this session already received from the prompt hook (T-1351)."""
+    session = hook_policy.session_id_of(hook_data)
+    return hook_policy.seen_ids(session) if session else frozenset()
+
+
 def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_data, rendered_ids):
-    """Render the ranked rows within budget, apply S2, record ids and accesses."""
+    """Render the ranked rows within budget, apply S2, record ids and accesses.
+
+    The prompt hook (``hook_data`` given) injects at most ``hook_policy.max_claims()``
+    claims and never one the session already received (T-1351); other callers get the
+    full block.
+    """
+    limit = None
+    if hook_data is not None:
+        seen = _session_seen(hook_data)
+        ranked = [row for row in ranked if getattr(row.get("claim"), "id", None) not in seen]
+        limit = hook_policy.max_claims()
     # Build output — top claims within budget
-    lines, rendered_rows = _render_recall_lines(ranked, budget)
+    lines, rendered_rows = _render_recall_lines(ranked, budget, limit=limit)
     # S2 RECALL (Jev, 4.9.0): only the prompt hook opts in by passing its
     # payload; with the surface off this is a no-op and the block is unchanged.
     if hook_data is not None:
         jev_rendering = _jev_recall_rendering(query, ranked, lines, rendered_rows, budget, hook_data, phase_ms)
         if jev_rendering is not None:
             lines, rendered_rows = jev_rendering
+    injected = [cid for row in rendered_rows if isinstance(cid := getattr(row.get("claim"), "id", None), int)]
     if rendered_ids is not None:
-        for row in rendered_rows:
-            cid = getattr(row.get("claim"), "id", None)
-            if isinstance(cid, int):
-                rendered_ids.append(cid)
+        rendered_ids.extend(injected)
+    if hook_data is not None and (session := hook_policy.session_id_of(hook_data)):
+        hook_policy.remember(session, injected)
 
     if rendered_rows:
         svc._record_accesses(rendered_rows, query_text=query)
@@ -2193,14 +2213,16 @@ def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_dat
     return _recall_text(lines), rendered_rows
 
 
-def _dense_prompt_rows(svc, query: str, plan) -> tuple[list[dict] | None, dict]:
+def _dense_prompt_rows(svc, query: str, plan, seen: frozenset[int] = frozenset()) -> tuple[list[dict] | None, dict]:
     """Dense candidates for the prompt hook, authorized like every other stream.
 
     Candidates in the hook's scope need ``min_score``; candidates from other
     projects need the higher ``outside_min_score`` and pass the same filter with
-    only the scope rule lifted. Returns ``(rows, metrics)``; ``rows`` is ``None``
-    when the service could not answer (the caller then runs lexical recall) and
-    may be empty when nothing qualifies (nothing is injected).
+    only the scope rule lifted. Claims in ``seen`` (already injected in this
+    session) are skipped before the cap, so the next best candidate takes the slot.
+    Returns ``(rows, metrics)``; ``rows`` is ``None`` when the service could not
+    answer (the caller then runs lexical recall) and may be empty when nothing
+    qualifies (nothing is injected).
     """
     import dataclasses
 
@@ -2220,14 +2242,17 @@ def _dense_prompt_rows(svc, query: str, plan) -> tuple[list[dict] | None, dict]:
         key=lambda item: -item[1],
     )
     rows: list[dict] = []
-    filtered_out = 0
-    seen: set[int] = set()
+    filtered_out = suppressed = 0
+    seen_now: set[int] = set()
     for cid, score, outside in candidates:
         if len(rows) >= dense_recall.max_claims():
             break
-        if cid in seen:  # a repeated id is injected once
+        if cid in seen_now:  # a repeated id is injected once
             continue
-        seen.add(cid)
+        seen_now.add(cid)
+        if cid in seen:  # ... and once per session
+            suppressed += 1
+            continue
         try:
             claim = svc.store.get_claim(cid, include_citations=True)
         except Exception as exc:  # noqa: BLE001 — a bad id must not break recall
@@ -2249,6 +2274,7 @@ def _dense_prompt_rows(svc, query: str, plan) -> tuple[list[dict] | None, dict]:
         "outside_above_threshold": sum(score >= outside_threshold for _, score in answer.outside),
         "injected_outside": sum(bool(row["dense_outside"]) for row in rows),
         "filtered_out": filtered_out,
+        "session_seen": suppressed,
         "top_score": round(answer.results[0][1], 4) if answer.results else None,
         "top_outside_score": round(answer.outside[0][1], 4) if answer.outside else None,
         "scores": [round(score, 4) for _, score in answer.results[:8]],
@@ -2280,18 +2306,21 @@ def _recall_chunk(claim, labels: tuple[str, ...] = ()) -> str:
     return f"- {text}"
 
 
-def _render_recall_lines(rows, budget: int, labels=None) -> tuple[list[str], list[dict]]:
+def _render_recall_lines(rows, budget: int, labels=None, limit: int | None = None) -> tuple[list[str], list[dict]]:
     """Pack complete bullets, counting framing in the four-character estimate.
 
     A claim that cannot fit must not hide later, smaller claims. Returning an
     ID for a silently truncated claim makes recall evaluation and exposure
-    receipts misleading, so each included claim retains its full text.
+    receipts misleading, so each included claim retains its full text. ``limit``
+    caps the number of claims (the prompt hook injects very few).
     """
     lines = list(RECALL_HEADER)
     rendered_rows: list[dict] = []
     chars_used = len("\n".join(lines))
     char_budget = max(0, budget) * 4
     for row in rows:
+        if limit is not None and len(rendered_rows) >= limit:
+            break
         claim = row.get("claim")
         if not hasattr(claim, "text"):
             continue

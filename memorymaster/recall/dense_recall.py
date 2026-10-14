@@ -38,6 +38,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from memorymaster.recall import hook_policy
+
 ENABLE_ENV = "MEMORYMASTER_RECALL_DENSE"
 URL_ENV = "MEMORYMASTER_RECALL_DENSE_URL"
 TIMEOUT_ENV = "MEMORYMASTER_RECALL_DENSE_TIMEOUT_S"
@@ -49,7 +51,6 @@ LOG_ENV = "MEMORYMASTER_RECALL_DENSE_LOG"
 DEFAULT_URL = "http://127.0.0.1:8767"
 DEFAULT_TIMEOUT_S = 1.5
 DEFAULT_MIN_SCORE = 0.68
-DEFAULT_MAX_CLAIMS = 6
 # Claims from other projects (outside the hook's scope allowlist) only on a very high
 # score, decided by the operator 2026-10-06. Measured on the 200 labeled prompts:
 # outside-scope candidates at cosine >= 0.76 were useful 44% of the time (in-scope
@@ -100,7 +101,10 @@ def outside_min_score() -> float:
 
 
 def max_claims() -> int:
-    return max(1, int(_float_env(MAX_CLAIMS_ENV, DEFAULT_MAX_CLAIMS)))
+    """Dense override of the hook-wide cap (``hook_policy.max_claims``, default 2)."""
+    if MAX_CLAIMS_ENV in os.environ:
+        return max(1, int(_float_env(MAX_CLAIMS_ENV, hook_policy.DEFAULT_MAX_CLAIMS)))
+    return hook_policy.max_claims()
 
 
 def search(query: str, scopes: Sequence[str] | None, *, k: int = FETCH_K, outside_k: int = 0) -> DenseAnswer:

@@ -228,6 +228,21 @@ def _no_operator_dense_recall(monkeypatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_recall_hook_policy(tmp_path_factory, monkeypatch) -> None:
+    """Tests never read the operator's recall-hook switch nor write its per-session state (T-1351).
+
+    Without this, the claims a test injects would be remembered under the real
+    ~/.memorymaster/hook_state/ and the next test using the same session id would see them as repeats.
+    """
+    for name in [key for key in os.environ if key.upper().startswith("MEMORYMASTER_RECALL_HOOK")]:
+        monkeypatch.delenv(name, raising=False)
+    for name in ("MEMORYMASTER_RECALL_LEXICAL_MIN_RELEVANCE", "MEMORYMASTER_RECALL_SESSION_DEDUP"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("MEMORYMASTER_RECALL_HOOK_CONFIG", str(tmp_path_factory.getbasetemp() / "no-recall-hook.json"))
+    monkeypatch.setenv("MEMORYMASTER_RECALL_SEEN_DIR", str(tmp_path_factory.mktemp("recall-seen")))
+
+
+@pytest.fixture(autouse=True)
 def _restore_cwd():
     """Every test ends in the directory it started in.
 

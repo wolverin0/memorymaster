@@ -117,6 +117,11 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("MEMORYMASTER_SPOOL_DIR", str(tmp_path / "spool"))
     monkeypatch.setenv("MEMORYMASTER_RECALL_STATE_DIR", str(tmp_path / "delivery"))
     monkeypatch.setenv("MEMORYMASTER_SCOPE_DEFAULT", "project:allowed")
+    # These tests pin the Jev surface against the full legacy block; the prompt hook's volume policy
+    # (top 2, lexical floor, T-1351) has its own tests in test_recall_hook_trim.py.
+    monkeypatch.setenv("MEMORYMASTER_RECALL_HOOK_MAX_CLAIMS", "50")
+    monkeypatch.setenv("MEMORYMASTER_RECALL_LEXICAL_MIN_RELEVANCE", "0")
+    monkeypatch.setenv("MEMORYMASTER_RECALL_SESSION_DEDUP", "0")  # these repeat a prompt in one session on purpose
     monkeypatch.delenv("QDRANT_URL", raising=False)
     monkeypatch.setattr(hook_log, "_STATE_DIR", tmp_path / "hook_state")
     monkeypatch.setattr(hook_log, "_LOG_FILE", tmp_path / "hook_state" / "hook.log")

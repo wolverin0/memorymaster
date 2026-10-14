@@ -271,9 +271,10 @@ def _run_case(
         trace["candidates"].append(_ids(rows))
         return rows
 
-    def capture_render(rows, budget, labels=None):
+    def capture_render(rows, budget, labels=None, limit=None):
         trace["ranked"].append(_ids(rows))
-        return original_render(rows, budget, labels)
+        # ``limit`` exists only on the prompt-hook path (T-1351) and in newer packages.
+        return original_render(rows, budget, labels, **({} if limit is None else {"limit": limit}))
 
     context_hook._governed_prompt_rows = capture_candidates
     context_hook._render_recall_lines = capture_render

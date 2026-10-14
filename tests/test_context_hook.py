@@ -130,6 +130,34 @@ class TestRecall:
         assert "a" * 200 in result
 
     @patch("memorymaster.core.service.MemoryService")
+    def test_prompt_hook_injects_at_most_two_of_many_candidates(self, mock_service_class: MagicMock, tmp_path) -> None:
+        """The prompt hook (hook_data given) caps injection at 2 claims; other callers keep the full block (T-1351)."""
+        mock_service = MagicMock()
+        mock_service_class.return_value = mock_service
+        rows = []
+        for n, word in enumerate(("alpha", "bravo", "charlie", "delta")):
+            claim = MagicMock()
+            claim.id = 100 + n
+            claim.text = f"{word} deployment note number {n}"
+            claim.status = "confirmed"
+            claim.scope = "project"
+            claim.visibility = "public"
+            claim.object_value = None
+            claim.subject = None
+            claim.predicate = None
+            claim.valid_from = None
+            claim.valid_until = None
+            rows.append({"claim": claim, "lexical_score": 0.9 - 0.1 * n, "confidence_score": 0.9})
+        mock_service.query_rows.return_value = rows
+
+        _, hook_ids = recall("deployment note", db_path=":memory:", return_ids=True,
+                             hook_data={"cwd": str(tmp_path)})
+        _, full_ids = recall("deployment note", db_path=":memory:", return_ids=True)
+
+        assert len(hook_ids) == 2
+        assert len(full_ids) == 4
+
+    @patch("memorymaster.core.service.MemoryService")
     def test_recall_sanitizes_non_ascii(self, mock_service_class: MagicMock) -> None:
         """Recall should sanitize non-ASCII characters for Windows console."""
         mock_service = MagicMock()

@@ -143,6 +143,10 @@ def create_http_app(
             return JSONResponse({"error": "bad_request"}, status_code=400)
         import anyio
         from memorymaster.context_hook import recall
+        from memorymaster.recall import hook_policy
+
+        if hook_policy.disabled_for((hook_data or {}).get("cwd")):  # older hooks still ask the server (T-1351)
+            return JSONResponse({"ctx": ""})
 
         if _hook_recall_limiter is None:
             _hook_recall_limiter = anyio.CapacityLimiter(_HOOK_RECALL_THREADS)
