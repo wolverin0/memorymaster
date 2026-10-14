@@ -56,7 +56,7 @@ CommandRunner = Callable[
 # No es una estimacion: es lo que cuesta abrir la boca.
 MEASURED_CALL_OVERHEAD_TOKENS = 20_000
 
-DEFAULT_MODEL = "gemini-3.7-flash-low"
+DEFAULT_MODEL = "gemini-3.8-flash-low"
 DEFAULT_TIMEOUT_SECONDS = 300
 
 

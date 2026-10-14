@@ -127,6 +127,17 @@ def test_a_successful_call_reports_usage(tmp_path: Path):
     assert r.model == "gemini-3.7-flash-low"
 
 
+def test_default_model_is_one_the_current_agy_lists():
+    # `agy` rechaza con status=ERROR un id que ya no lista, y con eso cada corrida
+    # de Dreaming y del perfil compilado quedo parcial desde el 2026-10-13: el
+    # default seguia en gemini-3.7-flash-low cuando `agy models` ya solo ofrecia
+    # Gemini 3.8 Flash y Gemini 4 Argon. Este id es el de `agy models` y de
+    # `_intel/model-tiers.json`; si agy lo vuelve a retirar, cambia aca Y alli.
+    from memorymaster.core.antigravity_client import DEFAULT_MODEL
+
+    assert DEFAULT_MODEL == "gemini-3.8-flash-low"
+
+
 def test_batch_call_uses_isolated_profile_and_preserves_environment(
     tmp_path: Path, monkeypatch
 ):

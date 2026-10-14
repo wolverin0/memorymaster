@@ -161,7 +161,7 @@ def test_a_leftover_glm_model_string_does_not_reach_agy(monkeypatch, caplog):
         con = AntigravityConsolidator(client=_FakeClient(_decisions("c0")))
 
     assert "/" not in con.model, "un modelo con prefijo de proveedor llego al cliente de agy"
-    assert con.model == "gemini-3.7-flash-low"
+    assert con.model == "gemini-3.8-flash-low"
     assert any("MEMORYMASTER_DREAM_CONSOLIDATE_MODEL" in r.message for r in caplog.records), (
         "se ignoro la variable sin avisar; eso la vuelve indistinguible de una que funciono"
     )

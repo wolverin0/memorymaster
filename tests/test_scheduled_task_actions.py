@@ -44,7 +44,7 @@ def test_windows_dream_action_uses_pythonw(monkeypatch, tmp_path: Path) -> None:
     #
     # Ahora la variable se BORRA explicitamente: un test cuyo resultado depende de
     # la shell de quien lo corre no prueba el codigo, prueba el ambiente.
-    assert "--consolidate-model gemini-3.7-flash-low" in action
+    assert "--consolidate-model gemini-3.8-flash-low" in action
     assert "zai-coding-plan" not in action, (
         "el instalador todavia configura instalaciones nuevas contra el plan dado de baja"
     )
