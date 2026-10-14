@@ -154,6 +154,10 @@ def test_authenticated_mcp_http_delivers_disposable_capture(
         outbox_path=tmp_path / "outbox.db",
         default_scope="project:workspace",
         worker_enabled=False,
+        # This journey proves the HTTP delivery, not the 0.35 s hook budget (the bounded-POST test
+        # below covers that): the first call to a server that has just booted is slower than that on
+        # Windows CI and surfaced as ``authority_unavailable`` (httpx.ReadTimeout).
+        request_timeout_seconds=10.0,
     )
     provider = MemoryMasterProvider(
         config=config,
