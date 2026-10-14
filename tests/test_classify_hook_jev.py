@@ -31,6 +31,12 @@ ROOT = Path(__file__).resolve().parent.parent
 HOOK = ROOT / "memorymaster" / "config_templates" / "hooks" / "memorymaster-classify.py"
 GOLDEN = json.loads((ROOT / "tests" / "fixtures" / "classify_hook_off_golden.json").read_text(encoding="utf-8"))
 KEY = ApiKey("ts-test-" + "H" * 24)  # synthetic
+# MEMORYMASTER_SKIP_PERF (CI): shared runners swing ~5x, so only wall-clock limits are skipped.
+TIMING = not os.environ.get("MEMORYMASTER_SKIP_PERF")
+# The deadline a test that is not about the deadline gives the hook when it builds its own engine
+# from the environment (make_engine passes the same value): the 900 ms production default fell back
+# to the regex hints on Windows CI before the ledger was even created.
+UNTIMED_HOOK_DEADLINE_MS = "10000"
 DECIDED = GOLDEN["cases"][0]  # "We decided to use WAL mode for the ledger." -> regex [DECISION]
 NO_REGEX_MATCH = "I prefer short answers with code over explanations"
 
@@ -84,7 +90,7 @@ def make_engine(tmp_path: Path, transport: FakeTransport, *, mode: str = "live",
     # A hook deadline no loaded CI runner reaches unless the test is about the deadline
     # (CI 2026-09-24 fell back at the 900 ms default); deadline tests pass their own.
     environ = {"MEMORYMASTER_JEV_MODE": mode, "MEMORYMASTER_DECISIONS_DB": str(tmp_path / "decisions.db"),
-               "MEMORYMASTER_JEV_HOOK_DEADLINE_MS": "10000"}
+               "MEMORYMASTER_JEV_HOOK_DEADLINE_MS": UNTIMED_HOOK_DEADLINE_MS}
     environ.update(env or {})
     return DecisionEngine(DecisionConfig.from_env(environ), transport_factory=lambda _key: transport,
                           key_lookup=lambda: key)
@@ -220,7 +226,8 @@ def test_timeout_degrades_to_the_regex_hints_within_the_deadline(hook, tmp_path)
     elapsed = time.monotonic() - started
 
     assert out == DECIDED["stdout"]
-    assert elapsed < 1.5, elapsed
+    if TIMING:  # the ledger's writes before and after the send are filesystem time on a loaded runner
+        assert elapsed < 1.5, elapsed
     assert rows(tmp_path, "SELECT fallback_reason FROM decisions")[0]["fallback_reason"] == "timeout"
 
 
@@ -288,7 +295,12 @@ def test_a_write_locked_ledger_cannot_push_the_hook_past_its_timeout(hook, tmp_p
     monkeypatch.setenv("MEMORYMASTER_DECISIONS_DB", str(db))
     monkeypatch.setenv("TYPESAFE_API_KEY", KEY.reveal())
 
+    # Creating the ledger is not what this test measures: the hook builds its engine from the
+    # environment, so it gets the same untimed deadline make_engine gives every other test here
+    # (at the 900 ms default a slow runner timed out first and the hook correctly showed DECISION).
+    monkeypatch.setenv("MEMORYMASTER_JEV_HOOK_DEADLINE_MS", UNTIMED_HOOK_DEADLINE_MS)
     assert hint_names(hook.run(json.loads(DECIDED["stdin"]))) == ["PREFERENCE"]  # creates the ledger
+    monkeypatch.delenv("MEMORYMASTER_JEV_HOOK_DEADLINE_MS")  # the locked run keeps the production deadline
     lock = sqlite3.connect(str(db), timeout=1)
     try:
         lock.execute("BEGIN IMMEDIATE")
@@ -299,7 +311,9 @@ def test_a_write_locked_ledger_cannot_push_the_hook_past_its_timeout(hook, tmp_p
         lock.rollback()
         lock.close()
 
-    assert elapsed < 3.0, elapsed
+    # The regression is the ledger's 15 s busy wait; the installed hook timeout is 5 s, so a loaded
+    # runner gets the whole of it (a Windows filesystem swings ~5x, not 15 s).
+    assert elapsed < (3.0 if TIMING else 5.0), elapsed
     assert out == DECIDED["stdout"]  # an unreadable ledger never acts on Jev: the regex hints survive
 
 
