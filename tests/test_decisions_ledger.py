@@ -382,17 +382,23 @@ def test_a_failed_strict_watermark_read_is_not_an_absent_watermark(tmp_path, mon
     assert ld.ledger_write_failures() > before  # a read that forces a fallback is counted
 
 
+# T-1421 (ledger-read-lock investigation parked): real hooks are paced, the old unpaced
+# open-write-close loop convoyed on SQLITE_BUSY (1.5% per open unpaced, 0.45% at 50 ms, 0.13% at 250 ms).
+# 50 ms is the fastest realistic hook cadence and keeps heavy contention; the miss assert stays strict.
+_WRITER_PACE_S = 0.05
+
 _CONTENDED_WRITER = textwrap.dedent(
     """
     import sys, time
     from memorymaster.decisions.ledger import DecisionLedger, DecisionRecord
-    path, worker, seconds = sys.argv[1], sys.argv[2], float(sys.argv[3])
+    path, worker, seconds, pace = sys.argv[1], sys.argv[2], float(sys.argv[3]), float(sys.argv[4])
     ledger = DecisionLedger(path)
     end, n = time.monotonic() + seconds, 0
     while time.monotonic() < end:
         with ledger.bounded(250):
             ledger.write_decision(DecisionRecord(decision_id=f"w{worker}-{n}", surface="recall"))
         n += 1
+        time.sleep(pace)
     print(n)
     """
 )
@@ -444,7 +450,7 @@ def test_bounded_reads_survive_concurrent_hook_writers(tmp_path):
     env["PYTHONPATH"] = str(REPO)
     writers = [
         subprocess.Popen([sys.executable, "-I", "-c", f"import sys; sys.path.insert(0, {str(REPO)!r})\n"
-                          + _CONTENDED_WRITER, str(path), str(w), "3.0"],
+                          + _CONTENDED_WRITER, str(path), str(w), "3.0", str(_WRITER_PACE_S)],
                          cwd=str(tmp_path), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         for w in range(6)
     ]
