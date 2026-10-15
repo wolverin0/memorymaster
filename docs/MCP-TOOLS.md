@@ -50,7 +50,7 @@ tool, grouped by purpose. For the MCP server config block see the
 | `classify_query` | Classify a query and report both the recommended mode and its containment-safe effective mode. |
 | `recall_analysis` | Explain WHY each claim ranked where it did (ranking introspection). |
 | `search_verbatim` | Search raw conversation memories through FTS5; vector/hybrid requests currently report an FTS5 fallback. |
-| `read_active_tasks` | Read and parse the project's `active_tasks.md`. |
+| `read_active_tasks` | Read and parse the project's `active_tasks.md`; tasks older than 48h, with an expired lease or for another cwd/lane are listed under `skipped`, never as `active_task`. |
 | `rules_export` | Export mined rule-shaped claims, filtered by confidence + status. |
 
 ## Listing & inspection

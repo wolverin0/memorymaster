@@ -147,6 +147,8 @@ def create_http_app(
 
         if hook_policy.disabled_for((hook_data or {}).get("cwd")):  # older hooks still ask the server (T-1351)
             return JSONResponse({"ctx": ""})
+        if hook_policy.is_trivial_prompt(query):  # installed hooks that skip nothing still ask the server (T-1433)
+            return JSONResponse({"ctx": ""})
 
         if _hook_recall_limiter is None:
             _hook_recall_limiter = anyio.CapacityLimiter(_HOOK_RECALL_THREADS)

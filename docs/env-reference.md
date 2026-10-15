@@ -5,10 +5,11 @@ Complete inventory of `MEMORYMASTER_*` variables referenced in the package,
 script after adding or removing a variable. For what each does, follow the
 listed source files (most are read next to a docstring or comment).
 
-Total: 297 variables.
+Total: 299 variables.
 
 | Variable | Referenced in |
 |---|---|
+| `MEMORYMASTER_ACTIVE_TASK_MAX_AGE_HOURS` | `memorymaster/recall/active_tasks.py`, `memorymaster/surfaces/mcp_server.py` |
 | `MEMORYMASTER_AGY_COMMAND` | `memorymaster/core/antigravity_client.py`, `memorymaster/surfaces/setup_hooks.py` |
 | `MEMORYMASTER_AGY_MODEL` | `memorymaster/core/antigravity_client.py` |
 | `MEMORYMASTER_AGY_TIMEOUT` | `memorymaster/core/antigravity_client.py` |
@@ -163,6 +164,7 @@ Total: 297 variables.
 | `MEMORYMASTER_MCP_WORKSPACE` | `memorymaster/core/access_control.py` |
 | `MEMORYMASTER_MCP_WORKSPACE_ALLOWLIST` | `memorymaster/surfaces/mcp_path_policy.py` |
 | `MEMORYMASTER_MEDIA_MODE` | `memorymaster/bridges/evidence_policy.py` |
+| `MEMORYMASTER_NON_AUTO_PROMOTABLE_SOURCES` | `memorymaster/core/promotion_policy.py` |
 | `MEMORYMASTER_OCR_PROVIDER` | `memorymaster/capture/worker.py`, `memorymaster/surfaces/setup_hooks.py` |
 | `MEMORYMASTER_ONTOLOGY_FILE` | `memorymaster/knowledge/ontology.py` |
 | `MEMORYMASTER_OPENCODE_AUTH_MODE` | `memorymaster/dreaming/providers.py` |

@@ -7,7 +7,9 @@ Operator decision 2026-10-13, implemented here:
 
 * at most :func:`max_claims` (default 2) claims per prompt, dense and lexical;
 * a claim already injected in a session is not injected again in that session;
-* the hook can be turned off per lane/cwd from a config file, to run an A/B.
+* the hook can be turned off per lane/cwd from a config file, to run an A/B;
+* a trivial prompt ("ok", "dale", "gracias", a lone emoji) gets no injection
+  (T-1433): see :func:`is_trivial_prompt`.
 
 Standard library only: the hook process imports this on every prompt. Nothing
 here stores prompt text or claim text, and every failure degrades to "no
@@ -29,8 +31,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 import time
+import unicodedata
 from pathlib import Path
 
 ENABLED_ENV = "MEMORYMASTER_RECALL_HOOK"
@@ -100,6 +104,58 @@ def lexical_min_relevance() -> float:
         return float(os.environ.get(LEXICAL_MIN_ENV, DEFAULT_LEXICAL_MIN_RELEVANCE))
     except ValueError:
         return DEFAULT_LEXICAL_MIN_RELEVANCE
+
+
+# --- trivial prompts (T-1433) -------------------------------------------------------------
+
+# Spanish + English acknowledgements, assents and "keep going" fillers, accent-folded and
+# lower-cased. A prompt is trivial only when EVERY word is one of these: a single other word
+# ("ok fix the importer", "seguí con T-1433") keeps recall.
+_ACK_WORDS = frozenset("""
+ok okay okey oka k kk vale dale listo ya bueno buenisimo genial perfecto perfect excelente
+barbaro joya claro exacto correcto cierto entendido entiendo hecho
+si sip sep seh no nop nope yes yep yeah yup ye sure
+gracias gracia grax muchas mil thanks thank thx ty tks cheers you
+good great cool nice fine done got it sounds right
+bien muy todo eso esa ese lo por favor please pls
+continua continue continuar continuemos segui seguir segi sigue seguimos sigamos
+proceed go ahead next dale adelante avanza avanzar
+ahora ahi aca aqui entonces tambien
+""".split())
+_WORD = re.compile(r"[^\W_]+")
+_IDENTIFIER = re.compile(r"\d|[^\W]_|_[^\W]|\w[./\\-]\w")
+_TRIVIAL_MAX_WORDS = 6
+
+
+def _fold(word: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", word.lower())
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+def _is_ack(word: str) -> bool:
+    folded = _fold(word)
+    # "okkk", "daleee", "goood": a run of 3+ letters may be one or two in the real word.
+    return folded in _ACK_WORDS or any(
+        re.sub(r"(.)\1{2,}", lambda m: m.group(1) * keep, folded) in _ACK_WORDS for keep in (1, 2)
+    )
+
+
+def is_trivial_prompt(prompt: object) -> bool:
+    """Whether a prompt carries nothing to recall for: empty, symbols/emoji only, or only acknowledgements.
+
+    Conservative: any digit, path/identifier shape or word outside the Spanish/English acknowledgement
+    list makes the prompt non-trivial, as does a prompt longer than a few words, so "why 500?" or
+    "T-1433 status" still get recall. Never raises.
+    """
+    if not isinstance(prompt, str):
+        return False
+    text = prompt.strip()
+    if _IDENTIFIER.search(text):
+        return False
+    words = _WORD.findall(text)
+    if not words:
+        return True  # nothing but punctuation, symbols or emoji
+    return len(words) <= _TRIVIAL_MAX_WORDS and all(_is_ack(w) for w in words)
 
 
 # --- claims already injected in a session -------------------------------------------------
