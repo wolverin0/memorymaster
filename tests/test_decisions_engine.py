@@ -279,9 +279,26 @@ def test_transport_failures_fall_back_with_reason(tmp_path, outcome):
     assert row["transport_outcome"] == outcome and row["jev_action"] is None
 
 
+def _deadline_clock():
+    """Engine clock for the deadline tests under MEMORYMASTER_SKIP_PERF (CI).
+
+    The engine's deadline arithmetic reads this clock, so a slow runner cannot spend the deadline on
+    ledger work before the send (Windows CI: ``fake.calls == []`` / no late answer, the request never
+    left). Frozen, the full deadline is left for the send; the real waits (the transport thread, the
+    ``box.done.wait`` and the locked-write retries) still run on real time. ``None`` keeps the real
+    clock where wall-clock limits are measured (TIMING).
+    """
+    return None if TIMING else (lambda: 0.0)
+
+
 def test_deadline_returns_legacy_and_late_answer_never_acts(tmp_path):
-    slow = FakeTransport(delay=1.2)
-    engine, _ = make_engine(tmp_path, transport=slow, env={"MEMORYMASTER_JEV_HOOK_DEADLINE_MS": "300"})
+    # Without TIMING the deadline and the hang scale together on the frozen clock: the answer is
+    # late by 2 s, not by a margin a loaded runner can close.
+    deadline_ms, hang_s = (300, 1.2) if TIMING else (2000, 4.0)
+    slow = FakeTransport(delay=hang_s)
+    clock = _deadline_clock()
+    engine, _ = make_engine(tmp_path, transport=slow, env={"MEMORYMASTER_JEV_HOOK_DEADLINE_MS": str(deadline_ms)},
+                            **({"monotonic": clock} if clock else {}))
     engine.ledger.register_questions(q.get(key) for key in ("recall.relevant", "recall.usable_evidence",
                                                             "recall.contradicts_request", "recall.instruction_like"))
     started = time.perf_counter()  # the ledger exists: the hook deadline is spent waiting for the answer
@@ -290,7 +307,7 @@ def test_deadline_returns_legacy_and_late_answer_never_acts(tmp_path):
     if TIMING:
         assert time.perf_counter() - started <= 0.3 + 0.1 + 0.016
     assert decision.action == LEGACY and decision.fallback_reason == "timeout"
-    engine.wait_for_late_answers(timeout=5)
+    engine.wait_for_late_answers(timeout=5 if TIMING else 30)
     row = rows(tmp_path, "SELECT * FROM decisions")[0]
     assert json.loads(row["action_taken"]) == LEGACY and row["transport_outcome"] == "timeout"
     late = rows(tmp_path, "SELECT * FROM outcomes WHERE kind = 'late_answer'")
@@ -719,10 +736,13 @@ def test_hook_decide_returns_within_deadline_plus_100ms_when_the_final_write_is_
             return super().send(payload, **kwargs)
 
     # On a slow CI runner the work before the send alone can exceed 300 ms (the transport was
-    # never reached): there the deadline is scaled so the locked final write is still exercised.
+    # never reached): there the deadline is scaled, and the engine clock frozen, so the locked
+    # final write is still exercised.
     deadline_ms, hang_s = (300, 1.5) if TIMING else (2000, 4.0)
+    clock = _deadline_clock()  # the engine clock cannot be spent by the work before the send
     engine, fake = make_engine(tmp_path, transport=LockingHang(delay=hang_s),
-                               env={"MEMORYMASTER_JEV_HOOK_DEADLINE_MS": str(deadline_ms)})
+                               env={"MEMORYMASTER_JEV_HOOK_DEADLINE_MS": str(deadline_ms)},
+                               **({"monotonic": clock} if clock else {}))
     try:
         started = time.perf_counter()
         decision = decide_recall(engine)
@@ -736,7 +756,7 @@ def test_hook_decide_returns_within_deadline_plus_100ms_when_the_final_write_is_
     # deadline + 100 ms, plus one tick of the Windows monotonic clock the engine reads
     if TIMING:
         assert elapsed <= 0.3 + 0.1 + 0.016, elapsed
-    engine.wait_for_late_answers(timeout=5)
+    engine.wait_for_late_answers(timeout=5 if TIMING else 30)
 
 
 def test_hook_transport_gets_only_the_time_left_before_the_deadline(tmp_path):

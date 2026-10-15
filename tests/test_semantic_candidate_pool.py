@@ -53,8 +53,15 @@ def _claim(service: MemoryService, text: str, *, confidence: float, **kwargs):
     )
 
 
+# The pool cap is scaled down for the seeding: the admission rules depend on the cap, not on its
+# magnitude, and seeding the production-size corpus (2,077 claims, ~6,000 connection opens) took
+# ~14 s on a fast machine and more than 600 s on a slow Windows runner (the pytest timeout).
+_SCALED_POOL_CAP = 200
+_NOISE_LOW_ROWS = 110  # more than the broad pool (cap - lexical reserve = 100) holds beyond the 62 higher rows
+
+
 def test_hybrid_candidate_pool_admits_semantic_and_lexical_hits_before_embedding(
-    tmp_path,
+    tmp_path, monkeypatch,
 ):
     """High-confidence noise must not hide either class of useful candidate.
 
@@ -63,6 +70,7 @@ def test_hybrid_candidate_pool_admits_semantic_and_lexical_hits_before_embedding
     lexical union is required.  Rows outside tenant/scope/visibility/sensitivity
     and temporal authority must never be embedded.
     """
+    monkeypatch.setattr(candidate_module, "_HYBRID_CANDIDATE_POOL_CAP", _SCALED_POOL_CAP)
     service = MemoryService(
         tmp_path / "candidate-pool.db",
         workspace_root=tmp_path,
@@ -82,7 +90,7 @@ def test_hybrid_candidate_pool_admits_semantic_and_lexical_hits_before_embedding
     )
     # Push the lexical result beyond the bounded broad pool while leaving the
     # semantic result within it.  The query-specific FTS union must recover it.
-    for index in range(2_010):
+    for index in range(_NOISE_LOW_ROWS):
         _claim(service, f"NOISE-LOW-{index}", confidence=0.70)
     lexical = _claim(
         service,
@@ -134,7 +142,7 @@ def test_hybrid_candidate_pool_admits_semantic_and_lexical_hits_before_embedding
     returned_ids = {row["claim"].id for row in rows}
     assert {semantic.id, lexical.id} <= returned_ids
     assert provider.query_inputs == [QUERY], "hybrid retrieval embeds the query once"
-    assert len(provider.claim_inputs) <= 2_000, "embedding work stays bounded"
+    assert len(provider.claim_inputs) <= _SCALED_POOL_CAP, "embedding work stays bounded"
     embedded = "\n".join(provider.claim_inputs)
     assert "SEMANTIC-TARGET" in embedded
     assert "LEXICAL-TARGET" in embedded

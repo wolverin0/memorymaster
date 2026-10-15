@@ -154,6 +154,12 @@ def test_authenticated_mcp_http_delivers_disposable_capture(
         outbox_path=tmp_path / "outbox.db",
         default_scope="project:workspace",
         worker_enabled=False,
+        # This journey proves the HTTP delivery, not the 0.35 s / 5 s hook and delivery budgets (the
+        # bounded-POST and longer-timeout tests below cover those): the first call to a server that
+        # has just booted is slower than that on Windows CI and surfaced as ``authority_unavailable``
+        # (httpx.ReadTimeout), and so did a delivery during a runner stall (probe 2026-10-14).
+        request_timeout_seconds=10.0,
+        delivery_timeout_seconds=30.0,
     )
     provider = MemoryMasterProvider(
         config=config,
@@ -244,7 +250,7 @@ def test_authenticated_mcp_http_delivers_disposable_capture(
 
 def test_mcp_http_rejects_wrong_token_as_permanent_auth_error(mcp_http_server) -> None:
     endpoint, _token, _db, _workspace = mcp_http_server
-    backend = MCPHttpBackend(endpoint, "wrong-token", timeout_seconds=2.0)
+    backend = MCPHttpBackend(endpoint, "wrong-token", timeout_seconds=10.0)
     with pytest.raises(BackendAuthError):
         backend.recall("fixture", scope="user", session_id="a" * 64)
 
