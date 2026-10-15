@@ -402,7 +402,7 @@ def recall(
     token_budget: int = 4000,
     trust_mode: str = "trusted",
     output_format: str = "text",
-    retrieval_mode: str = "hybrid",
+    retrieval_mode: str = "legacy",
     include_skills: bool = False,
     skill_limit: int = 3,
     include_observations: bool = False,

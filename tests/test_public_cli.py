@@ -105,3 +105,23 @@ class _LegacyWindowsStream:
 
     def flush(self) -> None:
         return None
+
+
+def test_cli_recall_retrieval_mode_defaults_legacy_and_accepts_hybrid(
+    cli_env, capsys, monkeypatch
+) -> None:
+    import memorymaster.surfaces.cli_handlers_public as handlers
+
+    db, workspace = cli_env
+    seen: list[str] = []
+    real = handlers.recall
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs["retrieval_mode"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(handlers, "recall", spy)
+    assert main([*_base(db, workspace), "recall", "x"]) == 0
+    assert main([*_base(db, workspace), "recall", "x", "--retrieval-mode", "hybrid"]) == 0
+    capsys.readouterr()
+    assert seen == ["legacy", "hybrid"]

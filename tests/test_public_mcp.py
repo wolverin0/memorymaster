@@ -283,3 +283,29 @@ def test_team_writer_can_queue_improvement_without_promotion(
     assert remembered["source_item"]["id"] > 0
     with mcp_server._service(str(db), str(workspace), read_only=True).store.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM claims").fetchone()[0] == 0
+
+
+def test_recall_defaults_to_legacy_retrieval_mode() -> None:
+    import inspect
+
+    from memorymaster.public.v1 import recall as public_recall
+
+    for fn in (mcp_server.recall, public_recall):
+        assert inspect.signature(fn).parameters["retrieval_mode"].default == "legacy"
+
+
+def test_recall_forwards_explicit_hybrid_and_defaults_legacy(mcp_env, monkeypatch) -> None:
+    import memorymaster.public.v1 as v1
+
+    db, workspace = mcp_env
+    seen: list[str] = []
+    real = v1.recall
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs["retrieval_mode"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(v1, "recall", spy)
+    mcp_server.recall(query="x", db=db, workspace=workspace)
+    mcp_server.recall(query="x", retrieval_mode="hybrid", db=db, workspace=workspace)
+    assert seen == ["legacy", "hybrid"]

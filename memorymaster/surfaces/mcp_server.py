@@ -1108,7 +1108,7 @@ if FastMCP is not None:
         scope_allowlist: str = "",
         token_budget: int = 4000,
         trust_mode: str = "trusted",
-        retrieval_mode: str = "hybrid",
+        retrieval_mode: str = "legacy",
         include_skills: bool = False,
         skill_limit: int = 3,
         include_observations: bool = False,
