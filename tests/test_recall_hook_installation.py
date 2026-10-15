@@ -71,3 +71,29 @@ def test_modifications_to_managed_hook_are_preserved(tmp_path, monkeypatch):
     path.write_text(custom)
     install(tmp_path, monkeypatch)
     assert path.read_text() == custom
+
+
+def test_installed_hook_skips_trivial_prompts_but_not_short_questions(tmp_path, monkeypatch, capsys):
+    """T-1433: "ok" injects nothing; a two-word real question (below the old word-count gate) still recalls."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    path = install(tmp_path, monkeypatch)
+    capsys.readouterr()
+    calls = []
+    monkeypatch.setattr(context_hook, "recall", lambda q, *a, **k: calls.append(q) or "cited context")
+    monkeypatch.setattr(hook_log, "log_hook", lambda *a, **k: None)
+    monkeypatch.setenv("MEMORYMASTER_RECALL_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MEMORYMASTER_RECALL_SEEN_DIR", str(tmp_path / "seen"))
+
+    def run(prompt):
+        data = {"session_id": "s-" + prompt, "cwd": str(tmp_path), "prompt": prompt}
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(data)))
+        runpy.run_path(str(path), run_name="__main__")
+        return capsys.readouterr().out
+
+    assert run("ok") == "" and run("dale, gracias") == "" and run("\U0001F44D") == ""
+    assert calls == []
+    assert "cited context" in run("why 500?")
+    assert "cited context" in run("T-1433 status")
+    assert calls == ["why 500?", "T-1433 status"]

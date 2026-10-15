@@ -2248,13 +2248,21 @@ if FastMCP is not None:
     @mcp.tool()
     def read_active_tasks(
         project_root: str = ".",
+        cwd: str = "",
+        lane: str = "",
+        max_age_hours: float | None = None,
     ) -> dict[str, Any]:
         """Read and parse <project_root>/vault/active_tasks.md (or active_tasks.md at root).
 
         Returns the active task pointer (first in_progress, falling back to first
         pending) and the full task list. Goose-side equivalent of legacy
         wezbridge/src/task-parser.cjs — used by recipes that need to know what
-        the user is currently working on. Path resolution:
+        the user is currently working on. Stale or foreign tasks never become
+        ``active_task`` (T-1433): one older than ``max_age_hours`` (default 48,
+        env MEMORYMASTER_ACTIVE_TASK_MAX_AGE_HOURS, 0 disables), with an expired
+        lease, naming a ``cwd`` unrelated to the caller's ``cwd``, or an ``owner``
+        other than the caller's ``lane`` are listed under ``skipped`` instead.
+        Path resolution:
             1. <project_root>/vault/active_tasks.md
             2. <project_root>/active_tasks.md
             3. None → returns ok=False with reason
@@ -2265,10 +2273,10 @@ if FastMCP is not None:
               "active_task": {"id": "T-001", "title": "...", "status": "in_progress",
                               "narrative": "...", "yaml_block": {...}}  | None,
               "all_tasks": [ ... same shape ... ],
+              "skipped": [{"id": "T-001", "reason": "older than 48h"}, ...],
               "source_file": "<resolved path>",
             }
         """
-        import re as _re
         from pathlib import Path as _Path
         mcp_path_policy.validate_workspace_path(project_root, actor="mcp_caller")
         candidates = [
@@ -2284,47 +2292,22 @@ if FastMCP is not None:
         except Exception as exc:
             return {"ok": False, "reason": f"read failed: {exc}", "source_file": str(source)}
 
-        # Parse: split on "## " headers, each section has a ```yaml block``` + narrative.
-        header_re = _re.compile(r"^##\s+(?:Task:\s+)?(.+?)\s*$", _re.MULTILINE)
-        positions = [(m.start(), m.end(), m.group(1).strip()) for m in header_re.finditer(text)]
+        from memorymaster.recall.active_tasks import parse_tasks, select_active
 
-        all_tasks: list[dict[str, Any]] = []
-        for i, (start, end, title) in enumerate(positions):
-            body_start = end
-            body_end = positions[i + 1][0] if i + 1 < len(positions) else len(text)
-            body = text[body_start:body_end]
-
-            yaml_block = {}
-            ym = _re.search(r"```yaml\s*\n(.*?)\n```", body, _re.DOTALL)
-            if ym:
-                for line in ym.group(1).splitlines():
-                    kv = _re.match(r"^([A-Za-z0-9_]+)\s*:\s*(.*)$", line.strip())
-                    if kv:
-                        yaml_block[kv.group(1)] = kv.group(2).strip().strip('"\'')
-
-            # Narrative = body with yaml block stripped
-            narrative = _re.sub(r"```yaml\s*\n.*?\n```", "", body, flags=_re.DOTALL).strip()
-
-            # Try to extract a task id from the title (e.g. "T-001 · Title" or "Task: foo")
-            id_match = _re.search(r"\b(T-?\d+)\b", title)
-            task_id = id_match.group(1) if id_match else f"task-{i+1}"
-
-            all_tasks.append({
-                "id": task_id,
-                "title": title,
-                "status": yaml_block.get("status", "unknown"),
-                "narrative": narrative,
-                "yaml": yaml_block,
-            })
-
-        in_progress = next((t for t in all_tasks if t["status"] == "in_progress"), None)
-        pending = next((t for t in all_tasks if t["status"] == "pending"), None)
-        active = in_progress or pending
+        all_tasks = parse_tasks(text)
+        try:
+            mtime = source.stat().st_mtime
+        except OSError:
+            mtime = None
+        active, skipped = select_active(
+            all_tasks, file_mtime=mtime, max_age=max_age_hours, cwd=cwd or project_root, lane=lane,
+        )
 
         return {
             "ok": True,
             "active_task": active,
             "all_tasks": all_tasks,
+            "skipped": skipped,
             "source_file": str(source),
         }
 

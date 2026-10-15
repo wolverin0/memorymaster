@@ -27,6 +27,12 @@ except ImportError:  # a package older than this template: legacy prefix, no Jev
         return "[MemoryMaster recall]\n" + context
     JEV_OPT_IN = False
 
+try:  # T-1433: "ok"/"dale"/emoji get no recall, but a short real question ("why 500?") still does
+    from memorymaster.recall.hook_policy import is_trivial_prompt  # noqa: E402
+except ImportError:  # a package older than this template: the legacy word-count gate
+    def is_trivial_prompt(prompt):
+        return len(prompt.split()) < 3
+
 try:
     data = json.loads(sys.stdin.read() or "{}")
     query = data.get("prompt", "")
@@ -34,8 +40,8 @@ try:
     session_id = str(data.get("session_id", ""))[:16]
     if is_automated(query):
         log_hook("recall", "skip", session=session_id, reason="automated-event")
-    elif len(query.split()) < 3:
-        log_hook("recall", "skip", session=session_id, reason="short-query", words=len(query.split()))
+    elif is_trivial_prompt(query):
+        log_hook("recall", "skip", session=session_id, reason="trivial-prompt", words=len(query.split()))
     else:
         log_hook("recall", "start", session=session_id, query_len=len(query))
         from memorymaster.recall.remote import hook_recall  # T-0594: warm shared server first

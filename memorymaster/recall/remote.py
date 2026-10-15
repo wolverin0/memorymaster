@@ -74,9 +74,10 @@ def remote_recall(
 
 
 def hook_recall(query: str, hook_data: dict | None, *, db_path: str, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> tuple[str, str]:
-    """Recall for the UserPromptSubmit hook: ``(ctx, via)``, ``via`` in shared/local/skipped_busy/off.
+    """Recall for the UserPromptSubmit hook: ``(ctx, via)``, ``via`` in shared/local/skipped_busy/off/trivial.
 
     ``off``: the hook is switched off for this cwd (``hook_policy``); nothing is recalled.
+    ``trivial``: the prompt is an acknowledgement or empty (``hook_policy.is_trivial_prompt``, T-1433).
 
     The warm shared server first. If nothing reached it, recall locally (the
     pre-T-0594 behaviour). If it was reached but did not answer in time, skip:
@@ -84,6 +85,8 @@ def hook_recall(query: str, hook_data: dict | None, *, db_path: str, timeout: fl
     """
     if hook_policy.disabled_for((hook_data or {}).get("cwd")):  # per-lane A/B switch (T-1351)
         return "", "off"
+    if hook_policy.is_trivial_prompt(query):  # "ok"/"dale" must not re-inject ~800 tokens (T-1433)
+        return "", "trivial"
     answer = remote_recall(query, hook_data, timeout=timeout)
     if answer.ctx is not None:
         return answer.ctx, "shared"
