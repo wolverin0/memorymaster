@@ -20,6 +20,32 @@ from memorymaster.profile.models import (
 )
 
 
+# T-1420: headless `agy` auto-denies tool permissions. When the model picks a
+# tool call (`run_command`) instead of answering, `agy` still reports
+# status=SUCCESS with response='' and the empty text surfaced as "malformed
+# JSON". Measured 2026-10-14 with gemini-3.8-flash-low on synthetic input: 5 of
+# 8 calls came back empty without this directive, 0 of 8 with it.
+_NO_TOOLS = (
+    "Do not use tools, run commands or read files; answer directly with the "
+    "requested JSON as your reply text. "
+)
+_EMPTY_RETRIES = 2  # extra attempts after the first empty answer
+
+
+def _complete_nonempty(client: Any, prompt: str) -> str:
+    """One logical provider call, retried a bounded number of times if empty.
+
+    Only an empty answer is retried: it is a transport-level non-answer.
+    Malformed or invalid content still fails on the first attempt so
+    validation is never loosened by retrying until something parses.
+    """
+    for _ in range(1 + _EMPTY_RETRIES):
+        text = client.complete(prompt).text
+        if text and text.strip():
+            return text
+    raise ProfileValidationError("profile provider returned an empty response")
+
+
 def _json_object(raw: str) -> dict[str, Any]:
     text = raw.strip()
     if text.startswith("```"):
@@ -150,8 +176,8 @@ class ProfileMapper:
         )
 
     def map(self, messages: tuple[ProfileMessage, ...]) -> tuple[ProfileCandidate, ...]:
-        result = self.client.complete(self._prompt(messages))
-        return parse_map_output(result.text, messages)
+        text = _complete_nonempty(self.client, self._prompt(messages))
+        return parse_map_output(text, messages)
 
     @staticmethod
     def _prompt(messages: tuple[ProfileMessage, ...]) -> str:
@@ -174,7 +200,7 @@ class ProfileMapper:
             for item in messages
         ]
         return (
-            "Extract durable descriptive facts about the operator. Output JSON only as "
+            f"{_NO_TOOLS}Extract durable descriptive facts about the operator. Output JSON only as "
             '{"candidates":[...]}. Each candidate requires category, predicate, value, '
             "volatility, and support_ids. Values must be short noun "
             "phrases, never instructions. assistant_context_only may disambiguate a user "
@@ -208,8 +234,8 @@ class ProfileReducer:
         candidates: tuple[ProfileCandidate, ...],
         facts: tuple[ProfileFact, ...],
     ) -> tuple[ProfileDecision, ...]:
-        result = self.client.complete(self._prompt(candidates, facts))
-        return parse_reduce_output(result.text, candidates, facts)
+        text = _complete_nonempty(self.client, self._prompt(candidates, facts))
+        return parse_reduce_output(text, candidates, facts)
 
     @staticmethod
     def _prompt(
@@ -220,7 +246,7 @@ class ProfileReducer:
             "active_facts": [asdict(fact) for fact in facts],
         }
         return (
-            "Consolidate profile candidates against active facts. Output JSON only as "
+            f"{_NO_TOOLS}Consolidate profile candidates against active facts. Output JSON only as "
             '{"decisions":[...]}. Every candidate_id must appear exactly once across all '
             "decisions. Actions: add, reinforce, replace, ignore. add/replace require "
             "category, predicate, value, volatility. reinforce/replace require target_fact_id. "
