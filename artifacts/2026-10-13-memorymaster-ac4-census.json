@@ -1,0 +1,556 @@
+{
+  "generated": "2026-10-18T06:47:17.973Z",
+  "window_days": 7,
+  "window_start_inclusive": "2026-10-06T14:09:32.097Z",
+  "window_end_exclusive": "2026-10-13T14:09:32.097Z",
+  "files_scanned": 2364,
+  "files_per_lane": {
+    "other:external": 258,
+    "futuramax": 14,
+    "infra": 13,
+    "memorymaster": 101,
+    "pedrito": 14,
+    "wezbridge": 1209,
+    "wisp": 755
+  },
+  "script_sha256": "c9127319508e56c4e784a36ae5082ecc37a0ada0a20f9b7564b8aa623ce85c77",
+  "excluded_records": {
+    "missing_or_invalid_timestamp": 149360,
+    "outside_window": 404210
+  },
+  "entry_type_counts": {
+    "queue-operation": 8209,
+    "attachment": 317678,
+    "user": 92453,
+    "assistant": 147857,
+    "system": 15016,
+    "pr-link": 6192,
+    "file-history-delta": 142
+  },
+  "per_lane_per_day": {
+    "other:external": {
+      "2026-10-08": {
+        "tool_calls": 561,
+        "auto_recall": 25,
+        "injected_ids": 230,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 0,
+        "deliberate_by_tool": {},
+        "ingest": 2,
+        "gitnexus": 13
+      },
+      "2026-10-07": {
+        "tool_calls": 1413,
+        "auto_recall": 17,
+        "injected_ids": 144,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 0,
+        "deliberate_by_tool": {},
+        "ingest": 2,
+        "gitnexus": 0
+      },
+      "2026-10-11": {
+        "tool_calls": 709,
+        "auto_recall": 26,
+        "injected_ids": 262,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 0,
+        "deliberate_by_tool": {},
+        "ingest": 0,
+        "gitnexus": 2
+      },
+      "2026-10-12": {
+        "tool_calls": 170,
+        "auto_recall": 4,
+        "injected_ids": 46,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 0,
+        "deliberate_by_tool": {},
+        "ingest": 0,
+        "gitnexus": 0
+      },
+      "2026-10-09": {
+        "tool_calls": 235,
+        "auto_recall": 9,
+        "injected_ids": 106,
+        "citations": 10,
+        "cited_of_injected": 10,
+        "deliberate": 2,
+        "deliberate_by_tool": {
+          "query_memory": 2
+        },
+        "ingest": 5,
+        "gitnexus": 0
+      },
+      "2026-10-10": {
+        "tool_calls": 188,
+        "auto_recall": 15,
+        "injected_ids": 148,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 0,
+        "deliberate_by_tool": {},
+        "ingest": 1,
+        "gitnexus": 0
+      },
+      "2026-10-13": {
+        "tool_calls": 503,
+        "auto_recall": 9,
+        "injected_ids": 90,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 0,
+        "deliberate_by_tool": {},
+        "ingest": 2,
+        "gitnexus": 0
+      },
+      "2026-10-06": {
+        "tool_calls": 64,
+        "auto_recall": 4,
+        "injected_ids": 50,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 0,
+        "deliberate_by_tool": {},
+        "ingest": 0,
+        "gitnexus": 0
+      }
+    },
+    "futuramax": {
+      "2026-10-06": {
+        "tool_calls": 46,
+        "auto_recall": 14,
+        "injected_ids": 150,
+        "citations": 5,
+        "cited_of_injected": 5,
+        "deliberate": 0,
+        "deliberate_by_tool": {},
+        "ingest": 1,
+        "gitnexus": 0
+      },
+      "2026-10-12": {
+        "tool_calls": 44,
+        "auto_recall": 1,
+        "injected_ids": 8,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 0,
+        "deliberate_by_tool": {},
+        "ingest": 0,
+        "gitnexus": 0
+      }
+    },
+    "memorymaster": {
+      "2026-10-08": {
+        "tool_calls": 151,
+        "auto_recall": 7,
+        "injected_ids": 86,
+        "citations": 1,
+        "cited_of_injected": 0,
+        "deliberate": 1,
+        "deliberate_by_tool": {
+          "query_memory": 1
+        },
+        "ingest": 2,
+        "gitnexus": 0
+      },
+      "2026-10-06": {
+        "tool_calls": 604,
+        "auto_recall": 9,
+        "injected_ids": 114,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 2,
+        "deliberate_by_tool": {
+          "query_memory": 1,
+          "dream_status": 1
+        },
+        "ingest": 5,
+        "gitnexus": 0
+      },
+      "2026-10-07": {
+        "tool_calls": 215,
+        "auto_recall": 6,
+        "injected_ids": 68,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 0,
+        "deliberate_by_tool": {},
+        "ingest": 2,
+        "gitnexus": 0
+      },
+      "2026-10-11": {
+        "tool_calls": 314,
+        "auto_recall": 7,
+        "injected_ids": 74,
+        "citations": 1,
+        "cited_of_injected": 1,
+        "deliberate": 1,
+        "deliberate_by_tool": {
+          "query_memory": 1
+        },
+        "ingest": 1,
+        "gitnexus": 7
+      },
+      "2026-10-12": {
+        "tool_calls": 224,
+        "auto_recall": 2,
+        "injected_ids": 16,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 0,
+        "deliberate_by_tool": {},
+        "ingest": 3,
+        "gitnexus": 0
+      },
+      "2026-10-13": {
+        "tool_calls": 6,
+        "auto_recall": 1,
+        "injected_ids": 8,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 0,
+        "deliberate_by_tool": {},
+        "ingest": 0,
+        "gitnexus": 0
+      },
+      "2026-10-10": {
+        "tool_calls": 0,
+        "auto_recall": 1,
+        "injected_ids": 10,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 0,
+        "deliberate_by_tool": {},
+        "ingest": 0,
+        "gitnexus": 0
+      }
+    },
+    "wezbridge": {
+      "2026-10-13": {
+        "tool_calls": 2088,
+        "auto_recall": 52,
+        "injected_ids": 345,
+        "citations": 8,
+        "cited_of_injected": 8,
+        "deliberate": 10,
+        "deliberate_by_tool": {
+          "query_memory": 6,
+          "recall_stats": 2,
+          "get_usage_rollup": 2
+        },
+        "ingest": 4,
+        "gitnexus": 0
+      },
+      "2026-10-10": {
+        "tool_calls": 3378,
+        "auto_recall": 44,
+        "injected_ids": 368,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 15,
+        "deliberate_by_tool": {
+          "query_for_task": 1,
+          "query_memory": 9,
+          "search_verbatim": 2,
+          "list_claims": 3
+        },
+        "ingest": 9,
+        "gitnexus": 4
+      },
+      "2026-10-11": {
+        "tool_calls": 10518,
+        "auto_recall": 79,
+        "injected_ids": 452,
+        "citations": 1,
+        "cited_of_injected": 0,
+        "deliberate": 2,
+        "deliberate_by_tool": {
+          "query_memory": 2
+        },
+        "ingest": 28,
+        "gitnexus": 54
+      },
+      "2026-10-08": {
+        "tool_calls": 5431,
+        "auto_recall": 69,
+        "injected_ids": 578,
+        "citations": 1,
+        "cited_of_injected": 0,
+        "deliberate": 9,
+        "deliberate_by_tool": {
+          "query_memory": 8,
+          "list_claims": 1
+        },
+        "ingest": 33,
+        "gitnexus": 21
+      },
+      "2026-10-07": {
+        "tool_calls": 10378,
+        "auto_recall": 62,
+        "injected_ids": 560,
+        "citations": 2,
+        "cited_of_injected": 2,
+        "deliberate": 45,
+        "deliberate_by_tool": {
+          "query_memory": 42,
+          "list_claims": 3
+        },
+        "ingest": 47,
+        "gitnexus": 31
+      },
+      "2026-10-09": {
+        "tool_calls": 6499,
+        "auto_recall": 45,
+        "injected_ids": 398,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 15,
+        "deliberate_by_tool": {
+          "query_memory": 15
+        },
+        "ingest": 19,
+        "gitnexus": 47
+      },
+      "2026-10-06": {
+        "tool_calls": 8551,
+        "auto_recall": 120,
+        "injected_ids": 1146,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 13,
+        "deliberate_by_tool": {
+          "query_memory": 12,
+          "list_claims": 1
+        },
+        "ingest": 13,
+        "gitnexus": 0
+      },
+      "2026-10-12": {
+        "tool_calls": 2351,
+        "auto_recall": 52,
+        "injected_ids": 390,
+        "citations": 5,
+        "cited_of_injected": 4,
+        "deliberate": 3,
+        "deliberate_by_tool": {
+          "query_memory": 3
+        },
+        "ingest": 8,
+        "gitnexus": 0
+      }
+    },
+    "wisp": {
+      "2026-10-13": {
+        "tool_calls": 1612,
+        "auto_recall": 14,
+        "injected_ids": 164,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 0,
+        "deliberate_by_tool": {},
+        "ingest": 4,
+        "gitnexus": 0
+      },
+      "2026-10-12": {
+        "tool_calls": 2113,
+        "auto_recall": 29,
+        "injected_ids": 320,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 3,
+        "deliberate_by_tool": {
+          "query_memory": 3
+        },
+        "ingest": 6,
+        "gitnexus": 0
+      },
+      "2026-10-11": {
+        "tool_calls": 4487,
+        "auto_recall": 15,
+        "injected_ids": 154,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 5,
+        "deliberate_by_tool": {
+          "list_claims": 1,
+          "query_memory": 4
+        },
+        "ingest": 16,
+        "gitnexus": 0
+      },
+      "2026-10-08": {
+        "tool_calls": 7254,
+        "auto_recall": 33,
+        "injected_ids": 308,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 10,
+        "deliberate_by_tool": {
+          "query_memory": 10
+        },
+        "ingest": 13,
+        "gitnexus": 0
+      },
+      "2026-10-07": {
+        "tool_calls": 6228,
+        "auto_recall": 28,
+        "injected_ids": 306,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 16,
+        "deliberate_by_tool": {
+          "query_memory": 15,
+          "search_verbatim": 1
+        },
+        "ingest": 34,
+        "gitnexus": 0
+      },
+      "2026-10-09": {
+        "tool_calls": 3730,
+        "auto_recall": 20,
+        "injected_ids": 214,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 2,
+        "deliberate_by_tool": {
+          "query_memory": 1,
+          "search_verbatim": 1
+        },
+        "ingest": 6,
+        "gitnexus": 0
+      },
+      "2026-10-10": {
+        "tool_calls": 776,
+        "auto_recall": 6,
+        "injected_ids": 46,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 0,
+        "deliberate_by_tool": {},
+        "ingest": 4,
+        "gitnexus": 0
+      },
+      "2026-10-06": {
+        "tool_calls": 3974,
+        "auto_recall": 11,
+        "injected_ids": 158,
+        "citations": 0,
+        "cited_of_injected": 0,
+        "deliberate": 1,
+        "deliberate_by_tool": {
+          "query_memory": 1
+        },
+        "ingest": 10,
+        "gitnexus": 12
+      }
+    }
+  },
+  "totals_7d": {
+    "other:external": {
+      "tool_calls": 3843,
+      "auto_recall": 109,
+      "injected_ids": 1076,
+      "citations": 10,
+      "cited_of_injected": 10,
+      "deliberate": 2,
+      "deliberate_by_tool": {
+        "query_memory": 2
+      },
+      "ingest": 12,
+      "gitnexus": 15
+    },
+    "futuramax": {
+      "tool_calls": 90,
+      "auto_recall": 15,
+      "injected_ids": 158,
+      "citations": 5,
+      "cited_of_injected": 5,
+      "deliberate": 0,
+      "deliberate_by_tool": {},
+      "ingest": 1,
+      "gitnexus": 0
+    },
+    "memorymaster": {
+      "tool_calls": 1514,
+      "auto_recall": 33,
+      "injected_ids": 376,
+      "citations": 2,
+      "cited_of_injected": 1,
+      "deliberate": 4,
+      "deliberate_by_tool": {
+        "query_memory": 3,
+        "dream_status": 1
+      },
+      "ingest": 13,
+      "gitnexus": 7
+    },
+    "wezbridge": {
+      "tool_calls": 49194,
+      "auto_recall": 523,
+      "injected_ids": 4237,
+      "citations": 17,
+      "cited_of_injected": 14,
+      "deliberate": 112,
+      "deliberate_by_tool": {
+        "query_memory": 97,
+        "recall_stats": 2,
+        "get_usage_rollup": 2,
+        "query_for_task": 1,
+        "search_verbatim": 2,
+        "list_claims": 8
+      },
+      "ingest": 161,
+      "gitnexus": 157
+    },
+    "wisp": {
+      "tool_calls": 30174,
+      "auto_recall": 156,
+      "injected_ids": 1670,
+      "citations": 0,
+      "cited_of_injected": 0,
+      "deliberate": 37,
+      "deliberate_by_tool": {
+        "query_memory": 34,
+        "list_claims": 1,
+        "search_verbatim": 2
+      },
+      "ingest": 93,
+      "gitnexus": 12
+    }
+  },
+  "mcp_servers_per_profile": {
+    "drill": [],
+    "fleet": [
+      "memorymaster",
+      "slack",
+      "gitnexus",
+      "wezbridge",
+      "tool-gateway"
+    ],
+    "futuramax": [
+      "memorymaster"
+    ],
+    "memorymaster": [
+      "memorymaster"
+    ],
+    "pedrito": [
+      "memorymaster"
+    ],
+    "wabot2": [
+      "memorymaster"
+    ],
+    "wezbridge": [
+      "memorymaster",
+      "gitnexus",
+      "context7"
+    ],
+    "wisp": [
+      "memorymaster"
+    ]
+  }
+}
