@@ -31,12 +31,12 @@ ROOT = Path(__file__).resolve().parent.parent
 HOOK = ROOT / "memorymaster" / "config_templates" / "hooks" / "memorymaster-classify.py"
 GOLDEN = json.loads((ROOT / "tests" / "fixtures" / "classify_hook_off_golden.json").read_text(encoding="utf-8"))
 KEY = ApiKey("ts-test-" + "H" * 24)  # synthetic
-# MEMORYMASTER_SKIP_PERF (CI): shared runners swing ~5x, so only wall-clock limits are skipped.
-TIMING = not os.environ.get("MEMORYMASTER_SKIP_PERF")
+# MEMORYMASTER_SKIP_PERF (Windows CI): shared runners swing ~5x, so only Windows wall-clock limits are skipped.
+TIMING = not (sys.platform == "win32" and os.environ.get("MEMORYMASTER_SKIP_PERF"))
 # The deadline a test that is not about the deadline gives the hook when it builds its own engine
 # from the environment (make_engine passes the same value): the 900 ms production default fell back
 # to the regex hints on Windows CI before the ledger was even created.
-UNTIMED_HOOK_DEADLINE_MS = "10000"
+UNTIMED_HOOK_DEADLINE_MS = "10000" if sys.platform == "win32" else "900"
 DECIDED = GOLDEN["cases"][0]  # "We decided to use WAL mode for the ledger." -> regex [DECISION]
 NO_REGEX_MATCH = "I prefer short answers with code over explanations"
 
@@ -298,9 +298,11 @@ def test_a_write_locked_ledger_cannot_push_the_hook_past_its_timeout(hook, tmp_p
     # Creating the ledger is not what this test measures: the hook builds its engine from the
     # environment, so it gets the same untimed deadline make_engine gives every other test here
     # (at the 900 ms default a slow runner timed out first and the hook correctly showed DECISION).
-    monkeypatch.setenv("MEMORYMASTER_JEV_HOOK_DEADLINE_MS", UNTIMED_HOOK_DEADLINE_MS)
+    if sys.platform == "win32":
+        monkeypatch.setenv("MEMORYMASTER_JEV_HOOK_DEADLINE_MS", UNTIMED_HOOK_DEADLINE_MS)
     assert hint_names(hook.run(json.loads(DECIDED["stdin"]))) == ["PREFERENCE"]  # creates the ledger
-    monkeypatch.delenv("MEMORYMASTER_JEV_HOOK_DEADLINE_MS")  # the locked run keeps the production deadline
+    if sys.platform == "win32":
+        monkeypatch.delenv("MEMORYMASTER_JEV_HOOK_DEADLINE_MS")  # the locked run keeps the production deadline
     lock = sqlite3.connect(str(db), timeout=1)
     try:
         lock.execute("BEGIN IMMEDIATE")
