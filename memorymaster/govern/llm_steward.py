@@ -26,7 +26,11 @@ from typing import Any
 
 from memorymaster.stores._storage_shared import open_conn
 from memorymaster.core import observability
-from memorymaster.core.promotion_policy import auto_promotion_blocked, non_auto_promotable_sources
+from memorymaster.core.promotion_policy import (
+    auto_promotion_blocked,
+    non_auto_promotable_sources,
+    structure_blocks_auto_promotion,
+)
 from memorymaster.core.security import sanitize_claim_input
 
 # P2 phase0 cycle cut: KeyRotator/DEFAULT_COOLDOWN_SECONDS now live in
@@ -509,6 +513,10 @@ def _confirm_candidate_cas(
     # Backstop for the candidate query's source policy filter (T-1354).
     row = conn.execute("SELECT source_agent FROM claims WHERE id = ?", (claim_id,)).fetchone()
     if row is not None and auto_promotion_blocked(row[0]):
+        return False
+    # T-1591: judge the triple that will be STORED (the LLM rewrites it), not the
+    # one the candidate arrived with.
+    if structure_blocks_auto_promotion(subject, predicate, object_value):
         return False
     cur = conn.execute(
         "UPDATE claims SET status = 'confirmed', subject = ?, predicate = ?, "

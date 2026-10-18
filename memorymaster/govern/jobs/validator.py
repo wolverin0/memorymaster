@@ -8,6 +8,7 @@ from memorymaster.core.models import Claim
 from memorymaster.core.promotion_policy import (
     PromotionPolicyBlocked,
     auto_promotion_blocked,
+    structure_blocks_auto_promotion,
     non_auto_promotable_sources,
 )
 from memorymaster.govern.steward_classifier import load_classifier, predict_promote_probability
@@ -92,17 +93,20 @@ def _candidate_recency_key(claim: Claim) -> tuple[str, int]:
 
 
 _SOURCE_POLICY_HOLD = "promotion_blocked_source_policy"
+_STRUCTURE_POLICY_HOLD = "promotion_blocked_structure_policy"
 
 
-def _record_source_policy_hold(store, claim: Claim, score: float, citation_count: int) -> None:
+def _record_source_policy_hold(
+    store, claim: Claim, score: float, citation_count: int, hold: str = _SOURCE_POLICY_HOLD
+) -> None:
     """Audit the hold once, not on every cycle the claim stays a candidate."""
     latest = store.list_events(claim_id=claim.id, event_type="validator", limit=1)
-    if latest and latest[0].details == _SOURCE_POLICY_HOLD:
+    if latest and latest[0].details == hold:
         return
     store.record_event(
         claim_id=claim.id,
         event_type="validator",
-        details=_SOURCE_POLICY_HOLD,
+        details=hold,
         payload={"score": score, "citation_count": citation_count, "claim_status": claim.status},
     )
 
@@ -174,6 +178,7 @@ def run(
             "skill_pending_approval": 0,
             "blocked_pending_supersession": 0,
             "held_by_source_policy": 0,
+            "held_by_structure_policy": 0,
             "staled": 0,
             "revalidated_healthy": 0,
             "observation_checked": 0,
@@ -211,6 +216,7 @@ def run(
     confirmed = 0
     blocked_pending_supersession = 0
     held_by_source_policy = 0
+    held_by_structure_policy = 0
     conflicted = 0
     superseded = 0
     archived_duplicates = 0
@@ -288,6 +294,16 @@ def run(
             _record_source_policy_hold(store, claim, score, citation_count)
             pending += 1
             held_by_source_policy += 1
+            continue
+
+        # Structure policy (T-1591): a loopback object or a predicate without a
+        # subject is an extractor artifact; it is never confirmed automatically.
+        if claim.status != "confirmed" and structure_blocks_auto_promotion(
+            claim.subject, claim.predicate, claim.object_value
+        ):
+            _record_source_policy_hold(store, claim, score, citation_count, _STRUCTURE_POLICY_HOLD)
+            pending += 1
+            held_by_structure_policy += 1
             continue
 
         # Calibrated-classifier gate (task #129): when the artifact is present
@@ -406,6 +422,7 @@ def run(
         "skill_pending_approval": skill_pending_approval,
         "blocked_pending_supersession": blocked_pending_supersession,
         "held_by_source_policy": held_by_source_policy,
+        "held_by_structure_policy": held_by_structure_policy,
         "staled": staled,
         "revalidated_healthy": revalidated_healthy,
         "observation_checked": observation_review["checked"],

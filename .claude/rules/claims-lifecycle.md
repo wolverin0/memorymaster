@@ -24,6 +24,8 @@ Canonical statuses are defined in `memorymaster/models.py:CLAIM_STATUSES` — si
 
 `memorymaster/core/promotion_policy.py` is the single policy point: claims whose `source_agent` is in `non_auto_promotable_sources()` (default `{"llm-stop-hook"}`, override with `MEMORYMASTER_NON_AUTO_PROMOTABLE_SOURCES`, empty disables) stay `candidate`. `transition_claim` raises `PromotionPolicyBlocked` for `-> confirmed` unless `event_payload["actor"]` is `operator` or `agent`; the validator, curation drain, Jev revalidation selection and the raw-SQL `llm_steward` confirm consult the same policy. A new automatic promoter must go through `transition_claim` (or call `auto_promotion_blocked`) and must not wrap the confirm in a broad `except` that downgrades the refusal to `conflicted`.
 
+Structure policy (T-1591), same gate: a claim whose structured `object_value` is a loopback literal (`127.0.0.1`, `localhost`, `::1`, optional port or URL form) or that has a `predicate` without a `subject` is never auto-promoted either (`structure_blocks_auto_promotion`). Cause: `govern/jobs/extractor.py:infer_structure` stamps `server/ip_address/<first IPv4 in the text>` on prose that merely mentions an address. `subject`+`predicate` with no `object_value` is NOT malformed (dream-worker's normal shape). Private non-loopback IPs stay promotable.
+
 ## Tiers (recall weight, orthogonal to status)
 
 Tiers control recall ordering. Default stored in schema is `working` (see `schema.sql:26` and `_storage_schema.py:463`). The `recompute-tiers` CLI command reports counts for three buckets (see `cli_handlers_basic.py:455`):
