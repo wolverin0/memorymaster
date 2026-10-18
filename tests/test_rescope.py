@@ -83,8 +83,7 @@ def _confirmed(store, scope: str, object_value: str) -> int:
     claim = store.create_claim(text=f"service url is {object_value}", subject="service", predicate="url",
                                object_value=object_value, citations=[CitationInput(source="session://y")],
                                scope=scope)
-    lifecycle.transition_claim(store, claim.id, "confirmed", reason="fixture", event_type="validator",
-                               event_payload={"actor": "operator"})
+    lifecycle.transition_claim(store, claim.id, "confirmed", reason="fixture", event_type="validator")
     return claim.id
 
 

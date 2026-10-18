@@ -516,7 +516,7 @@ def _confirm_candidate_cas(
         return False
     # T-1591: judge the triple that will be STORED (the LLM rewrites it), not the
     # one the candidate arrived with.
-    if structure_blocks_auto_promotion(subject, predicate, object_value):
+    if structure_blocks_auto_promotion(subject, predicate):
         return False
     cur = conn.execute(
         "UPDATE claims SET status = 'confirmed', subject = ?, predicate = ?, "

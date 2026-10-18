@@ -145,9 +145,9 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
                     # rival y despues fallar la promocion dejaria la tupla vacia.
                     summary["held_by_source_policy"] += 1
                     continue
-                if structure_blocks_auto_promotion(claim.subject, claim.predicate, claim.object_value):
-                    # T-1591: mismo corte previo a la supersesion para un objeto
-                    # loopback o un predicado sin sujeto (artefacto del extractor).
+                if structure_blocks_auto_promotion(claim.subject, claim.predicate):
+                    # T-1591: mismo corte previo a la supersesion para un predicado
+                    # sin sujeto (campo corrido, no una tripleta).
                     summary["held_by_structure_policy"] += 1
                     continue
                 if apply:

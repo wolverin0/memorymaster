@@ -296,10 +296,10 @@ def run(
             held_by_source_policy += 1
             continue
 
-        # Structure policy (T-1591): a loopback object or a predicate without a
-        # subject is an extractor artifact; it is never confirmed automatically.
+        # Structure policy (T-1591): a predicate without a subject is a shifted
+        # field, not a triple; it is never confirmed automatically.
         if claim.status != "confirmed" and structure_blocks_auto_promotion(
-            claim.subject, claim.predicate, claim.object_value
+            claim.subject, claim.predicate
         ):
             _record_source_policy_hold(store, claim, score, citation_count, _STRUCTURE_POLICY_HOLD)
             pending += 1

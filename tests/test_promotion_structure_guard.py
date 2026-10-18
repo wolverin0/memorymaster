@@ -1,14 +1,12 @@
-"""T-1591: loopback-object and malformed-triple claims are never auto-promoted.
+"""T-1591: a predicate without a subject is never auto-promoted.
 
-``govern.jobs.extractor.infer_structure`` stamps ``server / ip_address / <first
-IPv4 in the text>`` on any prose that mentions an address, so long legitimate
-claims that merely cite 127.0.0.1 carry a loopback "fact" as their structured
-object. Those must not reach ``confirmed`` through an automatic path. Only the
-hole-in-the-middle triple (predicate without subject) is malformed: subject +
-predicate with no object is the normal shape of dream-worker output and must
-keep promoting. Operator/agent actors are never affected. All tests use a
-disposable SQLite database; private IPs stay promotable on purpose (see
-``tests/test_security_patterns.py::TestPrivateIPv4NotRedactedAtIngest``).
+A predicate with no subject is a shifted field (a category label such as
+CONSTRAINT / PROJECT in the predicate slot), not a triple. Subject + predicate
+with no object is NOT malformed: it is the normal shape of dream-worker output
+(313 confirmed claims) and must keep promoting, as must free-text claims and
+loopback/private objects (the loopback noise is fixed at the source, see
+``tests/test_extractor_infer_structure.py``). Operator/agent actors are never
+affected. All tests use a disposable SQLite database.
 """
 from __future__ import annotations
 
@@ -26,32 +24,6 @@ from memorymaster.core.promotion_policy import (
 from memorymaster.core.service import MemoryService
 from memorymaster.govern import llm_steward
 from memorymaster.govern.jobs import curation_drain, validator
-
-LOOPBACK_OBJECTS = [
-    "127.0.0.1",
-    "localhost",
-    "LOCALHOST",
-    "  127.0.0.1  ",
-    "::1",
-    "[::1]",
-    "127.0.0.1:8080",
-    "localhost:3003",
-    "[::1]:8080",
-    "http://localhost:3003/health",
-    "https://127.0.0.1/",
-    "127.4.5.6",
-]
-NOT_LOOPBACK_OBJECTS = [
-    "10.0.0.5",
-    "192.168.1.20",
-    "0.0.0.0",
-    "localhost.example.com",
-    "mylocalhost",
-    "https://code.example.com/docs",
-    "1270.0.0.1",
-    "v",
-]
-
 
 @pytest.fixture()
 def svc(tmp_path: Path, monkeypatch) -> MemoryService:
@@ -79,41 +51,6 @@ def _status_of(svc, claim_id) -> str:
 
 # --- lifecycle gateway --------------------------------------------------------
 
-@pytest.mark.parametrize("obj", LOOPBACK_OBJECTS)
-def test_transition_refuses_automatic_confirm_of_loopback_object(svc, obj):
-    cid = _claim(svc, "Long prose that merely mentions a local address", subject="server",
-                 predicate="ip_address", object_value=obj)
-    with pytest.raises(PromotionPolicyBlocked):
-        transition_claim(svc.store, cid, "confirmed", reason="auto", event_type="validator")
-    with pytest.raises(PromotionPolicyBlocked):
-        transition_claim(svc.store, cid, "confirmed", reason="cycle", event_type="transition",
-                         event_payload={"actor": "automation"})
-    assert _status_of(svc, cid) == "candidate"
-
-
-@pytest.mark.parametrize("obj", NOT_LOOPBACK_OBJECTS)
-def test_non_loopback_objects_still_confirm(svc, obj):
-    cid = _claim(svc, f"Host fact pointing at {obj}", subject="server", predicate="ip_address",
-                 object_value=obj)
-    assert transition_claim(svc.store, cid, "confirmed", reason="auto", event_type="validator").status == "confirmed"
-
-
-def test_loopback_subject_alone_does_not_block(svc):
-    """Only the structured OBJECT is inspected; the loopback literal as subject is prose."""
-    cid = _claim(svc, "localhost is mentioned as the subject only", subject="localhost",
-                 predicate="runs", object_value="vite")
-    assert transition_claim(svc.store, cid, "confirmed", reason="auto", event_type="validator").status == "confirmed"
-
-
-@pytest.mark.parametrize("actor", ["operator", "agent"])
-def test_explicit_actor_can_still_confirm_a_loopback_claim(svc, actor):
-    cid = _claim(svc, f"Loopback claim confirmed explicitly by {actor}", subject="server",
-                 predicate="ip_address", object_value="127.0.0.1")
-    updated = transition_claim(svc.store, cid, "confirmed", reason="explicit", event_type="transition",
-                               event_payload={"actor": actor})
-    assert updated.status == "confirmed"
-
-
 def test_predicate_without_subject_is_malformed_and_blocked(svc):
     cid = _claim(svc, "Category label landed in the predicate slot", subject=None,
                  predicate="CONSTRAINT")
@@ -122,6 +59,16 @@ def test_predicate_without_subject_is_malformed_and_blocked(svc):
     assert _status_of(svc, cid) == "candidate"
     assert transition_claim(svc.store, cid, "confirmed", reason="explicit", event_type="transition",
                             event_payload={"actor": "operator"}).status == "confirmed"
+
+
+def test_stale_malformed_claim_cannot_be_reconfirmed_automatically(svc):
+    cid = _claim(svc, "Legacy confirmed claim that decayed", subject=None, predicate="PROJECT")
+    transition_claim(svc.store, cid, "confirmed", reason="legacy", event_type="transition",
+                     event_payload={"actor": "operator"})
+    transition_claim(svc.store, cid, "stale", reason="decay", event_type="decay")
+    with pytest.raises(PromotionPolicyBlocked):
+        transition_claim(svc.store, cid, "confirmed", reason="jev", event_type="validator")
+    assert _status_of(svc, cid) == "stale"
 
 
 def test_whitespace_subject_counts_as_empty(svc):
@@ -135,6 +82,7 @@ def test_whitespace_subject_counts_as_empty(svc):
     ("ledger", "refuses unconfirmed", None),  # dream-worker shape: no object
     ("ledger", None, None),                  # subject only
     ("server", "ip_address", "10.0.0.5"),    # full triple
+    ("server", "ip_address", "127.0.0.1"),   # loopback is fixed in the extractor, not blocked here
 ])
 def test_legitimate_shapes_are_not_blocked(svc, subject, predicate, object_value):
     cid = _claim(svc, f"Legit claim {subject}/{predicate}/{object_value}", subject=subject,
@@ -142,22 +90,11 @@ def test_legitimate_shapes_are_not_blocked(svc, subject, predicate, object_value
     assert transition_claim(svc.store, cid, "confirmed", reason="auto", event_type="validator").status == "confirmed"
 
 
-def test_stale_loopback_claim_cannot_be_reconfirmed_automatically(svc):
-    cid = _claim(svc, "Legacy confirmed claim that decayed", subject="server",
-                 predicate="ip_address", object_value="127.0.0.1")
-    transition_claim(svc.store, cid, "confirmed", reason="legacy", event_type="transition",
-                     event_payload={"actor": "operator"})
-    transition_claim(svc.store, cid, "stale", reason="decay", event_type="decay")
-    with pytest.raises(PromotionPolicyBlocked):
-        transition_claim(svc.store, cid, "confirmed", reason="jev", event_type="validator")
-    assert _status_of(svc, cid) == "stale"
-
-
 # --- validator cycle ----------------------------------------------------------
 
-def test_validator_holds_loopback_candidate_and_still_promotes_others(svc):
-    held = _claim(svc, "Dev server notes mention 127.0.0.1 in passing", subject="server",
-                  predicate="ip_address", object_value="127.0.0.1")
+def test_validator_holds_malformed_candidate_and_still_promotes_others(svc):
+    held = _claim(svc, "Marketing note whose category label landed in the predicate",
+                  subject=None, predicate="CONSTRAINT")
     other = _claim(svc, "Release deadline is 2026-04-01 according to a session",
                    subject="rel-b", predicate="deadline", object_value="2026-04-01")
 
@@ -165,7 +102,7 @@ def test_validator_holds_loopback_candidate_and_still_promotes_others(svc):
     second = validator.run(svc.store, min_citations=1, min_score=0.5)
 
     assert _status_of(svc, other) == "confirmed", "control claim must still be promoted"
-    assert _status_of(svc, held) == "candidate", "loopback claim must not be confirmed or conflicted"
+    assert _status_of(svc, held) == "candidate", "malformed claim must not be confirmed or conflicted"
     assert first["held_by_structure_policy"] == 1 and second["held_by_structure_policy"] == 1
     holds = [e for e in svc.store.list_events(claim_id=held, event_type="validator", limit=20)
              if e.details == "promotion_blocked_structure_policy"]
@@ -194,16 +131,10 @@ def _cas_confirm(svc, claim_id, **fields):
     return ok
 
 
-def test_llm_steward_confirm_cas_refuses_rewritten_loopback_object(svc):
-    cid = _claim(svc, "Candidate the llm rewrote into a loopback fact")
-    assert _cas_confirm(svc, cid, subject="server", predicate="ip_address", object_value="localhost:3003") is False
-    assert _status_of(svc, cid) == "candidate"
-
-
 def test_llm_steward_confirm_cas_judges_the_stored_triple_not_the_arriving_one(svc):
-    """The CAS overwrites the triple, so a clean rewrite of a loopback candidate may confirm."""
-    cid = _claim(svc, "Candidate that arrived with a loopback object", subject="server",
-                 predicate="ip_address", object_value="127.0.0.1")
+    """The CAS overwrites the triple, so a clean rewrite of a malformed candidate may confirm."""
+    cid = _claim(svc, "Candidate that arrived with a predicate and no subject", subject=None,
+                 predicate="PROJECT")
     assert _cas_confirm(svc, cid, subject="dev-workflow", predicate="runs on", object_value=None) is True
     assert _status_of(svc, cid) == "confirmed"
 
@@ -221,13 +152,17 @@ def test_llm_steward_confirm_cas_still_confirms_ordinary_rewrite(svc):
 
 # --- curation drain -------------------------------------------------------------
 
-def test_a_loopback_conflict_winner_is_not_promoted_and_does_not_supersede_the_rival(svc):
-    rival = _claim(svc, "the older confirmed host fact with less confidence", subject="host-a",
+def test_a_malformed_conflict_winner_is_not_promoted_and_does_not_supersede_the_rival(svc):
+    rival = _claim(svc, "the older confirmed fact with less confidence", subject="host-a",
                    predicate="ip_address", object_value="10.0.0.5", confidence=0.3)
     transition_claim(svc.store, rival, "confirmed", reason="fixture")
-    winner = _claim(svc, "the newer conflicted claim that only cites a local address", subject="host-a",
-                    predicate="ip_address", object_value="127.0.0.1", confidence=0.95)
-    transition_claim(svc.store, winner, "conflicted", reason="fixture")
+    winner = _claim(svc, "the newer conflicted claim with a shifted predicate", subject=None,
+                    predicate="ip_address", object_value="10.0.0.6", confidence=0.95)
+    transition_claim(svc.store, winner, "conflicted", reason="fixture",
+                     event_type="validator")
+    # A subject-less claim has no (subject, predicate) rival; the drain finds it in the audit trail.
+    svc.store.record_event(claim_id=winner, event_type="validator",
+                           details=f"conflicts_with_confirmed_claim:{rival}")
 
     result = curation_drain.drain_conflicts(svc, apply=True)
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ipaddress
 import re
+from urllib.parse import urlsplit
 
 _SPACE_RE = re.compile(r"\s+")
 _IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
@@ -9,20 +11,69 @@ _WIN_PATH_RE = re.compile(r"[A-Za-z]:\\[^\s]+")
 _UNIX_PATH_RE = re.compile(r"(?:/[^/\s]+)+")
 
 
+# Documentation hosts whose URLs are references, not a fact about a service of ours
+# (T-1591). Deliberately minimal: extend only with a measured offender.
+GENERIC_DOCS_DOMAINS = ("code.claude.com",)
+
+
+def _is_loopback_host(host: str | None) -> bool:
+    host = (host or "").strip("[]").lower()
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_generic_docs_host(host: str | None) -> bool:
+    host = (host or "").lower()
+    return any(host == domain or host.endswith(f".{domain}") for domain in GENERIC_DOCS_DOMAINS)
+
+
+def _url_host(url: str) -> str | None:
+    try:
+        return urlsplit(url).hostname
+    except ValueError:
+        return None
+
+
+def _first_infra_ip(text: str) -> str | None:
+    """First IPv4 in the text that is not loopback (127.0.0.0/8 says nothing about a server)."""
+    for match in _IPV4_RE.finditer(text):
+        if not _is_loopback_host(match.group(0)):
+            return match.group(0)
+    return None
+
+
+def _first_service_url(text: str) -> str | None:
+    """First URL that is neither loopback nor a generic docs reference."""
+    for match in _URL_RE.finditer(text):
+        host = _url_host(match.group(0))
+        if not _is_loopback_host(host) and not _is_generic_docs_host(host):
+            return match.group(0)
+    return None
+
+
 def normalize_claim_text(text: str) -> str:
     return _SPACE_RE.sub(" ", text.strip().lower())
 
 
 def infer_structure(text: str) -> tuple[str | None, str | None, str | None, str | None]:
-    ip_match = _IPV4_RE.search(text)
-    if ip_match:
-        return ("infra_fact", "server", "ip_address", ip_match.group(0))
+    # Loopback addresses and generic docs URLs are prose, not infra facts: stamping
+    # them as server/ip_address or service/url put a bogus triple on long claims
+    # that merely mention them (T-1591).
+    ip = _first_infra_ip(text)
+    if ip:
+        return ("infra_fact", "server", "ip_address", ip)
 
-    url_match = _URL_RE.search(text)
-    if url_match:
-        return ("infra_fact", "service", "url", url_match.group(0))
+    url = _first_service_url(text)
+    if url:
+        return ("infra_fact", "service", "url", url)
 
-    path_match = _WIN_PATH_RE.search(text) or _UNIX_PATH_RE.search(text)
+    # URLs skipped above must not be re-read as filesystem paths ("//host/page").
+    prose = _URL_RE.sub(" ", text)
+    path_match = _WIN_PATH_RE.search(prose) or _UNIX_PATH_RE.search(prose)
     if path_match:
         # Use None instead of generic "workspace"/"path" to avoid mass conflicts
         # Claims with file paths don't need tuple-based conflict detection

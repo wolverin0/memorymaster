@@ -72,10 +72,9 @@ def transition_claim(
     """``event_payload`` adds fields to the transition event's payload (e.g.
     the steward resolution ``actor``, review F-21).
 
-    Confirming a claim whose author is in the non-auto-promotable set, or whose
-    structured object is a loopback literal, or that has a predicate without a
-    subject (``core.promotion_policy``), raises :class:`PromotionPolicyBlocked` unless
-    ``event_payload["actor"]`` marks an explicit decision (``operator``/``agent``).
+    Confirming a claim whose author is in the non-auto-promotable set, or that
+    has a predicate without a subject (``core.promotion_policy``), raises
+    :class:`PromotionPolicyBlocked` unless ``event_payload["actor"]`` marks an explicit decision (``operator``/``agent``).
     """
     claim = store.get_claim(claim_id, include_citations=False)
     if claim is None:
@@ -93,7 +92,7 @@ def transition_claim(
     ):
         raise PromotionPolicyBlocked(
             f"Claim {claim_id} is not auto-promotable (source_agent '{claim.source_agent}', "
-            "loopback object or malformed triple); confirm it with an explicit operator/agent actor."
+            "or a predicate without a subject); confirm it with an explicit operator/agent actor."
         )
     extra = {"event_payload": event_payload} if event_payload else {}
     updated = store.apply_status_transition(
