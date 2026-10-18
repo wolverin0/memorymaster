@@ -86,8 +86,8 @@ def recall_inputs(query: str = "how do we run tests on 10.0.0.5?"):
     return state, bound
 
 
-# MEMORYMASTER_SKIP_PERF (CI): shared runners swing ~5x, so only wall-clock limits are skipped.
-TIMING = not os.environ.get("MEMORYMASTER_SKIP_PERF")
+# MEMORYMASTER_SKIP_PERF (Windows CI): shared runners swing ~5x, so only Windows wall-clock limits are skipped.
+TIMING = not (sys.platform == "win32" and os.environ.get("MEMORYMASTER_SKIP_PERF"))
 # Tests get a hook deadline no loaded machine reaches unless they are about the deadline: at the
 # 900 ms production default, Windows CI (2026-09-24) timed out a label test and a loaded release
 # machine timed out the surrogate and send-intent tests. Deadline tests pass their own value.
