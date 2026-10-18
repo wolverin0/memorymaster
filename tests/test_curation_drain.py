@@ -202,3 +202,21 @@ def test_a_stop_hook_winner_is_not_promoted_and_does_not_supersede_the_rival(svc
         "la rival no puede quedar superseded por una promocion que no va a ocurrir"
     )
 
+
+def test_a_predicate_without_subject_winner_is_not_promoted_and_does_not_supersede_the_rival(svc):
+    """T-1591: a shifted-field claim is held before the supersession, like a held author."""
+    rival = _claim(svc, "la confirmada vieja con menos confianza",
+                   subject="s", predicate="p", object_value="v1", confidence=0.3)
+    _status(svc, rival, "confirmed")
+    ganador = _claim(svc, "la conflictiva nueva con el predicado corrido de campo",
+                     predicate="p", object_value="v2", confidence=0.95)
+    _status(svc, ganador, "conflicted")
+    # sin sujeto no hay rival por tupla; el dren la encuentra en la auditoria
+    svc.store.record_event(claim_id=ganador, event_type="validator",
+                           details=f"conflicts_with_confirmed_claim:{rival}")
+
+    r = curation_drain.drain_conflicts(svc, apply=True)
+
+    assert r["held_by_structure_policy"] == 1 and r["resolved_won"] == 0
+    assert _get(svc, ganador).status == "conflicted"
+    assert _get(svc, rival).status == "confirmed"
