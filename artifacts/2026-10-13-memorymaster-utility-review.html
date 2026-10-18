@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MemoryMaster: ¿es útil, se recupera, se usa? (2026-10-13)</title>
+<style>
+:root{--bg:#fafafa;--fg:#1c1c1e;--mut:#5f6368;--card:#fff;--bd:#d9dce1;--acc:#0b5cad;--ok:#1a7f37;--bad:#b42318;--warn:#9a6700;--chip:#eef1f5}
+@media (prefers-color-scheme:dark){:root{--bg:#141517;--fg:#e8e9eb;--mut:#9aa0a6;--card:#1d1f22;--bd:#33373d;--acc:#6aa9ee;--ok:#56d364;--bad:#ff7b72;--warn:#e3b341;--chip:#262a30}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:860px;margin:0 auto;padding:16px}
+h1{font-size:1.4rem;margin:.4rem 0}
+h2{font-size:1.15rem;margin:0 0 .5rem;color:var(--acc)}
+.sub{color:var(--mut);font-size:.9rem}
+section,.verdict{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px 16px;margin:14px 0}
+.verdict{border-left:5px solid var(--warn)}
+.verdict p{margin:.3rem 0;font-size:1.05rem}
+table{width:100%;border-collapse:collapse;font-size:.92rem;display:block;overflow-x:auto}
+th,td{padding:5px 8px;border-bottom:1px solid var(--bd);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--mut);font-weight:600}
+.chip{display:inline-block;background:var(--chip);border-radius:6px;padding:1px 8px;margin:2px 2px 2px 0;font-size:.88rem}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+ul{padding-left:1.2rem;margin:.4rem 0}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:640px){.cols{grid-template-columns:1fr}}
+.dec{border-top:1px solid var(--bd);padding-top:8px;margin-top:8px}
+.rec{font-weight:600;color:var(--ok)}
+.note{color:var(--mut);font-size:.88rem}
+</style>
+</head>
+<body>
+<main>
+<h1>MemoryMaster: ¿lo que guarda es útil, se recupera y se usa?</h1>
+<div class="sub">Revisión T-1343 · 13/10/2026 · pregunta del operador: "casi ningún pane usa memorymaster ni gitnexus"</div>
+
+<div class="verdict">
+<h2>Veredicto</h2>
+<p><b>Lo que se guarda es mayormente útil, y la búsqueda deliberada lo encuentra rápido con el modo legacy. Pero la inyección automática en cada prompt casi no se usa:</b> ~3300 claims y ~5 KB por prompt para 14 citas en la semana.</p>
+<p class="note">Una cita subestima el uso (el modelo puede aprovechar una memoria sin citarla): 0,42% es piso de uso, no prueba de valor cero.</p>
+</div>
+
+<section>
+<h2>AC1 · ¿Se usa la inyección automática?</h2>
+<p>7 días, transcripts principales de Claude Code.</p>
+<span class="chip">698 prompts con inyección</span>
+<span class="chip">3297 claims inyectados (999 únicos)</span>
+<span class="chip">citas estrictas [mm-id]: 14 (0,42%)</span>
+<span class="chip">citas laxas: 21 (0,64%)</span>
+<span class="chip">~5,04 claims y ~5300 caracteres por prompt</span>
+<table>
+<tr><th>Lane</th><th>Prompts</th><th>Inyectados</th><th>Citados</th></tr>
+<tr><td>wezbridge</td><td>422</td><td>1924</td><td>7</td></tr>
+<tr><td>wisp</td><td>138</td><td>677</td><td class="bad">0</td></tr>
+<tr><td>memorymaster</td><td>24</td><td>152</td><td>1</td></tr>
+<tr><td>futuramax</td><td>24</td><td>107</td><td class="bad">0</td></tr>
+<tr><td>external</td><td>29</td><td>144</td><td>6</td></tr>
+<tr><td>pubgclone</td><td>26</td><td>113</td><td class="bad">0</td></tr>
+</table>
+<ul>
+<li>Todas las inyecciones del período traen el id y la instrucción de citar: no es un problema de formato.</li>
+<li>Los claims más inyectados y nunca citados se repiten hasta ~50 veces en la semana.</li>
+<li>Subagentes y sesiones Codex no registran inyección.</li>
+</ul>
+<p class="note">Informe: _intel/briefs/2026-10-13-T-1343-REPORT.md · script scripts/review_recall_citations.py (rama t1343-ac1)</p>
+</section>
+
+<section>
+<h2>AC2 · ¿La búsqueda deliberada (query_memory) encuentra lo guardado?</h2>
+<p>77 preguntas fijas (13 de llamadas reales pasadas, 64 escritas desde claims confirmados), sobre snapshot de solo lectura.</p>
+<table>
+<tr><th>Medida</th><th>Legacy</th><th>Hybrid</th></tr>
+<tr><td>hit@5, 13 llamadas reales</td><td>0,615 (8/13)</td><td>0,615</td></tr>
+<tr><td>hit@5, 21 preguntas sin scope</td><td>12/21</td><td class="bad">10/21</td></tr>
+<tr><td>Latencia p50</td><td class="ok">~200 ms</td><td>~2,3-5 s</td></tr>
+<tr><td>Latencia p95</td><td class="ok">~800 ms</td><td class="bad">~6-7,8 s</td></tr>
+</table>
+<ul>
+<li>Hybrid no mejora los aciertos y es ~10x más lento (cota superior: 45% de los claims confirmados no tienen embedding en caché en el snapshot).</li>
+<li>Las preguntas con scope siempre aciertan (inflado); el número honesto es el de las 21 sin scope.</li>
+<li>Cero resultados: 0% en el set, pero el set no puede medir el 32% de producción (toda respuesta existe por construcción).</li>
+<li>n=13 reales es poco (margen ±0,26).</li>
+</ul>
+<p class="note">Informe: _intel/briefs/2026-10-13-T-1343-ac2.md · script scripts/eval_query_memory_quality.py (rama t1343-ac2). Set de preguntas guardado fuera del repo.</p>
+</section>
+
+<section>
+<h2>AC3 · ¿Lo guardado tiene valor?</h2>
+<p>400 claims confirmados al azar; 4 descartados por el filtro de sensibilidad; 396 juzgados con gemini-2.5-flash.</p>
+<span class="chip ok">útil 91,9%</span>
+<span class="chip">obvio 5,1%</span>
+<span class="chip bad">erróneo 0,8%</span>
+<span class="chip bad">basura 2,3%</span>
+<p class="warn"><b>El juez es indulgente:</b> el acuerdo con etiquetas humanas a ciegas fue 20/30, y la lectura propia del verificador sobre 15 da ~73%. Útil realista: <b>65-80%</b>.</p>
+<table>
+<tr><th>Fuente (n≥10)</th><th>n</th><th>Malos</th></tr>
+<tr><td>llm-stop-hook</td><td>20</td><td class="bad">30% (todos "obvio")</td></tr>
+<tr><td>codex-session</td><td>163</td><td>8%</td></tr>
+<tr><td>claude-session</td><td>186</td><td class="ok">2,7%</td></tr>
+</table>
+<table>
+<tr><th>Scope</th><th>n</th><th>Malos</th></tr>
+<tr><td>user</td><td>10</td><td class="bad">40%</td></tr>
+<tr><td>project:memorymaster</td><td>40</td><td class="bad">22,5% (sobre todo obvio)</td></tr>
+<tr><td>wezbridge</td><td>-</td><td>12,5%</td></tr>
+</table>
+<p>Contexto: solo 4328 de ~151.600 filas (2,9%) están confirmadas; el curador vio 11 ingresadas contra 105 decaídas en 24 h.</p>
+<p class="note">Informe: _intel/briefs/2026-10-13-T-1343-ac3.md · script scripts/judge_claim_value.py (rama t1343-ac3)</p>
+</section>
+
+<section>
+<h2>AC4 · Usage by lane and UTC day; GitNexus recommendation</h2>
+<p><b>Seven-day window:</b> 2026-10-06T14:09:32.097Z inclusive to
+2026-10-13T14:09:32.097Z exclusive (168 hours). October 6 and 13 are partial UTC days.</p>
+<p>Only records with a valid timestamp inside this window contribute to any count.
+File modification time selects candidate files only; it never supplies an event date.
+Excluded: 404210 out-of-window records and
+149360 missing/invalid timestamps.</p>
+<table><tr><th>Lane</th><th>Automatic recall</th><th>Deliberate MCP</th><th>Ingest</th><th>GitNexus</th></tr>
+<tr><td>futuramax</td><td>15</td><td>0</td><td>1</td><td>0</td></tr>
+<tr><td>infra</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>memorymaster</td><td>33</td><td>4</td><td>13</td><td>7</td></tr>
+<tr><td>other:external</td><td>109</td><td>2</td><td>12</td><td>15</td></tr>
+<tr><td>pedrito</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>wabot2</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>wezbridge</td><td>523</td><td>112</td><td>161</td><td>157</td></tr>
+<tr><td>wisp</td><td>156</td><td>37</td><td>93</td><td>12</td></tr>
+<tr><td>yolo26</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><th>Total</th><td>836</td><td>155</td><td>280</td><td>191</td></tr></table>
+<details><summary>Counts by lane and UTC day (zeros included)</summary>
+<table><tr><th>Lane / UTC day</th><th>Automatic recall</th><th>Deliberate MCP</th><th>Ingest</th><th>GitNexus</th></tr>
+<tr><td>futuramax / 2026-10-06</td><td>14</td><td>0</td><td>1</td><td>0</td></tr>
+<tr><td>futuramax / 2026-10-07</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>futuramax / 2026-10-08</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>futuramax / 2026-10-09</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>futuramax / 2026-10-10</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>futuramax / 2026-10-11</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>futuramax / 2026-10-12</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>futuramax / 2026-10-13</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>infra / 2026-10-06</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>infra / 2026-10-07</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>infra / 2026-10-08</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>infra / 2026-10-09</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>infra / 2026-10-10</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>infra / 2026-10-11</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>infra / 2026-10-12</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>infra / 2026-10-13</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>memorymaster / 2026-10-06</td><td>9</td><td>2</td><td>5</td><td>0</td></tr>
+<tr><td>memorymaster / 2026-10-07</td><td>6</td><td>0</td><td>2</td><td>0</td></tr>
+<tr><td>memorymaster / 2026-10-08</td><td>7</td><td>1</td><td>2</td><td>0</td></tr>
+<tr><td>memorymaster / 2026-10-09</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>memorymaster / 2026-10-10</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>memorymaster / 2026-10-11</td><td>7</td><td>1</td><td>1</td><td>7</td></tr>
+<tr><td>memorymaster / 2026-10-12</td><td>2</td><td>0</td><td>3</td><td>0</td></tr>
+<tr><td>memorymaster / 2026-10-13</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>other:external / 2026-10-06</td><td>4</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>other:external / 2026-10-07</td><td>17</td><td>0</td><td>2</td><td>0</td></tr>
+<tr><td>other:external / 2026-10-08</td><td>25</td><td>0</td><td>2</td><td>13</td></tr>
+<tr><td>other:external / 2026-10-09</td><td>9</td><td>2</td><td>5</td><td>0</td></tr>
+<tr><td>other:external / 2026-10-10</td><td>15</td><td>0</td><td>1</td><td>0</td></tr>
+<tr><td>other:external / 2026-10-11</td><td>26</td><td>0</td><td>0</td><td>2</td></tr>
+<tr><td>other:external / 2026-10-12</td><td>4</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>other:external / 2026-10-13</td><td>9</td><td>0</td><td>2</td><td>0</td></tr>
+<tr><td>pedrito / 2026-10-06</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>pedrito / 2026-10-07</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>pedrito / 2026-10-08</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>pedrito / 2026-10-09</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>pedrito / 2026-10-10</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>pedrito / 2026-10-11</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>pedrito / 2026-10-12</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>pedrito / 2026-10-13</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>wabot2 / 2026-10-06</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>wabot2 / 2026-10-07</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>wabot2 / 2026-10-08</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>wabot2 / 2026-10-09</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>wabot2 / 2026-10-10</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>wabot2 / 2026-10-11</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>wabot2 / 2026-10-12</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>wabot2 / 2026-10-13</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>wezbridge / 2026-10-06</td><td>120</td><td>13</td><td>13</td><td>0</td></tr>
+<tr><td>wezbridge / 2026-10-07</td><td>62</td><td>45</td><td>47</td><td>31</td></tr>
+<tr><td>wezbridge / 2026-10-08</td><td>69</td><td>9</td><td>33</td><td>21</td></tr>
+<tr><td>wezbridge / 2026-10-09</td><td>45</td><td>15</td><td>19</td><td>47</td></tr>
+<tr><td>wezbridge / 2026-10-10</td><td>44</td><td>15</td><td>9</td><td>4</td></tr>
+<tr><td>wezbridge / 2026-10-11</td><td>79</td><td>2</td><td>28</td><td>54</td></tr>
+<tr><td>wezbridge / 2026-10-12</td><td>52</td><td>3</td><td>8</td><td>0</td></tr>
+<tr><td>wezbridge / 2026-10-13</td><td>52</td><td>10</td><td>4</td><td>0</td></tr>
+<tr><td>wisp / 2026-10-06</td><td>11</td><td>1</td><td>10</td><td>12</td></tr>
+<tr><td>wisp / 2026-10-07</td><td>28</td><td>16</td><td>34</td><td>0</td></tr>
+<tr><td>wisp / 2026-10-08</td><td>33</td><td>10</td><td>13</td><td>0</td></tr>
+<tr><td>wisp / 2026-10-09</td><td>20</td><td>2</td><td>6</td><td>0</td></tr>
+<tr><td>wisp / 2026-10-10</td><td>6</td><td>0</td><td>4</td><td>0</td></tr>
+<tr><td>wisp / 2026-10-11</td><td>15</td><td>5</td><td>16</td><td>0</td></tr>
+<tr><td>wisp / 2026-10-12</td><td>29</td><td>3</td><td>6</td><td>0</td></tr>
+<tr><td>wisp / 2026-10-13</td><td>14</td><td>0</td><td>4</td><td>0</td></tr>
+<tr><td>yolo26 / 2026-10-06</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>yolo26 / 2026-10-07</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>yolo26 / 2026-10-08</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>yolo26 / 2026-10-09</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>yolo26 / 2026-10-10</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>yolo26 / 2026-10-11</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>yolo26 / 2026-10-12</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>yolo26 / 2026-10-13</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+</table></details>
+<p class="note">Automatic recall counts user/attachment records carrying the recall marker;
+deliberate MCP counts non-ingest MemoryMaster tool calls (including administrative calls);
+ingest counts ingest_claim, ingest_rule and remember. Main and subagent JSONL files are included,
+without resumed-session deduplication. Missing persisted hook payloads and shell/CLI calls are not
+reconstructed. These are observed transcript events, not unique human requests or the AC1 citation metric.
+Unmapped directories are combined as other:external; zero means no observed event in scanned files.</p>
+<h3>MCP inventory per lane/profile</h3>
+<p>Historical server-name snapshot from T-1344 (2026-10-13); configured profiles, not proof of live tool loading.</p>
+<table><tr><th>Lane/profile</th><th>MCP servers</th></tr>
+<tr><td>drill</td><td>none</td></tr>
+<tr><td>fleet</td><td>memorymaster, slack, gitnexus, wezbridge, tool-gateway</td></tr>
+<tr><td>futuramax</td><td>memorymaster</td></tr>
+<tr><td>infra</td><td>unmeasured: no recorded profile</td></tr>
+<tr><td>memorymaster</td><td>memorymaster</td></tr>
+<tr><td>pedrito</td><td>memorymaster</td></tr>
+<tr><td>wabot2</td><td>memorymaster</td></tr>
+<tr><td>wezbridge</td><td>memorymaster, gitnexus, context7</td></tr>
+<tr><td>wisp</td><td>memorymaster</td></tr>
+<tr><td>yolo26</td><td>unmeasured: no recorded profile</td></tr>
+</table>
+<p><b>Recommendation:</b> retain MemoryMaster-only MCP profiles in product lanes. The recorded product
+profiles omit GitNexus; observed GitNexus calls can come from earlier sessions and do not establish
+a benefit from adding it to every lane. Keep it available to fleet/wezbridge and evaluate a bounded
+product-lane trial before changing profiles. Call volume alone does not measure usefulness.</p>
+<p class="note">Source: scripts/review_usage_census.cjs, tests/test_review_usage_census.cjs and
+artifacts/2026-10-13-memorymaster-ac4-census.json. Recomputed from locally retained transcripts;
+the historical source files may have grown since the original census. No claims, transcript text,
+credentials or personal paths are included.</p>
+</section>
+
+<section>
+<h2>Medido además hoy</h2>
+<ul>
+<li><b class="ok">Recall denso</b> (EmbeddingGemma 2), 7 días: fallback 0,1%, p95 1318 ms tras el fix. Se mantiene.</li>
+<li><b class="bad">Defecto abierto:</b> el hook puede bloquear el prompt mucho más allá de su timeout de 1,5 s (máximo 85 s).</li>
+<li><b>Caída del servidor compartido :8766 el 13/10:</b> toda la máquina quedó sin recursos ~13:07-13:39Z (probable sobrecompromiso de memoria, ~119 GB comprometidos sobre 64 GB). No es bug del servidor. Informe: _intel/briefs/2026-10-13-T-1343-mcp8766-rca.md</li>
+</ul>
+</section>
+
+<div class="cols">
+<section>
+<h2 class="ok">Mantener</h2>
+<ul>
+<li>Almacén de claims confirmados y la promoción del steward.</li>
+<li>Legacy como modo por defecto de la consulta deliberada.</li>
+<li>Servicio de recall denso (rápido y estable).</li>
+</ul>
+</section>
+<section>
+<h2 class="bad">Cortar o cambiar</h2>
+<ul>
+<li>Volumen de inyección (top 5, ~5 KB por prompt).</li>
+<li>Inyección repetida de los mismos claims nunca citados.</li>
+<li>llm-stop-hook como fuente de ingesta sin compuerta.</li>
+<li>Hybrid como modo por defecto.</li>
+</ul>
+</section>
+</div>
+
+<section>
+<h2>Decisiones para el operador</h2>
+
+<div class="dec"><b>1. Hook de prompt.</b> (a) dejar igual; (b) top 2 con umbral de score más alto y sin repetir dentro de una sesión; (c) apagarlo en lanes de producto con 0 citas (wisp, futuramax, pubgclone).
+<div class="rec">Recomendación: (b), más un A/B de una semana con el hook apagado en un lane, para medir si las respuestas empeoran.</div></div>
+
+<div class="dec"><b>2. Hybrid como default de la búsqueda deliberada.</b>
+<div class="rec">Recomendación: no. Legacy se queda.</div></div>
+
+<div class="dec"><b>3. llm-stop-hook.</b>
+<div class="rec">Recomendación: que sus claims queden en candidate y nunca se auto-promuevan, o frenar la fuente.</div></div>
+
+<div class="dec"><b>4. Ampliar el set de preguntas reales</b> (etiquetar a mano ~40 llamadas reales más) para que el 0,615 tenga margen utilizable. Opcional.
+<div class="rec">Recomendación: sí, antes de cualquier cambio de recuperación.</div></div>
+
+<div class="dec"><b>5. Sobrecompromiso de memoria de la máquina</b> (causa de las caídas de :8766): decidir topes de carga, por ejemplo cuántas sesiones arrancan a la vez.
+<div class="rec">Decisión del operador.</div></div>
+</section>
+
+<p class="note">Fuentes: cuatro verificaciones independientes (AC1-AC3 y RCA). Sin texto de claims ni datos sensibles.</p>
+</main>
+</body>
+</html>
