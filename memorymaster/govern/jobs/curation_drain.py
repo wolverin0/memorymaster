@@ -39,7 +39,7 @@ import logging
 import re
 from typing import Any
 
-from memorymaster.core.promotion_policy import auto_promotion_blocked
+from memorymaster.core.promotion_policy import auto_promotion_blocked, structure_blocks_auto_promotion
 from memorymaster.govern.conflict_resolver import (
     SupersessionRaceLost,
     _pick_winner,
@@ -105,6 +105,7 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
         "resolved_orphan": 0,
         "kept_for_operator": 0,
         "held_by_source_policy": 0,
+        "held_by_structure_policy": 0,
         "skipped_race": 0,
         "dry_run": not apply,
     }
@@ -143,6 +144,11 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
                     # automatico. Se corta ANTES de la supersesion: superar a la
                     # rival y despues fallar la promocion dejaria la tupla vacia.
                     summary["held_by_source_policy"] += 1
+                    continue
+                if structure_blocks_auto_promotion(claim.subject, claim.predicate):
+                    # T-1591: mismo corte previo a la supersesion para un predicado
+                    # sin sujeto (campo corrido, no una tripleta).
+                    summary["held_by_structure_policy"] += 1
                     continue
                 if apply:
                     supersede_claim(

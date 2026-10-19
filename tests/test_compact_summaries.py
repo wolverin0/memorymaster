@@ -35,7 +35,8 @@ def _create_archived_claim(store, text, subject="test-subject", predicate="has_v
     )
     # Transition to confirmed first, then archived
     from memorymaster.core.lifecycle import transition_claim
-    transition_claim(store, claim.id, to_status="confirmed", reason="test", event_type="transition")
+    transition_claim(store, claim.id, to_status="confirmed", reason="test", event_type="transition",
+                     event_payload={"actor": "operator"})
     transition_claim(store, claim.id, to_status="stale", reason="test", event_type="decay")
     transition_claim(store, claim.id, to_status="archived", reason="test", event_type="compactor")
     return store.get_claim(claim.id)

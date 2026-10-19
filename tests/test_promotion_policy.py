@@ -240,3 +240,24 @@ def test_llm_steward_confirm_cas_refuses_stop_hook_claim_directly(svc):
         conn.close()
     assert ok is False
     assert _status_of(svc, hook_id) == "candidate"
+
+
+# --- structure policy (T-1591) -----------------------------------------------
+
+def test_structure_policy_blocks_only_a_predicate_without_subject():
+    from memorymaster.core.promotion_policy import (
+        claim_auto_promotion_blocked,
+        is_malformed_triple,
+        structure_blocks_auto_promotion,
+    )
+
+    assert is_malformed_triple(None, "CONSTRAINT") and is_malformed_triple("  ", "PROJECT")
+    assert structure_blocks_auto_promotion("", "PROJECT")
+    for subject, predicate in [(None, None), ("ledger", None), ("ledger", "refuses"), (None, ""), ("  ", "  ")]:
+        assert not structure_blocks_auto_promotion(subject, predicate), (subject, predicate)
+
+    row = {"source_agent": "claude-session", "subject": None, "predicate": "PROJECT", "object_value": None}
+    assert claim_auto_promotion_blocked(row)
+    assert claim_auto_promotion_blocked({**row, "source_agent": HOOK, "subject": "s", "predicate": "p"})
+    assert not claim_auto_promotion_blocked({**row, "subject": "s", "predicate": "p"})
+    assert claim_auto_promotion_blocked(SimpleNamespace(**{**row, "subject": ""}))

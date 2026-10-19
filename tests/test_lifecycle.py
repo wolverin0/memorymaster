@@ -96,3 +96,26 @@ class TestTransitionClaim:
         claim.source_agent = "llm-stop-hook"
         transition_claim(store, claim_id=1, to_status="stale", reason="decay")
         store.apply_status_transition.assert_called_once()
+
+    def test_predicate_without_subject_is_not_auto_promoted(self):
+        store, claim = self._mock_store("candidate")
+        claim.source_agent = "claude-session"
+        claim.subject, claim.predicate = None, "CONSTRAINT"
+        with pytest.raises(PromotionPolicyBlocked):
+            transition_claim(store, claim_id=1, to_status="confirmed", reason="auto")
+        store.apply_status_transition.assert_not_called()
+
+    def test_predicate_without_subject_confirms_with_explicit_actor(self):
+        store, claim = self._mock_store("candidate")
+        claim.source_agent = "claude-session"
+        claim.subject, claim.predicate = None, "CONSTRAINT"
+        transition_claim(store, claim_id=1, to_status="confirmed", reason="operator",
+                         event_payload={"actor": "operator"})
+        store.apply_status_transition.assert_called_once()
+
+    def test_subject_and_predicate_without_object_is_auto_promoted(self):
+        store, claim = self._mock_store("candidate")
+        claim.source_agent = "dream-worker"
+        claim.subject, claim.predicate, claim.object_value = "ledger", "refuses old cards", None
+        transition_claim(store, claim_id=1, to_status="confirmed", reason="auto")
+        store.apply_status_transition.assert_called_once()
