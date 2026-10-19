@@ -233,3 +233,17 @@ def test_os_username_scope_is_scrubbed_and_diagnostics_are_windowed(tmp_path):
     assert "alice" not in json.dumps(result)
     assert result["diagnostics"]["injections_without_ids"] == 0
     assert result["diagnostics"]["compaction_boundaries"] == 0
+
+
+def test_header_format_block_is_instructed_and_counted_per_format(tmp_path):
+    """T-1632: the header A/B arm carries its own cite hint; the review must not read it as uninstructed."""
+    header_block = ("[MemoryMaster recall]\n# Decisions you made earlier (cite [mm-id] when you rely on one)\n"
+                    "Ranked by relevance to your active task, then to this prompt.\n\n- [mm-a1] alpha")
+    home, mapping = setup_review(tmp_path, [
+        user("first"), hook(header_block), assistant("Relying on [mm-a1]."),
+        user("second"), hook(),
+    ])
+    result = review(home, mapping, days=7, now=NOW)
+    assert result["total"]["prompts_header_format"] == 1
+    split = result["total_by_cite_instruction"]
+    assert split["instructed"]["prompts_with_injection"] == 1 and split["instructed"]["prompts_with_citation"] == 1
