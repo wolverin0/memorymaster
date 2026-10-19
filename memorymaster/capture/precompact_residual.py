@@ -41,14 +41,22 @@ PREDICATES = {
     "next_step": ("fact", "next_step"),
 }
 
-PROMPT = """You are preserving working context that a conversation compaction is about to destroy.
+# Output budget. The shared provider client caps answers at 500 tokens on the Google, OpenAI and
+# Anthropic paths (1500 on Ollama); a truncated JSON object parses to nothing, so the prompt asks
+# for a worst case that fits the smallest cap: 8 items x 120 chars + ~200 chars of JSON scaffolding
+# is ~1160 chars, about 390 tokens at a pessimistic 3 chars per token.
+PROMPT_MAX_ITEMS = 8
+PROMPT_ITEM_CHARS = 120
+PROVIDER_MIN_OUTPUT_TOKENS = 500
+
+PROMPT = f"""You are preserving working context that a conversation compaction is about to destroy.
 Read the conversation excerpt and return ONE JSON object with exactly these keys:
-{"decisions": ["decision still open or just made, one short line"],
- "rejected": [{"option": "what was rejected", "why": "reason, short"}],
+{{"decisions": ["decision still open or just made, one short line"],
+ "rejected": [{{"option": "what was rejected", "why": "reason, short"}}],
  "assumptions": ["assumption nobody verified yet"],
  "cards": ["T-1234"],
- "next_step": "the single next intended action"}
-Rules: at most 10 items in total, each under 200 characters, terse. Only facts stated in the excerpt.
+ "next_step": "the single next intended action"}}
+Rules: at most {PROMPT_MAX_ITEMS} items in total, each under {PROMPT_ITEM_CHARS} characters, terse. Only facts stated in the excerpt.
 cards are task ids written like T-NNNN that are still in progress. Use [] or "" when a key has nothing.
 Never include credentials, tokens, keys, private addresses, personal paths, or code. Output JSON only."""
 

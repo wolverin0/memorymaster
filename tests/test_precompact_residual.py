@@ -127,6 +127,13 @@ def test_extract_residual_redacts_what_it_sends_and_drops_sensitive_answers():
     assert pr.extract_residual("hello", llm=lambda p, t: "not json at all", config={"provider": "x", "model": ""}) == []
 
 
+def test_prompt_worst_case_answer_fits_the_smallest_provider_output_cap():
+    worst_chars = pr.PROMPT_MAX_ITEMS * pr.PROMPT_ITEM_CHARS + 200  # items plus JSON scaffolding
+    assert worst_chars / 3 < pr.PROVIDER_MIN_OUTPUT_TOKENS  # pessimistic 3 chars per token
+    assert str(pr.PROMPT_MAX_ITEMS) in pr.PROMPT and str(pr.PROMPT_ITEM_CHARS) in pr.PROMPT
+    assert pr.PROMPT_MAX_ITEMS <= state.MAX_ITEMS
+
+
 def test_provider_config_sonnet_on_claude_and_says_so_otherwise():
     claude = pr.provider_config({"MEMORYMASTER_LLM_PROVIDER": "claude_cli"})
     assert claude["model"] == pr.DEFAULT_MODEL
