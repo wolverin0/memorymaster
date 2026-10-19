@@ -52,3 +52,14 @@ def test_replay_counts_each_mode_and_emits_no_text(tmp_path):
     assert result["official_script_agreement"]["injected_claims"] == [4, 4]
     emitted = json.dumps(result)
     assert "billing worker" not in emitted and "weather" not in emitted  # counts and ids only
+
+
+def test_replay_ignores_the_appended_look_ahead_briefing(tmp_path):
+    """The installed hook appends a briefing to the same payload; it is not a claim and must not be reshaped."""
+    home, mapping = setup_review(tmp_path, [
+        user("how do I deploy the billing worker?"),
+        hook(BLOCK + "\n\n[Look-ahead briefing]\n- [mm-zz] briefing bullet that is not a recall claim"),
+    ])
+    result = replay(home, mapping, days=7, now=NOW)
+    assert result["total"]["modes"]["header"]["injected_claims"] == 2
+    assert result["total"]["modes"]["current"]["injected_claims"] == 2

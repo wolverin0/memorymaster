@@ -36,9 +36,14 @@ def tokens_of(chars: int) -> int:
     return (chars + 3) // 4  # same four-characters-per-token estimate recall uses to pack its budget
 
 
+BRIEFING = "[Look-ahead briefing]"  # the installed hook appends this second block to the same payload
+
+
 def block_context(block: str) -> str:
+    """The recall claims of an injected payload: no prefix, no appended look-ahead briefing."""
     head = block.lstrip()
-    return head[len(PREFIX):] if head.startswith(PREFIX) else head
+    head = head[len(PREFIX):] if head.startswith(PREFIX) else head
+    return head.split(BRIEFING, 1)[0].rstrip()
 
 
 def render(turn, mode: str) -> tuple[str, set[str]]:
@@ -129,7 +134,7 @@ def per_day(turns) -> dict:
 
 
 def baseline(turns) -> dict:
-    sizes = [tokens_of(sum(len(b) for b in turn.blocks)) for turn in turns if turn.ids]
+    sizes = [tokens_of(sum(len(PREFIX) + len(block_context(b)) for b in turn.blocks)) for turn in turns if turn.ids]
     return {"median_injected_tokens": median(sizes), "p90_injected_tokens":
             (sorted(sizes)[int(len(sizes) * 0.9)] if sizes else None), "relevance": relevance(turns)}
 
