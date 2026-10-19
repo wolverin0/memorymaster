@@ -1,6 +1,6 @@
 <!-- doc-head: sole roadmap; installed recall integrity, temporal guard and verified delivery -->
 # MemoryMaster roadmap
-# Covers: live Jev decision ledger (4.9.0 checklist), useful-memory delivery/evaluation, workflow analytics, governed observations and deferrals.
+# Covers: live Jev decision ledger (4.9.0 checklist), useful-memory delivery/evaluation, workflow analytics, governed observations, always-on context layer program and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, code navigation.
 # Read when: choosing release scope, accepting a feature, or checking deferrals.
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
@@ -527,6 +527,259 @@ remain separately gated. Integrated code does not imply activation.
   runtime upgrades under their existing explicit operator decisions.
 - Preserve historical P5 failures and repairs in the dated audit ledgers;
   those elapsed windows are not new implementation prerequisites.
+
+### Always-on context layer program (operator decision 2026-10-19)
+
+Goal: make memory reach every session continuously, with no manual recall, and
+prove it is used. Token spend is not the constraint; three real bottlenecks
+are. Use: injected claims are cited in 0.42% of turns, so freshness without
+use is cost. Write-path contention: a beat that hammers the shared MCP server
+starves the recall hook, so the beat writes through the service in its own
+process on the same SQLite WAL. Noise: every new source lands as candidate
+under its own `source_agent` and the T-1354/T-1591 promotion policy, with red
+tests before activation.
+
+Plan: `artifacts/2026-10-19-memorymaster-always-on-plan.html`; design note:
+`artifacts/2026-10-19-always-on-context-agent.html` (local planning artifacts,
+not tracked in this repo). A box is ticked only with evidence: a PR SHA, a
+test name or a measurement file. "Measured" means the metric has a number and
+a date, not that the feature shipped.
+
+Operator decisions, 2026-10-19:
+
+- First batch is A only (AO-0, AO-1).
+- Dreaming daily caps (80/24) are removed only once the AO-2 latency guard
+  exists.
+- Native memory stores (Codex, Claude Code auto-memory, agy) are read-only
+  sources first (AO-4); writing projections into them (AO-5) needs a separate
+  explicit order.
+- Backfill from zero (AO-7) starts as soon as AO-2 ships.
+- Model per task: Haiku for bulk transcript reading, the rest by complexity
+  (plan section 7).
+
+North-star metrics, measured before and after every batch:
+
+| Metric | Baseline | Target | How measured | Last value / date |
+|---|---|---|---|---|
+| M1 use | 0.42% strict `[mm-id]` citations (T-1343, 7 days to 2026-10-13) | >= 5% | `scripts/review_recall_citations.py`, 7-day window, per lane |  |
+| M2 continuity | unmeasured | 4 of 5 compacted sessions; 3 of 3 repos | fixed scripted probe set, answers judged by Haiku batch |  |
+| M3 lag | hours to days (Dreaming backlog 1113) | < 60 min for transcripts | beat cursor table: event time to candidate time |  |
+| M4 guard | dense recall p95 740-853 ms post-trim | within T-1042 bounds while the beat runs | existing due-measurement scripts (T-1042, T-1351) |  |
+| M5 quality | T-1343 AC3 sample | junk share under the gate per source | T-1343 AC3 rubric, Haiku batch, Sonnet spot-check |  |
+
+**AO-R roadmap section** (S, batch A; ledger T-1631)
+
+Models: build Sonnet (docs), runtime none, judge lane verifier Sonnet. Depends
+on: none.
+
+- [ ] Routed.
+- [ ] Section merged into this roadmap (record SHA).
+- [ ] Deployed: not applicable.
+- [ ] Metric measured: not applicable.
+
+**AO-0 Why injected memory is ignored** (S/M, batch A; ledger T-1632)
+
+Models: build Sonnet (T3), runtime none (deterministic hook formats), judge
+Haiku batch scores the A/B samples with a 10% Sonnet spot-check. Depends on:
+none; continues T-1433.
+
+- [ ] Routed.
+- [ ] Red test written.
+- [ ] Green locally and in CI.
+- [ ] Merged (record SHA).
+- [ ] Installed under the existing hook patch procedure (needs an operator
+  order).
+- [ ] Metric measured: M1 baseline per lane, then M1 after the three variants
+  against the target set before the test (proposal 5%). If no variant moves
+  M1, say so and prioritize M2 over injection.
+- [ ] AC1: the T-1343 AC1 script re-run on the current 7 days gives the
+  baseline per lane.
+- [ ] AC2: three injection variants (current; 3-line "decisions you made"
+  header; relevance-gated with task-first ranking) A/B'd on the same prompt
+  set for 7 days each, by lane.
+- [ ] AC3: recommendation with numbers; the winning format installed under the
+  existing hook patch procedure.
+
+**AO-1 PreCompact residual hook** (M, batch A; ledger T-1633)
+
+Models: build Sonnet (T3), runtime Sonnet (few calls per session), judge
+Sonnet verifier runs the M2 probe. Depends on: none.
+
+- [ ] Routed.
+- [ ] Red test written.
+- [ ] Green locally and in CI.
+- [ ] Merged (record SHA).
+- [ ] Hook installed (needs an operator order).
+- [ ] Metric measured: M2 probe before and after; passes in 4 of 5 compacted
+  real sessions over a week.
+- [ ] AC1: a Claude Code PreCompact hook captures the turns about to be
+  summarized and extracts a residual: open decisions, rejected options,
+  unverified assumptions, in-flight card ids. Ingested as candidates with
+  `source_agent=precompact-residual` and the session id as citation.
+- [ ] AC2: the next prompt after compaction re-injects that residual (one
+  block, capped), independent of similarity search.
+- [ ] AC3: red test: a compacted test session fails a "what did we decide"
+  probe before and passes after; sensitivity filter proven on the residual
+  path.
+- [ ] AC4: Codex equivalent scoped: whether a compaction hook exists; if not,
+  a stop-hook that extracts the residual at session end.
+
+**AO-2 Beat runner with cursors and the p95 guard** (L, batch B; ledger not created yet)
+
+Models: build Opus or Fable (architecture; Fable quota first per the
+2026-10-07 policy), runtime Haiku for transcript extraction and Sonnet for
+consolidation, judge Fable design review plus Sonnet verifier. Depends on:
+none (parallel with A).
+
+- [ ] Routed.
+- [ ] Red test written.
+- [ ] Green locally and in CI.
+- [ ] Merged (record SHA).
+- [ ] Activated (needs the operator activation decision; Dreaming behaviour is
+  unchanged until then).
+- [ ] Metric measured: M3 lag under 60 minutes for transcripts for 7
+  consecutive days, with M4 within bounds and backlog trending down.
+- [ ] AC1: `beat_cursors` table via versioned migration; a tick processes
+  every source from its cursor; crash or reboot resumes with no duplicates
+  (idempotency keys).
+- [ ] AC2: the beat writes through the service in its own process, never
+  through the shared MCP port; parallel workers per source; daily caps
+  replaced by the guard: if dense recall p95 or hook latency leaves the T-1042
+  bounds, the beat halves concurrency and logs it.
+- [ ] AC3: lag and backlog per source appear in the daily operational review
+  and the due-measurements ledger.
+- [ ] AC4: existing Dreaming behaviour is unchanged until the operator flips
+  the activation.
+
+**AO-3 Per-project projection and SessionStart delta** (M, batch B; ledger not created yet)
+
+Models: build Sonnet (T3), runtime none (deterministic builder from confirmed
+claims), judge Sonnet verifier runs the 3-repo probe. Depends on: AO-2 for
+freshness; usable before.
+
+- [ ] Routed.
+- [ ] Red test written.
+- [ ] Green locally and in CI.
+- [ ] Merged (record SHA).
+- [ ] Deployed (hook install needs an operator order).
+- [ ] Metric measured: M2 3-repo probe, and Cockpit page equals SessionStart
+  facts.
+- [ ] AC1: `projections/project-<slug>.md` built like the user profile: repo
+  purpose, constraints, last 10 decisions with dates, open ledger cards,
+  gotchas, GitNexus symbols changed in 7 days; exact support manifest; 3 KB
+  cap; generated marker.
+- [ ] AC2: SessionStart injects it plus a "since your last session" delta
+  keyed by the last session end per project.
+- [ ] AC3: the Cockpit page consumes the same builder output instead of its
+  own claim query (drops the empty-subject/object filter); the operator notes
+  block is read as a source (`source_agent=operator-notes`, operator actor).
+- [ ] AC4: loop guard: ingest rejects marked files, with test.
+
+**AO-4 Native memory stores as read-only sources** (M, batch C; ledger not created yet)
+
+Models: build Sonnet (T3), runtime Haiku classify and Sonnet extract on the
+kept 20%, judge Haiku batch for M5 plus Sonnet spot-check. Depends on: AO-2.
+
+- [ ] Routed.
+- [ ] Red test written.
+- [ ] Green locally and in CI.
+- [ ] Merged (record SHA).
+- [ ] Activated per store (each store needs its own activation decision).
+- [ ] Metric measured: M5 junk share per store under the gate; each store's
+  claims appear in the project projection with citations.
+- [ ] AC1: adapters for Codex `~/.codex/memories/` files, Claude auto-memory
+  dirs under `~/.claude/projects/<project>/memory/`, agy history and
+  `~/.gemini/` GEMINI.md; each with its own `source_agent`, cursor by content
+  hash, red tests for the sensitivity filter and the loop guard.
+- [ ] AC2: M5 precision sample per store judged before activation; junk share
+  above the gate keeps the store off.
+- [ ] AC3: read-only; no file under the operator's directories is modified by
+  this card.
+
+**AO-5 Projections into the native stores** (M, batch C; ledger not created yet)
+
+Models: build Sonnet (precision worker), runtime none, judge Sonnet verifier
+diffs agent-owned files. Depends on: AO-3, AO-4 and an explicit operator
+order.
+
+- [ ] Routed.
+- [ ] Red test written.
+- [ ] Green locally and in CI.
+- [ ] Merged (record SHA).
+- [ ] Deployed (blocked until the explicit operator order; do not route
+  without it).
+- [ ] Metric measured: M1 for Codex sessions goes from 0 to a non-zero rate;
+  no agent-owned file diff other than the pointer line.
+- [ ] AC1: separate generated files next to each store's own index, plus one
+  pointer line; GEMINI.md through the existing generated-block mechanism;
+  never overwrite agent-owned files; rollback script.
+- [ ] AC2: Codex sessions started after the write cite MemoryMaster facts
+  (Codex has no recall hook; this is its M1).
+
+**AO-6 git, docs and ledger sources** (M, batch C; ledger not created yet)
+
+Models: build Sonnet (T3), runtime Haiku commit/doc classify and Sonnet
+contradiction checks, judge Sonnet verifier plants the contradiction. Depends
+on: AO-2.
+
+- [ ] Routed.
+- [ ] Red test written.
+- [ ] Green locally and in CI.
+- [ ] Merged (record SHA).
+- [ ] Activated per source (needs an operator activation decision).
+- [ ] Metric measured: a planted doc contradiction surfaces within one beat;
+  changed symbols appear in the projection within one beat of a commit.
+- [ ] AC1: per-repo git cursor: commit messages and PR bodies become "why"
+  candidates with the SHA as citation; a structural delta triggers GitNexus
+  `detect_changes` and a conditional re-index.
+- [ ] AC2: docs cursor by hash for AGENTS/CLAUDE/ROADMAP/docs: constraints and
+  decisions as candidates with file citations; a doc that contradicts a newer
+  confirmed claim surfaces as an obsolescence candidate.
+- [ ] AC3: ledger cards feed the projection only, never claims.
+
+**AO-7 Backfill from zero** (L, batch D; ledger not created yet)
+
+Models: build Sonnet (T3, runner only), runtime Haiku for all transcript
+reading and Sonnet only for consolidating kept candidates, judge Haiku batch
+M5 per 1,000 sessions. Depends on: AO-2; starts as soon as AO-2 ships
+(operator decision).
+
+- [ ] Routed.
+- [ ] Red test: not applicable.
+- [ ] Green locally and in CI.
+- [ ] Merged (record SHA).
+- [ ] Run started (the start time is the operator's call once AO-2 ships).
+- [ ] Metric measured: backlog zero, M5 sample per 1,000 sessions, M4 within
+  bounds throughout.
+- [ ] AC1: every source's cursor can be reset to the beginning with a separate
+  backfill provider and concurrency, isolated from the live tick's guard
+  budget.
+- [ ] AC2: about 12.5k Claude transcripts, 5.4k Codex sessions and the agy
+  history processed; the M5 sample is judged per 1,000 sessions and the run
+  pauses if junk share exceeds the gate.
+- [ ] AC3: burndown chart in the daily review; the steward's dedup and
+  supersession keep the confirmed set from doubling.
+
+**AO-8 GitNexus freshness and graphify maps** (S, batch D; ledger not created yet)
+
+Models: build Sonnet (T2/T3), runtime none, judge Sonnet verifier. Depends on:
+AO-6.
+
+- [ ] Routed.
+- [ ] Red test written.
+- [ ] Green locally and in CI.
+- [ ] Merged (record SHA).
+- [ ] Deployed.
+- [ ] Metric measured: index age and map age under 24 h for all active repos
+  for a week.
+- [ ] AC1: index age per repo and map age per project shown in the projection;
+  both rebuilt by the beat on change.
+- [ ] AC2: graphify community summaries are navigation aids in the projection
+  and are rejected at ingest (derived views are never sources).
+
+Activation of any generation, beat or source stays under the existing explicit
+operator decisions bullet above. Nothing produced by the beat is ever
+committed to this public repository.
 
 ### Research-derived memory sustainability program
 
