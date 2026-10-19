@@ -5,7 +5,7 @@ Complete inventory of `MEMORYMASTER_*` variables referenced in the package,
 script after adding or removing a variable. For what each does, follow the
 listed source files (most are read next to a docstring or comment).
 
-Total: 299 variables.
+Total: 304 variables.
 
 | Variable | Referenced in |
 |---|---|
@@ -56,7 +56,7 @@ Total: 299 variables.
 | `MEMORYMASTER_DEDUPE_ENABLED` | `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py`, `memorymaster/govern/candidate_dedupe.py` |
 | `MEMORYMASTER_DEDUPE_JACCARD_HIGH` | `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py`, `memorymaster/govern/candidate_dedupe.py` |
 | `MEMORYMASTER_DEDUPE_SHADOW` | `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py`, `memorymaster/govern/candidate_dedupe.py` |
-| `MEMORYMASTER_DEFAULT_DB` | `memorymaster/config_templates/hooks/memorymaster-dream-sync.py`, `memorymaster/config_templates/hooks/memorymaster-pretooluse-recall.py`, `memorymaster/config_templates/hooks/memorymaster-recall.py`, `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py` (+7 more) |
+| `MEMORYMASTER_DEFAULT_DB` | `memorymaster/config_templates/hooks/memorymaster-dream-sync.py`, `memorymaster/config_templates/hooks/memorymaster-precompact.py`, `memorymaster/config_templates/hooks/memorymaster-pretooluse-recall.py`, `memorymaster/config_templates/hooks/memorymaster-recall.py` (+8 more) |
 | `MEMORYMASTER_DEFAULT_PROJECT_SCOPE` | `memorymaster/surfaces/mcp_server.py` |
 | `MEMORYMASTER_DISABLE_ST` | `memorymaster/knowledge/wiki_similarity.py` |
 | `MEMORYMASTER_DREAM_CAPTURE_MAX_BYTES` | `memorymaster/dreaming/worker.py` |
@@ -99,6 +99,7 @@ Total: 299 variables.
 | `MEMORYMASTER_HEBBIAN_DECAY` | `memorymaster/core/service.py`, `memorymaster/govern/jobs/decay.py` |
 | `MEMORYMASTER_HEBBIAN_DECAY_LAMBDA` | `memorymaster/govern/jobs/decay.py` |
 | `MEMORYMASTER_HOOK_RECALL_REMOTE` | `memorymaster/recall/remote.py` |
+| `MEMORYMASTER_HOOK_STATE_DIR` | `memorymaster/config_templates/hooks/memorymaster-precompact.py`, `memorymaster/recall/residual.py` |
 | `MEMORYMASTER_INITDB_FASTPATH` | `memorymaster/stores/migrations/__init__.py`, `memorymaster/stores/storage.py` |
 | `MEMORYMASTER_INTAKE_DEFAULT_SOURCE_AGENT` | `memorymaster/core/intake_policy.py` |
 | `MEMORYMASTER_INTAKE_MAX_PER_STOP` | `memorymaster/core/intake_policy.py` |
@@ -134,8 +135,8 @@ Total: 299 variables.
 | `MEMORYMASTER_LLM_FALLBACK_PROVIDER` | `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py`, `memorymaster/core/llm_provider.py`, `memorymaster/core/provider_health.py`, `memorymaster/surfaces/setup_hooks.py` |
 | `MEMORYMASTER_LLM_KEY_COOLDOWN_SECONDS` | `memorymaster/core/llm_provider.py` |
 | `MEMORYMASTER_LLM_KEY_ROTATION` | `memorymaster/core/llm_provider.py`, `memorymaster/recall/llm_rerank.py` |
-| `MEMORYMASTER_LLM_MODEL` | `memorymaster/bridges/atlas_llm_extractor.py`, `memorymaster/capture/worker.py`, `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py`, `memorymaster/core/llm_provider.py` (+6 more) |
-| `MEMORYMASTER_LLM_PROVIDER` | `memorymaster/capture/worker.py`, `memorymaster/config_templates/hooks/memorymaster-auto-ingest.py`, `memorymaster/config_templates/hooks/memorymaster-session-end.py`, `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py` (+11 more) |
+| `MEMORYMASTER_LLM_MODEL` | `memorymaster/bridges/atlas_llm_extractor.py`, `memorymaster/capture/precompact_residual.py`, `memorymaster/capture/worker.py`, `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py` (+7 more) |
+| `MEMORYMASTER_LLM_PROVIDER` | `memorymaster/capture/precompact_residual.py`, `memorymaster/capture/worker.py`, `memorymaster/config_templates/hooks/memorymaster-auto-ingest.py`, `memorymaster/config_templates/hooks/memorymaster-session-end.py` (+12 more) |
 | `MEMORYMASTER_LLM_REASONING_EFFORT` | `memorymaster/capture/worker.py`, `memorymaster/core/llm_provider.py` |
 | `MEMORYMASTER_LLM_RERANK` | `memorymaster/core/config.py` |
 | `MEMORYMASTER_LLM_RERANK_MAX_FAILURES` | `memorymaster/recall/llm_rerank.py` |
@@ -175,6 +176,10 @@ Total: 299 variables.
 | `MEMORYMASTER_PINNED_BONUS` | `memorymaster/core/config.py` |
 | `MEMORYMASTER_POLICY_MODE` | `memorymaster/core/policy.py` |
 | `MEMORYMASTER_PRECOMPACT_BLOCKING` | `memorymaster/config_templates/hooks/memorymaster-precompact.py` |
+| `MEMORYMASTER_PRECOMPACT_RESIDUAL` | `memorymaster/capture/precompact_residual.py`, `memorymaster/config_templates/hooks/memorymaster-precompact.py`, `memorymaster/surfaces/setup_hooks.py` |
+| `MEMORYMASTER_PRECOMPACT_RESIDUAL_INPUT_CHARS` | `memorymaster/capture/precompact_residual.py` |
+| `MEMORYMASTER_PRECOMPACT_RESIDUAL_MODEL` | `memorymaster/capture/precompact_residual.py` |
+| `MEMORYMASTER_PRECOMPACT_RESIDUAL_PROVIDER` | `memorymaster/capture/precompact_residual.py` |
 | `MEMORYMASTER_PRETOOLUSE_RECALL` | `memorymaster/config_templates/hooks/memorymaster-pretooluse-recall.py`, `memorymaster/surfaces/setup_hooks.py` |
 | `MEMORYMASTER_PROFILE_CADENCE_DAYS` | `memorymaster/profile/engine.py` |
 | `MEMORYMASTER_PROFILE_MAP_MODEL` | `memorymaster/profile/providers.py` |
@@ -292,7 +297,7 @@ Total: 299 variables.
 | `MEMORYMASTER_USAGE_LEDGER_DB` | `memorymaster/core/usage_ledger.py` |
 | `MEMORYMASTER_VALIDATION_THRESHOLD` | `memorymaster/core/config.py` |
 | `MEMORYMASTER_VAULT_DIR` | `memorymaster/knowledge/vault_log.py`, `memorymaster/surfaces/mcp_server.py` |
-| `MEMORYMASTER_WAL_DISCIPLINE` | `memorymaster/bridges/dream_bridge.py`, `memorymaster/config_templates/hooks/memorymaster-auto-ingest.py`, `memorymaster/config_templates/hooks/memorymaster-dream-sync.py`, `memorymaster/config_templates/hooks/memorymaster-recall.py` (+7 more) |
+| `MEMORYMASTER_WAL_DISCIPLINE` | `memorymaster/bridges/dream_bridge.py`, `memorymaster/config_templates/hooks/memorymaster-auto-ingest.py`, `memorymaster/config_templates/hooks/memorymaster-dream-sync.py`, `memorymaster/config_templates/hooks/memorymaster-precompact.py` (+8 more) |
 | `MEMORYMASTER_WEBHOOK_SECRET` | `memorymaster/core/webhook.py` |
 | `MEMORYMASTER_WEBHOOK_TIMEOUT` | `memorymaster/core/webhook.py` |
 | `MEMORYMASTER_WEBHOOK_URL` | `memorymaster/core/webhook.py` |

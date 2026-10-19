@@ -69,8 +69,9 @@ def _make_stale(svc, claim_id) -> None:
 
 def test_default_set_and_env_override(monkeypatch):
     monkeypatch.delenv(ENV_NON_AUTO_PROMOTABLE_SOURCES, raising=False)
-    assert non_auto_promotable_sources() == frozenset({HOOK})
+    assert non_auto_promotable_sources() == frozenset({HOOK, "precompact-residual"})
     assert auto_promotion_blocked(HOOK)
+    assert auto_promotion_blocked("precompact-residual")  # T-1633
     assert not auto_promotion_blocked("claude-session")
     assert not auto_promotion_blocked(None)
 

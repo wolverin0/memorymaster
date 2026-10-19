@@ -11,6 +11,9 @@ never target ``confirmed``.
 Every automatic promoter consults this module: ``core.lifecycle.transition_claim``
 enforces it for all lifecycle jobs (validator, jev revalidation, curation drain,
 compaction), and the steward's raw-SQL confirm applies the same predicate.
+``precompact-residual`` (T-1633) joins the default set: a residual is extracted by an
+LLM from the turns a compaction is about to summarize, so its claims are leads for
+review, not facts, and stay ``candidate`` like the stop hook's.
 Configure the set with ``MEMORYMASTER_NON_AUTO_PROMOTABLE_SOURCES``
 (comma-separated source agents; set it empty to disable the policy).
 
@@ -29,7 +32,7 @@ from collections.abc import Mapping
 from typing import Any
 
 ENV_NON_AUTO_PROMOTABLE_SOURCES = "MEMORYMASTER_NON_AUTO_PROMOTABLE_SOURCES"
-DEFAULT_NON_AUTO_PROMOTABLE_SOURCES = frozenset({"llm-stop-hook"})
+DEFAULT_NON_AUTO_PROMOTABLE_SOURCES = frozenset({"llm-stop-hook", "precompact-residual"})
 
 # Lifecycle event payload ``actor`` values that mark an explicit decision rather
 # than an automatic cycle (cycles stamp ``automation``, see govern.steward).
