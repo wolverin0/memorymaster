@@ -56,9 +56,9 @@ def _derive_scope() -> str:
     """Derive scope from current working directory."""
     try:
         sys.path.insert(0, str(MM_ROOT))
-        from memorymaster.core.scope_utils import scope_from_cwd
+        from memorymaster.core.scope_utils import scope_from_cwd_or_user
 
-        return scope_from_cwd(os.getcwd())
+        return scope_from_cwd_or_user(os.getcwd())
     except Exception:
         return "project"
 

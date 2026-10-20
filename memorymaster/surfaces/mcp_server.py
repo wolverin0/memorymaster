@@ -32,6 +32,7 @@ from memorymaster.core.models import CitationInput
 from memorymaster.core.structured_log import timed_event
 from memorymaster.surfaces.unknown_args import record_unknown_arguments
 from memorymaster.core.scope_utils import (
+    project_root_from_cwd,
     ancestor_project_scopes,
     canonicalize_slug,
     project_scope_variants,
@@ -552,12 +553,14 @@ def _project_scope(workspace: str) -> str:
     raw_arg = str(workspace or "").strip()
     if not raw_arg and not _ENV_DEFAULT_WORKSPACE:
         return "user"
-    workspace_path = Path(_resolve_workspace(workspace)).resolve()
+    # Unresolved on purpose: scope_from_cwd matches symlink folder aliases before resolving.
+    workspace_path = Path(_resolve_workspace(workspace))
     scope = scope_from_cwd(workspace_path)
     if scope == "global":
         return "user"
     if scope.startswith("project:") and os.getenv("MEMORYMASTER_SCOPE_DISAMBIGUATE", "").strip().lower() in ("1", "true", "yes"):
-        digest = hashlib.sha1(str(workspace_path).lower().encode("utf-8")).hexdigest()[:8]
+        # Hash the project root, not the worktree or subdirectory, or every checkout gets its own scope again.
+        digest = hashlib.sha1(str(project_root_from_cwd(workspace_path)).lower().encode("utf-8")).hexdigest()[:8]
         return f"{scope}:{digest}"
     return scope
 
