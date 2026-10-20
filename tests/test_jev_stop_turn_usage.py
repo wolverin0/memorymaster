@@ -37,13 +37,10 @@ def _project(tmp_path):
                            [CitationInput(source="test://stop", locator="other")], scope="project:p")
     transition_claim(service.store, other.id, "confirmed", "test fixture")
     hook = tmp_path / "stop-hook.py"
-    hook_source = TEMPLATE.read_text(encoding="utf-8").replace(
-        "__MEMORYMASTER_PROJECT_ROOT__", str(project).replace("\\", "/"))
-    # The hook intentionally bounds its daemon join to 300 ms. Give this subprocess test enough
-    # time for Windows CI scheduling and SQLite startup so process exit signals completed work.
-    assert hook_source.count("TURN_USAGE_BUDGET_S = 0.3") == 1, "hook template constant moved: update this fixture"
-    hook_source = hook_source.replace("TURN_USAGE_BUDGET_S = 0.3", "TURN_USAGE_BUDGET_S = 5.0")
-    hook.write_text(hook_source, encoding="utf-8")
+    # The hook is exercised exactly as installed: its own join budget must be enough for a
+    # loaded runner, or the production hook loses the usage row too (T-1663).
+    hook.write_text(TEMPLATE.read_text(encoding="utf-8").replace(
+        "__MEMORYMASTER_PROJECT_ROOT__", str(project).replace("\\", "/")), encoding="utf-8")
     return project, hook, claim.id, other.id
 
 

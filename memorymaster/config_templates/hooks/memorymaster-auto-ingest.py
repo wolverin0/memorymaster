@@ -24,7 +24,9 @@ def _enabled(name):
     return os.environ.get(name, "").strip().lower() not in ("", "0", "false", "no", "off")
 
 
-TURN_USAGE_BUDGET_S = 0.3
+# 2 s, not 0.3: a loaded runner (CI windows 3.11, PR 284 on 2026-10-20) exited before the
+# daemon write landed and the turn's usage row was silently lost. The join is still bounded.
+TURN_USAGE_BUDGET_S = 2.0
 _JEV_MODE_ENVS = ("MEMORYMASTER_JEV_MODE", "MEMORYMASTER_JEV_RECALL", "MEMORYMASTER_JEV_SESSION")
 
 
