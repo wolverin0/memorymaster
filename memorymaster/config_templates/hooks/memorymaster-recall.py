@@ -33,6 +33,18 @@ except ImportError:  # a package older than this template: the legacy word-count
     def is_trivial_prompt(prompt):
         return len(prompt.split()) < 3
 
+try:  # T-1632: MEMORYMASTER_RECALL_FORMAT=current|header|gated; unset or unknown = current (no change)
+    from memorymaster.recall.recall_format import active_task_text, apply_format, format_mode  # noqa: E402
+except ImportError:  # a package older than this template: the block exactly as recall rendered it
+    def format_mode():
+        return "current"
+
+    def apply_format(ctx, prompt="", task="", mode=None):
+        return ctx
+
+    def active_task_text(cwd):
+        return ""
+
 try:
     data = json.loads(sys.stdin.read() or "{}")
     query = data.get("prompt", "")
@@ -48,6 +60,12 @@ try:
         # hook_data opts into the S2 RECALL Jev surface (inert unless MEMORYMASTER_JEV_* is on).
         extra = {"hook_data": data} if JEV_OPT_IN else {}
         ctx, via = hook_recall(query, extra.get("hook_data"), db_path=DB_PATH)
+        mode = format_mode()
+        if ctx and mode != "current":
+            claims_in = ctx.count("\n- [mm-")
+            ctx = apply_format(ctx, query, active_task_text(data.get("cwd") or ""), mode)
+            log_hook("recall", "format", session=session_id, mode=mode, claims_in=claims_in,
+                     claims_out=ctx.count("\n- [mm-") if ctx else 0)
         if ctx:
             def emit(output):
                 sys.stdout.write(output)
