@@ -35,6 +35,25 @@ def can_transition(current: str, target: str) -> bool:
     return target in ALLOWED_TRANSITIONS.get(current, set())
 
 
+def is_tuple_predecessor(claim: Claim, rival: Claim) -> bool:
+    """An explicit, unpinned predecessor occupying this claim's tuple slot.
+
+    A replacement link does not authorize retiring a different tenant, scope
+    or private principal. Pinned predecessors still require arbitration.
+    """
+    return (
+        claim.supersedes_claim_id == rival.id
+        and claim.replaced_by_claim_id is None
+        and rival.status == "confirmed"
+        and rival.replaced_by_claim_id is None
+        and not rival.pinned
+        and bool(claim.subject and claim.predicate)
+        and (claim.tenant_id or "", claim.subject, claim.predicate, claim.scope, claim.visibility)
+        == (rival.tenant_id or "", rival.subject, rival.predicate, rival.scope, rival.visibility)
+        and (claim.visibility == "public" or claim.source_agent == rival.source_agent)
+    )
+
+
 def _wiki_autopromote_after_validator(store, claim_id: int, event_type: str) -> None:
     if event_type != "validator":
         return
@@ -68,6 +87,7 @@ def transition_claim(
     event_type: str = "transition",
     replaced_by_claim_id: int | None = None,
     event_payload: dict[str, object] | None = None,
+    supersedes_claim_id: int | None = None,
 ) -> Claim:
     """``event_payload`` adds fields to the transition event's payload (e.g.
     the steward resolution ``actor``, review F-21).
@@ -75,6 +95,10 @@ def transition_claim(
     Confirming a claim whose author is in the non-auto-promotable set, or that
     has a predicate without a subject (``core.promotion_policy``), raises
     :class:`PromotionPolicyBlocked` unless ``event_payload["actor"]`` marks an explicit decision (``operator``/``agent``).
+
+    ``supersedes_claim_id`` confirms and retires a same-identity tuple rival
+    atomically on SQLite. It never bypasses promotion or source-review gates;
+    unsupported backends reject the option before changing either claim.
     """
     claim = store.get_claim(claim_id, include_citations=False)
     if claim is None:
@@ -95,6 +119,10 @@ def transition_claim(
             "or a predicate without a subject); confirm it with an explicit operator/agent actor."
         )
     extra = {"event_payload": event_payload} if event_payload else {}
+    if supersedes_claim_id is not None:
+        if to_status != "confirmed":
+            raise ValueError("Atomic supersession requires confirmation.")
+        extra["supersedes_claim_id"] = supersedes_claim_id
     updated = store.apply_status_transition(
         claim,
         to_status=to_status,

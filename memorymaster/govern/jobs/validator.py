@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import contextlib
+import sqlite3
 
 from memorymaster.core.config import get_config
-from memorymaster.core.lifecycle import transition_claim
+from memorymaster.core.lifecycle import is_tuple_predecessor, transition_claim
 from memorymaster.core.models import Claim
 from memorymaster.core.promotion_policy import (
     PromotionPolicyBlocked,
@@ -279,6 +280,9 @@ def run(
             visibility=claim.visibility,
             source_agent=claim.source_agent,
         )
+        # The lifecycle retires an explicit predecessor atomically with the
+        # confirmation. It is neither a duplicate nor an unresolved rival.
+        related = [x for x in related if not is_tuple_predecessor(claim, x)]
 
         duplicate = next((x for x in related if x.object_value == claim.object_value and x.object_value), None)
         if duplicate is not None and not is_revalidation:
@@ -346,7 +350,9 @@ def run(
             None,
         )
 
-        if conflict is not None and score <= (conflict.confidence + cfg.conflict_margin):
+        if conflict is not None and (
+            conflict.pinned or score <= (conflict.confidence + cfg.conflict_margin)
+        ):
             if claim.status != "conflicted":
                 transition_claim(
                     store,
@@ -375,13 +381,24 @@ def run(
                     to_status="confirmed",
                     reason=f"validated score={score:.3f} citations={citation_count}",
                     event_type="validator",
+                    **({"supersedes_claim_id": conflict.id} if conflict is not None else {}),
                 )
                 confirmed += 1
+                superseded += int(conflict is not None)
             except PromotionPolicyBlocked:
                 raise
-            except Exception:
-                # Tuple uniqueness conflict — another confirmed claim has the same
-                # (subject, predicate, scope). Mark as conflicted instead of crashing.
+            except sqlite3.IntegrityError as exc:
+                # A concurrent confirmation can take the unique tuple slot.
+                # Other storage/source-review failures must remain failures.
+                if not any(name in str(exc) for name in (
+                    "idx_claims_public_confirmed_tuple_unique",
+                    "idx_claims_nonpublic_principal_confirmed_tuple_unique",
+                )) or not store.find_confirmed_by_tuple(
+                    subject=claim.subject, predicate=claim.predicate, scope=claim.scope,
+                    exclude_claim_id=claim.id, tenant_id=claim.tenant_id,
+                    visibility=claim.visibility, source_agent=claim.source_agent,
+                ):
+                    raise
                 if claim.status != "conflicted":
                     transition_claim(
                         store,
@@ -391,6 +408,7 @@ def run(
                         event_type="validator",
                     )
                 conflicted += 1
+                continue
         else:
             store.record_event(
                 claim_id=claim.id,
@@ -401,14 +419,6 @@ def run(
                 payload={"score": score, "citation_count": citation_count},
             )
             revalidated_healthy += 1
-
-        if conflict is not None:
-            store.mark_superseded(
-                old_claim_id=conflict.id,
-                new_claim_id=claim.id,
-                reason=f"superseded by claim:{claim.id}",
-            )
-            superseded += 1
 
     return {
         "processed": len(claims),

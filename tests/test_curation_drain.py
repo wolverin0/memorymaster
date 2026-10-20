@@ -97,15 +97,16 @@ def test_a_winning_conflicted_claim_is_promoted_and_the_rival_superseded(svc):
 
 # --- veredicto (c): huerfano -----------------------------------------------
 
-def test_an_orphan_conflict_goes_stale_not_deleted(svc):
+def test_an_orphan_conflict_waits_for_revalidation(svc):
     huerfano = _claim(svc, "conflictiva cuyo rival ya no esta confirmado en ningun lado")
     _status(svc, huerfano, "conflicted")
 
     r = curation_drain.drain_conflicts(svc, apply=True)
 
-    assert r["resolved_orphan"] == 1
-    assert _get(svc, huerfano).status == "stale", (
-        "el huerfano debia ir a stale (reversible, lo gestiona el decay)"
+    assert r["pending_revalidation"] == 1
+    assert r["resolved_orphan"] == 0
+    assert _get(svc, huerfano).status == "conflicted", (
+        "la ausencia de rival no demuestra falta de vigencia"
     )
 
 
@@ -130,9 +131,8 @@ def test_operator_claims_are_never_touched(svc):
 
     assert r["kept_for_operator"] == 1
     assert _get(svc, pineada).status == "conflicted", "toco una claim PINEADA"
-    assert _get(svc, de_user).status == "stale", (
-        "scope=user sin rival debia drenarse como huerfano; volvio el proxy falso"
-    )
+    assert _get(svc, de_user).status == "conflicted"
+    assert r["pending_revalidation"] == 1
 
 
 def test_dry_run_mutates_nothing(svc):
@@ -148,7 +148,7 @@ def test_dry_run_mutates_nothing(svc):
     r = curation_drain.drain_conflicts(svc, apply=False)
 
     assert r["dry_run"] is True
-    assert r["resolved_lost"] == 1 and r["resolved_orphan"] == 1
+    assert r["resolved_lost"] == 1 and r["pending_revalidation"] == 1
     assert _get(svc, perdedor).status == "conflicted", "el dry-run aplico"
     assert _get(svc, huerfano).status == "conflicted", "el dry-run aplico"
 
