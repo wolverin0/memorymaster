@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; installed recall integrity, temporal guard and verified delivery -->
+<!-- doc-head: sole roadmap; installed recall integrity and source-only AO-7 verification limits -->
 # MemoryMaster roadmap
 # Covers: live Jev decision ledger (4.9.0 checklist), useful-memory delivery/evaluation, workflow analytics, governed observations, always-on context layer program and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, code navigation.
@@ -743,6 +743,18 @@ on: AO-2.
 
 **AO-7 Backfill from zero** (L, batch D; census T-1636; plan retained by
 operator decision 2026-10-20; backfill may start now AO-2 is merged)
+
+T-1665 source checkpoint (2026-10-20): all eleven build-item implementations
+and disposable regression files are present on the isolated branch. The resumed
+rollback ownership changes were committed as `5878f1f`; Ruff passed and all six
+CLI dry-run actions passed a disposable fixture smoke check without changing
+fixture bytes or creating state/database files. Pytest acceptance remains open:
+two single-file attempts were blocked by the heavy-job guard, and its required
+global semaphore wrapper failed with `EPERM` before starting pytest. No broad
+suite was attempted. The stock OpenCode client also lacks the bounded-output
+interface required by the runner; a verified bounded route must be bound before
+runtime use. No deployment or activation was performed. See the
+[resume evidence](artifacts/inputs/2026-10-20-T-1665-BUILD-RESUME.md).
 
 Models: build Sonnet (T3, runner only), runtime Haiku for all transcript
 reading and Sonnet only for consolidating kept candidates, judge Haiku batch
