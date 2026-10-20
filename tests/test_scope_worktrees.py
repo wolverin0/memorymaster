@@ -120,6 +120,10 @@ def test_broken_gitfiles_fall_back_without_crossing_to_parent_repo(tmp_path, poi
     checkout.mkdir()
     (checkout / ".git").write_text(pointer, encoding="utf-8")
     assert scope_from_cwd(checkout) == "project:separate-project"
+    # A subdirectory of that broken checkout still belongs to the checkout, not to its own name.
+    nested = checkout / "src" / "pkg"
+    nested.mkdir(parents=True)
+    assert scope_from_cwd(nested) == "project:separate-project"
 
 
 def test_plain_non_git_project_is_unchanged(tmp_path):
@@ -213,6 +217,42 @@ def test_invalid_commondir_falls_back_to_checkout_scope(tmp_path, pointer):
     repo, checkout = _worktree(tmp_path, "separate-project")
     (repo / ".git/worktrees/slot/commondir").write_text(pointer, encoding="utf-8")
     assert scope_from_cwd(checkout) == "project:separate-project"
+    nested = checkout / "docs"
+    nested.mkdir()
+    assert scope_from_cwd(nested) == "project:separate-project"
+
+
+def test_hooks_translate_the_global_sentinel_to_user(tmp_path, monkeypatch):
+    from memorymaster.core.scope_utils import scope_from_cwd_or_user
+
+    collection = tmp_path / "apps"
+    for name in ("one", "two"):
+        (collection / name / ".git").mkdir(parents=True)
+    assert scope_from_cwd(collection) == "global"
+    assert scope_from_cwd_or_user(collection) == "user"
+    assert scope_from_cwd_or_user("") == "user"
+    assert scope_from_cwd_or_user(None) == "user"
+    _, checkout = _worktree(tmp_path, "memorymaster-pr300")
+    assert scope_from_cwd_or_user(checkout) == "project:memorymaster"
+    hook = Path(__file__).resolve().parents[1] / "memorymaster/config_templates/hooks/memorymaster-session-start.py"
+    spec = importlib.util.spec_from_file_location("collection_session_start", hook)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.chdir(collection)
+    assert module._derive_scope() == "user"
+
+
+def test_mcp_disambiguation_digest_is_shared_by_worktrees(tmp_path, monkeypatch):
+    from memorymaster.surfaces import mcp_server
+
+    monkeypatch.setenv("MEMORYMASTER_SCOPE_DISAMBIGUATE", "1")
+    monkeypatch.setattr(mcp_server, "_ENV_DEFAULT_PROJECT_SCOPE", "", raising=False)
+    monkeypatch.setattr(mcp_server.mcp_path_policy, "validate_workspace_path", lambda *_a, **_k: None)
+    repo, checkout = _worktree(tmp_path, "memorymaster-pr301")
+    main_scope = mcp_server._project_scope(str(repo))
+    assert main_scope.startswith("project:memorymaster:") and len(main_scope.rsplit(":", 1)[1]) == 8
+    assert mcp_server._project_scope(str(checkout)) == main_scope
+    assert mcp_server._project_scope(str(checkout / "sub")) == main_scope
 
 
 def test_session_start_hook_uses_shared_worktree_scope(tmp_path, monkeypatch):

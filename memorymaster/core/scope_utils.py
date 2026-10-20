@@ -211,10 +211,10 @@ def _git_project_root(current: Path) -> tuple[Path, Path] | None:
             elif dotgit.is_file():
                 pointer = dotgit.read_text(encoding="utf-8").strip()
                 if not pointer.startswith("gitdir:") or not pointer[7:].strip():
-                    return None
+                    return candidate, candidate
                 gitdir = (candidate / pointer[7:].strip()).resolve()
                 if not gitdir.is_dir():
-                    return None
+                    return candidate, candidate
             else:
                 continue
             commondir = gitdir / "commondir"
@@ -222,10 +222,10 @@ def _git_project_root(current: Path) -> tuple[Path, Path] | None:
                 return candidate, candidate
             pointer = commondir.read_text(encoding="utf-8").strip()
             if not pointer:
-                return None
+                return candidate, candidate
             common = (gitdir / pointer).resolve()
             if not common.is_dir():
-                return None
+                return candidate, candidate
             # Linked worktrees share the main checkout's .git directory.
             # Bare repositories conventionally use <project>.git instead.
             if common.name.lower() == ".git":
@@ -233,7 +233,9 @@ def _git_project_root(current: Path) -> tuple[Path, Path] | None:
             project = common.with_suffix("") if common.suffix.lower() == ".git" else common
             return candidate, project
         except (OSError, ValueError, UnicodeError):
-            return None
+            # Unreadable metadata: the folder that carries ``.git`` is still the checkout,
+            # so subdirectories and checkout aliases keep resolving to it.
+            return candidate, candidate
     return None
 
 
@@ -281,6 +283,33 @@ def scope_from_cwd(cwd: str | os.PathLike[str] | None) -> str:
     slug = canonicalize_slug(name)
     folder_slug = re.sub(r"\s+", "-", name.strip().lower())
     return aliases.get(folder_slug, aliases.get(slug, f"project:{slug}"))
+
+
+def project_root_from_cwd(cwd: str | os.PathLike[str] | None) -> Path:
+    """The Git project root ``scope_from_cwd`` derives the scope from, or the folder itself.
+
+    Disambiguation digests must hash this, never the worktree or subdirectory path.
+    """
+    current = Path(str(cwd or "").strip() or ".")
+    try:
+        current = current.resolve()
+    except (OSError, ValueError):
+        pass
+    try:
+        roots = _git_project_root(current)
+    except (OSError, ValueError):
+        roots = None
+    return roots[1] if roots is not None else current
+
+
+def scope_from_cwd_or_user(cwd: str | os.PathLike[str] | None) -> str:
+    """``scope_from_cwd`` for hooks and session defaults: the ``global`` sentinel becomes ``user``.
+
+    Hooks run from collection roots, filesystem roots and empty cwds; an implicit
+    ``global`` binding there would leak claims into every project.
+    """
+    scope = scope_from_cwd(cwd) if cwd else "user"
+    return "user" if scope == "global" else scope
 
 
 def cwd_from_transcript(transcript_path: str | os.PathLike[str] | None) -> str | None:
