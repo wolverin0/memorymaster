@@ -119,15 +119,6 @@ class CompiledProfileEngine:
 
     def run(self, *, force: bool = False, max_map_calls: int | None = None) -> dict[str, Any]:
         current = self.now()
-        from memorymaster.core.model_preflight import alert, preflight_provider
-
-        try:
-            for provider in (self.mapper, self.reducer):
-                preflight_provider(provider)
-        except Exception as exc:  # noqa: BLE001 - skip the job before changing profile state
-            provider_name = "antigravity"
-            alert(provider_name, str(provider.model), exc)
-            return {"ok": False, "status": "preflight_failed", "error": type(exc).__name__}
         # Every run re-checks claim supports, before the cadence gate and
         # before mapping or reducing, and rewrites the projection at once so a
         # retired fact stops being injected even when no compile is due or
@@ -143,6 +134,17 @@ class CompiledProfileEngine:
             now=current, cadence_days=self.config.cadence_days
         ):
             return {"ok": True, "status": "not_due"}
+        # Preflight only once a compile is actually due: the retraction above must run
+        # on every tick regardless of provider health, and a not-due run costs no call.
+        from memorymaster.core.model_preflight import alert, preflight_provider
+
+        try:
+            for provider in (self.mapper, self.reducer):
+                preflight_provider(provider)
+        except Exception as exc:  # noqa: BLE001 - skip the compile before changing run state
+            alert(str(getattr(provider, "provider", "antigravity")), str(getattr(provider, "model", "")), exc,
+                  now=current)
+            return {"ok": False, "status": "preflight_failed", "error": type(exc).__name__}
         run = active or self._start_run(current)
         if run is None:
             rendered = self._write_projection(current)
