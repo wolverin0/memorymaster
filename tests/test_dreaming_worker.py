@@ -178,6 +178,34 @@ def test_provider_failure_is_replayable_and_never_mutates_claims(tmp_path: Path)
     assert service.list_claims(limit=20, scope_allowlist=["project:test"]) == []
 
 
+def test_model_preflight_failure_alerts_once_and_leaves_capture_untouched(tmp_path: Path, monkeypatch, caplog) -> None:
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    capture_id = _capture(ledger)
+    monkeypatch.setenv("MEMORYMASTER_CAPTURE_STATE_DB", str(ledger.db_path))
+
+    class InvalidModel:
+        def model_available(self, model):
+            assert model == "bogus-model"
+            return False
+
+    class Configured(_Extractor):
+        model = "bogus-model"
+        client = InvalidModel()
+
+    before = ledger.get_capture(capture_id)
+    result = DreamWorker(ledger, service, Configured(), _Consolidator(),
+                         config=DreamConfig(), now=lambda: NOW).run(apply_candidates=False)
+    after = ledger.get_capture(capture_id)
+
+    assert result["reason"] == "model_preflight_failed"
+    assert after == before
+    assert len([record for record in caplog.records if record.levelname == "ERROR" and
+                "provider model preflight failed" in record.message]) == 1
+    with ledger._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM dream_hook_errors WHERE error_code LIKE 'model_preflight:%'").fetchone()[0] == 1
+
+
 def test_extraction_rate_limit_opens_batch_circuit_and_records_429(tmp_path: Path) -> None:
     service = _service(tmp_path)
     ledger = DreamLedger(tmp_path / "capture.db")

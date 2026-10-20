@@ -179,6 +179,25 @@ def test_scheduled_slots_complete_and_missing(tmp_path: Path) -> None:
     assert review.check_scheduled_slots(config, now=now).verdict is review.Verdict.FAIL
 
 
+def test_model_preflight_failure_is_reported_read_only(tmp_path: Path) -> None:
+    state_db = tmp_path / "capture.db"
+    with sqlite3.connect(state_db) as connection:
+        connection.execute("CREATE TABLE dream_hook_errors (id INTEGER PRIMARY KEY, provider TEXT, error_code TEXT, occurred_at TEXT)")
+        connection.execute(
+            "INSERT INTO dream_hook_errors(provider,error_code,occurred_at) VALUES (?,?,?)",
+            ("antigravity", "model_preflight:bogus-model:RuntimeError", "2026-10-20T10:00:00+00:00"),
+        )
+    config = review.ReviewConfig(db=_db(tmp_path / "memory.db"), capture_state_db=state_db)
+
+    result = review.check_model_preflight(config)
+
+    assert result.name == "model_preflight"
+    assert result.verdict is review.Verdict.FAIL
+    assert "bogus-model" in result.detail
+    with sqlite3.connect(state_db) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM dream_hook_errors").fetchone()[0] == 1
+
+
 def test_private_context_and_blocked_job_fail(tmp_path: Path, monkeypatch) -> None:
     # HERMETICO A PROPOSITO: estos casos ejercitan el subsistema PRENDIDO.
     # Sin fijar la variable heredaban el entorno del que corria los tests, y

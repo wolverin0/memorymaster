@@ -91,6 +91,36 @@ def test_pending_only_excluye_los_ya_consumidos(repo: ProfileRepository):
     assert len(repo.candidates(1)) == 5, "sin pending_only debe seguir viendo todos"
 
 
+def test_model_preflight_fails_before_profile_state_changes(repo: ProfileRepository, tmp_path: Path, monkeypatch, caplog):
+    from memorymaster.dreaming.ledger import DreamLedger
+
+    state_db = tmp_path / "capture-state.db"
+    monkeypatch.setenv("MEMORYMASTER_CAPTURE_STATE_DB", str(state_db))
+
+    class Client:
+        def model_available(self, model):
+            return model != "bogus-model"
+
+    class Provider:
+        model = "bogus-model"
+        client = Client()
+
+    before = repo.active_run()
+    result = CompiledProfileEngine(
+        repo, Provider(), Provider(), output_dir=tmp_path / "profile",
+        now=lambda: NOW,
+    ).run(force=True)
+
+    assert result["status"] == "preflight_failed"
+    assert repo.active_run() == before
+    assert len([record for record in caplog.records if record.levelname == "ERROR" and
+                "provider model preflight failed" in record.message]) == 1
+    with DreamLedger(state_db)._connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM dream_hook_errors WHERE error_code LIKE 'model_preflight:%'"
+        ).fetchone()[0] == 1
+
+
 def test_reaplicar_el_mismo_lote_no_lo_consume_dos_veces(repo: ProfileRepository):
     """Un crash entre lotes no puede traducirse en hechos duplicados."""
     _seed(repo, 1, 3)
