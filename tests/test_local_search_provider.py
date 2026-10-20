@@ -273,6 +273,37 @@ def test_search_passes_real_es_folder_switches(
 
 
 @pytest.mark.unit
+def test_search_under_uses_es_path_switch_before_the_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``under`` maps to ES ``-path <dir>`` (verified live against ES 1.1.0.27);
+    a quoted ``path:"..."`` term inside the query returned nothing there."""
+    monkeypatch.setenv("MEMORYMASTER_EVERYTHING_ES_PATH", "C:/es.exe")
+    monkeypatch.setattr(
+        "memorymaster.bridges.local_search.everything.os.path.isfile",
+        lambda _: True,
+    )
+    captured: dict[str, list[str]] = {}
+
+    def _fake_run(args: list[str], **kwargs: Any) -> MagicMock:
+        if "-version" in args:
+            return _make_completed("1.1.0.27", 0)
+        captured["args"] = args
+        return _make_completed("", 0)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    provider = EverythingProvider()
+
+    provider.search("foo", kind="file", under="D:/some dir")
+    args = captured["args"]
+    assert args[args.index("-path") + 1] == "D:/some dir"
+    assert args[-1] == "foo"
+
+    provider.search("foo", kind="file")
+    assert "-path" not in captured["args"]
+
+
+@pytest.mark.unit
 def test_search_returns_empty_when_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
