@@ -152,6 +152,7 @@ def evaluate(
     dense_log: Path | None = None,
     hook_log: Path | None = None,
     guard_log: Path | None = None,
+    record: bool = True,
 ) -> GuardDecision:
     """Return the beat's permission for this tick and record it in the guard log."""
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -181,9 +182,10 @@ def evaluate(
                            else "insufficient_data")
     except Exception as exc:  # noqa: BLE001 - the guard must fail open, never block the beat on its own bug
         action, reasons = ALLOW, [f"guard_error:{type(exc).__name__}"]
-    _append(
-        guard_log if guard_log is not None else guard_log_path(),
-        {"ts": current.isoformat(timespec="seconds"), "action": action, "reasons": reasons,
-         "dense": metrics["dense"], "hook": metrics["hook"], "thresholds": thresholds},
-    )
+    if record:
+        _append(
+            guard_log if guard_log is not None else guard_log_path(),
+            {"ts": current.isoformat(timespec="seconds"), "action": action, "reasons": reasons,
+             "dense": metrics["dense"], "hook": metrics["hook"], "thresholds": thresholds},
+        )
     return GuardDecision(action, reasons, metrics)

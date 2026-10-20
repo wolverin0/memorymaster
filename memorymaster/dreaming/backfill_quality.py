@@ -43,6 +43,7 @@ def evaluate_cohort_quality(candidates: list[dict[str, Any]], discarded: list[di
                                            ("missed_signal", haiku, audit, "missed_signal")):
         for item in population:
             key = str(item.get("candidate_id") or item.get("selection_id"))
+            verdict = None
             try:
                 reservation = None
                 if reserve is not None:
@@ -67,7 +68,8 @@ def evaluate_cohort_quality(candidates: list[dict[str, Any]], discarded: list[di
                                        "model": model_receipt or {"provider": judge.provider, "requested_model": judge.model}})
             except Exception:  # noqa: BLE001 - a failed judge latches the gate
                 complete = False
-                results[label].append({"id": key, "error": "judge_incomplete"})
+                flags = {k: verdict[k] for k in LEAKS if isinstance(verdict, dict) and type(verdict.get(k)) is bool}
+                results[label].append({"id": key, "error": "judge_incomplete", **flags})
     precision = {r["id"]: r for r in results["haiku"]}
     junk = sum(r.get("junk", True) for r in results["haiku"])
     checks = results["sonnet"]

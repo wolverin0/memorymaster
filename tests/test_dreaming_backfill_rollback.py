@@ -136,3 +136,82 @@ def test_store_retirement_guard_survives_service_check_race(service, monkeypatch
     recovered = _ingest(service)
     assert recovered.status == service.store.get_claim(claim.id).status == "archived"
     assert not any(event.details.startswith("reingest_revival:") for event in service.store.list_events(claim.id))
+
+
+def test_runner_rollback_retires_only_owned_candidates_and_blocks_live_replay(service, tmp_path):
+    from memorymaster.dreaming.backfill import rollback_backfill_cohort
+    from test_dreaming_backfill_cli import _campaign, _claims
+
+    (tmp_path / "campaign").mkdir()
+    fixture = _campaign(tmp_path / "campaign")
+    fixture.runner.inventory()
+    fixture.runner.run(stage="all", apply_candidates=True)
+    claim = _claims(fixture)[0]
+    cohort = fixture.runner._rows()[0]["cohort_id"]
+    result = rollback_backfill_cohort(fixture.runner, cohort, service=fixture.service, dry_run=False)
+    assert result["retired_claim_ids"] == [claim.id]
+    assert fixture.service.store.get_claim(claim.id).status == "archived"
+    replay = fixture.service.ingest(claim.text, [CitationInput("dream-worker", locator="live:replay")],
+                                    scope=claim.scope, source_agent="dream-worker",
+                                    claim_type=claim.claim_type, subject=claim.subject, predicate=claim.predicate,
+                                    object_value=claim.object_value,
+                                    intake_batch_id="replay", intake_batch_max=200)
+    assert replay.id == claim.id and replay.status == "archived"
+    assert not fixture.service.query_rows("cited architecture", include_candidates=True,
+                                           scope_allowlist=[claim.scope], record_accesses=False)
+    fixture.runner.run(stage="apply", apply_candidates=True)
+    assert fixture.service.store.get_claim(claim.id).status == "archived"
+    assert fixture.runner._rows()[0]["metadata"]["rollback"]["tombstone"] is True
+
+
+def test_runner_rollback_preserves_reused_claim_and_its_original_review(service, tmp_path):
+    import hashlib
+    from memorymaster.dreaming.backfill import rollback_backfill_cohort
+    from test_dreaming_backfill_cli import _campaign
+
+    (tmp_path / "campaign").mkdir()
+    fixture = _campaign(tmp_path / "campaign")
+    fixture.runner.inventory()
+    fixture.runner.run(stage="extract")
+    row = fixture.runner._rows()[0]
+    capture = fixture.runner._captures([row])[0]
+    candidate = capture["extraction"][0]
+    key = "dream-" + hashlib.sha256(f"{row['scope']}|{candidate['candidate_id']}".encode()).hexdigest()[:24]
+    existing = fixture.service.ingest(candidate["text"], [CitationInput("independent", locator="original:source")],
+                                      idempotency_key=key, scope=row["scope"], source_agent="dream-worker",
+                                      claim_type=candidate["claim_type"], subject=candidate["subject"],
+                                      predicate=candidate["predicate"], object_value=candidate["object_value"],
+                                      intake_batch_id="original", intake_batch_max=200)
+    events = fixture.service.list_events(claim_id=existing.id)
+    fixture.runner.run(stage="consolidate")
+    fixture.runner.run(stage="quality")
+    fixture.runner.run(stage="apply", apply_candidates=True)
+    manifest = next(iter(fixture.runner._rows()[0]["metadata"]["applications"].values()))
+    assert manifest["reused_claim_ids"] == [existing.id] and manifest["created_claim_ids"] == []
+    assert fixture.service.store.get_claim(existing.id).citations == existing.citations
+    assert fixture.service.list_events(claim_id=existing.id) == events
+    result = rollback_backfill_cohort(fixture.runner, row["cohort_id"], service=fixture.service, dry_run=False)
+    assert result["retired_claim_ids"] == [] and result["reused_claim_ids"] == [existing.id]
+    assert fixture.service.store.get_claim(existing.id).status == "candidate"
+
+
+@pytest.mark.parametrize("independent_support", [True, False])
+def test_rollback_recovers_crash_intent_and_preserves_independent_support(service, tmp_path, independent_support):
+    from memorymaster.dreaming.backfill import rollback_backfill_cohort
+    from test_dreaming_backfill_cli import _campaign, _claims
+
+    (tmp_path / "campaign").mkdir()
+    fixture = _campaign(tmp_path / "campaign")
+    fixture.runner.inventory()
+    fixture.runner.run(stage="all", apply_candidates=True)
+    claim = _claims(fixture)[0]
+    row = fixture.runner._rows()[0]
+    entry = next(iter(row["metadata"]["applications"].values()))
+    entry["created_claim_ids"], entry["completed"] = [], False
+    fixture.runner._save(row)
+    if independent_support:
+        fixture.service.store.record_event(claim_id=claim.id, event_type="validator", details="independent_verification")
+    result = rollback_backfill_cohort(fixture.runner, row["cohort_id"], service=fixture.service, dry_run=False)
+    assert result["created_claim_ids"] == [claim.id]
+    assert result["retired_claim_ids"] == ([] if independent_support else [claim.id])
+    assert fixture.service.store.get_claim(claim.id).status == ("candidate" if independent_support else "archived")

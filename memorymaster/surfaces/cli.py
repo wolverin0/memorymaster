@@ -32,6 +32,7 @@ from memorymaster.surfaces.cli_handlers_basic import (
 )
 from memorymaster.surfaces.cli_handlers_integrity import _handle_drain_spool, _handle_integrity, _handle_qdrant_reconcile, _handle_repair_fk
 from memorymaster.surfaces.dreaming_cli import handle_dream_run, handle_dream_status
+from memorymaster.surfaces.backfill_cli import handle_backfill, register_backfill_parser
 from memorymaster.surfaces.session_scope import handle_session_scope
 from memorymaster.surfaces.cli_handlers_skills import SKILL_COMMAND_HANDLERS, register_skill_parsers
 from memorymaster.surfaces.cli_handlers_jev import JEV_COMMAND_HANDLERS, LEDGER_COMMANDS, register_jev_parsers
@@ -64,6 +65,7 @@ COMMAND_HANDLERS["migrate"] = _handle_migrate
 COMMAND_HANDLERS["export-delta"] = _handle_export_delta
 COMMAND_HANDLERS["dream-run"] = handle_dream_run
 COMMAND_HANDLERS["dream-status"] = handle_dream_status
+COMMAND_HANDLERS["dream-backfill"] = handle_backfill
 COMMAND_HANDLERS["remember"] = handle_remember
 COMMAND_HANDLERS["recall"] = handle_recall
 COMMAND_HANDLERS["forget"] = handle_forget
@@ -88,6 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stealth", action="store_true", help="Use local-only stealth DB (.memorymaster-stealth.db) in the current directory")
     parser.add_argument("--tenant", default=None, help="Tenant ID for multi-tenant isolation (only claims with this tenant_id are visible)")
     sub = parser.add_subparsers(dest="command", required=True)
+    register_backfill_parser(sub)
 
     sub.add_parser("init-db", help="Create schema in SQLite database")
 
@@ -847,6 +850,7 @@ def main(argv: list[str] | None = None) -> int:
         "export-delta",
         "qdrant-search",
         "dream-status",
+        "dream-backfill",
         "workflow",
         *LEDGER_COMMANDS,  # decisions ledger / Dreaming ledger only: never open the memory DB
     }

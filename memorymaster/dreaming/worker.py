@@ -1113,8 +1113,11 @@ class DreamWorker:
             return None
         created = None
         if decision.action in {"add", "reinforce", "propose_supersede", "propose_conflict"}:
-            created = self._ingest_candidate(row, candidate, effective_scope)
-            if review is not None:
+            outcome = row.get("outcome_receipt", {})
+            created = self._ingest_candidate({**row, "outcome_receipt": outcome}, candidate, effective_scope)
+            if created.status == "archived":
+                return None
+            if review is not None and (outcome.get("created") or outcome.get("owned")):
                 record_review(self.service.store, created.id, bound, review)
             summary["candidate_writes"] += 1
         if decision.action.startswith("propose_"):
