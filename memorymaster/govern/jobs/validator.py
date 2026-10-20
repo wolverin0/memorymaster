@@ -13,6 +13,7 @@ from memorymaster.core.promotion_policy import (
     non_auto_promotable_sources,
 )
 from memorymaster.govern.steward_classifier import load_classifier, predict_promote_probability
+from memorymaster.stores._storage_shared import ConcurrentModificationError
 
 # Calibrated-classifier decision threshold — the (precision>=0.95, max recall)
 # operating point from the Pareto sweep. See
@@ -282,6 +283,7 @@ def run(
         )
         # The lifecycle retires an explicit predecessor atomically with the
         # confirmation. It is neither a duplicate nor an unresolved rival.
+        predecessor = next((x for x in related if is_tuple_predecessor(claim, x)), None)
         related = [x for x in related if not is_tuple_predecessor(claim, x)]
 
         duplicate = next((x for x in related if x.object_value == claim.object_value and x.object_value), None)
@@ -351,7 +353,9 @@ def run(
         )
 
         if conflict is not None and (
-            conflict.pinned or score <= (conflict.confidence + cfg.conflict_margin)
+            conflict.pinned
+            or score <= (conflict.confidence + cfg.conflict_margin)
+            or claim.supersedes_claim_id not in {None, conflict.id}
         ):
             if claim.status != "conflicted":
                 transition_claim(
@@ -374,6 +378,7 @@ def run(
             continue
 
         if claim.status != "confirmed":
+            retirement = conflict or predecessor
             try:
                 transition_claim(
                     store,
@@ -381,23 +386,30 @@ def run(
                     to_status="confirmed",
                     reason=f"validated score={score:.3f} citations={citation_count}",
                     event_type="validator",
-                    **({"supersedes_claim_id": conflict.id} if conflict is not None else {}),
+                    **({"supersedes_claim_id": retirement.id} if retirement is not None else {}),
                 )
                 confirmed += 1
-                superseded += int(conflict is not None)
+                superseded += int(retirement is not None)
             except PromotionPolicyBlocked:
                 raise
-            except sqlite3.IntegrityError as exc:
-                # A concurrent confirmation can take the unique tuple slot.
-                # Other storage/source-review failures must remain failures.
-                if not any(name in str(exc) for name in (
-                    "idx_claims_public_confirmed_tuple_unique",
-                    "idx_claims_nonpublic_principal_confirmed_tuple_unique",
-                )) or not store.find_confirmed_by_tuple(
-                    subject=claim.subject, predicate=claim.predicate, scope=claim.scope,
-                    exclude_claim_id=claim.id, tenant_id=claim.tenant_id,
-                    visibility=claim.visibility, source_agent=claim.source_agent,
+            except (sqlite3.IntegrityError, ValueError, ConcurrentModificationError) as exc:
+                if isinstance(exc, sqlite3.IntegrityError):
+                    # A concurrent confirmation can take the unique tuple slot.
+                    if not any(name in str(exc) for name in (
+                        "idx_claims_public_confirmed_tuple_unique",
+                        "idx_claims_nonpublic_principal_confirmed_tuple_unique",
+                    )) or not store.find_confirmed_by_tuple(
+                        subject=claim.subject, predicate=claim.predicate, scope=claim.scope,
+                        exclude_claim_id=claim.id, tenant_id=claim.tenant_id,
+                        visibility=claim.visibility, source_agent=claim.source_agent,
+                    ):
+                        raise
+                elif retirement is None or (
+                    isinstance(exc, ValueError)
+                    and str(exc) != "Supersession requires a current unpinned tuple predecessor."
                 ):
+                    # Only the atomic predecessor refusal is an unresolved tuple.
+                    # Source-review and unrelated storage failures still propagate.
                     raise
                 if claim.status != "conflicted":
                     transition_claim(

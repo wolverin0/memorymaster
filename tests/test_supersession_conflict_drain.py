@@ -11,6 +11,7 @@ from memorymaster.core.models import CitationInput
 from memorymaster.core.promotion_policy import PromotionPolicyBlocked
 from memorymaster.core.service import MemoryService
 from memorymaster.govern.jobs import curation_drain, validator
+from memorymaster.stores._storage_shared import ConcurrentModificationError
 
 
 @pytest.fixture()
@@ -24,7 +25,7 @@ def service(tmp_path, monkeypatch):
 def replacement_pair(service, *, source="claude-session", retired=False):
     old = service.ingest(
         text="The original diagnosis has been disproved.", subject="diagnosis",
-        predicate="cause", object_value="old", scope="project:test", confidence=0.3,
+        predicate="cause", object_value="old", scope="project:test", confidence=0.95,
         citations=[CitationInput(source="fixture:old")], source_agent="claude-session",
     )
     transition_claim(service.store, old.id, "confirmed", reason="fixture")
@@ -34,19 +35,30 @@ def replacement_pair(service, *, source="claude-session", retired=False):
         confidence=0.84, source_agent=source, supersedes_claim_id=old.id,
         citations=[CitationInput(source="fixture:a"), CitationInput(source="fixture:b")],
     )
-    if retired:
-        service.store.mark_superseded(old.id, new.id, reason="fixture resolved supersession")
-    return old, new
+    service.store.mark_superseded(old.id, new.id, reason="fixture resolved supersession")
+    if not retired:
+        # Reproduce the historical unretired predecessor through the store API.
+        # Keep the replacement's persisted link, but restore the old snapshot
+        # with its current version so the validator must retire it again.
+        service.store.apply_status_transition(
+            replace(old, version=service.store.get_claim(old.id).version),
+            to_status="confirmed", reason="fixture historical unretired predecessor",
+            event_type="transition",
+        )
+    return service.store.get_claim(old.id), service.store.get_claim(new.id)
 
 
 @pytest.mark.parametrize("retired", [False, True])
 @pytest.mark.parametrize("source", ["claude-session", "llm-stop-hook"])
 def test_validator_replacement_never_enters_conflict_drain(service, retired, source):
     old, new = replacement_pair(service, source=source, retired=retired)
-    validator.run(service.store)
+    assert new.supersedes_claim_id == old.id
+    assert old.confidence >= new.confidence
+    result = validator.run(service.store)
     curation_drain.drain_conflicts(service, apply=True)
     expected = "candidate" if source == "llm-stop-hook" else "confirmed"
     assert service.store.get_claim(new.id).status == expected
+    assert result["superseded"] == int(expected == "confirmed" and not retired)
     if expected == "confirmed" or retired:
         ancestor = service.store.get_claim(old.id)
         assert ancestor.status == "superseded"
@@ -120,17 +132,21 @@ def test_atomic_supersession_cannot_bypass_source_policy(service):
 
 
 @pytest.mark.parametrize("retired", [False, True])
-def test_validator_propagates_non_conflict_confirmation_failure(service, monkeypatch, retired):
+@pytest.mark.parametrize("error", [
+    sqlite3.OperationalError("injected storage failure"),
+    ValueError("Dreaming confirmation requires a current source review"),
+])
+def test_validator_propagates_non_conflict_confirmation_failure(service, monkeypatch, retired, error):
     old, new = replacement_pair(service, retired=retired)
     apply = service.store.apply_status_transition
 
     def fail_confirmation(claim, **kwargs):
         if kwargs.get("to_status") == "confirmed":
-            raise sqlite3.OperationalError("injected storage failure")
+            raise error
         return apply(claim, **kwargs)
 
     monkeypatch.setattr(service.store, "apply_status_transition", fail_confirmation)
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(type(error), match=str(error)):
         validator.run(service.store)
     assert service.store.get_claim(new.id).status == "candidate"
     assert service.store.get_claim(old.id).status == ("superseded" if retired else "confirmed")
@@ -138,6 +154,7 @@ def test_validator_propagates_non_conflict_confirmation_failure(service, monkeyp
 
 def test_drain_confirmation_failure_keeps_confirmed_rival(service, monkeypatch):
     old, new = replacement_pair(service)
+    service.store.set_confidence(old.id, 0.3)
     transition_claim(service.store, new.id, "conflicted", reason="fixture")
     insert = service.store._insert_event_row
 
@@ -153,19 +170,96 @@ def test_drain_confirmation_failure_keeps_confirmed_rival(service, monkeypatch):
     assert service.store.get_claim(old.id).status == "confirmed"
     assert service.store.get_claim(old.id).replaced_by_claim_id is None
     assert service.store.get_claim(new.id).status == "conflicted"
-    assert service.store.get_claim(new.id).supersedes_claim_id is None
+    assert service.store.get_claim(new.id).supersedes_claim_id == old.id
 
 
 def test_explicit_predecessor_snapshot_is_confirmed_atomically(service):
     old, new = replacement_pair(service)
-    snapshot = replace(service.store.get_claim(new.id), supersedes_claim_id=old.id)
     service.store.apply_status_transition(
-        snapshot, to_status="confirmed", reason="fixture", event_type="validator",
+        service.store.get_claim(new.id), to_status="confirmed", reason="fixture", event_type="validator",
     )
     assert service.store.get_claim(new.id).status == "confirmed"
     assert service.store.get_claim(new.id).supersedes_claim_id == old.id
     assert service.store.get_claim(old.id).status == "superseded"
     assert service.store.get_claim(old.id).replaced_by_claim_id == new.id
+
+
+def test_validator_preserves_different_superseded_ancestor(service):
+    ancestor, new = replacement_pair(service, retired=True)
+    rival = service.ingest(
+        text="Another diagnosis occupies the tuple.", subject=new.subject,
+        predicate=new.predicate, object_value="rival", scope=new.scope,
+        confidence=0.3, citations=[CitationInput(source="fixture:rival")],
+        source_agent="claude-session",
+    )
+    transition_claim(service.store, rival.id, "confirmed", reason="fixture")
+
+    result = validator.run(service.store)
+
+    assert result["conflicted"] == 1
+    assert result["confirmed"] == result["superseded"] == 0
+    assert service.store.get_claim(new.id).status == "conflicted"
+    assert service.store.get_claim(new.id).supersedes_claim_id == ancestor.id
+    assert service.store.get_claim(rival.id).status == "confirmed"
+    assert service.store.get_claim(rival.id).replaced_by_claim_id is None
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("change", ["pinned", "stale", "superseded"])
+def test_validator_holds_when_predecessor_changes_after_lookup(service, monkeypatch, explicit, change):
+    if explicit:
+        old, new = replacement_pair(service)
+    else:
+        old = service.ingest(
+            text="The earlier diagnosis.", subject="diagnosis", predicate="cause",
+            object_value="old", confidence=0.3, scope="project:test",
+            citations=[CitationInput(source="fixture:old")], source_agent="claude-session",
+        )
+        transition_claim(service.store, old.id, "confirmed", reason="fixture")
+        new = service.ingest(
+            text="The corrected root cause has independent supporting evidence. " * 4,
+            subject=old.subject, predicate=old.predicate, object_value="new", scope=old.scope,
+            confidence=0.84, citations=[CitationInput(source="fixture:a"), CitationInput(source="fixture:b")],
+            source_agent="claude-session",
+        )
+    lookup = service.store.find_confirmed_by_tuple
+
+    def changed_after_lookup(**kwargs):
+        related = lookup(**kwargs)
+        if change == "pinned":
+            service.pin(old.id, True)
+        elif change == "stale":
+            transition_claim(service.store, old.id, "stale", reason="concurrent writer")
+        else:
+            service.store.mark_superseded(old.id, new.id, reason="concurrent writer")
+        return related
+
+    monkeypatch.setattr(service.store, "find_confirmed_by_tuple", changed_after_lookup)
+    result = validator.run(service.store)
+
+    assert result["conflicted"] == 1
+    assert result["confirmed"] == result["superseded"] == 0
+    assert service.store.get_claim(new.id).status == "conflicted"
+    assert service.store.get_claim(old.id).status == ("confirmed" if change == "pinned" else change)
+    assert not any(e.to_status == "confirmed" for e in service.store.list_events(claim_id=new.id))
+
+
+def test_validator_holds_on_concurrent_atomic_supersession_failure(service, monkeypatch):
+    old, new = replacement_pair(service)
+    apply = service.store.apply_status_transition
+
+    def concurrent_confirmation(claim, **kwargs):
+        if kwargs.get("to_status") == "confirmed":
+            raise ConcurrentModificationError("Replacement already supersedes another claim.")
+        return apply(claim, **kwargs)
+
+    monkeypatch.setattr(service.store, "apply_status_transition", concurrent_confirmation)
+    result = validator.run(service.store)
+
+    assert result["conflicted"] == 1
+    assert result["confirmed"] == result["superseded"] == 0
+    assert service.store.get_claim(new.id).status == "conflicted"
+    assert service.store.get_claim(old.id).status == "confirmed"
 
 
 def test_dream_source_review_failure_preserves_predecessor(service):
