@@ -33,6 +33,19 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 - `scripts/probe_m2_continuity.py` is the M2 continuity probe ("what did we decide
   about X" after a simulated compaction) and documents the real-session protocol.
 
+### `local_search` content search (T-1645)
+
+- `local_search` accepts an optional `content_query` (plus `extension`, `folder`,
+  `max_hits`) and returns `{path, line, snippet}` hits over files pre-filtered by
+  Everything, or by a pruned walk of the workspace/folder when Everything is
+  unavailable. It runs `rg --json` when ripgrep is on PATH, otherwise a Python
+  line scan with the same literal, case-insensitive semantics. Paths become
+  root-relative tokens and snippets go through the secret/home-path redaction.
+  Only files under registered roots are read; credential folders, binaries and
+  oversized files are skipped; nothing is indexed or written. Without
+  `content_query` the tool is unchanged. Knobs: `MEMORYMASTER_LOCAL_SEARCH_*`
+  (see `docs/env-reference.md`).
+
 ### 4.9.0 (release candidate) - live Jev decisions and the weekly-review cure
 
 - TypeSafe Jev (System One, `jev-1.13.0`) judges eight surfaces through one

@@ -33,7 +33,7 @@ import time
 import urllib.request
 from collections import Counter
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -79,6 +79,7 @@ class DenseAnswer:
     indexed: int
     model: str
     outside: tuple[tuple[int, float], ...] = ()
+    probe: dict[str, Any] = field(default_factory=dict)  # the service's own stall probe (T-1648)
 
 
 def enabled() -> bool:
@@ -122,7 +123,8 @@ def search(query: str, scopes: Sequence[str] | None, *, k: int = FETCH_K, outsid
         results = tuple((int(item["id"]), float(item["score"])) for item in payload["results"])
         outside = tuple((int(item["id"]), float(item["score"])) for item in payload.get("outside") or ())
         return DenseAnswer(results, float(payload.get("embed_ms") or 0.0), float(payload.get("search_ms") or 0.0),
-                           int(payload.get("indexed") or 0), str(payload.get("model") or ""), outside)
+                           int(payload.get("indexed") or 0), str(payload.get("model") or ""), outside,
+                           dict(payload.get("probe") or {}))
     # Any failure means "no dense answer": a truncated body (IncompleteRead), a bad status
     # line, an overflowing id or a malformed URL all fell through a narrower list (verifier,
     # 2026-10-06) and cost the prompt its lexical fallback.

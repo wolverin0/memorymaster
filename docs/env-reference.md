@@ -5,7 +5,7 @@ Complete inventory of `MEMORYMASTER_*` variables referenced in the package,
 script after adding or removing a variable. For what each does, follow the
 listed source files (most are read next to a docstring or comment).
 
-Total: 306 variables.
+Total: 313 variables.
 
 | Variable | Referenced in |
 |---|---|
@@ -141,6 +141,12 @@ Total: 306 variables.
 | `MEMORYMASTER_LLM_RERANK` | `memorymaster/core/config.py` |
 | `MEMORYMASTER_LLM_RERANK_MAX_FAILURES` | `memorymaster/recall/llm_rerank.py` |
 | `MEMORYMASTER_LLM_RERANK_MIN_INTERVAL_SECONDS` | `memorymaster/recall/llm_rerank.py` |
+| `MEMORYMASTER_LOCAL_SEARCH_CONTENT` | `memorymaster/bridges/local_search/content.py` |
+| `MEMORYMASTER_LOCAL_SEARCH_EXCLUDE_DIRS` | `memorymaster/bridges/local_search/content.py` |
+| `MEMORYMASTER_LOCAL_SEARCH_MAX_FILE_BYTES` | `memorymaster/bridges/local_search/content.py` |
+| `MEMORYMASTER_LOCAL_SEARCH_MAX_RESPONSE_BYTES` | `memorymaster/bridges/local_search/content.py` |
+| `MEMORYMASTER_LOCAL_SEARCH_RG_PATH` | `memorymaster/bridges/local_search/content.py` |
+| `MEMORYMASTER_LOCAL_SEARCH_TIMEOUT` | `memorymaster/bridges/local_search/content.py` |
 | `MEMORYMASTER_MANAGED_RECALL_V1` | `memorymaster/config_templates/hooks/memorymaster-recall.py` |
 | `MEMORYMASTER_MAX_EMBEDDING_ITEMS_PER_DAY` | `memorymaster/core/usage_ledger.py` |
 | `MEMORYMASTER_MAX_LLM_CALLS_PER_CYCLE` | `memorymaster/core/llm_budget.py`, `memorymaster/core/service.py`, `memorymaster/govern/steward.py`, `memorymaster/knowledge/rule_miner.py` |
@@ -282,6 +288,7 @@ Total: 306 variables.
 | `MEMORYMASTER_SOURCE_AGENT` | `memorymaster/surfaces/mcp_server.py` |
 | `MEMORYMASTER_SPOOL_DIR` | `memorymaster/core/spool.py`, `memorymaster/profile/engine.py` |
 | `MEMORYMASTER_STALE_THRESHOLD` | `memorymaster/core/config.py` |
+| `MEMORYMASTER_STALL_PROBE` | `memorymaster/config_templates/hooks/memorymaster-recall.py`, `memorymaster/core/stall_probe.py`, `memorymaster/recall/dense_server.py` |
 | `MEMORYMASTER_STEWARD_CLASSIFIER_ENABLED` | `memorymaster/govern/steward_classifier.py` |
 | `MEMORYMASTER_STEWARD_CLASSIFIER_PATH` | `memorymaster/govern/steward_classifier.py` |
 | `MEMORYMASTER_STEWARD_FEATURE_CACHE` | `memorymaster/knowledge/wiki_similarity.py` |

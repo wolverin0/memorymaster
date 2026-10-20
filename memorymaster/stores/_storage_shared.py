@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from memorymaster.core import stall_probe
 from memorymaster.core.retry import connect_with_retry
 
 HUMAN_ID_PREFIX = "mm"
@@ -209,10 +211,12 @@ def connect_ro(db_path: str | Path, *, query_ms: int = DEFAULT_RO_BUSY_TIMEOUT_M
     verbatim_recall, session-start hook). ``query_ms`` is the busy_timeout
     for readers waiting on a checkpoint.
     """
+    started = time.perf_counter()
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA query_only = ON")
     conn.execute(f"PRAGMA busy_timeout = {int(query_ms)}")
+    stall_probe.note_connect(time.perf_counter() - started)  # T-1648: observation only
     return conn
 
 

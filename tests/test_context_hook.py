@@ -310,3 +310,22 @@ class TestObserve:
 
         call_kwargs = mock_service.ingest.call_args.kwargs
         assert call_kwargs["confidence"] == 0.6
+
+
+class TestFinishRecallStages:
+    """T-1648: the render, Jev and access-spool stages report their own time without changing the block."""
+
+    def test_stages_are_filled_and_the_block_is_the_same_with_or_without_them(self) -> None:
+        from types import SimpleNamespace
+
+        from memorymaster.recall.context_hook import _finish_recall
+
+        claim = SimpleNamespace(id=7, text="netcode tick rate fixed at 60 Hz", human_id="mm-7")
+        svc = MagicMock()
+        kwargs = {"budget": 500, "svc": svc, "phase_ms": {}, "rank_start": 0.0, "hook_data": None, "rendered_ids": None}
+        stages: dict[str, float] = {}
+        with_stages = _finish_recall("tick rate", [{"claim": claim}], stages=stages, **kwargs)
+        without = _finish_recall("tick rate", [{"claim": claim}], **kwargs)
+        assert with_stages == without and "mm-7" in with_stages[0]
+        assert set(stages) == {"render_ms", "remember_ms", "access_ms"} and all(v >= 0 for v in stages.values())
+        svc._record_accesses.assert_called()

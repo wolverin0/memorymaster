@@ -128,3 +128,38 @@ def test_team_mode_server_has_no_hook_recall_route(monkeypatch):
     client = _client(monkeypatch, "team")
     response = client.post("/hook/recall", json={"query": "q"}, headers={"Authorization": "Bearer secret"})
     assert response.status_code == 404
+
+
+def test_shared_server_tells_the_worker_how_long_the_request_queued(monkeypatch):
+    """T-1648: the limiter wait is part of the server's duration but was never separable from compute."""
+    import memorymaster.recall.context_hook as context_hook
+    from memorymaster.core import stall_probe
+
+    seen = {}
+
+    def recall(q, **kw):
+        seen["wait"] = stall_probe.queue_wait_ms()
+        return "warm ctx"
+
+    monkeypatch.setattr(context_hook, "recall", recall)
+    client = _client(monkeypatch, "local-trusted")
+    response = client.post("/hook/recall", json={"query": "why x"}, headers={"Authorization": "Bearer secret"})
+    assert response.json() == {"ctx": "warm ctx"}
+    assert seen["wait"] is not None and seen["wait"] >= 0
+    assert stall_probe.queue_wait_ms() is None  # the worker thread is clean for the next request
+
+
+def test_shared_server_main_starts_the_stall_heartbeat(monkeypatch):
+    from memorymaster.core import stall_probe
+    from memorymaster.surfaces import mcp_http
+
+    started = []
+    monkeypatch.setattr(stall_probe, "start_heartbeat", lambda *a, **k: started.append(True))
+    monkeypatch.setattr(mcp_http, "create_http_app", lambda **kw: object())
+    monkeypatch.setattr(mcp_http, "_start_tokenizer_warmer", lambda db: None)
+    monkeypatch.setattr(mcp_http, "_preload_native_ml", lambda: None)
+    monkeypatch.setattr(mcp_http, "_limit_native_threads", lambda: None)
+    monkeypatch.setattr(mcp_http, "configure_structured_logging", lambda *a, **k: None)
+    monkeypatch.setattr(mcp_http, "_serve", lambda app, host, port: None)
+    assert mcp_http.main(["--db", "test.db"]) == 0
+    assert started == [True]

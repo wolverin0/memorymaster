@@ -35,6 +35,7 @@ from typing import Any
 
 import numpy as np
 
+from memorymaster.core import stall_probe
 from memorymaster.stores._storage_shared import connect_ro
 
 LOGGER = logging.getLogger("memorymaster.dense_server")
@@ -187,7 +188,9 @@ def load_encoder(dim: int, device: str | None = None) -> tuple[Encoder, str]:
 
     def encode(texts: Sequence[str], kind: str) -> np.ndarray:
         prompt = "SearchQuery" if kind == "query" else "Document"
+        queued = time.perf_counter()
         with lock:
+            stall_probe.note_lock_wait(time.perf_counter() - queued)  # T-1648: queries queue behind index-sync batches
             vectors = model.encode(list(texts), prompt_name=prompt, batch_size=EMBED_BATCH,
                                    truncate_dim=dim if dim != DEFAULT_DIM else None,
                                    normalize_embeddings=True, convert_to_numpy=True)
@@ -234,6 +237,7 @@ class DenseService:
 
     def search(self, query: str, scopes: Sequence[str] | None, k: int, outside_k: int = 0) -> dict[str, Any]:
         started = time.perf_counter()
+        window = stall_probe.Window()
         vector = self.encode([query], "query")[0]
         embedded = time.perf_counter()
         results = self.index.search(vector, scopes=scopes, k=k)
@@ -242,7 +246,8 @@ class DenseService:
         return {"results": [{"id": cid, "score": round(score, 5)} for cid, score in results],
                 "outside": [{"id": cid, "score": round(score, 5)} for cid, score in others],
                 "embed_ms": round((embedded - started) * 1000, 2), "search_ms": round((done - embedded) * 1000, 2),
-                "indexed": self.index.stats()["indexed"], "model": self.model, "dim": self.dim}
+                "indexed": self.index.stats()["indexed"], "model": self.model, "dim": self.dim,
+                "probe": window.finish()}  # T-1648: observation only, empty when MEMORYMASTER_STALL_PROBE=0
 
     def health(self) -> dict[str, Any]:
         return {"ok": True, "model": self.model, "dim": self.dim, "device": self.device,
@@ -323,6 +328,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     LOGGER.info("dense service ready on %s:%d (%s, %d indexed, %d embedded at start)",
                 args.host, args.port, device, service.index.stats()["indexed"], embedded)
     service.start_sync()
+    stall_probe.start_heartbeat()
     server = ThreadingHTTPServer((args.host, args.port), make_handler(service))
     try:
         server.serve_forever()
