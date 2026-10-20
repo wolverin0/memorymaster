@@ -210,6 +210,9 @@ def _no_live_shared_recall(monkeypatch) -> None:
 def _no_operator_scope_aliases(tmp_path_factory, monkeypatch) -> None:
     """Tests never read the operator's ~/.memorymaster/scope-aliases.json (2026-10-06)."""
     monkeypatch.setenv("MEMORYMASTER_SCOPE_ALIASES", str(tmp_path_factory.getbasetemp() / "no-scope-aliases.json"))
+    # Disposable non-Git fixtures must not inherit the checkout when basetemp
+    # is inside a worktree (e.g. artifacts/pytest-tmp on restricted Windows).
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path_factory.getbasetemp()))
 
 
 @pytest.fixture(autouse=True)

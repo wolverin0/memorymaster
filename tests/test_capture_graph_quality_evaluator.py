@@ -96,7 +96,11 @@ def test_fixture_ignores_non_text_cases_for_quality_gate(tmp_path: Path) -> None
     ]
 
 
-def test_output_must_remain_outside_repository(tmp_path: Path) -> None:
+def test_output_must_remain_outside_repository(tmp_path: Path, monkeypatch) -> None:
+    # Keep the boundary test valid when --basetemp itself is in the checkout.
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    monkeypatch.setattr(evaluator, "ROOT", repository)
     assert evaluator._private_output(tmp_path / "result.json").is_absolute()
     with pytest.raises(ValueError, match="outside the repository"):
         evaluator._private_output(evaluator.ROOT / "result.json")
