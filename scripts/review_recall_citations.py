@@ -27,7 +27,8 @@ BARE_RE = re.compile(rf"(?<![\w~-])({ID})(?![\w~])")
 TOP_N = 20
 PROJECT_ANCHOR = "Py-Apps-"
 NOTIFICATION = "<task-notification>"
-CITE_HINT = "cite its [mm-id]"
+CITE_HINTS = ("cite its [mm-id]", "cite [mm-id] when you rely")  # current / header format (T-1632)
+HEADER_FORMAT_HINT = "Decisions you made earlier"
 
 
 def parse_time(value):
@@ -124,6 +125,7 @@ def assistant_text(row):
     )
 
 
+PROMPT_KEEP = 4000
 PERSISTED = "<persisted-output>"
 PERSISTED_PATH_RE = re.compile(r"Full output saved to:\s*(.+)")
 
@@ -172,12 +174,13 @@ def recall_texts(row, root=None, diagnostics=None):
 
 
 class Turn:
-    __slots__ = ("key", "ts", "real", "instructed", "ids", "cited", "lenient")
+    __slots__ = ("key", "ts", "real", "instructed", "ids", "cited", "lenient", "prompt", "blocks", "header_format")
 
     def __init__(self, key, ts, real):
         self.key, self.ts, self.real = key, ts, real
         self.instructed = False
         self.ids, self.cited, self.lenient = set(), set(), set()
+        self.prompt, self.blocks, self.header_format = "", [], False  # kept in memory for the offline replay only
 
 
 def scan_claude_file(path, diagnostics, turns, in_window, root=None, soft_notifications=False):
@@ -213,6 +216,7 @@ def scan_claude_file(path, diagnostics, turns, in_window, root=None, soft_notifi
                     continue  # sensitivity variant: background-task pings do not end the turn
                 key = row.get("uuid") or f"{path.name}:{number}"
                 state[side] = Turn(key, ts, real=True)
+                state[side].prompt = prompt_text(row)[:PROMPT_KEEP]
                 turns[side].append(state[side])
             elif kind == "attachment":
                 texts = recall_texts(row, root, diagnostics if counted else None)
@@ -230,7 +234,9 @@ def scan_claude_file(path, diagnostics, turns, in_window, root=None, soft_notifi
                         diagnostics["injections_without_ids"] += 1
                         diagnostics["claims_in_injections_without_ids"] += len(BULLET_RE.findall(text))
                     turn.ids.update(found)
-                    turn.instructed |= CITE_HINT in text
+                    turn.instructed |= any(hint in text for hint in CITE_HINTS)
+                    turn.header_format |= HEADER_FORMAT_HINT in text
+                    turn.blocks.append(text)
             elif kind == "assistant" and state[side] is not None and "mm-" in line:
                 text = assistant_text(row)
                 for group in BRACKET_RE.findall(text):
@@ -241,7 +247,7 @@ def scan_claude_file(path, diagnostics, turns, in_window, root=None, soft_notifi
 def empty_stats():
     return {"prompts_total": 0, "prompts_with_injection": 0, "injected_claims": 0,
             "cited_claims": 0, "cited_claims_lenient": 0, "prompts_with_citation": 0,
-            "prompts_with_citation_lenient": 0}
+            "prompts_with_citation_lenient": 0, "prompts_header_format": 0}
 
 
 def finalize(stats, injected, cited):
@@ -267,6 +273,7 @@ def aggregate(turns):
             continue
         hit, hit_lenient = turn.ids & turn.cited, turn.ids & turn.lenient
         stats["prompts_with_injection"] += 1
+        stats["prompts_header_format"] += turn.header_format
         stats["injected_claims"] += len(turn.ids)
         stats["cited_claims"] += len(hit)
         stats["cited_claims_lenient"] += len(hit_lenient)
@@ -277,21 +284,30 @@ def aggregate(turns):
     return finalize(stats, injected, cited)
 
 
+def merge_turns(turns):
+    """Dedupe turns by key: a prompt seen in a resumed copy of the session keeps the union of both."""
+    merged = {}
+    for turn in turns:
+        known = merged.setdefault(turn.key, turn)
+        if known is not turn:
+            known.ids |= turn.ids
+            known.cited |= turn.cited
+            known.lenient |= turn.lenient
+            known.real |= turn.real
+            known.instructed |= turn.instructed
+            known.header_format |= turn.header_format
+            known.prompt = known.prompt or turn.prompt
+            known.blocks.extend(b for b in turn.blocks if b not in known.blocks)
+    return list(merged.values())
+
+
 def summarize(lane_turns):
     """lane -> list[Turn]; returns {lane: stats}, total stats, total split by cite instruction."""
     lanes, everything = {}, []
     for lane in sorted(lane_turns):
-        merged = {}
-        for turn in lane_turns[lane]:
-            known = merged.setdefault(turn.key, turn)
-            if known is not turn:  # same prompt seen in a resumed copy of the session
-                known.ids |= turn.ids
-                known.cited |= turn.cited
-                known.lenient |= turn.lenient
-                known.real |= turn.real
-                known.instructed |= turn.instructed
-        lanes[lane] = aggregate(merged.values())
-        everything.extend(merged.values())
+        merged = merge_turns(lane_turns[lane])
+        lanes[lane] = aggregate(merged)
+        everything.extend(merged)
     by_instruction = {
         "instructed": aggregate(t for t in everything if t.ids and t.instructed),
         "uninstructed": aggregate(t for t in everything if t.ids and not t.instructed),
@@ -357,8 +373,11 @@ def probe_codex(sessions, cutoff, diagnostics):
             "injection_format_observed": events > 0}
 
 
-def collect_transcripts(home, repos, cutoff, now, diagnostics, soft_notifications=False):
-    """Scan Claude transcripts; returns summarize() of main and subagent turns, then file counts."""
+def collect_transcripts(home, repos, cutoff, now, diagnostics, soft_notifications=False, raw=None):
+    """Scan Claude transcripts; returns summarize() of main and subagent turns, then file counts.
+
+    ``raw``, when a dict, receives the main-transcript turns as ``{lane: [Turn]}`` (offline replay).
+    """
     def in_window(ts):
         return cutoff <= ts <= now + timedelta(days=1)
 
@@ -383,6 +402,8 @@ def collect_transcripts(home, repos, cutoff, now, diagnostics, soft_notification
                 kept = [t for t in file_turns[side] if t.ts is not None and in_window(t.ts)]
                 turns[bucket].setdefault(lane, []).extend(kept)
 
+    if raw is not None:
+        raw.update({lane: merge_turns(found) for lane, found in turns[False].items()})
     return (*summarize(turns[False]), *summarize(turns[True]), files)
 
 

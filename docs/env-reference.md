@@ -5,7 +5,7 @@ Complete inventory of `MEMORYMASTER_*` variables referenced in the package,
 script after adding or removing a variable. For what each does, follow the
 listed source files (most are read next to a docstring or comment).
 
-Total: 304 variables.
+Total: 306 variables.
 
 | Variable | Referenced in |
 |---|---|
@@ -219,7 +219,9 @@ Total: 304 variables.
 | `MEMORYMASTER_RECALL_DENSE_OUTSIDE_MIN_SCORE` | `memorymaster/recall/dense_recall.py` |
 | `MEMORYMASTER_RECALL_DENSE_TIMEOUT_S` | `memorymaster/recall/dense_recall.py` |
 | `MEMORYMASTER_RECALL_DENSE_URL` | `memorymaster/recall/dense_recall.py` |
+| `MEMORYMASTER_RECALL_FORMAT` | `memorymaster/config_templates/hooks/memorymaster-recall.py`, `memorymaster/recall/recall_format.py` |
 | `MEMORYMASTER_RECALL_FUSION` | `memorymaster/recall/context_hook.py` |
+| `MEMORYMASTER_RECALL_GATE_MIN_SHARED` | `memorymaster/recall/recall_format.py` |
 | `MEMORYMASTER_RECALL_GRAPH` | `memorymaster/recall/context_hook.py`, `memorymaster/recall/graph_store.py` |
 | `MEMORYMASTER_RECALL_GRAPH_CANDIDATES` | `memorymaster/recall/context_hook.py` |
 | `MEMORYMASTER_RECALL_GRAPH_EXPAND_BASE_SHARE` | `memorymaster/recall/graph_expansion.py` |
