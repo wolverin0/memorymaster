@@ -14,6 +14,7 @@ from memorymaster.core.security import redact_text
 from memorymaster.core.scope_utils import scope_from_cwd
 from memorymaster.dreaming.ledger import DreamLedger
 from memorymaster.dreaming.models import CaptureEnvelope, DreamMessage
+from memorymaster.dreaming.self_observation import is_memory_tool, strip_self_observation
 
 
 _ABSOLUTE_WINDOWS_PATH = re.compile(r"(?i)(?<![A-Za-z0-9])(?:[A-Z]:\\|[A-Z]:/)[^\r\n\t\"'<>|]+")
@@ -32,7 +33,26 @@ def _text_parts(content: Any, allowed: set[str]) -> str:
     return "\n".join(part for part in parts if part.strip())
 
 
-def _conversation_record(entry: dict[str, Any], provider: str) -> tuple[str, str] | None:
+def _conversation_record(
+    entry: dict[str, Any], provider: str, *, state: dict[str, Any] | None = None,
+) -> tuple[str, str] | None:
+    state = state if state is not None else {}
+    payload = entry.get("payload") if provider == "codex" else entry.get("message", entry)
+    payload = payload if isinstance(payload, dict) else entry
+    content = payload.get("content", [])
+    blocks = content if isinstance(content, list) else []
+    calls = [payload, *[block for block in blocks if isinstance(block, dict)]]
+    has_tool_result = False
+    for call in calls:
+        has_tool_result |= call.get("type") in {"tool_result", "function_call_output", "custom_tool_call_output"}
+        name = str(call.get("name") or call.get("tool_name") or "")
+        call_id = str(call.get("call_id") or call.get("tool_use_id") or call.get("id") or "")
+        if is_memory_tool(name) or (call_id and call_id in state.get("memory_tool_ids", ())):
+            strip_self_observation("", role="tool", tool_name=name, metadata={"state": state, "tool_call_id": call_id})
+            # Text alongside a memory call/result shares the structural origin.
+            return None
+    if has_tool_result:
+        return None
     if provider == "codex":
         payload = entry.get("payload")
         if entry.get("type") != "response_item" or not isinstance(payload, dict) or payload.get("type") != "message":
@@ -48,7 +68,12 @@ def _conversation_record(entry: dict[str, Any], provider: str) -> tuple[str, str
         role = str(message.get("role", entry.get("type", "")))
         text = _text_parts(message.get("content", ""), {"text", "input_text", "output_text"})
     normalized_role = "assistant" if role in {"assistant", "model"} else "user" if role == "user" else ""
-    return (normalized_role, text) if normalized_role and text.strip() else None
+    clean = strip_self_observation(text, role=normalized_role, metadata={
+        "state": state,
+        "injected": bool(entry.get("hook_additional_context") or entry.get("isMeta") or payload.get("hook_additional_context")),
+        "generated_session": bool(entry.get("backfill_generated") or entry.get("memorymaster_generated")),
+    })
+    return (normalized_role, clean.text) if normalized_role and clean.text else None
 
 
 def _sanitize(text: str) -> str:
@@ -57,7 +82,10 @@ def _sanitize(text: str) -> str:
     return redacted.strip()[:16_000]
 
 
-def parse_transcript_lines(text: str, provider: str) -> list[DreamMessage]:
+def parse_transcript_lines(
+    text: str, provider: str, *, state: dict[str, Any] | None = None,
+) -> list[DreamMessage]:
+    state = state if state is not None else {}
     messages: list[DreamMessage] = []
     seen: set[tuple[str, str, str]] = set()
     for raw in text.splitlines():
@@ -67,7 +95,7 @@ def parse_transcript_lines(text: str, provider: str) -> list[DreamMessage]:
             continue
         if not isinstance(entry, dict):
             continue
-        record = _conversation_record(entry, provider.lower())
+        record = _conversation_record(entry, provider.lower(), state=state)
         if record is None:
             continue
         role, content = record
@@ -108,7 +136,19 @@ def capture_transcript(
     chunk = cursor_ledger.read_increment(transcript_path, f"dream:{provider}:{session_hash}")
     if not chunk.text:
         return {"queued": 0, "reason": "no_increment"}
-    messages = parse_transcript_lines(chunk.text, provider)
+    filter_key = f"filter:{provider}:{session_hash}"
+    saved_filter = ledger.scan_state(filter_key)
+    filter_state: dict[str, Any] = {
+        "tool_contaminated": bool(saved_filter and saved_filter[0]),
+        "memory_tool_ids": sorted(saved_filter[1]) if saved_filter else [],
+    }
+    messages = parse_transcript_lines(chunk.text, provider, state=filter_state)
+    # Persist only linkage, never recalled text. Write this before advancing the
+    # cursor, so replay after an interrupted capture remains conservative.
+    ledger.set_scan_watermark(
+        filter_key, float(bool(filter_state.get("tool_contaminated"))),
+        list(filter_state.get("memory_tool_ids", ()))[:128],
+    )
     if not messages:
         cursor_ledger.commit_cursor(chunk)
         return {"queued": 0, "reason": "no_conversation"}
