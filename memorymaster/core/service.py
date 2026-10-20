@@ -646,6 +646,17 @@ class MemoryService(IntegrationService):
                 fill_outcome_receipt(outcome_receipt, revived, created=False,
                                      persisted=self.store.ingest_creation_receipt(revived.id) if outcome_receipt is not None else None)
                 return revived
+        # Explicit retirement follows content even when a producer switches
+        # between its own key and the facade's generated hash key.
+        retired = self.store.get_retired_content_match(
+            text, tenant_id=self.tenant_id, scope=scope,
+            visibility=visibility, source_agent=source_agent,
+        )
+        if retired is not None:
+            fill_outcome_receipt(outcome_receipt, retired, created=False,
+                                 persisted=self.store.ingest_creation_receipt(retired.id) if outcome_receipt is not None else None)
+            observability.bump_claim_ingested(source_agent)
+            return retired
         # Dedup by content hash (catch duplicates without idempotency key)
         # Include scope + tenant to avoid cross-tenant/cross-scope dedup
         import hashlib

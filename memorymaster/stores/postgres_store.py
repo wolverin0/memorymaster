@@ -1694,6 +1694,48 @@ class PostgresStore(SQLiteStore):
             return human_id
         raise RuntimeError("Unable to allocate a unique human_id after 100 attempts.")
 
+    def get_retired_content_match(
+        self, text: str, *, tenant_id: str | None, scope: str,
+        visibility: str = "public", source_agent: str | None = None,
+    ) -> Claim | None:
+        visibility, source_agent = normalize_claim_identity(
+            visibility, source_agent, allow_sensitive=not self.require_tenant,
+        )
+        with self.connect() as conn, conn.cursor() as cur:
+            return self._retired_content_match(
+                cur, text, tenant_id=self._tenant_for_operation(tenant_id), scope=scope,
+                visibility=visibility, source_agent=source_agent,
+            )
+
+    def _retired_content_match(
+        self, cur, text: str, *, tenant_id: str | None, scope: str,
+        visibility: str, source_agent: str | None, lock: bool = False,
+    ) -> Claim | None:
+        identity_sql, identity_params = self._postgres_identity_filter(visibility, source_agent)
+        archived = "" if lock else " AND status='archived'"
+        cur.execute(
+            "SELECT id,text,status FROM claims WHERE tenant_id IS NOT DISTINCT FROM %s "
+            f"AND scope=%s AND {identity_sql}{archived} ORDER BY id",
+            (tenant_id, scope, *identity_params),
+        )
+        # Python normalization is the facade's content-hash contract, including
+        # Unicode lowercasing that database collations need not implement alike.
+        identity = text.strip().lower()
+        rows = [row for row in cur.fetchall() if row["text"].strip().lower() == identity]
+        for row in rows:
+            status = row["status"]
+            if lock:
+                # Lock live matches too: an overlapping archive must complete
+                # before this request checks retirement and creates a new ID.
+                cur.execute("SELECT status FROM claims WHERE id=%s FOR UPDATE", (row["id"],))
+                current = cur.fetchone()
+                status = current["status"] if current is not None else None
+            if status == "archived" and self._latest_archive_reason(cur, row["id"]) in {
+                "friendly_forget_claim", "ao7_rollback",
+            }:
+                return self.get_claim(int(row["id"]))
+        return None
+
     def ingest_creation_receipt(self, claim_id: int) -> dict[str, object]:
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(
@@ -1788,6 +1830,14 @@ class PostgresStore(SQLiteStore):
         )
         now = utc_now()
         with self.connect() as conn, conn.cursor() as cur:
+            retired = self._retired_content_match(
+                cur, text, tenant_id=normalized_tenant_id, scope=scope,
+                visibility=visibility, source_agent=source_agent, lock=True,
+            )
+            if retired is not None:
+                fill_outcome_receipt(outcome_receipt, retired, created=False,
+                                     persisted=self.ingest_creation_receipt(retired.id) if outcome_receipt is not None else None)
+                return retired
             cur.execute(
                 """
                     INSERT INTO claims (

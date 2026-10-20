@@ -36,6 +36,36 @@ logger = logging.getLogger(__name__)
 
 
 class _WriteClaimsMixin:
+    def get_retired_content_match(
+        self, text: str, *, tenant_id: str | None, scope: str,
+        visibility: str = "public", source_agent: str | None = None,
+    ) -> Claim | None:
+        """Find explicit retirement intent independently of the ingest key."""
+        visibility, source_agent = normalize_claim_identity(visibility, source_agent)
+        with self.connect_ro() as conn:
+            return self._retired_content_match(
+                conn, text, tenant_id=tenant_id, scope=scope,
+                visibility=visibility, source_agent=source_agent,
+            )
+
+    def _retired_content_match(
+        self, conn: sqlite3.Connection, text: str, *, tenant_id: str | None,
+        scope: str, visibility: str, source_agent: str | None,
+    ) -> Claim | None:
+        identity_sql, identity_params = self._claim_identity_filter(visibility, source_agent)
+        rows = conn.execute(
+            "SELECT id,text FROM claims WHERE status='archived' AND tenant_id IS ? "
+            f"AND scope=? AND {identity_sql} ORDER BY id DESC",
+            ((tenant_id or "").strip() or None, scope, *identity_params),
+        )
+        identity = text.strip().lower()
+        for row in rows:
+            if row["text"].strip().lower() == identity and self._latest_archive_reason(conn, row["id"]) in {
+                "friendly_forget_claim", "ao7_rollback",
+            }:
+                return self.get_claim(int(row["id"]))
+        return None
+
     def ingest_creation_receipt(self, claim_id: int) -> dict[str, object]:
         """Recover creation attribution from the append-only atomic ingest event."""
         with self.connect_ro() as conn:
@@ -180,6 +210,18 @@ class _WriteClaimsMixin:
             if existing is not None:
                 fill_outcome_receipt(outcome_receipt, existing, created=False, persisted=self.ingest_creation_receipt(existing.id) if outcome_receipt is not None else None)
                 return existing
+
+            # Serialize this final content check with archive transitions as
+            # well as insertion. Keep the optimistic lookup outside the lock.
+            conn.execute("BEGIN IMMEDIATE")
+            retired = self._retired_content_match(
+                conn, text, tenant_id=normalized_tenant_id, scope=scope,
+                visibility=visibility, source_agent=source_agent,
+            )
+            if retired is not None:
+                fill_outcome_receipt(outcome_receipt, retired, created=False,
+                                     persisted=self.ingest_creation_receipt(retired.id) if outcome_receipt is not None else None)
+                return retired
 
             try:
                 cur = conn.execute(
