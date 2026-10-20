@@ -303,8 +303,12 @@ def test_deadline_returns_legacy_and_late_answer_never_acts(tmp_path):
                             monotonic=clock)
     engine.ledger.register_questions(q.get(key) for key in ("recall.relevant", "recall.usable_evidence",
                                                             "recall.contradicts_request", "recall.instruction_like"))
+    started = time.perf_counter()
     decision = decide_recall(engine)
     assert slow.calls[0]["timeout_s"] == pytest.approx(0.3)
+    # Returning before the transport answers (1.2 s) proves the deadline fired; the margin is
+    # 0.9 s instead of the 0.1 s + one clock tick that flaked on loaded ubuntu runners.
+    assert time.perf_counter() - started < hang_s
     assert decision.action == LEGACY and decision.fallback_reason == "timeout"
     engine.wait_for_late_answers(timeout=5 if TIMING else 30)
     row = rows(tmp_path, "SELECT * FROM decisions")[0]

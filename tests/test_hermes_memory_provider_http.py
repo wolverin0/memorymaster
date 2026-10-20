@@ -159,7 +159,7 @@ def test_authenticated_mcp_http_delivers_disposable_capture(
         # has just booted is slower than that on Windows CI and surfaced as ``authority_unavailable``
         # (httpx.ReadTimeout), and so did a delivery during a runner stall (probe 2026-10-14).
         request_timeout_seconds=10.0,
-        delivery_timeout_seconds=30.0 if sys.platform == "win32" else 5.0,
+        delivery_timeout_seconds=30.0,
     )
     provider = MemoryMasterProvider(
         config=config,

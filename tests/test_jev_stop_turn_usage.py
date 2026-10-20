@@ -41,6 +41,7 @@ def _project(tmp_path):
         "__MEMORYMASTER_PROJECT_ROOT__", str(project).replace("\\", "/"))
     # The hook intentionally bounds its daemon join to 300 ms. Give this subprocess test enough
     # time for Windows CI scheduling and SQLite startup so process exit signals completed work.
+    assert hook_source.count("TURN_USAGE_BUDGET_S = 0.3") == 1, "hook template constant moved: update this fixture"
     hook_source = hook_source.replace("TURN_USAGE_BUDGET_S = 0.3", "TURN_USAGE_BUDGET_S = 5.0")
     hook.write_text(hook_source, encoding="utf-8")
     return project, hook, claim.id, other.id
