@@ -189,9 +189,11 @@ def _probe_session(path: Path, provider: str) -> tuple[str, str | None]:
     read = 0
     with path.open("r", encoding="utf-8", errors="replace") as handle:
         for index, raw in enumerate(handle):
-            read += len(raw)
+            # Parse the line that crosses the byte cap (a first line with an embedded image is
+            # common) and only then stop; the caps bound how many LINES are read, not their parsing.
             if index >= _PROBE_MAX_LINES or read > _PROBE_MAX_BYTES:
                 break
+            read += len(raw)
             try:
                 entry = json.loads(raw)
             except (json.JSONDecodeError, TypeError):

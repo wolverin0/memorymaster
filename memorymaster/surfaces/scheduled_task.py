@@ -155,9 +155,9 @@ def _write_beat_artifact(workspace: str, state_db: Path, guard_log: Path) -> Pat
 def _run_beat(args: argparse.Namespace) -> int:
     """One AO-2 beat tick: scan transcripts, ask the latency guard, then maybe run a bounded dream.
 
-    Off unless MEMORYMASTER_BEAT_ENABLED is truthy. The tick holds the shared ``dream-worker``
-    lease while it scans and decides, and releases it before ``run_dream``, which takes that same
-    lease itself. Hourly Dreaming holding it is a normal no-op for the beat, not a failure.
+    Off unless MEMORYMASTER_BEAT_ENABLED is truthy. The guard is asked first; on ``skip`` nothing
+    else is touched. Otherwise the tick holds the shared ``dream-worker`` lease while it scans, and
+    releases it before ``run_dream``, which takes that same lease itself. Hourly Dreaming holding it is a normal no-op for the beat, not a failure.
     ``allow`` runs the worker with ``max_sessions`` 3 and one consolidated capture, under the
     existing daily token ceiling; ``capture_only`` and ``skip`` never call a model.
     Claims are applied only if the operator passes ``--apply-candidates``.
@@ -174,25 +174,29 @@ def _run_beat(args: argparse.Namespace) -> int:
     from memorymaster.dreaming.worker import DreamConfig, run_dream
 
     state_db = capture_state_path()
-    ledger = DreamLedger(state_db)
-    owner = uuid.uuid4().hex
-    if not ledger.acquire_lease("dream-worker", owner, BEAT_LEASE_TTL_SECONDS):
-        log_event(_JOB_LOG, "beat_tick", surface="job", job="beat", outcome="worker_busy")
-        return 0
-    try:
-        scan = scan_active_transcripts(ledger)
-        decision = latency_guard.evaluate()
-    finally:
-        ledger.release_lease("dream-worker", owner)
+    # The guard comes first: a hard breach (skip) must not scan directories, probe files or write
+    # the state db, only record the decision.
+    decision = latency_guard.evaluate()
+    scan: dict | None = None
     dream: dict | None = None
-    if decision.action == latency_guard.ALLOW:
-        config = replace(
-            DreamConfig.from_env(),
-            lease_ttl_seconds=BEAT_LEASE_TTL_SECONDS,
-            max_sessions=BEAT_MAX_SESSIONS,
-            max_consolidate_captures_per_run=BEAT_MAX_CONSOLIDATE_CAPTURES,
-        )
-        dream = run_dream(args.db, args.workspace, apply_candidates=bool(args.apply_candidates), config=config)
+    if decision.action != latency_guard.SKIP:
+        ledger = DreamLedger(state_db)
+        owner = uuid.uuid4().hex
+        if not ledger.acquire_lease("dream-worker", owner, BEAT_LEASE_TTL_SECONDS):
+            log_event(_JOB_LOG, "beat_tick", surface="job", job="beat", outcome="worker_busy")
+            return 0
+        try:
+            scan = scan_active_transcripts(ledger)
+        finally:
+            ledger.release_lease("dream-worker", owner)
+        if decision.action == latency_guard.ALLOW:
+            config = replace(
+                DreamConfig.from_env(),
+                lease_ttl_seconds=BEAT_LEASE_TTL_SECONDS,
+                max_sessions=BEAT_MAX_SESSIONS,
+                max_consolidate_captures_per_run=BEAT_MAX_CONSOLIDATE_CAPTURES,
+            )
+            dream = run_dream(args.db, args.workspace, apply_candidates=bool(args.apply_candidates), config=config)
     log_event(_JOB_LOG, "beat_tick", surface="job", job="beat", outcome=decision.action,
               reasons=decision.reasons, scan=scan, dream=dream)
     try:

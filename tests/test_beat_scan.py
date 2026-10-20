@@ -302,3 +302,17 @@ def test_a_failing_provider_with_many_files_does_not_starve_the_other_provider(w
 
     assert {row["provider"] for row in _rows(world["ledger"])} == {"codex"}
     assert summary["errors"] == 1 and summary["queued"] == 1
+
+
+def test_an_oversized_first_line_is_still_parsed_by_the_probe(world) -> None:
+    """The line that crosses the probe byte cap used to be dropped unparsed (first line with embedded base64)."""
+    from memorymaster.dreaming import capture
+
+    big = json.dumps({"type": "user", "sessionId": CLAUDE_SESSION, "cwd": str(world["project"]), "uuid": "big",
+                      "message": {"role": "user", "content": "x" * (capture._PROBE_MAX_BYTES + 200_000)}}) + chr(10)
+    path = world["roots"]["claude"] / "proj-dir" / "huge-first-line.jsonl"
+    path.write_text(big + _claude_line("small follow up", "assistant", world["project"], "u2"), encoding="utf-8")
+
+    session_id, cwd = capture._probe_session(path, "claude")
+
+    assert session_id == "huge-first-line" and cwd == str(world["project"])

@@ -71,12 +71,12 @@ def test_falsy_switch_values_keep_the_beat_off(beat, monkeypatch, value) -> None
     assert beat["calls"] == []
 
 
-def test_allow_scans_then_runs_a_bounded_dream(beat, monkeypatch) -> None:
+def test_allow_asks_the_guard_then_scans_then_runs_a_bounded_dream(beat, monkeypatch) -> None:
     monkeypatch.setenv("MEMORYMASTER_BEAT_ENABLED", "1")
 
     assert scheduled_task.main(beat["argv"]) == 0
 
-    assert [name for name, _ in beat["calls"]] == ["scan", "guard", "dream"]
+    assert [name for name, _ in beat["calls"]] == ["guard", "scan", "dream"]
     dream_kwargs = beat["calls"][2][1]
     config = dream_kwargs["config"]
     assert config.max_sessions == 3
@@ -92,16 +92,18 @@ def test_capture_only_scans_but_never_consolidates(beat, monkeypatch) -> None:
 
     assert scheduled_task.main(beat["argv"]) == 0
 
-    assert [name for name, _ in beat["calls"]] == ["scan", "guard"]
+    assert [name for name, _ in beat["calls"]] == ["guard", "scan"]
 
 
-def test_skip_only_logs(beat, monkeypatch) -> None:
+def test_skip_only_logs_and_touches_no_transcript_and_no_ledger(beat, monkeypatch) -> None:
     monkeypatch.setenv("MEMORYMASTER_BEAT_ENABLED", "true")
     beat["decision"]["action"] = "skip"
 
     assert scheduled_task.main(beat["argv"]) == 0
 
-    assert "dream" not in [name for name, _ in beat["calls"]]
+    # A hard latency breach must not scan directories, probe files or write the state db.
+    assert [name for name, _ in beat["calls"]] == ["guard"]
+    assert not beat["state"].exists()
     log = (beat["tmp"] / "beat.log").read_text(encoding="utf-8")
     assert "beat_tick" in log and "skip" in log
 
@@ -112,7 +114,7 @@ def test_a_busy_dream_worker_lease_makes_the_tick_a_noop(beat, monkeypatch) -> N
 
     assert scheduled_task.main(beat["argv"]) == 0
 
-    assert beat["calls"] == []
+    assert [name for name, _ in beat["calls"]] == ["guard"]  # no scan, no dream
 
 
 def test_the_lease_is_free_again_when_the_tick_ends(beat, monkeypatch) -> None:
