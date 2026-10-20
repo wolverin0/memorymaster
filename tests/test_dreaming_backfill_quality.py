@@ -1,4 +1,7 @@
+import pytest
+
 from memorymaster.dreaming.backfill_quality import evaluate_cohort_quality, receipt_is_current
+from test_dreaming_backfill_cli import _campaign, isolated_configuration as isolated_configuration
 
 
 class Judge:
@@ -131,3 +134,93 @@ def test_changed_discard_population_or_model_identity_invalidates_release():
     assert receipt_is_current(receipt, candidates, identity, discarded=discarded)
     assert not receipt_is_current(receipt, candidates, identity, discarded=[{"selection_id": "new"}])
     assert not receipt_is_current(receipt, candidates, {"models": "new-models"})
+
+
+def test_quality_stage_replay_reuses_current_receipt(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
+    import memorymaster.dreaming.backfill as module
+
+    fixture = _campaign(tmp_path, sessions=5, candidates=5)
+    runner = fixture.runner
+    evaluate = Mock(wraps=module.evaluate_cohort_quality)
+    monkeypatch.setattr(module, "evaluate_cohort_quality", evaluate)
+    runner.inventory()
+    runner.run(stage="all")
+    first = runner._rows()[0]["metadata"]["quality_receipt"]
+    assert first["passed"] and len(fixture.sonnet.calls) == 20
+
+    runner.run(stage="quality")
+
+    assert evaluate.call_count == 1
+    assert runner._rows()[0]["metadata"]["quality_receipt"] == first
+    assert len(fixture.sonnet.calls) == 20
+    assert all(latch["state"] == "running" for latch in runner._latches().values())
+
+
+def test_changed_references_renew_quality_and_discarded_audit(tmp_path):
+    from memorymaster.core.models import CitationInput
+
+    fixture = _campaign(tmp_path, sessions=5, candidates=5)
+    runner = fixture.runner
+    runner.inventory()
+    runner.run(stage="all")
+    leader = runner._rows()[0]
+    prior = leader["metadata"]["reference_hashes"]
+    # A cached audit from the old consolidation must not survive revalidation.
+    leader["metadata"]["discarded_audit"] = [{"selection_id": "stale", "source_family": "codex"}]
+    runner._save(leader)
+    fixture.service.ingest(
+        "The project now requires independent audit evidence.", [CitationInput("independent")],
+        scope=leader["scope"], source_agent="independent-writer",
+    )
+
+    runner.run(stage="all")
+
+    leader = runner._rows()[0]
+    assert leader["metadata"]["reference_hashes"] != prior
+    assert leader["metadata"]["quality_receipt"]["passed"]
+    assert all(item["selection_id"] != "stale" for item in leader["metadata"]["discarded_audit"])
+    assert len(fixture.sonnet.calls) == 40
+    assert all(latch["state"] == "running" for latch in runner._latches().values())
+    with runner.ledger._connect() as conn:
+        counts = dict(conn.execute(
+            "SELECT status,COUNT(*) FROM backfill_reservations WHERE stage='sonnet' GROUP BY status"
+        ).fetchall())
+    assert counts == {"released": 20, "reserved": 20}
+
+
+def test_incomplete_quality_retry_renews_only_its_judge_allowance(tmp_path):
+    fixture = _campaign(tmp_path, sessions=5, candidates=5)
+    runner = fixture.runner
+    runner.inventory()
+    runner.run(stage="extract")
+    runner.run(stage="consolidate")
+    healthy = runner.sonnet
+    runner.sonnet = Judge(incomplete=True)
+    runner.run(stage="quality")
+    assert not runner._rows()[0]["metadata"]["quality_receipt"]["complete"]
+    assert runner._latches()["fixture:codex-0"]["state"] == "quality_paused"
+    # Only the explicit operator resume clears a failed quality gate.
+    runner.resume(cohort_id="codex-0", evidence={
+        "diagnosis": "fixture judge returned incomplete verdicts", "disposition": "restore healthy fixture judge",
+        "passed": True, "checked_at": runner.now().timestamp(),
+    })
+    runner.sonnet = healthy
+    unrelated = runner._reserve("codex-01/codex", "sonnet", 2000, 300)
+
+    runner.run(stage="quality")
+
+    assert runner._rows()[0]["metadata"]["quality_receipt"]["passed"]
+    with runner.ledger._connect() as conn:
+        assert conn.execute("SELECT status FROM backfill_reservations WHERE reservation_id=?", (unrelated,)).fetchone()[0] == "reserved"
+        assert conn.execute("SELECT COUNT(*) FROM backfill_reservations WHERE stage='extract' AND status='released'").fetchone()[0] == 0
+
+
+def test_reservation_deferral_propagates_without_a_quality_failure():
+    def deferred(*args):
+        raise RuntimeError("daily_budget_deferred")
+
+    with pytest.raises(RuntimeError, match="daily_budget_deferred"):
+        evaluate_cohort_quality([{"candidate_id": "one"}], [], haiku=Judge(), sonnet=Judge(),
+                                identity={}, seed="fixed", reserve=deferred)

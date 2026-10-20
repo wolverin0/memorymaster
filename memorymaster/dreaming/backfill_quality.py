@@ -44,10 +44,12 @@ def evaluate_cohort_quality(candidates: list[dict[str, Any]], discarded: list[di
         for item in population:
             key = str(item.get("candidate_id") or item.get("selection_id"))
             verdict = None
+            # Scheduling/lease failures must stop the run without latching a
+            # quality failure for a judgment that was never dispatched.
+            reservation = None
+            if reserve is not None:
+                reservation = reserve(label, 4000 if mode == "missed_signal" else 2000, 300)
             try:
-                reservation = None
-                if reserve is not None:
-                    reservation = reserve(label, 4000 if mode == "missed_signal" else 2000, 300)
                 verdict = judge.judge(item, audit=mode)
                 if any(type(verdict.get(k)) is not bool for k in LEAKS):
                     raise ValueError("incomplete leak judgment")

@@ -453,6 +453,18 @@ class BackfillRunner:
                 conn.execute("UPDATE backfill_reservations SET input_tokens=?,output_tokens=?,status='settled' WHERE reservation_id=?", (usage.input_tokens, usage.output_tokens, reservation))
         self.ledger.record_provider_call(run_id, **{key: getattr(usage, key) for key in ("provider", "model", "latency_ms", "structured_valid", "input_tokens", "output_tokens", "http_status")}, outcome="success", now=self.now())
 
+    def _release_judge_reservations(self, cohort: str) -> None:
+        """Renew the evaluation allowance, including every source-family stratum."""
+        self._hold_lease()
+        prefix = cohort + "/"
+        with self.ledger._connect() as conn:
+            conn.execute(
+                "UPDATE backfill_reservations SET status='released' WHERE campaign_id=? "
+                "AND (cohort_id=? OR substr(cohort_id,1,?)=?) "
+                "AND stage IN ('haiku','sonnet','missed_signal') AND status!='released'",
+                (self.config.campaign_id, cohort, len(prefix), prefix),
+            )
+
     def _scope_valid(self, row: dict[str, Any]) -> bool:
         from memorymaster.core.scope_utils import resolve_transcript_workspace_scope
 
@@ -637,9 +649,11 @@ class BackfillRunner:
                 for capture in captures:
                     conn.execute("UPDATE dream_captures SET decisions_json=NULL,state='extracted' WHERE id=?", (capture["id"],))
                     capture["decisions"] = None
+            self._release_judge_reservations(rows[0]["cohort_id"])
             for row in rows:
                 row["metadata"].pop("quality_receipt", None)
                 row["metadata"].pop("quality_receipts", None)
+                row["metadata"].pop("discarded_audit", None)
         rows[0]["metadata"]["reference_hashes"] = hashes
         self._save(rows[0])
         existing = {capture["id"] for capture in captures if capture.get("decisions") is not None}
@@ -763,8 +777,16 @@ class BackfillRunner:
         if self.haiku is None or self.sonnet is None:
             raise ValueError("explicit independent Haiku/Sonnet judges required")
         population = self._population(rows)
+        existing = rows[0]["metadata"].get("quality_receipt", {})
+        if existing and not existing.get("complete"):
+            rows[0]["metadata"].pop("discarded_audit", None)
         discarded = self._discarded(rows)
         identity = self._identity(rows)
+        if receipt_is_current(existing, population, identity, discarded=discarded):
+            return existing
+        # Caps bound one M5 evaluation, rather than the cohort's replay lifetime.
+        # Keep provider-call history while releasing superseded reservations.
+        self._release_judge_reservations(rows[0]["cohort_id"])
         families = sorted({r["metadata"]["source_family"] for r in rows})
         strata = {}
         for family in families:
