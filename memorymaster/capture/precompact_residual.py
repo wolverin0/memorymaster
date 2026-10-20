@@ -122,16 +122,19 @@ def slice_turns(transcript_path: str, max_chars: int | None = None) -> str:
         return ""
     if not turns:  # nothing happened after the boundary: the old summary alone is not worth a call
         return ""
-    # The summary prefix is a minority of the budget and counts against it; the newest turns are reserved first.
-    summary = previous_summary[: min(PREVIOUS_SUMMARY_CHARS, budget // 5)]
-    prefix = f"previous summary: {summary}\n" if summary else ""
+    # The newest turns are reserved first; the previous summary only gets what is left (and counts against the budget).
     kept: list[str] = []
-    used = len(prefix)
+    used = 0
     for turn in reversed(turns):
         if used + len(turn) > budget:
             break
         kept.append(turn)
         used += len(turn) + 1
+    if not kept:  # not even the newest turn fits: the old summary alone is not worth a call
+        return ""
+    label = "previous summary: "
+    room = min(PREVIOUS_SUMMARY_CHARS, budget // 5, budget - used - len(label) - 1)
+    prefix = f"{label}{previous_summary[:room]}\n" if previous_summary and room > 0 else ""
     return prefix + "\n".join(reversed(kept))
 
 

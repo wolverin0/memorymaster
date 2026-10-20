@@ -138,17 +138,40 @@ def test_slice_turns_returns_nothing_when_only_the_old_summary_exists(tmp_path):
     assert pr.slice_turns(str(transcript)) == ""
 
 
-def test_slice_turns_summary_counts_against_the_budget_and_newest_turns_win(tmp_path):
+def test_slice_turns_newest_turns_are_reserved_before_the_summary_prefix(tmp_path):
     transcript = tmp_path / "t.jsonl"
     rows = [_msg("user", "P" * 2400, isCompactSummary=True)]
     rows += [_msg("user", f"turn-{i:03d} " + "w" * 90) for i in range(60)]
     _write_rows(transcript, rows)
     budget = 3000
     excerpt = pr.slice_turns(str(transcript), max_chars=budget)
-    assert len(excerpt) <= budget  # the summary prefix is inside the budget
-    assert "turn-059" in excerpt  # newest turns are reserved first
-    assert excerpt.count("turn-") >= 15  # the summary did not starve them
-    assert "P" * 100 in excerpt  # but a (capped) summary prefix is still there
+    assert len(excerpt) <= budget  # the summary prefix, when present, is inside the budget
+    assert "turn-059" in excerpt and excerpt.count("turn-") >= 25  # turns are fitted first and not starved
+
+
+def test_slice_turns_keeps_a_turn_that_fits_even_when_the_summary_would_not(tmp_path):
+    # Argon review of #283: the newest turn fits the budget but not budget - len(prefix).
+    transcript = tmp_path / "t.jsonl"
+    turn_text = "n" * pr.MESSAGE_CHARS  # a full-size message: 1506 chars with its role label
+    budget = len("user: ") + len(turn_text) + 10
+    _write_rows(transcript, [_msg("user", "P" * 2500, isCompactSummary=True), _msg("user", turn_text)])
+    excerpt = pr.slice_turns(str(transcript), max_chars=budget)
+    assert turn_text in excerpt and len(excerpt) <= budget
+    assert "P" * 100 not in excerpt  # no room left: the summary is dropped, never the turn
+
+
+def test_slice_turns_adds_a_trimmed_summary_with_the_room_that_is_left(tmp_path):
+    transcript = tmp_path / "t.jsonl"
+    _write_rows(transcript, [_msg("user", "P" * 2400, isCompactSummary=True), _msg("user", "short new turn")])
+    excerpt = pr.slice_turns(str(transcript), max_chars=3000)
+    assert "short new turn" in excerpt and "P" * 100 in excerpt and len(excerpt) <= 3000
+    assert excerpt.count("P") <= 3000 // 5  # capped at a fifth of the budget
+
+
+def test_slice_turns_returns_nothing_when_not_even_the_newest_turn_fits(tmp_path):
+    transcript = tmp_path / "t.jsonl"
+    _write_rows(transcript, [_msg("user", "P" * 500, isCompactSummary=True), _msg("user", "n" * 1400)])
+    assert pr.slice_turns(str(transcript), max_chars=1000) == ""
 
 
 def test_extract_residual_checks_secrets_before_the_clip_can_hide_them():
