@@ -512,19 +512,15 @@ class GeminiExtractor:
         return f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
 
     def model_available(self, model: str) -> bool:
-        """Verify model metadata without generating content or charging tokens."""
+        """One ``countTokens`` call through the injected transport: free of token charges,
+        404 when the model name is unknown. Any other outcome (5xx, 429, auth) is inconclusive
+        and answers True: transient provider trouble belongs to the run's breaker, not here."""
         if not self.api_key:
             raise ProviderConfigError("GEMINI_API_KEY is not configured", reason="missing_api_key")
-        request = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model}?key={self.api_key}"
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=10) as response:
-                return response.status == 200
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                return False
-            raise ProviderCallError("Gemini model preflight failed", http_status=exc.code) from exc
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:countTokens?key={self.api_key}"
+        payload = {"contents": [{"parts": [{"text": "ping"}]}]}
+        status, _body, _headers = self.transport(url, payload, {"Content-Type": "application/json"}, 10)
+        return status != 404
 
     @staticmethod
     def _payload(prompt: str, messages: list[dict[str, Any]], scope: str) -> dict[str, Any]:

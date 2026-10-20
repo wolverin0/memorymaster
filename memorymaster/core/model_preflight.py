@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 from datetime import datetime, timezone
@@ -23,10 +24,29 @@ def record_failure(provider: str, model: str, error: BaseException) -> None:
 
 
 def preflight(client: object, model: str) -> None:
-    """Raise when the provider says the configured model is unavailable."""
-    check = getattr(client, "model_available", None)
-    if callable(check) and not check(model):
+    """Raise when the provider says the configured model is unavailable.
+
+    The check is looked up on the client's class, never through ``__getattr__``:
+    test doubles and proxies that refuse unknown attributes must not turn the
+    preflight itself into a failure.
+    """
+    if client is None or not callable(getattr(type(client), "model_available", None)):
+        return
+    try:
+        available = client.model_available(model)
+    except Exception as exc:  # noqa: BLE001 - a transport failure is inconclusive, the run's breaker owns it
+        LOGGER.debug("model preflight inconclusive for %s: %s", model, type(exc).__name__)
+        return
+    if not available:
         raise RuntimeError("configured model is not available")
+
+
+def preflight_provider(provider: object) -> None:
+    """Preflight one Dreaming/profile provider: its ``client`` and ``model`` attributes."""
+    # Gemini providers are their own HTTP client; Antigravity providers wrap one in ``client``.
+    client = inspect.getattr_static(provider, "client", None) or provider
+    model = inspect.getattr_static(provider, "model", "")
+    preflight(client, str(model))
 
 
 def alert(provider: str, model: str, error: BaseException) -> None:

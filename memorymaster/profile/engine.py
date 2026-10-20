@@ -119,11 +119,11 @@ class CompiledProfileEngine:
 
     def run(self, *, force: bool = False, max_map_calls: int | None = None) -> dict[str, Any]:
         current = self.now()
-        from memorymaster.core.model_preflight import alert, preflight
+        from memorymaster.core.model_preflight import alert, preflight_provider
 
         try:
             for provider in (self.mapper, self.reducer):
-                preflight(getattr(provider, "client", None), provider.model)
+                preflight_provider(provider)
         except Exception as exc:  # noqa: BLE001 - skip the job before changing profile state
             provider_name = "antigravity"
             alert(provider_name, str(provider.model), exc)
