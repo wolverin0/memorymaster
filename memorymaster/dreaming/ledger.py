@@ -124,6 +124,34 @@ CREATE TABLE IF NOT EXISTS dream_scan_state (
     seen_json TEXT NOT NULL DEFAULT '[]',
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS backfill_inventory (
+    campaign_id TEXT NOT NULL,
+    stream_id TEXT NOT NULL,
+    cohort_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    parent_session_id TEXT NOT NULL,
+    source_locator TEXT NOT NULL,
+    frozen_end INTEGER NOT NULL,
+    source_digest TEXT NOT NULL,
+    scope TEXT,
+    internal_timestamp TEXT,
+    status TEXT NOT NULL,
+    read_offset INTEGER NOT NULL DEFAULT 0,
+    selector_version TEXT NOT NULL DEFAULT 'v2',
+    filter_version TEXT NOT NULL DEFAULT 'v2',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY(campaign_id, stream_id)
+);
+CREATE TABLE IF NOT EXISTS backfill_reservations (
+    reservation_id TEXT PRIMARY KEY,
+    campaign_id TEXT NOT NULL,
+    cohort_id TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    utc_day TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'reserved'
+);
 """
 
 
@@ -197,7 +225,7 @@ class DreamLedger:
         )
         return int(latest["id"])
 
-    def enqueue(self, envelope: CaptureEnvelope) -> int:
+    def enqueue(self, envelope: CaptureEnvelope, *, coalesce: bool = True) -> int:
         messages_json = json.dumps([message.to_dict() for message in envelope.messages], ensure_ascii=False)
         capture_key = ":".join((envelope.provider, envelope.session_hash, str(envelope.cursor_start), str(envelope.cursor_end), envelope.content_hash))
         now = _iso(_utc_now())
@@ -207,7 +235,7 @@ class DreamLedger:
             ).fetchone()
             if exact is not None:
                 return int(exact[0])
-            coalesced = self._coalesce_captured(conn, envelope, now)
+            coalesced = self._coalesce_captured(conn, envelope, now) if coalesce else None
             if coalesced is not None:
                 return coalesced
             conn.execute(
