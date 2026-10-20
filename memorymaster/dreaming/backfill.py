@@ -184,6 +184,18 @@ def read_backfill_status(state_dir: Path, *, campaign_id: str | None = None, dry
             "usage_reservations": [dict(r) for r in reservations], "coverage_contract": "selector_v2_sampled"}
 
 
+def _session_bundles(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Keep parent framing first, then order whole sessions by priority/time."""
+    sessions: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in rows:
+        sessions.setdefault((row["provider"], row["parent_session_id"]), []).append(row)
+    for bundle in sessions.values():
+        bundle.sort(key=lambda row: (row["metadata"].get("source_family") == "claude_subagent",
+                                     row.get("internal_timestamp") or "", row["stream_id"]))
+    leaders = {bundle[0]["stream_id"]: bundle for bundle in sessions.values()}
+    return [leaders[row["stream_id"]] for row in order_inventory([bundle[0] for bundle in sessions.values()])]
+
+
 class BackfillRunner:
     def __init__(self, config: BackfillConfig, *, extractor=None, consolidator=None,
                  reference_service_factory: Callable[[], Any] | None = None,
@@ -279,15 +291,13 @@ class BackfillRunner:
                     full = agy_sessions[path].full_path
                     full_end, full_digest = frozen_identity(full)
                     rows[-1]["metadata"]["full_source"] = {"locator": str(full), "end": full_end, "digest": full_digest}
-        bundles: dict[tuple[str, str], list[dict[str, Any]]] = {}
-        for row in rows:
-            bundles.setdefault((row["provider"], row["parent_session_id"]), []).append(row)
-        for bundle in bundles.values():
+        for bundle in _session_bundles(rows):
             if len({row["scope"] for row in bundle if row["scope"]}) > 1:
                 for row in bundle:
                     row["scope"], row["status"] = None, "unresolved_scope"
                     row["metadata"]["scope_resolution"] = "conflicting_bundle_scope"
-        rows = order_inventory(rows)
+        bundles = _session_bundles(rows)
+        rows = [row for bundle in bundles for row in bundle]
         cohorts: dict[tuple[str, str], str] = {}
         counts: dict[str, int] = {}
         copies: set[tuple[str, str, str]] = set()
@@ -323,7 +333,7 @@ class BackfillRunner:
         # Reports never contain source paths/cwd or transcript text.
         plan = {"windows": 0, "eligible_chars": 0, "selected_chars": 0, "sampled_out_chars": 0, "coverage_gaps": 0}
         if dry_run:
-            for bundle in bundles.values():
+            for bundle in bundles:
                 if not bundle[0]["scope"]:
                     continue
                 gaps = []
@@ -830,8 +840,9 @@ class BackfillRunner:
         run_id = self.ledger.start_run(not apply_candidates, getattr(self.extractor, "model", ""), getattr(self.consolidator, "model", ""), now=self.now())
         self._run_id = run_id
         try:
-            rows = [r for r in order_inventory(self._rows()) if r["scope"] and r["status"] != "duplicate_copy"
-                    and (cohort_id is None or r["cohort_id"] == cohort_id)]
+            bundles = _session_bundles([r for r in self._rows() if r["scope"] and r["status"] != "duplicate_copy"
+                                       and (cohort_id is None or r["cohort_id"] == cohort_id)])
+            rows = [row for bundle in bundles for row in bundle]
             # A changed frozen source invalidates all downstream receipts for its cohort.
             for row in rows:
                 if not self._source_valid(row) or not self._scope_valid(row):
@@ -846,14 +857,12 @@ class BackfillRunner:
                 if not self._allowed(cohort, "extract" if stage in {"extract", "all"} else "consolidate" if stage != "apply" else "apply"):
                     continue
                 if stage in {"extract", "all"}:
-                    sessions: dict[str, list] = {}
-                    for row in group:
-                        sessions.setdefault(row["parent_session_id"], []).append(row)
+                    sessions = _session_bundles(group)
                     # Freeze every session's plan before computing the cohort's
                     # shared repair allowance or dispatching any extraction.
-                    for bundle in sessions.values():
+                    for bundle in sessions:
                         self._select(bundle)
-                    for bundle in sessions.values():
+                    for bundle in sessions:
                         if not self._allowed(cohort, "extract"):
                             break
                         self._extract(bundle[0], run_id)

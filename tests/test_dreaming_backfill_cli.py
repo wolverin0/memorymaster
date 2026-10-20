@@ -358,6 +358,34 @@ def test_cli_dry_actions_construct_no_services_or_providers_and_write_no_bytes(t
     assert _files(tmp_path) == before
 
 
+def test_parent_precedes_later_subagent_in_preview_and_run(tmp_path, monkeypatch):
+    import memorymaster.dreaming.backfill as module
+
+    fixture = _campaign(tmp_path, provider="claude", child=True)
+    child = fixture.sources / "session-0" / "subagents" / "child.jsonl"
+    child.write_text(child.read_text(encoding="utf-8").replace(NOW.isoformat(), NOW.replace(day=21).isoformat()), encoding="utf-8")
+    select = module.select_windows
+    seen = []
+
+    def recording_selector(turns, *, scope):
+        turns = list(turns)
+        seen.append([turn.stream_id for turn in turns])
+        return select(turns, scope=scope)
+
+    monkeypatch.setattr(module, "select_windows", recording_selector)
+    preview = fixture.runner.inventory(dry_run=True)
+    fixture.runner.inventory()
+    fixture.runner.run(stage="extract")
+
+    rows = fixture.runner._rows()
+    parent = next(row for row in rows if row["metadata"]["source_family"] == "claude")
+    assert len(seen) == 2
+    assert seen[0] == seen[1]
+    assert seen[0][0] == parent["stream_id"]
+    assert parent["metadata"]["selection_owner"] == parent["stream_id"]
+    assert preview["offline_selection"]["windows"] == len(parent["metadata"]["selection"]["windows"])
+
+
 def test_parent_and_child_share_one_session_and_four_window_allowance(tmp_path):
     fixture = _campaign(tmp_path, provider="claude", child=True)
     report = fixture.runner.inventory()
