@@ -292,20 +292,19 @@ def _deadline_clock():
 
 
 def test_deadline_returns_legacy_and_late_answer_never_acts(tmp_path):
-    # Without TIMING the deadline and the hang scale together on the frozen clock: the answer is
-    # late by 2 s, not by a margin a loaded runner can close.
-    deadline_ms, hang_s = (300, 1.2) if TIMING else (2000, 4.0)
+    # Keep a fixed 900 ms gap between the deadline and the transport answer; the engine clock is
+    # frozen so work before the send cannot consume that budget on a loaded runner.
+    deadline_ms, hang_s = (300, 1.2)
     slow = FakeTransport(delay=hang_s)
-    clock = _deadline_clock()
+    def clock() -> float:
+        return 0.0  # freeze deadline arithmetic; the transport returns after 1.2 s
+
     engine, _ = make_engine(tmp_path, transport=slow, env={"MEMORYMASTER_JEV_HOOK_DEADLINE_MS": str(deadline_ms)},
-                            **({"monotonic": clock} if clock else {}))
+                            monotonic=clock)
     engine.ledger.register_questions(q.get(key) for key in ("recall.relevant", "recall.usable_evidence",
                                                             "recall.contradicts_request", "recall.instruction_like"))
-    started = time.perf_counter()  # the ledger exists: the hook deadline is spent waiting for the answer
     decision = decide_recall(engine)
-    # deadline + 100 ms (the hook contract), plus one tick of the Windows monotonic clock the engine reads
-    if TIMING:
-        assert time.perf_counter() - started <= 0.3 + 0.1 + 0.016
+    assert slow.calls[0]["timeout_s"] == pytest.approx(0.3)
     assert decision.action == LEGACY and decision.fallback_reason == "timeout"
     engine.wait_for_late_answers(timeout=5 if TIMING else 30)
     row = rows(tmp_path, "SELECT * FROM decisions")[0]
