@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS dream_leases (
 CREATE TABLE IF NOT EXISTS dream_scan_state (
     name TEXT PRIMARY KEY,
     value REAL NOT NULL,
+    seen_json TEXT NOT NULL DEFAULT '[]',
     updated_at TEXT NOT NULL
 );
 """
@@ -224,18 +225,25 @@ class DreamLedger:
             row = conn.execute("SELECT id FROM dream_captures WHERE capture_key=?", (capture_key,)).fetchone()
         return int(row[0])
 
+    def scan_state(self, name: str) -> tuple[float, frozenset[str]] | None:
+        """(watermark mtime, paths already handled AT that exact mtime) of one transcript source."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT value, seen_json FROM dream_scan_state WHERE name=?", (name,)).fetchone()
+        return None if row is None else (float(row[0]), frozenset(json.loads(row[1] or "[]")))
+
     def scan_watermark(self, name: str) -> float | None:
         """Last-scan mtime (epoch seconds) of one transcript source, or None before its first scan."""
-        with self._connect() as conn:
-            row = conn.execute("SELECT value FROM dream_scan_state WHERE name=?", (name,)).fetchone()
-        return None if row is None else float(row[0])
+        state = self.scan_state(name)
+        return None if state is None else state[0]
 
-    def set_scan_watermark(self, name: str, value: float) -> None:
+    def set_scan_watermark(self, name: str, value: float, seen: Iterable[str] = ()) -> None:
+        """Store the watermark and the files handled at exactly that mtime (ties at a cut are not lost)."""
         with self._connect() as conn:
             conn.execute(
-                """INSERT INTO dream_scan_state VALUES (?, ?, ?)
-                   ON CONFLICT(name) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
-                (name, float(value), _iso(_utc_now())),
+                """INSERT INTO dream_scan_state VALUES (?, ?, ?, ?)
+                   ON CONFLICT(name) DO UPDATE SET value=excluded.value, seen_json=excluded.seen_json,
+                   updated_at=excluded.updated_at""",
+                (name, float(value), json.dumps(sorted(set(seen))), _iso(_utc_now())),
             )
 
     def record_source_mtime(self, capture_id: int, mtime: float) -> None:

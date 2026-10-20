@@ -183,10 +183,11 @@ class DreamConfig:
     max_candidate_writes_daily: int = 200
     max_extract_calls_daily: int = 40
     max_consolidate_calls_daily: int = 12
-    # AO-2 beat: captures whose consolidation may START in one run (0 = no per-run cap). A
-    # capture that started finishes all its scopes (a half-consolidated capture would drop its
-    # finished decisions and repeat the same call forever); captures beyond the cap are deferred
-    # untouched, like a daily-budget deferral, and the next run starts them.
+    # AO-2 beat: captures whose consolidation may START in one run (0 = no per-run cap), chosen
+    # before candidates are grouped by scope. A chosen capture finishes all its scopes (a
+    # half-consolidated capture would drop its finished decisions and repeat the same call
+    # forever); the others are deferred untouched, like a daily-budget deferral, and a later run
+    # starts them.
     max_consolidate_captures_per_run: int = 0
     # TOPE DE GASTO, ordenado por el operador el 2026-08-24 (ruling MM3).
     # Los dos topes de arriba cuentan LLAMADAS, y por eso nunca acotaron el gasto:
@@ -668,13 +669,27 @@ class DreamWorker:
         tripped: set[int] = set()  # in a consolidation call that tripped the breaker this run
         stopped: DreamProviderStopped | None = None
         pending_by_scope: dict[str, list[dict[str, Any]]] = {}
+        # AO-2 beat: pick the captures this run consolidates BEFORE grouping by scope. Batches pack
+        # candidates of several captures, so a cap applied per batch is bypassed by captures that
+        # share a scope; a picked capture finishes all its scopes, the others wait untouched.
+        cap = self.config.max_consolidate_captures_per_run
+        if cap > 0:
+            wanted = {int(pair[0]["id"]) for pairs in groups.values() for pair in pairs}
+            over_cap = set([int(row["id"]) for row in rows if int(row["id"]) in wanted][cap:])
+            if over_cap:
+                groups = {scope: kept for scope, pairs in groups.items()
+                          if (kept := [pair for pair in pairs if int(pair[0]["id"]) not in over_cap])}
+                self._hold_lease()
+                for capture_id in sorted(over_cap):
+                    self.ledger.defer_consolidation(capture_id, run_id)
+                deferred_captures.update(over_cap)
+                summary["deferred_consolidate_budget"] = len(deferred_captures)
         # Ruling R2: a capture whose calls tripped the breaker in consecutive
         # runs is a poison suspect; it no longer goes first or shares a call.
         streaks = self.ledger.consolidation_trips(int(row["id"]) for row in rows)
         suspects = {capture_id: trips for capture_id, (trips, _) in streaks.items()
                     if trips >= POISON_ISOLATE_AFTER}
         answered = 0  # consolidation calls the provider answered in this run
-        started: set[int] = set()  # captures whose consolidation began in this run (per-run cap)
         batches = deque(
             (effective_scope, batch)
             for effective_scope in sorted(groups)
@@ -704,7 +719,7 @@ class DreamWorker:
                 now=self.now(),
             ) >= self.config.max_consolidate_calls_daily or self._over_token_budget(
                 self.consolidator.provider, self.consolidator.model,
-            ) or (0 < self.config.max_consolidate_captures_per_run <= len(started) and not capture_ids & started):
+            ):
                 self._hold_lease()
                 for capture_id in capture_ids:
                     self.ledger.defer_consolidation(capture_id, run_id)
@@ -719,7 +734,6 @@ class DreamWorker:
                 references = self._fit_prompt(candidates, references, effective_scope)
                 self._hold_lease()
                 called = True
-                started.update(capture_ids)
                 result = self.consolidator.consolidate(candidates, references, scope=effective_scope)
                 called = False
                 answered += 1

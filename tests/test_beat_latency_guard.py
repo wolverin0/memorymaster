@@ -160,3 +160,38 @@ def test_guard_log_defaults_to_the_state_dir_and_hook_log_is_tail_read(tmp_path:
             handle.write(f"[{stamp}] hook=recall event=latency_total total_ms=1500.0\n")
 
     assert _run(tmp_path, hook_log=big).action == "skip"
+
+
+def test_hook_log_timestamps_with_a_trailing_z_are_read(tmp_path: Path) -> None:
+    """Python 3.10 fromisoformat rejects 'Z'; those lines must not be silently dropped."""
+    stamp = (NOW - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with (tmp_path / "hook.log").open("w", encoding="utf-8") as handle:
+        for _ in range(10):
+            handle.write(f"[{stamp}] hook=recall event=latency_total total_ms=1500.0" + chr(10))
+
+    assert latency_guard._parse_ts(stamp).utcoffset() == timedelta(0)
+    assert _run(tmp_path).action == "skip"
+
+
+@pytest.mark.parametrize("name", [latency_guard.DENSE_SOFT_ENV, latency_guard.HOOK_HARD_ENV,
+                                  latency_guard.MIN_EVENTS_ENV, latency_guard.WINDOW_ENV])
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "garbage"])
+def test_a_bad_env_threshold_falls_back_to_the_default_and_never_raises(tmp_path: Path, monkeypatch, name, value) -> None:
+    monkeypatch.setenv(name, value)
+    _dense_log(tmp_path / "dense.jsonl", [200.0] * 10)  # soft breach under the defaults
+
+    decision = _run(tmp_path)
+
+    assert decision.action == "capture_only"
+
+
+def test_threshold_parsing_errors_are_inside_the_fail_open_guard(tmp_path: Path, monkeypatch) -> None:
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("bad env")
+
+    monkeypatch.setattr(latency_guard, "_float_env", boom)
+
+    decision = _run(tmp_path)
+
+    assert decision.action == "allow" and decision.reasons == ["guard_error:RuntimeError"]
+    assert _events(tmp_path / "guard.jsonl")[0]["action"] == "allow"

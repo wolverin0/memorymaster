@@ -106,6 +106,10 @@ def capture_transcript(
     transcript_path: str | Path, *, provider: str, session_id: str, cwd: str | None, ledger: DreamLedger,
 ) -> dict[str, Any]:
     session_hash = hashlib.sha256((session_id or "unknown").encode("utf-8", errors="replace")).hexdigest()
+    try:
+        source_mtime: float | None = Path(transcript_path).stat().st_mtime  # before the read: never newer than the bytes
+    except OSError:
+        source_mtime = None
     cursor_ledger = CaptureLedger(ledger.db_path)
     chunk = cursor_ledger.read_increment(transcript_path, f"dream:{provider}:{session_hash}")
     if not chunk.text:
@@ -122,6 +126,9 @@ def capture_transcript(
     )
     capture_id = ledger.enqueue(envelope)
     cursor_ledger.commit_cursor(chunk)
+    if source_mtime is not None:
+        # Also on a hook coalescing later turns into a scan-created row: M3 follows the newest write.
+        ledger.record_source_mtime(capture_id, source_mtime)
     return {"queued": 1, "capture_id": capture_id, "messages": len(messages)}
 
 
@@ -220,27 +227,29 @@ def scan_active_transcripts(
         "scanned": 0, "queued": 0, "no_increment": 0, "skipped_no_cwd": 0, "errors": 0, "by_provider": {},
     }
     pending: list[tuple[float, str, Path]] = []
-    watermarks: dict[str, float] = {}
+    states: dict[str, tuple[float, frozenset[str]]] = {}
     for provider in ("claude", "codex"):
         root = resolved.get(provider)
         if root is None or not root.is_dir():
             continue
         key = f"scan:{provider}"
-        mark = ledger.scan_watermark(key)
-        if mark is None:
-            mark = (current - timedelta(seconds=max(0, lookback_seconds))).timestamp()
-            ledger.set_scan_watermark(key, mark)
-        watermarks[provider] = mark
+        state = ledger.scan_state(key)
+        if state is None:
+            state = ((current - timedelta(seconds=max(0, lookback_seconds))).timestamp(), frozenset())
+            ledger.set_scan_watermark(key, state[0])
+        states[provider] = state
+        mark, seen = state
         for path in _candidate_files(provider, root):
             try:
                 mtime = path.stat().st_mtime
             except OSError:
                 continue
-            if mtime > mark:
+            # Files AT the watermark mtime that were not handled yet (a max_files cut split a tie) stay pending.
+            if mtime > mark or (mtime == mark and str(path) not in seen):
                 pending.append((mtime, provider, path))
     pending.sort(key=lambda item: (item[0], str(item[2])))
     blocked: set[str] = set()
-    advanced: dict[str, float] = {}
+    advanced: dict[str, list[tuple[float, str]]] = {}
     for mtime, provider, path in pending[: max(0, max_files)]:
         if provider in blocked:
             continue
@@ -254,7 +263,6 @@ def scan_active_transcripts(
                 if result.get("queued"):
                     summary["queued"] += 1
                     stats["queued"] += 1
-                    ledger.record_source_mtime(int(result["capture_id"]), mtime)
                 else:
                     summary["no_increment"] += 1
         except Exception:  # noqa: BLE001 - one bad transcript must not stop the tick or lose the others
@@ -263,7 +271,10 @@ def scan_active_transcripts(
             continue
         summary["scanned"] += 1
         stats["scanned"] += 1
-        advanced[provider] = mtime
-    for provider, mtime in advanced.items():
-        ledger.set_scan_watermark(f"scan:{provider}", max(mtime, watermarks[provider]))
+        advanced.setdefault(provider, []).append((mtime, str(path)))
+    for provider, handled in advanced.items():
+        old_mark, old_seen = states[provider]
+        new_mark = max(old_mark, *(mtime for mtime, _ in handled))
+        seen = {path for mtime, path in handled if mtime == new_mark}
+        ledger.set_scan_watermark(f"scan:{provider}", new_mark, seen | (old_seen if new_mark == old_mark else set()))
     return summary

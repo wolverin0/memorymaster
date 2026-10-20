@@ -205,3 +205,44 @@ def test_existing_ledger_without_the_column_is_upgraded_on_open(tmp_path: Path) 
     with sqlite3.connect(path) as conn:
         assert "source_mtime" in {row[1] for row in conn.execute("PRAGMA table_info(dream_captures)")}
         assert 4 in {row[0] for row in conn.execute("SELECT version FROM dream_schema_versions")}
+
+
+def test_files_sharing_the_boundary_mtime_are_all_captured_across_ticks(world) -> None:
+    ledger = world["ledger"]
+    root = world["roots"]["claude"] / "proj-dir"
+    for name in ("sess-a", "sess-b", "sess-c"):
+        path = root / f"{name}.jsonl"
+        path.write_text(
+            _claude_line(f"question from {name} about builds", "user", world["project"], f"{name}-1")
+            + _claude_line(f"answer from {name} about builds", "assistant", world["project"], f"{name}-2"),
+            encoding="utf-8",
+        )
+        _touch(path, 30)  # one shared mtime, newer than the world's two files
+    world["claude_file"].unlink()
+    world["codex_file"].unlink()
+
+    first = scan_active_transcripts(ledger, max_files=2, roots=world["roots"], now=NOW)
+    second = scan_active_transcripts(ledger, max_files=2, roots=world["roots"], now=NOW)
+    third = scan_active_transcripts(ledger, max_files=2, roots=world["roots"], now=NOW)
+
+    assert (first["scanned"], second["scanned"], third["scanned"]) == (2, 1, 0)
+    texts = " ".join(row["messages_json"] for row in _rows(ledger))
+    assert all(f"from {name}" in texts for name in ("sess-a", "sess-b", "sess-c"))
+
+
+def test_a_hook_that_coalesces_later_turns_refreshes_the_source_mtime(world) -> None:
+    ledger = world["ledger"]
+    scan_active_transcripts(ledger, roots=world["roots"], now=NOW)
+    with world["claude_file"].open("a", encoding="utf-8") as handle:
+        handle.write(_claude_line("a later question from the hook", "user", world["project"], "u9"))
+        handle.write(_claude_line("a later answer from the hook", "assistant", world["project"], "u10"))
+    _touch(world["claude_file"], 5)
+
+    capture_hook_payload(
+        {"transcript_path": str(world["claude_file"]), "session_id": CLAUDE_SESSION, "cwd": str(world["project"])},
+        provider="claude", ledger=ledger,
+    )
+
+    claude = [row for row in _rows(ledger) if row["provider"] == "claude"][-1]
+    assert "later question" in claude["messages_json"]
+    assert claude["source_mtime"] == pytest.approx(NOW.timestamp() - 5, abs=1)

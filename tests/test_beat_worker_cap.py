@@ -79,3 +79,37 @@ def test_a_single_two_scope_capture_converges_in_one_run_under_the_cap(tmp_path:
 
     assert len(consolidator.scopes) == 2  # personal + project, once
     assert ledger.get_capture(capture_id)["state"] == "consolidated"
+
+
+class _PerCaptureExtractor(H["_Extractor"]):
+    """Candidate ids unique per capture text, so several captures can share one scope."""
+
+    def extract(self, messages, *, scope, capture_hash):
+        tag = str(messages[-1]["text"])[-1]
+        return ExtractionResult((
+            DreamCandidate(f"project-{tag}", f"The blue interface {tag} is selected.", "decision", "interface", "uses", f"blue-{tag}", "project", "m2", "Blue interfaces", 0.8),
+            DreamCandidate(f"personal-{tag}", f"The user prefers blue interfaces {tag}.", "preference", "user", "prefers", f"blue interfaces {tag}", "personal", "m1", "prefer blue interfaces", 0.9),
+        ), H["_usage"]("google", self.model))
+
+
+def test_captures_sharing_a_scope_cannot_bypass_the_cap_through_batch_packing(tmp_path: Path) -> None:
+    """Review: with the default batch size, packing put all three captures in one call per scope."""
+    ledger = DreamLedger(tmp_path / "capture.db")
+    ids = [H["_capture"](ledger, session_hash=f"s{n}", extra_text=f" {n}") for n in "ABC"]
+    consolidator = H["_Consolidator"]()
+    config = replace(DreamConfig(), max_consolidate_captures_per_run=1)
+    worker = DreamWorker(ledger, H["_service"](tmp_path), _PerCaptureExtractor(), consolidator, config=config, now=lambda: NOW)
+
+    def states():
+        return [ledger.get_capture(capture_id)["state"] for capture_id in ids]
+
+    first = worker.run(apply_candidates=False)
+    assert sorted(states()) == ["consolidated", "extracted", "extracted"]
+    assert first["consolidated"] == 1 and first["deferred_consolidate_budget"] == 2 and first["errors"] == 0
+    assert len(consolidator.scopes) == 2  # one capture, its personal and project scopes
+
+    worker.run(apply_candidates=False)
+    worker.run(apply_candidates=False)
+
+    assert states() == ["consolidated"] * 3
+    assert len(consolidator.scopes) == 6  # each capture consolidated exactly once, never repeated

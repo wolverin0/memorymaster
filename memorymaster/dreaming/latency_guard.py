@@ -18,6 +18,7 @@ Every decision is appended as one JSON line to ``beat-guard.jsonl`` in the state
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -58,10 +59,18 @@ class GuardDecision:
 
 
 def _float_env(name: str, default: float) -> float:
+    """A finite float from the environment; anything else (garbage, nan, inf) is the default."""
     try:
-        return float(os.environ.get(name, "").strip() or default)
+        value = float(os.environ.get(name, "").strip() or default)
     except ValueError:
         return default
+    return value if math.isfinite(value) else default
+
+
+def _parse_ts(value: str) -> datetime:
+    """ISO timestamp to an aware datetime; a trailing Z is read as UTC (Python 3.10 rejects it)."""
+    stamp = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    return stamp if stamp.tzinfo else stamp.astimezone()
 
 
 def guard_log_path() -> Path:
@@ -97,11 +106,9 @@ def _hook_metrics(path: Path, since: datetime) -> dict[str, Any]:
         if match is None:
             continue
         try:
-            stamp = datetime.fromisoformat(match.group("ts"))
+            stamp = _parse_ts(match.group("ts"))
         except ValueError:
             continue
-        if stamp.tzinfo is None:
-            stamp = stamp.astimezone()
         if stamp >= since:
             totals.append(float(match.group("ms")))
     return {"n": len(totals), "p95_ms": _p95(totals)}
@@ -140,15 +147,16 @@ def evaluate(
 ) -> GuardDecision:
     """Return the beat's permission for this tick and record it in the guard log."""
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    thresholds = {
-        "dense": [_float_env(DENSE_SOFT_ENV, DEFAULT_DENSE_SOFT_MS), _float_env(DENSE_HARD_ENV, DEFAULT_DENSE_HARD_MS)],
-        "hook": [_float_env(HOOK_SOFT_ENV, DEFAULT_HOOK_SOFT_MS), _float_env(HOOK_HARD_ENV, DEFAULT_HOOK_HARD_MS)],
-        "min_events": int(_float_env(MIN_EVENTS_ENV, DEFAULT_MIN_EVENTS)),
-        "window_minutes": int(_float_env(WINDOW_ENV, DEFAULT_WINDOW_MINUTES)),
-    }
+    thresholds: dict[str, Any] = {}
     reasons: list[str] = []
     metrics: dict[str, Any] = {"dense": {"n": 0, "p95_ms": None}, "hook": {"n": 0, "p95_ms": None}}
     try:
+        thresholds = {
+            "dense": [_float_env(DENSE_SOFT_ENV, DEFAULT_DENSE_SOFT_MS), _float_env(DENSE_HARD_ENV, DEFAULT_DENSE_HARD_MS)],
+            "hook": [_float_env(HOOK_SOFT_ENV, DEFAULT_HOOK_SOFT_MS), _float_env(HOOK_HARD_ENV, DEFAULT_HOOK_HARD_MS)],
+            "min_events": int(_float_env(MIN_EVENTS_ENV, DEFAULT_MIN_EVENTS)),
+            "window_minutes": int(_float_env(WINDOW_ENV, DEFAULT_WINDOW_MINUTES)),
+        }
         from memorymaster.core import hook_log as hook_log_module
         from memorymaster.recall import dense_recall
 
