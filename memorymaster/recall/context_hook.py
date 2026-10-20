@@ -1262,10 +1262,12 @@ def _filter_prompt_rows(rows: list[dict], plan) -> list[dict]:
 
 def _governed_prompt_rows(svc, query_text: str, *, limit: int) -> list[dict]:
     """Run prompt-hook lexical recall through the immutable trusted planner."""
+    from memorymaster.recall.execution import execute_planned_search
+
     plan = _prompt_recall_plan(query_text, limit=limit)
     statuses = set(plan.statuses)
-    rows = svc.query_rows(
-        query_text=plan.search_text,
+    rows = execute_planned_search(
+        plan, svc.query_rows,
         limit=plan.limit,
         retrieval_mode=plan.effective_mode,
         include_stale="stale" in statuses,
