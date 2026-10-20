@@ -17,6 +17,7 @@ from typing import Any
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from memorymaster.core import stall_probe
 from memorymaster.core.structured_log import configure_structured_logging, timed_event
 from memorymaster.surfaces.mcp_server import (
     FastMCP,
@@ -153,11 +154,18 @@ def create_http_app(
         if _hook_recall_limiter is None:
             _hook_recall_limiter = anyio.CapacityLimiter(_HOOK_RECALL_THREADS)
         extra = {"hook_data": hook_data} if hook_data else {}
+        enqueued = time.perf_counter()
+        run = partial(recall, query, db_path=resolved_db, skip_qdrant=True, **extra)
+
+        def run_probed() -> Any:  # T-1648: how long the request waited behind the limiter (observation only)
+            stall_probe.worker_started(enqueued)
+            try:
+                return run()
+            finally:
+                stall_probe.worker_finished()
+
         with timed_event(_HOOK_LOG, "hook_recall", surface="hook", query_chars=len(query)) as fields:
-            ctx = await anyio.to_thread.run_sync(
-                partial(recall, query, db_path=resolved_db, skip_qdrant=True, **extra),
-                limiter=_hook_recall_limiter,
-            )
+            ctx = await anyio.to_thread.run_sync(run_probed, limiter=_hook_recall_limiter)
             fields["ctx_chars"] = len(ctx or "")
         return JSONResponse({"ctx": ctx or ""})
 
@@ -197,6 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         allowed_hosts=args.allowed_hosts,
     )
     _start_tokenizer_warmer(str(args.db or os.environ.get("MEMORYMASTER_DEFAULT_DB", "memorymaster.db")))
+    stall_probe.start_heartbeat()  # T-1648: process-wide wake-up lag, read by each dense recall event
     _serve(app, host=args.host, port=args.port)
     return 0
 

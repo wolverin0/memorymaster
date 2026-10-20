@@ -97,3 +97,49 @@ def test_installed_hook_skips_trivial_prompts_but_not_short_questions(tmp_path, 
     assert "cited context" in run("why 500?")
     assert "cited context" in run("T-1433 status")
     assert calls == ["why 500?", "T-1433 status"]
+
+
+def _run_recall_hook_logging(tmp_path, monkeypatch, capsys, via, ctx):
+    """Run the installed recall hook against a stubbed shared server; returns the log_hook calls."""
+    from memorymaster.recall import remote
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    path = install(tmp_path, monkeypatch)
+    capsys.readouterr()
+    logged = []
+    monkeypatch.setattr(hook_log, "log_hook", lambda hook, event, **f: logged.append((hook, event, f)))
+    monkeypatch.setattr(remote, "hook_recall", lambda *a, **k: (ctx, via))
+    monkeypatch.setenv("MEMORYMASTER_RECALL_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MEMORYMASTER_RECALL_SEEN_DIR", str(tmp_path / "seen"))
+    data = {"session_id": "timing", "cwd": str(tmp_path), "prompt": "explain the importer"}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(data)))
+    runpy.run_path(str(path), run_name="__main__")
+    capsys.readouterr()
+    return logged
+
+
+def test_installed_hook_logs_its_own_startup_cost_even_when_the_server_was_busy(tmp_path, monkeypatch, capsys):
+    """T-1648: the hook's start-up and import time were never logged, and a skipped_busy prompt logged nothing at all."""
+    for via, ctx in (("skipped_busy", ""), ("shared", "cited context")):
+        logged = _run_recall_hook_logging(tmp_path, monkeypatch, capsys, via, ctx)
+        timing = [fields for hook, event, fields in logged if hook == "recall" and event == "timing"]
+        assert len(timing) == 1, logged
+        fields = timing[0]
+        assert fields["via"] == via
+        assert fields["import_ms"] >= 0 and fields["recall_ms"] >= 0 and fields["log_ms"] >= 0
+        # the deferred import of the remote client and the formatting step are timed, and one clock covers all
+        assert fields["remote_import_ms"] >= 0 and fields["format_ms"] >= 0 and fields["deliver_ms"] >= 0
+        parts = fields["import_ms"] + fields["remote_import_ms"] + fields["recall_ms"] + fields["format_ms"]             + fields["deliver_ms"] + fields["log_ms"]
+        assert fields["total_ms"] >= parts - 1
+        assert "boot_ms" in fields  # None where the OS cannot report the process age (the log line drops it)
+
+
+def test_the_switch_disables_the_process_age_lookup_and_the_hook_timing_line(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("MEMORYMASTER_STALL_PROBE", "0")
+    from memorymaster.core import stall_probe
+
+    assert stall_probe.process_age_ms() is None
+    logged = _run_recall_hook_logging(tmp_path, monkeypatch, capsys, "skipped_busy", "")
+    assert not [1 for hook, event, _ in logged if hook == "recall" and event == "timing"]
