@@ -46,7 +46,7 @@ class FixtureExtractor:
         source = messages[0]
         candidates = tuple(DreamCandidate(
             f"{capture_hash[:16]}-{index}", f"{source['text']} Rule {index}.", "decision",
-            "project", "preserves", f"architecture-{capture_hash[:12]}-{index}", "project",
+            "project", "preserves", f"architecture-{capture_hash[:12].translate(str.maketrans('0123456789', 'ghijklmnop'))}-{index}", "project",
             source["id"] if "id" in source else source["message_id"], source["text"], .9,
         ) for index in range(self.count))
         return ExtractionResult(candidates, _usage(self.provider, self.model))

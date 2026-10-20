@@ -215,3 +215,58 @@ def test_rollback_recovers_crash_intent_and_preserves_independent_support(servic
     assert result["created_claim_ids"] == [claim.id]
     assert result["retired_claim_ids"] == ([] if independent_support else [claim.id])
     assert fixture.service.store.get_claim(claim.id).status == ("candidate" if independent_support else "archived")
+
+
+@pytest.mark.parametrize("concurrent_change", ["validator", "version", "citation"])
+def test_rollback_preserves_support_added_after_ownership_check(service, tmp_path, monkeypatch, concurrent_change):
+    from memorymaster.dreaming.backfill import rollback_backfill_cohort
+    from test_dreaming_backfill_cli import _campaign, _claims
+
+    fixture = _campaign(tmp_path)
+    fixture.runner.inventory()
+    fixture.runner.run(stage="all", apply_candidates=True)
+    claim = _claims(fixture)[0]
+    cohort = fixture.runner._rows()[0]["cohort_id"]
+    original = fixture.service.store.apply_status_transition
+
+    def change_before_transition(current, **kwargs):
+        if concurrent_change == "validator":
+            fixture.service.store.record_event(claim_id=current.id, event_type="validator", details="independent")
+        elif concurrent_change == "citation":
+            with fixture.service.store.connect() as conn:
+                conn.execute("INSERT INTO citations (claim_id, source, locator, created_at) VALUES (?, ?, ?, ?)",
+                             (current.id, "independent", "independent:1", fixture.runner.now().isoformat()))
+                conn.commit()
+        else:
+            original(current, to_status="conflicted", reason="independent_review", event_type="transition")
+        return original(current, **kwargs)
+
+    monkeypatch.setattr(fixture.service.store, "apply_status_transition", change_before_transition)
+    result = rollback_backfill_cohort(fixture.runner, cohort, service=fixture.service, dry_run=False)
+    assert result["retired_claim_ids"] == []
+    assert result["preserved_claim_ids"] == [claim.id]
+    assert fixture.service.store.get_claim(claim.id).status == ("conflicted" if concurrent_change == "version" else "candidate")
+
+
+def test_rollback_requires_runner_lease_before_retiring_cohort(service, tmp_path):
+    from memorymaster.dreaming.backfill import rollback_backfill_cohort
+    from test_dreaming_backfill_cli import _campaign, _claims
+
+    fixture = _campaign(tmp_path)
+    fixture.runner.inventory()
+    fixture.runner.run(stage="all", apply_candidates=True)
+    row = fixture.runner._rows()[0]
+    assert fixture.runner.ledger.acquire_lease("backfill-runner", "other-runner", 3600, now=fixture.runner.now())
+    with pytest.raises(RuntimeError, match="lease is busy"):
+        rollback_backfill_cohort(fixture.runner, row["cohort_id"], service=fixture.service, dry_run=False)
+    assert len(_claims(fixture)) == 1
+    assert fixture.runner._rows()[0]["status"] == row["status"]
+
+
+def test_postgres_rejects_conditional_rollback_before_connection():
+    from memorymaster.stores.postgres_store import PostgresStore
+
+    store = object.__new__(PostgresStore)
+    with pytest.raises(ValueError, match="SQLite-only"):
+        store.apply_status_transition(None, to_status="archived", reason="ao7_rollback",
+                                      event_type="transition", event_payload={"ao7_retirement_guard": {}})

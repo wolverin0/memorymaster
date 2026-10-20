@@ -26,11 +26,19 @@ from memorymaster.dreaming.backfill_selection import (
 )
 from memorymaster.dreaming.ledger import DreamLedger
 from memorymaster.dreaming.models import CaptureEnvelope, DreamCandidate, DreamDecision, DreamMessage
-from memorymaster.stores._storage_shared import connect_ro
+from memorymaster.stores._storage_shared import ConcurrentModificationError, connect_ro
 
 LEDGER_NAME = "dream_backfill_ledger.db"
 GUARD_NAME = "dream_backfill_guard.json"
 STATUS_NAME = "dream_backfill_status.json"
+
+
+def _require_sqlite_service(service) -> None:
+    from memorymaster.stores.storage import SQLiteStore
+    from memorymaster.stores.postgres_store import PostgresStore
+
+    if not isinstance(service.store, SQLiteStore) or isinstance(service.store, PostgresStore):
+        raise ValueError("backfill source review and conditional retirement are SQLite-only")
 
 
 @dataclass(frozen=True)
@@ -603,6 +611,7 @@ class BackfillRunner:
         if not self.reference_service_factory or self.consolidator is None:
             raise ValueError("explicit read-only reference service and consolidator required")
         service = self.reference_service_factory()
+        _require_sqlite_service(service)
         if not getattr(service.store, "read_only", False):
             raise ValueError("reference service must be read-only")
         worker = self._worker(service)
@@ -856,6 +865,7 @@ class BackfillRunner:
         if not self.application_service_factory:
             raise ValueError("explicit application service required")
         service = self.application_service_factory()
+        _require_sqlite_service(service)
         worker = self._worker(service)
         self._reconcile_intents(rows, service)
         # Material authorized reference changes renew consolidation and M5.
@@ -976,6 +986,24 @@ class BackfillRunner:
 
 def rollback_backfill_cohort(runner: BackfillRunner, cohort_id: str, *, service=None,
                              dry_run: bool = True) -> dict[str, Any]:
+    if dry_run or not (runner.config.state_dir / LEDGER_NAME).exists():
+        return _rollback_backfill_cohort_locked(runner, cohort_id, service=service, dry_run=dry_run)
+    if service is None:
+        raise ValueError("explicit authorized service required for rollback")
+    _require_sqlite_service(service)
+    owner = uuid.uuid4().hex
+    if not runner.ledger.acquire_lease("backfill-runner", owner, 3600, now=runner.now()):
+        raise RuntimeError("backfill runner lease is busy; rollback not started")
+    previous_owner, runner._lease_owner = runner._lease_owner, owner
+    try:
+        return _rollback_backfill_cohort_locked(runner, cohort_id, service=service, dry_run=False)
+    finally:
+        runner.ledger.release_lease("backfill-runner", owner)
+        runner._lease_owner = previous_owner
+
+
+def _rollback_backfill_cohort_locked(runner: BackfillRunner, cohort_id: str, *, service=None,
+                                    dry_run: bool = True) -> dict[str, Any]:
     """Retire only exclusively owned claims, retaining manifest tombstones forever."""
     from memorymaster.core.lifecycle import transition_claim
 
@@ -993,6 +1021,8 @@ def rollback_backfill_cohort(runner: BackfillRunner, cohort_id: str, *, service=
     entries = []
     for row in rows:
         row["metadata"] = json.loads(row["metadata_json"])
+        for key, entry in row["metadata"].get("applications", {}).items():
+            entry.setdefault("operation_id", "ao7-" + key)
         entries.extend(row["metadata"].get("applications", {}).values())
         for entry in row["metadata"].get("applications", {}).values():
             created.update(entry.get("created_claim_ids", []))
@@ -1006,6 +1036,7 @@ def rollback_backfill_cohort(runner: BackfillRunner, cohort_id: str, *, service=
         reused = {claim_id for entry in entries for claim_id in entry.get("reused_claim_ids", [])}
         runner.pause(cohort_id=cohort_id, state="retired")
         for claim_id in sorted(created - reused):
+            runner._hold_lease()
             entry = next(e for e in entries if claim_id in e.get("created_claim_ids", []))
             claims = service.list_claims(ids=[claim_id], scope_allowlist=[entry["scope"]], requesting_agent="dream-worker", limit=1)
             if not claims:
@@ -1020,11 +1051,20 @@ def rollback_backfill_cohort(runner: BackfillRunner, cohort_id: str, *, service=
                 continue
             # Independent validation/promotion or a later ingest defeats exclusive ownership.
             events = service.list_events(claim_id=claim_id, limit=10000)
-            if claim.status != "candidate" or any(e.event_type in {"validator", "deterministic_validator", "citation_added", "reinforcement"} or
+            if len(events) >= 10000 or claim.status != "candidate" or any(e.event_type in {"validator", "deterministic_validator", "citation_added", "reinforcement"} or
                    (e.to_status == "confirmed" and e.from_status != "confirmed") for e in events):
                 preserved.append(claim_id)
                 continue
-            transition_claim(service.store, claim_id, "archived", "ao7_rollback")
+            guard = {"tenant_id": entry["tenant_id"], "scope": entry["scope"], "version": claim.version,
+                     "citation_hash": fingerprint(citations), "last_event_id": max((event.id for event in events), default=0),
+                     "operation_id": entry["operation_id"]}
+            try:
+                runner._hold_lease()
+                transition_claim(service.store, claim_id, "archived", "ao7_rollback",
+                                 event_payload={"ao7_retirement_guard": guard})
+            except ConcurrentModificationError:
+                preserved.append(claim_id)
+                continue
             retired.append(claim_id)
         for row in rows:
             row["metadata"]["rollback"] = {"retired": retired, "preserved": preserved, "tombstone": True}

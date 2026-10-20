@@ -2656,6 +2656,8 @@ class PostgresStore(SQLiteStore):
     ) -> Claim:
         if supersedes_claim_id is not None:
             raise ValueError("Atomic confirmation with supersession is SQLite-only")
+        if event_payload and "ao7_retirement_guard" in event_payload:
+            raise ValueError("AO-7 conditional retirement is SQLite-only")
         if to_status == "confirmed" and (
             claim.source_agent == "dream-worker" or (claim.idempotency_key or "").startswith("dream-")
         ):
