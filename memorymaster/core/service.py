@@ -1007,8 +1007,12 @@ class MemoryService(IntegrationService):
         if plan.effective_mode == "qdrant":
             return RetrievalResult(plan=plan, rows=tuple(self._query_qdrant_mode(plan)))
         statuses = set(plan.statuses)
-        rows = self.query_rows(
-            query_text=plan.search_text,
+        from memorymaster.recall.execution import execute_planned_search
+
+        rows = execute_planned_search(
+            plan, self.query_rows,
+            access_recorder=self._record_accesses,
+            record_accesses=True,
             limit=plan.limit,
             include_stale="stale" in statuses,
             include_conflicted="conflicted" in statuses,

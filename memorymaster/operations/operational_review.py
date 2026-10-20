@@ -478,12 +478,13 @@ def check_recent_private_context(config: ReviewConfig) -> ReviewResult:
 
 def _default_retrieval(db: Path, query: str) -> list[str]:
     from memorymaster.core.service import MemoryService
+    from memorymaster.recall.execution import execute_planned_search
     from memorymaster.recall.planner import RetrievalRequest, build_retrieval_plan
 
     service = MemoryService(str(db), workspace_root=db.parent, read_only=True)
     plan = build_retrieval_plan(RetrievalRequest(query_text=query, limit=5, trust_mode="trusted"))
-    rows = service.query_rows(
-        query_text=plan.search_text,
+    rows = execute_planned_search(
+        plan, service.query_rows,
         limit=plan.limit,
         include_stale=False,
         include_conflicted=False,
