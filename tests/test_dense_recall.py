@@ -12,13 +12,14 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from memorymaster.core import lifecycle
+from memorymaster.core import lifecycle, stall_probe
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
 from memorymaster.recall import context_hook, dense_recall
@@ -324,3 +325,101 @@ def test_the_report_skips_lines_without_a_timestamp(tmp_path) -> None:
     log = tmp_path / "recall-dense.jsonl"
     log.write_text('{"outcome": "dense"}\n{"ts": "2026-10-06T23:00:00+00:00", "outcome": "dense"}\n', encoding="utf-8")
     assert len(dense_recall.read_events(log)) == 1
+
+
+# ---- T-1648: stall-attribution probes carried by the dense event (core/stall_probe.py)
+
+WINDOW_KEYS = {"wall_ms", "cpu_ms", "gc_n", "gc_ms", "threads"}
+STAGE_KEYS = {"svc_ms", "plan_ms", "rtt_ms", "hydrate_ms", "claim_ms", "claims_n", "render_ms", "access_ms",
+              "seen_ms", "remember_ms", "other_ms"}
+
+
+def test_a_dense_event_carries_the_stage_and_process_probes(claims, monkeypatch) -> None:
+    ids = claims["ids"]
+    monkeypatch.setenv(dense_recall.ENABLE_ENV, "1")
+    monkeypatch.setattr(dense_recall, "search", lambda q, s, **_: _answer((ids["netcode"], 0.8), (ids["recoil"], 0.7)))
+    stall_probe.worker_started(time.perf_counter() - 0.1)
+    try:
+        text = context_hook.recall("how does weapon recoil spread work", db_path=claims["db"], hook_data=claims["hook"])
+    finally:
+        stall_probe.worker_finished()
+    event = _events(claims["log"])[-1]
+    probe = event["probe"]
+    assert event["outcome"] == "dense" and text
+    assert (WINDOW_KEYS | STAGE_KEYS) <= set(probe), set(probe)
+    assert probe["claims_n"] == 2 and probe["conn_n"] >= 2  # one connection per hydrated claim at least
+    assert probe["hydrate_ms"] >= probe["claim_ms"] >= 0
+    assert probe["q_wait_ms"] >= 90
+    assert probe["wall_ms"] >= probe["hydrate_ms"]
+    assert "weapon" not in json.dumps(event)  # still never logs the prompt
+
+
+def test_a_fallback_event_is_probed_too(claims, monkeypatch) -> None:
+    monkeypatch.setenv(dense_recall.ENABLE_ENV, "1")
+
+    def down(query, scopes, **_):
+        raise dense_recall.DenseUnavailable("TimeoutError")
+
+    monkeypatch.setattr(dense_recall, "search", down)
+    context_hook.recall("weapon recoil spread", db_path=claims["db"], hook_data=claims["hook"])
+    event = _events(claims["log"])[-1]
+    assert event["outcome"] == "fallback:TimeoutError"
+    assert WINDOW_KEYS <= set(event["probe"]) and event["probe"]["rtt_ms"] >= 0
+
+
+def test_probing_changes_neither_the_recall_text_nor_the_other_event_fields(claims, monkeypatch) -> None:
+    ids = claims["ids"]
+    monkeypatch.setenv(dense_recall.ENABLE_ENV, "1")
+    monkeypatch.setattr(dense_recall, "search", lambda q, s, **_: _answer((ids["netcode"], 0.8), (ids["recoil"], 0.7)))
+    on_text = context_hook.recall("how does weapon recoil spread work", db_path=claims["db"],
+                                  hook_data={**claims["hook"], "session_id": "on"})
+    on = _events(claims["log"])[-1]
+    monkeypatch.setenv(stall_probe.ENV_SWITCH, "0")
+    off_text = context_hook.recall("how does weapon recoil spread work", db_path=claims["db"],
+                                   hook_data={**claims["hook"], "session_id": "off"})
+    off = _events(claims["log"])[-1]
+    assert on_text == off_text
+    assert "probe" in on and "probe" not in off
+    volatile = {"ts", "probe", "service_ms", "total_ms", "embed_ms", "search_ms"}
+    assert {k: v for k, v in on.items() if k not in volatile} == {k: v for k, v in off.items() if k not in volatile}
+
+
+def test_the_report_still_summarizes_probed_events(claims, monkeypatch) -> None:
+    ids = claims["ids"]
+    monkeypatch.setenv(dense_recall.ENABLE_ENV, "1")
+    monkeypatch.setattr(dense_recall, "search", lambda q, s, **_: _answer((ids["netcode"], 0.8)))
+    context_hook.recall("netcode tick rate", db_path=claims["db"], hook_data=claims["hook"])
+    summary = dense_recall.summarize(dense_recall.read_events(claims["log"]))
+    assert summary["recalls"] == 1 and summary["outcomes"] == {"dense": 1}
+
+
+def test_the_search_answer_carries_the_services_own_probe_and_the_client_logs_it(claims, monkeypatch) -> None:
+    from http.server import ThreadingHTTPServer
+
+    from memorymaster.recall.dense_server import DenseService, make_handler
+
+    def encode(texts, kind):
+        import numpy as np
+
+        return np.ones((len(texts), 4), dtype=np.float32) / 2
+
+    service = DenseService(claims["db"], encode, model="fake", dim=4, device="cpu")
+    service.sync_once()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(service))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        monkeypatch.setenv(dense_recall.URL_ENV, f"http://127.0.0.1:{server.server_address[1]}")
+        answer = dense_recall.search("weapon recoil", ["project:pubgclone"])
+        assert WINDOW_KEYS <= set(answer.probe) and "lock_ms" not in answer.probe  # this encoder takes no lock
+        monkeypatch.setenv(dense_recall.ENABLE_ENV, "1")
+        context_hook.recall("weapon recoil spread", db_path=claims["db"], hook_data=claims["hook"])
+        assert WINDOW_KEYS <= set(_events(claims["log"])[-1]["probe"]["dense"])
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_an_old_service_without_a_probe_still_answers() -> None:
+    answer = dense_recall.DenseAnswer(((1, 0.9),), 30.0, 1.0, 3, "m")
+    assert answer.probe == {} and answer.outside == ()

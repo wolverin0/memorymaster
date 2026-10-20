@@ -5,7 +5,7 @@ Complete inventory of `MEMORYMASTER_*` variables referenced in the package,
 script after adding or removing a variable. For what each does, follow the
 listed source files (most are read next to a docstring or comment).
 
-Total: 312 variables.
+Total: 313 variables.
 
 | Variable | Referenced in |
 |---|---|
@@ -288,6 +288,7 @@ Total: 312 variables.
 | `MEMORYMASTER_SOURCE_AGENT` | `memorymaster/surfaces/mcp_server.py` |
 | `MEMORYMASTER_SPOOL_DIR` | `memorymaster/core/spool.py`, `memorymaster/profile/engine.py` |
 | `MEMORYMASTER_STALE_THRESHOLD` | `memorymaster/core/config.py` |
+| `MEMORYMASTER_STALL_PROBE` | `memorymaster/config_templates/hooks/memorymaster-recall.py`, `memorymaster/core/stall_probe.py`, `memorymaster/recall/dense_server.py` |
 | `MEMORYMASTER_STEWARD_CLASSIFIER_ENABLED` | `memorymaster/govern/steward_classifier.py` |
 | `MEMORYMASTER_STEWARD_CLASSIFIER_PATH` | `memorymaster/govern/steward_classifier.py` |
 | `MEMORYMASTER_STEWARD_FEATURE_CACHE` | `memorymaster/knowledge/wiki_similarity.py` |

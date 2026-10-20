@@ -8,7 +8,9 @@
 import json
 import os
 import sys
+import time
 
+_T0 = time.perf_counter()  # T-1648: what the hook itself costs before it asks the server
 PROJECT_ROOT = "__MEMORYMASTER_PROJECT_ROOT__"
 DB_PATH = os.path.join(PROJECT_ROOT, "memorymaster.db")
 
@@ -50,6 +52,19 @@ except ImportError:  # a package older than this template: the block exactly as 
     def active_task_text(cwd):
         return ""
 
+try:  # T-1648: OS process age = interpreter start-up + imports; absent on an older package or off Windows
+    from memorymaster.core.stall_probe import enabled as probe_enabled, process_age_ms  # noqa: E402
+except ImportError:
+    def probe_enabled():
+        return False
+
+    def process_age_ms():
+        return None
+
+_PROBE = probe_enabled()  # MEMORYMASTER_STALL_PROBE=0 turns off the OS lookup and the timing line
+_IMPORT_MS = round((time.perf_counter() - _T0) * 1000, 1)
+_BOOT_MS = process_age_ms() if _PROBE else None
+
 try:
     data = json.loads(sys.stdin.read() or "{}")
     query = data.get("prompt", "")
@@ -62,28 +77,39 @@ try:
     residual = ""
     if residual_state is not None and not automated and isinstance(full_session, str) and full_session:
         residual = residual_state.pending_block(full_session)
-    ctx, via = "", ""
+    ctx, via, timing = "", "", None
     if automated:
         log_hook("recall", "skip", session=session_id, reason="automated-event")
     elif is_trivial_prompt(query):
         log_hook("recall", "skip", session=session_id, reason="trivial-prompt", words=len(query.split()))
     else:
+        _t = time.perf_counter()
         log_hook("recall", "start", session=session_id, query_len=len(query))
+        log_ms = round((time.perf_counter() - _t) * 1000, 1)
         try:
+            _t = time.perf_counter()
             from memorymaster.recall.remote import hook_recall  # T-0594: warm shared server first
+            remote_import_ms = round((time.perf_counter() - _t) * 1000, 1)
             # hook_data opts into the S2 RECALL Jev surface (inert unless MEMORYMASTER_JEV_* is on).
             extra = {"hook_data": data} if JEV_OPT_IN else {}
+            _t = time.perf_counter()
             ctx, via = hook_recall(query, extra.get("hook_data"), db_path=DB_PATH)
+            recall_ms = round((time.perf_counter() - _t) * 1000, 1)
+            _t = time.perf_counter()
             mode = format_mode()
             if ctx and mode != "current":
                 claims_in = ctx.count("\n- [mm-")
                 ctx = apply_format(ctx, query, active_task_text(data.get("cwd") or ""), mode)
                 log_hook("recall", "format", session=session_id, mode=mode, claims_in=claims_in,
                          claims_out=ctx.count("\n- [mm-") if ctx else 0)
+            format_ms = round((time.perf_counter() - _t) * 1000, 1)
+            timing = {"log_ms": log_ms, "remote_import_ms": remote_import_ms, "recall_ms": recall_ms,
+                      "format_ms": format_ms}
         except Exception as e:
             if not residual:
                 raise
             log_hook("recall", "error", message=str(e)[:200])  # a recall failure must not drop the residual
+    _t = time.perf_counter()
     parts = ([residual] if residual else []) + ([recall_block(ctx)] if ctx else [])
     if parts:
         def emit(output):
@@ -93,5 +119,10 @@ try:
         if sent and residual:
             residual_state.consume(full_session)  # one block, once
         log_hook("recall", "done", session=session_id, hit=bool(ctx), residual=bool(residual), delivered=sent, via=via)
+    # T-1648: logged for every recall outcome, including skipped_busy (the timeouts), which logged nothing before.
+    if _PROBE and timing:
+        log_hook("recall", "timing", session=session_id, via=via, import_ms=_IMPORT_MS, boot_ms=_BOOT_MS,
+                 deliver_ms=round((time.perf_counter() - _t) * 1000, 1),
+                 total_ms=round((time.perf_counter() - _T0) * 1000, 1), **timing)
 except Exception as e:
     log_hook("recall", "error", message=str(e)[:200])

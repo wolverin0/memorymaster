@@ -1423,26 +1423,41 @@ def _recall_impl(
     """
     MemoryService = _memory_service_cls
     db = db_path or os.environ.get("MEMORYMASTER_DEFAULT_DB") or "memorymaster.db"
+    # T-1648: stall attribution probes, dense prompt hook only (observation; see core/stall_probe.py).
+    probe = None
+    if _hook_data is not None:
+        from memorymaster.core import stall_probe
+        from memorymaster.recall import dense_recall
+
+        if dense_recall.enabled() and stall_probe.enabled():
+            probe = stall_probe.Window(db)
+    stage_start = time.perf_counter()
     # Recall is always query-only. Access/feedback signals are emitted once,
     # after top-level ranking and budget selection, through the RO spool path.
     svc = MemoryService(db_target=db, workspace_root=Path.cwd(), read_only=True)
+    svc_ms = _stage_ms(stage_start)
+    stage_start = time.perf_counter()
     prompt_plan = _prompt_recall_plan(query, limit=100)
+    plan_ms = _stage_ms(stage_start)
 
     # Dense prompt recall (EmbeddingGemma 2 service, MEMORYMASTER_RECALL_DENSE=1).
     # Prompt hook only; when the service cannot answer, lexical recall below runs.
     if _hook_data is not None:
-        from memorymaster.recall import dense_recall
-
         if dense_recall.enabled():
             dense_started = time.perf_counter()
+            stage_start = time.perf_counter()
+            seen = _session_seen(_hook_data)
+            seen_ms = _stage_ms(stage_start)
             with _phase_timer(phase_ms, "dense"):
-                dense_rows, dense_metrics = _dense_prompt_rows(svc, query, prompt_plan, _session_seen(_hook_data))
+                dense_rows, dense_metrics = _dense_prompt_rows(svc, query, prompt_plan, seen)
+            stages = {"svc_ms": svc_ms, "plan_ms": plan_ms, "seen_ms": seen_ms, **dense_metrics.pop("probe", {})}
             event = {"scope": _current_scope(), "query_fp": dense_recall.query_fingerprint(query),
                      "query_chars": len(query), **dense_metrics}
             if dense_rows is not None:
                 text, rendered = _finish_recall(
                     query, dense_rows, budget=budget, svc=svc, phase_ms=phase_ms,
                     rank_start=time.perf_counter(), hook_data=_hook_data, rendered_ids=_rendered_ids,
+                    stages=stages,
                 )
                 event.update({
                     "outcome": "dense" if rendered else "dense_empty",
@@ -1451,9 +1466,13 @@ def _recall_impl(
                     "chars": len(text),
                     "total_ms": dense_recall.elapsed_ms(dense_started),
                 })
+                if probe is not None:
+                    event["probe"] = probe.finish(**stages)
                 dense_recall.record(event)
                 return text
             event["total_ms"] = dense_recall.elapsed_ms(dense_started)
+            if probe is not None:
+                event["probe"] = probe.finish(**stages)
             dense_recall.record(event)
 
     # Pre-extract salient tokens before hitting FTS5. Passing the full
@@ -2177,7 +2196,12 @@ def _session_seen(hook_data: dict | None) -> frozenset[int]:
     return hook_policy.seen_ids(session) if session else frozenset()
 
 
-def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_data, rendered_ids):
+def _stage_ms(started: float) -> float:
+    """Milliseconds since ``started`` (a ``perf_counter`` reading), for the stall probes (T-1648)."""
+    return round((time.perf_counter() - started) * 1000.0, 1)
+
+
+def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_data, rendered_ids, stages=None):
     """Render the ranked rows within budget, apply S2, record ids and accesses.
 
     The prompt hook (``hook_data`` given) injects at most ``hook_policy.max_claims()``
@@ -2186,25 +2210,40 @@ def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_dat
     """
     limit = None
     if hook_data is not None:
+        stage_start = time.perf_counter()
         seen = _session_seen(hook_data)
+        if stages is not None:
+            stages["seen_ms"] = round(stages.get("seen_ms", 0.0) + _stage_ms(stage_start), 1)
         ranked = [row for row in ranked if getattr(row.get("claim"), "id", None) not in seen]
         limit = hook_policy.max_claims()
     # Build output — top claims within budget
+    stage_start = time.perf_counter()
     lines, rendered_rows = _render_recall_lines(ranked, budget, limit=limit)
+    if stages is not None:
+        stages["render_ms"] = _stage_ms(stage_start)
     # S2 RECALL (Jev, 4.9.0): only the prompt hook opts in by passing its
     # payload; with the surface off this is a no-op and the block is unchanged.
     if hook_data is not None:
+        stage_start = time.perf_counter()
         jev_rendering = _jev_recall_rendering(query, ranked, lines, rendered_rows, budget, hook_data, phase_ms)
         if jev_rendering is not None:
             lines, rendered_rows = jev_rendering
+        if stages is not None:
+            stages["jev_ms"] = _stage_ms(stage_start)
     injected = [cid for row in rendered_rows if isinstance(cid := getattr(row.get("claim"), "id", None), int)]
     if rendered_ids is not None:
         rendered_ids.extend(injected)
+    stage_start = time.perf_counter()
     if hook_data is not None and (session := hook_policy.session_id_of(hook_data)):
         hook_policy.remember(session, injected)
+    if stages is not None:
+        stages["remember_ms"] = _stage_ms(stage_start)
 
+    stage_start = time.perf_counter()
     if rendered_rows:
         svc._record_accesses(rendered_rows, query_text=query)
+    if stages is not None:
+        stages["access_ms"] = _stage_ms(stage_start)
 
     # Close the rank_and_build timer right before we emit output so the
     # measurement covers _relevance/RRF + the budget-trimming loop.
@@ -2233,7 +2272,12 @@ def _dense_prompt_rows(svc, query: str, plan, seen: frozenset[int] = frozenset()
     try:
         answer = dense_recall.search(query, scopes, outside_k=dense_recall.FETCH_K if scopes else 0)
     except dense_recall.DenseUnavailable as exc:
-        return None, {"outcome": f"fallback:{exc}", "service_ms": dense_recall.elapsed_ms(started)}
+        return None, {"outcome": f"fallback:{exc}", "service_ms": dense_recall.elapsed_ms(started),
+                      "probe": {"rtt_ms": _stage_ms(started)}}
+    rtt_ms = _stage_ms(started)
+    service_probe = answer.probe
+    hydrate_started = time.perf_counter()
+    claim_s, claims_n = 0.0, 0
     threshold, outside_threshold = dense_recall.min_score(), dense_recall.outside_min_score()
     open_plan = dataclasses.replace(plan, scope_allowlist=None)
     candidates = sorted(
@@ -2253,11 +2297,14 @@ def _dense_prompt_rows(svc, query: str, plan, seen: frozenset[int] = frozenset()
         if cid in seen:  # ... and once per session
             suppressed += 1
             continue
+        claim_started = time.perf_counter()
         try:
             claim = svc.store.get_claim(cid, include_citations=True)
         except Exception as exc:  # noqa: BLE001 — a bad id must not break recall
             logger.debug("dense hydrate get_claim(%d) failed: %s", cid, exc)
             claim = None
+        claim_s += time.perf_counter() - claim_started
+        claims_n += 1
         row = {**_row_for_graph_claim(claim, 0.0), "dense_score": score, "source": "dense"} if claim else None
         if row is None or not _filter_prompt_rows([row], open_plan if outside else plan):
             filtered_out += 1
@@ -2265,6 +2312,8 @@ def _dense_prompt_rows(svc, query: str, plan, seen: frozenset[int] = frozenset()
         row["dense_outside"] = outside
         rows.append(row)
     return rows, {
+        "probe": {"rtt_ms": rtt_ms, "hydrate_ms": _stage_ms(hydrate_started), "claim_ms": round(claim_s * 1000.0, 1),
+                  "claims_n": claims_n, **({"dense": service_probe} if service_probe else {})},
         "service_ms": dense_recall.elapsed_ms(started),
         "embed_ms": answer.embed_ms,
         "search_ms": answer.search_ms,
