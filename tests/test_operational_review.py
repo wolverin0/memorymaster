@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -108,6 +109,39 @@ def test_clean_review_checks_pass(tmp_path: Path, monkeypatch) -> None:
     assert review.exit_code(results) == 0
     assert {item.verdict for item in results} == {review.Verdict.PASS}
     assert results[-1].name == "beat_health" and "inactive" in results[-1].detail
+
+
+def test_snapshot_dir_fresh_stale_and_unreachable(tmp_path: Path, monkeypatch) -> None:
+    now = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
+    folder = tmp_path / "snapshots"
+    folder.mkdir()
+    snapshot = folder / "db.sqlite"
+    snapshot.write_bytes(b"snapshot")
+    monkeypatch.setattr(review, "_utc", lambda value=None: now if value is None else value.astimezone(timezone.utc))
+    import os
+    os.utime(snapshot, (now.timestamp() - 3600, now.timestamp() - 3600))
+    config = review.ReviewConfig(db=tmp_path / "db", snapshot_dir=folder)
+    assert review.check_snapshot_dir(config, now=now).verdict is review.Verdict.PASS
+    os.utime(snapshot, (now.timestamp() - 9 * 86400, now.timestamp() - 9 * 86400))
+    assert review.check_snapshot_dir(config, now=now).verdict is review.Verdict.WARN
+    assert review.check_snapshot_dir(review.ReviewConfig(db=config.db, snapshot_dir=tmp_path / "absent"), now=now).verdict is review.Verdict.FAIL
+
+
+def test_scheduled_slots_complete_and_missing(tmp_path: Path) -> None:
+    now = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
+    logs = {}
+    for mode in ("dream", "steward"):
+        path = tmp_path / f"{mode}.log"
+        lines = []
+        for hours in (1, 7, 13, 19):
+            stamp = (now - timedelta(hours=hours)).isoformat()
+            lines.append(json.dumps({"event": "job_start", "job": mode, "ts": stamp}))
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        logs[mode] = path
+    config = review.ReviewConfig(db=tmp_path / "db", dream_log=logs["dream"], steward_log=logs["steward"])
+    assert review.check_scheduled_slots(config, now=now).verdict is review.Verdict.PASS
+    logs["dream"].write_text("", encoding="utf-8")
+    assert review.check_scheduled_slots(config, now=now).verdict is review.Verdict.FAIL
 
 
 def test_private_context_and_blocked_job_fail(tmp_path: Path, monkeypatch) -> None:

@@ -82,6 +82,9 @@ class ReviewConfig:
     # guard log next to it).
     capture_state_db: Path | None = None
     beat_guard_log: Path | None = None
+    snapshot_dir: Path | None = None
+    dream_log: Path | None = None
+    steward_log: Path | None = None
 
 
 def _configured_canaries(config: ReviewConfig) -> list[tuple[str, str]]:
@@ -720,6 +723,60 @@ def check_checkpoint_delivery(config: ReviewConfig, *, now: datetime | None = No
     return ReviewResult("checkpoint_delivery", verdict, detail, counts)
 
 
+SNAPSHOT_MAX_AGE_DAYS = 7
+
+
+def check_snapshot_dir(config: ReviewConfig, *, now: datetime | None = None) -> ReviewResult:
+    directory = config.snapshot_dir or Path(os.environ.get("MEMORYMASTER_SNAPSHOT_DIR", "~/.memorymaster/snapshots")).expanduser()
+    try:
+        if not directory.is_dir():
+            return ReviewResult("snapshot_dir", Verdict.FAIL, "snapshot directory missing or unreachable")
+        # Listing validates access independently of the newest-file probe.
+        files = [path for path in directory.iterdir() if path.is_file()]
+        newest = max((path.stat().st_mtime for path in files), default=None)
+    except OSError as exc:
+        return ReviewResult("snapshot_dir", Verdict.FAIL, f"probe_error={type(exc).__name__}")
+    max_age = max(1, int(os.environ.get("MEMORYMASTER_SNAPSHOT_MAX_AGE_DAYS", SNAPSHOT_MAX_AGE_DAYS)))
+    if newest is None:
+        return ReviewResult("snapshot_dir", Verdict.WARN, "no snapshot files found", {"snapshot_files": 0})
+    age_days = max(0.0, (_utc(now).timestamp() - newest) / 86400)
+    verdict = Verdict.WARN if age_days > max_age else Verdict.PASS
+    return ReviewResult("snapshot_dir", verdict, f"newest snapshot age={age_days:.2f}d (max {max_age}d)",
+                        {"snapshot_files": len(files), "newest_age_hours": int(age_days * 24)})
+
+
+def check_scheduled_slots(config: ReviewConfig, *, now: datetime | None = None) -> ReviewResult:
+    end = _utc(now)
+    expected = {"dream": 4, "steward": 4}
+    paths = {
+        "dream": config.dream_log or Path(os.environ.get("MEMORYMASTER_DREAM_LOG", "~/.memorymaster/logs/dream.log")).expanduser(),
+        "steward": config.steward_log or Path(os.environ.get("MEMORYMASTER_STEWARD_LOG", "~/.memorymaster/logs/steward.log")).expanduser(),
+    }
+    missing = 0
+    details = []
+    for mode, path in paths.items():
+        starts = []
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        for line in text.splitlines():
+            try:
+                event = json.loads(line)
+                stamp = _parse_utc(str(event.get("ts", "")))
+                if event.get("event") == "job_start" and stamp and end - timedelta(hours=24) <= stamp <= end:
+                    starts.append(stamp)
+            except (ValueError, TypeError):
+                continue
+        slots = {int((stamp.timestamp() // 21600)) for stamp in starts}
+        absent = max(0, expected[mode] - len(slots))
+        missing += absent
+        details.append(f"{mode}_runs={len(slots)}/4")
+    verdict = Verdict.FAIL if missing >= 2 else Verdict.WARN if missing else Verdict.PASS
+    return ReviewResult("scheduled_slots", verdict, "; ".join(details) + f"; missing_slots={missing}",
+                        {"missing_slots": missing})
+
+
 # AO-2 beat health (M3 lag, M4 latency guard). Read-only; silent (PASS) until the beat has run.
 BEAT_WINDOW_HOURS = 24
 BEAT_LAG_TARGET_SECONDS = 3600
@@ -846,7 +903,8 @@ def check_beat_health(config: ReviewConfig, *, now: datetime | None = None) -> R
 
 REVIEW_CHECKS = (check_runtime, check_database, check_feature_activation, check_graph_observations,
                  check_compiled_profile, check_recent_private_context, check_retrieval,
-                 check_jev_decisions, check_checkpoint_delivery, check_beat_health)
+                 check_jev_decisions, check_checkpoint_delivery, check_beat_health,
+                 check_snapshot_dir, check_scheduled_slots)
 
 
 def exit_code(results: Iterable[ReviewResult]) -> int:
