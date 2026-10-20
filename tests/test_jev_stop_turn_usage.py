@@ -174,7 +174,8 @@ def test_slow_joiner_is_bounded_and_output_stays_exact(tmp_path, monkeypatch, ca
     release.set()
 
     assert calls == [SESSION]
-    assert elapsed < 1.0
+    # Bounded by the hook's own budget (2 s since T-1663), never by the 5 s the joiner hangs.
+    assert elapsed < module.TURN_USAGE_BUDGET_S + 0.5
     assert capsys.readouterr().out == APPROVE
 
 
