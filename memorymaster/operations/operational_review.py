@@ -736,7 +736,10 @@ def check_snapshot_dir(config: ReviewConfig, *, now: datetime | None = None) -> 
         newest = max((path.stat().st_mtime for path in files), default=None)
     except OSError as exc:
         return ReviewResult("snapshot_dir", Verdict.FAIL, f"probe_error={type(exc).__name__}")
-    max_age = max(1, int(os.environ.get("MEMORYMASTER_SNAPSHOT_MAX_AGE_DAYS", SNAPSHOT_MAX_AGE_DAYS)))
+    try:
+        max_age = max(1, int(os.environ.get("MEMORYMASTER_SNAPSHOT_MAX_AGE_DAYS", SNAPSHOT_MAX_AGE_DAYS)))
+    except ValueError:
+        max_age = SNAPSHOT_MAX_AGE_DAYS
     if newest is None:
         return ReviewResult("snapshot_dir", Verdict.WARN, "no snapshot files found", {"snapshot_files": 0})
     age_days = max(0.0, (_utc(now).timestamp() - newest) / 86400)
@@ -763,12 +766,16 @@ def check_scheduled_slots(config: ReviewConfig, *, now: datetime | None = None) 
         for line in text.splitlines():
             try:
                 event = json.loads(line)
-                stamp = _parse_utc(str(event.get("ts", "")))
-                if event.get("event") == "job_start" and stamp and end - timedelta(hours=24) <= stamp <= end:
-                    starts.append(stamp)
-            except (ValueError, TypeError):
+            except ValueError:
                 continue
-        slots = {int((stamp.timestamp() // 21600)) for stamp in starts}
+            if not isinstance(event, dict) or event.get("event") != "job_start":
+                continue
+            stamp = _parse_utc(str(event.get("ts", "")))
+            if stamp and end - timedelta(hours=24) <= stamp <= end:
+                starts.append(stamp)
+        # Slots are counted relative to ``end`` (0..3), not by fixed UTC epochs: a 24 h window
+        # that is not aligned to a 6 h boundary would otherwise span five epoch buckets.
+        slots = {min(3, int((end - stamp).total_seconds() // 21600)) for stamp in starts}
         absent = max(0, expected[mode] - len(slots))
         missing += absent
         details.append(f"{mode}_runs={len(slots)}/4")

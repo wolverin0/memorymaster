@@ -109,6 +109,23 @@ def test_clean_review_checks_pass(tmp_path: Path, monkeypatch) -> None:
     assert review.exit_code(results) == 0
     assert {item.verdict for item in results} == {review.Verdict.PASS}
     assert results[-1].name == "beat_health" and "inactive" in results[-1].detail
+    # T-1662: the snapshot/slot checks are the last two registered checks and pass on
+    # hermetic fixtures (a fresh snapshot, four job_start events per job).
+    assert [check.__name__ for check in review.REVIEW_CHECKS[-2:]] == ["check_snapshot_dir", "check_scheduled_slots"]
+    now = datetime.now(timezone.utc)
+    snapshots = tmp_path / "snapshots"
+    snapshots.mkdir()
+    (snapshots / "db.sqlite").write_bytes(b"snapshot")
+    logs = {}
+    for mode in ("dream", "steward"):
+        logs[mode] = tmp_path / f"{mode}.log"
+        logs[mode].write_text("".join(json.dumps({"event": "job_start", "job": mode,
+                                                   "ts": (now - timedelta(hours=h)).isoformat()}) + "\n"
+                                      for h in (1, 7, 13, 19)), encoding="utf-8")
+    hermetic = review.ReviewConfig(db=config.db, snapshot_dir=snapshots,
+                                   dream_log=logs["dream"], steward_log=logs["steward"])
+    assert review.check_snapshot_dir(hermetic, now=now).verdict is review.Verdict.PASS
+    assert review.check_scheduled_slots(hermetic, now=now).verdict is review.Verdict.PASS
 
 
 def test_snapshot_dir_fresh_stale_and_unreachable(tmp_path: Path, monkeypatch) -> None:
@@ -125,6 +142,12 @@ def test_snapshot_dir_fresh_stale_and_unreachable(tmp_path: Path, monkeypatch) -
     os.utime(snapshot, (now.timestamp() - 9 * 86400, now.timestamp() - 9 * 86400))
     assert review.check_snapshot_dir(config, now=now).verdict is review.Verdict.WARN
     assert review.check_snapshot_dir(review.ReviewConfig(db=config.db, snapshot_dir=tmp_path / "absent"), now=now).verdict is review.Verdict.FAIL
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert review.check_snapshot_dir(review.ReviewConfig(db=config.db, snapshot_dir=empty), now=now).verdict is review.Verdict.WARN
+    # A bad max-age override falls back to the default instead of crashing the review.
+    monkeypatch.setenv("MEMORYMASTER_SNAPSHOT_MAX_AGE_DAYS", "soon")
+    assert review.check_snapshot_dir(config, now=now).verdict is review.Verdict.WARN
 
 
 def test_scheduled_slots_complete_and_missing(tmp_path: Path) -> None:
@@ -140,6 +163,15 @@ def test_scheduled_slots_complete_and_missing(tmp_path: Path) -> None:
         logs[mode] = path
     config = review.ReviewConfig(db=tmp_path / "db", dream_log=logs["dream"], steward_log=logs["steward"])
     assert review.check_scheduled_slots(config, now=now).verdict is review.Verdict.PASS
+    # The review rarely runs on a 6-hour boundary: slots are relative to ``now``, so a
+    # window ending at 13:47 still sees exactly four slots.
+    assert review.check_scheduled_slots(config, now=now + timedelta(hours=1, minutes=47)).verdict is review.Verdict.PASS
+    # One missing slot (a run skipped at 13 h ago) is a WARN; two runs in the same slot do not hide it.
+    lines = [json.dumps({"event": "job_start", "job": "dream", "ts": (now - timedelta(hours=h)).isoformat()})
+             for h in (1, 2, 7, 19)]
+    logs["dream"].write_text("\n".join(lines) + "\nnot json\n[1, 2]\n", encoding="utf-8")
+    result = review.check_scheduled_slots(config, now=now)
+    assert result.verdict is review.Verdict.WARN and result.counts["missing_slots"] == 1
     logs["dream"].write_text("", encoding="utf-8")
     assert review.check_scheduled_slots(config, now=now).verdict is review.Verdict.FAIL
 
