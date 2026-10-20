@@ -158,22 +158,24 @@ def save_residual(
     if not items:
         return None
     path = residual_path(session_id, directory)
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "session": safe_session(session_id),
         "created_at": time.time() if now is None else now,
         "items": items,
         "meta": meta or {},
     }
-    handle = tempfile.NamedTemporaryFile(
-        "w", encoding="utf-8", dir=path.parent, delete=False, suffix=".tmp", prefix="residual_"
-    )
+    temporary: str | None = None
     try:
-        with handle:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=path.parent, delete=False, suffix=".tmp", prefix="residual_"
+        ) as handle:
+            temporary = handle.name
             json.dump(payload, handle, ensure_ascii=False)
-        os.replace(handle.name, path)
+        os.replace(temporary, path)
     except OSError:
-        Path(handle.name).unlink(missing_ok=True)
+        if temporary:
+            Path(temporary).unlink(missing_ok=True)
         return None
     return path
 
@@ -190,6 +192,7 @@ def pending_block(
         payload = json.loads(path.read_text(encoding="utf-8"))
         age = (time.time() if now is None else now) - float(payload["created_at"])
         if age > TTL_SECONDS:
+            consume(session_id, directory=directory)  # an expired marker is dead weight: delete it, do not re-parse it
             return ""
         return render_block(_fit([i for i in payload["items"] if i.get("kind") in KINDS and i.get("text")]))
     except (OSError, ValueError, TypeError, KeyError):
