@@ -212,6 +212,8 @@ class DreamConfig:
     # for at most this many days after the hold (never while quarantined).
     held_retain_days: int = held.HELD_RETAIN_DAYS
     enable_graph_observations: bool = False
+    # Backfill must opt out before touching the live process-wide decision engine.
+    jev_triage_enabled: bool = True
 
     @classmethod
     def from_env(cls) -> "DreamConfig":
@@ -239,6 +241,7 @@ class DreamConfig:
             enable_graph_observations=_env_bool(
                 "MEMORYMASTER_GRAPH_OBSERVATIONS", False
             ),
+            jev_triage_enabled=_env_bool("MEMORYMASTER_DREAM_JEV_TRIAGE_ENABLED", True),
         )
 
 
@@ -256,11 +259,13 @@ class DreamWorker:
 
     def _decisions_ledger(self) -> Any:
         """The S3 decisions ledger: the injected engine's, else the configured one (``None``)."""
+        if not self.config.jev_triage_enabled:
+            return None
         return getattr(self.decision_engine, "ledger", None) if self.decision_engine is not None else None
 
     def _record_verdicts(self, capture_id: int, decisions: list[dict[str, Any]]) -> None:
         """S3 rewards: the consolidator's verdict on each triaged candidate of this capture."""
-        if not decisions:
+        if not self.config.jev_triage_enabled or not decisions:
             return
         try:
             notes = held.triage_notes(self.ledger.get_capture(capture_id).get("extraction"))
@@ -274,6 +279,8 @@ class DreamWorker:
 
     def _record_claim_link(self, note: dict[str, Any], claim_id: int) -> None:
         """S3 rewards: tie the created claim to its candidate's decision for the lifecycle joiner."""
+        if not self.config.jev_triage_enabled:
+            return
         try:
             held.record_claim_link(self._decisions_ledger(), note, claim_id, observed_at=self.now().isoformat())
         except Exception as exc:  # noqa: BLE001 - telemetry never fails an application
@@ -281,6 +288,8 @@ class DreamWorker:
 
     def _record_held_expired(self, notes: list[dict[str, Any]]) -> None:
         """Ruling R7: held candidates pruned with their capture leave ``held_expired`` outcomes."""
+        if not self.config.jev_triage_enabled:
+            return
         held.record_expired(self._decisions_ledger(), notes, observed_at=self.now().isoformat())
 
     def _hold_lease(self) -> None:
@@ -591,6 +600,8 @@ class DreamWorker:
         every other outcome, including every fallback, is the legacy path.
         """
         payloads = list(row.get("extraction") or [])
+        if not self.config.jev_triage_enabled:
+            return payloads
         notes: dict[str, dict[str, Any]] = {}
         for payload in payloads:
             if held.annotation(payload) is None:
