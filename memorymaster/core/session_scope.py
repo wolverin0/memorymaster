@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from memorymaster.core.scope_utils import canonicalize_slug
+from memorymaster.core.scope_utils import canonicalize_slug, scope_from_cwd
 from memorymaster.core.security import redact_text
 from memorymaster.stores._storage_shared import open_conn
 
@@ -348,7 +348,9 @@ class SessionScopeResolver:
     @staticmethod
     def _workspace_or_user(workspace: Path | None) -> tuple[str, str]:
         if workspace is not None and workspace.is_dir() and workspace.name:
-            return f"project:{canonicalize_slug(workspace.name)}", "verified_workspace"
+            scope = scope_from_cwd(workspace)
+            if scope != "global":
+                return scope, "verified_workspace"
         return "user", "default_user"
 
     @staticmethod

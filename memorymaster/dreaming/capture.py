@@ -11,6 +11,7 @@ from typing import Any, Mapping
 
 from memorymaster.core.capture_control import CaptureLedger
 from memorymaster.core.security import redact_text
+from memorymaster.core.scope_utils import scope_from_cwd
 from memorymaster.dreaming.ledger import DreamLedger
 from memorymaster.dreaming.models import CaptureEnvelope, DreamMessage
 
@@ -85,21 +86,7 @@ def parse_transcript_lines(text: str, provider: str) -> list[DreamMessage]:
 
 
 def _scope(cwd: str | None) -> str:
-    if not cwd:
-        return "global"
-    current = Path(cwd)
-    child_repositories = sum(
-        1 for child in current.iterdir()
-        if child.is_dir() and (child / ".git").exists()
-    ) if current.is_dir() else 0
-    if child_repositories > 1:
-        return "global"
-    for candidate in (current, *current.parents):
-        if (candidate / ".git").exists():
-            current = candidate
-            break
-    slug = re.sub(r"[^a-z0-9]+", "-", current.name.lower()).strip("-")
-    return f"project:{slug or 'unknown'}"
+    return scope_from_cwd(cwd)
 
 
 def capture_transcript(

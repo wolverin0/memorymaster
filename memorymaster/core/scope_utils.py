@@ -10,10 +10,9 @@ The fix: read the authoritative ``cwd`` field from the transcript JSONL
 metadata. Each session record carries the working directory the session was
 launched in. Slug decoding stays as a last-resort fallback.
 
-The 2026-04-09 v3.3.1 release patched a related bug
-(``_project_scope`` was appending an SHA1 hash suffix unconditionally). This
-helper sits one layer up: it tells callers WHICH cwd to feed
-``_project_scope``.
+Project identity comes from Git's common directory for linked worktrees;
+operator folder aliases override it. Capture, session bindings and surfaces
+share this resolution rather than deriving disposable checkout scopes.
 """
 from __future__ import annotations
 
@@ -43,11 +42,7 @@ PROJECT_ROOT_MARKERS = ("CLAUDE.md", "AGENTS.md")
 MAX_ANCESTOR_DEPTH = 4
 
 
-_SLUG_NORMALIZER_RE = re.compile(r"\s+")
-
-# ---- slug canonicalization (copied verbatim from surfaces/mcp_server.py) ----
-# These regexes are the single source of truth; mcp_server.py imports them
-# from here (or keeps its own copy for now — both produce identical output).
+# Shared slug canonicalization; surfaces import these rules.
 
 _SCOPE_SAFE_RE = re.compile(r"[^a-z0-9_-]+")
 # Windows / macOS "Copy" artefacts and trailing "(1)"-style numeric variants.
@@ -193,26 +188,99 @@ def _scope_aliases() -> dict[str, str]:
     return _ALIAS_CACHE["map"]  # type: ignore[return-value]
 
 
-def scope_from_cwd(cwd: str | os.PathLike[str] | None) -> str:
-    """Derive a ``project:<slug>`` scope from a CWD path.
+def _git_project_root(current: Path) -> tuple[Path, Path] | None:
+    """Read Git's gitdir/commondir pointers without launching a hook-time process.
 
-    - ``cwd is None`` or empty → ``"global"``
-    - Non-empty cwd → ``project:<lowercased-basename-with-spaces-as-dashes>``
-
-    Spaces, mixed case, and trailing separators are normalised. This is the
-    same shape the deployed Stop hook produces, lifted into a re-usable
-    helper so other callers (verbatim_store, dream-ingest, batch importers)
-    can match it byte-for-byte.
+    Gitfile paths are relative to the checkout; commondir paths are relative
+    to the per-worktree gitdir. An ordinary gitfile (e.g. a submodule) with no
+    commondir still belongs to its own checkout, not the metadata directory.
+    Return both checkout and common project roots so checkout aliases also
+    apply when a session starts in a subdirectory.
     """
-    if not cwd:
+    ceilings = {
+        Path(raw).resolve() for raw in os.environ.get("GIT_CEILING_DIRECTORIES", "").split(os.pathsep) if raw
+    }
+    candidates = (current,) if current in ceilings else (current, *current.parents)
+    for candidate in candidates:
+        if candidate != current and candidate in ceilings:
+            break
+        dotgit = candidate / ".git"
+        try:
+            if dotgit.is_dir():
+                gitdir = dotgit
+            elif dotgit.is_file():
+                pointer = dotgit.read_text(encoding="utf-8").strip()
+                if not pointer.startswith("gitdir:") or not pointer[7:].strip():
+                    return None
+                gitdir = (candidate / pointer[7:].strip()).resolve()
+                if not gitdir.is_dir():
+                    return None
+            else:
+                continue
+            commondir = gitdir / "commondir"
+            if not commondir.is_file():
+                return candidate, candidate
+            pointer = commondir.read_text(encoding="utf-8").strip()
+            if not pointer:
+                return None
+            common = (gitdir / pointer).resolve()
+            if not common.is_dir():
+                return None
+            # Linked worktrees share the main checkout's .git directory.
+            # Bare repositories conventionally use <project>.git instead.
+            if common.name.lower() == ".git":
+                return candidate, common.parent
+            project = common.with_suffix("") if common.suffix.lower() == ".git" else common
+            return candidate, project
+        except (OSError, ValueError, UnicodeError):
+            return None
+    return None
+
+
+def scope_from_cwd(cwd: str | os.PathLike[str] | None) -> str:
+    """Resolve the project once for capture, hooks, session bindings and MCP.
+
+    Explicit folder aliases win. Otherwise the nearest Git checkout's common
+    directory identifies the project, including worktrees with arbitrary
+    names or locations. Non-Git folders keep basename scope derivation;
+    multi-repository collection roots and empty paths use global scope.
+    """
+    raw = str(cwd or "").strip()
+    current = Path(raw)
+    if not raw:
         return "global"
-    name = Path(str(cwd)).name
-    if not name:
+    aliases = _scope_aliases()
+    # Preserve exact folder aliases, including names canonicalize_slug folds
+    # and symlink names that resolve to differently named project folders.
+    folder_slug = re.sub(r"\s+", "-", current.name.strip().lower())
+    if folder_slug in aliases:
+        return aliases[folder_slug]
+    try:
+        current = current.resolve()
+    except (OSError, ValueError):
+        pass
+    if not current.name:
         return "global"
-    slug = _SLUG_NORMALIZER_RE.sub("-", name.strip().lower())
-    if not slug:
-        return "global"
-    return _scope_aliases().get(slug, f"project:{slug}")
+    try:
+        roots = _git_project_root(current)
+        if roots is None and current.is_dir() and sum(
+            1 for child in current.iterdir()
+            if child.is_dir() and (child / ".git").exists()
+        ) > 1:
+            return "global"
+    except (OSError, ValueError):
+        roots = None
+    if roots is not None:
+        checkout, root = roots
+        checkout_slug = re.sub(r"\s+", "-", checkout.name.strip().lower())
+        if checkout_slug in aliases:
+            return aliases[checkout_slug]
+        name = root.name
+    else:
+        name = current.name
+    slug = canonicalize_slug(name)
+    folder_slug = re.sub(r"\s+", "-", name.strip().lower())
+    return aliases.get(folder_slug, aliases.get(slug, f"project:{slug}"))
 
 
 def cwd_from_transcript(transcript_path: str | os.PathLike[str] | None) -> str | None:
