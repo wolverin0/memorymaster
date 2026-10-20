@@ -78,6 +78,7 @@ Total: 313 variables.
 | `MEMORYMASTER_DREAM_MAX_CAPTURE_ERRORS` | `memorymaster/dreaming/worker.py` |
 | `MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CALLS_DAILY` | `memorymaster/dreaming/worker.py` |
 | `MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CANDIDATES` | `memorymaster/dreaming/worker.py` |
+| `MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CAPTURES_PER_RUN` | `memorymaster/dreaming/worker.py` |
 | `MEMORYMASTER_DREAM_MAX_CONTEXT_CHARS` | `memorymaster/dreaming/worker.py` |
 | `MEMORYMASTER_DREAM_MAX_EXTRACT_CALLS_DAILY` | `memorymaster/dreaming/worker.py` |
 | `MEMORYMASTER_DREAM_MAX_INPUT_CHARS` | `memorymaster/dreaming/worker.py` |

@@ -239,10 +239,15 @@ class DreamLedger:
             )
 
     def record_source_mtime(self, capture_id: int, mtime: float) -> None:
-        """Keep the EARLIEST source mtime of a capture: a coalesced row's lag is its oldest bytes'."""
+        """Keep the LATEST source mtime of a capture (M3 lag is measured from the last write).
+
+        A capture cannot be processed before its session has been idle, so the lag that says
+        whether the beat is working is processed minus the newest write, not minus the oldest
+        bytes of a long coalesced session.
+        """
         with self._connect() as conn:
             conn.execute(
-                "UPDATE dream_captures SET source_mtime=? WHERE id=? AND source_mtime IS NULL",
+                "UPDATE dream_captures SET source_mtime=MAX(COALESCE(source_mtime, 0), ?) WHERE id=?",
                 (float(mtime), capture_id),
             )
 

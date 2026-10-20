@@ -103,6 +103,8 @@ def test_scan_is_incremental_and_resumes_from_the_byte_cursor(world) -> None:
     assert claude_rows[-1]["cursor_end"] == world["claude_file"].stat().st_size
     assert "caching" in claude_rows[-1]["messages_json"]
     assert "build pipeline" in claude_rows[-1]["messages_json"]
+    # M3 measures from the last write, so a coalesced long session carries its newest mtime.
+    assert claude_rows[-1]["source_mtime"] == pytest.approx(NOW.timestamp() - 10, abs=1)
 
 
 def test_cold_start_ignores_transcripts_older_than_the_lookback(world) -> None:

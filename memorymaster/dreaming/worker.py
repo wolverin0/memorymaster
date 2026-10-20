@@ -183,9 +183,11 @@ class DreamConfig:
     max_candidate_writes_daily: int = 200
     max_extract_calls_daily: int = 40
     max_consolidate_calls_daily: int = 12
-    # AO-2 beat: consolidation calls ONE run may make (0 = no per-run cap). The rest of
-    # the queue is deferred with the same state as a daily-budget deferral.
-    max_consolidate_calls_per_run: int = 0
+    # AO-2 beat: captures whose consolidation may START in one run (0 = no per-run cap). A
+    # capture that started finishes all its scopes (a half-consolidated capture would drop its
+    # finished decisions and repeat the same call forever); captures beyond the cap are deferred
+    # untouched, like a daily-budget deferral, and the next run starts them.
+    max_consolidate_captures_per_run: int = 0
     # TOPE DE GASTO, ordenado por el operador el 2026-08-24 (ruling MM3).
     # Los dos topes de arriba cuentan LLAMADAS, y por eso nunca acotaron el gasto:
     # medido sobre el ledger de produccion, 527 llamadas a openai costaron 9,76M
@@ -220,7 +222,7 @@ class DreamConfig:
             max_candidate_writes_daily=_env_int("MEMORYMASTER_DREAM_MAX_CANDIDATE_WRITES_DAILY", 200),
             max_extract_calls_daily=_env_int("MEMORYMASTER_DREAM_MAX_EXTRACT_CALLS_DAILY", 40),
             max_consolidate_calls_daily=_env_int("MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CALLS_DAILY", 12),
-            max_consolidate_calls_per_run=_env_int("MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CALLS_PER_RUN", 0),
+            max_consolidate_captures_per_run=_env_int("MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CAPTURES_PER_RUN", 0),
             max_input_tokens_daily=_env_int(
                 "MEMORYMASTER_DREAM_MAX_INPUT_TOKENS_DAILY", 2_000_000,
             ),
@@ -672,7 +674,7 @@ class DreamWorker:
         suspects = {capture_id: trips for capture_id, (trips, _) in streaks.items()
                     if trips >= POISON_ISOLATE_AFTER}
         answered = 0  # consolidation calls the provider answered in this run
-        issued = 0  # consolidation calls attempted in this run (per-run cap)
+        started: set[int] = set()  # captures whose consolidation began in this run (per-run cap)
         batches = deque(
             (effective_scope, batch)
             for effective_scope in sorted(groups)
@@ -702,7 +704,7 @@ class DreamWorker:
                 now=self.now(),
             ) >= self.config.max_consolidate_calls_daily or self._over_token_budget(
                 self.consolidator.provider, self.consolidator.model,
-            ) or (0 < self.config.max_consolidate_calls_per_run <= issued):
+            ) or (0 < self.config.max_consolidate_captures_per_run <= len(started) and not capture_ids & started):
                 self._hold_lease()
                 for capture_id in capture_ids:
                     self.ledger.defer_consolidation(capture_id, run_id)
@@ -717,7 +719,7 @@ class DreamWorker:
                 references = self._fit_prompt(candidates, references, effective_scope)
                 self._hold_lease()
                 called = True
-                issued += 1
+                started.update(capture_ids)
                 result = self.consolidator.consolidate(candidates, references, scope=effective_scope)
                 called = False
                 answered += 1

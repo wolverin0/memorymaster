@@ -80,7 +80,7 @@ def test_allow_scans_then_runs_a_bounded_dream(beat, monkeypatch) -> None:
     dream_kwargs = beat["calls"][2][1]
     config = dream_kwargs["config"]
     assert config.max_sessions == 3
-    assert config.max_consolidate_calls_per_run == 1
+    assert config.max_consolidate_captures_per_run == 1
     assert config.lease_ttl_seconds == 270
     assert config.max_input_tokens_daily == 2_000_000  # the shared daily ceiling is kept
     assert dream_kwargs["apply_candidates"] is False  # applying claims is a separate activation
@@ -151,8 +151,8 @@ def test_an_enabled_tick_writes_the_measurement_artifact(beat, monkeypatch) -> N
     assert {"m3", "m4"} <= set(payload)
 
 
-def test_dreamconfig_per_run_consolidation_cap_defaults_to_unlimited() -> None:
+def test_dreamconfig_per_run_capture_cap_defaults_to_unlimited() -> None:
     from memorymaster.dreaming.worker import DreamConfig
 
-    assert DreamConfig().max_consolidate_calls_per_run == 0
-    assert DreamConfig.from_env().max_consolidate_calls_per_run == 0
+    assert DreamConfig().max_consolidate_captures_per_run == 0
+    assert DreamConfig.from_env().max_consolidate_captures_per_run == 0
