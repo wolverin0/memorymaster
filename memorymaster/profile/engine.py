@@ -119,6 +119,15 @@ class CompiledProfileEngine:
 
     def run(self, *, force: bool = False, max_map_calls: int | None = None) -> dict[str, Any]:
         current = self.now()
+        from memorymaster.core.model_preflight import alert, preflight
+
+        try:
+            for provider in (self.mapper, self.reducer):
+                preflight(getattr(provider, "client", None), provider.model)
+        except Exception as exc:  # noqa: BLE001 - skip the job before changing profile state
+            provider_name = "antigravity"
+            alert(provider_name, str(provider.model), exc)
+            return {"ok": False, "status": "preflight_failed", "error": type(exc).__name__}
         # Every run re-checks claim supports, before the cadence gate and
         # before mapping or reducing, and rewrites the projection at once so a
         # retired fact stops being injected even when no compile is due or

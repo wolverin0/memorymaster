@@ -113,6 +113,16 @@ class AntigravityClient:
         """Esta `agy` en el PATH? No dice nada sobre autenticacion."""
         return shutil.which(self.command) is not None
 
+    def model_available(self, model: str) -> bool:
+        """Check the configured model against Antigravity's model catalogue."""
+        if not self.available():
+            raise AntigravityError(f"el CLI '{self.command}' no esta en el PATH")
+        env = dict(os.environ)
+        result = self.runner([self.command, "models"], "", self.timeout, self.work_dir, env)
+        if result.returncode:
+            raise AntigravityError("agy models failed")
+        return model in result.stdout
+
     def complete(self, prompt: str) -> AntigravityResponse:
         """UNA llamada. Agrupar los items ANTES de llamar — ver el encabezado del modulo."""
         if not self.available():

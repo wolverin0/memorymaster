@@ -511,6 +511,21 @@ class GeminiExtractor:
     def _url(self) -> str:
         return f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
 
+    def model_available(self, model: str) -> bool:
+        """Verify model metadata without generating content or charging tokens."""
+        if not self.api_key:
+            raise ProviderConfigError("GEMINI_API_KEY is not configured", reason="missing_api_key")
+        request = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}?key={self.api_key}"
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status == 200
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return False
+            raise ProviderCallError("Gemini model preflight failed", http_status=exc.code) from exc
+
     @staticmethod
     def _payload(prompt: str, messages: list[dict[str, Any]], scope: str) -> dict[str, Any]:
         schema = {

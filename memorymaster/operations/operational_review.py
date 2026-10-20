@@ -912,10 +912,37 @@ def check_beat_health(config: ReviewConfig, *, now: datetime | None = None) -> R
     return ReviewResult("beat_health", verdict, detail, counts)
 
 
+def check_model_preflight(config: ReviewConfig) -> ReviewResult:
+    """Surface the latest model availability failure from the capture ledger."""
+    state_db, _ = _beat_paths(config)
+    if not state_db.is_file():
+        return ReviewResult("model_preflight", Verdict.PASS, "no model preflight failures recorded")
+    try:
+        with contextlib.closing(_connect_ro(state_db)) as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dream_hook_errors'"
+            ).fetchone()
+            if exists is None:
+                return ReviewResult("model_preflight", Verdict.PASS, "no model preflight failures recorded")
+            row = conn.execute(
+                "SELECT provider, error_code, occurred_at FROM dream_hook_errors "
+                "WHERE error_code LIKE 'model_preflight:%' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+    except (OSError, sqlite3.Error) as exc:
+        return ReviewResult("model_preflight", Verdict.WARN, f"probe_error={type(exc).__name__}")
+    if row is None:
+        return ReviewResult("model_preflight", Verdict.PASS, "no model preflight failures recorded")
+    return ReviewResult(
+        "model_preflight", Verdict.FAIL,
+        f"last failure provider={row['provider']} at={row['occurred_at']} ({row['error_code']})",
+        {"failures": 1},
+    )
+
+
 REVIEW_CHECKS = (check_runtime, check_database, check_feature_activation, check_graph_observations,
                  check_compiled_profile, check_recent_private_context, check_retrieval,
                  check_jev_decisions, check_checkpoint_delivery, check_beat_health,
-                 check_snapshot_dir, check_scheduled_slots)
+                 check_model_preflight, check_snapshot_dir, check_scheduled_slots)
 
 
 def exit_code(results: Iterable[ReviewResult]) -> int:
