@@ -7,7 +7,7 @@ Measured 2026-10-12..19: the hook injects claims into a prompt and the model cit
 * ``current`` (default, also for any unknown value): the block exactly as recall rendered it.
 * ``header``: a three-line "Decisions you made earlier" header, at most :data:`HEADER_MAX_CLAIMS` claims,
   ranked by lexical overlap with the active task first and the prompt second.
-* ``gated``: same ranking, current wrapper, and nothing at all unless the top claim shares at least
+* ``gated``: same ranking, current wrapper, and nothing at all unless some claim shares at least
   :func:`gate_min_shared` meaningful words with the prompt and active task.
 
 The hook receives rendered text only (no scores, no timestamps), so relevance here is lexical overlap and
@@ -106,7 +106,7 @@ def apply_format(ctx: str, prompt: str = "", task: str = "", mode: str | None = 
             return ctx
         rows = ranked(bullets, prompt, task)
         if mode == "gated":
-            if not gate_passes(rows[0][4], prompt, task):
+            if not any(gate_passes(row[4], prompt, task) for row in rows):  # the best match, not the task-ranked first
                 return ""
             return "\n".join([*header, *(row[4] for row in rows)])
         return "\n".join([*HEADER_LINES, *(row[4] for row in rows[:HEADER_MAX_CLAIMS])])
@@ -116,6 +116,8 @@ def apply_format(ctx: str, prompt: str = "", task: str = "", mode: str | None = 
 
 def active_task_text(cwd: str, max_levels: int = 6) -> str:
     """Title and start of the fresh in-progress task for ``cwd`` (T-1433 rules), else ``""``."""
+    if not isinstance(cwd, str) or not cwd.strip():  # abspath('') would be the process cwd, not the session's
+        return ""
     try:
         from memorymaster.recall.active_tasks import fresh_active_task
 
