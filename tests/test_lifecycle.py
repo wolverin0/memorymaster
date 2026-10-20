@@ -2,12 +2,83 @@
 
 from __future__ import annotations
 
+import sqlite3
 from unittest.mock import MagicMock
 
 import pytest
 
 from memorymaster.core.lifecycle import ALLOWED_TRANSITIONS, can_transition, transition_claim
+from memorymaster.core.models import CitationInput
 from memorymaster.core.promotion_policy import PromotionPolicyBlocked
+from memorymaster.core.service import MemoryService
+
+
+@pytest.mark.parametrize("fail_confirmation", [False, True])
+def test_confirmation_and_tuple_retirement_are_atomic(tmp_path, monkeypatch, fail_confirmation):
+    service = MemoryService(str(tmp_path / "lifecycle.db"), workspace_root=str(tmp_path))
+    service.init_db()
+    old, new = [
+        service.ingest(
+            text=f"The diagnosis is {value}.", subject="diagnosis", predicate="cause",
+            object_value=value, scope="project:test", source_agent="claude-session",
+            citations=[CitationInput(source=f"fixture:{value}")],
+        )
+        for value in ("old", "new")
+    ]
+    old = transition_claim(service.store, old.id, "confirmed", reason="fixture")
+    assert new.supersedes_claim_id is None
+    before_events = service.store.list_events(limit=100)
+    insert_event = service.store._insert_event_row
+    confirmation_seen = []
+
+    def observe_confirmation(conn, **kwargs):
+        if kwargs.get("claim_id") == new.id and kwargs.get("to_status") == "confirmed":
+            assert conn.in_transaction
+            predecessor = conn.execute(
+                "SELECT status, replaced_by_claim_id FROM claims WHERE id = ?", (old.id,),
+            ).fetchone()
+            replacement = conn.execute(
+                "SELECT status, supersedes_claim_id FROM claims WHERE id = ?", (new.id,),
+            ).fetchone()
+            assert tuple(predecessor) == ("superseded", new.id)
+            assert tuple(replacement) == ("confirmed", old.id)
+            # A separate reader must still see the pre-transaction state.
+            assert service.store.get_claim(old.id) == old
+            assert service.store.get_claim(new.id) == new
+            confirmation_seen.append(True)
+            if fail_confirmation:
+                raise sqlite3.OperationalError("injected confirmation failure")
+        return insert_event(conn, **kwargs)
+
+    monkeypatch.setattr(service.store, "_insert_event_row", observe_confirmation)
+
+    def confirm():
+        return transition_claim(
+            service.store, new.id, "confirmed", reason="replacement accepted",
+            supersedes_claim_id=old.id,
+        )
+
+    if fail_confirmation:
+        with pytest.raises(sqlite3.OperationalError, match="injected confirmation failure"):
+            confirm()
+        assert service.store.get_claim(old.id) == old
+        assert service.store.get_claim(new.id) == new
+        assert service.store.list_events(limit=100) == before_events
+    else:
+        confirmed = confirm()
+        retired = service.store.get_claim(old.id)
+        assert confirmed.status == "confirmed"
+        assert confirmed.supersedes_claim_id == old.id
+        assert retired.status == "superseded"
+        assert retired.replaced_by_claim_id == new.id
+        assert retired.valid_until is not None
+        events = service.store.list_events(limit=100)
+        added = [event for event in events if event.id not in {e.id for e in before_events}]
+        assert {(event.claim_id, event.to_status) for event in added} == {
+            (old.id, "superseded"), (new.id, "confirmed"),
+        }
+        assert len(added) == 2
+    assert confirmation_seen == [True]
 
 
 class TestCanTransition:
