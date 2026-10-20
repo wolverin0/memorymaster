@@ -323,12 +323,11 @@ class DreamWorker:
             "recovered_stale_runs": 0,
         }
         try:
-            from memorymaster.core.model_preflight import alert, preflight
+            from memorymaster.core.model_preflight import alert, preflight_provider
 
             try:
                 for provider in (self.extractor, self.consolidator):
-                    client = getattr(provider, "client", None)
-                    preflight(client, provider.model)
+                    preflight_provider(provider)
             except Exception as exc:  # noqa: BLE001 - invalid provider config skips the batch
                 provider_name = str(getattr(provider, "provider", "unknown"))
                 alert(provider_name, str(provider.model), exc)

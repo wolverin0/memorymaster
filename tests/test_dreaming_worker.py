@@ -703,7 +703,9 @@ def test_five_rate_limited_runs_never_consume_the_capture_error_cap(tmp_path):
         worker.run(apply_candidates=False)
         capture = ledger.get_capture(capture_id)
         assert (capture["state"], capture["error_count"]) == ("retryable", 0), run
-    assert len(calls) == 5 * 4  # every run really reached the provider (4 HTTP attempts each)
+    # every run really reached the provider (4 HTTP attempts each); the T-1660 model
+    # preflight adds one countTokens call per run that is not an extraction attempt.
+    assert len([url for url in calls if ":generateContent" in url]) == 5 * 4
 
 
 @pytest.mark.parametrize("build", [
