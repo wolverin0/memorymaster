@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,10 +13,134 @@ from memorymaster.dreaming.providers import (
     opencode_response_text,
     GeminiExtractor,
     OpenCodeExtractor,
+    OpenCodeConsolidator,
+    ProviderConfigError,
     ProviderCallError,
     _default_command_runner,
     create_dream_extractor,
 )
+
+
+def _bounded_client(*, model="anthropic/claude-sonnet-4-6", raw='{"decisions":[]}', input_tokens=100, output_tokens=10):
+    calls = []
+
+    def complete(prompt, *, max_output_tokens):
+        calls.append((prompt, max_output_tokens))
+        return SimpleNamespace(text=raw, observed_model=model, model=model, input_tokens=input_tokens, output_tokens=output_tokens)
+
+    return SimpleNamespace(complete_bounded=complete), calls
+
+
+def test_backfill_sonnet_requires_real_bounded_transport_before_dispatch(tmp_path):
+    class Unsupported:
+        def complete(self, prompt):
+            pytest.fail("unsupported route was dispatched")
+
+    provider = OpenCodeConsolidator(model="anthropic/claude-sonnet-4-6", client=Unsupported(), work_dir=tmp_path)
+    with pytest.raises(ProviderConfigError) as caught:
+        provider.consolidate([], [], scope="project:test")
+    assert caught.value.reason == "output_limit_unsupported"
+
+
+def test_backfill_sonnet_uses_exact_model_and_provider_output_cap(tmp_path):
+    client, calls = _bounded_client()
+    provider = OpenCodeConsolidator(model="anthropic/claude-sonnet-4-6", client=client, work_dir=tmp_path)
+    result = provider.consolidate([], [], scope="project:test")
+    assert calls[0][1] == 4000
+    assert result.usage.model == provider.last_observed_model == "anthropic/claude-sonnet-4-6"
+
+
+@pytest.mark.parametrize("changes", [{"model": "anthropic/claude-haiku-4-5"}, {"model": None}, {"input_tokens": 30_001}, {"output_tokens": 4001}])
+def test_backfill_sonnet_latches_model_or_usage_violation_without_fallback(tmp_path, changes):
+    client, calls = _bounded_client(**changes)
+    provider = OpenCodeConsolidator(model="anthropic/claude-sonnet-4-6", client=client, work_dir=tmp_path)
+    for _ in range(2):
+        with pytest.raises(ProviderConfigError):
+            provider.consolidate([], [], scope="project:test")
+    assert len(calls) == 1
+
+
+def test_backfill_rejects_framing_overrun_with_billed_usage_retained(tmp_path):
+    client, _ = _bounded_client(input_tokens=5000, output_tokens=20)
+    provider = OpenCodeConsolidator(model="anthropic/claude-sonnet-4-6", client=client, work_dir=tmp_path,
+                                   token_counter=lambda prompt: 100, framing_tokens=20)
+    with pytest.raises(ProviderConfigError) as caught:
+        provider.consolidate([], [], scope="project:test")
+    assert caught.value.reason == "token_bound_exceeded"
+    assert (caught.value.input_tokens, caught.value.output_tokens, caught.value.http_status) == (5000, 20, 200)
+
+
+def test_backfill_sonnet_rejects_malformed_output(tmp_path):
+    client, _ = _bounded_client(raw="not-json")
+    provider = OpenCodeConsolidator(model="anthropic/claude-sonnet-4-6", client=client, work_dir=tmp_path)
+    with pytest.raises(ProviderCallError, match="malformed JSON"):
+        provider.consolidate([], [], scope="project:test")
+
+
+@pytest.mark.parametrize("stage", ["extract", "consolidate"])
+def test_backfill_slot_latch_stops_an_already_queued_call(tmp_path, stage):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    barrier = threading.Barrier(2)
+    local = threading.local()
+
+    def counter(prompt):
+        if not getattr(local, "counted", False):
+            local.counted = True
+            barrier.wait(timeout=5)
+        return 100
+
+    client, calls = _bounded_client(input_tokens=101)
+    kwargs = {"model": "anthropic/claude-sonnet-4-6", "client": client,
+              "work_dir": tmp_path, "token_counter": counter}
+    provider = (OpenCodeExtractor(**kwargs, max_input_tokens=10_000, max_output_tokens=1500)
+                if stage == "extract" else OpenCodeConsolidator(**kwargs))
+
+    def call():
+        with pytest.raises(ProviderConfigError):
+            if stage == "extract":
+                provider.extract([], scope="project:test", capture_hash="fixture")
+            else:
+                provider.consolidate([], [], scope="project:test")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(lambda _: call(), range(2)))
+    assert len(calls) == 1
+
+
+def test_backfill_extraction_preflights_the_rendered_prompt_including_framing(tmp_path):
+    client, calls = _bounded_client(raw='{"candidates":[]}')
+    provider = OpenCodeExtractor(model="anthropic/claude-sonnet-4-6", work_dir=tmp_path,
+                                 max_input_tokens=100, max_output_tokens=1500, framing_tokens=20, client=client)
+    messages = [{"id": "m1", "role": "user", "text": "A durable rule."}]
+    assert provider.rendered_input_tokens(messages, scope="project:test") > 100
+    with pytest.raises(ProviderCallError, match="input cap"):
+        provider.extract(messages, scope="project:test", capture_hash="source")
+    assert calls == []
+
+
+def test_backfill_extraction_passes_output_cap_to_capable_client(tmp_path):
+    client, calls = _bounded_client(raw='{"candidates":[]}')
+    provider = OpenCodeExtractor(model="anthropic/claude-sonnet-4-6", work_dir=tmp_path,
+                                 max_input_tokens=10_000, max_output_tokens=1500, client=client)
+    result = provider.extract([], scope="project:test", capture_hash="source")
+    assert calls[0][1] == 1500
+    assert result.usage.input_tokens == 100
+
+
+def test_extraction_cleans_session_after_malformed_event_in_slot(tmp_path):
+    calls = []
+
+    def runner(command, prompt, timeout, cwd, env):
+        calls.append((command, cwd))
+        output = json.dumps({"sessionID": "owned-session", "type": "step_start"}) + "\nmalformed"
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    provider = OpenCodeExtractor(model="openai/test", command="opencode", work_dir=tmp_path / "slot-1", runner=runner)
+    with pytest.raises(ProviderCallError, match="malformed"):
+        provider.extract([], scope="project:test", capture_hash="source")
+    assert calls[-1] == (["opencode", "session", "delete", "owned-session"], tmp_path / "slot-1")
 
 
 def test_gemini_extractor_requests_json_and_retries_429_without_fallback() -> None:

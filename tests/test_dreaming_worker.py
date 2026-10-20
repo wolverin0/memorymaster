@@ -28,6 +28,133 @@ def _usage(provider: str, model: str) -> ProviderUsage:
     return ProviderUsage(provider, model, 200, 10, 20, 5, True)
 
 
+def test_backfill_packing_fills_five_across_capture_boundaries_preserving_owners():
+    from dataclasses import replace
+
+    candidate = _Extractor().extract([], scope="project:test", capture_hash="hash").candidates[0]
+    pairs = [({"id": 1 if index < 3 else 2, "scope": "project:test"},
+              replace(candidate, candidate_id=f"candidate-{index}")) for index in range(6)]
+    worker = DreamWorker(None, None, None, _Consolidator(), config=DreamConfig(max_consolidate_candidates=20))
+    batches = worker._candidate_batches(pairs)
+    assert [len(batch) for batch in batches] == [5, 1]
+    assert [pair for batch in batches for pair in batch] == pairs
+    assert [row["id"] for row, _ in batches[0]] == [1, 1, 1, 2, 2]
+
+
+def test_backfill_packing_splits_on_rendered_tokens_without_truncating_evidence():
+    from dataclasses import replace
+
+    from memorymaster.dreaming.providers import consolidation_prompt
+
+    candidate = _Extractor().extract([], scope="project:test", capture_hash="hash").candidates[0]
+    candidates = [replace(candidate, candidate_id=f"candidate-{index}", evidence_quote="complete source " * 30)
+                  for index in range(3)]
+
+    class Bounded(_Consolidator):
+        max_input_tokens = len(consolidation_prompt(candidates[:1], [], "project:test"))
+        rendered_input_tokens = staticmethod(len)
+
+    worker = DreamWorker(None, None, None, Bounded(), config=DreamConfig())
+    pairs = [({"id": index, "scope": "project:test"}, item) for index, item in enumerate(candidates)]
+    batches = worker._candidate_batches(pairs)
+    assert [len(batch) for batch in batches] == [1, 1, 1]
+    assert [item.evidence_quote for batch in batches for _, item in batch] == [item.evidence_quote for item in candidates]
+
+
+def test_backfill_first_oversized_reference_cannot_bypass_cap(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    service = _service(tmp_path)
+    claim = SimpleNamespace(id=1, text="oversized " * 7000, tenant_id=service.tenant_id)
+    monkeypatch.setattr(service, "list_claims", lambda **kwargs: [claim])
+    monkeypatch.setattr("memorymaster.dreaming.source_review.reviewed_memory_keys", lambda *args: {})
+    worker = DreamWorker(None, service, None, _Consolidator(), config=DreamConfig(max_context_chars=60_000))
+    assert worker._current_claims("project:test") == []
+    assert worker._fit_prompt([], [{"text": "x" * 60_000}], "project:test") == []
+
+
+def test_backfill_packing_splits_to_preserve_relevant_references(tmp_path, monkeypatch):
+    from memorymaster.dreaming.providers import consolidation_prompt
+    from memorymaster.dreaming.source_review import bind_source
+
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    ids = [_extracted_capture(ledger, session_hash=f"refs-{i}", candidate_id=f"ref-{i}") for i in range(2)]
+    reference = {"id": 999, "text": "Relevant governed context. " * 200}
+    row = ledger.get_capture(ids[0])
+    one = bind_source(DreamCandidate(**row["extraction"][0]), row)
+
+    class Bounded(_Consolidator):
+        max_prompt_chars = len(consolidation_prompt([one], [reference], "project:test")) + 500
+
+        def consolidate(self, candidates, current_claims, *, scope):
+            assert current_claims == [reference]
+            self.scopes.append(len(candidates))
+            return ConsolidationResult(tuple(DreamDecision(c.candidate_id, "ignore", "fixture", .9)
+                                             for c in candidates), _usage(self.provider, self.model))
+
+    provider = Bounded()
+    worker = DreamWorker(ledger, service, _NoCall(), provider, config=DreamConfig(jev_triage_enabled=False), now=lambda: NOW)
+    monkeypatch.setattr(worker, "_current_claims", lambda *args: [reference])
+    summary = worker.run(apply_candidates=False)
+    assert summary["errors"] == 0
+    assert provider.scopes == [1, 1]
+
+
+def test_backfill_partial_capture_failure_withdraws_dependent_peer_decisions(tmp_path):
+    from dataclasses import replace
+
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    original = _Extractor().extract([], scope="project:test", capture_hash="hash").candidates[0]
+    ids = []
+    for owner, count in (("a", 3), ("b", 3), ("c", 1)):
+        capture_id = _capture(ledger, session_hash=owner)
+        ids.append(capture_id)
+        ledger.set_extraction(capture_id, [replace(original, candidate_id=f"{owner}{i}").to_dict()
+                                           for i in range(count)], "fixture")
+
+    class FailTail(_Consolidator):
+        def consolidate(self, candidates, current_claims, *, scope):
+            if any(c.candidate_id == "b2" for c in candidates):
+                raise ValueError("invalid tail")
+            return super().consolidate(candidates, current_claims, scope=scope)
+
+    summary = DreamWorker(ledger, service, _NoCall(), FailTail(),
+                          config=DreamConfig(jev_triage_enabled=False), now=lambda: NOW).run(apply_candidates=False)
+    assert ledger.get_capture(ids[1])["state"] == "retryable"
+    assert summary["deferred_consolidate_dependencies"] == 2
+    for capture_id in (ids[0], ids[2]):
+        row = ledger.get_capture(capture_id)
+        assert row["state"] == "extracted"
+        assert row["decisions"] is None
+        assert row["error_count"] == 0
+
+
+def test_backfill_ingest_preserves_worker_author_and_parent_lineage_with_ownership_receipt():
+    from types import SimpleNamespace
+
+    seen = {}
+
+    def ingest(text, citations, **kwargs):
+        seen.update(kwargs)
+        seen["citations"] = citations
+
+    worker = DreamWorker(None, SimpleNamespace(ingest=ingest), None, _Consolidator(), config=DreamConfig())
+    candidate = _Extractor().extract([], scope="project:test", capture_hash="hash").candidates[0]
+    receipt = {}
+    row = {"provider": "claude-subagent", "session_hash": "child", "run_id": "run",
+           "citation_provider": "claude", "citation_session_hash": "parenthash123456",
+           "citation_suffix": "subagent-child", "intake_batch_id": "ao7-campaign-cohort-window",
+           "outcome_receipt": receipt}
+    worker._ingest_candidate(row, candidate, "project:test")
+    assert seen["source_agent"] == seen["citations"][0].source == "dream-worker"
+    assert seen["citations"][0].locator == "dream:claude:parenthash12:subagent-child:m2"
+    assert seen["intake_batch_id"] == "ao7-campaign-cohort-window"
+    assert seen["intake_batch_max"] == 200
+    assert seen["outcome_receipt"] is receipt
+
+
 def _accepted_review(candidate: DreamCandidate, scope: str) -> dict:
     """Build a synthetic v2 acceptance receipt for orchestration tests only."""
     kind = candidate.claim_type if candidate.claim_type in {
