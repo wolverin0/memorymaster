@@ -104,7 +104,14 @@ def _scope(cwd: str | None) -> str:
 
 def capture_transcript(
     transcript_path: str | Path, *, provider: str, session_id: str, cwd: str | None, ledger: DreamLedger,
+    record_source_mtime: bool = False,
 ) -> dict[str, Any]:
+    """Queue the new bytes of a transcript.
+
+    ``record_source_mtime`` is the beat scan's: it sets the capture's source mtime. Lifecycle hooks
+    leave it off, so they never create beat data (an inactive beat stays invisible to the review);
+    they only refresh a source mtime the beat already set when they coalesce into that capture.
+    """
     session_hash = hashlib.sha256((session_id or "unknown").encode("utf-8", errors="replace")).hexdigest()
     try:
         source_mtime: float | None = Path(transcript_path).stat().st_mtime  # before the read: never newer than the bytes
@@ -128,7 +135,7 @@ def capture_transcript(
     cursor_ledger.commit_cursor(chunk)
     if source_mtime is not None:
         # Also on a hook coalescing later turns into a scan-created row: M3 follows the newest write.
-        ledger.record_source_mtime(capture_id, source_mtime)
+        ledger.record_source_mtime(capture_id, source_mtime, only_if_set=not record_source_mtime)
     return {"queued": 1, "capture_id": capture_id, "messages": len(messages)}
 
 
@@ -250,16 +257,24 @@ def scan_active_transcripts(
     pending.sort(key=lambda item: (item[0], str(item[2])))
     blocked: set[str] = set()
     advanced: dict[str, list[tuple[float, str]]] = {}
-    for mtime, provider, path in pending[: max(0, max_files)]:
+    attempts = 0
+    for mtime, provider, path in pending:
+        # A failing provider is skipped BEFORE it can use up the tick's budget, so its backlog of
+        # older files never starves the other provider.
         if provider in blocked:
             continue
+        if attempts >= max(0, max_files):
+            break
+        attempts += 1
         stats = summary["by_provider"].setdefault(provider, {"scanned": 0, "queued": 0})
         try:
             session_id, cwd = _probe_session(path, provider)
             if cwd is None:
                 summary["skipped_no_cwd"] += 1
             else:
-                result = capture_transcript(path, provider=provider, session_id=session_id, cwd=cwd, ledger=ledger)
+                result = capture_transcript(
+                    path, provider=provider, session_id=session_id, cwd=cwd, ledger=ledger, record_source_mtime=True,
+                )
                 if result.get("queued"):
                     summary["queued"] += 1
                     stats["queued"] += 1

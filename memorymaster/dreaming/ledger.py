@@ -246,7 +246,7 @@ class DreamLedger:
                 (name, float(value), json.dumps(sorted(set(seen))), _iso(_utc_now())),
             )
 
-    def record_source_mtime(self, capture_id: int, mtime: float) -> None:
+    def record_source_mtime(self, capture_id: int, mtime: float, *, only_if_set: bool = False) -> None:
         """Keep the LATEST source mtime of a capture (M3 lag is measured from the last write).
 
         A capture cannot be processed before its session has been idle, so the lag that says
@@ -255,7 +255,8 @@ class DreamLedger:
         """
         with self._connect() as conn:
             conn.execute(
-                "UPDATE dream_captures SET source_mtime=MAX(COALESCE(source_mtime, 0), ?) WHERE id=?",
+                "UPDATE dream_captures SET source_mtime=MAX(COALESCE(source_mtime, 0), ?) WHERE id=?"
+                + (" AND source_mtime IS NOT NULL" if only_if_set else ""),
                 (float(mtime), capture_id),
             )
 

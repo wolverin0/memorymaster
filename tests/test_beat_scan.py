@@ -246,3 +246,59 @@ def test_a_hook_that_coalesces_later_turns_refreshes_the_source_mtime(world) -> 
     claude = [row for row in _rows(ledger) if row["provider"] == "claude"][-1]
     assert "later question" in claude["messages_json"]
     assert claude["source_mtime"] == pytest.approx(NOW.timestamp() - 5, abs=1)
+
+
+def test_a_hook_capture_leaves_source_mtime_empty_so_an_inactive_beat_stays_invisible(world) -> None:
+    """check_beat_health treats 'no row with source_mtime' as an inactive beat: hooks must not set it."""
+    ledger = world["ledger"]
+    capture_hook_payload(
+        {"transcript_path": str(world["claude_file"]), "session_id": CLAUDE_SESSION, "cwd": str(world["project"])},
+        provider="claude", ledger=ledger,
+    )
+
+    rows = _rows(ledger)
+    assert len(rows) == 1 and rows[0]["source_mtime"] is None
+
+
+def test_a_hook_refreshes_source_mtime_only_when_the_beat_already_set_it(world) -> None:
+    ledger = world["ledger"]
+    scan_active_transcripts(ledger, roots=world["roots"], now=NOW)  # sets it for the claude row
+    first = [row for row in _rows(ledger) if row["provider"] == "claude"][0]["source_mtime"]
+    assert first is not None
+    with world["claude_file"].open("a", encoding="utf-8") as handle:
+        handle.write(_claude_line("hook turn after the scan", "user", world["project"], "h1"))
+        handle.write(_claude_line("hook answer after the scan", "assistant", world["project"], "h2"))
+    _touch(world["claude_file"], 3)
+
+    capture_hook_payload(
+        {"transcript_path": str(world["claude_file"]), "session_id": CLAUDE_SESSION, "cwd": str(world["project"])},
+        provider="claude", ledger=ledger,
+    )
+
+    claude = [row for row in _rows(ledger) if row["provider"] == "claude"][-1]
+    assert "hook turn after the scan" in claude["messages_json"]
+    assert claude["source_mtime"] == pytest.approx(NOW.timestamp() - 3, abs=1)
+
+
+def test_a_failing_provider_with_many_files_does_not_starve_the_other_provider(world, monkeypatch) -> None:
+    from memorymaster.dreaming import capture
+
+    root = world["roots"]["claude"] / "proj-dir"
+    for index in range(12):
+        path = root / f"broken-{index:02d}.jsonl"
+        path.write_text(_claude_line(f"broken {index}", "user", world["project"], f"b{index}"), encoding="utf-8")
+        _touch(path, 3000 - index)  # all older than the codex file
+    world["claude_file"].unlink()
+    real = capture.capture_transcript
+
+    def flaky(path, *, provider, **kwargs):
+        if provider == "claude":
+            raise sqlite3.OperationalError("database is locked")
+        return real(path, provider=provider, **kwargs)
+
+    monkeypatch.setattr(capture, "capture_transcript", flaky)
+
+    summary = scan_active_transcripts(world["ledger"], roots=world["roots"], now=NOW)
+
+    assert {row["provider"] for row in _rows(world["ledger"])} == {"codex"}
+    assert summary["errors"] == 1 and summary["queued"] == 1

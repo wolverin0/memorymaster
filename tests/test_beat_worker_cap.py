@@ -113,3 +113,20 @@ def test_captures_sharing_a_scope_cannot_bypass_the_cap_through_batch_packing(tm
 
     assert states() == ["consolidated"] * 3
     assert len(consolidator.scopes) == 6  # each capture consolidated exactly once, never repeated
+
+
+def test_a_poison_suspect_is_not_picked_ahead_of_healthy_captures_under_the_cap(tmp_path: Path) -> None:
+    """Ruling R2 puts suspects last; the cap must not hand them the only slot every run."""
+    ledger = DreamLedger(tmp_path / "capture.db")
+    suspect = H["_capture"](ledger, session_hash="sA", extra_text=" A")  # first in row order
+    healthy = H["_capture"](ledger, session_hash="sB", extra_text=" B")
+    for _ in range(2):  # two consecutive trips make a suspect (POISON_ISOLATE_AFTER)
+        ledger.record_consolidation_trip([suspect], alone=False, now=NOW)
+    consolidator = H["_Consolidator"]()
+    config = replace(DreamConfig(), max_consolidate_captures_per_run=1)
+    worker = DreamWorker(ledger, H["_service"](tmp_path), _PerCaptureExtractor(), consolidator, config=config, now=lambda: NOW)
+
+    worker.run(apply_candidates=False)
+
+    assert ledger.get_capture(healthy)["state"] == "consolidated"
+    assert ledger.get_capture(suspect)["state"] == "extracted"

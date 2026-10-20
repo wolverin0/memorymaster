@@ -672,10 +672,19 @@ class DreamWorker:
         # AO-2 beat: pick the captures this run consolidates BEFORE grouping by scope. Batches pack
         # candidates of several captures, so a cap applied per batch is bypassed by captures that
         # share a scope; a picked capture finishes all its scopes, the others wait untouched.
+        # Ruling R2: a capture whose calls tripped the breaker in consecutive
+        # runs is a poison suspect; it no longer goes first or shares a call.
+        streaks = self.ledger.consolidation_trips(int(row["id"]) for row in rows)
+        suspects = {capture_id: trips for capture_id, (trips, _) in streaks.items()
+                    if trips >= POISON_ISOLATE_AFTER}
         cap = self.config.max_consolidate_captures_per_run
         if cap > 0:
             wanted = {int(pair[0]["id"]) for pairs in groups.values() for pair in pairs}
-            over_cap = set([int(row["id"]) for row in rows if int(row["id"]) in wanted][cap:])
+            # Healthy captures first (row order), suspects last and fewest trips first, as in R2:
+            # with cap 1 a suspect must not take the only slot every run.
+            ordered = sorted((int(row["id"]) for row in rows if int(row["id"]) in wanted),
+                             key=lambda capture_id: (capture_id in suspects, suspects.get(capture_id, 0)))
+            over_cap = set(ordered[cap:])
             if over_cap:
                 groups = {scope: kept for scope, pairs in groups.items()
                           if (kept := [pair for pair in pairs if int(pair[0]["id"]) not in over_cap])}
@@ -684,11 +693,6 @@ class DreamWorker:
                     self.ledger.defer_consolidation(capture_id, run_id)
                 deferred_captures.update(over_cap)
                 summary["deferred_consolidate_budget"] = len(deferred_captures)
-        # Ruling R2: a capture whose calls tripped the breaker in consecutive
-        # runs is a poison suspect; it no longer goes first or shares a call.
-        streaks = self.ledger.consolidation_trips(int(row["id"]) for row in rows)
-        suspects = {capture_id: trips for capture_id, (trips, _) in streaks.items()
-                    if trips >= POISON_ISOLATE_AFTER}
         answered = 0  # consolidation calls the provider answered in this run
         batches = deque(
             (effective_scope, batch)
