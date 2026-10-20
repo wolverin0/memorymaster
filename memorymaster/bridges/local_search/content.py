@@ -549,12 +549,17 @@ def run_content_search(
 
     root_set = _Roots(roots)
     base = os.path.realpath(workspace or ".")
-    scope_dir = _resolve_dir(root_set, roots, folder, base, "folder") if str(folder or "").strip() else None
+    # Default scope is the workspace, never "whatever Everything returns under
+    # any root"; ``folder`` is the explicit way to search somewhere else.
+    if str(folder or "").strip():
+        scope_dir = _resolve_dir(root_set, roots, folder, base, "folder")
+    else:
+        scope_dir = _resolve_dir(root_set, roots, ".", base, "workspace")
     excludes = _Excludes()
     degraded = not provider.available()
 
     if degraded:
-        walk_dir = scope_dir or _resolve_dir(root_set, roots, ".", base, "workspace")
+        walk_dir = scope_dir
         matcher = _name_matcher(name_query, whole_name)
         raw_candidates: Iterable[str] = _walk(walk_dir, excludes, matcher, deadline)
     else:
@@ -564,14 +569,14 @@ def run_content_search(
         search_kwargs: dict[str, Any] = {
             "limit": HARD_MAX_CANDIDATES, "kind": "file", "whole_name": bool(whole_name),
         }
-        if scope_dir and "under" in inspect.signature(provider.search).parameters:
+        if "under" in inspect.signature(provider.search).parameters:
             search_kwargs["under"] = scope_dir
         found = provider.search(es_query, **search_kwargs)
         raw_candidates = [hit.path for hit in found if getattr(hit, "kind", "file") != "dir"]
 
     flt = _Filter(
         root_set, excludes, extensions=extensions,
-        scope_real=_norm(scope_dir) if scope_dir else None, max_file_bytes=max_file_bytes,
+        scope_real=_norm(scope_dir), max_file_bytes=max_file_bytes,
     )
 
     def accepted() -> Iterator[str]:

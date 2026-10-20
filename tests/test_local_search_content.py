@@ -325,6 +325,14 @@ def test_everything_receives_file_kind_and_hints(tree):
     assert call["limit"] <= content.HARD_MAX_CANDIDATES
 
 
+def test_default_scope_is_the_workspace_not_the_whole_machine(tree):
+    other = tree / "docs"
+    provider = FakeProvider(_all_files(tree))
+    result = _search(tree, provider=provider, workspace=str(other))
+    assert provider.calls[0]["under"] == os.path.realpath(other)
+    assert _tokens(result) == {"workspace/docs/notes.md"}
+
+
 def test_provider_without_under_support_still_works(tree):
     class Legacy(FakeProvider):
         def search(self, query, *, limit=50, kind="any", whole_name=False):

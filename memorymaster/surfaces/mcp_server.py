@@ -1611,9 +1611,10 @@ if FastMCP is not None:
 
         Set ``content_query`` to also search file *contents* (literal,
         case-insensitive, one line at a time). ``query`` then filters file
-        names (``*`` for any), ``extension`` (``py;md``) and ``folder`` narrow
-        the candidates, and ``max_hits`` caps the results; ``limit`` is
-        ignored. Hits are ``{path, line, snippet}`` with redacted paths and
+        names (``*`` for any), ``extension`` (``py;md``) narrows the
+        candidates, the search is scoped to ``workspace`` unless ``folder``
+        (a path or a ``root/sub`` token under a registered root) says
+        otherwise, and ``max_hits`` caps the results; ``limit`` is ignored. Hits are ``{path, line, snippet}`` with redacted paths and
         snippets. Only files under registered roots are read; credential
         folders, binaries and oversized files are skipped. Nothing is indexed
         or written.
