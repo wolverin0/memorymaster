@@ -118,6 +118,12 @@ CREATE TABLE IF NOT EXISTS dream_leases (
     heartbeat_at TEXT NOT NULL,
     expires_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS dream_scan_state (
+    name TEXT PRIMARY KEY,
+    value REAL NOT NULL,
+    seen_json TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -218,6 +224,41 @@ class DreamLedger:
             )
             row = conn.execute("SELECT id FROM dream_captures WHERE capture_key=?", (capture_key,)).fetchone()
         return int(row[0])
+
+    def scan_state(self, name: str) -> tuple[float, frozenset[str]] | None:
+        """(watermark mtime, paths already handled AT that exact mtime) of one transcript source."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT value, seen_json FROM dream_scan_state WHERE name=?", (name,)).fetchone()
+        return None if row is None else (float(row[0]), frozenset(json.loads(row[1] or "[]")))
+
+    def scan_watermark(self, name: str) -> float | None:
+        """Last-scan mtime (epoch seconds) of one transcript source, or None before its first scan."""
+        state = self.scan_state(name)
+        return None if state is None else state[0]
+
+    def set_scan_watermark(self, name: str, value: float, seen: Iterable[str] = ()) -> None:
+        """Store the watermark and the files handled at exactly that mtime (ties at a cut are not lost)."""
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO dream_scan_state VALUES (?, ?, ?, ?)
+                   ON CONFLICT(name) DO UPDATE SET value=excluded.value, seen_json=excluded.seen_json,
+                   updated_at=excluded.updated_at""",
+                (name, float(value), json.dumps(sorted(set(seen))), _iso(_utc_now())),
+            )
+
+    def record_source_mtime(self, capture_id: int, mtime: float, *, only_if_set: bool = False) -> None:
+        """Keep the LATEST source mtime of a capture (M3 lag is measured from the last write).
+
+        A capture cannot be processed before its session has been idle, so the lag that says
+        whether the beat is working is processed minus the newest write, not minus the oldest
+        bytes of a long coalesced session.
+        """
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE dream_captures SET source_mtime=MAX(COALESCE(source_mtime, 0), ?) WHERE id=?"
+                + (" AND source_mtime IS NOT NULL" if only_if_set else ""),
+                (float(mtime), capture_id),
+            )
 
     def get_capture(self, capture_id: int) -> dict[str, Any]:
         with self._connect() as conn:

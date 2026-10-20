@@ -5,9 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from memorymaster.core.capture_control import CaptureLedger
 from memorymaster.core.security import redact_text
@@ -104,8 +104,19 @@ def _scope(cwd: str | None) -> str:
 
 def capture_transcript(
     transcript_path: str | Path, *, provider: str, session_id: str, cwd: str | None, ledger: DreamLedger,
+    record_source_mtime: bool = False,
 ) -> dict[str, Any]:
+    """Queue the new bytes of a transcript.
+
+    ``record_source_mtime`` is the beat scan's: it sets the capture's source mtime. Lifecycle hooks
+    leave it off, so they never create beat data (an inactive beat stays invisible to the review);
+    they only refresh a source mtime the beat already set when they coalesce into that capture.
+    """
     session_hash = hashlib.sha256((session_id or "unknown").encode("utf-8", errors="replace")).hexdigest()
+    try:
+        source_mtime: float | None = Path(transcript_path).stat().st_mtime  # before the read: never newer than the bytes
+    except OSError:
+        source_mtime = None
     cursor_ledger = CaptureLedger(ledger.db_path)
     chunk = cursor_ledger.read_increment(transcript_path, f"dream:{provider}:{session_hash}")
     if not chunk.text:
@@ -122,6 +133,9 @@ def capture_transcript(
     )
     capture_id = ledger.enqueue(envelope)
     cursor_ledger.commit_cursor(chunk)
+    if source_mtime is not None:
+        # Also on a hook coalescing later turns into a scan-created row: M3 follows the newest write.
+        ledger.record_source_mtime(capture_id, source_mtime, only_if_set=not record_source_mtime)
     return {"queued": 1, "capture_id": capture_id, "messages": len(messages)}
 
 
@@ -136,3 +150,148 @@ def capture_hook_payload(payload: dict[str, Any], *, provider: str, ledger: Drea
         cwd=str(payload.get("cwd") or "") or None,
         ledger=ledger,
     )
+
+
+# --- AO-2 beat: incremental scan of recently modified transcripts ---------------------------
+
+_CODEX_THREAD_ID = re.compile(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$", re.IGNORECASE)
+_PROBE_MAX_LINES = 400
+_PROBE_MAX_BYTES = 1_048_576
+DEFAULT_SCAN_LOOKBACK_SECONDS = 3600
+
+
+def default_transcript_roots() -> dict[str, Path]:
+    home = Path.home()
+    return {"claude": home / ".claude" / "projects", "codex": home / ".codex" / "sessions"}
+
+
+def _candidate_files(provider: str, root: Path) -> list[Path]:
+    # Claude: only <project>/<session>.jsonl, the file the Stop hook reports. Sub-agent
+    # transcripts live deeper and carry their parent's sessionId, which would share (and
+    # keep resetting) the parent's cursor.
+    pattern = "*/*.jsonl" if provider == "claude" else "**/*.jsonl"
+    return [path for path in root.glob(pattern) if path.is_file()]
+
+
+def _probe_session(path: Path, provider: str) -> tuple[str, str | None]:
+    """Session id (the hook's cursor key) and working directory of a transcript.
+
+    The id must equal what the lifecycle hook sends, or the beat and the hook would
+    read the same bytes under two cursors: Claude names the file after its session,
+    Codex records the thread id in the first ``session_meta`` record.
+    """
+    session_id = path.stem
+    cwd: str | None = None
+    if provider == "codex":
+        match = _CODEX_THREAD_ID.search(path.stem)
+        if match:
+            session_id = match.group(1)
+    read = 0
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for index, raw in enumerate(handle):
+            # Parse the line that crosses the byte cap (a first line with an embedded image is
+            # common) and only then stop; the caps bound how many LINES are read, not their parsing.
+            if index >= _PROBE_MAX_LINES or read > _PROBE_MAX_BYTES:
+                break
+            read += len(raw)
+            try:
+                entry = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(entry, dict):
+                continue
+            if provider == "codex":
+                payload = entry.get("payload")
+                if entry.get("type") == "session_meta" and isinstance(payload, dict):
+                    session_id = str(payload.get("id") or session_id)
+                    cwd = str(payload.get("cwd") or "") or None
+                    break
+            else:
+                found = entry.get("cwd")
+                if isinstance(found, str) and found:
+                    cwd = found
+                    break
+    return session_id, cwd
+
+
+def scan_active_transcripts(
+    ledger: DreamLedger,
+    *,
+    max_files: int = 10,
+    roots: Mapping[str, str | Path] | None = None,
+    now: datetime | None = None,
+    lookback_seconds: int = DEFAULT_SCAN_LOOKBACK_SECONDS,
+) -> dict[str, Any]:
+    """Capture the new bytes of transcripts modified since the last scan (AO-2 beat).
+
+    The per-provider watermark (mtime of the newest file handled) lives in the ledger
+    state db. Files are handled oldest first, at most ``max_files`` per call, so a
+    backlog drains over successive ticks. A failure stops that provider at the failing
+    file: the watermark never moves past work that was not done. A first scan only
+    looks back ``lookback_seconds``; the byte cursor itself makes a re-scan harmless.
+    """
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    resolved = {name: Path(path) for name, path in (roots if roots is not None else default_transcript_roots()).items()}
+    summary: dict[str, Any] = {
+        "scanned": 0, "queued": 0, "no_increment": 0, "skipped_no_cwd": 0, "errors": 0, "by_provider": {},
+    }
+    pending: list[tuple[float, str, Path]] = []
+    states: dict[str, tuple[float, frozenset[str]]] = {}
+    for provider in ("claude", "codex"):
+        root = resolved.get(provider)
+        if root is None or not root.is_dir():
+            continue
+        key = f"scan:{provider}"
+        state = ledger.scan_state(key)
+        if state is None:
+            state = ((current - timedelta(seconds=max(0, lookback_seconds))).timestamp(), frozenset())
+            ledger.set_scan_watermark(key, state[0])
+        states[provider] = state
+        mark, seen = state
+        for path in _candidate_files(provider, root):
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            # Files AT the watermark mtime that were not handled yet (a max_files cut split a tie) stay pending.
+            if mtime > mark or (mtime == mark and str(path) not in seen):
+                pending.append((mtime, provider, path))
+    pending.sort(key=lambda item: (item[0], str(item[2])))
+    blocked: set[str] = set()
+    advanced: dict[str, list[tuple[float, str]]] = {}
+    attempts = 0
+    for mtime, provider, path in pending:
+        # A failing provider is skipped BEFORE it can use up the tick's budget, so its backlog of
+        # older files never starves the other provider.
+        if provider in blocked:
+            continue
+        if attempts >= max(0, max_files):
+            break
+        attempts += 1
+        stats = summary["by_provider"].setdefault(provider, {"scanned": 0, "queued": 0})
+        try:
+            session_id, cwd = _probe_session(path, provider)
+            if cwd is None:
+                summary["skipped_no_cwd"] += 1
+            else:
+                result = capture_transcript(
+                    path, provider=provider, session_id=session_id, cwd=cwd, ledger=ledger, record_source_mtime=True,
+                )
+                if result.get("queued"):
+                    summary["queued"] += 1
+                    stats["queued"] += 1
+                else:
+                    summary["no_increment"] += 1
+        except Exception:  # noqa: BLE001 - one bad transcript must not stop the tick or lose the others
+            summary["errors"] += 1
+            blocked.add(provider)
+            continue
+        summary["scanned"] += 1
+        stats["scanned"] += 1
+        advanced.setdefault(provider, []).append((mtime, str(path)))
+    for provider, handled in advanced.items():
+        old_mark, old_seen = states[provider]
+        new_mark = max(old_mark, *(mtime for mtime, _ in handled))
+        seen = {path for mtime, path in handled if mtime == new_mark}
+        ledger.set_scan_watermark(f"scan:{provider}", new_mark, seen | (old_seen if new_mark == old_mark else set()))
+    return summary

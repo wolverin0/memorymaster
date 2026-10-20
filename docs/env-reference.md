@@ -5,7 +5,7 @@ Complete inventory of `MEMORYMASTER_*` variables referenced in the package,
 script after adding or removing a variable. For what each does, follow the
 listed source files (most are read next to a docstring or comment).
 
-Total: 313 variables.
+Total: 321 variables.
 
 | Variable | Referenced in |
 |---|---|
@@ -18,6 +18,13 @@ Total: 313 variables.
 | `MEMORYMASTER_API_KEY` | `memorymaster/core/llm_provider.py`, `memorymaster/govern/llm_steward.py`, `memorymaster/surfaces/setup_hooks.py` |
 | `MEMORYMASTER_API_KEYS` | `memorymaster/core/llm_provider.py`, `memorymaster/govern/jobs/compact_summaries.py`, `memorymaster/govern/llm_steward.py` |
 | `MEMORYMASTER_BACKUP_KEY` | `memorymaster/surfaces/operations.py` |
+| `MEMORYMASTER_BEAT_DENSE_HARD_MS` | `memorymaster/dreaming/latency_guard.py` |
+| `MEMORYMASTER_BEAT_DENSE_SOFT_MS` | `memorymaster/dreaming/latency_guard.py` |
+| `MEMORYMASTER_BEAT_ENABLED` | `memorymaster/surfaces/scheduled_task.py` |
+| `MEMORYMASTER_BEAT_GUARD_MIN_EVENTS` | `memorymaster/dreaming/latency_guard.py` |
+| `MEMORYMASTER_BEAT_GUARD_WINDOW_MINUTES` | `memorymaster/dreaming/latency_guard.py` |
+| `MEMORYMASTER_BEAT_HOOK_HARD_MS` | `memorymaster/dreaming/latency_guard.py` |
+| `MEMORYMASTER_BEAT_HOOK_SOFT_MS` | `memorymaster/dreaming/latency_guard.py` |
 | `MEMORYMASTER_BM25_` | `memorymaster/recall/context_hook.py` |
 | `MEMORYMASTER_BM25_B` | `memorymaster/recall/context_hook.py` |
 | `MEMORYMASTER_BM25_K1` | `memorymaster/recall/context_hook.py` |
@@ -30,7 +37,7 @@ Total: 313 variables.
 | `MEMORYMASTER_CAPTURE_PROVIDER_DAILY_CALLS` | `memorymaster/core/capture_control.py` |
 | `MEMORYMASTER_CAPTURE_ROOTS` | `memorymaster/capture/adapters.py`, `memorymaster/public/demo.py` |
 | `MEMORYMASTER_CAPTURE_SESSION_DAILY_CALLS` | `memorymaster/core/capture_control.py` |
-| `MEMORYMASTER_CAPTURE_STATE_DB` | `memorymaster/core/capture_control.py` |
+| `MEMORYMASTER_CAPTURE_STATE_DB` | `memorymaster/core/capture_control.py`, `memorymaster/operations/operational_review.py` |
 | `MEMORYMASTER_CAPTURE_TRUST_MODE` | `memorymaster/capture/adapters.py`, `memorymaster/public/demo.py` |
 | `MEMORYMASTER_CHECKPOINT_LOG` | `memorymaster/operations/operational_review.py` |
 | `MEMORYMASTER_CLAUDE_CLI_BIN` | `memorymaster/core/llm_provider.py` |
@@ -78,6 +85,7 @@ Total: 313 variables.
 | `MEMORYMASTER_DREAM_MAX_CAPTURE_ERRORS` | `memorymaster/dreaming/worker.py` |
 | `MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CALLS_DAILY` | `memorymaster/dreaming/worker.py` |
 | `MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CANDIDATES` | `memorymaster/dreaming/worker.py` |
+| `MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CAPTURES_PER_RUN` | `memorymaster/dreaming/worker.py` |
 | `MEMORYMASTER_DREAM_MAX_CONTEXT_CHARS` | `memorymaster/dreaming/worker.py` |
 | `MEMORYMASTER_DREAM_MAX_EXTRACT_CALLS_DAILY` | `memorymaster/dreaming/worker.py` |
 | `MEMORYMASTER_DREAM_MAX_INPUT_CHARS` | `memorymaster/dreaming/worker.py` |

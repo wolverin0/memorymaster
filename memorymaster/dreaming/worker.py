@@ -183,6 +183,12 @@ class DreamConfig:
     max_candidate_writes_daily: int = 200
     max_extract_calls_daily: int = 40
     max_consolidate_calls_daily: int = 12
+    # AO-2 beat: captures whose consolidation may START in one run (0 = no per-run cap), chosen
+    # before candidates are grouped by scope. A chosen capture finishes all its scopes (a
+    # half-consolidated capture would drop its finished decisions and repeat the same call
+    # forever); the others are deferred untouched, like a daily-budget deferral, and a later run
+    # starts them.
+    max_consolidate_captures_per_run: int = 0
     # TOPE DE GASTO, ordenado por el operador el 2026-08-24 (ruling MM3).
     # Los dos topes de arriba cuentan LLAMADAS, y por eso nunca acotaron el gasto:
     # medido sobre el ledger de produccion, 527 llamadas a openai costaron 9,76M
@@ -217,6 +223,7 @@ class DreamConfig:
             max_candidate_writes_daily=_env_int("MEMORYMASTER_DREAM_MAX_CANDIDATE_WRITES_DAILY", 200),
             max_extract_calls_daily=_env_int("MEMORYMASTER_DREAM_MAX_EXTRACT_CALLS_DAILY", 40),
             max_consolidate_calls_daily=_env_int("MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CALLS_DAILY", 12),
+            max_consolidate_captures_per_run=_env_int("MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CAPTURES_PER_RUN", 0),
             max_input_tokens_daily=_env_int(
                 "MEMORYMASTER_DREAM_MAX_INPUT_TOKENS_DAILY", 2_000_000,
             ),
@@ -662,11 +669,30 @@ class DreamWorker:
         tripped: set[int] = set()  # in a consolidation call that tripped the breaker this run
         stopped: DreamProviderStopped | None = None
         pending_by_scope: dict[str, list[dict[str, Any]]] = {}
+        # AO-2 beat: pick the captures this run consolidates BEFORE grouping by scope. Batches pack
+        # candidates of several captures, so a cap applied per batch is bypassed by captures that
+        # share a scope; a picked capture finishes all its scopes, the others wait untouched.
         # Ruling R2: a capture whose calls tripped the breaker in consecutive
         # runs is a poison suspect; it no longer goes first or shares a call.
         streaks = self.ledger.consolidation_trips(int(row["id"]) for row in rows)
         suspects = {capture_id: trips for capture_id, (trips, _) in streaks.items()
                     if trips >= POISON_ISOLATE_AFTER}
+        cap = self.config.max_consolidate_captures_per_run
+        if cap > 0:
+            wanted = {int(pair[0]["id"]) for pairs in groups.values() for pair in pairs}
+            # Healthy captures first (row order), suspects last and fewest trips first, as in R2:
+            # with cap 1 a suspect must not take the only slot every run.
+            ordered = sorted((int(row["id"]) for row in rows if int(row["id"]) in wanted),
+                             key=lambda capture_id: (capture_id in suspects, suspects.get(capture_id, 0)))
+            over_cap = set(ordered[cap:])
+            if over_cap:
+                groups = {scope: kept for scope, pairs in groups.items()
+                          if (kept := [pair for pair in pairs if int(pair[0]["id"]) not in over_cap])}
+                self._hold_lease()
+                for capture_id in sorted(over_cap):
+                    self.ledger.defer_consolidation(capture_id, run_id)
+                deferred_captures.update(over_cap)
+                summary["deferred_consolidate_budget"] = len(deferred_captures)
         answered = 0  # consolidation calls the provider answered in this run
         batches = deque(
             (effective_scope, batch)
@@ -1143,10 +1169,10 @@ class DreamWorker:
             output_tokens=0, http_status=int(getattr(error, "http_status", 0)), now=self.now())
 
 
-def run_dream(db_path: str | Path, workspace: str | Path, *, apply_candidates: bool = False, scope: str | None = None, max_sessions: int | None = None, ledger_path: str | Path | None = None) -> dict[str, Any]:
+def run_dream(db_path: str | Path, workspace: str | Path, *, apply_candidates: bool = False, scope: str | None = None, max_sessions: int | None = None, ledger_path: str | Path | None = None, config: DreamConfig | None = None) -> dict[str, Any]:
     from memorymaster.core.capture_control import capture_state_path
 
     ledger = DreamLedger(ledger_path or capture_state_path())
     service = MemoryService(db_path, workspace_root=workspace)
-    worker = DreamWorker(ledger, service, create_dream_extractor(), create_dream_consolidator())
+    worker = DreamWorker(ledger, service, create_dream_extractor(), create_dream_consolidator(), config=config)
     return worker.run(apply_candidates=apply_candidates, scope=scope, max_sessions=max_sessions)
