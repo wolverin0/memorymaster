@@ -110,6 +110,110 @@ def test_slice_turns_keeps_newest_turns_within_budget(tmp_path):
     assert "turn-099" in excerpt and "turn-000" not in excerpt
 
 
+def _write_rows(path, rows):
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+
+def _msg(role, text, **extra):
+    return {"type": role, "message": {"role": role, "content": text}, **extra}
+
+
+def test_slice_turns_previous_summary_is_capped_by_its_own_limit_not_the_message_limit(tmp_path):
+    # Argon review 1: a >1500 char summary was middle-elided to ~1500 before the 2500 cap applied.
+    transcript = tmp_path / "t.jsonl"
+    summary = "S" * 2000
+    _write_rows(transcript, [_msg("user", summary, isCompactSummary=True), _msg("user", "a real new turn")])
+    excerpt = pr.slice_turns(str(transcript), max_chars=30000)
+    assert "S" * 2000 in excerpt  # whole summary kept (limit 2500), not elided at 1500
+    assert "…" not in excerpt
+
+
+def test_slice_turns_returns_nothing_when_only_the_old_summary_exists(tmp_path):
+    # Argon review 2: no turns after the boundary must not trigger an LLM call on the old summary alone.
+    transcript = tmp_path / "t.jsonl"
+    _write_rows(transcript, [
+        {"type": "system", "subtype": "compact_boundary"},
+        _msg("user", "previous summary text", isCompactSummary=True),
+    ])
+    assert pr.slice_turns(str(transcript)) == ""
+
+
+def test_slice_turns_newest_turns_are_reserved_before_the_summary_prefix(tmp_path):
+    transcript = tmp_path / "t.jsonl"
+    rows = [_msg("user", "P" * 2400, isCompactSummary=True)]
+    rows += [_msg("user", f"turn-{i:03d} " + "w" * 90) for i in range(60)]
+    _write_rows(transcript, rows)
+    budget = 3000
+    excerpt = pr.slice_turns(str(transcript), max_chars=budget)
+    assert len(excerpt) <= budget  # the summary prefix, when present, is inside the budget
+    assert "turn-059" in excerpt and excerpt.count("turn-") >= 25  # turns are fitted first and not starved
+
+
+def test_slice_turns_keeps_a_turn_that_fits_even_when_the_summary_would_not(tmp_path):
+    # Argon review of #283: the newest turn fits the budget but not budget - len(prefix).
+    transcript = tmp_path / "t.jsonl"
+    turn_text = "n" * pr.MESSAGE_CHARS  # a full-size message: 1506 chars with its role label
+    budget = len("user: ") + len(turn_text) + 10
+    _write_rows(transcript, [_msg("user", "P" * 2500, isCompactSummary=True), _msg("user", turn_text)])
+    excerpt = pr.slice_turns(str(transcript), max_chars=budget)
+    assert turn_text in excerpt and len(excerpt) <= budget
+    assert "P" * 100 not in excerpt  # no room left: the summary is dropped, never the turn
+
+
+def test_slice_turns_adds_a_trimmed_summary_with_the_room_that_is_left(tmp_path):
+    transcript = tmp_path / "t.jsonl"
+    _write_rows(transcript, [_msg("user", "P" * 2400, isCompactSummary=True), _msg("user", "short new turn")])
+    excerpt = pr.slice_turns(str(transcript), max_chars=3000)
+    assert "short new turn" in excerpt and "P" * 100 in excerpt and len(excerpt) <= 3000
+    assert excerpt.count("P") <= 3000 // 5  # capped at a fifth of the budget
+
+
+def test_slice_turns_returns_nothing_when_not_even_the_newest_turn_fits(tmp_path):
+    transcript = tmp_path / "t.jsonl"
+    _write_rows(transcript, [_msg("user", "P" * 500, isCompactSummary=True), _msg("user", "n" * 1400)])
+    assert pr.slice_turns(str(transcript), max_chars=1000) == ""
+
+
+def test_extract_residual_checks_secrets_before_the_clip_can_hide_them():
+    # Argon review 2: a token straddling the 220 char clip must not slip through truncated.
+    token = "ghp_" + "a" * 36
+    padded = "x" * 200 + " " + token  # the clip at 220 would cut the token in half
+    answer = json.dumps({"decisions": [padded, "keep WAL on"], "next_step": "ok"})
+    items = pr.extract_residual("user: hello there", llm=lambda p, t: answer, config={"provider": "x", "model": ""})
+    texts = " ".join(i["text"] for i in items)
+    assert "ghp_" not in texts and "x" * 50 not in texts  # the whole item is dropped, no truncated token
+    assert "keep WAL on" in texts
+
+
+def test_capture_residual_still_ingests_when_the_marker_cannot_be_written(tmp_path):
+    service = MemoryService(str(tmp_path / "r.db"), workspace_root=str(tmp_path))
+    service.init_db()
+    blocker = tmp_path / "state-is-a-file"
+    blocker.write_text("not a directory", encoding="utf-8")
+    transcript = tmp_path / "t.jsonl"
+    probe.build_transcript(transcript, str(tmp_path / "ws" / "syncworker"))
+    outcome = pr.capture_residual(
+        {"session_id": "s", "transcript_path": str(transcript), "cwd": str(tmp_path / "ws" / "syncworker")},
+        db_path=str(tmp_path / "r.db"),
+        llm=lambda p, t: json.dumps(probe.FAKE_ANSWER),
+        state_directory=blocker / "child",
+    )
+    assert outcome["ingested"] > 0 and len(_claims(str(tmp_path / "r.db"))) == outcome["ingested"]
+
+
+def test_save_residual_returns_none_instead_of_raising_when_the_directory_is_unusable(tmp_path):
+    blocker = tmp_path / "f"
+    blocker.write_text("x", encoding="utf-8")
+    assert state.save_residual("s", state.bound_residual({"decisions": ["d"]}), directory=blocker / "sub") is None
+
+
+def test_expired_residual_is_deleted_not_reparsed_forever(tmp_path):
+    state.save_residual("s", state.bound_residual({"decisions": ["d"]}), directory=tmp_path, now=1000.0)
+    path = state.residual_path("s", tmp_path)
+    assert state.pending_block("s", directory=tmp_path, now=1000.0 + state.TTL_SECONDS + 1) == ""
+    assert not path.exists()
+
+
 def test_extract_residual_redacts_what_it_sends_and_drops_sensitive_answers():
     seen = {}
 

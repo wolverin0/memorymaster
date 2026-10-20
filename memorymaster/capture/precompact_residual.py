@@ -67,7 +67,7 @@ def enabled() -> bool:
     return os.environ.get(ENV_ENABLED, "").strip().lower() not in ("", "0", "false", "no", "off")
 
 
-def _message_text(entry: dict) -> tuple[str, str]:
+def _message_text(entry: dict, limit: int = MESSAGE_CHARS) -> tuple[str, str]:
     message = entry.get("message") if isinstance(entry.get("message"), dict) else entry
     role = message.get("role") or entry.get("type")
     if role not in ("user", "assistant"):
@@ -82,8 +82,8 @@ def _message_text(entry: dict) -> tuple[str, str]:
     text = _REMINDER_RE.sub("", content).strip()
     if not text or "<command-message>" in text:
         return "", ""
-    if len(text) > MESSAGE_CHARS:  # decisions tend to sit at the end of a long answer
-        text = text[:500] + " … " + text[-(MESSAGE_CHARS - 505):]
+    if len(text) > limit:  # decisions tend to sit at the end of a long answer
+        text = text[:500] + " … " + text[-(limit - 505):]
     return str(role), text
 
 
@@ -111,24 +111,31 @@ def slice_turns(transcript_path: str, max_chars: int | None = None) -> str:
                 if entry.get("type") == "system" and entry.get("subtype") == "compact_boundary":
                     turns, previous_summary = [], ""
                     continue
+                if entry.get("isCompactSummary"):  # judged with its own limit, never the per-message one
+                    previous_summary = _message_text(entry, PREVIOUS_SUMMARY_CHARS)[1]
+                    continue
                 role, text = _message_text(entry)
                 if not text:
-                    continue
-                if entry.get("isCompactSummary"):
-                    previous_summary = text[:PREVIOUS_SUMMARY_CHARS]
                     continue
                 turns.append(f"{role}: {text}")
     except OSError:
         return ""
+    if not turns:  # nothing happened after the boundary: the old summary alone is not worth a call
+        return ""
+    # The newest turns are reserved first; the previous summary only gets what is left (and counts against the budget).
     kept: list[str] = []
-    used = len(previous_summary)
+    used = 0
     for turn in reversed(turns):
         if used + len(turn) > budget:
             break
         kept.append(turn)
         used += len(turn) + 1
-    excerpt = "\n".join(reversed(kept))
-    return (f"previous summary: {previous_summary}\n" if previous_summary else "") + excerpt
+    if not kept:  # not even the newest turn fits: the old summary alone is not worth a call
+        return ""
+    label = "previous summary: "
+    room = min(PREVIOUS_SUMMARY_CHARS, budget // 5, budget - used - len(label) - 1)
+    prefix = f"{label}{previous_summary[:room]}\n" if previous_summary and room > 0 else ""
+    return prefix + "\n".join(reversed(kept))
 
 
 def _input_chars() -> int:
@@ -173,6 +180,29 @@ def _sensitive(text: str) -> bool:
     return bool(redact_text(text)[1])
 
 
+def _scrub_raw(parsed: Any) -> dict:
+    """Remove sensitive strings from the raw parsed answer BEFORE it is clipped.
+
+    Clipping to the item cap can cut a token in half so the filter no longer matches it; the
+    check therefore runs on the full values. A sensitive value drops its whole list entry (or key).
+    """
+
+    def clean(value: Any) -> Any:
+        if isinstance(value, str):
+            return None if _sensitive(value) else value
+        if isinstance(value, list):
+            return [kept for kept in (clean(v) for v in value) if kept is not None]
+        if isinstance(value, dict):
+            cleaned = {k: clean(v) for k, v in value.items()}
+            return None if any(v is None for v in cleaned.values()) else cleaned
+        return value
+
+    top = next((entry for entry in parsed if isinstance(entry, dict)), {}) if isinstance(parsed, list) else parsed
+    if not isinstance(top, dict):
+        return {}
+    return {key: cleaned for key, value in top.items() if (cleaned := clean(value)) is not None}
+
+
 def drop_sensitive(items: list[dict[str, str]]) -> list[dict[str, str]]:
     return [item for item in items if not _sensitive(item["text"])]
 
@@ -203,7 +233,7 @@ def extract_residual(
         answer = call(PROMPT, safe_excerpt)
     if not answer:
         return []
-    return drop_sensitive(residual_state.bound_residual(parse_json_response(answer)))
+    return drop_sensitive(residual_state.bound_residual(_scrub_raw(parse_json_response(answer))))
 
 
 def _claim_args(item: dict[str, str], *, scope: str, session_id: str, subject: str) -> dict[str, Any]:
@@ -327,12 +357,17 @@ def capture_residual(
     if not items:
         outcome["skipped"] = "empty-residual"
         return outcome
-    residual_state.save_residual(
-        session_id,
-        items,
-        meta={"provider": config["provider"], "model": config["model"], "trigger": str(data.get("trigger") or "")},
-        directory=state_directory,
-    )
+    try:
+        saved = residual_state.save_residual(
+            session_id,
+            items,
+            meta={"provider": config["provider"], "model": config["model"], "trigger": str(data.get("trigger") or "")},
+            directory=state_directory,
+        )
+    except Exception as exc:  # swallow-ok: a marker that cannot be written must not abort the claim ingestion below
+        saved = None
+        outcome["save_error"] = type(exc).__name__
+    outcome["saved"] = saved is not None
     try:
         outcome["ingested"] = ingest_residual(items, db_path=db_path, session_id=session_id, cwd=cwd, spool=spool)
     except Exception as exc:  # swallow-ok: the residual file already protects the session; ingest is the durable extra
