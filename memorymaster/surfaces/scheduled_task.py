@@ -4,15 +4,21 @@ Each run appends JSON lines to ``~/.memorymaster/logs/<mode>.log`` (T-0764):
 ``job_start``, the job's own records, and one ``job_finish`` with ``job``,
 ``scope``, ``duration_ms``, ``exit_code`` and ``outcome``. Output that a
 steward hook script prints itself is still captured verbatim.
+
+``beat`` (AO-2 v1) is a short tick meant for a 5-minute schedule. It does nothing unless
+``MEMORYMASTER_BEAT_ENABLED`` is truthy. See ``_run_beat``.
 """
 
 from __future__ import annotations
 
 import argparse
 import contextlib
+import json
 import logging
 import os
 import runpy
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from memorymaster.core.structured_log import (
@@ -24,10 +30,16 @@ from memorymaster.core.structured_log import (
 
 _JOB_LOG = logging.getLogger("memorymaster.jobs")
 
+BEAT_ENABLED_ENV = "MEMORYMASTER_BEAT_ENABLED"
+# One tick must end before the next 5-minute tick starts: the lease outlives a stuck run by at most this.
+BEAT_LEASE_TTL_SECONDS = 270
+BEAT_MAX_SESSIONS = 3
+BEAT_MAX_CONSOLIDATE_CALLS = 1
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="memorymaster-scheduled-task")
-    parser.add_argument("mode", choices=["dream", "steward"])
+    parser.add_argument("mode", choices=["dream", "steward", "beat"])
     parser.add_argument("--db", required=True)
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--script", default="")
@@ -120,6 +132,78 @@ def _run_dream(args: argparse.Namespace) -> int:
     return 0 if passed else 1
 
 
+def _beat_enabled() -> bool:
+    return os.environ.get(BEAT_ENABLED_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _write_beat_artifact(workspace: str, state_db: Path, guard_log: Path) -> Path:
+    """Persist M3/M4 as ``artifacts/<date>-ao2-beat-measurements.json`` (atomic replace)."""
+    from memorymaster.operations.operational_review import compute_beat_measurements
+
+    now = datetime.now(timezone.utc)
+    payload = {"schema": "memorymaster.ao2-beat-measurements.v1",
+               **compute_beat_measurements(state_db, guard_log, now=now)}
+    directory = Path(workspace) / "artifacts"
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"{now.date().isoformat()}-ao2-beat-measurements.json"
+    temporary = target.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(temporary, target)
+    return target
+
+
+def _run_beat(args: argparse.Namespace) -> int:
+    """One AO-2 beat tick: scan transcripts, ask the latency guard, then maybe run a bounded dream.
+
+    Off unless MEMORYMASTER_BEAT_ENABLED is truthy. The tick holds the shared ``dream-worker``
+    lease while it scans and decides, and releases it before ``run_dream``, which takes that same
+    lease itself. Hourly Dreaming holding it is a normal no-op for the beat, not a failure.
+    ``allow`` runs the worker with ``max_sessions`` 3 and one consolidation call, under the
+    existing daily token ceiling; ``capture_only`` and ``skip`` never call a model.
+    Claims are applied only if the operator passes ``--apply-candidates``.
+    """
+    if not _beat_enabled():
+        log_event(_JOB_LOG, "beat_tick", surface="job", job="beat", outcome="disabled")
+        return 0
+    from dataclasses import replace
+
+    from memorymaster.core.capture_control import capture_state_path
+    from memorymaster.dreaming import latency_guard
+    from memorymaster.dreaming.capture import scan_active_transcripts
+    from memorymaster.dreaming.ledger import DreamLedger
+    from memorymaster.dreaming.worker import DreamConfig, run_dream
+
+    state_db = capture_state_path()
+    ledger = DreamLedger(state_db)
+    owner = uuid.uuid4().hex
+    if not ledger.acquire_lease("dream-worker", owner, BEAT_LEASE_TTL_SECONDS):
+        log_event(_JOB_LOG, "beat_tick", surface="job", job="beat", outcome="worker_busy")
+        return 0
+    try:
+        scan = scan_active_transcripts(ledger)
+        decision = latency_guard.evaluate()
+    finally:
+        ledger.release_lease("dream-worker", owner)
+    dream: dict | None = None
+    if decision.action == latency_guard.ALLOW:
+        config = replace(
+            DreamConfig.from_env(),
+            lease_ttl_seconds=BEAT_LEASE_TTL_SECONDS,
+            max_sessions=BEAT_MAX_SESSIONS,
+            max_consolidate_calls_per_run=BEAT_MAX_CONSOLIDATE_CALLS,
+        )
+        dream = run_dream(args.db, args.workspace, apply_candidates=bool(args.apply_candidates), config=config)
+    log_event(_JOB_LOG, "beat_tick", surface="job", job="beat", outcome=decision.action,
+              reasons=decision.reasons, scan=scan, dream=dream)
+    try:
+        _write_beat_artifact(args.workspace, state_db, latency_guard.guard_log_path())
+    except OSError as exc:
+        log_event(_JOB_LOG, "beat_artifact_error", level=logging.WARNING, surface="job", job="beat",
+                  error=type(exc).__name__)
+    busy = bool(dream) and dream.get("reason") == "worker_busy"
+    return 0 if dream is None or busy or (dream.get("ok") and not dream.get("errors")) else 1
+
+
 def _run_steward(args: argparse.Namespace) -> int:
     if not args.script:
         raise ValueError("--script is required for steward mode")
@@ -158,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
                 with timed_event(_JOB_LOG, "job_finish", **fields) as result:
-                    code = _run_dream(args) if args.mode == "dream" else _run_steward(args)
+                    code = {"dream": _run_dream, "beat": _run_beat}.get(args.mode, _run_steward)(args)
                     result["exit_code"] = code
                     if code:
                         result["outcome"] = "failed"

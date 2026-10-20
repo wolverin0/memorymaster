@@ -11,6 +11,9 @@ _STEPS = (
     (2, (("error_count", "error_count INTEGER NOT NULL DEFAULT 0"),)),
     # Candidates Jev held (S3 INGEST); retention bounds how long such a capture is kept.
     (3, (("held_count", "held_count INTEGER NOT NULL DEFAULT 0"),)),
+    # AO-2 beat: when the source transcript was last written (epoch seconds, UTC), so
+    # the lag from "the file changed" to "the capture was processed" is measurable.
+    (4, (("source_mtime", "source_mtime REAL"),)),
 )
 
 

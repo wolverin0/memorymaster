@@ -46,6 +46,23 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
   `content_query` the tool is unchanged. Knobs: `MEMORYMASTER_LOCAL_SEARCH_*`
   (see `docs/env-reference.md`).
 
+### AO-2 beat v1 - minimal always-on tick (off by default)
+
+- `python -m memorymaster.surfaces.scheduled_task beat --db <db> --workspace <repo>` is a
+  5-minute tick that does nothing unless `MEMORYMASTER_BEAT_ENABLED` is truthy. It scans recently
+  modified Claude Code and Codex transcripts into the existing Dreaming ledger
+  (`scan_active_transcripts`, byte cursors shared with the lifecycle hooks, watermark in the
+  ledger state db), asks a latency guard (`dreaming/latency_guard.py`: dense recall 150/300 ms,
+  hook p95 900/1200 ms, logged to `beat-guard.jsonl`), and only on `allow` runs the existing
+  Dreaming worker under the shared `dream-worker` lease, the daily token ceiling, three
+  captures and one consolidation call per tick. Claims are not applied unless
+  `--apply-candidates` is passed. No scheduled task is registered by this change.
+- Additive ledger migration 4: `dream_captures.source_mtime` plus a `dream_scan_state` table in
+  the SQLite state file only; `DreamConfig.max_consolidate_calls_per_run` (default 0, unlimited).
+- Operational review `beat_health` (read-only): M3 capture-to-processing lag p50/p95 per provider
+  and M4 guard summary. PASS while the beat has not run. The beat CLI writes
+  `artifacts/<date>-ao2-beat-measurements.json`.
+
 ### 4.9.0 (release candidate) - live Jev decisions and the weekly-review cure
 
 - TypeSafe Jev (System One, `jev-1.13.0`) judges eight surfaces through one

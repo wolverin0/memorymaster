@@ -243,6 +243,22 @@ def _hermetic_recall_hook_policy(tmp_path_factory, monkeypatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_capture_state(tmp_path_factory, monkeypatch) -> None:
+    """Keep the Dreaming/capture state db (and the beat guard log beside it) out of the real home.
+
+    WHY: capture_state_path() defaults to ~/.memorymaster/capture-control.db. The AO-2 beat
+    check in the operational review and the scheduled-task beat read and write that file; a
+    test that did not set MEMORYMASTER_CAPTURE_STATE_DB itself would have touched the
+    operator's real cursors, captures and leases (T-1640, review M5). Tests that need a
+    specific path still set the variable themselves.
+    """
+    monkeypatch.setenv(
+        "MEMORYMASTER_CAPTURE_STATE_DB",
+        str(tmp_path_factory.mktemp("mm-capture-state") / "capture-control.db"),
+    )
+
+
+@pytest.fixture(autouse=True)
 def _restore_cwd():
     """Every test ends in the directory it started in.
 

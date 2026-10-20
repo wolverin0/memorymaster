@@ -8,6 +8,7 @@ watermark. Exit codes are 0=PASS, 1=FAIL, and 3=WARN.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.metadata
 import json
 import os
@@ -77,6 +78,10 @@ class ReviewConfig:
     # (default: MEMORYMASTER_CHECKPOINT_LOG, then ~/.memorymaster/checkpoints/).
     decisions_db: Path | None = None
     checkpoint_log: Path | None = None
+    # AO-2 beat (default: the Dreaming state db, MEMORYMASTER_CAPTURE_STATE_DB, and the
+    # guard log next to it).
+    capture_state_db: Path | None = None
+    beat_guard_log: Path | None = None
 
 
 def _configured_canaries(config: ReviewConfig) -> list[tuple[str, str]]:
@@ -714,9 +719,133 @@ def check_checkpoint_delivery(config: ReviewConfig, *, now: datetime | None = No
     return ReviewResult("checkpoint_delivery", verdict, detail, counts)
 
 
+# AO-2 beat health (M3 lag, M4 latency guard). Read-only; silent (PASS) until the beat has run.
+BEAT_WINDOW_HOURS = 24
+BEAT_LAG_TARGET_SECONDS = 3600
+BEAT_SKIP_FAIL_SHARE = 0.10
+BEAT_PROCESSED_STATES = ("extracted", "consolidated", "applied")
+BEAT_PENDING_STATES = ("captured", "retryable")
+
+
+def _nearest_rank(values: list[float], q: float) -> int:
+    data = sorted(values)
+    return int(round(data[min(len(data) - 1, int(q * len(data)))]))
+
+
+def _beat_paths(config: ReviewConfig) -> tuple[Path, Path]:
+    from memorymaster.core.capture_control import capture_state_path
+    from memorymaster.dreaming.latency_guard import GUARD_LOG_NAME
+
+    state_db = config.capture_state_db if config.capture_state_db is not None else capture_state_path()
+    guard_log = config.beat_guard_log if config.beat_guard_log is not None else state_db.parent / GUARD_LOG_NAME
+    return state_db, guard_log
+
+
+def _beat_lag(state_db: Path, since: datetime) -> dict[str, Any]:
+    """M3: seconds from a transcript's last write to the capture being processed, per provider."""
+    out: dict[str, Any] = {"providers": {}, "processed": 0, "pending": 0}
+    if not state_db.exists():
+        return out
+    try:
+        with contextlib.closing(_connect_ro(state_db)) as conn:
+            marks = ",".join("?" for _ in BEAT_PROCESSED_STATES)
+            rows = conn.execute(
+                f"SELECT provider, updated_at, captured_at, source_mtime FROM dream_captures "
+                f"WHERE source_mtime IS NOT NULL AND state IN ({marks}) AND updated_at >= ?",
+                (*BEAT_PROCESSED_STATES, since.isoformat()),
+            ).fetchall()
+            pending = conn.execute(
+                f"SELECT COUNT(*) FROM dream_captures WHERE source_mtime IS NOT NULL AND state IN "
+                f"({','.join('?' for _ in BEAT_PENDING_STATES)})", BEAT_PENDING_STATES,
+            ).fetchone()[0]
+    except sqlite3.OperationalError:
+        return out  # no such table/column: a ledger that predates the beat has no beat data
+    lags: dict[str, list[float]] = {}
+    capture_lags: dict[str, list[float]] = {}
+    for row in rows:
+        processed, captured = _parse_utc(str(row["updated_at"])), _parse_utc(str(row["captured_at"]))
+        if processed is None:
+            continue
+        mtime = float(row["source_mtime"])
+        lags.setdefault(str(row["provider"]), []).append(max(0.0, processed.timestamp() - mtime))
+        if captured is not None:
+            capture_lags.setdefault(str(row["provider"]), []).append(max(0.0, captured.timestamp() - mtime))
+    for provider, values in sorted(lags.items()):
+        out["providers"][provider] = {
+            "n": len(values), "lag_p50_s": _nearest_rank(values, 0.5), "lag_p95_s": _nearest_rank(values, 0.95),
+            "capture_lag_p50_s": _nearest_rank(capture_lags[provider], 0.5) if provider in capture_lags else None,
+            "capture_lag_p95_s": _nearest_rank(capture_lags[provider], 0.95) if provider in capture_lags else None,
+        }
+    out["processed"], out["pending"] = len(rows), int(pending)
+    return out
+
+
+def _beat_guard(guard_log: Path, since: datetime) -> dict[str, Any]:
+    """M4: how the latency guard judged the ticks of the window."""
+    counts = {"allow": 0, "capture_only": 0, "skip": 0}
+    for candidate in (guard_log.with_suffix(guard_log.suffix + ".1"), guard_log):
+        try:
+            text = candidate.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for raw in text.splitlines():
+            try:
+                event = json.loads(raw)
+                stamp = _parse_utc(str(event["ts"]))
+            except (ValueError, KeyError, TypeError):
+                continue
+            if stamp is not None and stamp >= since and event.get("action") in counts:
+                counts[event["action"]] += 1
+    ticks = sum(counts.values())
+    verdict = Verdict.PASS
+    if ticks and counts["skip"] / ticks > BEAT_SKIP_FAIL_SHARE:
+        verdict = Verdict.FAIL
+    elif counts["skip"] or counts["capture_only"]:
+        verdict = Verdict.WARN
+    return {"ticks": ticks, **counts, "verdict": verdict.value}
+
+
+def compute_beat_measurements(
+    state_db: Path, guard_log: Path, *, now: datetime | None = None, window_hours: int = BEAT_WINDOW_HOURS,
+) -> dict[str, Any]:
+    """Read-only M3/M4 numbers; the beat CLI is the only caller that persists them."""
+    end = _utc(now)
+    since = end - timedelta(hours=window_hours)
+    m3 = _beat_lag(state_db, since)
+    m3["target_p95_s"] = BEAT_LAG_TARGET_SECONDS
+    m3["within_target"] = all(p["lag_p95_s"] <= BEAT_LAG_TARGET_SECONDS for p in m3["providers"].values())
+    return {"observed_at": end.isoformat(), "window_hours": window_hours, "m3": m3,
+            "m4": _beat_guard(guard_log, since)}
+
+
+def check_beat_health(config: ReviewConfig, *, now: datetime | None = None) -> ReviewResult:
+    """M3 (capture-to-processing lag) and M4 (latency guard) for the AO-2 beat; PASS while it has not run."""
+    state_db, guard_log = _beat_paths(config)
+    try:
+        data = compute_beat_measurements(state_db, guard_log, now=now)
+    except (OSError, sqlite3.Error) as exc:
+        return ReviewResult("beat_health", Verdict.WARN, f"probe_error={type(exc).__name__}")
+    m3, m4 = data["m3"], data["m4"]
+    if not m3["processed"] and not m3["pending"] and not m4["ticks"]:
+        return ReviewResult("beat_health", Verdict.PASS, f"no beat data in the last {data['window_hours']}h (beat inactive)")
+    counts = {"processed_24h": m3["processed"], "pending": m3["pending"], "guard_ticks": m4["ticks"],
+              "guard_allow": m4["allow"], "guard_capture_only": m4["capture_only"], "guard_skip": m4["skip"]}
+    for provider, stats in m3["providers"].items():
+        counts[f"{provider}_lag_p50_s"], counts[f"{provider}_lag_p95_s"] = stats["lag_p50_s"], stats["lag_p95_s"]
+    lag = "; ".join(f"{name} lag p50={s['lag_p50_s']}s p95={s['lag_p95_s']}s (n={s['n']})"
+                    for name, s in m3["providers"].items()) or "no processed captures"
+    detail = (f"M3 {lag}, pending={m3['pending']}; M4 {m4['verdict']} "
+              f"allow={m4['allow']} capture_only={m4['capture_only']} skip={m4['skip']}")
+    verdict = Verdict(m4["verdict"])
+    if not m3["within_target"]:
+        detail = f"lag p95 over {BEAT_LAG_TARGET_SECONDS}s: {detail}"
+        verdict = Verdict.FAIL if verdict is Verdict.FAIL else Verdict.WARN
+    return ReviewResult("beat_health", verdict, detail, counts)
+
+
 REVIEW_CHECKS = (check_runtime, check_database, check_feature_activation, check_graph_observations,
                  check_compiled_profile, check_recent_private_context, check_retrieval,
-                 check_jev_decisions, check_checkpoint_delivery)
+                 check_jev_decisions, check_checkpoint_delivery, check_beat_health)
 
 
 def exit_code(results: Iterable[ReviewResult]) -> int:

@@ -332,8 +332,8 @@ def test_checkpoint_log_env_override(tmp_path, monkeypatch):
 
 def test_run_review_and_cli_include_both_checks(tmp_path, monkeypatch, capsys):
     names = [check.__name__ for check in review.REVIEW_CHECKS]
-    assert names[-2:] == ["check_jev_decisions", "check_checkpoint_delivery"]
-    assert len(names) == 9
+    assert names[-3:] == ["check_jev_decisions", "check_checkpoint_delivery", "check_beat_health"]
+    assert len(names) == 10
     captured = {}
     monkeypatch.setattr(review, "run_review", lambda config: captured.setdefault("config", config) and [])
     review.main(["--db", str(tmp_path / "memory.db"), "--decisions-db", str(tmp_path / "d.db"),

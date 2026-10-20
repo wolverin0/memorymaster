@@ -118,6 +118,11 @@ CREATE TABLE IF NOT EXISTS dream_leases (
     heartbeat_at TEXT NOT NULL,
     expires_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS dream_scan_state (
+    name TEXT PRIMARY KEY,
+    value REAL NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -218,6 +223,28 @@ class DreamLedger:
             )
             row = conn.execute("SELECT id FROM dream_captures WHERE capture_key=?", (capture_key,)).fetchone()
         return int(row[0])
+
+    def scan_watermark(self, name: str) -> float | None:
+        """Last-scan mtime (epoch seconds) of one transcript source, or None before its first scan."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT value FROM dream_scan_state WHERE name=?", (name,)).fetchone()
+        return None if row is None else float(row[0])
+
+    def set_scan_watermark(self, name: str, value: float) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO dream_scan_state VALUES (?, ?, ?)
+                   ON CONFLICT(name) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
+                (name, float(value), _iso(_utc_now())),
+            )
+
+    def record_source_mtime(self, capture_id: int, mtime: float) -> None:
+        """Keep the EARLIEST source mtime of a capture: a coalesced row's lag is its oldest bytes'."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE dream_captures SET source_mtime=? WHERE id=? AND source_mtime IS NULL",
+                (float(mtime), capture_id),
+            )
 
     def get_capture(self, capture_id: int) -> dict[str, Any]:
         with self._connect() as conn:
