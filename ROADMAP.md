@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; recall integrity and source-tested supersession drain repair -->
+<!-- doc-head: sole roadmap; installed recall integrity, temporal guard and verified delivery -->
 # MemoryMaster roadmap
 # Covers: live Jev decision ledger (4.9.0 checklist), useful-memory delivery/evaluation, workflow analytics, governed observations, always-on context layer program and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, code navigation.
@@ -6,21 +6,6 @@
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
 # Safety: SQLite remains authority; generated user.md is disposable and feature-off by default.
 <!-- /doc-head -->
-
-## T-1656: supersession conflict drain repair (source only)
-
-- SQLite confirmation now retires a winning tuple predecessor and writes both
-  supersession links in the same lifecycle transaction. Confirmation failures
-  roll back the retirement; automatic source/structure policy still applies.
-- Conflicts without a current confirmed rival remain pending revalidation;
-  curation drain no longer classifies their missing rival as staleness.
-- `python -m scripts.revalidate_supersession_drain` performs a read-only census
-  of stale replacements affected by the old drain. After lane approval, use
-  `--apply --human-id <id>` (repeatable) to revalidate an explicit selection
-  through validator/lifecycle gates. No live revalidation was performed here.
-- Regression reproduced on base revision `34a0cf4`; local acceptance and
-  independent source review cover atomic rollback and promotion boundaries.
-  PostgreSQL rejects the new atomic supersession option explicitly.
 
 ## Shipped in v4.6.0
 
