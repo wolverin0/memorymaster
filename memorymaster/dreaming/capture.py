@@ -11,7 +11,7 @@ from typing import Any, Mapping
 
 from memorymaster.core.capture_control import CaptureLedger
 from memorymaster.core.security import redact_text
-from memorymaster.core.scope_utils import scope_from_cwd
+from memorymaster.core.scope_utils import resolve_transcript_workspace_scope
 from memorymaster.dreaming.ledger import DreamLedger
 from memorymaster.dreaming.models import CaptureEnvelope, DreamMessage
 from memorymaster.dreaming.self_observation import is_memory_tool, strip_self_observation
@@ -113,8 +113,8 @@ def parse_transcript_lines(
     return messages
 
 
-def _scope(cwd: str | None) -> str:
-    return scope_from_cwd(cwd)
+def _scope(cwd: str | None) -> str | None:
+    return resolve_transcript_workspace_scope(cwd)
 
 
 def capture_transcript(
@@ -152,9 +152,12 @@ def capture_transcript(
     if not messages:
         cursor_ledger.commit_cursor(chunk)
         return {"queued": 0, "reason": "no_conversation"}
+    scope = _scope(cwd)
+    if scope is None:
+        return {"queued": 0, "reason": "unresolved_scope"}
     content_hash = hashlib.sha256(json.dumps([m.to_dict() for m in messages], sort_keys=True).encode("utf-8")).hexdigest()
     envelope = CaptureEnvelope(
-        provider=provider.lower(), session_hash=session_hash, scope=_scope(cwd), captured_at=_now(),
+        provider=provider.lower(), session_hash=session_hash, scope=scope, captured_at=_now(),
         last_activity_at=messages[-1].timestamp or _now(), messages=tuple(messages),
         cursor_start=chunk.start_offset, cursor_end=chunk.end_offset, content_hash=content_hash,
     )

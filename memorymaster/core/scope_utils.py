@@ -30,6 +30,8 @@ __all__ = [
     "project_scope_variants",
     "PROJECT_ROOT_MARKERS",
     "MAX_ANCESTOR_DEPTH",
+    "resolve_transcript_workspace_scope",
+    "resolve_Transcript_workspace_scope",
 ]
 
 # A directory carrying agent instructions IS a project root. That is the whole
@@ -310,6 +312,103 @@ def scope_from_cwd_or_user(cwd: str | os.PathLike[str] | None) -> str:
     """
     scope = scope_from_cwd(cwd) if cwd else "user"
     return "user" if scope == "global" else scope
+
+
+_EPHEMERAL_WORKSPACE = re.compile(r"^(?:_wt|worktrees?|scratch|tmp|temp|pr[-_]?\d+|t[-_]?\d+|card[-_]?\d+)$", re.I)
+_REPOSITORY_WALK_LIMIT = 32
+_GIT_METADATA_LIMIT = 4096
+
+
+def _small_git_text(path: Path) -> str:
+    with path.open("r", encoding="utf-8") as handle:
+        text = handle.read(_GIT_METADATA_LIMIT + 1)
+    if len(text) > _GIT_METADATA_LIMIT or "\x00" in text:
+        raise ValueError("invalid repository metadata")
+    return text.strip()
+
+
+def _repository_owner(root: Path) -> Path | None:
+    """Validate worktree common-directory membership without invoking Git."""
+    marker = root / ".git"
+    if marker.is_dir():
+        return root
+    if not marker.is_file():
+        return None
+    pointer = _small_git_text(marker)
+    if not pointer.startswith("gitdir:") or "\n" in pointer:
+        return None
+    target = pointer[len("gitdir:"):].strip()
+    if not target:
+        return None
+    gitdir = (root / target).resolve()
+    common_text = _small_git_text(gitdir / "commondir")
+    if not common_text or "\n" in common_text:
+        return None
+    common = (gitdir / common_text).resolve()
+    # A valid linked worktree points into this exact common .git/worktrees dir.
+    # Reject arbitrary commondir pointers that could attribute a scratch repo.
+    if common.name != ".git" or not common.is_dir() or gitdir.parent != common / "worktrees":
+        return None
+    backlink = gitdir / "gitdir"
+    if backlink.exists() and Path(_small_git_text(backlink)).resolve() != marker.resolve():
+        return None
+    owner = common.parent
+    return owner if owner.is_dir() else None
+
+
+def resolve_transcript_workspace_scope(
+    path_or_cwd: str | os.PathLike[str] | None, *, allow_fallback_global: bool = False,
+) -> str | None:
+    """Resolve one canonical project identity, or explicitly leave it unresolved.
+
+    Existing operator aliases take precedence over inferred repository names.
+    A deleted worktree can resolve only through an explicit alias. A nearby
+    parent repository does not prove ownership of a missing card/scratch path.
+    Generic callers may retain their separate empty-cwd ``global`` convention.
+    """
+    raw = str(path_or_cwd or "").strip()
+    if not raw:
+        return "global" if allow_fallback_global else None
+    try:
+        current = Path(raw).resolve()
+        if current.is_file() and current.suffix == ".jsonl":
+            transcript_cwd = cwd_from_transcript(current)
+            return resolve_transcript_workspace_scope(transcript_cwd, allow_fallback_global=allow_fallback_global)
+        aliases = _scope_aliases()
+        candidates = (current, *list(current.parents)[:_REPOSITORY_WALK_LIMIT])
+        unresolved_workspace = not current.is_dir()
+        for candidate in candidates:
+            slug = _SLUG_NORMALIZER_RE.sub("-", candidate.name.strip().lower())
+            if slug in aliases:
+                return aliases[slug]
+            marker = candidate / ".git"
+            if marker.exists():
+                if unresolved_workspace:
+                    return None
+                owner = _repository_owner(candidate)
+                if owner is None:
+                    return None
+                owner_slug = _SLUG_NORMALIZER_RE.sub("-", owner.name.strip().lower())
+                if _EPHEMERAL_WORKSPACE.fullmatch(owner.name) and owner_slug not in aliases:
+                    return None
+                return aliases.get(owner_slug, f"project:{canonicalize_slug(owner.name)}")
+            if candidate == current and current.is_dir():
+                repositories = 0
+                for index, child in enumerate(current.iterdir()):
+                    if index >= 1024:
+                        return None
+                    repositories += int(child.is_dir() and (child / ".git").exists())
+                    if repositories > 1:
+                        return None
+            if _EPHEMERAL_WORKSPACE.fullmatch(candidate.name):
+                unresolved_workspace = True
+        return None
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
+# Preserve the spelling supplied in the approved review's interface contract.
+resolve_Transcript_workspace_scope = resolve_transcript_workspace_scope
 
 
 def cwd_from_transcript(transcript_path: str | os.PathLike[str] | None) -> str | None:

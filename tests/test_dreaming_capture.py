@@ -46,12 +46,14 @@ def test_claude_parser_redacts_before_auxiliary_persistence(tmp_path: Path) -> N
         encoding="utf-8",
     )
     ledger = DreamLedger(tmp_path / "capture.db")
+    repo = tmp_path / "my project"
+    (repo / ".git").mkdir(parents=True)
 
     result = capture_transcript(
         transcript,
         provider="claude",
         session_id="sensitive-session",
-        cwd=str(tmp_path / "my project"),
+        cwd=str(repo),
         ledger=ledger,
     )
 
@@ -69,6 +71,7 @@ def test_capture_cursor_is_replay_safe(tmp_path: Path) -> None:
         "message": {"role": "user", "content": "A durable preference worth capturing."}
     }) + "\n", encoding="utf-8")
     ledger = DreamLedger(tmp_path / "capture.db")
+    (tmp_path / ".git").mkdir()
 
     first = capture_transcript(
         transcript, provider="claude", session_id="same", cwd=str(tmp_path), ledger=ledger
@@ -91,9 +94,24 @@ def test_scope_uses_git_root_instead_of_nested_directory_name(tmp_path: Path) ->
     assert _scope(str(nested)) == "project:memory-master"
 
 
-def test_scope_treats_multi_repo_collection_root_as_global(tmp_path: Path) -> None:
+def test_scope_quarantines_unowned_multi_repo_collection_root(tmp_path: Path) -> None:
     collection = tmp_path / "Py Apps"
     (collection / "alpha" / ".git").mkdir(parents=True)
     (collection / "beta" / ".git").mkdir(parents=True)
 
-    assert _scope(str(collection)) == "global"
+    assert _scope(str(collection)) is None
+
+
+def test_unresolved_capture_preserves_cursor_until_alias_supplied(tmp_path, monkeypatch):
+    transcript = tmp_path / "unresolved.jsonl"
+    transcript.write_text(json.dumps({"type": "user", "message": {"role": "user", "content": "Keep WAL."}}) + "\n", encoding="utf-8")
+    ledger = DreamLedger(tmp_path / "unresolved.db")
+    cwd = tmp_path / "deleted" / "t1664"
+    args = dict(provider="claude", session_id="unresolved", cwd=str(cwd), ledger=ledger)
+    assert capture_transcript(transcript, **args) == {"queued": 0, "reason": "unresolved_scope"}
+    aliases = tmp_path / "aliases.json"
+    aliases.write_text(json.dumps({"aliases": {"t1664": "project:memorymaster"}}), encoding="utf-8")
+    monkeypatch.setenv("MEMORYMASTER_SCOPE_ALIASES", str(aliases))
+    result = capture_transcript(transcript, **args)
+    assert result["queued"] == 1
+    assert ledger.get_capture(result["capture_id"])["scope"] == "project:memorymaster"
