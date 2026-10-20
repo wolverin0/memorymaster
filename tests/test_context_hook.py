@@ -7,9 +7,44 @@ Tests cover:
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from memorymaster.recall.context_hook import classify_observation, observe, recall
+
+
+def test_governed_prompt_rows_keep_exact_then_fill_without_recording_discarded(monkeypatch):
+    from memorymaster.recall.context_hook import _governed_prompt_rows
+
+    monkeypatch.setenv("MEMORYMASTER_SCOPE_DEFAULT", "project:fixture")
+    query = "deployment worker retry queue timeout"
+    rows = [
+        {"claim": SimpleNamespace(
+            id=n, text=f"deployment worker note {n}", status="confirmed",
+            scope="project:fixture", visibility="public", subject=None,
+            predicate=None, object_value=None, valid_from=None, valid_until=None,
+        )}
+        for n in range(1, 5)
+    ]
+    service = MagicMock()
+    # Duplicate exact match must not consume a slot; the last row is discarded.
+    service.query_rows.side_effect = [rows[:1], [rows[1], rows[0], *rows[2:]]]
+
+    result = _governed_prompt_rows(service, query, limit=3)
+
+    assert [row["claim"].id for row in result] == [1, 2, 3]
+    calls = [call.kwargs for call in service.query_rows.call_args_list]
+    assert [call["query_text"] for call in calls] == [query, " OR ".join(query.split())]
+    for call in calls:
+        assert call["limit"] == 3
+        assert call["record_accesses"] is False
+        assert call["include_stale"] is False
+        assert call["include_conflicted"] is False
+        assert call["include_candidates"] is False
+        assert "project:fixture" in call["scope_allowlist"]
+    service._record_accesses.assert_not_called()
+    service.store.record_accesses_batch.assert_not_called()
+    service.store.record_access.assert_not_called()
 
 
 class TestClassifyObservation:

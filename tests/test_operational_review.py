@@ -3,8 +3,40 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from memorymaster.operations import operational_review as review
+
+
+def test_default_retrieval_keeps_exact_rows_then_fills_without_accesses(tmp_path, monkeypatch):
+    query = "deployment worker retry queue timeout"
+    db = _db(tmp_path / "memory.db")
+    rows = [
+        {"claim": SimpleNamespace(id=n, human_id=f"mm-{n}")}
+        for n in range(1, 8)
+    ]
+    service = MagicMock()
+    # Expansion ranks partial matches before exact ones and exceeds the cap.
+    service.query_rows.side_effect = [rows[:2], [rows[2], rows[0], *rows[3:]]]
+    service_class = MagicMock(return_value=service)
+    monkeypatch.setattr("memorymaster.core.service.MemoryService", service_class)
+
+    assert review._default_retrieval(db, query) == [f"mm-{n}" for n in range(1, 6)]
+
+    service_class.assert_called_once_with(str(db), workspace_root=db.parent, read_only=True)
+    calls = [call.kwargs for call in service.query_rows.call_args_list]
+    assert [call["query_text"] for call in calls] == [query, " OR ".join(query.split())]
+    for call in calls:
+        assert call["limit"] == 5
+        assert call["record_accesses"] is False
+        assert call["include_stale"] is False
+        assert call["include_conflicted"] is False
+        assert call["include_candidates"] is False
+        assert call["allow_sensitive"] is False
+    service._record_accesses.assert_not_called()
+    service.store.record_accesses_batch.assert_not_called()
+    service.store.record_access.assert_not_called()
 
 
 def _db(path: Path) -> Path:
