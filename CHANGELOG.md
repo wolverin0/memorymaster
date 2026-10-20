@@ -8,6 +8,31 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 ## [Unreleased]
 
+### PreCompact residual (AO-1, T-1633)
+
+- New opt-in `MEMORYMASTER_PRECOMPACT_RESIDUAL=1`: when a compaction is allowed
+  to proceed, the PreCompact hook makes one bounded LLM call over the turns about
+  to be summarized and extracts a residual (open decisions, rejected options with
+  why, unverified assumptions, in-flight `T-NNNN` ids, next step; at most 10
+  items / 1500 characters). Items land as `candidate` claims with
+  `source_agent=precompact-residual`, the project scope resolved from the working
+  directory and the session id as citation, through the sensitivity filter.
+  `precompact-residual` joins the default non-auto-promotable sources, so no
+  automatic path confirms them.
+- The recall hook template injects the stored residual as one block on the first
+  prompt after the compaction (even a trivial "continue"), independent of
+  similarity search, then consumes it. State lives in
+  `~/.memorymaster/hook_state/residual_<session>.json`
+  (`MEMORYMASTER_HOOK_STATE_DIR` overrides the directory); a residual older than
+  six hours is ignored.
+- A Claude provider uses a Sonnet-class model
+  (`MEMORYMASTER_PRECOMPACT_RESIDUAL_MODEL` overrides); any other configured
+  provider is used as configured and the hook log says so. The existing warn-once
+  behaviour and `MEMORYMASTER_PRECOMPACT_BLOCKING` are unchanged. The installed
+  PreCompact timeout is now 90 s because the capture budgets 75 s of provider time.
+- `scripts/probe_m2_continuity.py` is the M2 continuity probe ("what did we decide
+  about X" after a simulated compaction) and documents the real-session protocol.
+
 ### 4.9.0 (release candidate) - live Jev decisions and the weekly-review cure
 
 - TypeSafe Jev (System One, `jev-1.13.0`) judges eight surfaces through one

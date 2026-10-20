@@ -281,6 +281,21 @@ class TestInstallHooksIdempotent:
         # Must parse without error.
         json.loads((hermetic_home["claude_dir"] / "settings.json").read_text(encoding="utf-8"))
 
+    def test_precompact_declared_once_with_a_timeout_that_outlasts_the_residual_budget(self, hermetic_home):
+        """T-1633: the PreCompact residual capture budgets 75s of provider time inside the hook."""
+        llm = {"provider": "ollama", "api_key": "", "model": "llama3.2:3b"}
+        sh.install_hooks(llm)
+        sh.install_hooks(llm)
+        settings = json.loads((hermetic_home["claude_dir"] / "settings.json").read_text(encoding="utf-8"))
+        entries = [
+            hook
+            for entry in settings["hooks"]["PreCompact"]
+            for hook in entry["hooks"]
+            if "memorymaster-precompact.py" in hook["command"]
+        ]
+        assert len(entries) == 1
+        assert entries[0]["timeout"] == sh.PRECOMPACT_TIMEOUT_SECONDS >= 90
+
 
 # ---------------------------------------------------------------------------
 # Full-stack: no-Docker fallback

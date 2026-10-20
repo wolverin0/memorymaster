@@ -249,6 +249,10 @@ def banner(text):
     print(f"{'=' * 60}\n")
 
 
+# PreCompact hook timeout: residual capture budgets 75s of LLM work inside it.
+PRECOMPACT_TIMEOUT_SECONDS = 90
+
+
 def replace_placeholder(content, project_root):
     """Replace __MEMORYMASTER_PROJECT_ROOT__ with actual path."""
     # Forward slashes are valid Windows paths and cannot form Python escapes.
@@ -423,12 +427,16 @@ def install_hooks(llm_config, include_pretooluse: bool = False):
     stop_hooks[:] = [h for h in stop_hooks if "memorymaster" not in json.dumps(h)]
     stop_hooks.append(stop_hook)
 
-    # PreCompact — force save before context compaction (permanent context loss)
+    # PreCompact — warn-once save reminder (opt-in blocking) and, with
+    # MEMORYMASTER_PRECOMPACT_RESIDUAL=1, the residual capture (T-1633): one bounded
+    # LLM call over the turns about to be summarized. Claude Code event PreCompact
+    # (matcher omitted = manual and auto). The hook budgets its own work at 75s, so
+    # the timeout must outlast it; the quiet default path exits in milliseconds.
     precompact_hook = {
         "hooks": [{
             "type": "command",
             "command": f'python "{hooks_dir / "memorymaster-precompact.py"}"',
-            "timeout": 15
+            "timeout": PRECOMPACT_TIMEOUT_SECONDS
         }]
     }
     precompact_hooks = hooks.setdefault("PreCompact", [])
