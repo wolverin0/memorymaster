@@ -51,6 +51,7 @@ from memorymaster.stores.claim_identity import (
 )
 from memorymaster.stores.store_factory import create_store
 from memorymaster.stores._storage_shared import ConcurrentModificationError
+from memorymaster.stores.ingest_receipts import fill_outcome_receipt, prepare_outcome_receipt
 import contextlib
 
 logger = logging.getLogger(__name__)
@@ -493,11 +494,13 @@ class MemoryService(IntegrationService):
         (e.g. via ``archive_by_source``) would otherwise return the archived
         row inert: invisible to query_memory, yet blocking creation of a
         live duplicate — that exact fact could never be re-learned.
-        Re-ingesting IS fresh evidence the fact is current again, so
-        transition it back to ``candidate`` for the steward to re-validate.
+        Ordinary archival can transition back to ``candidate`` for steward
+        review. Explicit forget/rollback intent blocks automatic revival.
         Non-archived matches pass through untouched (dedup unchanged).
         """
         if claim.status != "archived":
+            return claim
+        if self.store.latest_archive_reason(claim.id) in {"friendly_forget_claim", "ao7_rollback"}:
             return claim
         owner = normalize_source_agent(claim.source_agent)
         actor = normalize_source_agent(source_agent)
@@ -545,7 +548,9 @@ class MemoryService(IntegrationService):
         intake_batch_id: str | None = None,
         intake_batch_max: int | None = None,
         _pre_sanitization_findings: list[str] | None = None,
+        outcome_receipt: dict[str, Any] | None = None,
     ) -> Claim:
+        prepare_outcome_receipt(outcome_receipt)
         if not text.strip():
             raise ValueError("Claim text cannot be empty.")
         if not citations:
@@ -635,8 +640,11 @@ class MemoryService(IntegrationService):
             if existing_claim is not None:
                 observability.bump_claim_ingested(source_agent)
                 revived = self._revive_archived_dedup_match(existing_claim, source_agent)
-                ingest_governance.queue_supersession_proposal(
-                    self.store, intake_governance.supersession_target, revived, confidence)
+                if revived.status != "archived":
+                    ingest_governance.queue_supersession_proposal(
+                        self.store, intake_governance.supersession_target, revived, confidence)
+                fill_outcome_receipt(outcome_receipt, revived, created=False,
+                                     persisted=self.store.ingest_creation_receipt(revived.id) if outcome_receipt is not None else None)
                 return revived
         # Dedup by content hash (catch duplicates without idempotency key)
         # Include scope + tenant to avoid cross-tenant/cross-scope dedup
@@ -655,9 +663,12 @@ class MemoryService(IntegrationService):
             if existing_by_hash is not None:
                 observability.bump_claim_ingested(source_agent)
                 revived = self._revive_archived_dedup_match(existing_by_hash, source_agent)
-                ingest_governance.queue_supersession_proposal(
-                    self.store, intake_governance.supersession_target, revived, confidence
-                )
+                if revived.status != "archived":
+                    ingest_governance.queue_supersession_proposal(
+                        self.store, intake_governance.supersession_target, revived, confidence
+                    )
+                fill_outcome_receipt(outcome_receipt, revived, created=False,
+                                     persisted=self.store.ingest_creation_receipt(revived.id) if outcome_receipt is not None else None)
                 return revived
         # Set content hash as idempotency key if none provided
         if normalized_idempotency_key is None:
@@ -721,6 +732,9 @@ class MemoryService(IntegrationService):
             scope=scope,
         )
 
+        # Always obtain the atomic store result, including for callers that do
+        # not request an output receipt. A race winner is never fresh intake.
+        creation_receipt = outcome_receipt if outcome_receipt is not None else {}
         claim = self.store.create_claim(
             text=sanitized.text,
             citations=sanitized.citations,
@@ -740,7 +754,17 @@ class MemoryService(IntegrationService):
             visibility=visibility,
             holder=holder,
             _pre_sanitization_findings=redaction_findings,
+            outcome_receipt=creation_receipt,
+            intake_batch_id=intake_batch_id,
         )
+        if not creation_receipt.get("created"):
+            # A concurrent writer won inside create_claim. Preserve its
+            # citations, creation ownership and source-review provenance.
+            claim = self._revive_archived_dedup_match(claim, source_agent)
+            fill_outcome_receipt(outcome_receipt, claim, created=False,
+                                 persisted=self.store.ingest_creation_receipt(claim.id))
+            observability.bump_claim_ingested(source_agent)
+            return claim
         ingest_governance.apply_post_ingest_governance(
             self.store, claim, intake_governance, confidence
         )

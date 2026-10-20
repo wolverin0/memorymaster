@@ -62,6 +62,7 @@ from memorymaster.stores.postgres_policy_contract import (
     expressions_match,
 )
 from memorymaster.stores.storage import SQLiteStore
+from memorymaster.stores.ingest_receipts import creation_payload, fill_outcome_receipt, prepare_outcome_receipt
 from memorymaster.stores._storage_sources import (
     _ACTION_FIELDS,
     _EVIDENCE_FIELDS,
@@ -1693,6 +1694,20 @@ class PostgresStore(SQLiteStore):
             return human_id
         raise RuntimeError("Unable to allocate a unique human_id after 100 attempts.")
 
+    def ingest_creation_receipt(self, claim_id: int) -> dict[str, object]:
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT payload_json FROM events WHERE claim_id=%s AND event_type='ingest' ORDER BY id LIMIT 1",
+                (claim_id,),
+            )
+            row = cur.fetchone()
+        if row is None or not row["payload_json"]:
+            return {}
+        payload = row["payload_json"]
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        return payload if isinstance(payload, dict) else {}
+
     def create_claim(
         self,
         text: str,
@@ -1714,7 +1729,10 @@ class PostgresStore(SQLiteStore):
         visibility: str = "public",
         holder: str | None = None,
         _pre_sanitization_findings: list[str] | None = None,
+        outcome_receipt: dict[str, object] | None = None,
+        intake_batch_id: str | None = None,
     ) -> Claim:
+        operation_id = prepare_outcome_receipt(outcome_receipt)
         if not citations:
             raise ValueError("At least one citation is required.")
         citation_inputs = [
@@ -1835,6 +1853,7 @@ class PostgresStore(SQLiteStore):
                 claim = self.get_claim(claim_id)
                 if claim is None:
                     raise RuntimeError("Idempotency key matched missing claim.")
+                fill_outcome_receipt(outcome_receipt, claim, created=False, persisted=self.ingest_creation_receipt(claim.id) if outcome_receipt is not None else None)
                 return claim
             claim_id = int(claim_row["id"])
 
@@ -1859,7 +1878,7 @@ class PostgresStore(SQLiteStore):
                 )
             ingest_payload = validate_event_payload(
                 "ingest",
-                {"citation_count": len(citations)},
+                creation_payload(len(citations), operation_id, intake_batch_id),
                 details="claim_ingested",
             )
             self._insert_event_row(
@@ -1892,6 +1911,7 @@ class PostgresStore(SQLiteStore):
         claim = self.get_claim(claim_id)
         if claim is None:
             raise RuntimeError("Failed to load claim after insert.")
+        fill_outcome_receipt(outcome_receipt, claim, created=True, persisted=ingest_payload)
         return claim
 
     def get_claim(self, claim_id: int, include_citations: bool = True) -> Claim | None:
@@ -2558,6 +2578,21 @@ class PostgresStore(SQLiteStore):
                 created_at=now,
             )
 
+    def latest_archive_reason(self, claim_id: int) -> str | None:
+        with self.connect() as conn, conn.cursor() as cur:
+            return self._latest_archive_reason(cur, claim_id)
+
+    @staticmethod
+    def _latest_archive_reason(cur, claim_id: int) -> str | None:
+        placeholders = ",".join("%s" for _ in STATUS_TRANSITION_EVENT_TYPES)
+        cur.execute(
+            "SELECT details FROM events WHERE claim_id=%s AND to_status='archived' "
+            f"AND from_status IS NOT NULL AND event_type IN ({placeholders}) ORDER BY id DESC LIMIT 1",
+            (claim_id, *STATUS_TRANSITION_EVENT_TYPES),
+        )
+        row = cur.fetchone()
+        return row["details"] if row is not None else None
+
     def apply_status_transition(
         self,
         claim: Claim,
@@ -2582,6 +2617,10 @@ class PostgresStore(SQLiteStore):
         next_replaced_by = replaced_by_claim_id if replaced_by_claim_id is not None else claim.replaced_by_claim_id
 
         with self.connect() as conn, conn.cursor() as cur:
+            if to_status == "candidate" and reason.startswith("reingest_revival:"):
+                cur.execute("SELECT id FROM claims WHERE id=%s FOR UPDATE", (claim.id,))
+                if self._latest_archive_reason(cur, claim.id) in {"friendly_forget_claim", "ao7_rollback"}:
+                    return claim
             cur.execute(
                 """
                 UPDATE claims

@@ -30,11 +30,24 @@ from memorymaster.stores._storage_shared import (
     utc_now,
 )
 from memorymaster.stores.claim_identity import normalize_claim_identity
+from memorymaster.stores.ingest_receipts import creation_payload, fill_outcome_receipt, prepare_outcome_receipt
 
 logger = logging.getLogger(__name__)
 
 
 class _WriteClaimsMixin:
+    def ingest_creation_receipt(self, claim_id: int) -> dict[str, object]:
+        """Recover creation attribution from the append-only atomic ingest event."""
+        with self.connect_ro() as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM events WHERE claim_id=? AND event_type='ingest' ORDER BY id LIMIT 1",
+                (claim_id,),
+            ).fetchone()
+        if row is None or not row["payload_json"]:
+            return {}
+        payload = json.loads(row["payload_json"])
+        return payload if isinstance(payload, dict) else {}
+
     if TYPE_CHECKING:
         def connect(self) -> sqlite3.Connection: ...
 
@@ -102,7 +115,10 @@ class _WriteClaimsMixin:
         visibility: str = "public",
         holder: str | None = None,
         _pre_sanitization_findings: list[str] | None = None,
+        outcome_receipt: dict[str, object] | None = None,
+        intake_batch_id: str | None = None,
     ) -> Claim:
+        operation_id = prepare_outcome_receipt(outcome_receipt)
         if not citations:
             raise ValueError("At least one citation is required.")
         citation_inputs = [
@@ -162,6 +178,7 @@ class _WriteClaimsMixin:
                 source_agent=source_agent,
             )
             if existing is not None:
+                fill_outcome_receipt(outcome_receipt, existing, created=False, persisted=self.ingest_creation_receipt(existing.id) if outcome_receipt is not None else None)
                 return existing
 
             try:
@@ -222,6 +239,7 @@ class _WriteClaimsMixin:
                 existing = self.get_claim(int(existing_row["id"]))
                 if existing is None:
                     raise RuntimeError("Idempotency key matched missing claim.") from None
+                fill_outcome_receipt(outcome_receipt, existing, created=False, persisted=self.ingest_creation_receipt(existing.id) if outcome_receipt is not None else None)
                 return existing
 
             claim_id = int(cur.lastrowid)
@@ -254,7 +272,7 @@ class _WriteClaimsMixin:
                 )
             ingest_payload = validate_event_payload(
                 "ingest",
-                {"citation_count": len(citations)},
+                creation_payload(len(citations), operation_id, intake_batch_id),
                 details="claim_ingested",
             )
             self._insert_event_row(
@@ -287,6 +305,7 @@ class _WriteClaimsMixin:
         claim = self.get_claim(claim_id)
         if claim is None:
             raise RuntimeError("Failed to load claim after insert.")
+        fill_outcome_receipt(outcome_receipt, claim, created=True, persisted=ingest_payload)
         return claim
 
 

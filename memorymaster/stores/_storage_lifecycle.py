@@ -84,6 +84,21 @@ def _tenant_event_chain_issues(rows, limit: int) -> list[dict[str, object]]:
 
 
 class _LifecycleMixin:
+    def latest_archive_reason(self, claim_id: int) -> str | None:
+        """Read the last lifecycle archive action, ignoring later bookkeeping."""
+        with self.connect() as conn:
+            return self._latest_archive_reason(conn, claim_id)
+
+    @staticmethod
+    def _latest_archive_reason(conn: sqlite3.Connection, claim_id: int) -> str | None:
+        placeholders = ",".join("?" for _ in STATUS_TRANSITION_EVENT_TYPES)
+        row = conn.execute(
+            "SELECT details FROM events WHERE claim_id=? AND to_status='archived' "
+            f"AND from_status IS NOT NULL AND event_type IN ({placeholders}) ORDER BY id DESC LIMIT 1",
+            (claim_id, *STATUS_TRANSITION_EVENT_TYPES),
+        ).fetchone()
+        return row["details"] if row is not None else None
+
     if TYPE_CHECKING:
         def connect(self) -> sqlite3.Connection: ...
 
@@ -131,6 +146,12 @@ class _LifecycleMixin:
         valid_until_update = now if to_status == "superseded" else None
 
         with self.connect() as conn:
+            if to_status == "candidate" and reason.startswith("reingest_revival:"):
+                # Check retirement history in the same write transaction as the
+                # revival. A later confidence/audit event cannot erase intent.
+                conn.execute("BEGIN IMMEDIATE")
+                if self._latest_archive_reason(conn, claim.id) in {"friendly_forget_claim", "ao7_rollback"}:
+                    return claim
             if to_status == "confirmed":
                 from memorymaster.dreaming.source_review import confirmation_allowed
 
