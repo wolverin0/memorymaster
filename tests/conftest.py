@@ -335,6 +335,11 @@ def _hermetic_wal_discipline(tmp_path_factory, monkeypatch) -> None:
         "MEMORYMASTER_SPOOL_DIR",
         str(tmp_path_factory.mktemp("mm-spool")),
     )
+    # Some tests intentionally clear all MEMORYMASTER_* variables to verify
+    # shipped defaults. Keep the default Path.home() spool hermetic too.
+    test_home = tmp_path_factory.mktemp("mm-test-home")
+    monkeypatch.setenv("HOME", str(test_home))
+    monkeypatch.setenv("USERPROFILE", str(test_home))
 
 
 @pytest.fixture(autouse=True)
