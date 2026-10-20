@@ -286,25 +286,26 @@ class _Filter:
             return None
         lexical = _norm(path)
         lex_root = self.roots.lexical_root(lexical)
-        if lex_root is None:
-            return None
         try:
             real = _norm(os.path.realpath(path))
         except (OSError, ValueError):
             return None
         real_root = self.roots.real_root(real)
+        # A candidate may come back already symlink-resolved (the scope is
+        # resolved before searching), so a symlinked root matches by its real
+        # path.  The resolved path must still sit under a root.
         if real_root is None:
             return None
         if self.scope_real is not None and not _is_within(self.scope_real, real):
             return None
-        if self.excludes.path_excluded(lexical, _rel_dirs(lex_root, lexical)):
+        if lex_root is not None and self.excludes.path_excluded(lexical, _rel_dirs(lex_root, lexical)):
             return None
         if self.excludes.path_excluded(real, _rel_dirs(real_root, real)):
             return None
         if _is_sensitive_name(os.path.basename(lexical)) or _is_sensitive_name(os.path.basename(real)):
             return None
         if self.extensions:
-            suffix = os.path.splitext(lexical)[1].lstrip(".")
+            suffix = os.path.splitext(lexical)[1].lstrip(".").lower()
             if suffix not in self.extensions:
                 return None
         try:
@@ -448,11 +449,22 @@ def _rg_stream(argv: list[str], timeout: float) -> Iterator[bytes]:
         shell=False,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
-    timer = threading.Timer(max(timeout, 0.01), proc.kill)
+    timed_out = threading.Event()
+
+    def _expire() -> None:
+        timed_out.set()
+        proc.kill()
+
+    timer = threading.Timer(max(timeout, 0.01), _expire)
     timer.start()
     try:
         assert proc.stdout is not None
         yield from iter(proc.stdout.readline, b"")
+        status = proc.wait()
+        # rg: 0 = matches, 1 = none, 2+ = error.  A killed (timed out) run is
+        # not an error; anything else must not look like "no results".
+        if status not in (0, 1) and not timed_out.is_set():
+            raise OSError(f"rg exited with status {status}")
     finally:
         timer.cancel()
         if proc.poll() is None:
@@ -558,6 +570,7 @@ def run_content_search(
     excludes = _Excludes()
     degraded = not provider.available()
 
+    candidates_capped = False
     if degraded:
         walk_dir = scope_dir
         matcher = _name_matcher(name_query, whole_name)
@@ -573,23 +586,34 @@ def run_content_search(
             search_kwargs["under"] = scope_dir
         found = provider.search(es_query, **search_kwargs)
         raw_candidates = [hit.path for hit in found if getattr(hit, "kind", "file") != "dir"]
+        candidates_capped = len(found) >= HARD_MAX_CANDIDATES
 
     flt = _Filter(
         root_set, excludes, extensions=extensions,
         scope_real=_norm(scope_dir), max_file_bytes=max_file_bytes,
     )
 
+    scan_capped = False
+
     def accepted() -> Iterator[str]:
+        nonlocal scan_capped
         count = 0
         for candidate in raw_candidates:
-            if time.monotonic() >= deadline or count >= MAX_FILES_SCANNED:
+            if time.monotonic() >= deadline:
+                return
+            if count >= MAX_FILES_SCANNED:
+                scan_capped = True  # more candidates exist than we are willing to read
                 return
             ok = flt.accept(candidate)
             if ok is not None:
                 count += 1
                 yield ok
 
-    collector = _Collector(roots, query, max_hits, max_per_file, max_response_bytes)
+    token_roots = sorted(
+        {(name, path) for name, path in roots} | {(name, os.path.realpath(path)) for name, path in roots},
+        key=lambda pair: len(pair[1]), reverse=True,
+    )
+    collector = _Collector(token_roots, query, max_hits, max_per_file, max_response_bytes)
     rg = rg_binary()
     engine = "rg" if rg else "python"
     files_scanned = 0
@@ -613,8 +637,7 @@ def run_content_search(
             except OSError as exc:
                 _LOG.warning("ripgrep failed (%s); using the Python scan", exc.__class__.__name__)
                 if emitted:
-                    collector.truncated = True
-                    break
+                    continue  # rg exits 2 when some file was unreadable; its matches stand
                 engine = "python"
         stop = False
         for path, number, text in _grep_python(batch, query, max_per_file, max_file_bytes, deadline):
@@ -627,6 +650,8 @@ def run_content_search(
             break
 
     timed_out = time.monotonic() >= deadline
+    if scan_capped or candidates_capped:
+        collector.truncated = True
     return {
         "hits": collector.hits,
         "degraded": degraded,

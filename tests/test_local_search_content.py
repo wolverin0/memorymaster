@@ -494,3 +494,95 @@ def test_content_search_module_has_no_write_or_shell_calls():
     assert "os.remove" not in src and "unlink" not in src
     assert 'open(path, "w' not in src and "mode=\"w" not in src
     assert sys.modules[content.__name__] is content
+
+
+# ------------------------------------------------- review fixes (PR 281)
+
+
+def test_scan_cap_marks_the_result_truncated(tmp_path, monkeypatch):
+    paths = []
+    for i in range(5):
+        f = tmp_path / f"f{i}.txt"
+        f.write_text("needle\n", encoding="utf-8")
+        paths.append(str(f))
+    monkeypatch.setattr(content, "MAX_FILES_SCANNED", 2)
+    result = _search(tmp_path, paths)
+    assert result["files_scanned"] == 2
+    assert result["truncated"] is True
+    # exactly at the cap with nothing left over is not truncated
+    monkeypatch.setattr(content, "MAX_FILES_SCANNED", 5)
+    assert _search(tmp_path, paths)["truncated"] is False
+
+
+def test_provider_candidate_cap_marks_the_result_truncated(tmp_path, monkeypatch):
+    paths = []
+    for i in range(3):
+        f = tmp_path / f"f{i}.txt"
+        f.write_text("needle\n", encoding="utf-8")
+        paths.append(str(f))
+    monkeypatch.setattr(content, "HARD_MAX_CANDIDATES", 3)
+    provider = FakeProvider(paths)
+    result = _search(tmp_path, provider=provider)
+    assert provider.calls[0]["limit"] == 3
+    assert provider.calls[0]["under"] == os.path.realpath(tmp_path)
+    assert result["truncated"] is True
+
+
+def test_symlinked_root_matches_by_its_resolved_path(tmp_path, monkeypatch):
+    """Registered root is an alias; scope and candidates come back resolved."""
+    real = tmp_path / "real"
+    (real / "sub").mkdir(parents=True)
+    (real / "sub" / "a.txt").write_text("needle here\n", encoding="utf-8")
+    (real / ".ssh").mkdir()
+    (real / ".ssh" / "k.txt").write_text("needle in ssh\n", encoding="utf-8")
+    alias = tmp_path / "alias"
+    real_realpath = os.path.realpath
+
+    def fake_realpath(p, *a, **k):
+        text = str(p)
+        if os.path.normcase(text).startswith(os.path.normcase(str(alias))):
+            text = str(real) + text[len(str(alias)):]
+        return real_realpath(text, *a, **k)
+
+    monkeypatch.setattr(os.path, "realpath", fake_realpath)
+    roots = [("workspace", str(alias))]
+    walked = content.run_content_search(
+        FakeProvider([], available=False), roots, name_query="*", content_query="needle",
+        workspace=str(alias),
+    )
+    assert _tokens(walked) == {"workspace/sub/a.txt"}
+    resolved = [str(real / "sub" / "a.txt"), str(real / ".ssh" / "k.txt")]
+    via_provider = content.run_content_search(
+        FakeProvider(resolved), roots, name_query="*", content_query="needle", workspace=str(alias),
+    )
+    assert _tokens(via_provider) == {"workspace/sub/a.txt"}
+    assert str(real) not in json.dumps(via_provider)
+
+
+def test_extension_match_is_case_insensitive_for_the_file_suffix(tmp_path):
+    f = tmp_path / "README.MD"
+    f.write_text("needle\n", encoding="utf-8")
+    assert _tokens(_search(tmp_path, [str(f)], extension="md")) == {"workspace/README.MD"}
+
+
+def test_rg_error_exit_raises_instead_of_looking_like_no_results():
+    bad = [sys.executable, "-c", "import sys; sys.exit(2)"]
+    with pytest.raises(OSError):
+        list(content._rg_stream(bad, 10))
+    no_match = [sys.executable, "-c", "import sys; sys.exit(1)"]
+    assert list(content._rg_stream(no_match, 10)) == []
+    ok = [sys.executable, "-c", "print('x')"]
+    assert [line.strip() for line in content._rg_stream(ok, 10)] == [b"x"]
+
+
+def test_rg_killed_by_timeout_is_not_reported_as_an_error():
+    slow = [sys.executable, "-c", "import time; time.sleep(30)"]
+    assert list(content._rg_stream(slow, 0.3)) == []
+
+
+def test_rg_exiting_2_falls_back_to_the_python_scan(tree, monkeypatch):
+    # ``python --json ...`` exits 2 immediately, standing in for a failing rg.
+    monkeypatch.setattr(content, "rg_binary", lambda: sys.executable)
+    result = _search(tree)
+    assert result["engine"] == "python"
+    assert _tokens(result) == {"workspace/src/app.py", "workspace/docs/notes.md"}
