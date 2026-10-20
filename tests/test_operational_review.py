@@ -69,10 +69,13 @@ def test_clean_review_checks_pass(tmp_path: Path, monkeypatch) -> None:
         review.check_compiled_profile(config),
         review.check_recent_private_context(config),
         review.check_retrieval(config, retrieve=lambda *_: ["mm-target"]),
+        # AO-2 beat (T-1640): inactive, it must not move the verdict of a clean review.
+        review.check_beat_health(config),
     ]
 
     assert review.exit_code(results) == 0
     assert {item.verdict for item in results} == {review.Verdict.PASS}
+    assert results[-1].name == "beat_health" and "inactive" in results[-1].detail
 
 
 def test_private_context_and_blocked_job_fail(tmp_path: Path, monkeypatch) -> None:
