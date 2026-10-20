@@ -147,6 +147,55 @@ def _files(root):
             for path in root.rglob("*") if path.is_file()}
 
 
+@pytest.mark.parametrize("sessions,repairs", [(3, 1), (11, 2)])
+def test_cohort_repair_allowance_rounds_up_after_planning_all_sessions(tmp_path, sessions, repairs):
+    fixture = _campaign(tmp_path, sessions=sessions)
+    runner = fixture.runner
+    extract = fixture.extractor.extract
+    calls = 0
+
+    def transient(messages, **kwargs):
+        nonlocal calls
+        calls += 1
+        planned = [window for row in runner._rows()
+                   for window in row["metadata"].get("selection", {}).get("windows", [])]
+        assert len(planned) == sessions
+        if calls <= repairs:
+            raise RuntimeError("fixture transient extraction failure")
+        return extract(messages, **kwargs)
+
+    fixture.extractor.extract = transient
+    runner.inventory()
+    for _ in range(repairs):
+        with pytest.raises(RuntimeError, match="fixture transient extraction failure"):
+            runner.run(stage="extract")
+
+    runner.run(stage="extract")
+
+    assert calls == sessions + repairs
+    assert runner._cohort_complete(runner._rows())
+    assert all(latch["state"] == "running" for latch in runner._latches().values())
+
+
+def test_three_window_cohort_stops_before_a_second_repair_dispatch(tmp_path):
+    fixture = _campaign(tmp_path, sessions=3)
+    runner = fixture.runner
+    calls = []
+
+    def unavailable(*args, **kwargs):
+        calls.append(kwargs["capture_hash"])
+        raise RuntimeError("fixture transient extraction failure")
+
+    fixture.extractor.extract = unavailable
+    runner.inventory()
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="fixture transient extraction failure"):
+            runner.run(stage="extract")
+    with pytest.raises(RuntimeError, match="extraction_repair_allowance_exhausted"):
+        runner.run(stage="extract")
+    assert len(calls) == 2
+
+
 def test_dry_inventory_constructs_no_ledger_service_or_native_database(tmp_path, monkeypatch):
     import json
     import memorymaster.dreaming.backfill as module

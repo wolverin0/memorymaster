@@ -579,7 +579,7 @@ class BackfillRunner:
                 all_rows = [item for item in self._rows() if item["cohort_id"] == row["cohort_id"]]
                 planned = [w for item in all_rows for w in item["metadata"].get("selection", {}).get("windows", [])]
                 repairs = sum(max(0, w.get("attempts", 0) - 1) for w in planned)
-                if repairs >= len(planned) // 10:
+                if repairs >= max(1, -(-len(planned) // 10)):
                     raise RuntimeError("extraction_repair_allowance_exhausted")
             # Actual rendered preflight is enforced by the configured provider adapter.
             messages = window["messages"]
@@ -849,10 +849,13 @@ class BackfillRunner:
                     sessions: dict[str, list] = {}
                     for row in group:
                         sessions.setdefault(row["parent_session_id"], []).append(row)
+                    # Freeze every session's plan before computing the cohort's
+                    # shared repair allowance or dispatching any extraction.
+                    for bundle in sessions.values():
+                        self._select(bundle)
                     for bundle in sessions.values():
                         if not self._allowed(cohort, "extract"):
                             break
-                        self._select(bundle)
                         self._extract(bundle[0], run_id)
                     if not self._cohort_complete(group):
                         continue
