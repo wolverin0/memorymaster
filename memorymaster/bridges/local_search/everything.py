@@ -111,17 +111,25 @@ class EverythingProvider:
         limit: int = 50,
         kind: str = "any",
         whole_name: bool = False,
+        under: str | None = None,
     ) -> list[PathHit]:
-        """Search using ES.exe; return ``[]`` on any failure (graceful degrade)."""
+        """Search using ES.exe; return ``[]`` on any failure (graceful degrade).
+
+        ``under`` restricts results to that folder and its subfolders (ES
+        ``-path``, verified against ES 1.1.0.27; quoting a path inside the
+        query string does not work).
+        """
         if not self.available():
             return []
         es = _es_path()
         if not es:
             return []
         # ES switches (verified against ES 1.1.0.27): /ad = folders only,
-        # /a-d = files only, -n = max results, wfn:<text> = whole-filename
-        # match.
+        # /a-d = files only, -n = max results, -path = recursive folder scope,
+        # wfn:<text> = whole-filename match.
         args: list[str] = [es, "-n", str(limit)]
+        if under:
+            args.extend(["-path", under])
         if kind == "dir":
             args.append("/ad")
         elif kind == "file":

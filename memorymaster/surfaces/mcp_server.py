@@ -1596,6 +1596,10 @@ if FastMCP is not None:
         exact: bool = False,
         db: str = "memorymaster.db",
         workspace: str = ".",
+        content_query: str = "",
+        extension: str = "",
+        folder: str = "",
+        max_hits: int = 50,
     ) -> dict[str, Any]:
         """Read-only path lookup across the machine via Everything (ES.exe).
 
@@ -1604,6 +1608,15 @@ if FastMCP is not None:
         prints a raw ``C:\\Users\\<name>`` path into a transcript. Returns
         ``degraded: true`` when the search backend is unavailable. Set
         ``exact=True`` for whole-name matching instead of substring matching.
+
+        Set ``content_query`` to also search file *contents* (literal,
+        case-insensitive, one line at a time). ``query`` then filters file
+        names (``*`` for any), ``extension`` (``py;md``) and ``folder`` narrow
+        the candidates, and ``max_hits`` caps the results; ``limit`` is
+        ignored. Hits are ``{path, line, snippet}`` with redacted paths and
+        snippets. Only files under registered roots are read; credential
+        folders, binaries and oversized files are skipped. Nothing is indexed
+        or written.
         """
         from memorymaster.bridges.local_search.everything import EverythingProvider
         from memorymaster.bridges.local_search.redact import (
@@ -1620,6 +1633,46 @@ if FastMCP is not None:
         roots = load_roots()
         provider = EverythingProvider()
         started = time.perf_counter()
+        if str(content_query or "").strip():
+            from memorymaster.bridges.local_search.content import (
+                ContentSearchError,
+                run_content_search,
+            )
+
+            try:
+                found = run_content_search(
+                    provider,
+                    roots,
+                    name_query=raw_query,
+                    content_query=content_query,
+                    workspace=workspace,
+                    folder=folder,
+                    extension=extension,
+                    whole_name=bool(exact),
+                    max_hits=max_hits,
+                )
+            except ContentSearchError as exc:
+                return _structured_error(str(exc), exc.code, exc.field)
+            _record_mcp_usage(
+                db,
+                tool_name="local_search:content",
+                started=started,
+                result_status=(
+                    "degraded" if found["degraded"] else ("ok_hits" if found["hits"] else "ok_empty")
+                ),
+            )
+            return {
+                "ok": True,
+                "hits": found["hits"],
+                "degraded": found["degraded"],
+                "exact": bool(exact),
+                "content": {
+                    "engine": found["engine"],
+                    "files_scanned": found["files_scanned"],
+                    "truncated": found["truncated"],
+                    "timed_out": found["timed_out"],
+                },
+            }
         degraded = not provider.available()
         hits = provider.search(
             raw_query,
