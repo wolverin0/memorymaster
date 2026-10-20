@@ -14,12 +14,13 @@ from memorymaster.core.service import MemoryService
 def test_long_query_prefers_exact_matches_and_fills_from_or(exact_ids) -> None:
     query = "wezterm cli timeout node bash"
     service = MemoryService.__new__(MemoryService)
+    service._record_accesses = Mock()
 
     def rows(ids):
         return [{"claim": SimpleNamespace(id=claim_id)} for claim_id in ids]
 
     service.query_rows = Mock(side_effect=lambda **kw: rows(
-        [1, 7, 2] if " OR " in kw["query_text"] else exact_ids
+        [1, 7, 2, 3] if " OR " in kw["query_text"] else exact_ids
     ))
 
     result = service.retrieve(RetrievalRequest(query_text=query, limit=3))
@@ -31,11 +32,63 @@ def test_long_query_prefers_exact_matches_and_fills_from_or(exact_ids) -> None:
     assert service.query_rows.call_count == 2
 
 
+@pytest.mark.parametrize("query, exact_ids", [
+    ("wezterm cli timeout node bash", [7]),
+    ("wezterm cli timeout node bash", []),
+    ("wezterm cli timeout node bash", [7, 1, 2]),
+    ("node bash", [7, 1, 2]),
+])
+def test_planned_search_records_only_delivered_claims_once(query, exact_ids) -> None:
+    service = MemoryService.__new__(MemoryService)
+    service.store = Mock(read_only=False, db_path="")
+    service._emit_recall_telemetry = Mock()
+    service._record_accesses = Mock(wraps=service._record_accesses)
+
+    def query_rows(**options):
+        ids = [1, 7, 2, 3] if " OR " in options["query_text"] else exact_ids
+        rows = [{"claim": SimpleNamespace(id=claim_id)} for claim_id in ids]
+        if options.get("record_accesses", True):
+            service._record_accesses(rows, query_text=options["query_text"])
+        return rows
+
+    service.query_rows = Mock(side_effect=query_rows)
+
+    result = service.retrieve(RetrievalRequest(query_text=query, limit=3))
+
+    expected_ids = [7, 1, 2] if exact_ids else [1, 7, 2]
+    assert [row["claim"].id for row in result.rows] == expected_ids
+    service._record_accesses.assert_called_once_with(list(result.rows), query_text=query)
+    service.store.record_accesses_batch.assert_called_once_with(expected_ids)
+    service.store.record_access.assert_not_called()
+    for call in service.query_rows.call_args_list:
+        assert call.kwargs["record_accesses"] is False
+
+
+def test_planned_search_preserves_disabled_access_recording() -> None:
+    from memorymaster.recall.execution import execute_planned_search
+
+    plan = build_retrieval_plan(RetrievalRequest(
+        query_text="wezterm cli timeout node bash", limit=3,
+    ))
+    query_rows = Mock(return_value=[])
+    access_recorder = Mock()
+
+    assert execute_planned_search(
+        plan, query_rows, access_recorder=access_recorder, record_accesses=False,
+    ) == []
+
+    assert query_rows.call_count == 2
+    assert all(call.kwargs["record_accesses"] is False
+               for call in query_rows.call_args_list)
+    access_recorder.assert_not_called()
+
+
 @pytest.mark.parametrize("query, limit", [
     ("node bash", 1), ("node bash", 3), ("wezterm cli timeout node bash", 1),
 ])
 def test_short_queries_and_full_exact_results_do_not_expand(query, limit) -> None:
     service = MemoryService.__new__(MemoryService)
+    service._record_accesses = Mock()
     service.query_rows = Mock(return_value=[{"claim": SimpleNamespace(id=7)}])
 
     result = service.retrieve(RetrievalRequest(query_text=query, limit=limit))
@@ -48,6 +101,7 @@ def test_short_queries_and_full_exact_results_do_not_expand(query, limit) -> Non
 @pytest.mark.parametrize("trust_mode", ["trusted", "exploratory"])
 def test_fallback_preserves_all_retrieval_options(trust_mode) -> None:
     service = MemoryService.__new__(MemoryService)
+    service._record_accesses = Mock()
     service.query_rows = Mock(return_value=[])
     service.retrieve(RetrievalRequest(
         query_text="wezterm cli timeout node bash", limit=4,

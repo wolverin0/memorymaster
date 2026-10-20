@@ -1011,6 +1011,8 @@ class MemoryService(IntegrationService):
 
         rows = execute_planned_search(
             plan, self.query_rows,
+            access_recorder=self._record_accesses,
+            record_accesses=True,
             limit=plan.limit,
             include_stale="stale" in statuses,
             include_conflicted="conflicted" in statuses,
