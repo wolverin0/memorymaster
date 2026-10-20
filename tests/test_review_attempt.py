@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from memorymaster.operations.operational_review import REVIEW_CHECKS
 from memorymaster.operations.review_attempt import atomic_json, phase_progress, read_json, read_review_state
 from memorymaster.operations.review_supervisor import supervise
 
@@ -43,7 +44,7 @@ def test_supervisor_only_kills_its_child_and_preserves_latest_on_failure(tmp_pat
             self.done = False
             if mode == "complete":
                 json.dump({"schema": "memorymaster.operational-review.v1", "attempt_id": env["MEMORYMASTER_REVIEW_ATTEMPT_ID"],
-                           "review_performed": True, "exit_code": 0, "verdict": "PASS", "checks": [{}] * 9}, stdout)
+                           "review_performed": True, "exit_code": 0, "verdict": "PASS", "checks": [{}] * len(REVIEW_CHECKS)}, stdout)
             else:
                 stdout.write('{"partial":')
 
@@ -102,9 +103,9 @@ def test_actual_child_runs_all_existing_review_phases_on_disposable_db(tmp_path,
     code = supervise({"python": sys.executable, "db": str(db), "output_root": str(root)}, timeout_seconds=20)
     assert code == 3  # no retrieval canary configured, never pretend PASS
     result = read_json(root / "latest.json")
-    assert len(result["checks"]) == 9
-    assert [check["name"] for check in result["checks"]][-2:] == ["jev_decisions", "checkpoint_delivery"]
-    assert len(read_json(root / "attempt.json")["phase_seconds"]) == 9
+    assert len(result["checks"]) == len(REVIEW_CHECKS) == 10
+    assert [check["name"] for check in result["checks"]][-3:] == ["jev_decisions", "checkpoint_delivery", "beat_health"]
+    assert len(read_json(root / "attempt.json")["phase_seconds"]) == len(REVIEW_CHECKS)
     assert read_review_state(root)["verdict"] == "WARN"
 
 
