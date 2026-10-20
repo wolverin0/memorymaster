@@ -63,3 +63,19 @@ def test_replay_ignores_the_appended_look_ahead_briefing(tmp_path):
     result = replay(home, mapping, days=7, now=NOW)
     assert result["total"]["modes"]["header"]["injected_claims"] == 2
     assert result["total"]["modes"]["current"]["injected_claims"] == 2
+
+
+def test_replay_counts_only_recall_claims_in_every_metric(tmp_path):
+    """Review fix: ids from the appended look-ahead briefing are not injected recall claims."""
+    home, mapping = setup_review(tmp_path, [
+        user("how do I deploy the billing worker?"),
+        hook(BLOCK + "\n\n[Look-ahead briefing]\n- [mm-zz] briefing bullet that is not a recall claim"),
+        assistant("Using [mm-zz] and [mm-a1]."),
+    ])
+    result = replay(home, mapping, days=7, now=NOW)
+    day = next(iter(result["per_day"].values()))
+    assert day["injected_claims"] == 2 and day["cited_claims"] == 1
+    assert result["total"]["modes"]["current"]["cited_claims_total"] == 1
+    assert result["total"]["strict_prompts_with_citation"] == 1
+    assert all(item["id"] != "mm-zz" for item in result["top10_injected_never_cited"])
+    assert result["recall_only_totals"] == {"prompts_with_injection": 1, "injected_claims": 2, "cited_claims": 1}
