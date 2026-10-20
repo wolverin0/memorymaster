@@ -108,3 +108,24 @@ def test_installed_template_applies_the_mode(tmp_path, monkeypatch, capsys, mode
     context = json.loads(out)["hookSpecificOutput"]["additionalContext"]
     assert context.startswith("[MemoryMaster recall]\n" + expected)
     assert "- [mm-a1] Deploy the billing worker" in context
+
+
+def test_gated_mode_judges_the_best_claim_not_the_task_ranked_first_one(monkeypatch):
+    """Review fix: a claim sharing one word with the task must not make the gate suppress a strong prompt match."""
+    monkeypatch.setenv(recall_format.FORMAT_ENV, "gated")
+    out = recall_format.apply_format(CTX, "deploy the billing worker with the staging flag", task="invoice")
+    assert out and set(ids(out)) == {"mm-a1", "mm-b2", "mm-c3"}
+    # and a block where no claim is relevant is still suppressed
+    assert recall_format.apply_format(CTX, "weather forecast tomorrow", task="invoice") == ""
+
+
+def test_active_task_text_ignores_an_empty_cwd(tmp_path, monkeypatch):
+    """Review fix: os.path.abspath('') is the process cwd; an empty hook cwd must not read its task file."""
+    from memorymaster.recall import active_tasks
+
+    (tmp_path / "active_tasks.md").write_text("## Task: something\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(active_tasks, "fresh_active_task", lambda path, cwd="", lane="": ("a title", "narrative"))
+    assert recall_format.active_task_text("") == ""
+    assert recall_format.active_task_text("   ") == ""
+    assert recall_format.active_task_text(str(tmp_path)).startswith("a title")

@@ -57,6 +57,14 @@ def render(turn, mode: str) -> tuple[str, set[str]]:
     return "\n\n".join(parts), ids
 
 
+def recall_ids(turn) -> set[str]:
+    """Claim ids of the recall block only: the transcript scan also picks up bullets of an appended briefing."""
+    found = set()
+    for block in turn.blocks:
+        found.update(claim_id for claim_id, _ in rf.parse_context(block_context(block))[1])
+    return found
+
+
 def median(values):
     return statistics.median(values) if values else None
 
@@ -69,10 +77,11 @@ def summarize_mode(turns, mode: str, substantive: int) -> dict:
     kept_sizes, kept_prompts, kept_claims, cited_turns_kept, cited_claims_kept = [], 0, 0, 0, 0
     cited_turns = cited_claims = 0
     for turn in turns:
-        if not turn.ids:
+        original = recall_ids(turn)
+        if not original:
             continue
         text, ids = render(turn, mode)
-        hit = turn.ids & turn.cited
+        hit = original & turn.cited
         cited_turns += bool(hit)
         cited_claims += len(hit)
         if ids:
@@ -101,7 +110,7 @@ def relevance(turns) -> dict:
     none = total = 0
     top_shared = {"cited": Counter(), "uncited": Counter()}
     for turn in turns:
-        if not turn.ids:
+        if not recall_ids(turn):
             continue
         total += 1
         query = rf.tokens(turn.prompt)
@@ -113,7 +122,7 @@ def relevance(turns) -> dict:
             if bullets:
                 top = max(top, len(query & rf.tokens(rf.ranked(bullets, turn.prompt, "")[0][4])))
         none += best == 0
-        top_shared["cited" if turn.ids & turn.cited else "uncited"][min(top, 5)] += 1
+        top_shared["cited" if recall_ids(turn) & turn.cited else "uncited"][min(top, 5)] += 1
     return {"injections": total, "no_shared_token": none, "share_no_shared_token": share(none, total),
             "top_claim_shared_tokens_histogram": {k: dict(sorted(v.items())) for k, v in top_shared.items()}}
 
@@ -121,20 +130,21 @@ def relevance(turns) -> dict:
 def per_day(turns) -> dict:
     days: dict[str, dict] = {}
     for turn in turns:
-        if not turn.ids or turn.ts is None:
+        ids = recall_ids(turn)
+        if not ids or turn.ts is None:
             continue
         day = days.setdefault(turn.ts.date().isoformat(), {"prompts_with_injection": 0, "injected_claims": 0,
                                                             "cited_claims": 0})
         day["prompts_with_injection"] += 1
-        day["injected_claims"] += len(turn.ids)
-        day["cited_claims"] += len(turn.ids & turn.cited)
+        day["injected_claims"] += len(ids)
+        day["cited_claims"] += len(ids & turn.cited)
     for day in days.values():
         day["claims_per_injection"] = share(day["injected_claims"], day["prompts_with_injection"])
     return dict(sorted(days.items()))
 
 
 def baseline(turns) -> dict:
-    sizes = [tokens_of(sum(len(PREFIX) + len(block_context(b)) for b in turn.blocks)) for turn in turns if turn.ids]
+    sizes = [tokens_of(sum(len(PREFIX) + len(block_context(b)) for b in turn.blocks)) for turn in turns if recall_ids(turn)]
     return {"median_injected_tokens": median(sizes), "p90_injected_tokens":
             (sorted(sizes)[int(len(sizes) * 0.9)] if sizes else None), "relevance": relevance(turns)}
 
@@ -154,18 +164,18 @@ def replay(home, mapping_path, days=7, now=None, since=None) -> dict:
     def entry_for(turns):
         substantive = sum(1 for t in turns if t.real and t.prompt.strip())
         return {"substantive_prompts": substantive, "baseline": baseline(turns),
-                "strict_prompts_with_citation": sum(1 for t in turns if t.ids & t.cited),
+                "strict_prompts_with_citation": sum(1 for t in turns if recall_ids(t) & t.cited),
                 "modes": {mode: summarize_mode(turns, mode, substantive) for mode in MODES}}
 
     out["total"] = entry_for(every)
     for lane, turns in sorted(raw.items()):
-        if any(t.ids for t in turns):
+        if any(recall_ids(t) for t in turns):
             out["lanes"][lane] = entry_for(turns)
     if since is not None:  # e.g. only the days after the T-1351 two-claim cap was deployed
         later = {lane: [t for t in turns if t.ts is not None and t.ts >= since] for lane, turns in raw.items()}
         out["since"] = {"from": since.isoformat(), "total": entry_for([t for ts in later.values() for t in ts]),
                         "lanes": {lane: entry_for(ts) for lane, ts in sorted(later.items())
-                                  if any(t.ids for t in ts)}}
+                                  if any(recall_ids(t) for t in ts)}}
     out["per_day"] = per_day(every)
     previous = os.environ.get(rf.GATE_MIN_SHARED_ENV)
     try:
@@ -180,14 +190,20 @@ def replay(home, mapping_path, days=7, now=None, since=None) -> dict:
     top = Counter()
     cited = Counter()
     for turn in every:
-        top.update(turn.ids)
-        cited.update(turn.ids & turn.cited)
+        ids = recall_ids(turn)
+        top.update(ids)
+        cited.update(ids & turn.cited)
     never = sorted(((i, n) for i, n in top.items() if not cited[i]), key=lambda x: (-x[1], x[0]))
     out["top10_injected_never_cited"] = [{"id": i, "injected": n} for i, n in never[:10]]
     out["official_script_agreement"] = {
         "prompts_with_injection": [main_total["prompts_with_injection"], sum(1 for t in every if t.ids)],
         "injected_claims": [main_total["injected_claims"], sum(len(t.ids) for t in every)],
         "cited_claims": [main_total["cited_claims"], sum(len(t.ids & t.cited) for t in every)],
+    }  # official script (also counts briefing bullets) against the same scan; replay metrics use recall_only_totals
+    out["recall_only_totals"] = {
+        "prompts_with_injection": sum(1 for t in every if recall_ids(t)),
+        "injected_claims": sum(len(recall_ids(t)) for t in every),
+        "cited_claims": sum(len(recall_ids(t) & t.cited) for t in every),
     }
     return out
 
