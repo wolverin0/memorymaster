@@ -325,6 +325,7 @@ class DreamWorker:
             "consolidate_breaker_detail": None,
             "consolidate_isolated": 0,
             "consolidate_poison_charged": 0,
+            "consolidate_hung_calls": 0,
             "ingest_triaged": 0,
             "ingest_held": 0,
             "ingest_explored": 0,
@@ -717,6 +718,7 @@ class DreamWorker:
                 deferred_captures.update(over_cap)
                 summary["deferred_consolidate_budget"] = len(deferred_captures)
         answered = 0  # consolidation calls the provider answered in this run
+        hung = 0  # calls the provider left unanswered after answering others (T-1687)
         batches = deque(
             (effective_scope, batch)
             for effective_scope in sorted(groups)
@@ -815,6 +817,25 @@ class DreamWorker:
                 charge = False
                 if called and not provider_wide:
                     completed.update(capture_ids)  # the call completed: not an outage
+                if provider_wide and called and answered > 0 and hung == 0 and _failure_reason(exc) == "TimeoutExpired":
+                    # T-1687: `agy` answered earlier batches of this run (7-47 s
+                    # each) and then left one call unanswered for the whole
+                    # timeout. That is one hung call, not an outage: the batch
+                    # stays untouched for a later run and the run keeps
+                    # consolidating. Opening the breaker here deferred 6-13
+                    # batches per run for five runs in a row. A second hung call
+                    # in the same run opens the breaker below, as before; the
+                    # R2 trip streak still counts the hung batch.
+                    hung += 1
+                    summary["consolidate_hung_calls"] = hung
+                    summary["errors"] += 1
+                    LOGGER.warning("Dreaming consolidation call hung, continuing the run: %s", str(exc)[:300])
+                    self._hold_lease()
+                    tripped.update(capture_ids)
+                    self.ledger.record_consolidation_trip(capture_ids, alone=len(capture_ids) == 1, now=self.now())
+                    provider_deferred.update(capture_ids)
+                    summary["deferred_consolidate_provider"] = len(provider_deferred)
+                    continue
                 if provider_wide:
                     # Mirror of the extraction 429 break: one provider-wide
                     # failure opens the breaker for the rest of this run.
