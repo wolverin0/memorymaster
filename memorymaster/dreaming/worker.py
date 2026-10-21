@@ -1148,7 +1148,12 @@ class DreamWorker:
         suffix = str(row.get("citation_suffix") or "").strip(":")
         suffix = f"{suffix}:" if suffix else ""
         locator = f"dream:{provider}:{session_hash[:12]}:{suffix}{candidate.evidence_message_id}"
-        ingest_options = {"outcome_receipt": row["outcome_receipt"]} if "outcome_receipt" in row else {}
+        # Live applications need the same durable creation ownership as backfill:
+        # a retry may need to restore its review after ingest already committed.
+        # Preserve explicit backfill operation IDs so reusing an older claim
+        # cannot acquire ownership of that claim or replace its review.
+        outcome = row.get("outcome_receipt", {})
+        outcome.setdefault("operation_id", f"dream-{identity}")
         return self.service.ingest(
             candidate.text,
             [CitationInput(source="dream-worker", locator=locator, excerpt=candidate.evidence_quote)],
@@ -1158,7 +1163,7 @@ class DreamWorker:
             valid_from=candidate.valid_from, valid_until=candidate.valid_until,
             source_agent="dream-worker", require_source_agent=True,
             intake_batch_id=row.get("intake_batch_id") or f"dream-{row['run_id'] or 'replay'}", intake_batch_max=200,
-            **ingest_options,
+            outcome_receipt=outcome,
         )
 
     def _emit_proposal(self, candidate: DreamCandidate, decision: DreamDecision, scope: str, replacement_id: int | None) -> None:
