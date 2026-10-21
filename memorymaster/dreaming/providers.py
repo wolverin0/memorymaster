@@ -1099,18 +1099,16 @@ def opencode_response_text(output: str) -> tuple[str, int, int, str | None]:
     return "".join(text_parts), input_tokens, output_tokens, session_id
 
 
-def create_dream_consolidator() -> AntigravityConsolidator | OpenCodeConsolidator:
-    """Select an explicit supported route without changing its requested model."""
+def create_dream_consolidator() -> AntigravityConsolidator:
+    """Keep the live route Gemini-only; backfill selects its explicit adapter."""
     provider = os.environ.get(
         "MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER", "antigravity",
     ).strip().lower()
     if provider in {"antigravity", "agy", "gemini", "google"}:
         return AntigravityConsolidator()
-    if provider == "opencode":
-        return OpenCodeConsolidator(model=os.environ.get("MEMORYMASTER_DREAM_CONSOLIDATE_MODEL", ""))
     raise ProviderCallError(
         "MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER must select Gemini "
-        "(antigravity, agy, gemini or google) or opencode"
+        "(antigravity, agy, gemini or google)"
     )
 
 
