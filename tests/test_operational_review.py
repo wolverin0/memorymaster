@@ -163,6 +163,9 @@ def test_scheduled_slots_complete_and_missing(tmp_path: Path) -> None:
         logs[mode] = path
     config = review.ReviewConfig(db=tmp_path / "db", dream_log=logs["dream"], steward_log=logs["steward"])
     assert review.check_scheduled_slots(config, now=now).verdict is review.Verdict.PASS
+    # No job log at all (fresh machine, CI): silent PASS, like the beat check before its first run.
+    absent = review.ReviewConfig(db=tmp_path / "db", dream_log=tmp_path / "no-dream.log", steward_log=tmp_path / "no-steward.log")
+    assert review.check_scheduled_slots(absent, now=now).detail == "no job log yet"
     # The review rarely runs on a 6-hour boundary: slots are relative to ``now``, so a
     # window ending at 13:47 still sees exactly four slots.
     assert review.check_scheduled_slots(config, now=now + timedelta(hours=1, minutes=47)).verdict is review.Verdict.PASS

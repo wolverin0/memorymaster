@@ -755,6 +755,10 @@ def check_scheduled_slots(config: ReviewConfig, *, now: datetime | None = None) 
         "dream": config.dream_log or Path(os.environ.get("MEMORYMASTER_DREAM_LOG", "~/.memorymaster/logs/dream.log")).expanduser(),
         "steward": config.steward_log or Path(os.environ.get("MEMORYMASTER_STEWARD_LOG", "~/.memorymaster/logs/steward.log")).expanduser(),
     }
+    if not any(path.is_file() for path in paths.values()):
+        # Silent until the scheduled task has run once (same contract as check_beat_health):
+        # a machine with no job log yet has not missed a slot, and tests never read the real home.
+        return ReviewResult("scheduled_slots", Verdict.PASS, "no job log yet")
     missing = 0
     details = []
     for mode, path in paths.items():

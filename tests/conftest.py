@@ -285,6 +285,10 @@ def _hermetic_snapshot_dir(tmp_path_factory, monkeypatch) -> None:
         "MEMORYMASTER_SNAPSHOT_DIR",
         str(tmp_path_factory.mktemp("mm-snapshots")),
     )
+    # T-1662: the review's slot check reads the scheduled task's job logs; never the real ones.
+    logs = tmp_path_factory.mktemp("mm-job-logs")
+    monkeypatch.setenv("MEMORYMASTER_DREAM_LOG", str(logs / "dream.log"))
+    monkeypatch.setenv("MEMORYMASTER_STEWARD_LOG", str(logs / "steward.log"))
 
 
 @pytest.fixture(autouse=True)
