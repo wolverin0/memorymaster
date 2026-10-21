@@ -13,8 +13,7 @@ Returns hookSpecificOutput.additionalContext so Claude starts every session
 with MemoryMaster state instead of a blank slate. Graceful degradation: if
 DB missing or any query fails, the hook exits silently.
 
-Scope is auto-derived from CWD: the project dir name becomes the scope
-suffix (e.g., cwd=memorymaster → scope=project:memorymaster).
+Scope is resolved from CWD through the shared Git-aware scope helper.
 """
 import json
 import os
@@ -56,12 +55,10 @@ CANDIDATE_REVIEW_HOURS = 24
 def _derive_scope() -> str:
     """Derive scope from current working directory."""
     try:
-        cwd = Path(os.getcwd()).resolve()
-        # If cwd is inside the memorymaster project, scope to it
-        if str(cwd).lower().startswith(str(MM_ROOT).lower()):
-            return "project:memorymaster"
-        # Otherwise: use dir name
-        return f"project:{cwd.name.lower()}"
+        sys.path.insert(0, str(MM_ROOT))
+        from memorymaster.core.scope_utils import scope_from_cwd_or_user
+
+        return scope_from_cwd_or_user(os.getcwd())
     except Exception:
         return "project"
 

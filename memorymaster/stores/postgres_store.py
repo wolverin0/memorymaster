@@ -62,6 +62,7 @@ from memorymaster.stores.postgres_policy_contract import (
     expressions_match,
 )
 from memorymaster.stores.storage import SQLiteStore
+from memorymaster.stores.ingest_receipts import creation_payload, fill_outcome_receipt, prepare_outcome_receipt
 from memorymaster.stores._storage_sources import (
     _ACTION_FIELDS,
     _EVIDENCE_FIELDS,
@@ -1693,6 +1694,70 @@ class PostgresStore(SQLiteStore):
             return human_id
         raise RuntimeError("Unable to allocate a unique human_id after 100 attempts.")
 
+    def get_retired_content_match(
+        self, text: str, *, tenant_id: str | None, scope: str,
+        visibility: str = "public", source_agent: str | None = None,
+    ) -> Claim | None:
+        visibility, source_agent = normalize_claim_identity(
+            visibility, source_agent, allow_sensitive=not self.require_tenant,
+        )
+        with self.connect() as conn, conn.cursor() as cur:
+            return self._retired_content_match(
+                cur, text, tenant_id=self._tenant_for_operation(tenant_id), scope=scope,
+                visibility=visibility, source_agent=source_agent,
+            )
+
+    def _retired_content_match(
+        self, cur, text: str, *, tenant_id: str | None, scope: str,
+        visibility: str, source_agent: str | None, lock: bool = False,
+    ) -> Claim | None:
+        identity_sql, identity_params = self._postgres_identity_filter(visibility, source_agent)
+        archived = "" if lock else " AND status='archived'"
+        cur.execute(
+            "SELECT id FROM claims WHERE tenant_id IS NOT DISTINCT FROM %s "
+            f"AND scope = %s AND {identity_sql}{archived} ORDER BY id",
+            (tenant_id, scope, *identity_params),
+        )
+        # Finish consuming the candidate IDs before reusing this cursor for
+        # per-claim reads. Keep the write path on the fetchone cursor contract.
+        candidate_ids = []
+        while (row := cur.fetchone()) is not None:
+            candidate_ids.append(int(row["id"]))
+        # Python normalization is the facade's content-hash contract, including
+        # Unicode lowercasing that database collations need not implement alike.
+        identity = text.strip().lower()
+        for claim_id in candidate_ids:
+            cur.execute("SELECT text,status FROM claims WHERE id=%s", (claim_id,))
+            current = cur.fetchone()
+            if current is None or current["text"].strip().lower() != identity:
+                continue
+            if lock:
+                # Only matching content needs to serialize with an archive.
+                # Recheck after waiting: the row may have changed meanwhile.
+                cur.execute("SELECT text,status FROM claims WHERE id=%s FOR UPDATE", (claim_id,))
+                current = cur.fetchone()
+                if current is None or current["text"].strip().lower() != identity:
+                    continue
+            if current["status"] == "archived" and self._latest_archive_reason(cur, claim_id) in {
+                "friendly_forget_claim", "ao7_rollback",
+            }:
+                return self.get_claim(claim_id)
+        return None
+
+    def ingest_creation_receipt(self, claim_id: int) -> dict[str, object]:
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT payload_json FROM events WHERE claim_id=%s AND event_type='ingest' ORDER BY id LIMIT 1",
+                (claim_id,),
+            )
+            row = cur.fetchone()
+        if row is None or not row["payload_json"]:
+            return {}
+        payload = row["payload_json"]
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        return payload if isinstance(payload, dict) else {}
+
     def create_claim(
         self,
         text: str,
@@ -1714,7 +1779,10 @@ class PostgresStore(SQLiteStore):
         visibility: str = "public",
         holder: str | None = None,
         _pre_sanitization_findings: list[str] | None = None,
+        outcome_receipt: dict[str, object] | None = None,
+        intake_batch_id: str | None = None,
     ) -> Claim:
+        operation_id = prepare_outcome_receipt(outcome_receipt)
         if not citations:
             raise ValueError("At least one citation is required.")
         citation_inputs = [
@@ -1770,6 +1838,14 @@ class PostgresStore(SQLiteStore):
         )
         now = utc_now()
         with self.connect() as conn, conn.cursor() as cur:
+            retired = self._retired_content_match(
+                cur, text, tenant_id=normalized_tenant_id, scope=scope,
+                visibility=visibility, source_agent=source_agent, lock=True,
+            )
+            if retired is not None:
+                fill_outcome_receipt(outcome_receipt, retired, created=False,
+                                     persisted=self.ingest_creation_receipt(retired.id) if outcome_receipt is not None else None)
+                return retired
             cur.execute(
                 """
                     INSERT INTO claims (
@@ -1835,6 +1911,7 @@ class PostgresStore(SQLiteStore):
                 claim = self.get_claim(claim_id)
                 if claim is None:
                     raise RuntimeError("Idempotency key matched missing claim.")
+                fill_outcome_receipt(outcome_receipt, claim, created=False, persisted=self.ingest_creation_receipt(claim.id) if outcome_receipt is not None else None)
                 return claim
             claim_id = int(claim_row["id"])
 
@@ -1859,7 +1936,7 @@ class PostgresStore(SQLiteStore):
                 )
             ingest_payload = validate_event_payload(
                 "ingest",
-                {"citation_count": len(citations)},
+                creation_payload(len(citations), operation_id, intake_batch_id),
                 details="claim_ingested",
             )
             self._insert_event_row(
@@ -1892,6 +1969,7 @@ class PostgresStore(SQLiteStore):
         claim = self.get_claim(claim_id)
         if claim is None:
             raise RuntimeError("Failed to load claim after insert.")
+        fill_outcome_receipt(outcome_receipt, claim, created=True, persisted=ingest_payload)
         return claim
 
     def get_claim(self, claim_id: int, include_citations: bool = True) -> Claim | None:
@@ -2558,6 +2636,26 @@ class PostgresStore(SQLiteStore):
                 created_at=now,
             )
 
+    def latest_archive_reason(self, claim_id: int) -> str | None:
+        with self.connect() as conn, conn.cursor() as cur:
+            return self._latest_archive_reason(cur, claim_id)
+
+    @staticmethod
+    def _latest_archive_reason(cur, claim_id: int) -> str | None:
+        placeholders = ",".join("%s" for _ in STATUS_TRANSITION_EVENT_TYPES)
+        cur.execute(
+            "SELECT details FROM events WHERE claim_id=%s AND to_status='archived' "
+            f"AND from_status IS NOT NULL AND event_type IN ({placeholders}) ORDER BY id DESC LIMIT 1",
+            (claim_id, *STATUS_TRANSITION_EVENT_TYPES),
+        )
+        row = cur.fetchone()
+        return row["details"] if row is not None else None
+
+    @staticmethod
+    def _check_ao7_retirement_guard(conn, claim: Claim, guard: object) -> None:
+        """Reject the SQLite-only rollback guard before any SQL can run."""
+        raise ValueError("AO-7 conditional retirement is SQLite-only")
+
     def apply_status_transition(
         self,
         claim: Claim,
@@ -2571,6 +2669,8 @@ class PostgresStore(SQLiteStore):
     ) -> Claim:
         if supersedes_claim_id is not None:
             raise ValueError("Atomic confirmation with supersession is SQLite-only")
+        if event_payload and "ao7_retirement_guard" in event_payload:
+            raise ValueError("AO-7 conditional retirement is SQLite-only")
         if to_status == "confirmed" and (
             claim.source_agent == "dream-worker" or (claim.idempotency_key or "").startswith("dream-")
         ):
@@ -2582,6 +2682,10 @@ class PostgresStore(SQLiteStore):
         next_replaced_by = replaced_by_claim_id if replaced_by_claim_id is not None else claim.replaced_by_claim_id
 
         with self.connect() as conn, conn.cursor() as cur:
+            if to_status == "candidate" and reason.startswith("reingest_revival:"):
+                cur.execute("SELECT id FROM claims WHERE id=%s FOR UPDATE", (claim.id,))
+                if self._latest_archive_reason(cur, claim.id) in {"friendly_forget_claim", "ao7_rollback"}:
+                    return claim
             cur.execute(
                 """
                 UPDATE claims

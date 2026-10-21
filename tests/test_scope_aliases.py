@@ -49,3 +49,13 @@ def test_an_edited_file_is_picked_up_without_a_restart(tmp_path, monkeypatch) ->
     stat = path.stat()
     os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10_000_000))
     assert scope_from_cwd(tmp_path / "wt") == "project:two"
+
+
+def test_explicit_alias_overrides_inferred_repository_and_resolves_deleted_worktree(tmp_path, monkeypatch):
+    from memorymaster.core.scope_utils import resolve_transcript_workspace_scope
+
+    _aliases(tmp_path, monkeypatch, {"aliases": {"physical-name": "project:logical", "t1664": "project:logical"}})
+    repo = tmp_path / "physical-name"
+    (repo / ".git").mkdir(parents=True)
+    assert resolve_transcript_workspace_scope(repo) == "project:logical"
+    assert resolve_transcript_workspace_scope(tmp_path / "deleted" / "t1664" / "src") == "project:logical"

@@ -9,9 +9,11 @@ import re
 import shutil
 import subprocess
 import time
+import threading
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +34,45 @@ CommandRunner = Callable[
     subprocess.CompletedProcess[str],
 ]
 LOGGER = logging.getLogger(__name__)
+_SLOT_LOCKS: dict[str, threading.RLock] = {}
+_SLOT_LOCKS_GUARD = threading.Lock()
+
+
+@contextmanager
+def _provider_slot(work_dir: Path):
+    """Serialize run plus session cleanup for a slot within this process.
+
+    This does not establish isolation of OpenCode's external global state.
+    """
+    with _SLOT_LOCKS_GUARD:
+        lock = _SLOT_LOCKS.setdefault(str(work_dir.resolve()).casefold(), threading.RLock())
+    with lock:
+        yield
+
+
+def rendered_token_bound(prompt: str) -> int:
+    """Conservative byte-token bound when no verified tokenizer was supplied."""
+    return len(prompt.encode("utf-8"))
+
+
+def _bounded_input(prompt: str, limit: int, framing: int, counter: Callable[[str], int]) -> int:
+    tokens = counter(prompt) + framing
+    if tokens > limit:
+        raise ProviderOutputError(f"rendered prompt exceeds the {limit}-token input cap")
+    return tokens
+
+
+def _bounded_response(response: Any, requested_model: str, input_limit: int, output_limit: int) -> None:
+    observed = getattr(response, "observed_model", None)
+    error = None
+    if observed != requested_model:
+        error = ProviderConfigError("provider model identity is missing or differs from requested model", reason="model_mismatch", http_status=200)
+    elif response.input_tokens > input_limit or response.output_tokens > output_limit:
+        error = ProviderConfigError("provider exceeded configured token bounds", reason="token_bound_exceeded", http_status=200)
+    if error is not None:
+        error.input_tokens = response.input_tokens
+        error.output_tokens = response.output_tokens
+        raise error
 
 _GEMINI_CANDIDATE_SCHEMA = {
     "type": "OBJECT",
@@ -555,6 +596,11 @@ class OpenCodeExtractor:
         command: str | None = None,
         runner: CommandRunner = _default_command_runner,
         work_dir: str | Path | None = None,
+        max_input_tokens: int | None = None,
+        max_output_tokens: int | None = None,
+        framing_tokens: int = 0,
+        token_counter: Callable[[str], int] = rendered_token_bound,
+        client: Any | None = None,
     ) -> None:
         configured_model = model or os.environ.get(
             "MEMORYMASTER_DREAM_EXTRACT_MODEL", "openai/gpt-5.4-mini",
@@ -579,6 +625,16 @@ class OpenCodeExtractor:
             if work_dir is not None
             else Path.home() / ".memorymaster" / "dreaming-opencode"
         )
+        self.max_input_tokens = min(10_000, max(1, max_input_tokens)) if max_input_tokens is not None else None
+        self.max_output_tokens = min(1500, max(1, max_output_tokens)) if max_output_tokens is not None else None
+        self.framing_tokens = max(0, framing_tokens)
+        self.token_counter = token_counter
+        self.client = client
+        self.last_observed_model: str | None = None
+        self._bounds_failed = False
+
+    def rendered_input_tokens(self, messages: list[dict[str, Any]], *, scope: str) -> int:
+        return self.token_counter(self._prompt(messages, scope)) + self.framing_tokens
 
     def extract(
         self,
@@ -587,6 +643,35 @@ class OpenCodeExtractor:
         scope: str,
         capture_hash: str,
     ) -> ExtractionResult:
+        if self._bounds_failed:
+            raise ProviderConfigError("provider bounds require route revalidation", reason="token_bound_exceeded")
+        prompt = self._prompt(messages, scope)
+        if self.max_input_tokens is not None:
+            _bounded_input(prompt, self.max_input_tokens, self.framing_tokens, self.token_counter)
+        with _provider_slot(self.work_dir):
+            if self._bounds_failed:
+                raise ProviderConfigError("provider bounds require route revalidation", reason="token_bound_exceeded")
+            if self.max_output_tokens is not None:
+                return self._extract_bounded(prompt, messages, capture_hash)
+            return self._extract_unbounded(messages, scope=scope, capture_hash=capture_hash)
+
+    def _extract_bounded(self, prompt: str, messages: list[dict[str, Any]], capture_hash: str) -> ExtractionResult:
+        complete = getattr(self.client, "complete_bounded", None)
+        if not callable(complete) or self.max_input_tokens is None:
+            raise ProviderConfigError("OpenCode route has no enforceable output limit", reason="output_limit_unsupported")
+        started = time.monotonic()
+        response = complete(prompt, max_output_tokens=self.max_output_tokens)
+        self.last_observed_model = getattr(response, "observed_model", None)
+        try:
+            bound = min(self.max_input_tokens, self.token_counter(prompt) + self.framing_tokens)
+            _bounded_response(response, self.model, bound, self.max_output_tokens)
+        except ProviderConfigError:
+            self._bounds_failed = True
+            raise
+        return self._validated_result(response.text, messages, capture_hash, started,
+                                      response.input_tokens, response.output_tokens)
+
+    def _extract_unbounded(self, messages: list[dict[str, Any]], *, scope: str, capture_hash: str) -> ExtractionResult:
         command = self._command()
         self.work_dir.mkdir(parents=True, exist_ok=True)
         env = _opencode_environment(self.provider)
@@ -599,14 +684,11 @@ class OpenCodeExtractor:
             raise ProviderConfigError("OpenCode CLI is not installed or not on PATH", reason="cli_missing") from exc
         except subprocess.TimeoutExpired as exc:
             raise ProviderCallError("OpenCode extraction timed out") from exc
-        if completed.returncode != 0:
-            raise ProviderCallError(
-                f"OpenCode extraction failed with exit {completed.returncode}"
-            )
-        raw, input_tokens, output_tokens, session_id = opencode_response_text(
-            completed.stdout,
-        )
+        session_id = _opencode_session_id(completed.stdout)
         try:
+            if completed.returncode != 0:
+                raise ProviderCallError(f"OpenCode extraction failed with exit {completed.returncode}")
+            raw, input_tokens, output_tokens, _ = opencode_response_text(completed.stdout)
             return self._validated_result(
                 raw, messages, capture_hash, started, input_tokens, output_tokens,
             )
@@ -791,6 +873,68 @@ def _consolidation_from_raw(
     return ConsolidationResult(tuple(validated_decisions), usage)
 
 
+class OpenCodeConsolidator:
+    """Sonnet through the existing synchronous client; strict unsupported routes stop.
+
+    A bounded client must enforce ``max_output_tokens`` at its provider boundary.
+    The stock CLI client has no such capability and is intentionally refused.
+    """
+
+    max_reference_chars = 60_000
+
+    def __init__(self, *, model: str, client: Any | None = None,
+                 work_dir: str | Path | None = None, max_prompt_chars: int = 120_000,
+                 max_input_tokens: int = 30_000, max_output_tokens: int = 4_000,
+                 framing_tokens: int = 0, token_counter: Callable[[str], int] = rendered_token_bound) -> None:
+        if "/" not in model or "sonnet" not in model.lower():
+            raise ProviderConfigError("consolidation requires an explicit provider-qualified Sonnet model", reason="invalid_model")
+        from memorymaster.core.opencode_client import OpenCodeClient
+
+        self.model = model
+        self.provider = model.split("/", 1)[0]
+        self.work_dir = Path(work_dir) if work_dir is not None else Path.home() / ".memorymaster" / "dreaming-consolidation"
+        self.client = client if client is not None else OpenCodeClient(model=model, work_dir=self.work_dir)
+        self.max_prompt_chars = min(120_000, max(1, max_prompt_chars))
+        self.max_input_tokens = min(30_000, max(1, max_input_tokens))
+        self.max_output_tokens = min(4_000, max(1, max_output_tokens))
+        self.framing_tokens = max(0, framing_tokens)
+        self.token_counter = token_counter
+        self.last_observed_model: str | None = None
+        self._bounds_failed = False
+
+    def rendered_input_tokens(self, prompt: str) -> int:
+        return self.token_counter(prompt) + self.framing_tokens
+
+    def consolidate(self, candidates: list[DreamCandidate], current_claims: list[dict[str, Any]], *, scope: str) -> ConsolidationResult:
+        if self._bounds_failed:
+            raise ProviderConfigError("provider bounds require route revalidation", reason="token_bound_exceeded")
+        if len(candidates) > 5:
+            raise ProviderOutputError("consolidation permits at most five candidates")
+        if len(json.dumps(current_claims, ensure_ascii=False)) > self.max_reference_chars:
+            raise ProviderOutputError("consolidation reference context exceeds its cap")
+        prompt = consolidation_prompt(candidates, current_claims, scope)
+        if len(prompt) > self.max_prompt_chars:
+            raise ProviderOutputError("consolidation rendered prompt exceeds its character cap")
+        bound = _bounded_input(prompt, self.max_input_tokens, self.framing_tokens, self.token_counter)
+        complete = getattr(self.client, "complete_bounded", None)
+        if not callable(complete):
+            raise ProviderConfigError("OpenCode route has no enforceable output limit", reason="output_limit_unsupported")
+        started = time.monotonic()
+        with _provider_slot(self.work_dir):
+            if self._bounds_failed:
+                raise ProviderConfigError("provider bounds require route revalidation", reason="token_bound_exceeded")
+            response = complete(prompt, max_output_tokens=self.max_output_tokens)
+            self.last_observed_model = getattr(response, "observed_model", None)
+            try:
+                _bounded_response(response, self.model, bound, self.max_output_tokens)
+            except ProviderConfigError:
+                self._bounds_failed = True
+                raise
+        return consolidation_from_raw(response.text, candidates, started=started,
+                                      input_tokens=response.input_tokens, output_tokens=response.output_tokens,
+                                      provider=self.provider, model=self.model)
+
+
 class AntigravityConsolidator:
     """Consolidacion sobre Gemini via el CLI `agy`, con OAuth y sin clave paga.
 
@@ -914,6 +1058,17 @@ def consolidation_prompt(
     )
     return f"{system}\n\nINPUT:\n{user}"
 
+def _opencode_session_id(output: str) -> str | None:
+    for line in output.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict) and isinstance(event.get("sessionID"), str):
+            return event["sessionID"]
+    return None
+
+
 def opencode_response_text(output: str) -> tuple[str, int, int, str | None]:
     text_parts: list[str] = []
     input_tokens = 0
@@ -945,7 +1100,7 @@ def opencode_response_text(output: str) -> tuple[str, int, int, str | None]:
 
 
 def create_dream_consolidator() -> AntigravityConsolidator:
-    """Use Gemini only; obsolete provider configuration fails before any call."""
+    """Keep the live route Gemini-only; backfill selects its explicit adapter."""
     provider = os.environ.get(
         "MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER", "antigravity",
     ).strip().lower()

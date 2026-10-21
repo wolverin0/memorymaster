@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; installed recall integrity, temporal guard and verified delivery -->
+<!-- doc-head: sole roadmap; installed recall integrity and AO-7 PR build with lane semaphore test evidence -->
 # MemoryMaster roadmap
 # Covers: live Jev decision ledger (4.9.0 checklist), useful-memory delivery/evaluation, workflow analytics, governed observations, always-on context layer program and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, code navigation.
@@ -742,7 +742,8 @@ on: AO-2.
 - [ ] AC3: ledger cards feed the projection only, never claims.
 
 **AO-7 Backfill from zero** (L, batch D; census T-1636; plan retained by
-operator decision 2026-10-20; backfill may start now AO-2 is merged)
+operator decision 2026-10-20; backfill may start now AO-2 is merged; build in
+PR #292, tests green under the lane's semaphore run)
 
 Models: build Sonnet (T3, runner only), runtime Haiku for all transcript
 reading and Sonnet only for consolidating kept candidates, judge Haiku batch

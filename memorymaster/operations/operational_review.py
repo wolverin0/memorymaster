@@ -953,10 +953,61 @@ def check_model_preflight(config: ReviewConfig, *, now: datetime | None = None) 
     return ReviewResult("model_preflight", Verdict.FAIL, detail, {"failures": 1})
 
 
+def check_backfill_burndown(config: ReviewConfig) -> ReviewResult:
+    """Report historical sampling separately from the live beat's M3 latency."""
+    from memorymaster.dreaming.backfill import read_backfill_status
+
+    try:
+        state_db, _ = _beat_paths(config)
+        status = read_backfill_status(state_db.parent)
+        if status["state"] == "not_inventoried":
+            return ReviewResult("backfill_burndown", Verdict.PASS, "backfill inactive (not inventoried)")
+
+        def progress_counts(bucket: dict[str, Any]) -> dict[str, int]:
+            values = {key: int(bucket.get(key, 0)) for key in
+                      ("files", "sessions", "completed_sessions")}
+            values.update({key: int(bucket[key]) for key in ("frozen_bytes", "scanned_bytes") if key in bucket})
+            sessions, completed = values["sessions"], values["completed_sessions"]
+            values["remaining_sessions"] = max(0, sessions - completed)
+            values["progress_basis_points"] = completed * 10_000 // sessions if sessions else 0
+            return values
+
+        counts = progress_counts(status)
+        counts.update({key: int(status[key]) for key in
+                       ("eligible_chars", "selected_chars", "sampled_out_chars", "coverage_gaps") if key in status})
+        for dimension in ("sources", "projects"):
+            for label, bucket in status.get(dimension, {}).items():
+                safe_label = (label in {"claude", "claude_subagent", "codex", "agy"}
+                              if dimension == "sources" else
+                              label in {"personal", "global", "unresolved"}
+                              or re.fullmatch(r"project:[a-z0-9][a-z0-9_-]*", label))
+                if safe_label:
+                    counts.update({f"{dimension}:{label}:{key}": value
+                                   for key, value in progress_counts(bucket).items()})
+        dispositions = {"inventoried", "unresolved_scope", "duplicate_copy", "invalidated",
+                        "selected", "no_signal", "unresolved_extraction", "extracted",
+                        "consolidated", "complete_sampled", "applied", "retired"}
+        for name, count in status.get("dispositions", {}).items():
+            if name in dispositions:
+                counts[f"disposition:{name}"] = int(count)
+        for usage in status.get("usage_reservations", []):
+            stage = usage["stage"]
+            if stage in {"extract", "consolidate", "apply", "haiku", "sonnet", "missed_signal"}:
+                counts.update({f"usage:{stage}:{key}": int(usage.get(key) or 0)
+                               for key in ("calls", "input_tokens", "output_tokens")})
+    except (OSError, sqlite3.Error, ValueError, KeyError, TypeError) as exc:
+        return ReviewResult("backfill_burndown", Verdict.WARN, f"probe_error={type(exc).__name__}")
+    detail = (f"sampled backfill sessions={counts['completed_sessions']}/{counts['sessions']} "
+              f"remaining={counts['remaining_sessions']} progress={counts['progress_basis_points'] / 100:.2f}%; "
+              "historical coverage follows the sampling contract")
+    return ReviewResult("backfill_burndown", Verdict.PASS, detail, counts)
+
+
 REVIEW_CHECKS = (check_runtime, check_database, check_feature_activation, check_graph_observations,
                  check_compiled_profile, check_recent_private_context, check_retrieval,
                  check_jev_decisions, check_checkpoint_delivery, check_beat_health,
-                 check_model_preflight, check_snapshot_dir, check_scheduled_slots)
+                 check_model_preflight, check_snapshot_dir, check_scheduled_slots,
+                 check_backfill_burndown)
 
 
 def exit_code(results: Iterable[ReviewResult]) -> int:

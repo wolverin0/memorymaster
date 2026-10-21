@@ -203,7 +203,9 @@ Only: bug root causes, decisions, gotchas, constraints. Never: credentials, IPs,
         if not claims:
             return
 
-        scope = "project:" + os.path.basename(cwd).lower().replace(" ", "-") if cwd else "user"
+        from memorymaster.core.scope_utils import scope_from_cwd_or_user
+
+        scope = scope_from_cwd_or_user(cwd)
 
         # Per-invocation batch fence (P3 intake policy Rule D). The intake policy
         # rejects the (N+1)th claim carrying the same intake_batch_id, so an
@@ -306,8 +308,9 @@ def _run_rule_extraction(transcript_path, cwd):
             return
         from memorymaster.knowledge.rule_miner import mine_transcript_rules
         from memorymaster.core.service import MemoryService
+        from memorymaster.core.scope_utils import scope_from_cwd_or_user
 
-        scope = "project:" + os.path.basename(cwd).lower().replace(" ", "-") if cwd else "user"
+        scope = scope_from_cwd_or_user(cwd)
         svc = MemoryService(DB_PATH, workspace_root=Path(cwd or PROJECT_ROOT))
         stats = mine_transcript_rules(transcript_path, svc, scope=scope, max_windows=1)
         if stats.get("ingested"):
@@ -428,7 +431,9 @@ def main():
     # Store verbatim on every stop (raw conversation storage)
     try:
         if verbatim and transcript_path and os.path.exists(transcript_path):
-            scope = "project:" + os.path.basename(cwd).lower().replace(" ", "-") if cwd else "user"
+            from memorymaster.core.scope_utils import scope_from_cwd_or_user
+
+            scope = scope_from_cwd_or_user(cwd)
             _run_incremental_verbatim(ledger, transcript_path, session_id, scope)
     except Exception:
         pass

@@ -2,14 +2,12 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
-import pytest
-
 from memorymaster.core.scope_utils import (
     cwd_from_transcript,
     scope_from_cwd,
     scope_from_transcript,
+    resolve_transcript_workspace_scope,
+    project_scope_variants,
 )
 
 
@@ -110,3 +108,49 @@ def test_scope_from_transcript_handles_missing_transcript(tmp_path):
     """Missing file → None from cwd_from_transcript → fallback path used."""
     out = scope_from_transcript(tmp_path / "missing.jsonl", fallback_cwd="/x/myapp")
     assert out == "project:myapp"
+
+
+def _worktree(repo, directory):
+    gitdir = repo / ".git" / "worktrees" / directory.name
+    gitdir.mkdir(parents=True)
+    directory.mkdir(parents=True)
+    (directory / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+    (gitdir / "commondir").write_text("../..\n", encoding="utf-8")
+    (gitdir / "gitdir").write_text(str(directory / ".git"), encoding="utf-8")
+    return directory
+
+
+def test_repository_identity_is_shared_by_card_pr_and_canonical_cwd(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMORYMASTER_SCOPE_ALIASES", str(tmp_path / "absent.json"))
+    repo = tmp_path / "MemoryMaster-final"
+    (repo / ".git").mkdir(parents=True)
+    paths = [repo, _worktree(repo, repo / "_wt" / "t1664"), _worktree(repo, tmp_path / "pr-123")]
+    for path in paths:
+        nested = path / "src" / "module"
+        nested.mkdir(parents=True)
+        assert resolve_transcript_workspace_scope(nested) == "project:memorymaster"
+        assert scope_from_cwd(nested) == "project:memorymaster"
+    assert project_scope_variants(repo.name) == ["project:memorymaster", "project:memorymaster-final"]
+
+
+def test_unverified_deleted_or_scratch_workspaces_are_quarantined(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMORYMASTER_SCOPE_ALIASES", str(tmp_path / "absent.json"))
+    (tmp_path / ".git").mkdir()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    assert resolve_transcript_workspace_scope(scratch) is None
+    assert resolve_transcript_workspace_scope(tmp_path / "_wt" / "t1664") is None
+    assert resolve_transcript_workspace_scope(None) is None
+    assert resolve_transcript_workspace_scope(None, allow_fallback_global=True) == "global"
+
+
+def test_worktree_pointer_requires_valid_common_membership_and_backlink(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMORYMASTER_SCOPE_ALIASES", str(tmp_path / "absent.json"))
+    repo = tmp_path / "repo"
+    wt = _worktree(repo, tmp_path / "pr-123")
+    gitdir = repo / ".git" / "worktrees" / wt.name
+    (gitdir / "commondir").write_text("../../../../unrelated", encoding="utf-8")
+    assert resolve_transcript_workspace_scope(wt) is None
+    (gitdir / "commondir").write_text("../..", encoding="utf-8")
+    (gitdir / "gitdir").write_text(str(tmp_path / "another" / ".git"), encoding="utf-8")
+    assert resolve_transcript_workspace_scope(wt) is None

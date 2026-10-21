@@ -6,6 +6,7 @@ and `self.db_path`. Do not instantiate directly.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import sqlite3
@@ -84,6 +85,44 @@ def _tenant_event_chain_issues(rows, limit: int) -> list[dict[str, object]]:
 
 
 class _LifecycleMixin:
+    @staticmethod
+    def _check_ao7_retirement_guard(conn: sqlite3.Connection, claim: Claim, guard: object) -> None:
+        """Check the rollback ownership snapshot while holding the write lock."""
+        if not isinstance(guard, dict):
+            raise ValueError("invalid AO-7 retirement guard")
+        current = conn.execute("SELECT * FROM claims WHERE id=?", (claim.id,)).fetchone()
+        citations = [list(row) for row in conn.execute(
+            "SELECT source, locator, excerpt FROM citations WHERE claim_id=? ORDER BY id", (claim.id,))]
+        citation_hash = hashlib.sha256(json.dumps(
+            citations, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+        last_event_id = conn.execute("SELECT COALESCE(MAX(id), 0) FROM events WHERE claim_id=?", (claim.id,)).fetchone()[0]
+        creation = conn.execute(
+            "SELECT payload_json FROM events WHERE claim_id=? AND event_type='ingest' ORDER BY id LIMIT 1",
+            (claim.id,),
+        ).fetchone()
+        creation_payload = json.loads(creation[0] or "{}") if creation is not None else {}
+        if (current is None or current["status"] != "candidate" or current["source_agent"] != "dream-worker"
+                or any(current[key] != guard.get(key) for key in ("tenant_id", "scope", "version"))
+                or citation_hash != guard.get("citation_hash") or last_event_id != guard.get("last_event_id")
+                or not guard.get("operation_id")
+                or creation_payload.get("ingest_operation_id") != guard["operation_id"]):
+            raise ConcurrentModificationError("AO-7 retirement ownership or support changed")
+
+    def latest_archive_reason(self, claim_id: int) -> str | None:
+        """Read the last lifecycle archive action, ignoring later bookkeeping."""
+        with self.connect() as conn:
+            return self._latest_archive_reason(conn, claim_id)
+
+    @staticmethod
+    def _latest_archive_reason(conn: sqlite3.Connection, claim_id: int) -> str | None:
+        placeholders = ",".join("?" for _ in STATUS_TRANSITION_EVENT_TYPES)
+        row = conn.execute(
+            "SELECT details FROM events WHERE claim_id=? AND to_status='archived' "
+            f"AND from_status IS NOT NULL AND event_type IN ({placeholders}) ORDER BY id DESC LIMIT 1",
+            (claim_id, *STATUS_TRANSITION_EVENT_TYPES),
+        ).fetchone()
+        return row["details"] if row is not None else None
+
     if TYPE_CHECKING:
         def connect(self) -> sqlite3.Connection: ...
 
@@ -131,6 +170,17 @@ class _LifecycleMixin:
         valid_until_update = now if to_status == "superseded" else None
 
         with self.connect() as conn:
+            if "ao7_retirement_guard" in payload:
+                if to_status != "archived" or reason != "ao7_rollback":
+                    raise ValueError("AO-7 retirement guard requires rollback archival")
+                conn.execute("BEGIN IMMEDIATE")
+                self._check_ao7_retirement_guard(conn, claim, payload["ao7_retirement_guard"])
+            if to_status == "candidate" and reason.startswith("reingest_revival:"):
+                # Check retirement history in the same write transaction as the
+                # revival. A later confidence/audit event cannot erase intent.
+                conn.execute("BEGIN IMMEDIATE")
+                if self._latest_archive_reason(conn, claim.id) in {"friendly_forget_claim", "ao7_rollback"}:
+                    return claim
             if to_status == "confirmed":
                 from memorymaster.dreaming.source_review import confirmation_allowed
 

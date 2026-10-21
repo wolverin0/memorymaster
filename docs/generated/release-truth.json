@@ -17,6 +17,7 @@
     "detect-contradictions",
     "diff",
     "drain-spool",
+    "dream-backfill",
     "dream-clean",
     "dream-ingest",
     "dream-run",
@@ -139,11 +140,11 @@
     "memorymaster-workflow-hook"
   ],
   "counts": {
-    "cli_commands": 126,
+    "cli_commands": 127,
     "console_entrypoints": 9,
     "mcp_tools": 51,
     "ops_cli_commands": 5,
-    "pytest_test_functions": 5611
+    "pytest_test_functions": 5740
   },
   "feature_profile_matrix": {
     "capture_hook": [

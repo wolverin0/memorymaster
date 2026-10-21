@@ -115,6 +115,41 @@ def _fails_privacy_for(candidate_id: str):
     return lambda check, candidate: 0.1 if (check == "privacy" and candidate == candidate_id) else 0.9
 
 
+@pytest.mark.parametrize("injected", [False, True])
+def test_backfill_bypasses_live_jev_and_all_reward_access(tmp_path, monkeypatch, injected):
+    def forbidden(*args, **kwargs):
+        pytest.fail("backfill accessed the live JEV path")
+
+    class ForbiddenEngine:
+        @property
+        def ledger(self):
+            return forbidden()
+
+    monkeypatch.setenv("MEMORYMASTER_JEV_MODE", "live")
+    monkeypatch.setattr("memorymaster.decisions.engine.decide", forbidden)
+    for name in ("record_verdicts", "record_claim_link", "record_expired"):
+        monkeypatch.setattr(held, name, forbidden)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    capture_id = _capture(ledger)
+    worker = _worker(tmp_path, ledger, ForbiddenEngine() if injected else None,
+                     config=DreamConfig(jev_triage_enabled=False))
+
+    summary = worker.run(apply_candidates=True)
+    worker._record_claim_link({"decision_id": "forbidden"}, 1)
+    worker._record_held_expired([{"decision_id": "forbidden"}])
+
+    assert ledger.get_capture(capture_id)["state"] == "applied"
+    assert summary["ingest_triaged"] == 0
+    assert not (tmp_path / "decisions.db").exists()
+
+
+def test_jev_triage_keeps_live_default_and_explicit_environment_opt_out(monkeypatch):
+    monkeypatch.delenv("MEMORYMASTER_DREAM_JEV_TRIAGE_ENABLED", raising=False)
+    assert DreamConfig.from_env().jev_triage_enabled is True
+    monkeypatch.setenv("MEMORYMASTER_DREAM_JEV_TRIAGE_ENABLED", "false")
+    assert DreamConfig.from_env().jev_triage_enabled is False
+
+
 def test_live_candidates_that_pass_every_check_proceed_to_consolidation(tmp_path):
     ledger = DreamLedger(tmp_path / "capture.db")
     capture_id = _capture(ledger)

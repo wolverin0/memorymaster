@@ -11,8 +11,10 @@ from typing import Any, Mapping
 
 from memorymaster.core.capture_control import CaptureLedger
 from memorymaster.core.security import redact_text
+from memorymaster.core.scope_utils import resolve_transcript_workspace_scope, scope_from_cwd
 from memorymaster.dreaming.ledger import DreamLedger
 from memorymaster.dreaming.models import CaptureEnvelope, DreamMessage
+from memorymaster.dreaming.self_observation import is_memory_tool, strip_self_observation
 
 
 _ABSOLUTE_WINDOWS_PATH = re.compile(r"(?i)(?<![A-Za-z0-9])(?:[A-Z]:\\|[A-Z]:/)[^\r\n\t\"'<>|]+")
@@ -31,7 +33,26 @@ def _text_parts(content: Any, allowed: set[str]) -> str:
     return "\n".join(part for part in parts if part.strip())
 
 
-def _conversation_record(entry: dict[str, Any], provider: str) -> tuple[str, str] | None:
+def _conversation_record(
+    entry: dict[str, Any], provider: str, *, state: dict[str, Any] | None = None,
+) -> tuple[str, str] | None:
+    state = state if state is not None else {}
+    payload = entry.get("payload") if provider == "codex" else entry.get("message", entry)
+    payload = payload if isinstance(payload, dict) else entry
+    content = payload.get("content", [])
+    blocks = content if isinstance(content, list) else []
+    calls = [payload, *[block for block in blocks if isinstance(block, dict)]]
+    has_tool_result = False
+    for call in calls:
+        has_tool_result |= call.get("type") in {"tool_result", "function_call_output", "custom_tool_call_output"}
+        name = str(call.get("name") or call.get("tool_name") or "")
+        call_id = str(call.get("call_id") or call.get("tool_use_id") or call.get("id") or "")
+        if is_memory_tool(name) or (call_id and call_id in state.get("memory_tool_ids", ())):
+            strip_self_observation("", role="tool", tool_name=name, metadata={"state": state, "tool_call_id": call_id})
+            # Text alongside a memory call/result shares the structural origin.
+            return None
+    if has_tool_result:
+        return None
     if provider == "codex":
         payload = entry.get("payload")
         if entry.get("type") != "response_item" or not isinstance(payload, dict) or payload.get("type") != "message":
@@ -47,7 +68,12 @@ def _conversation_record(entry: dict[str, Any], provider: str) -> tuple[str, str
         role = str(message.get("role", entry.get("type", "")))
         text = _text_parts(message.get("content", ""), {"text", "input_text", "output_text"})
     normalized_role = "assistant" if role in {"assistant", "model"} else "user" if role == "user" else ""
-    return (normalized_role, text) if normalized_role and text.strip() else None
+    clean = strip_self_observation(text, role=normalized_role, metadata={
+        "state": state,
+        "injected": bool(entry.get("hook_additional_context") or entry.get("isMeta") or payload.get("hook_additional_context")),
+        "generated_session": bool(entry.get("backfill_generated") or entry.get("memorymaster_generated")),
+    })
+    return (normalized_role, clean.text) if normalized_role and clean.text else None
 
 
 def _sanitize(text: str) -> str:
@@ -56,7 +82,10 @@ def _sanitize(text: str) -> str:
     return redacted.strip()[:16_000]
 
 
-def parse_transcript_lines(text: str, provider: str) -> list[DreamMessage]:
+def parse_transcript_lines(
+    text: str, provider: str, *, state: dict[str, Any] | None = None,
+) -> list[DreamMessage]:
+    state = state if state is not None else {}
     messages: list[DreamMessage] = []
     seen: set[tuple[str, str, str]] = set()
     for raw in text.splitlines():
@@ -66,7 +95,7 @@ def parse_transcript_lines(text: str, provider: str) -> list[DreamMessage]:
             continue
         if not isinstance(entry, dict):
             continue
-        record = _conversation_record(entry, provider.lower())
+        record = _conversation_record(entry, provider.lower(), state=state)
         if record is None:
             continue
         role, content = record
@@ -84,27 +113,14 @@ def parse_transcript_lines(text: str, provider: str) -> list[DreamMessage]:
     return messages
 
 
-def _scope(cwd: str | None) -> str:
-    if not cwd:
-        return "global"
-    current = Path(cwd)
-    child_repositories = sum(
-        1 for child in current.iterdir()
-        if child.is_dir() and (child / ".git").exists()
-    ) if current.is_dir() else 0
-    if child_repositories > 1:
-        return "global"
-    for candidate in (current, *current.parents):
-        if (candidate / ".git").exists():
-            current = candidate
-            break
-    slug = re.sub(r"[^a-z0-9]+", "-", current.name.lower()).strip("-")
-    return f"project:{slug or 'unknown'}"
+def _scope(cwd: str | None) -> str | None:
+    return resolve_transcript_workspace_scope(cwd)
 
 
 def capture_transcript(
     transcript_path: str | Path, *, provider: str, session_id: str, cwd: str | None, ledger: DreamLedger,
     record_source_mtime: bool = False,
+    live_workspace: bool = False,
 ) -> dict[str, Any]:
     """Queue the new bytes of a transcript.
 
@@ -121,13 +137,30 @@ def capture_transcript(
     chunk = cursor_ledger.read_increment(transcript_path, f"dream:{provider}:{session_hash}")
     if not chunk.text:
         return {"queued": 0, "reason": "no_increment"}
-    messages = parse_transcript_lines(chunk.text, provider)
+    filter_key = f"filter:{provider}:{session_hash}"
+    saved_filter = ledger.scan_state(filter_key)
+    filter_state: dict[str, Any] = {
+        "tool_contaminated": bool(saved_filter and saved_filter[0]),
+        "memory_tool_ids": sorted(saved_filter[1]) if saved_filter else [],
+    }
+    messages = parse_transcript_lines(chunk.text, provider, state=filter_state)
+    # Persist only linkage, never recalled text. Write this before advancing the
+    # cursor, so replay after an interrupted capture remains conservative.
+    ledger.set_scan_watermark(
+        filter_key, float(bool(filter_state.get("tool_contaminated"))),
+        list(filter_state.get("memory_tool_ids", ()))[:128],
+    )
     if not messages:
         cursor_ledger.commit_cursor(chunk)
         return {"queued": 0, "reason": "no_conversation"}
+    # A native lifecycle payload identifies its active workspace, including
+    # non-Git projects. Historical scans still require repository/alias evidence.
+    scope = scope_from_cwd(cwd) if live_workspace and cwd else _scope(cwd)
+    if scope is None or scope == "global":
+        return {"queued": 0, "reason": "unresolved_scope"}
     content_hash = hashlib.sha256(json.dumps([m.to_dict() for m in messages], sort_keys=True).encode("utf-8")).hexdigest()
     envelope = CaptureEnvelope(
-        provider=provider.lower(), session_hash=session_hash, scope=_scope(cwd), captured_at=_now(),
+        provider=provider.lower(), session_hash=session_hash, scope=scope, captured_at=_now(),
         last_activity_at=messages[-1].timestamp or _now(), messages=tuple(messages),
         cursor_start=chunk.start_offset, cursor_end=chunk.end_offset, content_hash=content_hash,
     )
@@ -149,6 +182,7 @@ def capture_hook_payload(payload: dict[str, Any], *, provider: str, ledger: Drea
         session_id=str(payload.get("session_id") or payload.get("thread_id") or "unknown"),
         cwd=str(payload.get("cwd") or "") or None,
         ledger=ledger,
+        live_workspace=True,
     )
 
 

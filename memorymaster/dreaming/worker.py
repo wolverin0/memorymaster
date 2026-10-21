@@ -212,6 +212,8 @@ class DreamConfig:
     # for at most this many days after the hold (never while quarantined).
     held_retain_days: int = held.HELD_RETAIN_DAYS
     enable_graph_observations: bool = False
+    # Backfill must opt out before touching the live process-wide decision engine.
+    jev_triage_enabled: bool = True
 
     @classmethod
     def from_env(cls) -> "DreamConfig":
@@ -239,6 +241,7 @@ class DreamConfig:
             enable_graph_observations=_env_bool(
                 "MEMORYMASTER_GRAPH_OBSERVATIONS", False
             ),
+            jev_triage_enabled=_env_bool("MEMORYMASTER_DREAM_JEV_TRIAGE_ENABLED", True),
         )
 
 
@@ -256,11 +259,13 @@ class DreamWorker:
 
     def _decisions_ledger(self) -> Any:
         """The S3 decisions ledger: the injected engine's, else the configured one (``None``)."""
+        if not self.config.jev_triage_enabled:
+            return None
         return getattr(self.decision_engine, "ledger", None) if self.decision_engine is not None else None
 
     def _record_verdicts(self, capture_id: int, decisions: list[dict[str, Any]]) -> None:
         """S3 rewards: the consolidator's verdict on each triaged candidate of this capture."""
-        if not decisions:
+        if not self.config.jev_triage_enabled or not decisions:
             return
         try:
             notes = held.triage_notes(self.ledger.get_capture(capture_id).get("extraction"))
@@ -274,6 +279,8 @@ class DreamWorker:
 
     def _record_claim_link(self, note: dict[str, Any], claim_id: int) -> None:
         """S3 rewards: tie the created claim to its candidate's decision for the lifecycle joiner."""
+        if not self.config.jev_triage_enabled:
+            return
         try:
             held.record_claim_link(self._decisions_ledger(), note, claim_id, observed_at=self.now().isoformat())
         except Exception as exc:  # noqa: BLE001 - telemetry never fails an application
@@ -281,6 +288,8 @@ class DreamWorker:
 
     def _record_held_expired(self, notes: list[dict[str, Any]]) -> None:
         """Ruling R7: held candidates pruned with their capture leave ``held_expired`` outcomes."""
+        if not self.config.jev_triage_enabled:
+            return
         held.record_expired(self._decisions_ledger(), notes, observed_at=self.now().isoformat())
 
     def _hold_lease(self) -> None:
@@ -591,6 +600,8 @@ class DreamWorker:
         every other outcome, including every fallback, is the legacy path.
         """
         payloads = list(row.get("extraction") or [])
+        if not self.config.jev_triage_enabled:
+            return payloads
         notes: dict[str, dict[str, Any]] = {}
         for payload in payloads:
             if held.annotation(payload) is None:
@@ -680,6 +691,7 @@ class DreamWorker:
         tripped: set[int] = set()  # in a consolidation call that tripped the breaker this run
         stopped: DreamProviderStopped | None = None
         pending_by_scope: dict[str, list[dict[str, Any]]] = {}
+        reference_dependencies: dict[int, set[int]] = {}
         # AO-2 beat: pick the captures this run consolidates BEFORE grouping by scope. Batches pack
         # candidates of several captures, so a cap applied per batch is bypassed by captures that
         # share a scope; a picked capture finishes all its scopes, the others wait untouched.
@@ -745,8 +757,25 @@ class DreamWorker:
             references: list[dict[str, Any]] = []
             called = False
             try:
-                references = [*pending_by_scope.get(effective_scope, []), *self._current_claims(effective_scope, candidates)]
-                references = self._fit_prompt(candidates, references, effective_scope)
+                unavailable = failed_captures | deferred_captures | provider_deferred
+                pending_refs = [item for item in pending_by_scope.get(effective_scope, [])
+                                if item["_capture_id"] not in unavailable]
+                references = [*({k: v for k, v in item.items() if k != "_capture_id"} for item in pending_refs),
+                              *self._current_claims(effective_scope, candidates)]
+                fitted = self._fit_prompt(candidates, references, effective_scope)
+                # Smaller source batches may retain relevant governed context.
+                # Trim references only when splitting cannot preserve more of it.
+                split_at = None
+                if len(candidates) > 1 and len(fitted) < len(references):
+                    for count in range(len(candidates) - 1, 0, -1):
+                        if len(self._fit_prompt(candidates[:count], references, effective_scope)) > len(fitted):
+                            split_at = count
+                            break
+                if split_at is not None:
+                    batches.appendleft((effective_scope, pairs[split_at:]))
+                    batches.appendleft((effective_scope, pairs[:split_at]))
+                    continue
+                references = fitted
                 self._hold_lease()
                 called = True
                 result = self.consolidator.consolidate(candidates, references, scope=effective_scope)
@@ -758,7 +787,14 @@ class DreamWorker:
                 decisions, pending = self._reviewed_batch(result, candidates, effective_scope)
                 for decision in decisions:
                     decisions_by_capture[owner_by_id[decision.candidate_id]].append(decision.to_dict())
-                pending_by_scope[effective_scope] = [*pending_by_scope.get(effective_scope, []), *pending]
+                pending_owners = [owner_by_id[d.candidate_id] for d in decisions if d.action == "add"]
+                pending_by_scope[effective_scope] = [*pending_by_scope.get(effective_scope, []),
+                    *({**item, "_capture_id": owner} for item, owner in zip(pending, pending_owners))]
+                # An incomplete capture may later fail in another batch/scope.
+                # Never persist a peer decision that relied on withdrawn work.
+                for capture_id in capture_ids:
+                    reference_dependencies.setdefault(capture_id, set()).update(
+                        (capture_ids | {item["_capture_id"] for item in pending_refs}) - {capture_id})
             except DreamLeaseLost:
                 raise
             except Exception as exc:
@@ -824,6 +860,16 @@ class DreamWorker:
                 )
                 summary["consolidate_poison_charged"] += int(charge)
                 failed_captures.update(capture_ids)
+        tainted = failed_captures | deferred_captures | provider_deferred
+        while dependent := {owner for owner, dependencies in reference_dependencies.items()
+                            if owner not in tainted and dependencies & tainted}:
+            tainted |= dependent
+        dependent_deferred = tainted - failed_captures - deferred_captures - provider_deferred
+        for capture_id in dependent_deferred:
+            self._hold_lease()
+            self.ledger.defer_consolidation(capture_id, run_id)
+        summary["deferred_consolidate_dependencies"] = len(dependent_deferred)
+        deferred_captures.update(dependent_deferred)
         for row in rows:
             capture_id = int(row["id"])
             if row.get("decisions") is not None or capture_id in failed_captures or capture_id in deferred_captures or capture_id in provider_deferred:
@@ -852,32 +898,40 @@ class DreamWorker:
         same batch every run and consolidation stalled for every scope.
         References are most relevant first, so the tail is dropped.
         """
-        cap = getattr(self.consolidator, "max_prompt_chars", None)
-        if not isinstance(cap, int) or cap <= 0:
-            return references
         from memorymaster.dreaming.providers import consolidation_prompt
 
-        def size(count: int) -> int:
-            return len(consolidation_prompt(candidates, references[:count], scope))
+        cap = getattr(self.consolidator, "max_prompt_chars", None)
+        token_cap = getattr(self.consolidator, "max_input_tokens", None)
+        token_counter = getattr(self.consolidator, "rendered_input_tokens", _estimated_tokens)
+        reference_cap = min(self.config.max_context_chars, getattr(self.consolidator, "max_reference_chars", self.config.max_context_chars))
+        bounded_references: list[dict[str, Any]] = []
+        for item in references:
+            if len(json.dumps([*bounded_references, item], ensure_ascii=False)) > reference_cap:
+                break
+            bounded_references.append(item)
+        references = bounded_references
 
-        if size(len(references)) <= cap:
+        def fits(count: int) -> bool:
+            prompt = consolidation_prompt(candidates, references[:count], scope)
+            return ((not isinstance(cap, int) or cap <= 0 or len(prompt) <= cap)
+                    and (not isinstance(token_cap, int) or token_cap <= 0 or token_counter(prompt) <= token_cap))
+
+        if fits(len(references)):
             return references
-        bare = size(0)
-        if bare > cap:
+        if not fits(0):
             raise DreamPromptTooLarge(
-                f"consolidation prompt has {bare} characters without reference claims; "
-                f"the consolidator cap is {cap}"
+                "consolidation prompt exceeds character/token caps without reference claims"
             )
         low, high = 0, len(references)  # size(low) fits, size(high) does not
         while high - low > 1:
             middle = (low + high) // 2
-            if size(middle) <= cap:
+            if fits(middle):
                 low = middle
             else:
                 high = middle
         LOGGER.info(
-            "Dreaming kept %d of %d reference claims to fit the %d-character prompt cap",
-            low, len(references), cap,
+            "Dreaming kept %d of %d reference claims to fit the prompt caps",
+            low, len(references),
         )
         return references[:low]
 
@@ -907,22 +961,20 @@ class DreamWorker:
         self,
         pairs: list[tuple[dict[str, Any], DreamCandidate]],
     ) -> list[list[tuple[dict[str, Any], DreamCandidate]]]:
-        limit = max(1, self.config.max_consolidate_candidates)
+        limit = min(5, max(1, self.config.max_consolidate_candidates))
         batches: list[list[tuple[dict[str, Any], DreamCandidate]]] = []
-        for capture_pairs in self._by_capture(pairs):
-            # Pack whole captures up to the candidate limit: every call re-sends
-            # the reference context, and one call per capture let the daily call
-            # cap strand most of the queue. A packed call that fails for a
-            # semantic or unexpected reason is retried per capture in
-            # _consolidate (exact failure ownership); a provider-wide failure
-            # defers the whole batch unchanged.
-            if batches and len(batches[-1]) + len(capture_pairs) <= limit:
-                batches[-1].extend(capture_pairs)
+        for pair in pairs:
+            trial = [*batches[-1], pair] if batches and len(batches[-1]) < limit else [pair]
+            scope = "personal" if pair[1].scope_class == "personal" else str(pair[0]["scope"])
+            if len(trial) > 1:
+                try:
+                    self._fit_prompt([candidate for _, candidate in trial], [], scope)
+                except DreamPromptTooLarge:
+                    trial = [pair]
+            if batches and len(trial) > 1:
+                batches[-1] = trial
             else:
-                batches.extend(
-                    capture_pairs[index:index + limit]
-                    for index in range(0, len(capture_pairs), limit)
-                )
+                batches.append(trial)
         return batches
 
     def _fail_group(
@@ -948,12 +1000,11 @@ class DreamWorker:
         The suspect that just tripped moves behind the others, so one poison
         capture cannot keep the other suspects waiting.
         """
-        limit = max(1, self.config.max_consolidate_candidates)
         isolated: list[tuple[str, list[tuple[dict[str, Any], DreamCandidate]]]] = []
         for capture_id in sorted(suspects, key=lambda key: (suspects[key], key)):
             for effective_scope in sorted(groups):
                 own = [pair for pair in groups[effective_scope] if int(pair[0]["id"]) == capture_id]
-                isolated.extend((effective_scope, own[index:index + limit]) for index in range(0, len(own), limit))
+                isolated.extend((effective_scope, batch) for batch in self._candidate_batches(own))
         return isolated
 
     def _clear_trips(self, capture_ids: set[int], streaks: dict[int, tuple[int, int]]) -> None:
@@ -978,16 +1029,15 @@ class DreamWorker:
         ] if claim.tenant_id == self.service.tenant_id}.values())
         keys = reviewed_memory_keys(self.service.store, [claim.id for claim in claims])
         out: list[dict[str, Any]] = []
-        used = 0
         for claim in claims:
             item = {key: getattr(claim, key, None) for key in ("id", "text", "status", "scope", "claim_type", "subject", "predicate", "object_value", "confidence")}
             if claim.id in keys:
                 item["memory_key"] = keys[claim.id]
-            size = len(json.dumps(item, ensure_ascii=False))
-            if out and used + size > self.config.max_context_chars:
+            size = len(json.dumps([*out, item], ensure_ascii=False))
+            cap = min(self.config.max_context_chars, getattr(self.consolidator, "max_reference_chars", self.config.max_context_chars))
+            if size > cap:
                 break
             out.append(item)
-            used += size
         return out
 
     def _apply(self, run_id: str, rows: list[dict[str, Any]], summary: dict[str, Any]) -> None:
@@ -1063,8 +1113,11 @@ class DreamWorker:
             return None
         created = None
         if decision.action in {"add", "reinforce", "propose_supersede", "propose_conflict"}:
-            created = self._ingest_candidate(row, candidate, effective_scope)
-            if review is not None:
+            outcome = row.get("outcome_receipt", {})
+            created = self._ingest_candidate({**row, "outcome_receipt": outcome}, candidate, effective_scope)
+            if created.status == "archived":
+                return None
+            if review is not None and (outcome.get("created") or outcome.get("owned")):
                 record_review(self.service.store, created.id, bound, review)
             summary["candidate_writes"] += 1
         if decision.action.startswith("propose_"):
@@ -1090,7 +1143,17 @@ class DreamWorker:
 
     def _ingest_candidate(self, row: dict[str, Any], candidate: DreamCandidate, scope: str):
         identity = hashlib.sha256(f"{scope}|{candidate.candidate_id}".encode("utf-8")).hexdigest()[:24]
-        locator = f"dream:{row['provider']}:{row['session_hash'][:12]}:{candidate.evidence_message_id}"
+        provider = row.get("citation_provider") or row["provider"]
+        session_hash = row.get("citation_session_hash") or row["session_hash"]
+        suffix = str(row.get("citation_suffix") or "").strip(":")
+        suffix = f"{suffix}:" if suffix else ""
+        locator = f"dream:{provider}:{session_hash[:12]}:{suffix}{candidate.evidence_message_id}"
+        # Live applications need the same durable creation ownership as backfill:
+        # a retry may need to restore its review after ingest already committed.
+        # Preserve explicit backfill operation IDs so reusing an older claim
+        # cannot acquire ownership of that claim or replace its review.
+        outcome = row.get("outcome_receipt", {})
+        outcome.setdefault("operation_id", f"dream-{identity}")
         return self.service.ingest(
             candidate.text,
             [CitationInput(source="dream-worker", locator=locator, excerpt=candidate.evidence_quote)],
@@ -1099,7 +1162,8 @@ class DreamWorker:
             object_value=candidate.object_value, scope=scope, confidence=0.6,
             valid_from=candidate.valid_from, valid_until=candidate.valid_until,
             source_agent="dream-worker", require_source_agent=True,
-            intake_batch_id=f"dream-{row['run_id'] or 'replay'}", intake_batch_max=200,
+            intake_batch_id=row.get("intake_batch_id") or f"dream-{row['run_id'] or 'replay'}", intake_batch_max=200,
+            outcome_receipt=outcome,
         )
 
     def _emit_proposal(self, candidate: DreamCandidate, decision: DreamDecision, scope: str, replacement_id: int | None) -> None:
@@ -1177,7 +1241,8 @@ class DreamWorker:
         self.ledger.record_provider_call(run_id, provider=provider, model=model,
             outcome="error", latency_ms=0, structured_valid=False,
             input_tokens=reported or input_tokens,
-            output_tokens=0, http_status=int(getattr(error, "http_status", 0)), now=self.now())
+            output_tokens=int(getattr(error, "output_tokens", 0) or 0),
+            http_status=int(getattr(error, "http_status", 0)), now=self.now())
 
 
 def run_dream(db_path: str | Path, workspace: str | Path, *, apply_candidates: bool = False, scope: str | None = None, max_sessions: int | None = None, ledger_path: str | Path | None = None, config: DreamConfig | None = None) -> dict[str, Any]:

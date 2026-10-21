@@ -27,6 +27,14 @@ from memorymaster.profile.repository import ProfileRepository
 from memorymaster.recall.verbatim_store import ensure_verbatim_schema, store_verbatim
 
 
+def test_parent_and_children_are_one_profile_evidence_session():
+    from memorymaster.profile.repository import _claim_session
+
+    locators = ["dream:claude:parent:m1", "dream:claude:parent:subagent-a:m2", "dream:claude:parent:subagent-b:m3"]
+    assert {_claim_session(index, [("dream-worker", locator)]) for index, locator in enumerate(locators)} == {"dream:claude:parent"}
+    assert _claim_session(4, [("dream-worker", "dream:claude:other:m1")]) == "dream:claude:other"
+
+
 class _Mapper:
     model = "fixture-map"
 

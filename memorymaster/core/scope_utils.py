@@ -10,10 +10,9 @@ The fix: read the authoritative ``cwd`` field from the transcript JSONL
 metadata. Each session record carries the working directory the session was
 launched in. Slug decoding stays as a last-resort fallback.
 
-The 2026-04-09 v3.3.1 release patched a related bug
-(``_project_scope`` was appending an SHA1 hash suffix unconditionally). This
-helper sits one layer up: it tells callers WHICH cwd to feed
-``_project_scope``.
+Project identity comes from Git's common directory for linked worktrees;
+operator folder aliases override it. Capture, session bindings and surfaces
+share this resolution rather than deriving disposable checkout scopes.
 """
 from __future__ import annotations
 
@@ -31,6 +30,8 @@ __all__ = [
     "project_scope_variants",
     "PROJECT_ROOT_MARKERS",
     "MAX_ANCESTOR_DEPTH",
+    "resolve_transcript_workspace_scope",
+    "resolve_Transcript_workspace_scope",
 ]
 
 # A directory carrying agent instructions IS a project root. That is the whole
@@ -43,11 +44,7 @@ PROJECT_ROOT_MARKERS = ("CLAUDE.md", "AGENTS.md")
 MAX_ANCESTOR_DEPTH = 4
 
 
-_SLUG_NORMALIZER_RE = re.compile(r"\s+")
-
-# ---- slug canonicalization (copied verbatim from surfaces/mcp_server.py) ----
-# These regexes are the single source of truth; mcp_server.py imports them
-# from here (or keeps its own copy for now — both produce identical output).
+# Shared slug canonicalization; surfaces import these rules.
 
 _SCOPE_SAFE_RE = re.compile(r"[^a-z0-9_-]+")
 # Windows / macOS "Copy" artefacts and trailing "(1)"-style numeric variants.
@@ -193,26 +190,226 @@ def _scope_aliases() -> dict[str, str]:
     return _ALIAS_CACHE["map"]  # type: ignore[return-value]
 
 
-def scope_from_cwd(cwd: str | os.PathLike[str] | None) -> str:
-    """Derive a ``project:<slug>`` scope from a CWD path.
+def _git_project_root(current: Path) -> tuple[Path, Path] | None:
+    """Read Git's gitdir/commondir pointers without launching a hook-time process.
 
-    - ``cwd is None`` or empty → ``"global"``
-    - Non-empty cwd → ``project:<lowercased-basename-with-spaces-as-dashes>``
-
-    Spaces, mixed case, and trailing separators are normalised. This is the
-    same shape the deployed Stop hook produces, lifted into a re-usable
-    helper so other callers (verbatim_store, dream-ingest, batch importers)
-    can match it byte-for-byte.
+    Gitfile paths are relative to the checkout; commondir paths are relative
+    to the per-worktree gitdir. An ordinary gitfile (e.g. a submodule) with no
+    commondir still belongs to its own checkout, not the metadata directory.
+    Return both checkout and common project roots so checkout aliases also
+    apply when a session starts in a subdirectory.
     """
-    if not cwd:
+    ceilings = {
+        Path(raw).resolve() for raw in os.environ.get("GIT_CEILING_DIRECTORIES", "").split(os.pathsep) if raw
+    }
+    candidates = (current,) if current in ceilings else (current, *current.parents)
+    for candidate in candidates:
+        if candidate != current and candidate in ceilings:
+            break
+        dotgit = candidate / ".git"
+        try:
+            if dotgit.is_dir():
+                gitdir = dotgit
+            elif dotgit.is_file():
+                pointer = dotgit.read_text(encoding="utf-8").strip()
+                if not pointer.startswith("gitdir:") or not pointer[7:].strip():
+                    return candidate, candidate
+                gitdir = (candidate / pointer[7:].strip()).resolve()
+                if not gitdir.is_dir():
+                    return candidate, candidate
+            else:
+                continue
+            commondir = gitdir / "commondir"
+            if not commondir.is_file():
+                return candidate, candidate
+            pointer = commondir.read_text(encoding="utf-8").strip()
+            if not pointer:
+                return candidate, candidate
+            common = (gitdir / pointer).resolve()
+            if not common.is_dir():
+                return candidate, candidate
+            # Linked worktrees share the main checkout's .git directory.
+            # Bare repositories conventionally use <project>.git instead.
+            if common.name.lower() == ".git":
+                return candidate, common.parent
+            project = common.with_suffix("") if common.suffix.lower() == ".git" else common
+            return candidate, project
+        except (OSError, ValueError, UnicodeError):
+            # Unreadable metadata: the folder that carries ``.git`` is still the checkout,
+            # so subdirectories and checkout aliases keep resolving to it.
+            return candidate, candidate
+    return None
+
+
+def scope_from_cwd(cwd: str | os.PathLike[str] | None) -> str:
+    """Resolve the project once for capture, hooks, session bindings and MCP.
+
+    Explicit folder aliases win. Otherwise the nearest Git checkout's common
+    directory identifies the project, including worktrees with arbitrary
+    names or locations. Non-Git folders keep basename scope derivation;
+    multi-repository collection roots and empty paths use global scope.
+    """
+    raw = str(cwd or "").strip()
+    current = Path(raw)
+    if not raw:
         return "global"
-    name = Path(str(cwd)).name
-    if not name:
+    aliases = _scope_aliases()
+    # Preserve exact folder aliases, including names canonicalize_slug folds
+    # and symlink names that resolve to differently named project folders.
+    folder_slug = re.sub(r"\s+", "-", current.name.strip().lower())
+    if folder_slug in aliases:
+        return aliases[folder_slug]
+    try:
+        current = current.resolve()
+    except (OSError, ValueError):
+        pass
+    if not current.name:
         return "global"
-    slug = _SLUG_NORMALIZER_RE.sub("-", name.strip().lower())
-    if not slug:
-        return "global"
-    return _scope_aliases().get(slug, f"project:{slug}")
+    try:
+        roots = _git_project_root(current)
+        if roots is None and current.is_dir() and sum(
+            1 for child in current.iterdir()
+            if child.is_dir() and (child / ".git").exists()
+        ) > 1:
+            return "global"
+    except (OSError, ValueError):
+        roots = None
+    if roots is not None:
+        checkout, root = roots
+        checkout_slug = re.sub(r"\s+", "-", checkout.name.strip().lower())
+        if checkout_slug in aliases:
+            return aliases[checkout_slug]
+        name = root.name
+    else:
+        name = current.name
+    slug = canonicalize_slug(name)
+    folder_slug = re.sub(r"\s+", "-", name.strip().lower())
+    return aliases.get(folder_slug, aliases.get(slug, f"project:{slug}"))
+
+
+def project_root_from_cwd(cwd: str | os.PathLike[str] | None) -> Path:
+    """The Git project root ``scope_from_cwd`` derives the scope from, or the folder itself.
+
+    Disambiguation digests must hash this, never the worktree or subdirectory path.
+    """
+    current = Path(str(cwd or "").strip() or ".")
+    try:
+        current = current.resolve()
+    except (OSError, ValueError):
+        pass
+    try:
+        roots = _git_project_root(current)
+    except (OSError, ValueError):
+        roots = None
+    return roots[1] if roots is not None else current
+
+
+def scope_from_cwd_or_user(cwd: str | os.PathLike[str] | None) -> str:
+    """``scope_from_cwd`` for hooks and session defaults: the ``global`` sentinel becomes ``user``.
+
+    Hooks run from collection roots, filesystem roots and empty cwds; an implicit
+    ``global`` binding there would leak claims into every project.
+    """
+    scope = scope_from_cwd(cwd) if cwd else "user"
+    return "user" if scope == "global" else scope
+
+
+_SLUG_NORMALIZER_RE = re.compile(r"\s+")
+_EPHEMERAL_WORKSPACE = re.compile(r"^(?:_wt|worktrees?|scratch|tmp|temp|pr[-_]?\d+|t[-_]?\d+|card[-_]?\d+)$", re.I)
+_REPOSITORY_WALK_LIMIT = 32
+_GIT_METADATA_LIMIT = 4096
+
+
+def _small_git_text(path: Path) -> str:
+    with path.open("r", encoding="utf-8") as handle:
+        text = handle.read(_GIT_METADATA_LIMIT + 1)
+    if len(text) > _GIT_METADATA_LIMIT or "\x00" in text:
+        raise ValueError("invalid repository metadata")
+    return text.strip()
+
+
+def _repository_owner(root: Path) -> Path | None:
+    """Validate worktree common-directory membership without invoking Git."""
+    marker = root / ".git"
+    if marker.is_dir():
+        return root
+    if not marker.is_file():
+        return None
+    pointer = _small_git_text(marker)
+    if not pointer.startswith("gitdir:") or "\n" in pointer:
+        return None
+    target = pointer[len("gitdir:"):].strip()
+    if not target:
+        return None
+    gitdir = (root / target).resolve()
+    common_text = _small_git_text(gitdir / "commondir")
+    if not common_text or "\n" in common_text:
+        return None
+    common = (gitdir / common_text).resolve()
+    # A valid linked worktree points into this exact common .git/worktrees dir.
+    # Reject arbitrary commondir pointers that could attribute a scratch repo.
+    if common.name != ".git" or not common.is_dir() or gitdir.parent != common / "worktrees":
+        return None
+    backlink = gitdir / "gitdir"
+    if backlink.exists() and Path(_small_git_text(backlink)).resolve() != marker.resolve():
+        return None
+    owner = common.parent
+    return owner if owner.is_dir() else None
+
+
+def resolve_transcript_workspace_scope(
+    path_or_cwd: str | os.PathLike[str] | None, *, allow_fallback_global: bool = False,
+) -> str | None:
+    """Resolve one canonical project identity, or explicitly leave it unresolved.
+
+    Existing operator aliases take precedence over inferred repository names.
+    A deleted worktree can resolve only through an explicit alias. A nearby
+    parent repository does not prove ownership of a missing card/scratch path.
+    Generic callers may retain their separate empty-cwd ``global`` convention.
+    """
+    raw = str(path_or_cwd or "").strip()
+    if not raw:
+        return "global" if allow_fallback_global else None
+    try:
+        current = Path(raw).resolve()
+        if current.is_file() and current.suffix == ".jsonl":
+            transcript_cwd = cwd_from_transcript(current)
+            return resolve_transcript_workspace_scope(transcript_cwd, allow_fallback_global=allow_fallback_global)
+        aliases = _scope_aliases()
+        candidates = (current, *list(current.parents)[:_REPOSITORY_WALK_LIMIT])
+        unresolved_workspace = not current.is_dir()
+        for candidate in candidates:
+            slug = _SLUG_NORMALIZER_RE.sub("-", candidate.name.strip().lower())
+            if slug in aliases:
+                return aliases[slug]
+            marker = candidate / ".git"
+            if marker.exists():
+                if unresolved_workspace:
+                    return None
+                owner = _repository_owner(candidate)
+                if owner is None:
+                    return None
+                owner_slug = _SLUG_NORMALIZER_RE.sub("-", owner.name.strip().lower())
+                if _EPHEMERAL_WORKSPACE.fullmatch(owner.name) and owner_slug not in aliases:
+                    return None
+                return aliases.get(owner_slug, f"project:{canonicalize_slug(owner.name)}")
+            if candidate == current and current.is_dir():
+                repositories = 0
+                for index, child in enumerate(current.iterdir()):
+                    if index >= 1024:
+                        return None
+                    repositories += int(child.is_dir() and (child / ".git").exists())
+                    if repositories > 1:
+                        return None
+            if _EPHEMERAL_WORKSPACE.fullmatch(candidate.name):
+                unresolved_workspace = True
+        return None
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
+# Preserve the spelling supplied in the approved review's interface contract.
+resolve_Transcript_workspace_scope = resolve_transcript_workspace_scope
 
 
 def cwd_from_transcript(transcript_path: str | os.PathLike[str] | None) -> str | None:

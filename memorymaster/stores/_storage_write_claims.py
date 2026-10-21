@@ -30,11 +30,54 @@ from memorymaster.stores._storage_shared import (
     utc_now,
 )
 from memorymaster.stores.claim_identity import normalize_claim_identity
+from memorymaster.stores.ingest_receipts import creation_payload, fill_outcome_receipt, prepare_outcome_receipt
 
 logger = logging.getLogger(__name__)
 
 
 class _WriteClaimsMixin:
+    def get_retired_content_match(
+        self, text: str, *, tenant_id: str | None, scope: str,
+        visibility: str = "public", source_agent: str | None = None,
+    ) -> Claim | None:
+        """Find explicit retirement intent independently of the ingest key."""
+        visibility, source_agent = normalize_claim_identity(visibility, source_agent)
+        with self.connect_ro() as conn:
+            return self._retired_content_match(
+                conn, text, tenant_id=tenant_id, scope=scope,
+                visibility=visibility, source_agent=source_agent,
+            )
+
+    def _retired_content_match(
+        self, conn: sqlite3.Connection, text: str, *, tenant_id: str | None,
+        scope: str, visibility: str, source_agent: str | None,
+    ) -> Claim | None:
+        identity_sql, identity_params = self._claim_identity_filter(visibility, source_agent)
+        rows = conn.execute(
+            "SELECT id,text FROM claims WHERE status='archived' AND tenant_id IS ? "
+            f"AND scope=? AND {identity_sql} ORDER BY id DESC",
+            ((tenant_id or "").strip() or None, scope, *identity_params),
+        )
+        identity = text.strip().lower()
+        for row in rows:
+            if row["text"].strip().lower() == identity and self._latest_archive_reason(conn, row["id"]) in {
+                "friendly_forget_claim", "ao7_rollback",
+            }:
+                return self.get_claim(int(row["id"]))
+        return None
+
+    def ingest_creation_receipt(self, claim_id: int) -> dict[str, object]:
+        """Recover creation attribution from the append-only atomic ingest event."""
+        with self.connect_ro() as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM events WHERE claim_id=? AND event_type='ingest' ORDER BY id LIMIT 1",
+                (claim_id,),
+            ).fetchone()
+        if row is None or not row["payload_json"]:
+            return {}
+        payload = json.loads(row["payload_json"])
+        return payload if isinstance(payload, dict) else {}
+
     if TYPE_CHECKING:
         def connect(self) -> sqlite3.Connection: ...
 
@@ -102,7 +145,10 @@ class _WriteClaimsMixin:
         visibility: str = "public",
         holder: str | None = None,
         _pre_sanitization_findings: list[str] | None = None,
+        outcome_receipt: dict[str, object] | None = None,
+        intake_batch_id: str | None = None,
     ) -> Claim:
+        operation_id = prepare_outcome_receipt(outcome_receipt)
         if not citations:
             raise ValueError("At least one citation is required.")
         citation_inputs = [
@@ -162,7 +208,20 @@ class _WriteClaimsMixin:
                 source_agent=source_agent,
             )
             if existing is not None:
+                fill_outcome_receipt(outcome_receipt, existing, created=False, persisted=self.ingest_creation_receipt(existing.id) if outcome_receipt is not None else None)
                 return existing
+
+            # Serialize this final content check with archive transitions as
+            # well as insertion. Keep the optimistic lookup outside the lock.
+            conn.execute("BEGIN IMMEDIATE")
+            retired = self._retired_content_match(
+                conn, text, tenant_id=normalized_tenant_id, scope=scope,
+                visibility=visibility, source_agent=source_agent,
+            )
+            if retired is not None:
+                fill_outcome_receipt(outcome_receipt, retired, created=False,
+                                     persisted=self.ingest_creation_receipt(retired.id) if outcome_receipt is not None else None)
+                return retired
 
             try:
                 cur = conn.execute(
@@ -222,6 +281,7 @@ class _WriteClaimsMixin:
                 existing = self.get_claim(int(existing_row["id"]))
                 if existing is None:
                     raise RuntimeError("Idempotency key matched missing claim.") from None
+                fill_outcome_receipt(outcome_receipt, existing, created=False, persisted=self.ingest_creation_receipt(existing.id) if outcome_receipt is not None else None)
                 return existing
 
             claim_id = int(cur.lastrowid)
@@ -254,7 +314,7 @@ class _WriteClaimsMixin:
                 )
             ingest_payload = validate_event_payload(
                 "ingest",
-                {"citation_count": len(citations)},
+                creation_payload(len(citations), operation_id, intake_batch_id),
                 details="claim_ingested",
             )
             self._insert_event_row(
@@ -287,6 +347,7 @@ class _WriteClaimsMixin:
         claim = self.get_claim(claim_id)
         if claim is None:
             raise RuntimeError("Failed to load claim after insert.")
+        fill_outcome_receipt(outcome_receipt, claim, created=True, persisted=ingest_payload)
         return claim
 
 

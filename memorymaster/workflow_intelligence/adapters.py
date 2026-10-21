@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
+from memorymaster.core.scope_utils import scope_from_cwd
+
 from .models import ActionRecord, FeedbackRecord, SessionRecord, TurnRecord
 from .redaction import public_excerpt
 
@@ -74,12 +76,7 @@ def source_prefix_hash(path: Path, *, limit: int = 4096) -> str:
 
 
 def infer_scope(cwd: object) -> str:
-    raw = str(cwd or "").strip()
-    if not raw:
-        return "global"
-    name = Path(raw).name.lower()
-    slug = re.sub(r"[^a-z0-9]+", "-", name).strip("-")
-    return f"project:{slug}" if slug else "global"
+    return scope_from_cwd(str(cwd or "").strip())
 
 
 def infer_task_category(text: str) -> str:

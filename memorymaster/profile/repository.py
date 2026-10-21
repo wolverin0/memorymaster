@@ -83,7 +83,7 @@ def _claim_session(claim_id: int, citations: list[tuple[str, str]]) -> str:
     for source, locator in citations:
         # Dreaming locator: dream:<provider>:<session hash>:<message id>
         if source == "dream-worker" and locator.startswith("dream:") and locator.count(":") >= 3:
-            return locator.rsplit(":", 1)[0]
+            return ":".join(locator.split(":")[:3])
     sessions = {
         _normalize_session_locator(locator)
         for source, locator in citations
