@@ -136,6 +136,12 @@ def test_changed_discard_population_or_model_identity_invalidates_release():
     assert not receipt_is_current(receipt, candidates, {"models": "new-models"})
 
 
+def _quality_leader(runner):
+    # Cohort receipts belong to the session-order leader, not the first SQL row.
+    [leader] = [row for row in runner._rows() if "quality_receipt" in row["metadata"]]
+    return leader
+
+
 def test_quality_stage_replay_reuses_current_receipt(tmp_path, monkeypatch):
     from unittest.mock import Mock
 
@@ -147,13 +153,13 @@ def test_quality_stage_replay_reuses_current_receipt(tmp_path, monkeypatch):
     monkeypatch.setattr(module, "evaluate_cohort_quality", evaluate)
     runner.inventory()
     runner.run(stage="all")
-    first = runner._rows()[0]["metadata"]["quality_receipt"]
+    first = _quality_leader(runner)["metadata"]["quality_receipt"]
     assert first["passed"] and len(fixture.sonnet.calls) == 20
 
     runner.run(stage="quality")
 
     assert evaluate.call_count == 1
-    assert runner._rows()[0]["metadata"]["quality_receipt"] == first
+    assert _quality_leader(runner)["metadata"]["quality_receipt"] == first
     assert len(fixture.sonnet.calls) == 20
     assert all(latch["state"] == "running" for latch in runner._latches().values())
 
@@ -165,7 +171,7 @@ def test_changed_references_renew_quality_and_discarded_audit(tmp_path):
     runner = fixture.runner
     runner.inventory()
     runner.run(stage="all")
-    leader = runner._rows()[0]
+    leader = _quality_leader(runner)
     prior = leader["metadata"]["reference_hashes"]
     # A cached audit from the old consolidation must not survive revalidation.
     leader["metadata"]["discarded_audit"] = [{"selection_id": "stale", "source_family": "codex"}]
@@ -177,7 +183,7 @@ def test_changed_references_renew_quality_and_discarded_audit(tmp_path):
 
     runner.run(stage="all")
 
-    leader = runner._rows()[0]
+    leader = _quality_leader(runner)
     assert leader["metadata"]["reference_hashes"] != prior
     assert leader["metadata"]["quality_receipt"]["passed"]
     assert all(item["selection_id"] != "stale" for item in leader["metadata"]["discarded_audit"])
@@ -199,7 +205,7 @@ def test_incomplete_quality_retry_renews_only_its_judge_allowance(tmp_path):
     healthy = runner.sonnet
     runner.sonnet = Judge(incomplete=True)
     runner.run(stage="quality")
-    assert not runner._rows()[0]["metadata"]["quality_receipt"]["complete"]
+    assert not _quality_leader(runner)["metadata"]["quality_receipt"]["complete"]
     assert runner._latches()["fixture:codex-0"]["state"] == "quality_paused"
     # Only the explicit operator resume clears a failed quality gate.
     runner.resume(cohort_id="codex-0", evidence={
@@ -211,7 +217,7 @@ def test_incomplete_quality_retry_renews_only_its_judge_allowance(tmp_path):
 
     runner.run(stage="quality")
 
-    assert runner._rows()[0]["metadata"]["quality_receipt"]["passed"]
+    assert _quality_leader(runner)["metadata"]["quality_receipt"]["passed"]
     with runner.ledger._connect() as conn:
         assert conn.execute("SELECT status FROM backfill_reservations WHERE reservation_id=?", (unrelated,)).fetchone()[0] == "reserved"
         assert conn.execute("SELECT COUNT(*) FROM backfill_reservations WHERE stage='extract' AND status='released'").fetchone()[0] == 0
