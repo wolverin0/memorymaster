@@ -1585,3 +1585,76 @@ def test_pending_legacy_review_is_reconsolidated_without_reextracting(tmp_path):
     assert len(consolidator.scopes) == 1
     assert result['candidate_writes'] == 1
     assert ledger.get_capture(capture_id)['decisions'][0]['source_review']['version'] == 2
+
+
+# --- T-1687: one hung `agy` call is not an outage -----------------------------
+
+def _agy_hangs_on_calls(numbers: set[int]):
+    """A healthy `agy` whose n-th call(s) never return (subprocess timeout)."""
+    healthy = _agy_ignores_every_candidate([])
+    seen = {"n": 0}
+
+    def runner(command, payload, timeout, cwd, env):
+        import subprocess
+
+        seen["n"] += 1
+        if seen["n"] in numbers:
+            raise subprocess.TimeoutExpired(command, timeout)
+        return healthy(command, payload, timeout, cwd, env)
+    return runner
+
+
+def _consolidation_run(tmp_path, runner, count: int):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    ids = [_extracted_capture(ledger, session_hash=f"s{i}", candidate_id=f"c{i}") for i in range(count)]
+    calls: list = []
+    consolidator = _agy_consolidator(tmp_path, runner, calls)
+    summary = DreamWorker(ledger, service, _NoCall(), consolidator,
+                          config=DreamConfig(max_consolidate_candidates=1),
+                          now=lambda: NOW).run(apply_candidates=False)
+    return ledger, ids, calls, summary
+
+
+def test_one_hung_agy_call_after_answered_batches_does_not_open_the_breaker(tmp_path):
+    """Live 2026-10-20/21: `agy` answered 3-7 batches per run (7-47 s each) and
+    then left one call unanswered for the 300 s timeout; the breaker then
+    deferred the 6-13 remaining batches, five runs in a row. One hung call
+    after answered batches is not an outage: its batch waits, the run goes on."""
+    _, _, healthy_calls, healthy = _consolidation_run(tmp_path / "healthy", _agy_hangs_on_calls(set()), 3)
+    assert healthy["consolidate_breaker"] is None and healthy["consolidated"] == 3
+
+    ledger, ids, calls, summary = _consolidation_run(tmp_path / "hung", _agy_hangs_on_calls({2}), 3)
+
+    assert len(calls) == len(healthy_calls), "the run stopped calling after the hung call"
+    assert summary["consolidate_breaker"] is None
+    assert summary["consolidate_hung_calls"] == 1
+    assert summary["errors"] == 1
+    assert summary["deferred_consolidate_provider"] == 1
+    assert summary["consolidated"] == 2
+    untouched = [capture_id for capture_id in ids if ledger.get_capture(capture_id)["state"] == "extracted"]
+    assert len(untouched) == 1, "the hung batch must stay untouched for a later run"
+    assert ledger.consolidation_trips(untouched)[untouched[0]] == (1, 1)
+
+
+def test_a_second_hung_agy_call_in_the_same_run_opens_the_breaker(tmp_path):
+    """Two unanswered calls in one run read as the provider going away."""
+    _, _, calls, summary = _consolidation_run(tmp_path, _agy_hangs_on_calls({2, 3}), 4)
+
+    assert len(calls) == 3
+    assert summary["consolidate_breaker"] == "TimeoutExpired"
+    assert summary["consolidate_hung_calls"] == 1
+    # the first hung batch and the never-called fourth batch wait for a later
+    # run; the batch whose call opened the breaker is retryable, as before
+    assert summary["deferred_consolidate_provider"] == 2
+    assert summary["consolidated"] == 1
+
+
+def test_a_hung_first_call_is_still_an_outage(tmp_path):
+    """Nothing answered yet: the first timeout opens the breaker as before."""
+    _, _, calls, summary = _consolidation_run(tmp_path, _agy_hangs_on_calls({1}), 2)
+
+    assert len(calls) == 1
+    assert summary["consolidate_breaker"] == "TimeoutExpired"
+    assert summary["consolidate_hung_calls"] == 0
