@@ -13,6 +13,23 @@ from memorymaster.core.scope_utils import (
 )
 
 
+def test_linked_worktree_resolves_to_its_main_checkout_scope(tmp_path):
+    # T-1661 witness for scope_from_cwd: a `.git` gitfile with a commondir pointer owns the scope.
+    from memorymaster.core.scope_utils import scope_from_cwd
+
+    repo = tmp_path / "memorymaster"
+    gitdir = repo / ".git" / "worktrees" / "slot"
+    gitdir.mkdir(parents=True)
+    (gitdir / "commondir").write_text("../..
+", encoding="utf-8")
+    checkout = tmp_path / "_wt" / "t1661"
+    checkout.mkdir(parents=True)
+    (checkout / ".git").write_text(f"gitdir: {gitdir}
+", encoding="utf-8")
+    assert scope_from_cwd(checkout) == "project:memorymaster"
+    assert scope_from_cwd(checkout / "src") == "project:memorymaster"
+
+
 def test_scope_from_cwd_basic(tmp_path):
     assert scope_from_cwd(tmp_path / "memorymaster") == "project:memorymaster"
 
