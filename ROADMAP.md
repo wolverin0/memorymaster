@@ -532,8 +532,8 @@ remain separately gated. Integrated code does not imply activation.
 
 Goal: make memory reach every session continuously, with no manual recall, and
 prove it is used. Token spend is not the constraint; three real bottlenecks
-are. Use: injected claims are cited in 0.42% of turns, so freshness without
-use is cost. Write-path contention: a beat that hammers the shared MCP server
+are. Use: injected claims were cited in 0.73% of turns under the strict
+`[mm-id]` baseline, so freshness without use is cost. Write-path contention: a beat that hammers the shared MCP server
 starves the recall hook, so the beat writes through the service in its own
 process on the same SQLite WAL. Noise: every new source lands as candidate
 under its own `source_agent` and the T-1354/T-1591 promotion policy, with red
@@ -561,7 +561,7 @@ North-star metrics, measured before and after every batch:
 
 | Metric | Baseline | Target | How measured | Last value / date |
 |---|---|---|---|---|
-| M1 use | 0.42% strict `[mm-id]` citations (T-1343, 7 days to 2026-10-13) | >= 5% | `scripts/review_recall_citations.py`, 7-day window, per lane |  |
+| M1 use | 0.73% strict `[mm-id]` citations (T-1632, 14 of 1,910 injections, 7 days to 2026-10-19) | >= 5% | `scripts/review_recall_citations.py`, 7-day window, per lane |  |
 | M2 continuity | unmeasured | 4 of 5 compacted sessions; 3 of 3 repos | fixed scripted probe set, answers judged by Haiku batch |  |
 | M3 lag | hours to days (Dreaming backlog 1113) | < 60 min for transcripts | beat cursor table: event time to candidate time |  |
 | M4 guard | dense recall p95 740-853 ms post-trim | within T-1042 bounds while the beat runs | existing due-measurement scripts (T-1042, T-1351) |  |
@@ -572,8 +572,8 @@ North-star metrics, measured before and after every batch:
 Models: build Sonnet (docs), runtime none, judge lane verifier Sonnet. Depends
 on: none.
 
-- [ ] Routed.
-- [ ] Section merged into this roadmap (record SHA).
+- [x] Routed.
+- [x] Section merged into this roadmap (PR 276, SHA `ffb7e3c`, 2026-10-19).
 - [ ] Deployed: not applicable.
 - [ ] Metric measured: not applicable.
 
@@ -583,75 +583,76 @@ Models: build Sonnet (T3), runtime none (deterministic hook formats), judge
 Haiku batch scores the A/B samples with a 10% Sonnet spot-check. Depends on:
 none; continues T-1433.
 
-- [ ] Routed.
-- [ ] Red test written.
-- [ ] Green locally and in CI.
-- [ ] Merged (record SHA).
-- [ ] Installed under the existing hook patch procedure (needs an operator
-  order).
-- [ ] Metric measured: M1 baseline per lane, then M1 after the three variants
-  against the target set before the test (proposal 5%). If no variant moves
-  M1, say so and prioritize M2 over injection.
-- [ ] AC1: the T-1343 AC1 script re-run on the current 7 days gives the
-  baseline per lane.
-- [ ] AC2: three injection variants (current; 3-line "decisions you made"
-  header; relevance-gated with task-first ranking) A/B'd on the same prompt
-  set for 7 days each, by lane.
-- [ ] AC3: recommendation with numbers; the winning format installed under the
-  existing hook patch procedure.
+- [x] Routed (T-1632).
+- [x] Red test written.
+- [x] Green locally and in CI.
+- [x] Merged PR 277 (SHA `73e98e6`) and fixes PR 280 (SHA `471d633`).
+- [x] Installed 2026-10-20 by T-1647; live A/B remains in progress.
+- [ ] Metric measured: current-format 7-day window due 2026-10-27; header due
+  2026-11-03; gated due 2026-11-10. Baseline is 0.73% strict `[mm-id]`
+  citations (14 of 1,910 injections). The 2-claim cap measured 1.33-1.35%;
+  gated ceiling was about 1.6% and was rejected. Keep the 5% target.
+- [x] AC1: baseline re-run for 7 days through 2026-10-19.
+- [ ] AC2: A/B current, header and gated formats on the same prompt set for
+  7 days each, by lane.
+- [ ] AC3: recommend with numbers after the A/B; decide format based on live
+  results.
+- Format switch: `MEMORYMASTER_RECALL_FORMAT=current|header|gated` in
+  `memorymaster/recall/recall_format.py`.
 
 **AO-1 PreCompact residual hook** (M, batch A; ledger T-1633)
 
 Models: build Sonnet (T3), runtime Sonnet (few calls per session), judge
 Sonnet verifier runs the M2 probe. Depends on: none.
 
-- [ ] Routed.
-- [ ] Red test written.
-- [ ] Green locally and in CI.
-- [ ] Merged (record SHA).
-- [ ] Hook installed (needs an operator order).
-- [ ] Metric measured: M2 probe before and after; passes in 4 of 5 compacted
-  real sessions over a week.
-- [ ] AC1: a Claude Code PreCompact hook captures the turns about to be
-  summarized and extracts a residual: open decisions, rejected options,
-  unverified assumptions, in-flight card ids. Ingested as candidates with
-  `source_agent=precompact-residual` and the session id as citation.
-- [ ] AC2: the next prompt after compaction re-injects that residual (one
-  block, capped), independent of similarity search.
-- [ ] AC3: red test: a compacted test session fails a "what did we decide"
-  probe before and passes after; sensitivity filter proven on the residual
-  path.
-- [ ] AC4: Codex equivalent scoped: whether a compaction hook exists; if not,
+- [x] Routed (T-1633).
+- [x] Red test written.
+- [x] Green locally and in CI.
+- [x] Merged PR 278 (SHA `d79c712`) and follow-up PR 283 (SHA `34a0cf4`),
+  after two Argon review rounds.
+- [x] Installed 2026-10-20 by T-1647; PreCompact timeout 90 seconds and
+  recall hook re-injects once.
+- [ ] Metric measured: M2 real-session probe due 2026-10-27
+  (`ao1-m2-real-sessions-7d`); target is 4 of 5 compacted sessions over a
+  week.
+- [x] AC1: Claude Code PreCompact captures turns about to be summarized and
+  extracts a residual (open decisions, rejected options, unverified
+  assumptions, in-flight card ids) as candidates with
+  `source_agent=precompact-residual` and the session id as citation. It is
+  opt-in via `MEMORYMASTER_PRECOMPACT_RESIDUAL=1`, never auto-confirmed.
+- [x] AC2: next prompt after compaction re-injects that residual (one block,
+  capped), independent of similarity search.
+- [x] AC3: compacted-session regression and sensitivity filter coverage.
+- [x] AC4: Codex equivalent scoped: whether a compaction hook exists; if not,
   a stop-hook that extracts the residual at session end.
 
-**AO-2 Beat runner with cursors and the p95 guard** (L, batch B; ledger not created yet)
+**AO-2 Beat runner v1** (L, batch B; design T-1634, review T-1637,
+implementation T-1640; roadmap sync T-1641)
 
-Models: build Opus or Fable (architecture; Fable quota first per the
-2026-10-07 policy), runtime Haiku for transcript extraction and Sonnet for
-consolidation, judge Fable design review plus Sonnet verifier. Depends on:
-none (parallel with A).
+The Argon T-1637 review requested the "simplest shippable version"; v1 is a
+bounded transcript scanner. Depends on: none.
 
-- [ ] Routed.
-- [ ] Red test written.
-- [ ] Green locally and in CI.
-- [ ] Merged (record SHA).
-- [ ] Activated (needs the operator activation decision; Dreaming behaviour is
-  unchanged until then).
-- [ ] Metric measured: M3 lag under 60 minutes for transcripts for 7
-  consecutive days, with M4 within bounds and backlog trending down.
-- [ ] AC1: `beat_cursors` table via versioned migration; a tick processes
-  every source from its cursor; crash or reboot resumes with no duplicates
-  (idempotency keys).
-- [ ] AC2: the beat writes through the service in its own process, never
-  through the shared MCP port; parallel workers per source; daily caps
-  replaced by the guard: if dense recall p95 or hook latency leaves the T-1042
-  bounds, the beat halves concurrency and logs it.
-- [ ] AC3: lag and backlog per source appear in the daily operational review
-  and the due-measurements ledger.
-- [ ] AC4: existing Dreaming behaviour is unchanged until the operator flips
-  the activation.
+- [x] Routed (T-1640).
+- [x] Red test written.
+- [x] Green locally and in CI.
+- [x] Merged PR 279 (SHA `3619764`) after four Argon rounds.
+- [x] Installed by T-1647 on 2026-10-20; remains off pending activation.
+- [ ] Metric measured: M3 lag (`ao2-m3-lag-7d`) and M4 guard
+  (`ao2-m4-guard-7d`) remain undated until activation; then measure 7 days.
+- [x] AC1: `scan_active_transcripts` scans active transcripts with a persisted
+  watermark.
+- [x] AC2: `memorymaster/dreaming/latency_guard.py` is evaluated before any
+  scan; enforce a per-run capture cap.
+- [x] AC3: beat tick in `memorymaster/surfaces/scheduled_task.py`, disabled
+  by default with `MEMORYMASTER_BEAT_ENABLED`; read-only `check_beat_health`
+  is included in operational review.
+- [x] AC4: candidates are never applied without `--apply-candidates`.
+- [ ] Activation: blocked by self-observation risk because the beat can
+  recapture `[MemoryMaster recall]` injections. Dreaming remains unchanged
+  while off.
 
-**AO-3 Per-project projection and SessionStart delta** (M, batch B; ledger not created yet)
+**AO-3 Per-project projection and SessionStart delta** (M, batch B;
+design T-1638; implementation not started)
 
 Models: build Sonnet (T3), runtime none (deterministic builder from confirmed
 claims), judge Sonnet verifier runs the 3-repo probe. Depends on: AO-2 for
@@ -675,7 +676,10 @@ freshness; usable before.
   block is read as a source (`source_agent=operator-notes`, operator actor).
 - [ ] AC4: loop guard: ingest rejects marked files, with test.
 
-**AO-4 Native memory stores as read-only sources** (M, batch C; ledger not created yet)
+**AO-4 Native memory stores as read-only sources** (M, batch C; briefs
+T-1635 and T-1639; read-only first per operator; implementation not started)
+Design briefs: `2026-10-19-T-1635-AO-4-GEMINI-TRANSCRIPTS.md` and
+`2026-10-19-T-1639-AO-4-SOURCE-FORMATS.md`.
 
 Models: build Sonnet (T3), runtime Haiku classify and Sonnet extract on the
 kept 20%, judge Haiku batch for M5 plus Sonnet spot-check. Depends on: AO-2.
@@ -737,7 +741,8 @@ on: AO-2.
   confirmed claim surfaces as an obsolescence candidate.
 - [ ] AC3: ledger cards feed the projection only, never claims.
 
-**AO-7 Backfill from zero** (L, batch D; ledger not created yet)
+**AO-7 Backfill from zero** (L, batch D; census T-1636; plan retained by
+operator decision 2026-10-20; backfill may start now AO-2 is merged)
 
 Models: build Sonnet (T3, runner only), runtime Haiku for all transcript
 reading and Sonnet only for consolidating kept candidates, judge Haiku batch
@@ -748,14 +753,17 @@ M5 per 1,000 sessions. Depends on: AO-2; starts as soon as AO-2 ships
 - [ ] Red test: not applicable.
 - [ ] Green locally and in CI.
 - [ ] Merged (record SHA).
-- [ ] Run started (the start time is the operator's call once AO-2 ships).
+- [ ] Run started (operator decision permits start; run-start evidence pending).
 - [ ] Metric measured: backlog zero, M5 sample per 1,000 sessions, M4 within
   bounds throughout.
 - [ ] AC1: every source's cursor can be reset to the beginning with a separate
   backfill provider and concurrency, isolated from the live tick's guard
   budget.
 - [ ] AC2: about 12.5k Claude transcripts, 5.4k Codex sessions and the agy
-  history processed; the M5 sample is judged per 1,000 sessions and the run
+  history processed; census: Codex 37.8 GB / 5,376 sessions, Claude main
+  8.9 GB / 12,549 plus subagents 17.4 GB / 17,342 (about 2M calls by bytes).
+  Bulk reading uses the cheapest tier (DeepSeek 4.1 Flash via OpenCode or
+  Haiku); the M5 sample is judged per 1,000 sessions and the run
   pauses if junk share exceeds the gate.
 - [ ] AC3: burndown chart in the daily review; the steward's dedup and
   supersession keep the confirmed set from doubling.
