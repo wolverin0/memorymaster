@@ -350,3 +350,49 @@ def test_steward_probe_timeout_and_circuit_breaker_flags_present() -> None:
     assert int(guardrails["probe_failure_threshold"]) == 1
     assert int(guardrails["probe_circuit_open_count"]) >= 0
 
+
+
+def test_steward_queue_settles_a_stale_proposal_once_the_claim_is_superseded() -> None:
+    """T-1686: superseded solo admite archivar, asi que una propuesta stale
+    anterior a la supersesion no es una decision pendiente. Antes seguia en la
+    cola, el dren la re-aprobaba cada ciclo y cada intento escribia
+    steward_proposal_apply_failed (13 claims, 52 eventos por dia desde el
+    rescope del 2026-10-06)."""
+    db = _case_db("sqlite-steward-superseded-settled")
+    workspace = _case_workspace("steward-workspace-superseded-settled")
+    service = MemoryService(db, workspace_root=workspace)
+    service.init_db()
+
+    old_claim = service.ingest(
+        text="The bot answers in project scope whatsappbot",
+        citations=[CitationInput(source="session://chat", locator="turn-1", excerpt="old")],
+        confidence=0.7,
+    )
+    new_claim = service.ingest(
+        text="The bot answers in project scope whatsappbot-final",
+        citations=[CitationInput(source="session://chat", locator="turn-2", excerpt="new")],
+        confidence=0.9,
+    )
+    _force_status(db, old_claim.id, "confirmed", "2026-01-01T00:00:00+00:00")
+    _force_status(db, new_claim.id, "confirmed", "2026-01-03T00:00:00+00:00")
+    service.store.record_event(
+        claim_id=old_claim.id, event_type="policy_decision", details="steward_proposal:stale",
+        payload={"source": "steward", "decision": "stale", "proposed_status": "stale", "priority": 0.9},
+    )
+    assert any(
+        item["claim_id"] == old_claim.id
+        for item in list_steward_proposals(service, limit=20, include_resolved=False)
+    ), "la propuesta es real mientras la claim sigue confirmada"
+
+    service.store.mark_superseded(old_claim_id=old_claim.id, new_claim_id=new_claim.id, reason="rescope")
+
+    pending = [
+        item for item in list_steward_proposals(service, limit=20, include_resolved=False)
+        if item["claim_id"] == old_claim.id
+    ]
+    assert pending == [], "una propuesta stale sobre una claim superseded no puede aplicar nunca"
+    settled = [
+        item for item in list_steward_proposals(service, limit=20, include_resolved=True)
+        if item["claim_id"] == old_claim.id
+    ]
+    assert [item["status"] for item in settled] == ["settled"]
