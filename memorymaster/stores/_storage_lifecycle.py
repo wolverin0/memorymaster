@@ -10,9 +10,10 @@ import json
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from memorymaster.core.lifecycle import can_transition
+from memorymaster.core.lifecycle import can_transition, is_tuple_predecessor
 from memorymaster.recall.embeddings import (
     EmbeddingProvider,
     cosine_similarity,
@@ -114,6 +115,7 @@ class _LifecycleMixin:
         event_type: str,
         replaced_by_claim_id: int | None = None,
         event_payload: dict[str, object] | None = None,
+        supersedes_claim_id: int | None = None,
     ) -> Claim:
         validated_event_type = validate_transition_event_type(event_type)
         now = utc_now()
@@ -136,6 +138,48 @@ class _LifecycleMixin:
                 conn.execute("BEGIN IMMEDIATE")
                 if not confirmation_allowed(conn, claim.id):
                     raise ValueError("Dreaming confirmation requires a current source review")
+                predecessor_id = supersedes_claim_id or claim.supersedes_claim_id
+                if predecessor_id is not None:
+                    predecessor = conn.execute(
+                        "SELECT * FROM claims WHERE id = ?", (predecessor_id,)
+                    ).fetchone()
+                    if supersedes_claim_id is not None and (
+                        claim.supersedes_claim_id not in {None, supersedes_claim_id}
+                        or predecessor is None
+                        or not is_tuple_predecessor(
+                            replace(claim, supersedes_claim_id=predecessor_id),
+                            self._row_to_claim(predecessor),
+                        )
+                    ):
+                        raise ValueError("Supersession requires a current unpinned tuple predecessor.")
+                    if predecessor is not None and is_tuple_predecessor(
+                        replace(claim, supersedes_claim_id=predecessor_id),
+                        self._row_to_claim(predecessor),
+                    ):
+                        # Free the unique confirmed tuple BEFORE promotion, in
+                        # the same transaction. A failed promotion rolls back
+                        # retirement and its event as well as the new status.
+                        conn.execute(
+                            """UPDATE claims SET status = 'superseded',
+                               replaced_by_claim_id = ?, updated_at = ?,
+                               valid_until = COALESCE(valid_until, ?), version = version + 1
+                               WHERE id = ?""",
+                            (claim.id, now, now, predecessor["id"]),
+                        )
+                        self._insert_event_row(
+                            conn, claim_id=predecessor["id"], event_type="supersession",
+                            from_status="confirmed", to_status="superseded",
+                            details=f"superseded by claim:{claim.id}",
+                            payload_json=json.dumps({"replaced_by_claim_id": claim.id}),
+                            created_at=now,
+                        )
+                        linked = conn.execute(
+                            """UPDATE claims SET supersedes_claim_id = ? WHERE id = ?
+                               AND (supersedes_claim_id IS NULL OR supersedes_claim_id = ?)""",
+                            (predecessor_id, claim.id, predecessor_id),
+                        )
+                        if linked.rowcount != 1:
+                            raise ConcurrentModificationError("Replacement already supersedes another claim.")
             cur = conn.execute(
                 """
                 UPDATE claims

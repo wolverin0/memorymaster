@@ -2567,7 +2567,10 @@ class PostgresStore(SQLiteStore):
         event_type: str,
         replaced_by_claim_id: int | None = None,
         event_payload: dict[str, object] | None = None,
+        supersedes_claim_id: int | None = None,
     ) -> Claim:
+        if supersedes_claim_id is not None:
+            raise ValueError("Atomic confirmation with supersession is SQLite-only")
         if to_status == "confirmed" and (
             claim.source_agent == "dream-worker" or (claim.idempotency_key or "").startswith("dream-")
         ):

@@ -19,11 +19,10 @@ EL CONTRATO:
   de elegirlos (5.976 conflicted: 260 pierden, 1.422 ganarian, 4.222 sin rival):
     (a) el conflicted PIERDE  -> superseded con puntero al ganador;
     (b) el conflicted GANA    -> la rival confirmada queda superseded por el
-        y el ganador se promueve conflicted->confirmed (el orden importa: la
-        supersesion libera primero la tupla del indice unico de confirmadas);
-    (c) SIN rival confirmado vigente -> el conflicto es huerfano (aquello con
-        lo que chocaba ya no esta confirmado): pasa a stale, que es reversible
-        (stale->confirmed si se revalida) y deja que el decay lo gestione.
+        y el ganador se promueve conflicted->confirmed en una transaccion;
+    (c) SIN rival confirmado vigente -> el conflicto queda pendiente de
+        revalidacion por el validator. La ausencia de rival no demuestra que
+        la claim sea vieja ni que haya perdido evidencia.
 - Nada se borra: superseded conserva el texto y el puntero; stale decae por
   el camino normal. Todo emite evento de auditoria.
 - Las propuestas del steward se aprueban con el camino existente
@@ -103,6 +102,7 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
         "resolved_lost": 0,
         "resolved_won": 0,
         "resolved_orphan": 0,
+        "pending_revalidation": 0,
         "kept_for_operator": 0,
         "held_by_source_policy": 0,
         "held_by_structure_policy": 0,
@@ -116,14 +116,9 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
         rival = _find_rival(service, claim)
         try:
             if rival is None:
-                # (c) conflicto huerfano: aquello con lo que chocaba ya no esta
-                # confirmado. stale es reversible y el decay lo gestiona.
-                if apply:
-                    transition_claim(
-                        store, claim.id, "stale",
-                        reason=f"{DRAIN_DETAILS}: conflicto sin rival confirmado vigente",
-                    )
-                summary["resolved_orphan"] += 1
+                # No current conflict is not evidence of staleness. Preserve
+                # status until the normal validator checks evidence/policy.
+                summary["pending_revalidation"] += 1
                 continue
             pair = _pick_winner(claim, rival)
             if pair.loser.id == claim.id:
@@ -137,8 +132,8 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
                     )
                 summary["resolved_lost"] += 1
             else:
-                # (b) el conflicted gana: primero la supersesion (libera la
-                # tupla del indice unico de confirmadas), despues la promocion.
+                # (b) Supersession and confirmation share the lifecycle's
+                # transaction, including source review and rollback on failure.
                 if auto_promotion_blocked(claim.source_agent):
                     # T-1354: este autor no se promueve a confirmed por un camino
                     # automatico. Se corta ANTES de la supersesion: superar a la
@@ -151,15 +146,10 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
                     summary["held_by_structure_policy"] += 1
                     continue
                 if apply:
-                    supersede_claim(
-                        store,
-                        old_claim_id=rival.id,
-                        new_claim_id=claim.id,
-                        reason=f"{DRAIN_DETAILS}: superada por conflicted ganador #{claim.id} ({pair.reason})",
-                    )
                     transition_claim(
                         store, claim.id, "confirmed",
                         reason=f"{DRAIN_DETAILS}: gana el conflicto contra #{rival.id} ({pair.reason})",
+                        supersedes_claim_id=rival.id,
                     )
                 summary["resolved_won"] += 1
         except SupersessionRaceLost:

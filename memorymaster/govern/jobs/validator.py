@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import contextlib
+import sqlite3
 
 from memorymaster.core.config import get_config
-from memorymaster.core.lifecycle import transition_claim
+from memorymaster.core.lifecycle import is_tuple_predecessor, transition_claim
 from memorymaster.core.models import Claim
 from memorymaster.core.promotion_policy import (
     PromotionPolicyBlocked,
@@ -12,6 +13,7 @@ from memorymaster.core.promotion_policy import (
     non_auto_promotable_sources,
 )
 from memorymaster.govern.steward_classifier import load_classifier, predict_promote_probability
+from memorymaster.stores._storage_shared import ConcurrentModificationError
 
 # Calibrated-classifier decision threshold — the (precision>=0.95, max recall)
 # operating point from the Pareto sweep. See
@@ -279,6 +281,10 @@ def run(
             visibility=claim.visibility,
             source_agent=claim.source_agent,
         )
+        # The lifecycle retires an explicit predecessor atomically with the
+        # confirmation. It is neither a duplicate nor an unresolved rival.
+        predecessor = next((x for x in related if is_tuple_predecessor(claim, x)), None)
+        related = [x for x in related if not is_tuple_predecessor(claim, x)]
 
         duplicate = next((x for x in related if x.object_value == claim.object_value and x.object_value), None)
         if duplicate is not None and not is_revalidation:
@@ -346,7 +352,11 @@ def run(
             None,
         )
 
-        if conflict is not None and score <= (conflict.confidence + cfg.conflict_margin):
+        if conflict is not None and (
+            conflict.pinned
+            or score <= (conflict.confidence + cfg.conflict_margin)
+            or claim.supersedes_claim_id not in {None, conflict.id}
+        ):
             if claim.status != "conflicted":
                 transition_claim(
                     store,
@@ -368,6 +378,7 @@ def run(
             continue
 
         if claim.status != "confirmed":
+            retirement = conflict or predecessor
             try:
                 transition_claim(
                     store,
@@ -375,13 +386,31 @@ def run(
                     to_status="confirmed",
                     reason=f"validated score={score:.3f} citations={citation_count}",
                     event_type="validator",
+                    **({"supersedes_claim_id": retirement.id} if retirement is not None else {}),
                 )
                 confirmed += 1
+                superseded += int(retirement is not None)
             except PromotionPolicyBlocked:
                 raise
-            except Exception:
-                # Tuple uniqueness conflict — another confirmed claim has the same
-                # (subject, predicate, scope). Mark as conflicted instead of crashing.
+            except (sqlite3.IntegrityError, ValueError, ConcurrentModificationError) as exc:
+                if isinstance(exc, sqlite3.IntegrityError):
+                    # A concurrent confirmation can take the unique tuple slot.
+                    if not any(name in str(exc) for name in (
+                        "idx_claims_public_confirmed_tuple_unique",
+                        "idx_claims_nonpublic_principal_confirmed_tuple_unique",
+                    )) or not store.find_confirmed_by_tuple(
+                        subject=claim.subject, predicate=claim.predicate, scope=claim.scope,
+                        exclude_claim_id=claim.id, tenant_id=claim.tenant_id,
+                        visibility=claim.visibility, source_agent=claim.source_agent,
+                    ):
+                        raise
+                elif retirement is None or (
+                    isinstance(exc, ValueError)
+                    and str(exc) != "Supersession requires a current unpinned tuple predecessor."
+                ):
+                    # Only the atomic predecessor refusal is an unresolved tuple.
+                    # Source-review and unrelated storage failures still propagate.
+                    raise
                 if claim.status != "conflicted":
                     transition_claim(
                         store,
@@ -391,6 +420,7 @@ def run(
                         event_type="validator",
                     )
                 conflicted += 1
+                continue
         else:
             store.record_event(
                 claim_id=claim.id,
@@ -401,14 +431,6 @@ def run(
                 payload={"score": score, "citation_count": citation_count},
             )
             revalidated_healthy += 1
-
-        if conflict is not None:
-            store.mark_superseded(
-                old_claim_id=conflict.id,
-                new_claim_id=claim.id,
-                reason=f"superseded by claim:{claim.id}",
-            )
-            superseded += 1
 
     return {
         "processed": len(claims),

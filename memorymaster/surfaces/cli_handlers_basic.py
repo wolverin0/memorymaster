@@ -1665,7 +1665,7 @@ def _handle_curation_drain(args: argparse.Namespace, service, parser: argparse.A
         print(f"curation-drain [{modo}] en {elapsed_ms:.0f}ms")
         print(
             f"  conflictos: escaneados={c['scanned']} perdedores={c['resolved_lost']} "
-            f"ganadores-promovidos={c['resolved_won']} huerfanos-a-stale={c['resolved_orphan']} "
+            f"ganadores-promovidos={c['resolved_won']} pendientes-revalidacion={c['pending_revalidation']} "
             f"del-operador={c['kept_for_operator']} carreras={c['skipped_race']}"
         )
         print(
