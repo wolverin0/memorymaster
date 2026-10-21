@@ -1714,26 +1714,34 @@ class PostgresStore(SQLiteStore):
         identity_sql, identity_params = self._postgres_identity_filter(visibility, source_agent)
         archived = "" if lock else " AND status='archived'"
         cur.execute(
-            "SELECT id,text,status FROM claims WHERE tenant_id IS NOT DISTINCT FROM %s "
-            f"AND scope=%s AND {identity_sql}{archived} ORDER BY id",
+            "SELECT id FROM claims WHERE tenant_id IS NOT DISTINCT FROM %s "
+            f"AND scope = %s AND {identity_sql}{archived} ORDER BY id",
             (tenant_id, scope, *identity_params),
         )
+        # Finish consuming the candidate IDs before reusing this cursor for
+        # per-claim reads. Keep the write path on the fetchone cursor contract.
+        candidate_ids = []
+        while (row := cur.fetchone()) is not None:
+            candidate_ids.append(int(row["id"]))
         # Python normalization is the facade's content-hash contract, including
         # Unicode lowercasing that database collations need not implement alike.
         identity = text.strip().lower()
-        rows = [row for row in cur.fetchall() if row["text"].strip().lower() == identity]
-        for row in rows:
-            status = row["status"]
+        for claim_id in candidate_ids:
+            cur.execute("SELECT text,status FROM claims WHERE id=%s", (claim_id,))
+            current = cur.fetchone()
+            if current is None or current["text"].strip().lower() != identity:
+                continue
             if lock:
-                # Lock live matches too: an overlapping archive must complete
-                # before this request checks retirement and creates a new ID.
-                cur.execute("SELECT status FROM claims WHERE id=%s FOR UPDATE", (row["id"],))
+                # Only matching content needs to serialize with an archive.
+                # Recheck after waiting: the row may have changed meanwhile.
+                cur.execute("SELECT text,status FROM claims WHERE id=%s FOR UPDATE", (claim_id,))
                 current = cur.fetchone()
-                status = current["status"] if current is not None else None
-            if status == "archived" and self._latest_archive_reason(cur, row["id"]) in {
+                if current is None or current["text"].strip().lower() != identity:
+                    continue
+            if current["status"] == "archived" and self._latest_archive_reason(cur, claim_id) in {
                 "friendly_forget_claim", "ao7_rollback",
             }:
-                return self.get_claim(int(row["id"]))
+                return self.get_claim(claim_id)
         return None
 
     def ingest_creation_receipt(self, claim_id: int) -> dict[str, object]:
@@ -2642,6 +2650,11 @@ class PostgresStore(SQLiteStore):
         )
         row = cur.fetchone()
         return row["details"] if row is not None else None
+
+    @staticmethod
+    def _check_ao7_retirement_guard(conn, claim: Claim, guard: object) -> None:
+        """Reject the SQLite-only rollback guard before any SQL can run."""
+        raise ValueError("AO-7 conditional retirement is SQLite-only")
 
     def apply_status_transition(
         self,
