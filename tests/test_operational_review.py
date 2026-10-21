@@ -392,3 +392,14 @@ def test_profile_with_every_active_fact_injected_passes(tmp_path: Path, monkeypa
     result = review.check_compiled_profile(_profile_with_two_active_facts(tmp_path, monkeypatch, [1, 2]))
     assert result.verdict is review.Verdict.PASS
     assert result.counts["omitted_active_facts"] == 0
+
+
+def test_backfill_burndown_is_the_last_registered_check_and_silent_when_inactive(tmp_path: Path) -> None:
+    # T-1665 witness: the historical backfill reports separately from the live beat and
+    # stays PASS (no state created) until an inventory exists.
+    assert review.REVIEW_CHECKS[-1].__name__ == "check_backfill_burndown"
+    config = review.ReviewConfig(db=_db(tmp_path / "memory.db"), capture_state_db=tmp_path / "state" / "capture.db")
+    result = review.check_backfill_burndown(config)
+    assert result.name == "backfill_burndown" and result.verdict is review.Verdict.PASS
+    assert "inactive" in result.detail
+    assert not (tmp_path / "state").exists()
