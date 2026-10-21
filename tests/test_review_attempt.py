@@ -103,7 +103,7 @@ def test_actual_child_runs_all_existing_review_phases_on_disposable_db(tmp_path,
     code = supervise({"python": sys.executable, "db": str(db), "output_root": str(root)}, timeout_seconds=20)
     assert code == 3  # no retrieval canary configured, never pretend PASS
     result = read_json(root / "latest.json")
-    assert len(result["checks"]) == len(REVIEW_CHECKS) == 10
+    assert len(result["checks"]) == len(REVIEW_CHECKS) >= 10
     assert [check["name"] for check in result["checks"]][-3:] == ["jev_decisions", "checkpoint_delivery", "beat_health"]
     assert len(read_json(root / "attempt.json")["phase_seconds"]) == len(REVIEW_CHECKS)
     assert read_review_state(root)["verdict"] == "WARN"
