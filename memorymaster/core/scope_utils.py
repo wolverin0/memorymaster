@@ -314,6 +314,7 @@ def scope_from_cwd_or_user(cwd: str | os.PathLike[str] | None) -> str:
     return "user" if scope == "global" else scope
 
 
+_SLUG_NORMALIZER_RE = re.compile(r"\s+")
 _EPHEMERAL_WORKSPACE = re.compile(r"^(?:_wt|worktrees?|scratch|tmp|temp|pr[-_]?\d+|t[-_]?\d+|card[-_]?\d+)$", re.I)
 _REPOSITORY_WALK_LIMIT = 32
 _GIT_METADATA_LIMIT = 4096

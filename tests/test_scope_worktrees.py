@@ -162,7 +162,9 @@ def test_collection_root_never_implicitly_binds_global_scope(tmp_path, monkeypat
     for name in ("alpha", "beta"):
         (collection / name / ".git").mkdir(parents=True)
     monkeypatch.setattr(mcp_server, "_ENV_DEFAULT_PROJECT_SCOPE", "")
-    assert scope_from_cwd(collection) == _scope(str(collection)) == "global"
+    assert scope_from_cwd(collection) == "global"
+    # Dreaming capture quarantines an unresolved workspace instead of binding global (T-1665).
+    assert _scope(str(collection)) is None
     assert SessionScopeResolver._workspace_or_user(collection) == ("user", "default_user")
     assert mcp_server._project_scope(str(collection)) == "user"
 

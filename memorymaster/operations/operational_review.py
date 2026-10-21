@@ -1005,6 +1005,7 @@ def check_backfill_burndown(config: ReviewConfig) -> ReviewResult:
 
 REVIEW_CHECKS = (check_runtime, check_database, check_feature_activation, check_graph_observations,
                  check_compiled_profile, check_recent_private_context, check_retrieval,
+                 check_jev_decisions, check_checkpoint_delivery, check_beat_health,
                  check_model_preflight, check_snapshot_dir, check_scheduled_slots,
                  check_backfill_burndown)
 
