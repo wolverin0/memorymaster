@@ -138,6 +138,23 @@ def spool_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
+def test_default_spool_root_uses_home_when_override_is_cleared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A test that clears MEMORYMASTER_* must still stay out of real HOME."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv(spool.ENV_SPOOL_DIR, raising=False)
+    db = tmp_path / "seeded.db"
+
+    written = spool.append(db, "access", {"claim_ids": [], "query_hash": "test"})
+
+    expected_root = home / ".memorymaster" / "spool"
+    assert written.is_relative_to(expected_root)
+    assert spool.spool_dir_for(db).is_dir()
+
+
 # ---------------------------------------------------------------------------
 # Library-level: verbatim spool path
 # ---------------------------------------------------------------------------
