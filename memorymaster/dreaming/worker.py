@@ -323,6 +323,17 @@ class DreamWorker:
             "recovered_stale_runs": 0,
         }
         try:
+            from memorymaster.core.model_preflight import alert, preflight_provider
+
+            try:
+                for provider in (self.extractor, self.consolidator):
+                    preflight_provider(provider)
+            except Exception as exc:  # noqa: BLE001 - invalid provider config skips the batch
+                provider_name = str(getattr(provider, "provider", "unknown"))
+                alert(provider_name, str(getattr(provider, "model", "")), exc, ledger=self.ledger, now=self.now())
+                summary.update({"ok": False, "errors": 1, "reason": "model_preflight_failed"})
+                self.ledger.finish_run(run_id, "failed", summary, now=self.now())
+                return summary
             summary["recovered_stale_runs"] = self.ledger.abandon_stale_runs(
                 run_id, now=self.now(),
             )

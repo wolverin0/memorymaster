@@ -912,10 +912,51 @@ def check_beat_health(config: ReviewConfig, *, now: datetime | None = None) -> R
     return ReviewResult("beat_health", verdict, detail, counts)
 
 
+def check_model_preflight(config: ReviewConfig, *, now: datetime | None = None) -> ReviewResult:
+    """Surface a live model-availability failure from the capture ledger.
+
+    The ledger is append-only, so a failure counts only while it is the latest word:
+    younger than 24 h and not followed by a Dreaming run that got past the preflight.
+    """
+    state_db, _ = _beat_paths(config)
+    if not state_db.is_file():
+        return ReviewResult("model_preflight", Verdict.PASS, "no model preflight failures recorded")
+    try:
+        with contextlib.closing(_connect_ro(state_db)) as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dream_hook_errors'"
+            ).fetchone()
+            if exists is None:
+                return ReviewResult("model_preflight", Verdict.PASS, "no model preflight failures recorded")
+            row = conn.execute(
+                "SELECT provider, error_code, occurred_at FROM dream_hook_errors "
+                "WHERE error_code LIKE 'model_preflight:%' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            recovered = None
+            if row is not None and conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dream_runs'"
+            ).fetchone():
+                recovered = conn.execute(
+                    "SELECT started_at FROM dream_runs WHERE status IN ('ok', 'partial') "
+                    "AND started_at > ? ORDER BY started_at DESC LIMIT 1", (row["occurred_at"],)
+                ).fetchone()
+    except (OSError, sqlite3.Error) as exc:
+        return ReviewResult("model_preflight", Verdict.WARN, f"probe_error={type(exc).__name__}")
+    if row is None:
+        return ReviewResult("model_preflight", Verdict.PASS, "no model preflight failures recorded")
+    occurred = _parse_utc(str(row["occurred_at"]))
+    detail = f"last failure provider={row['provider']} at={row['occurred_at']} ({row['error_code']})"
+    if recovered is not None:
+        return ReviewResult("model_preflight", Verdict.PASS, detail + f"; recovered by run at {recovered[0]}")
+    if occurred is None or _utc(now) - occurred > timedelta(hours=24):
+        return ReviewResult("model_preflight", Verdict.PASS, detail + "; older than 24h")
+    return ReviewResult("model_preflight", Verdict.FAIL, detail, {"failures": 1})
+
+
 REVIEW_CHECKS = (check_runtime, check_database, check_feature_activation, check_graph_observations,
                  check_compiled_profile, check_recent_private_context, check_retrieval,
                  check_jev_decisions, check_checkpoint_delivery, check_beat_health,
-                 check_snapshot_dir, check_scheduled_slots)
+                 check_model_preflight, check_snapshot_dir, check_scheduled_slots)
 
 
 def exit_code(results: Iterable[ReviewResult]) -> int:

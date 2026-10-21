@@ -545,3 +545,21 @@ def test_gemini_extractor_keeps_a_rolling_minute_under_the_token_budget() -> Non
 
     assert sleeps == [50.05]
     assert len(extractor._sent) == 1
+
+
+def test_gemini_model_preflight_uses_the_injected_transport_and_maps_404(monkeypatch):
+    # T-1660: a wrong model name is one countTokens call (no token charge) through the
+    # injected transport, never a raw network request; 404 = unavailable, 5xx raises.
+    seen = []
+
+    def transport(url, payload, headers, timeout):
+        seen.append(url)
+        return (404 if "bogus" in url else 200), {}, {}
+
+    extractor = GeminiExtractor(api_key="test-key", transport=transport, sleep=lambda _: None)
+    assert extractor.model_available("bogus-model") is False
+    assert extractor.model_available("gemini-ok") is True
+    assert all(":countTokens" in url for url in seen) and len(seen) == 2
+    # A 5xx is inconclusive (the run's breaker owns transient trouble), so the model is not declared missing.
+    flaky = GeminiExtractor(api_key="test-key", transport=lambda *_: (503, {}, {}), sleep=lambda _: None)
+    assert flaky.model_available("gemini-ok") is True
