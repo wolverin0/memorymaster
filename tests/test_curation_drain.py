@@ -220,3 +220,50 @@ def test_a_predicate_without_subject_winner_is_not_promoted_and_does_not_superse
     assert r["held_by_structure_policy"] == 1 and r["resolved_won"] == 0
     assert _get(svc, ganador).status == "conflicted"
     assert _get(svc, rival).status == "confirmed"
+
+
+# --- T-1686: propuestas que ya no pueden aplicar ----------------------------
+
+def test_proposal_drain_leaves_alone_a_stale_proposal_on_a_superseded_claim(svc):
+    """13 claims supersedidas por el rescope del 2026-10-06 cargaban una
+    propuesta stale anterior: el dren la re-aprobaba en cada ciclo, la
+    transicion superseded -> stale fallaba y quedaba un
+    `steward_proposal_apply_failed` por claim y ciclo (52 por dia)."""
+    old = _claim(svc, "la claim vieja que decayo")
+    _status(svc, old, "confirmed")
+    svc.store.record_event(
+        claim_id=old, event_type="policy_decision", details="steward_proposal:stale",
+        payload={"source": "steward", "decision": "stale", "proposed_status": "stale", "priority": 0.9},
+    )
+    newer = _claim(svc, "la claim nueva que la reemplaza")
+    _status(svc, newer, "confirmed")
+    svc.store.mark_superseded(old_claim_id=old, new_claim_id=newer, reason="rescope")
+
+    r = curation_drain.drain_proposals(svc, apply=True)
+
+    assert r["approved"] == 0 and r["failed"] == 0, r
+    fallidas = [e for e in svc.list_events(event_type="audit", limit=50)
+                if e.details == "steward_proposal_apply_failed"]
+    assert fallidas == [], "el dren volvio a intentar una transicion imposible"
+    assert _get(svc, old).status == "superseded"
+
+
+def test_proposal_drain_counts_an_unapplied_approval_as_failed(svc, monkeypatch):
+    """`resolve_steward_proposal` devuelve resolved=False cuando la aprobacion
+    no aplico; el dren la sumaba como approved igual (13 aprobaciones
+    fantasma por ciclo en el resumen)."""
+    normal = _claim(svc, "claim operativa con propuesta encima")
+    monkeypatch.setattr(
+        "memorymaster.govern.steward.list_steward_proposals",
+        lambda service, limit, include_resolved, **_kwargs: [{"proposal_event_id": 7, "claim_id": normal}],
+    )
+    monkeypatch.setattr(
+        "memorymaster.govern.steward.resolve_steward_proposal",
+        lambda service, action, proposal_event_id, apply_on_approve, actor: {
+            "ok": True, "resolved": False, "applied": False,
+        },
+    )
+
+    r = curation_drain.drain_proposals(svc, apply=True)
+
+    assert r["approved"] == 0 and r["failed"] == 1, r

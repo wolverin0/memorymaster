@@ -1369,7 +1369,14 @@ def _outcome_already_reached(service: MemoryService, claim_id: Any, payload: dic
     status = str(getattr(claim, "status", "") or "").lower()
     if proposed and status == proposed:
         return True
-    return status == "archived"  # terminal: ninguna propuesta sobrevive al archivado
+    if status == "archived":
+        return True  # terminal: ninguna propuesta sobrevive al archivado
+    # Superseded solo admite archivar (ALLOWED_TRANSITIONS): una propuesta
+    # stale/conflicted sobre una claim ya reemplazada no va a aplicar nunca y
+    # su reemplazo ocupa su lugar. Leida como pendiente, el dren la re-aprobaba
+    # en cada ciclo y cada intento dejaba un `steward_proposal_apply_failed`
+    # (13 claims del rescope del 2026-10-06, 52 eventos por dia). T-1686.
+    return status == "superseded" and proposed != "archived"
 
 
 def _find_target_proposal(

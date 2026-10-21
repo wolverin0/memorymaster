@@ -198,14 +198,19 @@ def drain_proposals(service: Any, *, limit: int = 100, apply: bool = False) -> d
             summary["approved"] += 1
             continue
         try:
-            resolve_steward_proposal(
+            result = resolve_steward_proposal(
                 service,
                 action="approve",
                 proposal_event_id=int(proposal["proposal_event_id"]),
                 apply_on_approve=True,
                 actor="automation",
             )
-            summary["approved"] += 1
+            # Una aprobacion que no aplico (resolved=False) deja la propuesta
+            # pendiente; contarla como approved inflaba el resumen (T-1686).
+            if isinstance(result, dict) and result.get("resolved") is False:
+                summary["failed"] += 1
+            else:
+                summary["approved"] += 1
         except Exception as exc:  # noqa: BLE001 - una propuesta rota no frena el dren
             logger.warning("curation drain proposal %s failed: %s", proposal.get("proposal_event_id"), exc)
             summary["failed"] += 1

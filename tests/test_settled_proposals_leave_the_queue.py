@@ -118,3 +118,33 @@ def test_a_lookup_failure_leaves_it_pending(svc, monkeypatch):
     assert claim.id in _pending_ids(svc), (
         "un fallo de lectura se resolvio como 'saldada' y escondio una decision"
     )
+
+
+def test_a_superseded_claim_settles_a_stale_proposal(svc):
+    """Una claim superseded solo puede archivarse (ALLOWED_TRANSITIONS): una
+    propuesta stale sobre ella nunca va a aplicar y su reemplazo ya ocupa su
+    lugar. Antes quedaba "pendiente" para siempre y el dren la re-aprobaba en
+    cada ciclo escribiendo `steward_proposal_apply_failed` (13 claims del
+    rescope whatsappbot del 2026-10-06: 52 eventos por dia desde entonces)."""
+    old = _claim(svc, "The prompt hook reads the project scope from the cwd.", confirm=True)
+    _propose(svc, old.id, proposed_status="stale", decision="stale")
+    assert old.id in _pending_ids(svc), "antes de la supersesion la propuesta es real"
+
+    newer = _claim(svc, "The prompt hook reads the project scope from the transcript cwd.", confirm=True)
+    svc.store.mark_superseded(old_claim_id=old.id, new_claim_id=newer.id, reason="rescope")
+
+    assert old.id not in _pending_ids(svc), (
+        "una propuesta stale sobre una claim ya superseded no puede aplicar nunca "
+        "y no es una decision pendiente"
+    )
+
+
+def test_an_archive_proposal_on_a_superseded_claim_stays_pending(svc):
+    """El contra-caso: archivar SI es una transicion valida desde superseded,
+    asi que esa propuesta sigue siendo una decision real."""
+    old = _claim(svc, "Recall caps the injected block at two claims.", confirm=True)
+    newer = _claim(svc, "Recall caps the injected block at two claims per prompt.", confirm=True)
+    svc.store.mark_superseded(old_claim_id=old.id, new_claim_id=newer.id, reason="rescope")
+    _propose(svc, old.id, proposed_status="archived", decision="archived")
+
+    assert old.id in _pending_ids(svc)
