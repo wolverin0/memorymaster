@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -154,7 +155,8 @@ def read_executor_metadata(db_path: str | Path | None) -> ExecutorMetadata:
         if len(cwds) != 1:
             return ExecutorMetadata(reason="conflicting_cwd" if cwds else "missing_cwd", model_ids=tuple(models))
         return ExecutorMetadata(next(iter(cwds.values())), models[-1] if models else None, "resolved", "executor_metadata", tuple(models))
-    except (OSError, sqlite3.Error, ValueError, UnicodeError):
+    except (OSError, sqlite3.Error, ValueError, UnicodeError) as exc:
+        logging.getLogger(__name__).debug("Executor metadata decoding failed", exc_info=exc)
         return ExecutorMetadata(reason="decoder_failure")
     finally:
         if conn is not None:
