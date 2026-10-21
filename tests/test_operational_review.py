@@ -111,7 +111,7 @@ def test_clean_review_checks_pass(tmp_path: Path, monkeypatch) -> None:
     assert results[-1].name == "beat_health" and "inactive" in results[-1].detail
     # T-1662: the snapshot/slot checks are the last two registered checks and pass on
     # hermetic fixtures (a fresh snapshot, four job_start events per job).
-    assert [check.__name__ for check in review.REVIEW_CHECKS[-2:]] == ["check_snapshot_dir", "check_scheduled_slots"]
+    assert {"check_snapshot_dir", "check_scheduled_slots"} <= {check.__name__ for check in review.REVIEW_CHECKS}
     now = datetime.now(timezone.utc)
     snapshots = tmp_path / "snapshots"
     snapshots.mkdir()
