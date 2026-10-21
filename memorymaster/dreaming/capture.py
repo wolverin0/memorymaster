@@ -11,7 +11,7 @@ from typing import Any, Mapping
 
 from memorymaster.core.capture_control import CaptureLedger
 from memorymaster.core.security import redact_text
-from memorymaster.core.scope_utils import resolve_transcript_workspace_scope
+from memorymaster.core.scope_utils import resolve_transcript_workspace_scope, scope_from_cwd
 from memorymaster.dreaming.ledger import DreamLedger
 from memorymaster.dreaming.models import CaptureEnvelope, DreamMessage
 from memorymaster.dreaming.self_observation import is_memory_tool, strip_self_observation
@@ -120,6 +120,7 @@ def _scope(cwd: str | None) -> str | None:
 def capture_transcript(
     transcript_path: str | Path, *, provider: str, session_id: str, cwd: str | None, ledger: DreamLedger,
     record_source_mtime: bool = False,
+    live_workspace: bool = False,
 ) -> dict[str, Any]:
     """Queue the new bytes of a transcript.
 
@@ -152,8 +153,10 @@ def capture_transcript(
     if not messages:
         cursor_ledger.commit_cursor(chunk)
         return {"queued": 0, "reason": "no_conversation"}
-    scope = _scope(cwd)
-    if scope is None:
+    # A native lifecycle payload identifies its active workspace, including
+    # non-Git projects. Historical scans still require repository/alias evidence.
+    scope = scope_from_cwd(cwd) if live_workspace and cwd else _scope(cwd)
+    if scope is None or scope == "global":
         return {"queued": 0, "reason": "unresolved_scope"}
     content_hash = hashlib.sha256(json.dumps([m.to_dict() for m in messages], sort_keys=True).encode("utf-8")).hexdigest()
     envelope = CaptureEnvelope(
@@ -179,6 +182,7 @@ def capture_hook_payload(payload: dict[str, Any], *, provider: str, ledger: Drea
         session_id=str(payload.get("session_id") or payload.get("thread_id") or "unknown"),
         cwd=str(payload.get("cwd") or "") or None,
         ledger=ledger,
+        live_workspace=True,
     )
 
 
