@@ -37,6 +37,8 @@ def _project(tmp_path):
                            [CitationInput(source="test://stop", locator="other")], scope="project:p")
     transition_claim(service.store, other.id, "confirmed", "test fixture")
     hook = tmp_path / "stop-hook.py"
+    # The hook is exercised exactly as installed: its own join budget must be enough for a
+    # loaded runner, or the production hook loses the usage row too (T-1663).
     hook.write_text(TEMPLATE.read_text(encoding="utf-8").replace(
         "__MEMORYMASTER_PROJECT_ROOT__", str(project).replace("\\", "/")), encoding="utf-8")
     return project, hook, claim.id, other.id
@@ -172,7 +174,8 @@ def test_slow_joiner_is_bounded_and_output_stays_exact(tmp_path, monkeypatch, ca
     release.set()
 
     assert calls == [SESSION]
-    assert elapsed < 1.0
+    # Bounded by the hook's own budget (2 s since T-1663), never by the 5 s the joiner hangs.
+    assert elapsed < module.TURN_USAGE_BUDGET_S + 0.5
     assert capsys.readouterr().out == APPROVE
 
 
