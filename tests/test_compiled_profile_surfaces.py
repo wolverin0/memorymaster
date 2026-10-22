@@ -125,3 +125,18 @@ def test_project_session_start_uses_payload_before_legacy_database(tmp_path, mon
     with pytest.raises(SystemExit):
         module.main()
     assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"] == "validated:" + str(tmp_path)
+
+
+def test_project_cli_branches_before_service_initialization(tmp_path, monkeypatch, capsys):
+    from memorymaster.profile import __main__ as cli
+
+    monkeypatch.setattr("memorymaster.core.service.MemoryService",
+                        lambda *args, **kwargs: pytest.fail("project CLI initialized authoritative service"))
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "0")
+    args = ["project-read", "--db", str(tmp_path / "never.db"),
+            "--scope", "project:fixture", "--tenant", "legacy-null", "--context-key", "fixture",
+            "--epoch", "test", "--project-root", str(tmp_path),
+            "--output-dir", str(tmp_path / "projections"), "--state-dir", str(tmp_path / "state")]
+    assert cli.main(args) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "inactive"
+    assert not (tmp_path / "never.db").exists()

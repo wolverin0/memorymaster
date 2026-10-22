@@ -10,6 +10,18 @@ from unittest.mock import MagicMock
 from memorymaster.operations import operational_review as review
 
 
+def test_operational_projection_off_stale_partial_and_m2(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "0")
+    config = review.ReviewConfig(db=tmp_path / "never-opened.db")
+    result = review.check_project_projection(config)
+    assert result.verdict == review.Verdict.PASS
+    assert "inactive" in result.detail
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "1")
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_PROJECTS", "[]")
+    assert review.check_project_projection(config).verdict == review.Verdict.WARN
+    assert not (tmp_path / "never-opened.db").exists()
+
+
 def test_default_retrieval_keeps_exact_rows_then_fills_without_accesses(tmp_path, monkeypatch):
     query = "deployment worker retry queue timeout"
     db = _db(tmp_path / "memory.db")

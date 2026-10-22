@@ -85,6 +85,9 @@ class ReviewConfig:
     snapshot_dir: Path | None = None
     dream_log: Path | None = None
     steward_log: Path | None = None
+    # AO-3 uses explicit approved contexts; no database/home/root discovery.
+    project_projection_configs: tuple[Any, ...] = ()
+    project_m2_receipt: Path | None = None
 
 
 def _configured_canaries(config: ReviewConfig) -> list[tuple[str, str]]:
@@ -1003,11 +1006,83 @@ def check_backfill_burndown(config: ReviewConfig) -> ReviewResult:
     return ReviewResult("backfill_burndown", Verdict.PASS, detail, counts)
 
 
+def check_project_projection(config: ReviewConfig) -> ReviewResult:
+    """Validate derived views and receipt health without publishing or source mutation."""
+    from memorymaster.profile.project_runtime import PREFIX, active, load_project_configs
+
+    if not active(PREFIX + "ENABLED"):
+        return ReviewResult("project_projection", Verdict.PASS, "inactive; all project consumers gated")
+    contexts = config.project_projection_configs or tuple(load_project_configs())
+    if not contexts:
+        return ReviewResult("project_projection", Verdict.WARN, "pending: explicit allowlist/roots/epoch unavailable")
+    from memorymaster.profile.project_projection import read_manifest, read_project_projection
+    from memorymaster.profile.project_sessions import read_session_state
+
+    counts = {"projects": len(contexts), "ready": 0, "bytes": 0, "active_sessions": 0,
+              "completed_sessions": 0, "baseline_blobs": 0, "m2_passed": 0}
+    diagnostics = []
+    views = {}
+    failed = False
+    for context in contexts:
+        try:
+            manifest = read_manifest(context)
+            if manifest is None:
+                failed = True
+                diagnostics.append("invalid_or_missing_pair")
+                continue
+            checked = datetime.fromisoformat(manifest["checked_at"].replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - checked).total_seconds()
+            counts["oldest_check_seconds"] = max(counts.get("oldest_check_seconds", 0), int(age))
+            view = read_project_projection(context)
+            if view is None:
+                diagnostics.append("stale_or_unavailable_view")
+                continue
+            counts["bytes"] += view.manifest["payload_bytes"]
+            if view.status == "ready":
+                counts["ready"] += 1
+            else:
+                diagnostics.append("partial_or_m2_unready")
+            if age > 3600:
+                diagnostics.append("stale_source_validation")
+            state = read_session_state(context)
+            counts["active_sessions"] += len(state["active"])
+            counts["completed_sessions"] += len(state["completed"])
+            counts["baseline_blobs"] += len(state["baselines"])
+            if active("MEMORYMASTER_PROJECT_SESSION_DELTA") and state["latest_end"] is None:
+                diagnostics.append("baseline_unavailable")
+            views[context.scope] = view.manifest["view_id"]
+        except (OSError, ValueError, KeyError, TypeError):
+            diagnostics.append("continuity_or_source_unavailable")
+    # A healthy derived cache is never a real M2 acceptance receipt.
+    receipt = None
+    if config.project_m2_receipt:
+        try:
+            with config.project_m2_receipt.open("rb") as handle:
+                raw = handle.read(16385)
+            if len(raw) <= 16384:
+                receipt = json.loads(raw)
+        except (OSError, ValueError):
+            pass
+    if (receipt and receipt.get("schema") == "memorymaster.project-m2-probe.v1"
+            and receipt.get("independent") is True and receipt.get("installed") is True
+            and receipt.get("passed") == 3 and len(views) == 3
+            and receipt.get("views") == views and receipt.get("prohibited_tool_calls") == 0
+            and receipt.get("source_revision") and receipt.get("observed_at")
+            and receipt.get("epochs") == {ctx.scope: ctx.epoch for ctx in contexts}):
+        counts["m2_passed"] = 3
+    else:
+        diagnostics.append("real_m2_probe_pending")
+    flags = [name for name in ("REFRESH", "SESSION_START", "COCKPIT") if active(PREFIX + name)]
+    detail = "enabled=" + ",".join(flags) + "; " + ",".join(dict.fromkeys(diagnostics))
+    return ReviewResult("project_projection", Verdict.FAIL if failed else Verdict.WARN if diagnostics else Verdict.PASS,
+                        detail, counts)
+
+
 REVIEW_CHECKS = (check_runtime, check_database, check_feature_activation, check_graph_observations,
                  check_compiled_profile, check_recent_private_context, check_retrieval,
                  check_jev_decisions, check_checkpoint_delivery, check_beat_health,
                  check_model_preflight, check_snapshot_dir, check_scheduled_slots,
-                 check_backfill_burndown)
+                 check_project_projection, check_backfill_burndown)
 
 
 def exit_code(results: Iterable[ReviewResult]) -> int:
