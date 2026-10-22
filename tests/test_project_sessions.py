@@ -206,3 +206,20 @@ def test_out_of_order_ends_capacity_epoch_and_interrupted_replace(tmp_path, monk
     assert path.read_bytes() == before
     cfg.epoch = "new-activation"
     assert sessions.last_project_session_end(cfg) is None
+
+
+def test_stale_active_start_cannot_override_a_recent_explicit_end(tmp_path):
+    cfg = config(tmp_path)
+    old = snapshot(**{"claim:1": claim("before overlapping work")})
+    changed = snapshot(**{"claim:1": claim("retained overlapping work", 2)})
+    projection = {"source_coverage": old["coverage"], "read_at": NOW.isoformat()}
+    sessions.record_project_session_start(cfg, "completed-later", projection=projection,
+        snapshot_loader=lambda: old, now=NOW)
+    sessions.record_project_session_start(cfg, "crashed-overlap", projection=projection,
+        snapshot_loader=lambda: changed, now=NOW + timedelta(hours=6))
+    sessions.record_project_session_end(cfg, "completed-later", now=NOW + timedelta(hours=20))
+    result = sessions.record_project_session_start(cfg, "next", projection={
+        "source_coverage": changed["coverage"], "read_at": changed["read_at"]},
+        snapshot_loader=lambda: changed, now=NOW + timedelta(hours=20, minutes=1))
+    assert "retained overlapping work" in result["delta"].text
+    assert "prior_session_unclosed" not in result["delta"].text

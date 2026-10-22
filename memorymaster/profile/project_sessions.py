@@ -180,7 +180,9 @@ def _select_prior(state: dict, now: datetime) -> tuple[dict | None, str]:
     stale = [record for record in state["active"].values()
              if now - _time(record["start_at"]) >= ACTIVE_TTL]
     fallback = max(stale, key=lambda record: record["start_at"], default=None)
-    if fallback and (latest is None or fallback["start_at"] > latest["start_at"]):
+    if fallback and (latest is None or (
+            now - _time(latest["end_at"]) >= ACTIVE_TTL
+            and _time(fallback["start_at"]) > _time(latest["start_at"]))):
         return fallback, "prior_session_unclosed"
     return latest, ""
 
