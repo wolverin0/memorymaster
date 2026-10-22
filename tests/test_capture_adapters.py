@@ -51,6 +51,19 @@ def test_generated_only_inline_does_not_create_capture():
     assert exc.value.code == "generated_artifact"
 
 
+def test_html_escaped_generated_markers_reject_ambiguous_evidence(capture_root):
+    from html import escape
+
+    from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+
+    raw = "<p>Authored prefix.</p>" + escape(GENERATED_OPENER + "excluded" + GENERATED_CLOSER) + "<p>Authored suffix.</p>"
+    path = capture_root / "encoded.html"
+    path.write_text(raw, encoding="utf-8")
+    with pytest.raises(CaptureRejected) as exc:
+        LocalFileAdapter(path).capture()
+    assert exc.value.code == "ambiguous_generated_provenance"
+
+
 def test_generated_only_html_wrapper_does_not_create_capture(capture_root):
     from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
     path = capture_root / "generated.html"

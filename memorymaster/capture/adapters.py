@@ -128,6 +128,12 @@ def _retained_text(text: str, *, html: bool = False) -> tuple[str, tuple[str, ..
         if span.start == 0 and span.text.startswith("\ufeff"):
             span = SourceSpan(1, span.end, span.text[1:])
         value = _html_text(span.text.encode("utf-8")) if html else span.text
+        if html and strip_generated_spans(value).excluded_spans:
+            # HTML entity decoding changes offsets. Without a reversible source
+            # map, splitting decoded text would fabricate original attribution.
+            raise CaptureRejected(
+                "ambiguous_generated_provenance", "Decoded HTML generated markers cannot be attributed safely."
+            )
         bounded, warnings = _bounded_text(value)
         warning_codes.extend(warnings)
         if bounded.strip():

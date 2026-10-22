@@ -58,7 +58,7 @@ def _assistant_text(transcript_path: str) -> str:
                 entry = {**entry, "message": payload, "type": role or entry.get("type", "")}
         record = _conversation_record(entry, provider, state=state)
         if record is not None and record[0] == "assistant":
-            eligible.append((index, record[1]))
+            eligible.extend((index, span.text) for span in record[1])
     for index, content in reversed(eligible):
         if index < len(lines) - 200:
             break

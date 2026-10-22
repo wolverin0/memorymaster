@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from memorymaster.core.capture_control import CaptureLedger
+from memorymaster.core.generated_artifacts import SourceSpan
 from memorymaster.core.security import redact_text
 from memorymaster.core.scope_utils import resolve_transcript_workspace_scope, scope_from_cwd
 from memorymaster.dreaming.ledger import DreamLedger
@@ -35,7 +36,7 @@ def _text_parts(content: Any, allowed: set[str]) -> str:
 
 def _conversation_record(
     entry: dict[str, Any], provider: str, *, state: dict[str, Any] | None = None,
-) -> tuple[str, str] | None:
+) -> tuple[str, tuple[SourceSpan, ...]] | None:
     state = state if state is not None else {}
     payload = entry.get("payload") if provider == "codex" else entry.get("message", entry)
     payload = payload if isinstance(payload, dict) else entry
@@ -73,7 +74,9 @@ def _conversation_record(
         "injected": bool(entry.get("hook_additional_context") or entry.get("isMeta") or payload.get("hook_additional_context")),
         "generated_session": bool(entry.get("backfill_generated") or entry.get("memorymaster_generated")),
     })
-    return (normalized_role, clean.text) if normalized_role and clean.text else None
+    # The convenience joined text is never attributable evidence: a removed
+    # range can separate an authored prefix from an unrelated suffix.
+    return (normalized_role, clean.spans) if normalized_role and clean.spans else None
 
 
 def _sanitize(text: str) -> str:
@@ -98,18 +101,21 @@ def parse_transcript_lines(
         record = _conversation_record(entry, provider.lower(), state=state)
         if record is None:
             continue
-        role, content = record
-        sanitized = _sanitize(content)
-        if not sanitized:
-            continue
+        role, spans = record
         timestamp = str(entry.get("timestamp") or _now())
-        identity = (role, sanitized, timestamp)
-        if identity in seen:
-            continue
-        seen.add(identity)
-        raw_id = str(entry.get("uuid") or entry.get("id") or "|".join(identity))
-        message_id = "dm-" + hashlib.sha256(raw_id.encode("utf-8", errors="replace")).hexdigest()[:20]
-        messages.append(DreamMessage(message_id, role, sanitized, timestamp))
+        for span in spans:
+            sanitized = _sanitize(span.text)
+            if not sanitized:
+                continue
+            identity = (role, sanitized, timestamp)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            raw_id = str(entry.get("uuid") or entry.get("id") or "|".join(identity))
+            if len(spans) > 1:
+                raw_id += f":span:{span.start}:{span.end}"
+            message_id = "dm-" + hashlib.sha256(raw_id.encode("utf-8", errors="replace")).hexdigest()[:20]
+            messages.append(DreamMessage(message_id, role, sanitized, timestamp))
     return messages
 
 
