@@ -210,12 +210,6 @@ def scope_mode_workspace(request, tmp_path, monkeypatch):
             relaxed = strict = "project:logical"
     elif case == "nameless":
         cwd, relaxed, strict = Path(tmp_path.anchor), "global", None
-        # Exercise a nameless root without inspecting the host filesystem.
-        for method in ("is_dir", "is_file", "exists"):
-            original = getattr(Path, method)
-            monkeypatch.setattr(Path, method, lambda path, original=original: (
-                False if path in {cwd, cwd / ".git"} else original(path)
-            ))
     elif case in {"owner_alias", "checkout_alias"}:
         name = repo.name.lower() if case == "owner_alias" else checkout.name
         aliases.write_text(json.dumps({"aliases": {name: "project:logical"}}), encoding="utf-8")
@@ -279,3 +273,29 @@ def test_strict_workspace_scope_normalizes_aliases(tmp_path, monkeypatch, name, 
 
     assert resolve_workspace_scope(cwd, strict=True) == "project:logical"
     assert resolve_transcript_workspace_scope(cwd) == "project:logical"
+
+
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+def test_nameless_workspace_does_not_inspect_filesystem(tmp_path, monkeypatch, strict):
+    from memorymaster.core.scope_utils import resolve_workspace_scope
+
+    root = Path(tmp_path.anchor)
+    original_stat = Path.stat
+    original_iterdir = Path.iterdir
+
+    def stat(path, *args, **kwargs):
+        if path == root or path.parent == root:
+            pytest.fail(f"nameless workspace inspected {path}")
+        return original_stat(path, *args, **kwargs)
+
+    def iterdir(path):
+        if path == root:
+            pytest.fail("nameless workspace enumerated the host root")
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    expected = None if strict else "global"
+    assert resolve_workspace_scope(root, strict=strict) == expected
+    wrapper = resolve_transcript_workspace_scope if strict else scope_from_cwd
+    assert wrapper(root) == expected

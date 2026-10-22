@@ -255,6 +255,8 @@ def resolve_workspace_scope(
     current = Path(raw)
     if not raw:
         return "global" if not strict or allow_fallback_global else None
+    if current.anchor and not current.name:
+        return None if strict else "global"
     aliases = _scope_aliases()
     # Preserve exact folder aliases, including names canonicalize_slug folds
     # and symlink names that resolve to differently named project folders.
@@ -269,8 +271,8 @@ def resolve_workspace_scope(
         if isinstance(error, RuntimeError):
             raise
         pass
-    if not strict and not current.name:
-        return "global"
+    if not current.name:
+        return None if strict else "global"
     try:
         if strict and current.is_file() and current.suffix == ".jsonl":
             return resolve_workspace_scope(
