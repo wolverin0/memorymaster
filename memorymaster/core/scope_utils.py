@@ -167,6 +167,11 @@ SCOPE_ALIASES_ENV = "MEMORYMASTER_SCOPE_ALIASES"
 _ALIAS_CACHE: dict[str, object] = {"key": None, "map": {}}
 
 
+def _alias_slug(name: str) -> str:
+    """Fold whitespace in operator alias keys, preserving literal punctuation."""
+    return re.sub(r"\s+", "-", name.strip().lower())
+
+
 def _scope_aliases() -> dict[str, str]:
     """Folder slug -> project scope, from ~/.memorymaster/scope-aliases.json (operator-owned).
 
@@ -211,7 +216,7 @@ def _git_project_root(
     for candidate in candidates:
         if candidate != current and candidate in ceilings:
             break
-        if strict and _SLUG_NORMALIZER_RE.sub("-", candidate.name.strip().lower()) in aliases:
+        if strict and _alias_slug(candidate.name) in aliases:
             return candidate, candidate
         dotgit = candidate / ".git"
         try:
@@ -260,7 +265,7 @@ def resolve_workspace_scope(
     aliases = _scope_aliases()
     # Preserve exact folder aliases, including names canonicalize_slug folds
     # and symlink names that resolve to differently named project folders.
-    folder_slug = re.sub(r"\s+", "-", current.name.strip().lower())
+    folder_slug = _alias_slug(current.name)
     if not strict and folder_slug in aliases:
         return aliases[folder_slug]
     try:
@@ -292,10 +297,7 @@ def resolve_workspace_scope(
         roots = None
     if roots is not None:
         checkout, root = roots
-        checkout_slug = (
-            _SLUG_NORMALIZER_RE.sub("-", checkout.name.strip().lower()) if strict
-            else re.sub(r"\s+", "-", checkout.name.strip().lower())
-        )
+        checkout_slug = _alias_slug(checkout.name)
         if checkout_slug in aliases:
             return aliases[checkout_slug]
         name = root.name
@@ -304,10 +306,7 @@ def resolve_workspace_scope(
             return None
         name = current.name
     slug = canonicalize_slug(name)
-    folder_slug = (
-        _SLUG_NORMALIZER_RE.sub("-", name.strip().lower()) if strict
-        else re.sub(r"\s+", "-", name.strip().lower())
-    )
+    folder_slug = _alias_slug(name)
     if strict:
         if _EPHEMERAL_WORKSPACE.fullmatch(name) and folder_slug not in aliases:
             return None
@@ -342,7 +341,6 @@ def scope_from_cwd_or_user(cwd: str | os.PathLike[str] | None) -> str:
     return "user" if scope == "global" else scope
 
 
-_SLUG_NORMALIZER_RE = re.compile(r"\s+")
 _EPHEMERAL_WORKSPACE = re.compile(r"^(?:_wt|worktrees?|scratch|tmp|temp|pr[-_]?\d+|t[-_]?\d+|card[-_]?\d+)$", re.I)
 _REPOSITORY_WALK_LIMIT = 32
 _GIT_METADATA_LIMIT = 4096

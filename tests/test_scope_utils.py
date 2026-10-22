@@ -276,6 +276,33 @@ def test_strict_workspace_scope_normalizes_aliases(tmp_path, monkeypatch, name, 
 
 
 @pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+@pytest.mark.parametrize("name", ["My_Project", "My.Project", "t_12", "My  Project"])
+@pytest.mark.parametrize("location", ["plain", "repository", "checkout", "owner"])
+def test_workspace_aliases_preserve_literal_keys(tmp_path, monkeypatch, strict, name, location):
+    from memorymaster.core.scope_utils import resolve_workspace_scope
+
+    literal_key = "-".join(name.strip().lower().split())
+    punctuation_folded_key = literal_key.replace("_", "-").replace(".", "-")
+    alias_map = {punctuation_folded_key: "project:other", literal_key: "project:literal"}
+    aliases = tmp_path / "scope-aliases.json"
+    aliases.write_text(json.dumps({"aliases": alias_map}), encoding="utf-8")
+    monkeypatch.setenv("MEMORYMASTER_SCOPE_ALIASES", str(aliases))
+    cwd = tmp_path / name
+    if location == "checkout":
+        cwd = _worktree(tmp_path / "owner", cwd)
+    elif location == "owner":
+        cwd = _worktree(cwd, tmp_path / "checkout")
+    else:
+        cwd.mkdir()
+        if location == "repository":
+            (cwd / ".git").mkdir()
+
+    assert resolve_workspace_scope(cwd, strict=strict) == "project:literal"
+    wrapper = resolve_transcript_workspace_scope if strict else scope_from_cwd
+    assert wrapper(cwd) == "project:literal"
+
+
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
 def test_nameless_workspace_does_not_inspect_filesystem(tmp_path, monkeypatch, strict):
     from memorymaster.core.scope_utils import resolve_workspace_scope
 
