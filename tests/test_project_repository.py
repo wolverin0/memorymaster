@@ -82,6 +82,31 @@ def claim(config, id=1, text="Use bounded reads", **changes):
         )
 
 
+@pytest.mark.parametrize("count", [40, 400])
+@pytest.mark.parametrize("changed_count", [0, 1, 3])
+def test_unchanged_baseline_does_not_reload_all_temporal_metadata(project_config, monkeypatch, count, changed_count):
+    from memorymaster.profile import project_repository as repository
+
+    for number in range(1, count + 1):
+        claim(project_config, number, text=f"Decision {number}")
+    baseline = load_project_snapshot(project_config)
+    with sqlite3.connect(project_config.db_path) as conn:
+        conn.execute("UPDATE claims SET text='Changed decision' WHERE id<=?", (changed_count,))
+    original_row = sqlite3.Row
+    loaded = []
+
+    def counting_row(cursor, values):
+        row = original_row(cursor, values)
+        if "valid_from" in row.keys():
+            loaded.append(row["id"])
+        return row
+
+    monkeypatch.setattr(repository.sqlite3, "Row", counting_row)
+    result = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
+    assert result["complete"]
+    assert loaded == list(range(1, changed_count + 1)), {"metadata_rows_reloaded": len(loaded)}
+
+
 def test_confirmed_authorized_current_selection(project_config):
     config = project_config
     claim(config)
@@ -499,3 +524,66 @@ def test_incremental_keeps_unchanged_future_temporal_boundary(project_config, mo
     incremental = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
     assert incremental["complete"]
     assert incremental["next_temporal_boundary"] == "2026-10-22T09:10:00+00:00"
+
+
+def test_incremental_temporal_fence_updates_only_changed_and_crossed_rows(project_config, monkeypatch):
+    from memorymaster.profile import project_repository as repository
+
+    instant = datetime(2026, 10, 22, 9, tzinfo=timezone.utc)
+    original_current = repository.claim_is_temporally_current
+    monkeypatch.setattr(repository, "utc_now", lambda: instant.isoformat())
+    monkeypatch.setattr(repository, "claim_is_temporally_current", lambda row: original_current(row, now=instant))
+    for number in range(1, 41):
+        claim(project_config, number, valid_until="2026-10-22T06:10:00-03:00",
+              **({"valid_from": "2026-10-22T09:04:00Z"} if number == 2 else {}))
+    baseline = load_project_snapshot(project_config)
+    normalized_ids = []
+    original_instants = repository._validity_instants
+
+    def tracking_instants(rows):
+        normalized_ids.extend(row["id"] for row in rows)
+        return original_instants(rows)
+
+    monkeypatch.setattr(repository, "_validity_instants", tracking_instants)
+    with sqlite3.connect(project_config.db_path) as conn:
+        conn.execute("UPDATE claims SET valid_until='2026-10-22T09:03:00Z' WHERE id=1")
+        conn.execute("DELETE FROM claims WHERE id=3")
+        conn.execute("UPDATE claims SET scope='project:other' WHERE id=4")
+    instant = datetime(2026, 10, 22, 9, 2, tzinfo=timezone.utc)
+    first = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
+    assert first["complete"]
+    assert normalized_ids == [1]
+    assert first["next_temporal_boundary"] == "2026-10-22T09:03:00+00:00"
+    assert not {3, 4} & {id for _, id in first["coverage"]["__scan_fence__"]["temporal_boundaries"]}
+    normalized_ids.clear()
+    instant = datetime(2026, 10, 22, 9, 5, tzinfo=timezone.utc)
+    second = snapshot_since(project_config, first["coverage"], first["read_at"])
+    assert second["complete"]
+    assert normalized_ids == [1, 2]
+    assert second["next_temporal_boundary"] == "2026-10-22T09:10:00+00:00"
+    assert "claim:1" not in second["coverage"]
+    assert "claim:2" in second["coverage"]
+    full = load_project_snapshot(project_config)
+    assert {k: v for k, v in second["coverage"].items() if k.startswith("claim:")} == {
+        k: v for k, v in full["coverage"].items() if k.startswith("claim:")
+    }
+
+
+def test_legacy_temporal_fence_fails_closed_without_source_scan(project_config, monkeypatch):
+    from memorymaster.profile import project_repository as repository
+
+    claim(project_config)
+    baseline = load_project_snapshot(project_config)
+    baseline["coverage"]["__scan_fence__"].pop("temporal_boundaries")
+    statements = []
+    original_connect = sqlite3.connect
+
+    def traced_connect(*args, **kwargs):
+        conn = original_connect(*args, **kwargs)
+        conn.set_trace_callback(statements.append)
+        return conn
+
+    monkeypatch.setattr(repository.sqlite3, "connect", traced_connect)
+    current = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
+    assert not current["complete"]
+    assert not any("FROM claims" in statement or "FROM citations" in statement for statement in statements)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import closing
+from bisect import bisect_left, bisect_right
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -315,8 +316,7 @@ def _read_claims(
         params: list[Any] = [config.tenant_id, *scopes]
         where = "tenant_id IS ? AND scope IN (" + ",".join("?" for _ in scopes) + ")"
         changed_ids = []
-        temporal_instants = []
-        temporal_bytes = 0
+        temporal_boundaries = []
         if changed_since:
             cursor = (prior_fence or {}).get("source_cursor")
             if (not source_cursor or not isinstance(cursor, dict)
@@ -336,24 +336,28 @@ def _read_claims(
             watched = (prior_fence or {}).get("watched_ids", [])
             if len(watched) > MAX_CLAIMS or any(type(id) is not int or id <= 0 for id in watched):
                 raise ValueError("invalid_scan_fence")
+            watched_set = set(watched)
             watched_sql = ",".join("?" for _ in watched) or "NULL"
-            # A complete fence contains every previously scanned ID. Read only
-            # its bounded validity metadata by primary key, then normalize in
-            # Python: indexed TEXT ranges cannot compare offsets or fractions.
-            temporal_rows = list(conn.execute(
-                "SELECT id,"
-                "CASE WHEN length(valid_from)<=128 THEN valid_from END AS valid_from,"
-                "CASE WHEN length(valid_until)<=128 THEN valid_until END AS valid_until,"
-                "(length(COALESCE(valid_from,''))>128 OR length(COALESCE(valid_until,''))>128) AS oversized "
-                f"FROM claims NOT INDEXED WHERE {where} AND id IN ({watched_sql}) LIMIT ?",
-                [*params, *watched, MAX_CLAIMS + 1],
-            ))
-            temporal_bytes = sum(len(json.dumps(dict(row)).encode()) for row in temporal_rows)
-            if (len(temporal_rows) > MAX_CLAIMS or temporal_bytes > byte_limit
-                    or any(row["oversized"] for row in temporal_rows)):
-                return {}, False, {"source_bytes": byte_limit}
-            temporal_instants = _validity_instants(temporal_rows)
-            temporal_ids = sorted({id for id, boundary in temporal_instants if instant <= boundary <= now_instant})
+            # Protected continuity metadata holds already-normalized future
+            # boundaries. Never reload every watched row to compare ISO forms.
+            # Older fences lack this contract and must fail closed for rebuild.
+            temporal_boundaries = (prior_fence or {}).get("temporal_boundaries")
+            if ((prior_fence or {}).get("temporal_version") != 1
+                    or not isinstance(temporal_boundaries, list)
+                    or len(temporal_boundaries) > 2 * MAX_CLAIMS
+                    or any(not isinstance(entry, list) or len(entry) != 2
+                           or not isinstance(entry[0], str)
+                           or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}\+00:00", entry[0])
+                           or type(entry[1]) is not int or entry[1] not in watched_set
+                           for entry in temporal_boundaries)
+                    or temporal_boundaries != sorted(temporal_boundaries)):
+                raise ValueError("incremental_temporal_fence_unavailable")
+            lower = bisect_left(temporal_boundaries, instant.astimezone(timezone.utc).isoformat(timespec="microseconds"),
+                                key=lambda entry: entry[0])
+            upper = bisect_right(temporal_boundaries, now_instant.astimezone(timezone.utc).isoformat(timespec="microseconds"),
+                                 key=lambda entry: entry[0])
+            temporal_ids = sorted({id for _, id in temporal_boundaries[lower:upper]})
+            temporal_boundaries = temporal_boundaries[upper:]
             queries = [
                 "SELECT changes.claim_id AS id FROM project_source_changes changes "
                 "INDEXED BY idx_project_source_changes_seq "
@@ -421,7 +425,7 @@ def _read_claims(
             [*params, limit + 1],
         )
         rows = []
-        total = temporal_bytes
+        total = 0
         for row in cursor:
             if len(rows) >= limit:
                 fingerprint = {"source_bytes": total}
@@ -482,11 +486,18 @@ def _read_claims(
             if item:
                 items[item["key"]] = item
         now = datetime.fromisoformat(utc_now().replace("Z", "+00:00"))
-        boundaries = [boundary for _, boundary in [*temporal_instants, *_validity_instants(rows)]
-                      if boundary > now]
+        # Refresh normalized metadata only for source rows materialized because
+        # they changed, crossed a boundary or were explicitly requested.
+        refreshed_ids = set(changed_ids) | set(ids_read)
+        temporal_boundaries = sorted([
+            *[entry for entry in temporal_boundaries if entry[1] not in refreshed_ids],
+            *[[boundary.isoformat(timespec="microseconds"), id] for id, boundary in _validity_instants(rows)
+              if boundary > now],
+        ])
         fingerprint = {
             "data_version": conn.execute("PRAGMA data_version").fetchone()[0],
-            "next_temporal_boundary": min(boundaries).isoformat() if boundaries else None,
+            "next_temporal_boundary": (datetime.fromisoformat(temporal_boundaries[0][0]).isoformat()
+                                       if temporal_boundaries else None),
             "source_bytes": total,
             "changed_ids": changed_ids,
         }
@@ -499,6 +510,8 @@ def _read_claims(
                 "max_seen_id": max([max_seen_id or 0, *watched_ids]),
                 "complete": complete and len(watched_ids) <= MAX_CLAIMS and source_cursor is not None,
                 "source_cursor": source_cursor,
+                "temporal_version": 1,
+                "temporal_boundaries": temporal_boundaries,
             }
             complete = complete and len(watched_ids) <= MAX_CLAIMS
         return items, complete, fingerprint
