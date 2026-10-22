@@ -363,7 +363,8 @@ def build_project_projection(config: ProjectProjectionConfig) -> ProjectProjecti
     ordered = []
     for section in SECTIONS:
         matches = [item for item in snapshot["items"].values() if item["section"] == section and item.get("open", True)]
-        matches.sort(key=lambda item: item["sort"], reverse=section == "Decisions")
+        matches.sort(key=lambda item: item["sort"][1:] if section == "Decisions" else item["sort"],
+                     reverse=section == "Decisions")
         ordered.extend(matches[:1] if section == "Purpose" else matches[:10] if section == "Decisions" else matches)
     diagnostics = list(snapshot["diagnostics"])
     if not snapshot["complete"] and not diagnostics:

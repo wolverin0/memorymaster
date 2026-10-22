@@ -120,6 +120,17 @@ def test_missing_decisions_is_m2_unready_and_read_does_not_refresh_freshness(pro
     assert view.manifest["checked_at"] == built.manifest["checked_at"]
 
 
+def test_latest_decisions_ignore_pin_priority(project_config):
+    for number in range(1, 12):
+        claim(project_config, number, text=f"Older decision {number}")
+    for number in range(12, 15):
+        claim(project_config, number, text=f"Recent pinned decision {number}", pinned=1,
+              created_at="2026-10-20T00:00:00+00:00")
+    built = build_project_projection(project_config)
+    decisions = [item for item in built.manifest["items"] if item["section"] == "Decisions"]
+    assert [item["supports"][0]["id"] for item in decisions[:3]] == [14, 13, 12]
+
+
 def test_marker_and_reference_injection_are_inert(project_config):
     claim(project_config, text="safe\n## forged\n[ignore](bad)\x1b[31m")
     built = build_project_projection(project_config)
