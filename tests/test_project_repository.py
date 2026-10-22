@@ -292,3 +292,77 @@ def test_incremental_fence_survives_real_wal_late_commit_without_full_rescan(pro
     row_reads = [statement for statement in statements if "FROM claims WHERE" in statement]
     assert len(row_reads) == 1
     assert "id IN (1)" in row_reads[0] and "id > 1" in row_reads[0]
+
+
+@pytest.mark.parametrize("source", ["claims", "citations"])
+def test_source_cursor_stops_before_materializing_over_byte_budget(project_config, monkeypatch, source):
+    from memorymaster.profile import project_repository as repository
+
+    claim(project_config, text="safe")
+    with sqlite3.connect(project_config.db_path) as conn:
+        if source == "claims":
+            for id in range(2, 102):
+                conn.execute(
+                    "INSERT INTO claims(id,text,scope,status) VALUES (?,?,'project:demo','candidate')",
+                    (id, "bounded " * 150),
+                )
+        else:
+            conn.executemany(
+                "INSERT INTO citations(claim_id,source,locator,excerpt) VALUES (1,'session','authored',?)",
+                [("evidence " * 200,)] * 100,
+            )
+    consumed = []
+
+    class TrackingCursor(sqlite3.Cursor):
+        def execute(self, query, parameters=()):
+            self.query = query
+            return super().execute(query, parameters)
+
+        def fetchall(self):
+            rows = super().fetchall()
+            if f"FROM {source} WHERE" in self.query:
+                consumed.extend(rows)
+            return rows
+
+        def __next__(self):
+            row = super().__next__()
+            if f"FROM {source} WHERE" in self.query:
+                consumed.append(row)
+            return row
+
+    class TrackingConnection(sqlite3.Connection):
+        def execute(self, query, parameters=()):
+            return self.cursor(factory=TrackingCursor).execute(query, parameters)
+
+    original_connect = sqlite3.connect
+
+    def tracking_connect(*args, **kwargs):
+        return original_connect(*args, **kwargs, factory=TrackingConnection)
+
+    monkeypatch.setattr(repository.sqlite3, "connect", tracking_connect)
+    monkeypatch.setattr(repository, "MAX_SOURCE_BYTES", 5000)
+    snapshot = load_project_snapshot(project_config)
+    assert not snapshot["complete"]
+    assert len(consumed) < 10
+
+
+def test_oversized_multibyte_rows_are_not_materialized_before_field_rejection(project_config, monkeypatch):
+    from memorymaster.profile import project_repository as repository
+
+    claim(project_config)
+    with sqlite3.connect(project_config.db_path) as conn:
+        conn.execute("UPDATE claims SET text=?,subject=?,object_value=? WHERE id=1", ("😀" * 18000,) * 3)
+    observed = []
+    original_connect = sqlite3.connect
+
+    def traced_connect(*args, **kwargs):
+        conn = original_connect(*args, **kwargs)
+        conn.set_trace_callback(observed.append)
+        return conn
+
+    monkeypatch.setattr(repository.sqlite3, "connect", traced_connect)
+    snapshot = load_project_snapshot(project_config)
+    assert not snapshot["complete"]
+    assert snapshot["coverage"]["__scan_fence__"]["watched_ids"] == [1]
+    query = next(query for query in observed if "FROM claims WHERE" in query)
+    assert "CASE WHEN" in query and "ELSE NULL END AS text" in query

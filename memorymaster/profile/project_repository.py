@@ -340,46 +340,65 @@ def _read_claims(
         # Reject oversized rows before materializing their payload in Python.
         size = "+".join(f"length(CAST(COALESCE({name},'') AS BLOB))" for name in names)
         columns = ",".join(
-            f"substr({name},1,{MAX_FIELD_BYTES + 1}) AS {name}"
-            if name not in ("id", "version", "pinned", "replaced_by_claim_id")
-            else name
+            f"CASE WHEN ({size}) <= {MAX_FIELD_BYTES} THEN {name} ELSE NULL END AS {name}" if name != "id" else name
             for name in names
         )
-        rows = conn.execute(
+        cursor = conn.execute(
             f"SELECT {columns}, ({size}) AS _source_bytes FROM claims WHERE {where} ORDER BY id LIMIT ?",
             [*params, limit + 1],
-        ).fetchall()
-        complete = len(rows) <= limit
-        rows = rows[:limit]
+        )
+        rows = []
+        total = 0
+        for row in cursor:
+            if len(rows) >= limit:
+                fingerprint = {"source_bytes": total}
+                if not validation:
+                    watched = sorted(set(ids or ()) | {int(value["id"]) for value in rows})
+                    fingerprint["scan_fence"] = {
+                        "kind": "scan_fence",
+                        "watched_ids": watched[:MAX_CLAIMS],
+                        "max_seen_id": max([max_seen_id or 0, *watched]),
+                        "complete": False,
+                    }
+                return {}, False, fingerprint
+            row_bytes = len(json.dumps(dict(row)).encode())
+            if total + row_bytes > byte_limit:
+                # Exhaust the shared source allowance so ledger reads cannot
+                # restart that budget after an interrupted SQLite stream.
+                return {}, False, {"source_bytes": byte_limit}
+            total += row_bytes
+            rows.append(row)
+        complete = True
         oversized = {row["id"] for row in rows if row["_source_bytes"] > MAX_FIELD_BYTES}
         complete = complete and not oversized
         ids_read = [row["id"] for row in rows]
         citations: dict[int, list] = {}
-        raw_citations = []
         if ids_read:
             placeholders = ",".join("?" for _ in ids_read)
-            raw_citations = conn.execute(
+            citation_size = "length(CAST(COALESCE(source,'')||COALESCE(locator,'')||COALESCE(excerpt,'') AS BLOB))"
+            citation_cursor = conn.execute(
                 "SELECT id,claim_id,"
                 + ",".join(
-                    f"substr({name},1,{MAX_FIELD_BYTES + 1}) AS {name}" for name in ("source", "locator", "excerpt")
+                    f"CASE WHEN {citation_size} <= {MAX_FIELD_BYTES} THEN {name} ELSE NULL END AS {name}"
+                    for name in ("source", "locator", "excerpt")
                 )
-                + ",length(CAST(COALESCE(source,'')||COALESCE(locator,'')||COALESCE(excerpt,'') AS BLOB)) AS _source_bytes "
+                + f",{citation_size} AS _source_bytes "
                 f"FROM citations WHERE claim_id IN ({placeholders}) ORDER BY id LIMIT ?",
                 [*ids_read, citation_limit + 1],
-            ).fetchall()
-            complete = complete and len(raw_citations) <= citation_limit
-            if len(raw_citations) > citation_limit:
-                return {}, False, {}
-            for citation in raw_citations[:citation_limit]:
+            )
+            for index, citation in enumerate(citation_cursor):
+                citation_bytes = len(json.dumps(dict(citation)).encode())
+                if total + citation_bytes > byte_limit:
+                    return {}, False, {"source_bytes": byte_limit}
+                total += citation_bytes
+                if index >= citation_limit:
+                    return {}, False, {"source_bytes": total}
                 if citation["_source_bytes"] > MAX_FIELD_BYTES:
                     oversized.add(citation["claim_id"])
                     complete = False
                 value = dict(citation)
                 value.pop("_source_bytes")
                 citations.setdefault(citation["claim_id"], []).append(value)
-        total = sum(len(json.dumps(dict(row)).encode()) for row in [*rows, *raw_citations])
-        if total > byte_limit:
-            return {}, False, {}
         items = {}
         for row in rows:
             if row["id"] in oversized:
