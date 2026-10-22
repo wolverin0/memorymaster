@@ -25,3 +25,19 @@ def test_generic_payload_model_turn_preserves_legacy_distillation(tmp_path):
     path = tmp_path / "transcript.jsonl"
     path.write_text(json.dumps({"payload": {"role": "model", "content": "A durable authored finding about SQLite transaction boundaries."}}), encoding="utf-8")
     assert "durable authored" in _assistant_text(str(path))
+
+
+def test_cli_records_explicit_end_before_distillation_failure(tmp_path, monkeypatch):
+    from memorymaster.profile import project_runtime
+    from memorymaster.surfaces import session_end_ingest as ingest
+
+    seen = []
+    monkeypatch.setattr(project_runtime, "record_session_end", lambda data: seen.append(data))
+    monkeypatch.setattr(ingest, "run", lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("fixture failure")))
+    assert ingest.main(["--db", str(tmp_path / "fixture.db"), "--transcript", str(tmp_path / "missing.jsonl"),
+                        "--cwd", str(tmp_path), "--session-id", "explicit", "--end-at", "2026-10-22T09:00:00Z"]) == 1
+    assert seen == [{"cwd": str(tmp_path), "session_id": "explicit", "end_at": "2026-10-22T09:00:00Z"}]
+    seen.clear()
+    monkeypatch.setattr(ingest, "run", lambda *args, **kwargs: 0)
+    assert ingest.main(["--db", str(tmp_path / "fixture.db"), "--transcript", "unused"]) == 0
+    assert not seen

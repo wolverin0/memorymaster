@@ -139,7 +139,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--transcript", required=True)
     parser.add_argument("--source-agent", default="codex-session")
     parser.add_argument("--cwd", default=None)
+    parser.add_argument("--session-id", help="explicit project lifecycle identity; requires --end-at")
+    parser.add_argument("--end-at", help="observed UTC end time; requires --session-id")
     args = parser.parse_args(argv)
+    if bool(args.session_id) != bool(args.end_at):
+        parser.error("--session-id and --end-at must be supplied together")
+    if args.session_id:
+        from memorymaster.profile.project_runtime import record_session_end
+
+        record_session_end({"cwd": args.cwd, "session_id": args.session_id, "end_at": args.end_at})
     try:
         count = run(
             args.db,
