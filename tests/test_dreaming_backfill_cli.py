@@ -442,6 +442,74 @@ def test_unenforceable_runtime_fails_before_creating_campaign_state(tmp_path, ca
     assert not state.exists()
 
 
+def test_gemini_api_cli_preflight_binds_extractor_with_fake_factory(tmp_path, monkeypatch):
+    from memorymaster.surfaces.backfill_cli import configure_backfill_runtime
+    from memorymaster.surfaces.cli import build_parser
+
+    args = build_parser().parse_args([
+        "dream-backfill", "run", "--state-dir", str(tmp_path / "state"),
+        "--client", "gemini-api", "--extractor-model", "gemini-api/gemini-3.5-flash-lite",
+    ])
+    calls = []
+
+    def factory(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(complete_bounded=lambda *_args, **_kwargs: pytest.fail("preflight dispatched"))
+
+    monkeypatch.setattr("memorymaster.dreaming.providers.GeminiBoundedClient", factory)
+    runner = BackfillRunner(BackfillConfig(args.state_dir, {}, args.campaign))
+    configure_backfill_runtime(args, runner)
+    assert runner.extractor.model == args.extractor_model
+    assert callable(runner.extractor.client.complete_bounded)
+    assert calls == [{"model": args.extractor_model, "work_dir": args.state_dir / "provider-slot-ao7"}]
+    assert not args.state_dir.exists()
+
+
+def test_gemini_api_cli_preflight_binds_extractor_and_consolidator_with_fake_factory(tmp_path):
+    from memorymaster.surfaces.backfill_cli import configure_backfill_runtime
+    from memorymaster.surfaces.cli import build_parser
+
+    args = build_parser().parse_args([
+        "dream-backfill", "run", "--state-dir", str(tmp_path / "state"),
+        "--client", "gemini-api", "--extractor-model", "gemini-api/gemini-3.5-flash-lite",
+        "--stage", "consolidate", "--consolidator-model", "anthropic/claude-sonnet-4-6",
+        "--memory-db", str(tmp_path / "never-open.db"), "--probe-scope", "project:test",
+    ])
+    calls = []
+
+    def factory(**kwargs):
+        client = SimpleNamespace(complete_bounded=lambda *_args, **_kwargs: pytest.fail("preflight dispatched"))
+        calls.append((kwargs, client))
+        return client
+
+    runner = BackfillRunner(BackfillConfig(args.state_dir, {}, args.campaign))
+    configure_backfill_runtime(args, runner, client_factory=factory)
+    assert runner.extractor.client is calls[0][1]
+    assert runner.consolidator.client is calls[1][1]
+    assert [kwargs["model"] for kwargs, _ in calls] == [args.extractor_model, args.consolidator_model]
+    assert all(kwargs["work_dir"] == args.state_dir / "provider-slot-ao7" for kwargs, _ in calls)
+    assert callable(runner.reference_service_factory)
+    assert callable(runner.application_service_factory)
+    assert not args.state_dir.exists()
+    assert not args.memory_db.exists()
+
+
+@pytest.mark.parametrize("client_args", [[], ["--client", "opencode"]])
+def test_opencode_cli_preflight_still_rejects_unbounded_client(tmp_path, client_args):
+    from memorymaster.surfaces.backfill_cli import configure_backfill_runtime
+    from memorymaster.surfaces.cli import build_parser
+
+    args = build_parser().parse_args([
+        "dream-backfill", "run", "--state-dir", str(tmp_path / "state"),
+        "--extractor-model", "anthropic/claude-haiku-4-5", *client_args,
+    ])
+    assert args.client == "opencode"
+    runner = BackfillRunner(BackfillConfig(args.state_dir, {}, args.campaign))
+    with pytest.raises(ValueError, match="configured route cannot enforce provider output limits"):
+        configure_backfill_runtime(args, runner)
+    assert not args.state_dir.exists()
+
+
 def test_child_quality_is_reported_separately_and_privacy_latches_campaign(tmp_path):
     fixture = _campaign(tmp_path, provider="claude", child=True)
     fixture.runner.inventory()

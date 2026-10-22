@@ -19,6 +19,7 @@ def register_backfill_parser(sub) -> None:
         action.add_argument("--source-root", action="append", default=[], metavar="PROVIDER=PATH")
         action.add_argument("--offline-metadata", type=Path, default=None)
         if name == "run":
+            action.add_argument("--client", choices=("opencode", "gemini-api"), default="opencode")
             action.add_argument("--stage", choices=("extract", "consolidate", "quality", "apply", "all"), default="extract")
             action.add_argument("--apply-candidates", action="store_true", help="Explicitly authorize gated candidate/proposal writes")
             action.add_argument("--extractor-model", default="")
@@ -41,15 +42,17 @@ def configure_backfill_runtime(args, runner: BackfillRunner, *, client_factory=N
 
     A lane may inject a verified bounded client through this interface; the
     stock OpenCode CLI currently cannot prove an enforceable output limit.
-    No guessed CLI flags, fallback model or new network client is introduced.
+    Gemini API uses the existing key-based transport with a provider output cap.
     """
     from memorymaster.core.opencode_client import OpenCodeClient
-    from memorymaster.dreaming.providers import OpenCodeConsolidator, OpenCodeExtractor
+    from memorymaster.dreaming.providers import GeminiBoundedClient, OpenCodeConsolidator, OpenCodeExtractor
     from memorymaster.dreaming.backfill_quality import ProviderCohortJudge
     from memorymaster.dreaming.backfill_guard import run_quiet_hours_active_probes
     from memorymaster.dreaming.latency_guard import GuardDecision, evaluate
 
     factory = client_factory or OpenCodeClient
+    if getattr(args, "client", "opencode") == "gemini-api":
+        factory = client_factory or GeminiBoundedClient
     if not args.extractor_model or "/" not in args.extractor_model:
         raise ValueError("run requires an explicit provider-qualified extraction model")
     slot = args.state_dir / ("provider-slot-" + args.campaign)

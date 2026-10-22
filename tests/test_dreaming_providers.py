@@ -31,6 +31,153 @@ def _bounded_client(*, model="anthropic/claude-sonnet-4-6", raw='{"decisions":[]
     return SimpleNamespace(complete_bounded=complete), calls
 
 
+def _gemini_bounded_client(*, output_tokens=10, model_version="gemini-3.5-flash-lite", transport=None):
+    from memorymaster.dreaming.providers import GeminiBoundedClient
+
+    calls = []
+
+    def fake_transport(url, payload, headers, timeout):
+        calls.append((url, payload, headers, timeout))
+        return 200, {
+            "modelVersion": model_version,
+            "candidates": [{"content": {"parts": [{"text": '{"candidates":[]}'}]}}],
+            "usageMetadata": {"promptTokenCount": 12, "candidatesTokenCount": output_tokens},
+        }, {}
+
+    client = GeminiBoundedClient(
+        model="gemini-api/gemini-3.5-flash-lite", api_key="test-key",
+        transport=transport or fake_transport, sleep=lambda _: None,
+    )
+    return client, calls
+
+
+@pytest.mark.parametrize("output_tokens", [1499, 1500, 1501])
+def test_gemini_bounded_response_enforces_output_cap(output_tokens):
+    from memorymaster.dreaming.providers import _bounded_response
+
+    client, _ = _gemini_bounded_client(output_tokens=output_tokens)
+    response = client.complete_bounded("fixture prompt", max_output_tokens=1500)
+    if output_tokens <= 1500:
+        assert _bounded_response(response, client.model, 10_000, 1500) is None
+    else:
+        with pytest.raises(ProviderConfigError) as caught:
+            _bounded_response(response, client.model, 10_000, 1500)
+        assert caught.value.reason == "token_bound_exceeded"
+        assert caught.value.output_tokens == output_tokens
+
+
+def test_gemini_complete_bounded_sends_cap_and_parses_usage():
+    client, calls = _gemini_bounded_client()
+    response = client.complete_bounded("fixture prompt", max_output_tokens=1500)
+    url, payload, headers, timeout = calls[0]
+    assert "/models/gemini-3.5-flash-lite:generateContent?" in url
+    assert payload["generationConfig"]["maxOutputTokens"] == 1500
+    assert payload["generationConfig"]["responseMimeType"] == "application/json"
+    assert payload["contents"] == [{"parts": [{"text": "fixture prompt"}]}]
+    assert headers == {"Content-Type": "application/json"}
+    assert timeout == 90
+    assert (response.text, response.input_tokens, response.output_tokens) == ('{"candidates":[]}', 12, 10)
+    assert response.model == response.observed_model == client.model
+
+
+def test_gemini_complete_uses_a_default_output_cap():
+    client, calls = _gemini_bounded_client()
+    assert client.complete("fixture prompt").text == '{"candidates":[]}'
+    assert calls[0][1]["generationConfig"]["maxOutputTokens"] == 2000
+
+
+@pytest.mark.parametrize("status", [403, 503])
+def test_gemini_bounded_transport_failure_retains_http_status(status):
+    client, _ = _gemini_bounded_client(transport=lambda *_: (status, {"error": {"message": "PRIVATE"}}, {}))
+    with pytest.raises(ProviderCallError) as caught:
+        client.complete_bounded("fixture prompt", max_output_tokens=1500)
+    assert caught.value.http_status == status
+    assert "PRIVATE" not in str(caught.value)
+
+
+def test_gemini_bounded_transport_exception_is_provider_call_error():
+    def transport(*_):
+        raise OSError("PRIVATE")
+
+    client, _ = _gemini_bounded_client(transport=transport)
+    with pytest.raises(ProviderCallError, match="provider request failed") as caught:
+        client.complete_bounded("fixture prompt", max_output_tokens=1500)
+    assert caught.value.http_status == 0
+    assert "PRIVATE" not in str(caught.value)
+
+
+@pytest.mark.parametrize("model_version", [None, "gemini-other"])
+def test_gemini_bounded_response_does_not_invent_observed_model(model_version):
+    from memorymaster.dreaming.providers import _bounded_response
+
+    client, _ = _gemini_bounded_client(model_version=model_version)
+    response = client.complete_bounded("fixture prompt", max_output_tokens=1500)
+    with pytest.raises(ProviderConfigError) as caught:
+        _bounded_response(response, client.model, 10_000, 1500)
+    assert caught.value.reason == "model_mismatch"
+
+
+def test_gemini_bounded_client_runs_bounded_extraction(tmp_path):
+    client, calls = _gemini_bounded_client()
+    extractor = OpenCodeExtractor(model=client.model, client=client, work_dir=tmp_path,
+                                  max_input_tokens=10_000, max_output_tokens=1500, framing_tokens=512)
+    result = extractor.extract([], scope="project:test", capture_hash="fixture")
+    assert result.candidates == ()
+    assert result.usage.model == extractor.last_observed_model == client.model
+    assert (result.usage.input_tokens, result.usage.output_tokens) == (12, 10)
+    assert calls[0][1]["generationConfig"]["maxOutputTokens"] == 1500
+
+
+def test_gemini_bounded_response_counts_thinking_tokens_against_cap():
+    from memorymaster.dreaming.providers import _bounded_response
+
+    body = {
+        "modelVersion": "gemini-3.5-flash-lite",
+        "candidates": [{"content": {"parts": [{"text": '{"candidates":[]}'}]}}],
+        "usageMetadata": {"promptTokenCount": 12, "candidatesTokenCount": 1400, "thoughtsTokenCount": 101},
+    }
+    client, _ = _gemini_bounded_client(transport=lambda *_: (200, body, {}))
+    response = client.complete_bounded("fixture prompt", max_output_tokens=1500)
+    with pytest.raises(ProviderConfigError) as caught:
+        _bounded_response(response, client.model, 10_000, 1500)
+    assert caught.value.reason == "token_bound_exceeded"
+    assert caught.value.output_tokens == 1501
+
+
+@pytest.mark.parametrize("usage", [
+    None, {}, {"promptTokenCount": 12},
+    {"promptTokenCount": -1, "candidatesTokenCount": 10},
+    {"promptTokenCount": 12, "candidatesTokenCount": "10"},
+    {"promptTokenCount": 12, "candidatesTokenCount": 10, "thoughtsTokenCount": True},
+])
+def test_gemini_bounded_client_rejects_missing_or_invalid_usage(usage):
+    from memorymaster.dreaming.providers import ProviderOutputError
+
+    body = {"candidates": [{"content": {"parts": [{"text": '{}'}]}}], "usageMetadata": usage}
+    client, _ = _gemini_bounded_client(transport=lambda *_: (200, body, {}))
+    with pytest.raises(ProviderOutputError, match="token usage"):
+        client.complete_bounded("fixture prompt", max_output_tokens=1500)
+
+
+def test_gemini_bounded_client_requires_key_without_dispatch():
+    from memorymaster.dreaming.providers import GeminiBoundedClient
+
+    client = GeminiBoundedClient(model="gemini-api/gemini-3.5-flash-lite", api_key="",
+                                 transport=lambda *_: pytest.fail("missing-key request dispatched"))
+    with pytest.raises(ProviderConfigError) as caught:
+        client.complete_bounded("fixture prompt", max_output_tokens=1500)
+    assert caught.value.reason == "missing_api_key"
+
+
+@pytest.mark.parametrize("model", ["anthropic/claude-sonnet-4-6", "gemini-3.5-flash-lite", "gemini-api/"])
+def test_gemini_bounded_client_rejects_incompatible_models_before_dispatch(model):
+    from memorymaster.dreaming.providers import GeminiBoundedClient
+
+    with pytest.raises(ProviderConfigError) as caught:
+        GeminiBoundedClient(model=model, api_key="test-key", transport=lambda *_: pytest.fail("invalid route dispatched"))
+    assert caught.value.reason == "invalid_model"
+
+
 def test_backfill_sonnet_requires_real_bounded_transport_before_dispatch(tmp_path):
     class Unsupported:
         def complete(self, prompt):
