@@ -40,6 +40,16 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _instant_key(instant: datetime) -> int:
+    """Exact UTC microseconds, including instants outside UTC's calendar range."""
+    elapsed = instant - datetime.min.replace(tzinfo=timezone.utc)
+    return (elapsed.days * 86400 + elapsed.seconds) * 1_000_000 + elapsed.microseconds
+
+
+def _boundary_key(entry: list) -> tuple[int, int, str]:
+    return _instant_key(datetime.fromisoformat(entry[0])), entry[1], entry[0]
+
+
 def _validity_instants(rows) -> list[tuple[int, datetime]]:
     """Compare accepted ISO forms as instants without rewriting support fields."""
     result = []
@@ -50,7 +60,11 @@ def _validity_instants(rows) -> list[tuple[int, datetime]]:
             except ValueError:
                 continue  # Malformed persisted bounds are ineligible at rehydration.
             if instant is not None:
-                result.append((row["id"], instant.astimezone(timezone.utc)))
+                # Normalize display hints only when the UTC calendar can hold
+                # them. Fence ordering uses integer instants in either case.
+                if 0 <= _instant_key(instant) <= _instant_key(datetime.max.replace(tzinfo=timezone.utc)):
+                    instant = instant.astimezone(timezone.utc)
+                result.append((row["id"], instant))
     return result
 
 
@@ -357,24 +371,24 @@ def _read_claims(
                 raise ValueError("invalid_scan_fence")
             watched_set = set(watched)
             watched_sql = ",".join("?" for _ in watched) or "NULL"
-            # Protected continuity metadata holds already-normalized future
-            # boundaries. Never reload every watched row to compare ISO forms.
+            # Protected continuity metadata holds future boundaries ordered by
+            # integer instants, including bounds beyond the UTC calendar.
+            # Never reload every watched row to compare ISO forms.
             # Older fences lack this contract and must fail closed for rebuild.
             temporal_boundaries = (prior_fence or {}).get("temporal_boundaries")
-            if ((prior_fence or {}).get("temporal_version") != 1
+            if ((prior_fence or {}).get("temporal_version") != 2
                     or not isinstance(temporal_boundaries, list)
                     or len(temporal_boundaries) > 2 * MAX_CLAIMS
                     or any(not isinstance(entry, list) or len(entry) != 2
                            or not isinstance(entry[0], str)
-                           or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}\+00:00", entry[0])
                            or type(entry[1]) is not int or entry[1] not in watched_set
                            for entry in temporal_boundaries)
-                    or temporal_boundaries != sorted(temporal_boundaries)):
+                    or temporal_boundaries != sorted(temporal_boundaries, key=_boundary_key)):
                 raise ValueError("incremental_temporal_fence_unavailable")
-            lower = bisect_left(temporal_boundaries, instant.astimezone(timezone.utc).isoformat(timespec="microseconds"),
-                                key=lambda entry: entry[0])
-            upper = bisect_right(temporal_boundaries, as_of.astimezone(timezone.utc).isoformat(timespec="microseconds"),
-                                 key=lambda entry: entry[0])
+            lower = bisect_left(temporal_boundaries, _instant_key(instant),
+                                key=lambda entry: _boundary_key(entry)[0])
+            upper = bisect_right(temporal_boundaries, _instant_key(as_of),
+                                 key=lambda entry: _boundary_key(entry)[0])
             temporal_ids = sorted({id for _, id in temporal_boundaries[lower:upper]})
             temporal_boundaries = temporal_boundaries[upper:]
             queries = [
@@ -510,8 +524,8 @@ def _read_claims(
         temporal_boundaries = sorted([
             *[entry for entry in temporal_boundaries if entry[1] not in refreshed_ids],
             *[[boundary.isoformat(timespec="microseconds"), id] for id, boundary in _validity_instants(rows)
-              if boundary > as_of],
-        ])
+              if _instant_key(boundary) > _instant_key(as_of)],
+        ], key=_boundary_key)
         fingerprint = {
             "data_version": conn.execute("PRAGMA data_version").fetchone()[0],
             "next_temporal_boundary": (datetime.fromisoformat(temporal_boundaries[0][0]).isoformat()
@@ -528,7 +542,7 @@ def _read_claims(
                 "max_seen_id": max([max_seen_id or 0, *watched_ids]),
                 "complete": complete and len(watched_ids) <= MAX_CLAIMS and source_cursor is not None,
                 "source_cursor": source_cursor,
-                "temporal_version": 1,
+                "temporal_version": 2,
                 "temporal_boundaries": temporal_boundaries,
             }
             complete = complete and len(watched_ids) <= MAX_CLAIMS

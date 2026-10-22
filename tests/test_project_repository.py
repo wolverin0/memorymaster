@@ -148,6 +148,81 @@ def test_decision_utc_order_handles_calendar_extremes(project_config, field):
         assert record["text"].startswith(f"{dates[number - 1][:10]} ({label}):")
 
 
+@pytest.mark.parametrize("field,value,eligible", [
+    ("valid_from", "0001-01-01T00:00:00+14:00", True),
+    ("valid_until", "9999-12-31T23:59:59-12:00", True),
+    ("valid_until", "0001-01-01T00:00:00+14:00", False),
+    ("valid_from", "9999-12-31T23:59:59-12:00", False),
+])
+def test_validity_calendar_extremes_preserve_projection_and_incremental_support(
+    project_config, monkeypatch, field, value, eligible,
+):
+    from memorymaster.core.models import validate_temporal_fields
+    from memorymaster.profile import project_repository as repository
+    from memorymaster.profile.project_projection import build_project_projection
+
+    validate_temporal_fields(None, value if field == "valid_from" else None,
+                             value if field == "valid_until" else None)
+    claim(project_config, **{field: value})
+    claim(project_config, 2, text="Unrelated supported decision")
+    instant = "2026-10-22T09:00:00+00:00"
+    monkeypatch.setattr(repository, "utc_now", lambda: instant)
+    projection = build_project_projection(project_config)
+    assert "Unrelated supported decision" in projection.payload
+    baseline = load_project_snapshot(project_config)
+    assert baseline["complete"]
+    assert ("claim:1" in baseline["coverage"]) is eligible
+    assert "claim:2" in baseline["coverage"]
+    assert baseline["next_temporal_boundary"] == (value if value.startswith("9999") else None)
+
+    instant = "2026-10-22T09:01:00+00:00"
+    incremental = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
+    full = load_project_snapshot(project_config)
+    assert incremental["complete"] and full["complete"]
+    assert incremental["coverage"] == full["coverage"]
+    assert incremental["next_temporal_boundary"] == baseline["next_temporal_boundary"]
+
+    if eligible:
+        # Equivalent instants with different source spellings still change support identity.
+        with sqlite3.connect(project_config.db_path) as conn:
+            conn.execute(f"UPDATE claims SET {field}=? WHERE id=1", (value[:19] + ".000000" + value[19:],))
+        updated = snapshot_since(project_config, incremental["coverage"], incremental["read_at"])
+        assert updated["complete"]
+        assert updated["coverage"] == load_project_snapshot(project_config)["coverage"]
+        assert updated["coverage"]["claim:1"]["hash"] != baseline["coverage"]["claim:1"]["hash"]
+        assert updated["coverage"]["claim:2"] == baseline["coverage"]["claim:2"]
+
+
+@pytest.mark.parametrize("field,boundary,before,at", [
+    ("valid_from", "0001-01-01T00:00:00+14:00",
+     "0001-01-01T00:00:00+15:00", "0001-01-01T00:00:00+14:00"),
+    ("valid_until", "9999-12-31T23:59:59-12:00",
+     "9999-12-31T23:59:59-11:00", "9999-12-31T23:59:59-12:00"),
+])
+def test_incremental_validity_fences_cross_outside_utc_calendar(
+    project_config, monkeypatch, field, boundary, before, at,
+):
+    from memorymaster.profile import project_repository as repository
+
+    claim(project_config, **{field: boundary})
+    claim(project_config, 2, text="Unrelated supported decision")
+    instant = before
+    monkeypatch.setattr(repository, "utc_now", lambda: instant)
+    baseline = load_project_snapshot(project_config)
+    assert baseline["complete"]
+    assert baseline["next_temporal_boundary"] == boundary
+    assert ("claim:1" in baseline["coverage"]) is (field == "valid_until")
+
+    instant = at
+    incremental = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
+    full = load_project_snapshot(project_config)
+    assert incremental["complete"] and full["complete"]
+    assert incremental["coverage"] == full["coverage"]
+    assert ("claim:1" in incremental["coverage"]) is (field == "valid_from")
+    assert incremental["coverage"]["claim:2"] == baseline["coverage"]["claim:2"]
+    assert incremental["next_temporal_boundary"] is None
+
+
 @pytest.mark.parametrize("field", ["valid_until", "valid_from"])
 def test_temporal_boundary_crossed_during_snapshot_is_not_lost(project_config, monkeypatch, field):
     from memorymaster.profile import project_repository as repository
@@ -708,12 +783,16 @@ def test_incremental_temporal_fence_updates_only_changed_and_crossed_rows(projec
     }
 
 
-def test_legacy_temporal_fence_fails_closed_without_source_scan(project_config, monkeypatch):
+@pytest.mark.parametrize("legacy", ["missing_boundaries", "utc_string_order"])
+def test_legacy_temporal_fence_fails_closed_without_source_scan(project_config, monkeypatch, legacy):
     from memorymaster.profile import project_repository as repository
 
     claim(project_config)
     baseline = load_project_snapshot(project_config)
-    baseline["coverage"]["__scan_fence__"].pop("temporal_boundaries")
+    if legacy == "missing_boundaries":
+        baseline["coverage"]["__scan_fence__"].pop("temporal_boundaries")
+    else:
+        baseline["coverage"]["__scan_fence__"]["temporal_version"] = 1
     statements = []
     original_connect = sqlite3.connect
 
