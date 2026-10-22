@@ -31,12 +31,16 @@ def test_recall_template_sanitizes_json_prompt_before_retrieval(tmp_path, monkey
 
 
 def test_session_start_template_sanitizes_log_and_context(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     root = Path(__file__).resolve().parents[1]
     template = root / "memorymaster/config_templates/hooks/memorymaster-session-start.py"
     ns = runpy.run_path(str(template))
     ns["_log"]("error", message="prompt\udc8f")
-    log = Path.home() / ".memorymaster/hook_state/hook.log"
-    assert "message=prompt\ufffd" in log.read_text(encoding="utf-8")
+    log = tmp_path / ".memorymaster/hook_state/hook.log"
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    assert lines[0].endswith("event=error message=prompt\ufffd")
     main_globals = ns["main"].__globals__
     db = tmp_path / "disposable.db"
     import sqlite3
