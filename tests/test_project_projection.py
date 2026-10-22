@@ -2,6 +2,8 @@ from dataclasses import replace
 import json
 import sqlite3
 
+import pytest
+
 from test_project_repository import claim, project_config as _project_config
 
 
@@ -14,6 +16,106 @@ from memorymaster.profile.project_projection import (
 )
 
 project_config = _project_config
+
+
+@pytest.mark.parametrize("changed_count", [0, 1, 3])
+def test_session_start_incremental_counts_only_changed_rows_and_citations(project_config, monkeypatch, changed_count):
+    from memorymaster.profile import project_repository as repository
+    from memorymaster.profile import project_sessions as sessions
+
+    monkeypatch.setattr(repository, "utc_now", lambda: "2026-10-22T09:00:00.750000+00:00")
+    for number in range(1, 41):
+        claim(project_config, number, text=f"Decision {number}", updated_at="2026-10-22T09:00:00.100000+00:00")
+    projection = build_project_projection(project_config)
+    with sqlite3.connect(project_config.db_path) as connection:
+        for number in range(1, changed_count + 1):
+            connection.execute(
+                "UPDATE claims SET text=?,version=2,updated_at=? WHERE id=?",
+                (f"Changed decision {number}", projection.manifest["read_at"], number),
+            )
+            connection.execute("UPDATE citations SET excerpt='Updated evidence' WHERE claim_id=?", (number,))
+    loaded = {"claims": [], "citations": []}
+    statements = []
+    original_row = sqlite3.Row
+    original_connect = sqlite3.connect
+
+    def traced_connect(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    def counting_row(cursor, values):
+        row = original_row(cursor, values)
+        if "text" in row.keys() and "id" in row.keys():
+            loaded["claims"].append(row["id"])
+        elif "excerpt" in row.keys() and "claim_id" in row.keys():
+            loaded["citations"].append(row["claim_id"])
+        return row
+
+    monkeypatch.setattr(repository.sqlite3, "Row", counting_row)
+    monkeypatch.setattr(repository.sqlite3, "connect", traced_connect)
+    result = sessions.record_project_session_start(project_config, "incremental", projection=projection.manifest)
+    assert result["status"] == "ok"
+    expected = list(range(1, changed_count + 1))
+    assert loaded == {"claims": expected, "citations": expected}
+    with original_connect(project_config.db_path) as connection:
+        for statement in statements:
+            if not statement.startswith("SELECT"):
+                continue
+            plan = " ".join(row[3] for row in connection.execute("EXPLAIN QUERY PLAN " + statement))
+            assert not any(f"SCAN {table}" in plan for table in ("claims", "citations", "changes")), plan
+            if "_source_bytes FROM claims" in statement:
+                assert "INTEGER PRIMARY KEY (rowid=?)" in plan
+            if "FROM citations" in statement:
+                assert "idx_project_citations_claim (claim_id=?)" in plan
+    state = sessions.read_session_state(project_config)
+    baseline = next(iter(state["baselines"].values()))
+    assert len([key for key in baseline if key.startswith("claim:")]) == 40
+    for number in range(changed_count + 1, 41):
+        assert baseline[f"claim:{number}"] == projection.manifest["source_coverage"][f"claim:{number}"]
+    assert len(result["delta"].text.encode()) <= 500
+    assert len(projection.markdown.encode()) <= 2200
+    for entry in result["delta"].supports:
+        support = entry["support"]
+        assert support == baseline[f"claim:{support['id']}"]
+
+
+def test_refreshed_projection_rehydrates_only_displayed_prior_session_delta(project_config, monkeypatch):
+    from memorymaster.profile import project_repository as repository
+    from memorymaster.profile import project_sessions as sessions
+
+    for number in range(1, 41):
+        claim(project_config, number, text=f"Decision {number}")
+    before = build_project_projection(project_config)
+    assert sessions.record_project_session_start(project_config, "before", projection=before.manifest)["status"] == "ok"
+    assert sessions.record_project_session_end(project_config, "before")
+    with sqlite3.connect(project_config.db_path) as connection:
+        connection.execute("UPDATE claims SET text='Changed decision with details ' || id || ' ' || text,version=2")
+    refreshed = build_project_projection(project_config)
+    loaded = {"claims": [], "citations": []}
+    original_row = sqlite3.Row
+
+    def counting_row(cursor, values):
+        row = original_row(cursor, values)
+        if "text" in row.keys() and "id" in row.keys():
+            loaded["claims"].append(row["id"])
+        elif "excerpt" in row.keys() and "claim_id" in row.keys():
+            loaded["citations"].append(row["claim_id"])
+        return row
+
+    monkeypatch.setattr(repository.sqlite3, "Row", counting_row)
+    result = sessions.record_project_session_start(project_config, "after", projection=refreshed.manifest)
+    assert result["status"] == "ok"
+    delta = result["delta"]
+    assert delta.supports and "Changed decision" in delta.text
+    assert len(loaded["claims"]) <= len(delta.supports) + 1 < 40
+    assert loaded["claims"] == loaded["citations"]
+    for entry in delta.supports:
+        assert entry["support"] == refreshed.manifest["source_coverage"][f"claim:{entry['support']['id']}"]
+    state = sessions.read_session_state(project_config)
+    assert state["baselines"][next(record["baseline"] for record in state["active"].values())] == refreshed.manifest[
+        "source_coverage"
+    ]
 
 
 def test_exact_manifest_and_per_bullet_invalidation(project_config):

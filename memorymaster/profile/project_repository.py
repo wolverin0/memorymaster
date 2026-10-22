@@ -275,6 +275,7 @@ def _read_claims(
     changed_since: str | None = None,
     validation: bool = False,
     max_seen_id: int | None = None,
+    prior_fence: dict | None = None,
 ) -> tuple[dict, bool, dict]:
     limit = 64 if validation else MAX_CLAIMS
     citation_limit = 256 if validation else MAX_CITATIONS
@@ -289,35 +290,67 @@ def _read_claims(
         conn.execute("PRAGMA query_only=ON")
         conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
         conn.execute("BEGIN")
+        try:
+            clock = conn.execute("SELECT epoch,seq FROM project_source_clock WHERE singleton=1").fetchone()
+            source_cursor = {"epoch": clock[0], "seq": clock[1]} if clock else None
+        except sqlite3.OperationalError:
+            source_cursor = None
         scopes = (config.scope, *config.aliases)
         params: list[Any] = [config.tenant_id, *scopes]
         where = "tenant_id IS ? AND scope IN (" + ",".join("?" for _ in scopes) + ")"
-        if ids is not None:
-            clauses = []
-            if ids:
-                clauses.append("id IN (" + ",".join("?" for _ in ids) + ")")
-                params.extend(ids)
-            if changed_since:
-                # Store writes use whole UTC seconds; read_at retains microseconds.
-                # A bare second prefix includes every same-second timestamp suffix.
-                instant = datetime.fromisoformat(changed_since.replace("Z", "+00:00"))
-                if instant.tzinfo is None:
-                    raise ValueError("unqualified_baseline_time")
-                lower_bound = instant.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-                clauses.extend(
-                    [
-                        "updated_at >= ?",
-                        "valid_from >= ?",
-                        "EXISTS (SELECT 1 FROM citations c WHERE c.claim_id=claims.id AND c.created_at >= ?)",
-                    ]
+        changed_ids = []
+        if changed_since:
+            cursor = (prior_fence or {}).get("source_cursor")
+            if (not source_cursor or not isinstance(cursor, dict)
+                    or cursor.get("epoch") != source_cursor["epoch"]
+                    or type(cursor.get("seq")) is not int
+                    or not 0 <= cursor["seq"] <= source_cursor["seq"]):
+                raise ValueError("incremental_cursor_unavailable")
+            # Timestamp ranges cover ordinary writes and wall-clock eligibility.
+            # The transactional cursor also covers late commits, deletes, scope
+            # moves and citation edits without a claim timestamp change.
+            instant = datetime.fromisoformat(changed_since.replace("Z", "+00:00"))
+            if instant.tzinfo is None:
+                raise ValueError("unqualified_baseline_time")
+            # Whole-second and old-timestamp writes are covered by the cursor;
+            # flooring here would reload unchanged rows from the same second.
+            lower_bound = instant.astimezone(timezone.utc).isoformat()
+            now = utc_now()
+            if instant > datetime.fromisoformat(now.replace("Z", "+00:00")):
+                raise ValueError("future_baseline_time")
+            watched = (prior_fence or {}).get("watched_ids", [])
+            if len(watched) > MAX_CLAIMS or any(type(id) is not int or id <= 0 for id in watched):
+                raise ValueError("invalid_scan_fence")
+            watched_sql = ",".join("?" for _ in watched) or "NULL"
+            queries = [
+                "SELECT changes.claim_id AS id FROM project_source_changes changes "
+                "INDEXED BY idx_project_source_changes_seq "
+                "LEFT JOIN claims ON claims.id=changes.claim_id "
+                f"WHERE changes.seq > ? AND changes.seq <= ? AND (({where}) "
+                f"OR changes.claim_id IN ({watched_sql}))",
+            ]
+            changes_params: list[Any] = [cursor["seq"], source_cursor["seq"], *params, *watched]
+            for column, index in (("updated_at", "updated"), ("valid_from", "valid_from"),
+                                  ("valid_until", "valid_until")):
+                temporal = column != "updated_at"
+                queries.append(
+                    f"SELECT id FROM claims INDEXED BY idx_project_claims_{index} "
+                    f"WHERE {where} AND {column} >= ?" + (f" AND {column} <= ?" if temporal else "")
                 )
-                params.extend([lower_bound] * 3)
-            if max_seen_id is not None:
-                clauses.append("id > ?")
-                params.append(max_seen_id)
-            if not clauses:
-                return {}, True, {"data_version": conn.execute("PRAGMA data_version").fetchone()[0]}
-            where += " AND (" + " OR ".join(clauses) + ")"
+                changes_params.extend([*params, lower_bound, *([now] if temporal else [])])
+            queries.append(f"SELECT id FROM claims NOT INDEXED WHERE {where} AND id > ?")
+            changes_params.extend([*params, max_seen_id or 0])
+            changed_ids = [row[0] for row in conn.execute(
+                "SELECT id FROM (" + " UNION ".join(queries) + ") ORDER BY id LIMIT ?",
+                [*changes_params, limit + 1],
+            )]
+            if len(changed_ids) > limit:
+                return {}, False, {}
+            ids = sorted(set(ids or ()) | set(changed_ids))
+        if ids is not None:
+            # An empty IN set reads neither claim payloads nor citations.
+            where += " AND id IN (" + (",".join("?" for _ in ids) or "NULL") + ")"
+            params.extend(ids)
         # Builder scans watch bounded all-status IDs. Ineligible rows can become
         # eligible without a reliable post-commit timestamp; their IDs are only
         # protected continuity metadata, never factual support or public output.
@@ -354,8 +387,9 @@ def _read_claims(
             f"CASE WHEN ({size}) <= {MAX_FIELD_BYTES} THEN {name} ELSE NULL END AS {name}" if name != "id" else name
             for name in names
         )
+        claim_table = "claims NOT INDEXED" if ids is not None else "claims"
         cursor = conn.execute(
-            f"SELECT {columns}, ({size}) AS _source_bytes FROM claims WHERE {where} ORDER BY id LIMIT ?",
+            f"SELECT {columns}, ({size}) AS _source_bytes FROM {claim_table} WHERE {where} ORDER BY id LIMIT ?",
             [*params, limit + 1],
         )
         rows = []
@@ -364,7 +398,8 @@ def _read_claims(
             if len(rows) >= limit:
                 fingerprint = {"source_bytes": total}
                 if not validation:
-                    watched = sorted(set(ids or ()) | {int(value["id"]) for value in rows})
+                    watched = sorted(set((prior_fence or {}).get("watched_ids", ()))
+                                     | set(ids or ()) | {int(value["id"]) for value in rows})
                     fingerprint["scan_fence"] = {
                         "kind": "scan_fence",
                         "watched_ids": watched[:MAX_CLAIMS],
@@ -386,6 +421,7 @@ def _read_claims(
         citations: dict[int, list] = {}
         if ids_read:
             placeholders = ",".join("?" for _ in ids_read)
+            citation_index = " INDEXED BY idx_project_citations_claim" if source_cursor else ""
             citation_size = "length(CAST(COALESCE(source,'')||COALESCE(locator,'')||COALESCE(excerpt,'') AS BLOB))"
             citation_cursor = conn.execute(
                 "SELECT id,claim_id,"
@@ -394,7 +430,7 @@ def _read_claims(
                     for name in ("source", "locator", "excerpt")
                 )
                 + f",{citation_size} AS _source_bytes "
-                f"FROM citations WHERE claim_id IN ({placeholders}) ORDER BY id LIMIT ?",
+                f"FROM citations{citation_index} WHERE claim_id IN ({placeholders}) ORDER BY id LIMIT ?",
                 [*ids_read, citation_limit + 1],
             )
             for index, citation in enumerate(citation_cursor):
@@ -428,14 +464,17 @@ def _read_claims(
             "data_version": conn.execute("PRAGMA data_version").fetchone()[0],
             "next_temporal_boundary": min(boundaries) if boundaries else None,
             "source_bytes": total,
+            "changed_ids": changed_ids,
         }
         if not validation:
-            watched_ids = sorted(set(ids or ()) | {int(row["id"]) for row in rows})
+            watched_ids = sorted(set((prior_fence or {}).get("watched_ids", ()))
+                                 | set(ids or ()) | {int(row["id"]) for row in rows})
             fingerprint["scan_fence"] = {
                 "kind": "scan_fence",
                 "watched_ids": watched_ids[:MAX_CLAIMS],
                 "max_seen_id": max([max_seen_id or 0, *watched_ids]),
-                "complete": complete and len(watched_ids) <= MAX_CLAIMS,
+                "complete": complete and len(watched_ids) <= MAX_CLAIMS and source_cursor is not None,
+                "source_cursor": source_cursor,
             }
             complete = complete and len(watched_ids) <= MAX_CLAIMS
         return items, complete, fingerprint
@@ -469,19 +508,19 @@ def load_project_snapshot(
         ids = claim_ids
         prior_fence = None
         if coverage is not None:
+            if not changed_since:
+                raise ValueError("incremental_read_time_unavailable")
             prior_fence = coverage.get("__scan_fence__")
-            ids = sorted(
-                set(int(key.split(":", 1)[1]) for key in coverage if key.startswith("claim:"))
-                | set(prior_fence.get("watched_ids", ()) if isinstance(prior_fence, dict) else ())
-            )
-            if any(type(id) is not int or id <= 0 for id in ids):
-                raise ValueError("invalid_scan_fence")
+            # Coverage already holds unchanged support hashes. Only explicit
+            # display supports and indexed changes need source materialization.
+            ids = claim_ids or []
         items, complete, fingerprints = _read_claims(
             config,
             ids=ids,
             changed_since=changed_since,
             validation=validation,
             max_seen_id=prior_fence.get("max_seen_id") if isinstance(prior_fence, dict) else None,
+            prior_fence=prior_fence,
         )
         if coverage is not None and (not prior_fence or not prior_fence.get("complete")):
             complete = False
@@ -496,7 +535,12 @@ def load_project_snapshot(
     items.update((card["key"], card) for card in cards.values())
     result.update(items=items, complete=complete and ledger_complete, fingerprints=fingerprints)
     result["next_temporal_boundary"] = fingerprints.get("next_temporal_boundary")
-    result["coverage"] = {key: item["support"] for key, item in items.items() if item.get("open", True)}
+    carried = {key: value for key, value in (coverage or {}).items() if key.startswith("claim:")}
+    for id in fingerprints.pop("changed_ids", []):
+        carried.pop(f"claim:{id}", None)
+    result["coverage"] = {**carried, **{
+        key: item["support"] for key, item in items.items() if item.get("open", True)
+    }}
     fence = fingerprints.pop("scan_fence", None)
     if fence is not None:
         fence["complete"] = fence["complete"] and complete

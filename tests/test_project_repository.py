@@ -1,4 +1,6 @@
 from dataclasses import replace
+from datetime import datetime, timezone
+from importlib import import_module
 import json
 import os
 import sqlite3
@@ -35,6 +37,7 @@ def project_config(tmp_path):
             created_at TEXT,updated_at TEXT,event_time TEXT,valid_from TEXT,valid_until TEXT);
             CREATE TABLE citations(id INTEGER PRIMARY KEY,claim_id INTEGER,source TEXT,
             locator TEXT,excerpt TEXT,created_at TEXT);""")
+        import_module("memorymaster.stores.migrations.0029_project_source_cursor").apply_sqlite(conn)
     ledger = tmp_path / "ledger"
     ledger.mkdir()
     (ledger / "tasks.json").write_text(json.dumps({"complete": True, "tasks": []}))
@@ -163,10 +166,23 @@ def test_oversized_citation_cannot_hide_sensitive_or_generated_payload(project_c
     assert not snapshot["complete"]
 
 
-def test_incremental_includes_temporal_boundary_without_row_edit(project_config):
-    claim(project_config, valid_from="2026-10-01T00:00:00+00:00")
-    snapshot = snapshot_since(project_config, {}, "2026-09-30T00:00:00+00:00")
+def test_incremental_includes_temporal_boundary_without_row_edit(project_config, monkeypatch):
+    from memorymaster.profile import project_repository as repository
+
+    now = "2026-10-22T09:00:00+00:00"
+    original_current = repository.claim_is_temporally_current
+    monkeypatch.setattr(repository, "utc_now", lambda: now)
+    monkeypatch.setattr(repository, "claim_is_temporally_current", lambda row: original_current(
+        row, now=datetime.fromisoformat(now).astimezone(timezone.utc)))
+    claim(project_config, valid_from="2026-10-22T09:01:00+00:00")
+    claim(project_config, 2, valid_until="2026-10-22T09:01:00+00:00")
+    baseline = load_project_snapshot(project_config)
+    assert "claim:1" not in baseline["coverage"] and "claim:2" in baseline["coverage"]
+    now = "2026-10-22T09:02:00+00:00"
+    snapshot = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
     assert "claim:1" in snapshot["coverage"]
+    assert "claim:2" not in snapshot["coverage"]
+    assert snapshot["complete"]
     assert "next_temporal_boundary" in snapshot
 
 
@@ -253,6 +269,58 @@ def test_incremental_fence_finds_first_citation_without_claim_timestamp_edit(pro
     assert current["complete"]
 
 
+@pytest.mark.parametrize("mutation", [
+    "DELETE FROM claims WHERE id=1",
+    "DELETE FROM citations WHERE claim_id=1",
+    "UPDATE claims SET scope='project:other' WHERE id=1",
+    "UPDATE claims SET tenant_id='other' WHERE id=1",
+    "UPDATE claims SET id=3 WHERE id=1",
+])
+def test_incremental_withdraws_deleted_or_unauthorized_supports(project_config, mutation):
+    claim(project_config)
+    claim(project_config, 2)
+    baseline = load_project_snapshot(project_config)
+    with sqlite3.connect(project_config.db_path) as connection:
+        connection.execute(mutation)
+    current = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
+    assert current["complete"]
+    assert "claim:1" not in current["coverage"]
+    assert current["coverage"]["claim:2"] == baseline["coverage"]["claim:2"]
+
+
+@pytest.mark.parametrize("invalid_cursor", [None, {"epoch": "another-database", "seq": 0},
+                                           {"epoch": "same", "seq": 1000000}])
+def test_incremental_missing_or_rewound_cursor_fails_closed_without_source_scan(project_config, monkeypatch, invalid_cursor):
+    from memorymaster.profile import project_repository as repository
+
+    claim(project_config)
+    baseline = load_project_snapshot(project_config)
+    if invalid_cursor and invalid_cursor["epoch"] == "same":
+        invalid_cursor = {**invalid_cursor, "epoch": baseline["coverage"]["__scan_fence__"]["source_cursor"]["epoch"]}
+    baseline["coverage"]["__scan_fence__"]["source_cursor"] = invalid_cursor
+    statements = []
+    original_connect = sqlite3.connect
+
+    def traced_connect(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(repository.sqlite3, "connect", traced_connect)
+    current = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
+    assert not current["complete"]
+    assert not any("FROM claims" in statement or "FROM citations" in statement for statement in statements)
+
+
+def test_incremental_coverage_requires_read_watermark(project_config):
+    claim(project_config)
+    baseline = load_project_snapshot(project_config)
+    current = load_project_snapshot(project_config, coverage=baseline["coverage"])
+    assert not current["complete"]
+    assert "__scan_fence__" not in current["coverage"]
+    assert not current["items"]
+
+
 def test_incomplete_scan_fence_never_claims_complete_incremental_coverage(project_config, monkeypatch):
     from memorymaster.profile import project_repository as repository
 
@@ -300,9 +368,11 @@ def test_incremental_fence_survives_real_wal_late_commit_without_full_rescan(pro
     current = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
     assert {"claim:1", "claim:2"} <= set(current["coverage"])
     assert current["complete"]
-    row_reads = [statement for statement in statements if "FROM claims WHERE" in statement]
+    row_reads = [statement for statement in statements if "_source_bytes FROM claims" in statement]
     assert len(row_reads) == 1
-    assert "id IN (1)" in row_reads[0] and "id > 1" in row_reads[0]
+    assert "id IN (1,2)" in row_reads[0]
+    selection = next(statement for statement in statements if "FROM project_source_changes" in statement)
+    assert "changes.seq >" in selection and "id > 1" in selection
 
 
 @pytest.mark.parametrize("source", ["claims", "citations"])
@@ -331,13 +401,13 @@ def test_source_cursor_stops_before_materializing_over_byte_budget(project_confi
 
         def fetchall(self):
             rows = super().fetchall()
-            if f"FROM {source} WHERE" in self.query:
+            if f"FROM {source}" in self.query:
                 consumed.extend(rows)
             return rows
 
         def __next__(self):
             row = super().__next__()
-            if f"FROM {source} WHERE" in self.query:
+            if f"FROM {source}" in self.query:
                 consumed.append(row)
             return row
 

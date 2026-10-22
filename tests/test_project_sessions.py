@@ -115,6 +115,23 @@ def test_delta_cap_withdrawal_and_no_false_empty():
     assert "no changes" not in partial.text.lower()
 
 
+def test_delta_stops_loading_after_unavailable_support():
+    current = snapshot(**{f"claim:{number}": {**claim("changed"), "key": f"claim:{number}"}
+                          for number in range(1, 41)})
+    current["items"] = {}
+    loaded = []
+
+    def unavailable(key):
+        loaded.append(key)
+        return None
+
+    delta = sessions.build_session_delta({}, {}, current, item_loader=unavailable)
+    assert len(loaded) == 1
+    assert not delta.supports
+    assert delta.omitted == 40
+    assert "No changes" not in delta.text
+
+
 def test_disabled_state_never_reads_or_writes(tmp_path):
     cfg = config(tmp_path)
     cfg.enabled = False

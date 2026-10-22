@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import re
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -111,7 +112,8 @@ def _short(text: str, size: int) -> str:
 
 
 def build_session_delta(baseline: dict | None, projection_coverage: dict | None,
-                        current: dict, *, diagnostic: str = "") -> SessionDelta:
+                        current: dict, *, diagnostic: str = "",
+                        item_loader: Callable[[str], dict | None] | None = None) -> SessionDelta:
     """Union start and projection differences, with current authorized supports only."""
     def factual(value):
         return {key: support for key, support in value.items() if key.startswith(("claim:", "card:"))}
@@ -133,25 +135,34 @@ def build_session_delta(baseline: dict | None, projection_coverage: dict | None,
         label += "; " + diagnostic
     ordered = sorted(changed)
     chosen: list[tuple[str, dict]] = []
-    omitted = 0
-    for key in ordered:
-        item = items.get(key)
-        if not item or not item.get("support"):
-            omitted += 1
-            continue
-        support = item["support"]
-        reference = f"#{support['id']}" if support.get("kind") == "claim" else str(support["id"])
-        chosen.append((f"- {_short(item.get('text', ''), 110)} [{reference}]", support))
-    # Always reserve explicit omission/withdrawal counts before selecting lines.
+    omitted = len(ordered)
     def render():
         lines = [heading, label, *(line for line, _ in chosen)]
         if not changed and not withdrawn and complete and baseline is not None:
             lines.append("No changes.")
         lines.append(f"withdrawn={withdrawn}; omitted={omitted}")
         return "\n".join(lines)
-    while len(render().encode("utf-8")) > 500 and chosen:
-        chosen.pop()
-        omitted += 1
+
+    for key in ordered:
+        # Once full, later candidates cannot be rendered. Rehydrate at most
+        # the displayed delta supports plus one candidate that does not fit.
+        if len(render().encode("utf-8")) + 12 > 500:
+            break
+        item = items.get(key)
+        if item is None and item_loader is not None:
+            item = item_loader(key)
+            if item is None:
+                break
+        if not item or not item.get("support"):
+            continue
+        support = item["support"]
+        reference = f"#{support['id']}" if support.get("kind") == "claim" else str(support["id"])
+        chosen.append((f"- {_short(item.get('text', ''), 110)} [{reference}]", support))
+        omitted -= 1
+        if len(render().encode("utf-8")) > 500:
+            chosen.pop()
+            omitted += 1
+            break
     text = render()
     if len(text.encode("utf-8")) > 500:
         raise ValueError("delta_budget")
@@ -232,8 +243,23 @@ def record_project_session_start(config, session_id: str, *, projection: dict | 
             coverage = current["coverage"]
             if len(_encoded(coverage)) > MAX_BASELINE_BYTES:
                 return {"status": "baseline_capacity"}
+
+            def load_delta_item(key):
+                if not key.startswith("claim:"):
+                    return None
+                from memorymaster.profile.project_repository import _read_claims
+
+                try:
+                    items, complete, _ = _read_claims(config, ids=[int(key.split(":", 1)[1])], validation=True)
+                except (sqlite3.Error, OSError, ValueError):
+                    return None
+                item = items.get(key) if complete else None
+                # A racing write cannot substitute support for the snapshot
+                # being recorded or leave stale prose in the delta manifest.
+                return item if item and item["support"] == coverage.get(key) else None
+
             delta = build_session_delta(baseline, projection.get("source_coverage") if projection else None,
-                                        current, diagnostic=diagnostic)
+                                        current, diagnostic=diagnostic, item_loader=load_delta_item)
             if duplicate:
                 return {"status": "duplicate", "delta": delta}
             with project_lock(lock, timeout=0.05) as acquired:

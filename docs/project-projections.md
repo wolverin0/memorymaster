@@ -1,5 +1,5 @@
-<!-- doc-head: AO-3 projection configuration, rollback and partial source acceptance -->
-<!-- Covers: default-off gates, pilot limits, resumed verification and incremental-read gap. -->
+<!-- doc-head: AO-3 configuration, incremental source cursor and local acceptance -->
+<!-- Covers: default-off gates, pilot limits, incremental reads and dated source verification. -->
 <!-- Read when: reviewing or later authorizing the AO-3 pilot; no installation is implied. -->
 <!-- /doc-head -->
 # Project projections
@@ -172,7 +172,7 @@ Final suite counts and commands are recorded in the task close report.
 
 ### Resumed source checks, 2026-10-22
 
-Source acceptance remains **partial** pending the round-two incremental-read
+At the end of the previous resume, source acceptance was **partial** pending the round-two incremental-read
 criterion. `load_project_snapshot` unions every watched claim ID into the
 SessionStart lookup; `_read_claims` then reloads those rows and their citations.
 The query is bounded and uses primary-key lookups, but does not reuse unchanged
@@ -244,3 +244,75 @@ orphan witnesses). GitNexus reported `INDEX_MISSING`; deferred tool discovery
 exposed neither GitNexus nor Serena. Scoped source references and the reviewed
 diff covered the builder's CLI/refresh callers before committing. Branch
 freshness passed with zero commits behind `origin/main`.
+
+## Round-three incremental collection (T-1703)
+
+The incremental source criterion now passes locally. The first red run of
+`test_session_start_incremental_counts_only_changed_rows_and_citations`
+failed all three cases: forty known claims caused forty claim and citation
+loads even with zero, one or three changes. The corrected cases load exactly
+zero, one or three claim rows and their citations, including overlapping claim
+and citation edits, while retaining unchanged support hashes. Unchanged rows
+from the same second are also excluded. SQL query plans assert primary-key
+payload lookups and indexed citation lookups without scanning the source tables.
+
+The previous timestamp-only gap demonstrated the need for versioned migration
+29: a singleton epoch/sequence clock and one latest-change row per claim,
+including deletion tombstones. Transactional triggers track claim and citation
+inserts, updates, deletes and identity moves without storing source prose.
+This is bounded per claim identity rather than an append-only event history.
+Indexed sequence changes are unioned with indexed inclusive `updated_at` and
+temporal-boundary ranges and new IDs, then deduplicated before loading payloads.
+The same read-only SQLite transaction captures the clock, selected IDs, claims
+and citations. Coverage carries unchanged manifest support hashes and removes
+changed identities before adding currently eligible supports.
+
+The source-load cost is O(N + R): N unique changed claims and their citations,
+plus R supports needed for prior-session delta prose when a refreshed
+projection already includes those changes. Lazy delta loading stops at the
+500-byte output limit or the first unavailable support, with at most one
+additional candidate. A forty-claim refreshed-projection regression counts
+those loads against the rendered delta supports. The shared projection keeps
+its 2,200-byte cap and delta entries retain exact support hashes and spans.
+Coverage and bounded session-state serialization still operate on compact
+metadata, and configured ledger reads retain their existing bounds.
+
+Migration 29 is SQLite-only and PostgreSQL fails closed. Writable store
+initialization installs it, including convergence after a standalone migration
+runner stamped an empty database. SessionStart never initializes or migrates
+the store. Missing, foreign or rewound cursors withhold the baseline without
+falling back to a source scan; old projections require a fresh generation after
+schema initialization. The migration and initialization checks used disposable
+databases only, including backup/restore and late WAL commits. No authoritative
+database or installed service was changed; activation and independent Argon/M2
+acceptance remain separate lane actions.
+
+Retained failed evidence: the first repository integration run had two failures
+from tests that assumed an empty coverage could bootstrap an incremental read
+and that payload SQL contained the old watched-ID union. Those witnesses now
+check temporal activation/expiration with known coverage and the indexed
+selection followed by a deduplicated payload lookup. Cursor tests first exposed
+an untracked old primary key on identity moves and a bare-runner initialization
+gap; both received failing regressions before their fixes.
+
+Fresh round-three verification used one test file per Python process and the
+same workspace-only temporary-directory launcher as the previous resume:
+
+| Test file (`tests/`) | Passed |
+|---|---:|
+| `test_project_projection.py` | 16 |
+| `test_project_repository.py` | 31 |
+| `test_project_sessions.py` | 14 |
+| `test_project_runtime.py` | 8 |
+| `test_project_integration.py` | 5 |
+| `test_project_source_cursor.py` | 13 |
+| `test_public_demo.py` | 2 |
+| `test_migrations.py` | 18 |
+| `test_initdb_fastpath.py` | 6 |
+| **Total** | **113** |
+
+Ruff passed on all eight changed Python files. Release truth was regenerated
+and `--check` passed. Contract witness passed against `origin/main`; source
+navigation and final change-scope review used live references and Git diffs
+because this checkout still has no GitNexus index or exposed navigation tools.
+No push, merge, installed-hook edit or live database check belongs to this round.
