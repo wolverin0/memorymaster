@@ -9,6 +9,17 @@ from memorymaster.profile.project_projection import ProjectProjectionConfig
 from memorymaster.profile.project_repository import load_project_snapshot, snapshot_since
 
 
+@pytest.mark.parametrize("field", ["text", "subject", "citation"])
+@pytest.mark.parametrize("gap", ["  ", "\n"])
+def test_generated_marker_variants_never_qualify(project_config, field, gap):
+    value = f"<!-- generated{gap}by MemoryMaster; rebuild instead of editing -->generated<!-- /generated{gap}by MemoryMaster -->"
+    claim(project_config, **({field: value} if field != "citation" else {}))
+    if field == "citation":
+        with sqlite3.connect(project_config.db_path) as connection:
+            connection.execute("UPDATE citations SET excerpt=?", (value,))
+    assert "claim:1" not in load_project_snapshot(project_config)["items"]
+
+
 @pytest.fixture
 def project_config(tmp_path):
     root = tmp_path / "demo"
