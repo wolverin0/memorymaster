@@ -125,7 +125,8 @@ def build_session_delta(baseline: dict | None, projection_coverage: dict | None,
     # A currently authorized closed card may be carried in items outside open-card coverage.
     changed.update(key for key in removed if key in items)
     withdrawn = len(removed - changed)
-    complete = bool(current.get("complete")) and projection_coverage is not None
+    complete = (bool(current.get("complete")) and projection_coverage is not None
+                and "overlap_unresolved" not in diagnostic)
     status = "partial" if not complete else "first_recorded_session" if baseline is None else "ok"
     heading = "Prior-session changes and pending projection changes; current-state comparison."
     if not comparisons:
@@ -195,6 +196,13 @@ def _select_prior(state: dict, now: datetime) -> tuple[dict | None, str]:
             now - _time(latest["end_at"]) >= ACTIVE_TTL
             and _time(fallback["start_at"]) > _time(latest["start_at"]))):
         return fallback, "prior_session_unclosed"
+    # A start alone cannot distinguish a crashed predecessor from overlap.
+    # Preserve its comparison immediately, with an explicit partial result;
+    # waiting for TTL can lose closed cards after the projection refreshes.
+    unclosed = [record for record in state["active"].values()
+                if latest is None or _time(record["start_at"]) > _time(latest["end_at"])]
+    if unclosed:
+        return max(unclosed, key=lambda record: record["seq"]), "prior_session_unclosed; overlap_unresolved"
     return latest, ""
 
 
@@ -228,6 +236,17 @@ def record_project_session_start(config, session_id: str, *, projection: dict | 
                 else:
                     prior_id = prior["baseline"] if prior else None
                 baseline = copy.deepcopy(state["baselines"].get(prior_id))
+                if not duplicate and "overlap_unresolved" in diagnostic:
+                    # Compare all unresolved starts: the newest may already
+                    # omit a card retained by an earlier overlapping start.
+                    baseline = {}
+                    latest = state["latest_end"]
+                    for record in sorted(state["active"].values(), key=lambda value: value["seq"]):
+                        if latest is None or _time(record["start_at"]) > _time(latest["end_at"]):
+                            baseline.update(state["baselines"][record["baseline"]])
+                    if len(_encoded(baseline)) > MAX_BASELINE_BYTES:
+                        return {"status": "baseline_capacity"}
+                    prior_id = _digest(baseline)
             if snapshot_loader is None:
                 if projection is None and baseline is None:
                     return {"status": "baseline_unavailable"}
@@ -274,6 +293,8 @@ def record_project_session_start(config, session_id: str, *, projection: dict | 
                 if len(state["active"]) >= 16:
                     return {"status": "active_capacity"}
                 baseline_id = _digest(coverage)
+                if prior_id is not None:
+                    state["baselines"][prior_id] = baseline
                 state["baselines"][baseline_id] = coverage
                 state["seq"] += 1
                 state["active"][sid] = {"session": sid, "start_at": now.isoformat(),

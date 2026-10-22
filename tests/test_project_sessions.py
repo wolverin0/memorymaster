@@ -240,3 +240,43 @@ def test_stale_active_start_cannot_override_a_recent_explicit_end(tmp_path):
         snapshot_loader=lambda: changed, now=NOW + timedelta(hours=20, minutes=1))
     assert "retained overlapping work" in result["delta"].text
     assert "prior_session_unclosed" not in result["delta"].text
+
+
+def test_unclosed_session_before_ttl_retains_closed_card_after_refresh(tmp_path):
+    cfg = config(tmp_path)
+    support = {"kind": "card", "id": "T-1", "hash": "open", "state": "ready"}
+    opened = {"key": "card:T-1", "support": support, "text": "T-1 [ready] Visible card", "open": True}
+    original = {"coverage": {"card:T-1": support}, "items": {"card:T-1": opened},
+                "complete": True, "read_at": NOW.isoformat()}
+    projection = {"source_coverage": original["coverage"], "read_at": original["read_at"]}
+    assert sessions.record_project_session_start(cfg, "S", projection=projection,
+        snapshot_loader=lambda: original, now=NOW)["status"] == "ok"
+    closed = {**opened, "support": {**support, "hash": "closed", "state": "done"},
+              "text": "T-1 [done] Visible card", "open": False}
+    refreshed = {"coverage": {}, "items": {"card:T-1": closed}, "complete": True,
+                 "read_at": (NOW + timedelta(minutes=9)).isoformat()}
+    result = sessions.record_project_session_start(cfg, "T", projection={
+        "source_coverage": {}, "read_at": refreshed["read_at"]},
+        snapshot_loader=lambda: refreshed, now=NOW + timedelta(minutes=10))
+    delta = result["delta"]
+    assert delta.supports and delta.supports[0]["support"] == closed["support"]
+    assert "T-1 [done] Visible card" in delta.text
+    assert "prior_session_unclosed" in delta.text and "overlap_unresolved" in delta.text
+    assert delta.status == "partial"
+    assert "first recorded session" not in delta.text and "No changes" not in delta.text
+    assert sessions.last_project_session_end(cfg) is None
+    # A start alone cannot establish whether its predecessor crashed or is
+    # overlapping. Keep both live receipts; a later genuine end still works.
+    state = sessions.read_session_state(cfg)
+    assert len(state["active"]) == 2 and not state["completed"]
+    again = sessions.record_project_session_start(cfg, "U", projection={
+        "source_coverage": {}, "read_at": refreshed["read_at"]},
+        snapshot_loader=lambda: refreshed, now=NOW + timedelta(minutes=10, seconds=30))
+    assert again["delta"].status == "partial"
+    assert again["delta"].supports[0]["support"] == closed["support"]
+    assert sessions.record_project_session_end(cfg, "S", now=NOW + timedelta(minutes=11))
+    latest = sessions.record_project_session_start(cfg, "V", projection={
+        "source_coverage": {}, "read_at": refreshed["read_at"]},
+        snapshot_loader=lambda: refreshed, now=NOW + timedelta(minutes=12))
+    assert latest["delta"].status == "ok"
+    assert "overlap_unresolved" not in latest["delta"].text
