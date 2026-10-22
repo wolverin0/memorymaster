@@ -2,7 +2,7 @@ from dataclasses import replace
 import json
 import sqlite3
 
-from test_project_repository import claim
+from test_project_repository import claim, project_config as _project_config
 
 
 from memorymaster.profile.project_projection import (
@@ -13,7 +13,7 @@ from memorymaster.profile.project_projection import (
     project_lock,
 )
 
-pytest_plugins = ["test_project_repository"]
+project_config = _project_config
 
 
 def test_exact_manifest_and_per_bullet_invalidation(project_config):

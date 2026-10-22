@@ -10,9 +10,7 @@ import shutil
 import sqlite3
 import sys
 
-from test_project_repository import claim
-
-pytest_plugins = ["test_project_repository"]
+from test_project_repository import claim, project_config as _project_config
 
 from memorymaster.operations.operational_review import ReviewConfig, Verdict, check_project_projection
 from memorymaster.profile import project_repository, project_runtime
@@ -20,6 +18,8 @@ from memorymaster.profile.project_projection import (
     build_project_projection, projection_paths, publish_project_projection, read_project_projection,
 )
 from memorymaster.profile.project_sessions import record_project_session_start
+
+project_config = _project_config
 
 
 def _hook(name):

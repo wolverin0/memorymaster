@@ -1,9 +1,9 @@
-<!-- doc-head: canonical map; installed semantic candidate correction and pending JEV evaluation -->
+<!-- doc-head: canonical map; default-off project projections and prior runtime evidence -->
 # DOCS-MAP - memorymaster
 # Covers: trust verdicts and replacements for every canonical documentation surface.
 # Key terms: CURRENT, SUPERSEDED, workflow intelligence, compiled user profile, roadmap, ADR.
 # Read when: locating authoritative project documentation before reading doc bodies.
-# Updated: 2026-09-28 for shared CLI navigation; earlier dated entries retain their recorded scope.
+# Updated: 2026-10-22 for AO-3 source configuration; earlier entries retain their dated scope.
 # Rule: generated profiles are disposable projections; MemoryMaster remains authority.
 <!-- /doc-head -->
 
@@ -21,6 +21,7 @@
 | .planning/UPSTREAM-COMPARISON-2026-09-05.md | CURRENT | 2026-09-05 | Seventeen pinned upstream snapshots, source comparisons and bounded proposals; no head-to-head runtime benchmark. |
 | .planning/UPSTREAM-SNAPSHOTS-2026-09-05.json | CURRENT | 2026-09-05 | Origins, baselines, exact SHAs, branches, license labels and explicit inspection coverage. |
 | docs/development.md | CURRENT | 2026-09-05 | Scoped verification, public lifecycle demonstration, and deeper agent/GitNexus guidance. |
+| docs/project-projections.md | CURRENT | 2026-10-22 | Default-off AO-3 source configuration, continuity, budgets and rollback; installation and real M2 remain pending. |
 | .planning/DREAMING-SOURCE-STEWARD-V1.md | CURRENT | 2026-09-05 | Dated deployed v1 checkpoint; its receipt contract is superseded for the candidate by USEFUL-SELECTION.md, without retroactive runtime activation. |
 | .planning/ENGINEERING-CONSOLIDATION-2026-09-05.md | CURRENT | 2026-09-05 | Bounded implementation evidence and remaining measured gaps, subordinate to ROADMAP.md. |
 | CHANGELOG.md | CURRENT | 2026-09-05 | Historical releases plus local 4.8.7 deployment; distinguishes fleet reconnection and public publication. |

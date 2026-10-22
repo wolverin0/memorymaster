@@ -4,6 +4,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from memorymaster.profile import project_sessions as sessions
 
 
@@ -46,11 +48,12 @@ def test_session_gap_no_observable_change_lost(tmp_path):
     assert "Changed decision" in delta.text
 
 
+@pytest.mark.timeout(180)
 def test_session_end_state_is_atomic_bounded_idempotent(tmp_path):
     cfg = config(tmp_path)
     current = snapshot(**{"claim:1": claim("decision")})
     projection = {"source_coverage": current["coverage"], "read_at": NOW.isoformat()}
-    for index in range(100):
+    for index in range(10_000):
         now = NOW + timedelta(minutes=index)
         sessions.record_project_session_start(cfg, str(index), projection=projection,
                                               snapshot_loader=lambda: current, now=now)
@@ -63,7 +66,7 @@ def test_session_end_state_is_atomic_bounded_idempotent(tmp_path):
     previous = path.read_bytes()
     assert not sessions.record_project_session_end(cfg, "0", now=NOW + timedelta(days=2))
     assert path.read_bytes() == previous
-    assert "99" not in state["latest_end"]["session"]
+    assert state["latest_end"]["session"] != "9999"
 
 
 def test_duplicate_start_does_not_reset_baseline(tmp_path):
@@ -170,3 +173,36 @@ def test_internal_scan_fence_never_becomes_delta_support_or_omission():
     assert delta.omitted == 0
     assert not delta.supports
     assert "No changes" in delta.text
+
+
+def test_out_of_order_ends_capacity_epoch_and_interrupted_replace(tmp_path, monkeypatch):
+    from memorymaster.profile import project_projection
+
+    cfg = config(tmp_path)
+    current = snapshot()
+    projection = {"source_coverage": {}, "read_at": NOW.isoformat()}
+    def start(sid, minute=0):
+        return sessions.record_project_session_start(cfg, sid, projection=projection,
+            snapshot_loader=lambda: current, now=NOW + timedelta(minutes=minute))
+    start("old")
+    start("latest", 1)
+    assert sessions.record_project_session_end(cfg, "latest", now=NOW + timedelta(minutes=5))
+    assert sessions.record_project_session_end(cfg, "old", now=NOW + timedelta(minutes=3))
+    latest = sessions.last_project_session_end(cfg)
+    assert latest["end_at"] == (NOW + timedelta(minutes=5)).isoformat()
+    for index in range(16):
+        assert start(f"active-{index}", 6)["status"] == "ok"
+    assert start("overflow", 6)["status"] == "active_capacity"
+    assert sessions.last_project_session_end(cfg) == latest
+    path = sessions.session_state_path(cfg)
+    before = path.read_bytes()
+    with project_projection.project_lock(path.with_suffix(".lock")) as acquired:
+        assert acquired
+        assert start("locked", 6)["status"] == "continuity_pending"
+    def fail_replace(*args):
+        raise OSError("interrupted replace")
+    monkeypatch.setattr(project_projection, "atomic_json", fail_replace)
+    assert not sessions.record_project_session_end(cfg, "active-0", now=NOW + timedelta(minutes=7))
+    assert path.read_bytes() == before
+    cfg.epoch = "new-activation"
+    assert sessions.last_project_session_end(cfg) is None
