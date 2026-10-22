@@ -290,7 +290,10 @@ def resolve_workspace_scope(
         roots = None
     if roots is not None:
         checkout, root = roots
-        checkout_slug = re.sub(r"\s+", "-", checkout.name.strip().lower())
+        checkout_slug = (
+            _SLUG_NORMALIZER_RE.sub("-", checkout.name.strip().lower()) if strict
+            else re.sub(r"\s+", "-", checkout.name.strip().lower())
+        )
         if checkout_slug in aliases:
             return aliases[checkout_slug]
         name = root.name
@@ -299,7 +302,10 @@ def resolve_workspace_scope(
             return None
         name = current.name
     slug = canonicalize_slug(name)
-    folder_slug = re.sub(r"\s+", "-", name.strip().lower())
+    folder_slug = (
+        _SLUG_NORMALIZER_RE.sub("-", name.strip().lower()) if strict
+        else re.sub(r"\s+", "-", name.strip().lower())
+    )
     if strict:
         if _EPHEMERAL_WORKSPACE.fullmatch(name) and folder_slug not in aliases:
             return None

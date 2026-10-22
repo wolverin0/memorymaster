@@ -252,3 +252,30 @@ def test_workspace_scope_modes_preserve_unresolvable_path_policy(tmp_path, monke
     else:
         with pytest.raises(RuntimeError, match="symlink loop"):
             resolve_workspace_scope(cwd, strict=False)
+
+
+@pytest.mark.parametrize("name", ["My_Project", "My.Project", "t_12", "My Project"])
+@pytest.mark.parametrize("location", ["plain", "deleted", "ancestor", "repository", "checkout", "owner"])
+def test_strict_workspace_scope_normalizes_aliases(tmp_path, monkeypatch, name, location):
+    from memorymaster.core.scope_utils import resolve_workspace_scope
+
+    # Alias normalization folds whitespace only; punctuation stays literal.
+    alias_key = "-".join(name.strip().lower().split())
+    aliases = tmp_path / "scope-aliases.json"
+    aliases.write_text(json.dumps({"aliases": {alias_key: "project:logical"}}), encoding="utf-8")
+    monkeypatch.setenv("MEMORYMASTER_SCOPE_ALIASES", str(aliases))
+    cwd = tmp_path / name
+    if location == "checkout":
+        cwd = _worktree(tmp_path / "owner", cwd)
+    elif location == "owner":
+        cwd = _worktree(cwd, tmp_path / "checkout")
+    elif location != "deleted":
+        cwd.mkdir()
+        if location == "repository":
+            (cwd / ".git").mkdir()
+        elif location == "ancestor":
+            cwd = cwd / "src"
+            cwd.mkdir()
+
+    assert resolve_workspace_scope(cwd, strict=True) == "project:logical"
+    assert resolve_transcript_workspace_scope(cwd) == "project:logical"
