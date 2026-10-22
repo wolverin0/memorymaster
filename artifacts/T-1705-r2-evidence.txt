@@ -1,47 +1,518 @@
+T-1705 Round 2 verification
+
+Review: artifacts/inputs/argon-review-r1.json; both findings accepted and fixed.
+Blocker: explicit HOME/USERPROFILE redirection before template loading and exact
+one-line assertion against tmp_path; already committed as 8f5c138.
+Minor: guarded optional sanitizer import with stdlib surrogate replacement;
+four parametrized regressions cover unexpanded/missing root and import failures.
+
+Red-first output below was preserved from the existing Round 2 work. The latest
+suite entry for each file and ruff-final/release-truth/contract-witness entries
+were freshly executed on the final source during this continuation.
+All pytest commands use WEZBRIDGE_OPERATOR_ALLOW_HEAVY=1, one file per process,
+and the local harness redirects HOME/USERPROFILE before importing pytest.
+Test fixtures further redirect HOME/USERPROFILE to pytest temporary paths.
+No operator home or authoritative database was used as a test fixture.
+GitNexus index is missing and no GitNexus/Serena MCP tools were discovered.
+Native source references/diff review confirm scope: optional sanitizer import,
+inline logger/context consumers, isolated tests, and generated test count only.
+
+Fresh suites: 22 files, 412 passed (96 affected/public-demo + 316 additional).
+Ruff: all 15 Python files changed from origin/main passed.
+Release truth: generated and --check passed; 5760 source test functions.
+Contract witness against origin/main: passed (8 source files, 7 test files).
+Existing pytest-asyncio and Pydantic deprecation warnings remain in raw output.
+
+Per-file fresh counts:
+  tests/test_text_safety.py: 6 passed
+  tests/test_recall_delivery.py: 10 passed
+  tests/test_hook_log_timestamp.py: 2 passed
+  tests/test_hook_policy.py: 1 passed
+  tests/test_dense_recall.py: 28 passed
+  tests/test_hook_recall_remote.py: 15 passed
+  tests/test_recall_hook_installation.py: 12 passed
+  tests/test_recall_delivery_contract.py: 20 passed
+  tests/test_public_demo.py: 2 passed
+  tests/test_context_hook.py: 23 passed
+  tests/test_context_hook_extra.py: 70 passed
+  tests/test_recall_rendering_integrity.py: 14 passed
+  tests/test_recall_trivial_and_stale_tasks.py: 66 passed
+  tests/test_recall_format.py: 13 passed
+  tests/test_recall_hook_trim.py: 26 passed
+  tests/test_prompt_recall_project_scope.py: 5 passed
+  tests/test_prompt_recall_governance.py: 2 passed
+  tests/test_hook_env_isolation.py: 7 passed
+  tests/test_setup_hooks.py: 37 passed
+  tests/test_jev_recall_surfaces.py: 34 passed
+  tests/test_jev_session_surface.py: 7 passed
+  tests/test_public_v1.py: 12 passed
+
+Retained and fresh command output follows.
 
 === blocker-red: focused session-start log/context regression ===
-python : <python>\Lib\site-packages\pytest_asyncio\plugin.py:208: 
-PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
-At line:2 char:1
-+ python artifacts/local/T-1705/run_pytest.py tests/test_recall_hook_in ...
-+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (<user>\...cope" is unset.:String) [], RemoteException
-    + FullyQualifiedErrorId : NativeCommandError
- 
-The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of 
-pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop 
-scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", 
-"class", "module", "package", "session"
-
-  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
-F                                                                        [100%]
-================================== FAILURES ===================================
-____________ test_session_start_template_sanitizes_log_and_context ____________
-tests\test_recall_hook_installation.py:39: in test_session_start_template_sanitizes_log_and_context
-    lines = log.read_text(encoding="utf-8").splitlines()
-<python>\Lib\pathlib.py:1027: in read_text
-    with self.open(mode='r', encoding=encoding, errors=errors) as f:
-<python>\Lib\pathlib.py:1013: in open
-    return io.open(self, mode, buffering, encoding, errors, newline)
-E   FileNotFoundError: [Errno 2] No such file or directory: '<worktree>\\artifacts\\local\\T-1705\\scratch\\r2-blocker-red\\test_session_start_template_sa0\\.memorymaster\\hook_state\\hook.log'
-=========================== short test summary info ===========================
-FAILED tests/test_recall_hook_installation.py::test_session_start_template_sanitizes_log_and_context
-1 failed in 0.65s
+python : <python>\Lib\site-packages\pytest_asyncio\plugin.py:208:
+
+PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+
+At line:2 char:1
+
++ python artifacts/local/T-1705/run_pytest.py tests/test_recall_hook_in ...
+
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    + CategoryInfo          : NotSpecified: (<user>\...cope" is unset.:String) [], RemoteException
+
+    + FullyQualifiedErrorId : NativeCommandError
+
+
+
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of
+
+pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop
+
+scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function",
+
+"class", "module", "package", "session"
+
+
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+
+F                                                                        [100%]
+
+================================== FAILURES ===================================
+
+____________ test_session_start_template_sanitizes_log_and_context ____________
+
+tests\test_recall_hook_installation.py:39: in test_session_start_template_sanitizes_log_and_context
+
+    lines = log.read_text(encoding="utf-8").splitlines()
+
+<python>\Lib\pathlib.py:1027: in read_text
+
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+
+<python>\Lib\pathlib.py:1013: in open
+
+    return io.open(self, mode, buffering, encoding, errors, newline)
+
+E   FileNotFoundError: [Errno 2] No such file or directory: '<worktree>\\artifacts\\local\\T-1705\\scratch\\r2-blocker-red\\test_session_start_template_sa0\\.memorymaster\\hook_state\\hook.log'
+
+=========================== short test summary info ===========================
+
+FAILED tests/test_recall_hook_installation.py::test_session_start_template_sanitizes_log_and_context
+
+1 failed in 0.65s
+
 
 === blocker-green: focused session-start log/context regression ===
-python : <python>\Lib\site-packages\pytest_asyncio\plugin.py:208: 
-PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
-At line:2 char:1
-+ python artifacts/local/T-1705/run_pytest.py tests/test_recall_hook_in ...
-+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (<user>\...cope" is unset.:String) [], RemoteException
-    + FullyQualifiedErrorId : NativeCommandError
- 
-The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of 
-pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop 
-scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", 
-"class", "module", "package", "session"
-
-  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
-.                                                                        [100%]
-1 passed in 0.84s
+python : <python>\Lib\site-packages\pytest_asyncio\plugin.py:208:
+
+PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+
+At line:2 char:1
+
++ python artifacts/local/T-1705/run_pytest.py tests/test_recall_hook_in ...
+
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    + CategoryInfo          : NotSpecified: (<user>\...cope" is unset.:String) [], RemoteException
+
+    + FullyQualifiedErrorId : NativeCommandError
+
+
+
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of
+
+pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop
+
+scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function",
+
+"class", "module", "package", "session"
+
+
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+
+.                                                                        [100%]
+
+1 passed in 0.84s
+
+
+=== minor-red ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_recall_hook_installation.py -k degrades_without_importable_package -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-minor-red
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+FFFF                                                                     [100%]
+================================== FAILURES ===================================
+_ test_session_start_degrades_without_importable_package[ModuleNotFoundError-__MEMORYMASTER_PROJECT_ROOT__] _
+<worktree>\tests\test_recall_hook_installation.py:92: in test_session_start_degrades_without_importable_package
+    exec(compile(source, str(template), "exec"), ns)
+<worktree>\memorymaster\config_templates\hooks\memorymaster-session-start.py:28: in <module>
+    from memorymaster.core.text_safety import sanitize_text  # noqa: E402 — project bootstrap first
+<worktree>\tests\test_recall_hook_installation.py:87: in without_memorymaster
+    raise import_error("simulated unavailable package")
+E   ModuleNotFoundError: simulated unavailable package
+_ test_session_start_degrades_without_importable_package[ModuleNotFoundError-missing-root] _
+<worktree>\tests\test_recall_hook_installation.py:92: in test_session_start_degrades_without_importable_package
+    exec(compile(source, str(template), "exec"), ns)
+<worktree>\memorymaster\config_templates\hooks\memorymaster-session-start.py:28: in <module>
+    from memorymaster.core.text_safety import sanitize_text  # noqa: E402 — project bootstrap first
+<worktree>\tests\test_recall_hook_installation.py:87: in without_memorymaster
+    raise import_error("simulated unavailable package")
+E   ModuleNotFoundError: simulated unavailable package
+_ test_session_start_degrades_without_importable_package[RuntimeError-__MEMORYMASTER_PROJECT_ROOT__] _
+<worktree>\tests\test_recall_hook_installation.py:92: in test_session_start_degrades_without_importable_package
+    exec(compile(source, str(template), "exec"), ns)
+<worktree>\memorymaster\config_templates\hooks\memorymaster-session-start.py:28: in <module>
+    from memorymaster.core.text_safety import sanitize_text  # noqa: E402 — project bootstrap first
+<worktree>\tests\test_recall_hook_installation.py:87: in without_memorymaster
+    raise import_error("simulated unavailable package")
+E   RuntimeError: simulated unavailable package
+_ test_session_start_degrades_without_importable_package[RuntimeError-missing-root] _
+<worktree>\tests\test_recall_hook_installation.py:92: in test_session_start_degrades_without_importable_package
+    exec(compile(source, str(template), "exec"), ns)
+<worktree>\memorymaster\config_templates\hooks\memorymaster-session-start.py:28: in <module>
+    from memorymaster.core.text_safety import sanitize_text  # noqa: E402 — project bootstrap first
+<worktree>\tests\test_recall_hook_installation.py:87: in without_memorymaster
+    raise import_error("simulated unavailable package")
+E   RuntimeError: simulated unavailable package
+=========================== short test summary info ===========================
+FAILED tests/test_recall_hook_installation.py::test_session_start_degrades_without_importable_package[ModuleNotFoundError-__MEMORYMASTER_PROJECT_ROOT__]
+FAILED tests/test_recall_hook_installation.py::test_session_start_degrades_without_importable_package[ModuleNotFoundError-missing-root]
+FAILED tests/test_recall_hook_installation.py::test_session_start_degrades_without_importable_package[RuntimeError-__MEMORYMASTER_PROJECT_ROOT__]
+FAILED tests/test_recall_hook_installation.py::test_session_start_degrades_without_importable_package[RuntimeError-missing-root]
+4 failed, 8 deselected in 0.62s
+
+exit_code=1
+
+=== minor-green ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_recall_hook_installation.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-minor-green
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+............                                                             [100%]
+12 passed in 0.74s
+
+exit_code=0
+
+=== ruff-round2 ===
+$ python -m ruff check memorymaster/config_templates/hooks/memorymaster-session-start.py tests/test_recall_hook_installation.py
+All checks passed!
+
+exit_code=0
+
+=== suite-text_safety ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_text_safety.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-text_safety
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+......                                                                   [100%]
+6 passed in 0.39s
+
+exit_code=0
+
+=== suite-recall_delivery ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_recall_delivery.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-recall_delivery
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+..........                                                               [100%]
+10 passed in 0.43s
+
+exit_code=0
+
+=== suite-text_safety ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_text_safety.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-text_safety
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+......                                                                   [100%]
+6 passed in 0.36s
+
+exit_code=0
+
+=== suite-recall_delivery ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_recall_delivery.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-recall_delivery
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+..........                                                               [100%]
+10 passed in 0.37s
+
+exit_code=0
+
+=== suite-hook_log_timestamp ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_hook_log_timestamp.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-hook_log_timestamp
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+..                                                                       [100%]
+2 passed in 0.30s
+
+exit_code=0
+
+=== suite-hook_policy ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_hook_policy.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-hook_policy
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+.                                                                        [100%]
+1 passed in 0.31s
+
+exit_code=0
+
+=== suite-dense_recall ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_dense_recall.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-dense_recall
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+............................                                             [100%]
+28 passed in 8.45s
+
+exit_code=0
+
+=== suite-hook_recall_remote ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_hook_recall_remote.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-hook_recall_remote
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+...............                                                          [100%]
+============================== warnings summary ===============================
+tests/test_hook_recall_remote.py::test_shared_server_route_serves_the_warm_recall_behind_the_token
+  <worktree>\memorymaster\surfaces\mcp_server.py:110: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class _ToolInput(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+15 passed, 1 warning in 1.03s
+
+exit_code=0
+
+=== suite-recall_hook_installation ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_recall_hook_installation.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-recall_hook_installation
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+............                                                             [100%]
+12 passed in 0.47s
+
+exit_code=0
+
+=== suite-recall_delivery_contract ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_recall_delivery_contract.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-recall_delivery_contract
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+....................                                                     [100%]
+20 passed in 0.58s
+
+exit_code=0
+
+=== ruff-final ===
+$ python -m ruff check memorymaster/config_templates/hooks/memorymaster-recall.py memorymaster/config_templates/hooks/memorymaster-session-start.py memorymaster/core/hook_log.py memorymaster/core/text_safety.py memorymaster/recall/delivery.py memorymaster/recall/dense_recall.py memorymaster/recall/hook_policy.py memorymaster/recall/remote.py tests/test_dense_recall.py tests/test_hook_log_timestamp.py tests/test_hook_policy.py tests/test_hook_recall_remote.py tests/test_recall_delivery.py tests/test_recall_hook_installation.py tests/test_text_safety.py
+All checks passed!
+
+exit_code=0
+
+=== suite-public_demo ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_public_demo.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-public_demo
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+..                                                                       [100%]
+2 passed in 2.26s
+
+exit_code=0
+
+=== suite-context_hook ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_context_hook.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-context_hook
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+.......................                                                  [100%]
+23 passed in 0.72s
+
+exit_code=0
+
+=== release-truth-generate ===
+$ python scripts/generate_release_truth.py
+Release truth generated.
+
+exit_code=0
+
+=== suite-context_hook_extra ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_context_hook_extra.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-context_hook_extra
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+......................................................................   [100%]
+70 passed in 5.77s
+
+exit_code=0
+
+=== suite-recall_rendering_integrity ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_recall_rendering_integrity.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-recall_rendering_integrity
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+..............                                                           [100%]
+14 passed in 0.70s
+
+exit_code=0
+
+=== release-truth-check ===
+$ python scripts/generate_release_truth.py --check
+Release truth verified.
+
+exit_code=0
+
+=== contract-witness ===
+$ python scripts/check_contract_witness.py --base origin/main
+contract-witness: ok — 8 archivo(s) de codigo con 7 de tests, sin testigos huerfanos
+
+exit_code=0
+
+=== suite-recall_trivial_and_stale_tasks ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_recall_trivial_and_stale_tasks.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-recall_trivial_and_stale_tasks
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+..................................................................       [100%]
+============================== warnings summary ===============================
+tests/test_recall_trivial_and_stale_tasks.py::test_shared_server_route_is_silent_for_trivial_prompts
+  <worktree>\memorymaster\surfaces\mcp_server.py:110: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class _ToolInput(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+66 passed, 1 warning in 1.18s
+
+exit_code=0
+
+=== suite-recall_format ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_recall_format.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-recall_format
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+.............                                                            [100%]
+13 passed in 0.40s
+
+exit_code=0
+
+=== suite-recall_hook_trim ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_recall_hook_trim.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-recall_hook_trim
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+..........................                                               [100%]
+26 passed in 4.93s
+
+exit_code=0
+
+=== suite-prompt_recall_project_scope ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_prompt_recall_project_scope.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-prompt_recall_project_scope
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+.....                                                                    [100%]
+5 passed in 1.94s
+
+exit_code=0
+
+=== suite-prompt_recall_governance ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_prompt_recall_governance.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-prompt_recall_governance
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+..                                                                       [100%]
+2 passed in 1.45s
+
+exit_code=0
+
+=== suite-hook_env_isolation ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_hook_env_isolation.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-hook_env_isolation
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+.......                                                                  [100%]
+7 passed in 0.33s
+
+exit_code=0
+
+=== suite-setup_hooks ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_setup_hooks.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-setup_hooks
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+.....................................                                    [100%]
+============================== warnings summary ===============================
+tests/test_setup_hooks.py::TestMainNonInteractive::test_exit_zero_and_wires_hooks_mcp
+  <worktree>\memorymaster\surfaces\mcp_server.py:110: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class _ToolInput(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+37 passed, 1 warning in 6.20s
+
+exit_code=0
+
+=== suite-jev_recall_surfaces ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_jev_recall_surfaces.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-jev_recall_surfaces
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+..................................                                       [100%]
+============================== warnings summary ===============================
+tests/test_jev_recall_surfaces.py::test_mcp_query_for_context_off_matches_service_and_live_selects
+  <worktree>\memorymaster\surfaces\mcp_server.py:110: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class _ToolInput(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+34 passed, 1 warning in 16.04s
+
+exit_code=0
+
+=== suite-jev_session_surface ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_jev_session_surface.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-jev_session_surface
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+.......                                                                  [100%]
+7 passed in 5.30s
+
+exit_code=0
+
+=== suite-public_v1 ===
+$ python artifacts/local/T-1705/run_pytest.py tests/test_public_v1.py -q --tb=short --basetemp=artifacts/local/T-1705/scratch/r2-suite-public_v1
+<python>\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+............                                                             [100%]
+12 passed in 6.04s
+
+exit_code=0

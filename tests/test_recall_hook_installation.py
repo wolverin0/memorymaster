@@ -4,6 +4,8 @@ import json
 import runpy
 from pathlib import Path
 
+import pytest
+
 from memorymaster.surfaces import setup_hooks as setup
 from memorymaster.recall import context_hook
 from memorymaster.core import hook_log
@@ -61,6 +63,45 @@ def test_session_start_template_sanitizes_log_and_context(tmp_path, monkeypatch)
         ns["main"]()
     assert exc.value.code == 0
     assert json.loads(output.getvalue())["hookSpecificOutput"]["additionalContext"] == "claim\ufffd"
+
+
+@pytest.mark.parametrize("root_value", ["__MEMORYMASTER_PROJECT_ROOT__", "missing-root"])
+@pytest.mark.parametrize("import_error", [ModuleNotFoundError, RuntimeError])
+def test_session_start_degrades_without_importable_package(tmp_path, monkeypatch, capsys,
+                                                         root_value, import_error):
+    import builtins
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    # Keep the template's bootstrap path changes local to this test.
+    monkeypatch.syspath_prepend(str(tmp_path))
+    template = Path(__file__).resolve().parents[1] / "memorymaster/config_templates/hooks/memorymaster-session-start.py"
+    source = template.read_text(encoding="utf-8").replace("__MEMORYMASTER_PROJECT_ROOT__", root_value)
+    original_import = builtins.__import__
+    attempted = []
+
+    def without_memorymaster(name, *args, **kwargs):
+        if name == "memorymaster" or name.startswith("memorymaster."):
+            attempted.append(name)
+            raise import_error("simulated unavailable package")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_memorymaster)
+    ns = {"__name__": "session_start_fixture"}
+    exec(compile(source, str(template), "exec"), ns)
+    assert "memorymaster.core.text_safety" in attempted
+    text = "España 😀\ud800prompt\udc8f\udfff"
+    assert ns["sanitize_text"](text) == "España 😀\ufffdprompt\ufffd\ufffd"
+    ns["_log"]("error", message=text)
+    log = tmp_path / ".memorymaster/hook_state/hook.log"
+    assert log.read_text(encoding="utf-8").splitlines()[0].endswith("message=España 😀\ufffdprompt\ufffd\ufffd")
+    monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+    with pytest.raises(SystemExit) as exc:
+        ns["main"]()
+    assert exc.value.code == 0
+    assert capsys.readouterr().out == ""
+    assert log.read_text(encoding="utf-8").splitlines()[-1].endswith("event=skip reason=db-missing")
 
 
 def install(tmp_path, monkeypatch):

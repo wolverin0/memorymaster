@@ -17,6 +17,7 @@ Scope is resolved from CWD through the shared Git-aware scope helper.
 """
 import json
 import os
+import re
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
@@ -25,7 +26,12 @@ from pathlib import Path
 MM_ROOT = Path("__MEMORYMASTER_PROJECT_ROOT__")
 sys.path.insert(0, str(MM_ROOT))
 
-from memorymaster.core.text_safety import sanitize_text  # noqa: E402 — project bootstrap first
+try:
+    from memorymaster.core.text_safety import sanitize_text
+except Exception:
+    # Installed hooks must still start when their project root is unavailable.
+    def sanitize_text(text: str) -> str:
+        return re.sub(r"[\ud800-\udfff]", "\ufffd", text)
 
 
 def _log(event, **kw):
