@@ -16,7 +16,13 @@ from memorymaster.operations import operational_review as review
 project_config = _project_config
 
 
-def test_malformed_manifest_does_not_abort_operational_check(project_config, monkeypatch):
+@pytest.mark.parametrize("field,value", [
+    ("omissions", []),
+    ("checked_at", []),
+    ("checked_at", "not a timestamp"),
+    ("checked_at", "2026-10-22T09:00:00"),
+])
+def test_malformed_manifest_does_not_abort_operational_check(project_config, monkeypatch, field, value):
     from memorymaster.operations import review_attempt
     from memorymaster.profile import project_projection, project_runtime
 
@@ -24,8 +30,9 @@ def test_malformed_manifest_does_not_abort_operational_check(project_config, mon
         project_config, project_projection.build_project_projection(project_config))
     _, path = project_projection.projection_paths(project_config)
     manifest = json.loads(path.read_text(encoding="utf-8"))
-    manifest["omissions"] = []
+    manifest[field] = value
     path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert project_projection.read_project_projection(project_config) is None
     monkeypatch.setenv(project_runtime.PREFIX + "ENABLED", "1")
     monkeypatch.setattr(review_attempt, "phase_progress", lambda *args: None)
     later = review.ReviewResult("later_check", review.Verdict.PASS, "completed")
@@ -39,6 +46,7 @@ def test_malformed_manifest_does_not_abort_operational_check(project_config, mon
     assert result.counts["m2_passed"] == 0
     assert "invalid_or_missing_pair" in result.detail
     assert following is later
+    assert project_projection.read_manifest(project_config) is None
 
 
 def test_operational_projection_off_stale_partial_and_m2(tmp_path, monkeypatch):
