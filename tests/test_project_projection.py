@@ -159,3 +159,22 @@ def test_manifest_generation_and_span_tampering_are_rejected(project_config):
     manifest["items"][0]["span"] = [0, 1]
     path.write_text(json.dumps(manifest))
     assert read_project_projection(project_config) is None
+
+
+def test_modified_multibyte_card_title_preserves_all_reserved_slots(project_config):
+    path = project_config.ledger_root / "tasks.json"
+    tasks = [{"id": f"T-{index}-aaaaa", "repo": "demo", "state": "ready", "title": "X"}
+             for index in range(51)]
+    path.write_text(json.dumps({"complete": True, "tasks": tasks}))
+    built = build_project_projection(project_config)
+    assert len(built.items) == 51
+    assert publish_project_projection(project_config, built)
+    original = {record["key"]: record["text"] for record in built.manifest["items"]}
+    tasks[0]["title"] = "😀" * 80
+    path.write_text(json.dumps({"complete": True, "tasks": tasks}))
+    result = read_project_projection(project_config)
+    assert len(result.items) == 51
+    assert "open_cards_trimmed" not in result.payload
+    assert len(result.markdown.encode("utf-8")) <= 2200
+    assert all(record["text"] == original[record["key"]] for record in result.manifest["items"]
+               if record["key"] != "card:T-0-aaaaa")

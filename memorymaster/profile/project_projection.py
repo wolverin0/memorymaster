@@ -174,6 +174,24 @@ def _line(item: dict) -> str:
     return f"- {item['text']} [{reference}]"
 
 
+def _fit_card_text(item: dict, byte_budget: int) -> str:
+    """Keep the current ID/state slot; titles consume only its remaining UTF-8 bytes."""
+    text = item["text"]
+    if len(text.encode("utf-8")) <= byte_budget:
+        return text
+    marker = f"[{item['support']['state']}]"
+    end = text.find(marker)
+    if end < 0:
+        raise ValueError("invalid_card_rendering")
+    prefix = text[:end + len(marker)]
+    available = byte_budget - len(prefix.encode("utf-8"))
+    if available < 5:
+        return prefix
+    title = text[end + len(marker):].strip()
+    retained = title.encode("utf-8")[:available - 4].decode("utf-8", "ignore")
+    return prefix + " " + retained + "…"
+
+
 def render_project_projection(
     config: ProjectProjectionConfig,
     items: list[dict],
@@ -261,7 +279,9 @@ def render_project_projection(
             for item in selected:
                 text = item["text"]
                 minimum = 48 if item["section"] == "Open cards" else 80
-                if len(text) > minimum:
+                if item["section"] == "Open cards":
+                    item["text"] = _fit_card_text(item, minimum)
+                elif len(text) > minimum:
                     item["text"] = text[: minimum - 1] + "…"
             compacted = True
             continue
@@ -482,6 +502,7 @@ def read_project_projection(config: ProjectProjectionConfig) -> ProjectProjectio
     selected = []
     diagnostics = list(manifest["diagnostics"])
     omissions = dict(manifest["omissions"])
+    card_spare_bytes = max(0, config.budget_bytes - manifest["output_bytes"])
     for record in manifest["items"]:
         item = current["items"].get(record["key"])
         if record["supports"][0]["kind"] == "card":
@@ -490,6 +511,11 @@ def read_project_projection(config: ProjectProjectionConfig) -> ProjectProjectio
             if item and item.get("open"):
                 if item["support"] == record["supports"][0]:
                     item = {**item, "text": record["text"]}
+                else:
+                    # A title edit cannot take space reserved for an unrelated card.
+                    reserved = len(record["text"].encode("utf-8"))
+                    item = {**item, "text": _fit_card_text(item, reserved + card_spare_bytes)}
+                    card_spare_bytes += reserved - len(item["text"].encode("utf-8"))
                 selected.append(item)
             elif "m2_not_ready:cards_changed" not in diagnostics:
                 diagnostics.append("m2_not_ready:cards_changed")
