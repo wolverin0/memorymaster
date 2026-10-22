@@ -365,18 +365,21 @@ def main():
     except Exception:
         pass
 
+    project_enabled = True  # Import failure must also withhold legacy delivery.
     try:
-        from memorymaster.profile.project_runtime import session_start_context
+        from memorymaster.profile.project_runtime import active, session_start_context
 
+        project_enabled = active("MEMORYMASTER_PROJECT_PROJECTION_ENABLED")
         context = session_start_context(data, profile_loader=_load_compiled_profile)
         if context is not None:
             sys.stdout.write(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "SessionStart", "additionalContext": context}}))
             sys.stdout.flush()
             sys.exit(0)
-    except Exception:
+    except Exception as exc:
         # An enabled project consumer must never fall through to less restrictive legacy SQL.
-        if os.environ.get("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "").lower() in ("1", "true", "yes", "on"):
+        if project_enabled:
+            _log("project-consumer-error", cause=type(exc).__name__)
             sys.exit(0)
 
     if not DB_PATH.exists():
