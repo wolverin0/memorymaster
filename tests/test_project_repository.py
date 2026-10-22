@@ -82,6 +82,72 @@ def claim(config, id=1, text="Use bounded reads", **changes):
         )
 
 
+def test_latest_decisions_order_by_instant_across_valid_iso_offsets(project_config):
+    from memorymaster.profile.project_projection import build_project_projection
+
+    for number in range(1, 11):
+        claim(project_config, number, text=f"Newer decision {number}",
+              event_time="2026-10-22T09:00:00+00:00")
+    claim(project_config, 11, text="Older decision in another timezone",
+          event_time="2026-10-22T10:00:00+02:00")
+    result = build_project_projection(project_config)
+    actual = [record["supports"][0]["id"] for record in result.manifest["items"]
+              if record["section"] == "Decisions"]
+    assert actual == list(range(10, 0, -1))
+    # Tight budgets must reserve the latest three, never the lexically newest.
+    compact = build_project_projection(replace(project_config, budget_bytes=600))
+    compact_ids = [record["supports"][0]["id"] for record in compact.manifest["items"]
+                   if record["section"] == "Decisions"]
+    assert compact_ids[:3] == [10, 9, 8]
+    assert 3 <= len(compact_ids) < 10
+    assert compact_ids == actual[:len(compact_ids)]
+    assert "m2_not_ready:decisions_trimmed" not in compact.manifest["diagnostics"]
+
+
+@pytest.mark.parametrize("field", ["event_time", "created_at"])
+def test_decision_equal_instants_tie_by_id_preserving_date_evidence(project_config, field):
+    from memorymaster.profile.project_projection import build_project_projection
+
+    dates = ["2026-10-22T00:30:00+00:00", "2026-10-21T21:30:00-03:00",
+             "2026-10-22T02:30:00+02:00", "2026-10-22T00:30:00Z",
+             "2026-10-22T00:30:00", "2026-10-22T00:30:00.000001+00:00"]
+    for number, date in enumerate(dates, 1):
+        claim(project_config, number, text=f"Decision {number}", **{field: date})
+    result = build_project_projection(project_config)
+    records = [record for record in result.manifest["items"] if record["section"] == "Decisions"]
+    assert [record["supports"][0]["id"] for record in records] == [6, 5, 4, 3, 2, 1]
+    snapshot = load_project_snapshot(project_config)
+    label = "event" if field == "event_time" else "recorded"
+    # Local display dates retain their offsets' calendar day, including the
+    # previous day for the negative offset; normalization is for sorting only.
+    for number, date in enumerate(dates, 1):
+        item = snapshot["items"][f"claim:{number}"]
+        assert item["text"].startswith(f"{date[:10]} ({label}):")
+    before = snapshot["coverage"]["claim:2"]["hash"]
+    with sqlite3.connect(project_config.db_path) as conn:
+        conn.execute(f"UPDATE claims SET {field}=? WHERE id=2", (dates[0],))
+    after = load_project_snapshot(project_config)
+    assert after["coverage"]["claim:2"]["hash"] != before
+    assert after["items"]["claim:2"]["sort"] == snapshot["items"]["claim:2"]["sort"]
+
+
+@pytest.mark.parametrize("field", ["event_time", "created_at"])
+def test_decision_utc_order_handles_calendar_extremes(project_config, field):
+    from memorymaster.profile.project_projection import build_project_projection
+
+    dates = ["0001-01-01T00:00:00+14:00", "0001-01-01T00:00:00+00:00",
+             "9999-12-31T23:59:59-12:00", "9999-12-31T23:59:59+00:00"]
+    for number, date in enumerate(dates, 1):
+        claim(project_config, number, text=f"Boundary decision {number}", **{field: date})
+    result = build_project_projection(project_config)
+    records = [record for record in result.manifest["items"] if record["section"] == "Decisions"]
+    assert [record["supports"][0]["id"] for record in records] == [3, 4, 2, 1]
+    label = "event" if field == "event_time" else "recorded"
+    for record in records:
+        number = record["supports"][0]["id"]
+        assert record["text"].startswith(f"{dates[number - 1][:10]} ({label}):")
+
+
 @pytest.mark.parametrize("field", ["valid_until", "valid_from"])
 def test_temporal_boundary_crossed_during_snapshot_is_not_lost(project_config, monkeypatch, field):
     from memorymaster.profile import project_repository as repository

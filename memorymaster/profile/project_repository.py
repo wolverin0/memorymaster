@@ -285,13 +285,20 @@ def _claim_item(row: dict, citations: list[dict], *, now: datetime | None = None
     # Egress and inert-line formatting cover the entire composed display,
     # including date metadata, rather than only the source prose.
     text = _display(text)
+    # Exact UTC microseconds compare instants without converting to a calendar
+    # date that can overflow at year 1/9999 with a nonzero offset. Missing dates
+    # sort before every valid instant (ISO offsets are strictly below 24 hours).
+    instant_key = -86_400_000_000
+    if date is not None:
+        elapsed = date - datetime.min.replace(tzinfo=timezone.utc)
+        instant_key = (elapsed.days * 86400 + elapsed.seconds) * 1_000_000 + elapsed.microseconds
     return {
         "key": f"claim:{row['id']}",
         "section": section,
         "text": text,
         "support": support,
         "pinned": bool(row.get("pinned")),
-        "sort": [0 if row.get("pinned") else 1, date.isoformat() if date is not None else "", int(row["id"])],
+        "sort": [0 if row.get("pinned") else 1, instant_key, int(row["id"])],
     }
 
 
