@@ -2,6 +2,11 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
+
+import pytest
+
 from memorymaster.core.scope_utils import (
     cwd_from_transcript,
     scope_from_cwd,
@@ -154,3 +159,96 @@ def test_worktree_pointer_requires_valid_common_membership_and_backlink(tmp_path
     (gitdir / "commondir").write_text("../..", encoding="utf-8")
     (gitdir / "gitdir").write_text(str(tmp_path / "another" / ".git"), encoding="utf-8")
     assert resolve_transcript_workspace_scope(wt) is None
+
+
+@pytest.fixture(params=[
+    "relative", "absolute", "broken_gitfile", "missing_gitdir", "empty_commondir",
+    "missing_commondir", "wrong_membership", "wrong_backlink", "plain", "deleted",
+    "nameless", "owner_alias", "checkout_alias", "deleted_alias",
+])
+def scope_mode_workspace(request, tmp_path, monkeypatch):
+    """Both modes see exactly the same disposable metadata and alias tree."""
+    repo = tmp_path / "MemoryMaster-final"
+    checkout = _worktree(repo, tmp_path / "review-checkout")
+    nested = checkout / "src"
+    nested.mkdir()
+    gitdir = repo / ".git" / "worktrees" / checkout.name
+    (checkout / ".git").write_text(f"gitdir: {os.path.relpath(gitdir, checkout)}\n", encoding="utf-8")
+    aliases = tmp_path / "scope-aliases.json"
+    aliases.write_text(json.dumps({"aliases": {}}), encoding="utf-8")
+    monkeypatch.setenv("MEMORYMASTER_SCOPE_ALIASES", str(aliases))
+    case = request.param
+    cwd, relaxed, strict = nested, "project:memorymaster", "project:memorymaster"
+    if case == "absolute":
+        (checkout / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+        (gitdir / "commondir").write_text(str(repo / ".git"), encoding="utf-8")
+    elif case in {"broken_gitfile", "missing_gitdir"}:
+        (checkout / ".git").write_text(
+            "nonsense" if case == "broken_gitfile" else "gitdir: missing", encoding="utf-8",
+        )
+        relaxed, strict = "project:review-checkout", None
+    elif case in {"empty_commondir", "missing_commondir"}:
+        (gitdir / "commondir").write_text(
+            "" if case == "empty_commondir" else "missing", encoding="utf-8",
+        )
+        relaxed, strict = "project:review-checkout", None
+    elif case == "wrong_membership":
+        unrelated = tmp_path / "unrelated" / ".git"
+        unrelated.mkdir(parents=True)
+        (gitdir / "commondir").write_text(str(unrelated), encoding="utf-8")
+        relaxed, strict = "project:unrelated", None
+    elif case == "wrong_backlink":
+        (gitdir / "gitdir").write_text(str(tmp_path / "other" / ".git"), encoding="utf-8")
+        strict = None
+    elif case in {"plain", "deleted", "deleted_alias"}:
+        cwd = tmp_path / "scratch" / "plain-project"
+        if case == "plain":
+            cwd.mkdir(parents=True)
+        relaxed, strict = "project:plain-project", None
+        if case == "deleted_alias":
+            aliases.write_text(json.dumps({"aliases": {"plain-project": "project:logical"}}), encoding="utf-8")
+            relaxed = strict = "project:logical"
+    elif case == "nameless":
+        cwd, relaxed, strict = Path(tmp_path.anchor), "global", None
+        # Exercise a nameless root without inspecting the host filesystem.
+        for method in ("is_dir", "is_file", "exists"):
+            original = getattr(Path, method)
+            monkeypatch.setattr(Path, method, lambda path, original=original: (
+                False if path in {cwd, cwd / ".git"} else original(path)
+            ))
+    elif case in {"owner_alias", "checkout_alias"}:
+        name = repo.name.lower() if case == "owner_alias" else checkout.name
+        aliases.write_text(json.dumps({"aliases": {name: "project:logical"}}), encoding="utf-8")
+        relaxed = strict = "project:logical"
+    return cwd, relaxed, strict
+
+
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+def test_workspace_scope_explicit_modes_match_public_wrappers(scope_mode_workspace, strict):
+    from memorymaster.core.scope_utils import resolve_workspace_scope
+
+    cwd, relaxed_scope, strict_scope = scope_mode_workspace
+    expected = strict_scope if strict else relaxed_scope
+    assert resolve_workspace_scope(cwd, strict=strict) == expected
+    wrapper = resolve_transcript_workspace_scope if strict else scope_from_cwd
+    assert wrapper(cwd) == expected
+
+
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+def test_workspace_scope_modes_preserve_unresolvable_path_policy(tmp_path, monkeypatch, strict):
+    from memorymaster.core.scope_utils import resolve_workspace_scope
+
+    cwd = tmp_path / "loop"
+    original = Path.resolve
+
+    def resolve(path, *args, **kwargs):
+        if path == cwd:
+            raise RuntimeError("symlink loop")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+    if strict:
+        assert resolve_workspace_scope(cwd, strict=True) is None
+    else:
+        with pytest.raises(RuntimeError, match="symlink loop"):
+            resolve_workspace_scope(cwd, strict=False)
