@@ -270,18 +270,28 @@ def _claim_item(row: dict, citations: list[dict], *, now: datetime | None = None
         "citations": [{"id": int(c["id"]), "hash": digest(c)} for c in citations],
     }
     section = _section(row)
-    date = row.get("event_time") or row.get("created_at") or ""
-    text = _display(row["text"])
-    if section == "Decisions":
-        label = "event" if row.get("event_time") else "recorded"
-        text = f"{str(date)[:10]} ({label}): {text}"
+    date_field = "event_time" if row.get("event_time") else "created_at"
+    raw_date = row.get(date_field)
+    date = None
+    if isinstance(raw_date, str):
+        try:
+            date = _parse_iso_strict(date_field, raw_date)
+        except ValueError:
+            pass  # Keep cited prose, explicitly omit malformed persisted dates.
+    text = row["text"]
+    if section == "Decisions" and date is not None:
+        label = "event" if date_field == "event_time" else "recorded"
+        text = f"{date.date().isoformat()} ({label}): {text}"
+    # Egress and inert-line formatting cover the entire composed display,
+    # including date metadata, rather than only the source prose.
+    text = _display(text)
     return {
         "key": f"claim:{row['id']}",
         "section": section,
         "text": text,
         "support": support,
         "pinned": bool(row.get("pinned")),
-        "sort": [0 if row.get("pinned") else 1, str(date), int(row["id"])],
+        "sort": [0 if row.get("pinned") else 1, date.isoformat() if date is not None else "", int(row["id"])],
     }
 
 

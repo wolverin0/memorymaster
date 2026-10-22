@@ -123,6 +123,47 @@ def test_temporal_boundary_crossed_during_snapshot_is_not_lost(project_config, m
         assert "Use bounded reads" in delta.text
 
 
+@pytest.mark.parametrize("field", ["event_time", "created_at"])
+@pytest.mark.parametrize("value", ["a@b.co", "10.2.3.4", "not-a-date", "2026-02-30",
+                                  "2026-10-22\n## injected", "2026-10-22T00:00:00+00:00 alice@example.com"])
+def test_decision_date_prefix_receives_egress(project_config, field, value):
+    from memorymaster.profile.project_projection import build_project_projection
+    from memorymaster.profile.project_sessions import build_session_delta
+
+    # Existing persisted rows bypass new-input validation; retain their valid
+    # cited prose while explicitly omitting malformed date metadata.
+    claim(project_config, text="Authorized decision", **{field: value})
+    built = build_project_projection(project_config)
+    snapshot = load_project_snapshot(project_config)
+    delta = build_session_delta({}, {}, snapshot)
+    assert "claim:1" in snapshot["coverage"]
+    assert snapshot["items"]["claim:1"]["text"] == "Authorized decision"
+    for output in (built.markdown, json.dumps(built.public_manifest), delta.text):
+        assert value not in output, output
+        assert "a@b.co" not in output
+        assert "alice@example.com" not in output
+        assert "10.2.3.4" not in output
+
+
+def test_complete_decision_line_receives_egress_and_inert_formatting(project_config, monkeypatch):
+    from memorymaster.profile import project_repository as repository
+
+    text = "Authorized decision\n## [note] <tag> `code`"
+    claim(project_config, text=text, event_time="2026-10-22T00:00:00+00:00")
+    observed = []
+    original = repository.prepare_claim_egress
+
+    def egress(value):
+        observed.append(value)
+        return original(value)
+
+    monkeypatch.setattr(repository, "prepare_claim_egress", egress)
+    item = load_project_snapshot(project_config)["items"]["claim:1"]
+    assert f"2026-10-22 (event): {text}" in observed
+    assert item["text"].startswith("2026-10-22 (event): Authorized decision")
+    assert not any(character in item["text"] for character in "\n\r[]<>`")
+
+
 @pytest.mark.parametrize("count", [40, 400])
 @pytest.mark.parametrize("changed_count", [0, 1, 3])
 def test_unchanged_baseline_does_not_reload_all_temporal_metadata(project_config, monkeypatch, count, changed_count):
