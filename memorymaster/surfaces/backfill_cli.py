@@ -42,7 +42,8 @@ def configure_backfill_runtime(args, runner: BackfillRunner, *, client_factory=N
 
     A lane may inject a verified bounded client through this interface; the
     stock OpenCode CLI currently cannot prove an enforceable output limit.
-    Gemini API uses the existing key-based transport with a provider output cap.
+    The stock Gemini API route supports extraction only. Other stages require
+    a verified bounded factory for their Sonnet/Haiku models.
     """
     from memorymaster.core.opencode_client import OpenCodeClient
     from memorymaster.dreaming.providers import GeminiBoundedClient, OpenCodeConsolidator, OpenCodeExtractor
@@ -52,6 +53,8 @@ def configure_backfill_runtime(args, runner: BackfillRunner, *, client_factory=N
 
     factory = client_factory or OpenCodeClient
     if getattr(args, "client", "opencode") == "gemini-api":
+        if client_factory is None and args.stage != "extract":
+            raise ValueError("--client gemini-api supports only --stage extract; other stages require a verified bounded client factory")
         factory = client_factory or GeminiBoundedClient
     if not args.extractor_model or "/" not in args.extractor_model:
         raise ValueError("run requires an explicit provider-qualified extraction model")

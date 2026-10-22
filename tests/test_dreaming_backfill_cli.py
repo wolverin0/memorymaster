@@ -24,6 +24,8 @@ NOW = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
 
 @pytest.fixture(autouse=True)
 def isolated_configuration(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("MEMORYMASTER_SCOPE_ALIASES", str(tmp_path / "fixture-aliases.json"))
     monkeypatch.setattr(MemoryService, "_init_qdrant", staticmethod(lambda: None))
     monkeypatch.setattr("memorymaster.core.webhook.fire_webhook", lambda *args, **kwargs: None)
@@ -440,6 +442,29 @@ def test_unenforceable_runtime_fails_before_creating_campaign_state(tmp_path, ca
                  "--extractor-model", "anthropic/claude-haiku-4-5"]) == 2
     assert "cannot enforce" in capsys.readouterr().out
     assert not state.exists()
+
+
+@pytest.mark.parametrize("stage", ["consolidate", "quality", "apply", "all"])
+def test_gemini_api_non_extract_cli_fails_before_binding_runtime(tmp_path, monkeypatch, capsys, stage):
+    from memorymaster.surfaces.cli import main
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("unsupported stage constructed a provider or service")
+
+    monkeypatch.setattr("memorymaster.dreaming.providers.GeminiBoundedClient", forbidden)
+    monkeypatch.setattr("memorymaster.core.service.MemoryService", forbidden)
+    state = tmp_path / "state"
+    database = tmp_path / "never-open.db"
+    assert main([
+        "dream-backfill", "run", "--state-dir", str(state), "--client", "gemini-api",
+        "--extractor-model", "gemini-api/gemini-3.5-flash-lite", "--stage", stage,
+        "--consolidator-model", "anthropic/claude-sonnet-4-6", "--memory-db", str(database),
+        "--probe-scope", "project:test", "--haiku-model", "anthropic/claude-haiku-4-5",
+        "--sonnet-model", "anthropic/claude-sonnet-4-6",
+    ]) == 2
+    assert "--client gemini-api supports only --stage extract" in capsys.readouterr().out
+    assert not state.exists()
+    assert not database.exists()
 
 
 def test_gemini_api_cli_preflight_binds_extractor_with_fake_factory(tmp_path, monkeypatch):
