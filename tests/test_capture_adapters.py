@@ -66,6 +66,32 @@ def test_hidden_html_context_survives_generated_span_removal(capture_root, tag):
     assert raw[span.start:span.end].endswith("<p>Authored note.</p>")
 
 
+@pytest.mark.parametrize("tag", ["script", "style"])
+@pytest.mark.parametrize("fragment", ["&am", "<!--", "<scr"])
+def test_html_raw_text_fragment_does_not_poison_authored_suffix(tag, fragment):
+    from memorymaster.capture.adapters import _retained_text
+    from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+
+    raw = (f'<{tag}>const fragment = "{fragment}' + GENERATED_OPENER
+           + 'generated' + GENERATED_CLOSER + f'";</{tag}><p>Authored</p>')
+    assert _retained_text(raw, html=True)[0] == "Authored"
+
+
+def test_local_html_capture_retains_authored_suffix_after_hidden_js_string(capture_root):
+    from memorymaster.capture.adapters import _html_text
+    from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+
+    raw = ('<script>const fragment = "&am' + GENERATED_OPENER
+           + 'generated' + GENERATED_CLOSER + '";</script><p>Authored</p>')
+    assert _html_text(raw.encode("utf-8")) == "Authored"
+    source = capture_root / "authored.html"
+    source.write_bytes(raw.encode("utf-8"))
+    envelope = LocalFileAdapter(source).capture()
+    assert envelope.text == "Authored"
+    assert envelope.retained_spans[0].start == raw.index(GENERATED_CLOSER) + len(GENERATED_CLOSER)
+    assert envelope.retained_spans[0].end == len(raw)
+
+
 @pytest.mark.parametrize("tag", ["script", "style", "noscript", "template"])
 def test_excluded_generated_closing_tag_cannot_expose_hidden_authored_data(tag):
     from memorymaster.capture.adapters import _retained_text
