@@ -453,6 +453,23 @@ def read_manifest(config: ProjectProjectionConfig) -> dict | None:
             or len(manifest["source_coverage"]) > 769
         ):
             return None
+        # A pair hash proves internal consistency, never authority. Only fixed
+        # status vocabulary may be copied from the disposable cache to output.
+        allowed_diagnostics = {
+            "source_incomplete", "ledger_unavailable", "ledger_incomplete",
+            "claims_unavailable", "coverage_limit", "inactive",
+            "incremental_scan_fence_incomplete",
+            *(f"m2_not_ready:{reason}" for reason in (
+                "decisions_incomplete", "purpose_trimmed", "pinned_constraints_trimmed",
+                "open_cards_trimmed", "decisions_trimmed", "ledger_incomplete",
+                "cards_changed", "context_withdrawn",
+            )),
+        }
+        if (any(value not in allowed_diagnostics for value in manifest["diagnostics"])
+                or any(key not in {"purpose", "constraints", "decisions", "open_cards", "gotchas", "pinned_constraints"}
+                       or type(value) is not int or value < 0
+                       for key, value in manifest["omissions"].items())):
+            return None
         citations = 0
         keys = set()
         for record in records:
@@ -523,29 +540,32 @@ def read_project_projection(config: ProjectProjectionConfig) -> ProjectProjectio
             # Modified still-open cards are safe to render from the authorized
             # ledger snapshot and retain their reserved place in the payload.
             if item and item.get("open"):
-                if item["support"] == record["supports"][0]:
-                    item = {**item, "text": record["text"]}
-                else:
+                reserved = len(record["text"].encode("utf-8"))
+                unchanged = item["support"] == record["supports"][0]
+                try:
                     # A title edit cannot take space reserved for an unrelated card.
-                    reserved = len(record["text"].encode("utf-8"))
-                    try:
-                        fitted = _fit_card_text(item, reserved + card_spare_bytes)
-                    except ValueError as exc:
-                        if str(exc) != "card_prefix_exceeds_byte_budget":
-                            raise
-                        omissions["open_cards"] = omissions.get("open_cards", 0) + 1
-                        diagnostics.append("m2_not_ready:open_cards_trimmed")
-                        card_spare_bytes += reserved
-                        continue
-                    item = {**item, "text": fitted}
-                    card_spare_bytes += reserved - len(item["text"].encode("utf-8"))
+                    fitted = _fit_card_text(item, reserved + (0 if unchanged else card_spare_bytes))
+                except ValueError as exc:
+                    if str(exc) != "card_prefix_exceeds_byte_budget":
+                        raise
+                    omissions["open_cards"] = omissions.get("open_cards", 0) + 1
+                    diagnostics.append("m2_not_ready:open_cards_trimmed")
+                    card_spare_bytes += reserved
+                    continue
+                item = {**item, "text": fitted}
+                card_spare_bytes += reserved - len(fitted.encode("utf-8"))
                 selected.append(item)
             elif "m2_not_ready:cards_changed" not in diagnostics:
                 diagnostics.append("m2_not_ready:cards_changed")
         elif item and item["support"] == record["supports"][0]:
-            # Keep an unrelated bullet byte-identical even when the original
-            # renderer shortened it to fit the shared allocation.
-            selected.append({**item, "text": record["text"]})
+            # Retain only the cached byte reservation. Every factual character
+            # comes from the rehydrated, authorized source, including excerpts.
+            reserved = len(record["text"].encode("utf-8"))
+            text = item["text"]
+            if len(text.encode("utf-8")) > reserved:
+                text = (text.encode("utf-8")[:max(0, reserved - 3)].decode("utf-8", "ignore") + "…"
+                        if reserved >= 3 else "")
+            selected.append({**item, "text": text})
         else:
             diagnostics.append("m2_not_ready:context_withdrawn")
     diagnostics.extend(current["diagnostics"])
