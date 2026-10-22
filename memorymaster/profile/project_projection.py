@@ -216,12 +216,15 @@ def render_project_projection(
     # literal excerpts keeps references and support identities intact.
     safety = [item for item in selected if item["section"] == "Purpose" or item.get("pinned")]
     remaining = 400
-    for item in safety:
-        cap = min(remaining, 400 // max(1, len(safety)))
-        if cap < 4:
+    # Fund short excerpts first, returning their unused share to longer ones.
+    # Stable sorting leaves equal-sized items deterministic and display order intact.
+    for index, item in enumerate(sorted(safety, key=lambda item: len(item["text"].encode("utf-8")))):
+        cap = remaining // (len(safety) - index)
+        if cap < 4 and len(item["text"].encode("utf-8")) > cap:
             selected.remove(item)
-            omissions["pinned_constraints"] = omissions.get("pinned_constraints", 0) + 1
-            diagnostics.append("m2_not_ready:pinned_constraints_trimmed")
+            key = "purpose" if item["section"] == "Purpose" else "pinned_constraints"
+            omissions[key] = omissions.get(key, 0) + 1
+            diagnostics.append(f"m2_not_ready:{key}_trimmed")
             continue
         text = item["text"]
         while len(text.encode()) > cap:

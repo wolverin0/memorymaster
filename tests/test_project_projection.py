@@ -18,6 +18,37 @@ from memorymaster.profile.project_projection import (
 project_config = _project_config
 
 
+@pytest.mark.parametrize("purpose_first", [True, False])
+def test_safety_budget_reclaims_unused_bytes_for_longer_constraint(project_config, purpose_first):
+    from memorymaster.profile.project_projection import render_project_projection
+
+    constraint = "Keep backups. " * 17
+    purpose = {"key": "claim:1", "section": "Purpose", "text": "Purpose",
+               "support": {"kind": "claim", "id": 1}}
+    pinned = {"key": "claim:2", "section": "Constraints", "text": constraint,
+              "pinned": True, "support": {"kind": "claim", "id": 2}}
+    safety = [purpose, pinned] if purpose_first else [pinned, purpose]
+    decisions = [{"key": f"claim:{i}", "section": "Decisions", "text": "Decision",
+                  "support": {"kind": "claim", "id": i}} for i in range(3, 6)]
+    projection = render_project_projection(project_config, safety + decisions,
+                                           generation="fixture", read_at="2026-10-22T09:00:00Z")
+    assert [item["text"] for item in projection.items[:2]] == [item["text"] for item in safety]
+    assert projection.status == "ready"
+    assert not projection.manifest["omissions"]
+
+
+def test_safety_budget_counts_dropped_purpose_separately(project_config):
+    from memorymaster.profile.project_projection import render_project_projection
+
+    items = [{"key": f"claim:{i}", "section": "Purpose" if i == 0 else "Constraints",
+              "pinned": i != 0, "text": "Safety",
+              "support": {"kind": "claim", "id": i}} for i in range(101)]
+    projection = render_project_projection(project_config, items,
+                                           generation="fixture", read_at="2026-10-22T09:00:00Z")
+    assert projection.manifest["omissions"]["purpose"] == 1
+    assert "m2_not_ready:purpose_trimmed" in projection.manifest["diagnostics"]
+
+
 @pytest.mark.parametrize("changed_count", [0, 1, 3])
 def test_session_start_incremental_counts_only_changed_rows_and_citations(project_config, monkeypatch, changed_count):
     from memorymaster.profile import project_repository as repository
