@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "memorymaster" / "config_templates" / "hooks" / "memorymaster-session-end.py"
@@ -117,3 +119,56 @@ def test_incremental_hook_restores_prior_tool_provenance_until_genuine_user(tmp_
     assert len(distilled) == 1
     assert "SQLite transactions" in distilled[0]
     assert "Unmarked recalled echo" not in distilled[0]
+
+
+@pytest.mark.parametrize("capture_enabled", [False, True])
+def test_lifecycle_receipt_failure_reports_sanitized_cause_and_continues_capture(tmp_path, monkeypatch, capsys, capture_enabled):
+    import importlib.util
+    import io
+
+    from memorymaster.profile import project_runtime
+    from memorymaster.surfaces import session_end_ingest
+
+    spec = importlib.util.spec_from_file_location("observable_end_hook", TEMPLATE)
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    monkeypatch.setenv("MEMORYMASTER_SESSION_END_CAPTURE", "1" if capture_enabled else "0")
+    monkeypatch.setenv("MEMORYMASTER_CAPTURE_STATE_DB", str(tmp_path / "capture.db"))
+    monkeypatch.setenv("MEMORYMASTER_LLM_PROVIDER", "fake")
+
+    def fail_receipt(data):
+        if not capture_enabled:
+            raise RuntimeError("fixture failure")
+        try:
+            raise OSError("private underlying cause")
+        except OSError as exc:
+            raise RuntimeError("fixture failure") from exc
+
+    monkeypatch.setattr(project_runtime, "record_session_end", fail_receipt)
+    captures = []
+    monkeypatch.setattr(session_end_ingest, "run", lambda *args, **kwargs: captures.append(kwargs) or 0)
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text(json.dumps({"role": "assistant", "content": "A separately authorized authored learning about SQLite transactions."}) + "\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"session_id": "private-session-identifier", "cwd": str(tmp_path), "transcript_path": str(transcript)})))
+    hook.main()
+    diagnostic = capsys.readouterr().err
+    assert "type=RuntimeError" in diagnostic
+    assert f"cause={'OSError' if capture_enabled else 'RuntimeError'}" in diagnostic
+    assert "fixture failure" not in diagnostic and "private" not in diagnostic
+    assert str(tmp_path) not in diagnostic
+    assert len(captures) == int(capture_enabled)
+
+
+def test_lifecycle_receipt_unexpected_programming_error_is_not_swallowed(monkeypatch):
+    import importlib.util
+    import io
+
+    from memorymaster.profile import project_runtime
+
+    spec = importlib.util.spec_from_file_location("unexpected_end_hook", TEMPLATE)
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    monkeypatch.setattr(project_runtime, "record_session_end", lambda data: (_ for _ in ()).throw(TypeError("programming error")))
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    with pytest.raises(TypeError):
+        hook.main()

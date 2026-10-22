@@ -2,6 +2,7 @@
 
 import json
 import os
+import sqlite3
 import sys
 
 PROJECT_ROOT = "__MEMORYMASTER_PROJECT_ROOT__"
@@ -27,8 +28,14 @@ def main():
         from memorymaster.profile.project_runtime import record_session_end
 
         record_session_end(data)
-    except Exception:
-        pass  # Lifecycle failure must not suppress independently authorized capture.
+    except (ImportError, OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+        # Report only types: exception messages can carry session text, paths,
+        # identities or credentials. Capture has its own activation decision.
+        cause = exc.__cause__ or exc.__context__ or exc
+        print(
+            f"[MemoryMaster] session-end receipt error: type={type(exc).__name__} cause={type(cause).__name__}",
+            file=sys.stderr,
+        )
     if not _enabled("MEMORYMASTER_SESSION_END_CAPTURE", True):
         return
     transcript_path = data.get("transcript_path", "")
