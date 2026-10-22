@@ -3,8 +3,6 @@
 import json
 import os
 import sys
-import tempfile
-from pathlib import Path
 
 PROJECT_ROOT = "__MEMORYMASTER_PROJECT_ROOT__"
 DB_PATH = os.path.join(PROJECT_ROOT, "memorymaster.db")
@@ -48,12 +46,11 @@ def main():
         reservation = ledger.reserve_llm(provider, session_id, "session-end-distill")
         if reservation is None:
             return
-        temp_path = ""
         try:
-            with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".jsonl", delete=False) as handle:
-                handle.write(chunk.text)
-                temp_path = handle.name
-            run(DB_PATH, temp_path, source_agent="session-end-hook", cwd=cwd)
+            # Reconstruct structural provenance from the chronological source,
+            # but select evidence only within this cursor's complete records.
+            run(DB_PATH, transcript_path, source_agent="session-end-hook", cwd=cwd,
+                start_offset=chunk.start_offset, end_offset=chunk.end_offset)
             ledger.finish_llm(reservation, input_bytes=len(chunk.text.encode("utf-8")), output_bytes=0, outcome="ok")
             ledger.commit_cursor(chunk)
         except Exception:  # swallow-ok: hook quiet-by-contract; `capture_usage.outcome`
@@ -61,9 +58,6 @@ def main():
         # Guardar la causa pide una columna nueva en capture_usage, que es otro
         # subsistema. Deuda anotada, no escondida.
             ledger.finish_llm(reservation, input_bytes=len(chunk.text.encode("utf-8")), output_bytes=0, outcome="error")
-        finally:
-            if temp_path:
-                Path(temp_path).unlink(missing_ok=True)
     except Exception:
         return
 
