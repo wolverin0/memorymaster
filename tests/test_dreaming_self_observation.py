@@ -9,6 +9,15 @@ from memorymaster.dreaming.ledger import DreamLedger
 from memorymaster.dreaming.self_observation import strip_self_observation
 
 
+def test_balanced_generated_citation_does_not_poison_authored_spans():
+    from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+    text = f"Choose WAL.\n{GENERATED_OPENER}\nmm-12345678 old memory\n{GENERATED_CLOSER}\nUse transactions."
+    clean = strip_self_observation(text, role="assistant")
+    assert "Choose WAL." in clean.text and "Use transactions." in clean.text
+    assert "old memory" not in clean.text
+    assert all(text[span.start:span.end] == span.text for span in clean.spans)
+
+
 @pytest.mark.parametrize("text", [
     "[MemoryMaster recall]\nPrior claim",
     "# Memory Context\nPrior claim",

@@ -30,33 +30,30 @@ def _sensitive(claim: dict[str, Any]) -> bool:
 
 
 def _assistant_text(transcript_path: str) -> str:
+    from memorymaster.dreaming.capture import _conversation_record
+
     path = Path(transcript_path)
     if not path.is_file():
         return ""
     messages: list[str] = []
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    for line in reversed(lines[-200:]):
+    state: dict[str, Any] = {}
+    eligible: list[tuple[int, str]] = []
+    for index, line in enumerate(lines):
         try:
             entry = json.loads(line)
         except json.JSONDecodeError:
             continue
         if not isinstance(entry, dict):
             continue
-        record = entry
-        for key in ("message", "payload"):
-            if isinstance(entry.get(key), dict):
-                record = entry[key]
-                break
-        if str(record.get("role") or "") not in {"assistant", "model"}:
-            continue
-        content = record.get("content", "")
-        if isinstance(content, list):
-            content = " ".join(
-                str(part.get("text", ""))
-                for part in content
-                if isinstance(part, dict) and part.get("type") in (None, "text")
-            )
-        if isinstance(content, str) and len(content.strip()) > 30:
+        provider = "codex" if entry.get("type") == "response_item" else "claude"
+        record = _conversation_record(entry, provider, state=state)
+        if record is not None and record[0] == "assistant":
+            eligible.append((index, record[1]))
+    for index, content in reversed(eligible):
+        if index < len(lines) - 200:
+            break
+        if len(content.strip()) > 30:
             messages.append(content[:500])
             if sum(map(len, messages)) > 3000:
                 break
