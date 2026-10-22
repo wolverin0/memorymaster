@@ -11,11 +11,39 @@ from memorymaster.profile.project_projection import (
     build_project_projection,
     publish_project_projection,
     read_project_projection,
+    read_manifest,
     projection_paths,
     project_lock,
 )
 
 project_config = _project_config
+
+
+@pytest.mark.parametrize("field,value", [
+    ("omissions", []), ("source_coverage", []), ("source_fingerprints", []),
+    ("items", {}), ("diagnostics", {}), ("record", []),
+    ("supports", {}), ("support", []), ("citations", {}), ("manifest", []),
+])
+def test_malformed_manifest_containers_are_unavailable(project_config, field, value):
+    claim(project_config)
+    assert publish_project_projection(project_config, build_project_projection(project_config))
+    _, path = projection_paths(project_config)
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if field == "manifest":
+        manifest = value
+    elif field == "record":
+        manifest["items"][0] = value
+    elif field == "supports":
+        manifest["items"][0]["supports"] = value
+    elif field == "support":
+        manifest["items"][0]["supports"][0] = value
+    elif field == "citations":
+        manifest["items"][0]["supports"][0]["citations"] = value
+    else:
+        manifest[field] = value
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert read_manifest(project_config) is None
+    assert read_project_projection(project_config) is None
 
 
 @pytest.mark.parametrize("label", ["sk-" + "q" * 24, ".".join(map(str, (10, 2, 3, 4)))],

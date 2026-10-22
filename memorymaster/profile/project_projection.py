@@ -464,6 +464,14 @@ def read_manifest(config: ProjectProjectionConfig) -> dict | None:
         with md.open("rb") as stream:
             output = stream.read(config.budget_bytes + 1)
         manifest = json.loads(raw)
+        if not isinstance(manifest, dict) or any(
+            not isinstance(manifest.get(key), expected)
+            for key, expected in (
+                ("omissions", dict), ("source_coverage", dict), ("source_fingerprints", dict),
+                ("items", list), ("diagnostics", list),
+            )
+        ):
+            return None
         if (
             manifest["schema"] != SCHEMA
             or manifest["scope"] != config.scope
@@ -505,7 +513,8 @@ def read_manifest(config: ProjectProjectionConfig) -> dict | None:
                 "cards_changed", "context_withdrawn",
             )),
         }
-        if (any(value not in allowed_diagnostics for value in manifest["diagnostics"])
+        if (any(not isinstance(value, str) or value not in allowed_diagnostics
+                for value in manifest["diagnostics"])
                 or any(key not in {"purpose", "constraints", "decisions", "open_cards", "gotchas", "pinned_constraints"}
                        or type(value) is not int or value < 0
                        for key, value in manifest["omissions"].items())):
@@ -513,12 +522,16 @@ def read_manifest(config: ProjectProjectionConfig) -> dict | None:
         citations = 0
         keys = set()
         for record in records:
-            if record["key"] in keys or len(record["supports"]) != 1 or record["section"] not in SECTIONS:
+            if (not isinstance(record, dict) or not isinstance(record.get("supports"), list)
+                    or len(record["supports"]) != 1 or not isinstance(record["supports"][0], dict)):
+                return None
+            if record["key"] in keys or record["section"] not in SECTIONS:
                 return None
             keys.add(record["key"])
             support = record["supports"][0]
             if support["kind"] == "claim":
-                if type(support["id"]) is not int or support["id"] <= 0:
+                if (type(support["id"]) is not int or support["id"] <= 0
+                        or not isinstance(support.get("citations"), list)):
                     return None
                 citations += len(support["citations"])
             elif support["kind"] != "card" or not isinstance(support["id"], str):
