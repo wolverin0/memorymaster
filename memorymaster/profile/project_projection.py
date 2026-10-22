@@ -19,6 +19,7 @@ from memorymaster.core.generated_artifacts import (
     GENERATED_CLOSER as CLOSER,
 )
 from memorymaster.profile.project_repository import (
+    _display,
     digest,
     load_project_snapshot,
     utc_now,
@@ -176,18 +177,21 @@ def _line(item: dict) -> str:
 
 def _fit_card_text(item: dict, byte_budget: int) -> str:
     """Keep the current ID/state slot; titles consume only its remaining UTF-8 bytes."""
-    text = item["text"]
+    support = item["support"]
+    if not all(isinstance(support.get(key), str) and support[key].strip() for key in ("id", "state")):
+        raise ValueError("invalid_card_rendering")
+    prefix = f"{_display(support['id'], 48)} [{_display(support['state'], 24)}]"
+    available = byte_budget - len(prefix.encode("utf-8"))
+    if available < 0:
+        raise ValueError("card_prefix_exceeds_byte_budget")
+    title = item.get("title")
+    if not isinstance(title, str):
+        raise ValueError("invalid_card_rendering")
+    text = prefix + " " + title
     if len(text.encode("utf-8")) <= byte_budget:
         return text
-    marker = f"[{item['support']['state']}]"
-    end = text.find(marker)
-    if end < 0:
-        raise ValueError("invalid_card_rendering")
-    prefix = text[:end + len(marker)]
-    available = byte_budget - len(prefix.encode("utf-8"))
     if available < 5:
         return prefix
-    title = text[end + len(marker):].strip()
     retained = title.encode("utf-8")[:available - 4].decode("utf-8", "ignore")
     return prefix + " " + retained + "…"
 
@@ -283,7 +287,13 @@ def render_project_projection(
                 text = item["text"]
                 minimum = 48 if item["section"] == "Open cards" else 80
                 if item["section"] == "Open cards":
-                    item["text"] = _fit_card_text(item, minimum)
+                    try:
+                        item["text"] = _fit_card_text(item, minimum)
+                    except ValueError as exc:
+                        if str(exc) != "card_prefix_exceeds_byte_budget":
+                            raise
+                        # Keep its mandatory slots until normal budget eviction
+                        # can remove the card with an explicit omission receipt.
                 elif len(text) > minimum:
                     item["text"] = text[: minimum - 1] + "…"
             compacted = True
@@ -518,7 +528,16 @@ def read_project_projection(config: ProjectProjectionConfig) -> ProjectProjectio
                 else:
                     # A title edit cannot take space reserved for an unrelated card.
                     reserved = len(record["text"].encode("utf-8"))
-                    item = {**item, "text": _fit_card_text(item, reserved + card_spare_bytes)}
+                    try:
+                        fitted = _fit_card_text(item, reserved + card_spare_bytes)
+                    except ValueError as exc:
+                        if str(exc) != "card_prefix_exceeds_byte_budget":
+                            raise
+                        omissions["open_cards"] = omissions.get("open_cards", 0) + 1
+                        diagnostics.append("m2_not_ready:open_cards_trimmed")
+                        card_spare_bytes += reserved
+                        continue
+                    item = {**item, "text": fitted}
                     card_spare_bytes += reserved - len(item["text"].encode("utf-8"))
                 selected.append(item)
             elif "m2_not_ready:cards_changed" not in diagnostics:

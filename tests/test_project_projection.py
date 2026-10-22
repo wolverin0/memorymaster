@@ -49,6 +49,44 @@ def test_safety_budget_counts_dropped_purpose_separately(project_config):
     assert "m2_not_ready:purpose_trimmed" in projection.manifest["diagnostics"]
 
 
+def test_fit_card_text_rejects_review_prefix_that_exceeds_reservation():
+    from memorymaster.profile.project_projection import _fit_card_text
+
+    with pytest.raises(ValueError):
+        _fit_card_text({"text": "T-123456789 [running] title", "support": {"state": "running"}}, 8)
+
+
+@pytest.mark.parametrize("card_id,state", [("T-123456789", "running"), ("卡😀", "ready"),
+                                          ("T-[ready]", "ready")])
+@pytest.mark.parametrize("extra", [-1, 0, 1, 4, 5, 20])
+def test_fit_card_text_enforces_utf8_reservations_from_structured_slots(card_id, state, extra):
+    from memorymaster.profile.project_projection import _fit_card_text
+    from memorymaster.profile.project_repository import _display
+
+    prefix = f"{_display(card_id, 48)} [{_display(state, 24)}]"
+    budget = len(prefix.encode("utf-8")) + extra
+    title = "Título 😀 " * 20
+    item = {"text": f"{prefix} {title}", "title": title,
+            "support": {"kind": "card", "id": card_id, "state": state}}
+    if extra < 0:
+        with pytest.raises(ValueError, match="card_prefix_exceeds_byte_budget"):
+            _fit_card_text(item, budget)
+    else:
+        result = _fit_card_text(item, budget)
+        assert result.startswith(prefix)
+        assert len(result.encode("utf-8")) <= budget
+
+
+def test_oversized_card_prefix_is_omitted_with_diagnostic(project_config):
+    tasks = [{"id": "😀" * 48, "repo": "demo", "state": "running", "title": "Title"}
+             for _ in range(1)]
+    path = project_config.ledger_root / "tasks.json"
+    path.write_text(json.dumps({"complete": True, "tasks": tasks}), encoding="utf-8")
+    built = build_project_projection(replace(project_config, budget_bytes=400))
+    assert len(built.markdown.encode("utf-8")) <= 400
+    assert "m2_not_ready:open_cards_trimmed" in built.payload
+
+
 @pytest.mark.parametrize("changed_count", [0, 1, 3])
 def test_session_start_incremental_counts_only_changed_rows_and_citations(project_config, monkeypatch, changed_count):
     from memorymaster.profile import project_repository as repository

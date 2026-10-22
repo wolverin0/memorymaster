@@ -185,6 +185,7 @@ def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES) -> tuple[dict
                     "key": "card:" + card_id,
                     "section": "Open cards",
                     "text": f"{_display(card_id, 48)} [{_display(selected['state'], 24)}] {_display(selected['title'], 80)}",
+                    "title": _display(selected["title"], 80),
                     "support": support,
                     "open": selected["state"] in OPEN_STATES,
                     "sort": [selected["state"], card_id],
