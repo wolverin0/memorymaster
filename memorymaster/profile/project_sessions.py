@@ -140,16 +140,23 @@ def build_session_delta(baseline: dict | None, projection_coverage: dict | None,
     chosen: list[tuple[str, dict]] = []
     omitted = len(ordered)
     def render():
-        lines = [heading, label, *(line for line, _ in chosen)]
+        lines = [heading, label]
+        supports = []
+        offset = sum(len(line) + 1 for line in lines)
+        for line, support in chosen:
+            supports.append({"support": support, "start": offset, "end": offset + len(line),
+                             "display_sha256": hashlib.sha256(line.encode()).hexdigest()})
+            lines.append(line)
+            offset += len(line) + 1
         if not changed and not withdrawn and complete and baseline is not None:
             lines.append("No changes.")
         lines.append(f"withdrawn={withdrawn}; omitted={omitted}")
-        return "\n".join(lines)
+        return "\n".join(lines), supports
 
     for key in ordered:
         # Once full, later candidates cannot be rendered. Rehydrate at most
         # the displayed delta supports plus one candidate that does not fit.
-        if len(render().encode("utf-8")) + 12 > 500:
+        if len(render()[0].encode("utf-8")) + 12 > 500:
             break
         item = items.get(key)
         if item is None and item_loader is not None:
@@ -162,18 +169,13 @@ def build_session_delta(baseline: dict | None, projection_coverage: dict | None,
         reference = f"#{support['id']}" if support.get("kind") == "claim" else _display(support["id"], 48)
         chosen.append((f"- {_short(item.get('text', ''), 110)} [{reference}]", support))
         omitted -= 1
-        if len(render().encode("utf-8")) > 500:
+        if len(render()[0].encode("utf-8")) > 500:
             chosen.pop()
             omitted += 1
             break
-    text = render()
+    text, supports = render()
     if len(text.encode("utf-8")) > 500:
         raise ValueError("delta_budget")
-    supports = []
-    for line, support in chosen:
-        start = text.index(line)
-        supports.append({"support": support, "start": start, "end": start + len(line),
-                         "display_sha256": hashlib.sha256(line.encode()).hexdigest()})
     return SessionDelta(text, status, supports, omitted)
 
 

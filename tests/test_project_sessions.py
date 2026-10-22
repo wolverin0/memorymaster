@@ -27,6 +27,29 @@ def claim(text, version=1):
             "support": {"kind": "claim", "id": 1, "version": version, "hash": text}}
 
 
+@pytest.mark.parametrize("identifiers,texts", [
+    (("a@example.com", "b@example.com"), ("Changed visible work",) * 2),
+    (("T-" + "x" * 50 + "a", "T-" + "x" * 50 + "b"),
+     ("Visible work " * 12 + "a", "Visible work " * 12 + "b")),
+], ids=["redacted", "truncated"])
+def test_equal_delta_bullets_keep_occurrence_coordinates(identifiers, texts):
+    supports = [{"kind": "card", "id": identifier, "hash": str(index)}
+                for index, identifier in enumerate(identifiers)]
+    current = {"complete": True,
+               "coverage": {"card:" + item["id"]: item for item in supports},
+               "items": {"card:" + item["id"]: {"text": text, "support": item}
+                         for item, text in zip(supports, texts)}}
+    delta = sessions.build_session_delta({}, {}, current)
+    assert len(delta.supports) == 2
+    assert [item["support"] for item in delta.supports] == supports
+    spans = [(item["start"], item["end"]) for item in delta.supports]
+    assert len(set(spans)) == 2
+    assert spans[0][1] < spans[1][0]
+    lines = [delta.text[start:end] for start, end in spans]
+    assert lines[0] == lines[1]
+    assert lines == delta.text.splitlines()[2:4]
+
+
 def test_session_gap_no_observable_change_lost(tmp_path):
     cfg = config(tmp_path)
     original = snapshot(**{"claim:1": claim("Original decision")})

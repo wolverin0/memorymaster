@@ -262,7 +262,7 @@ def render_project_projection(
     max_bytes = config.budget_bytes
     status = "partial" if diagnostics or any(omissions.values()) else "ready"
 
-    def compose() -> tuple[str, str]:
+    def compose() -> tuple[str, str, dict[int, tuple[int, int, int]]]:
         nonlocal status
         status = "partial" if diagnostics or any(omissions.values()) else "ready"
         identity = digest(
@@ -275,17 +275,30 @@ def render_project_projection(
             ]
         )
         lines = [f"Project {config.slug}", f"View {identity[:16]} | {status}"]
+        coordinates = {}
+        byte_offset = sum(len(line.encode()) + 1 for line in lines)
+
+        def append(line: str) -> None:
+            nonlocal byte_offset
+            lines.append(line)
+            byte_offset += len(line.encode()) + 1
+
         for section in SECTIONS:
-            lines.append(f"## {section}")
-            matches = [item for item in selected if item["section"] == section]
+            append(f"## {section}")
+            matches = [(index, item) for index, item in enumerate(selected) if item["section"] == section]
             if section == "Purpose" and not matches:
-                lines.append("Purpose not recorded in confirmed memory.")
-            lines.extend(_line(item) for item in matches)
+                append("Purpose not recorded in confirmed memory.")
+            for index, item in matches:
+                rendered = _line(item)
+                # Each selected occurrence owns its coordinates even when
+                # redaction or truncation gives another item the same text.
+                coordinates[index] = (len(lines) + 1, byte_offset, byte_offset + len(rendered.encode()))
+                append(rendered)
         if diagnostics:
             lines.append("Status: " + ", ".join(dict.fromkeys(diagnostics)))
         if any(omissions.values()):
             lines.append("Omitted: " + ", ".join(f"{key}={value}" for key, value in sorted(omissions.items()) if value))
-        return "\n".join(lines), identity
+        return "\n".join(lines), identity, coordinates
 
     def size(payload: str) -> int:
         return len(f"{OPENER}\n{payload}\n{CLOSER}\n".encode())
@@ -294,7 +307,7 @@ def render_project_projection(
     # records are generated only after the final trim.
     compacted = False
     while True:
-        payload, identity = compose()
+        payload, identity, coordinates = compose()
         if (
             size(payload) <= max_bytes
             and len(selected) <= 64
@@ -340,18 +353,15 @@ def render_project_projection(
         if removable.get("pinned") and "m2_not_ready:pinned_constraints_trimmed" not in diagnostics:
             diagnostics.append("m2_not_ready:pinned_constraints_trimmed")
     records = []
-    lines = payload.splitlines()
-    for item in selected:
-        rendered = _line(item)
-        index = lines.index(rendered)
-        start = len(("\n".join(lines[:index]) + "\n").encode()) if index else 0
+    for index, item in enumerate(selected):
+        line, start, end = coordinates[index]
         records.append(
             {
                 "key": item["key"],
                 "section": item["section"],
                 "text": item["text"],
-                "line": index + 1,
-                "span": [start, start + len(rendered.encode())],
+                "line": line,
+                "span": [start, end],
                 "text_hash": digest(item["text"]),
                 "supports": [item["support"]],
                 "pinned": item.get("pinned", False),

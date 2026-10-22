@@ -18,6 +18,39 @@ from memorymaster.profile.project_projection import (
 project_config = _project_config
 
 
+@pytest.mark.parametrize("identifiers", [
+    ("alice@example.com", "bruce@example.com"),
+    ("T-" + "x" * 50 + "a", "T-" + "x" * 50 + "b"),
+], ids=["redacted", "truncated"])
+def test_equal_card_bullets_keep_occurrence_coordinates(project_config, identifiers):
+    rows = [{"id": identifier, "repo": "demo", "state": "ready", "title": "Visible work"}
+            for identifier in identifiers]
+    (project_config.ledger_root / "tasks.json").write_text(
+        json.dumps({"complete": True, "tasks": rows}), encoding="utf-8")
+    built = build_project_projection(project_config)
+    assert publish_project_projection(project_config, built)
+    _, path = projection_paths(project_config)
+    published = json.loads(path.read_text(encoding="utf-8"))
+    view = read_project_projection(project_config)
+    assert view is not None
+    for payload, manifest in ((built.payload, built.manifest), (built.payload, published),
+                              (view.payload, view.manifest), (built.payload, built.public_manifest),
+                              (view.payload, view.public_manifest)):
+        records = [record for record in manifest["items"] if record["section"] == "Open cards"]
+        assert len(records) == 2
+        assert len({record["key"] for record in records}) == 2
+        assert len({record["line"] for record in records}) == 2
+        assert len({tuple(record["span"]) for record in records}) == 2
+        rendered = []
+        for record in records:
+            start, end = record["span"]
+            line = payload.splitlines()[record["line"] - 1]
+            assert payload.encode("utf-8")[start:end].decode("utf-8") == line
+            assert payload.encode("utf-8")[:start].count(b"\n") + 1 == record["line"]
+            rendered.append(line)
+        assert rendered[0] == rendered[1]
+
+
 @pytest.mark.parametrize("version", [None, "version-owner@example.com", {"owner": "version-owner@example.com"}])
 def test_public_card_manifest_does_not_export_redacted_identity(project_config, monkeypatch, capsys, version):
     from memorymaster.profile.__main__ import main
