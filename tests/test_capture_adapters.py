@@ -67,7 +67,7 @@ def test_hidden_html_context_survives_generated_span_removal(capture_root, tag):
 
 
 @pytest.mark.parametrize("tag", ["script", "style"])
-@pytest.mark.parametrize("fragment", ["&am", "<!--", "<scr"])
+@pytest.mark.parametrize("fragment", ["&am", "<!--", "<scr", "<", "</", "</scr", "</sty", "</script", "</style"])
 def test_html_raw_text_fragment_does_not_poison_authored_suffix(tag, fragment):
     from memorymaster.capture.adapters import _retained_text
     from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
@@ -77,11 +77,12 @@ def test_html_raw_text_fragment_does_not_poison_authored_suffix(tag, fragment):
     assert _retained_text(raw, html=True)[0] == "Authored"
 
 
-def test_local_html_capture_retains_authored_suffix_after_hidden_js_string(capture_root):
+@pytest.mark.parametrize("fragment", ["&am", "</scr"])
+def test_local_html_capture_retains_authored_suffix_after_hidden_js_string(capture_root, fragment):
     from memorymaster.capture.adapters import _html_text
     from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
 
-    raw = ('<script>const fragment = "&am' + GENERATED_OPENER
+    raw = ('<script>const fragment = "' + fragment + GENERATED_OPENER
            + 'generated' + GENERATED_CLOSER + '";</script><p>Authored</p>')
     assert _html_text(raw.encode("utf-8")) == "Authored"
     source = capture_root / "authored.html"
@@ -117,6 +118,10 @@ def test_excluded_generated_opening_tag_cannot_hide_authored_suffix(tag):
 @pytest.mark.parametrize(("prefix", "suffix"), [
     ("<scr", "ipt>hidden</script><p>After</p>"),
     ("<script>hidden</scr", "ipt><p>After</p>"),
+    ("<script>hidden<", "/script><p>After</p>"),
+    ("<script>hidden</", "script><p>After</p>"),
+    ("<style>hidden</sty", "le><p>After</p>"),
+    ("<style>hidden</style", "><p>After</p>"),
     ("<", "script>hidden</script><p>After</p>"),
     ("<p title='", "'>After</p>"),
     ("<p title='>'", ">After</p>"),
@@ -129,6 +134,17 @@ def test_html_token_crossing_generated_boundary_is_rejected(prefix, suffix):
     from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
 
     raw = "<p>Before</p>" + prefix + GENERATED_OPENER + "generated" + GENERATED_CLOSER + suffix
+    with pytest.raises(CaptureRejected) as exc:
+        _retained_text(raw, html=True)
+    assert exc.value.code == "ambiguous_generated_provenance"
+
+
+def test_html_raw_text_closing_token_crossing_multiple_exclusions_is_rejected():
+    from memorymaster.capture.adapters import _retained_text
+    from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+
+    gap = GENERATED_OPENER + "generated" + GENERATED_CLOSER
+    raw = "<script>hidden</sc" + gap + "r" + gap + "ipt><p>After</p>"
     with pytest.raises(CaptureRejected) as exc:
         _retained_text(raw, html=True)
     assert exc.value.code == "ambiguous_generated_provenance"
