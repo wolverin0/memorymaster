@@ -18,6 +18,7 @@ from memorymaster.core.generated_artifacts import (
     GENERATED_OPENER as OPENER,
     GENERATED_CLOSER as CLOSER,
 )
+from memorymaster.profile.egress import prepare_claim_egress
 from memorymaster.profile.project_repository import (
     _display,
     digest,
@@ -149,6 +150,14 @@ class ProjectionItem:
     sort: list = field(default_factory=list)
 
 
+def _public_identity(value: str) -> str:
+    """Keep authorization identities private when egress flags their spelling."""
+    prepared = prepare_claim_egress(value)
+    if prepared.blocked or prepared.findings:
+        return "opaque-" + digest(value)[:16]
+    return prepared.text
+
+
 @dataclass
 class ProjectProjection:
     payload: str
@@ -167,12 +176,14 @@ class ProjectProjection:
         # never recursively copied onto the CLI surface. The opaque key maps
         # back to its private record by hashing that record's support identity.
         public = {key: self.manifest[key] for key in (
-            "schema", "algorithm_version", "scope", "activation_epoch",
+            "schema", "algorithm_version",
             "generation_id", "view_id", "read_at", "checked_at", "output_sha256",
             "payload_sha256", "output_bytes", "payload_bytes", "budget_bytes",
             "omissions", "diagnostics", "status", "complete", "source_complete",
             "next_temporal_boundary",
         )}
+        for key in ("scope", "activation_epoch"):
+            public[key] = _public_identity(self.manifest[key])
         public["items"] = []
         for record in self.manifest["items"]:
             supports = [{"kind": support["kind"],
@@ -274,7 +285,7 @@ def render_project_projection(
                 diagnostics,
             ]
         )
-        lines = [f"Project {config.slug}", f"View {identity[:16]} | {status}"]
+        lines = [f"Project {_public_identity(config.slug)}", f"View {identity[:16]} | {status}"]
         coordinates = {}
         byte_offset = sum(len(line.encode()) + 1 for line in lines)
 

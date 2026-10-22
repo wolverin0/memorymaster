@@ -18,6 +18,54 @@ from memorymaster.profile.project_projection import (
 project_config = _project_config
 
 
+@pytest.mark.parametrize("label", ["sk-" + "q" * 24, ".".join(map(str, (10, 2, 3, 4)))],
+                         ids=["credential", "private-address"])
+def test_session_start_and_public_manifest_filter_project_identity(project_config, monkeypatch, label):
+    from memorymaster.profile import project_runtime as runtime
+    from memorymaster.profile.egress import prepare_claim_egress
+
+    root = project_config.project_root.parent / label
+    root.mkdir()
+    (root / ".git").mkdir()
+    (root / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    aliases = root.parent / "aliases.json"
+    # The address fixture requires an explicit operator alias; credentials use
+    # normal inferred scope, exactly as in the independent review witnesses.
+    aliases.write_text(json.dumps({"aliases": {label: "project:" + label}
+                                  if label.startswith("10.") else {}}), encoding="utf-8")
+    monkeypatch.setenv("MEMORYMASTER_SCOPE_ALIASES", str(aliases))
+    config = replace(project_config, project_root=root, scope="project:" + label)
+    assert prepare_claim_egress(label).findings
+    assert runtime.resolve_projection_scope(config, root) == config.scope
+    built = build_project_projection(config)
+    assert publish_project_projection(config, built)
+    for suffix in ("ENABLED", "SESSION_START"):
+        monkeypatch.setenv(runtime.PREFIX + suffix, "1")
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_SESSION_DELTA", "0")
+    monkeypatch.setattr(runtime, "load_project_configs", lambda: [config])
+
+    context = runtime.session_start_context({"cwd": str(root)}, profile_loader=lambda: "")
+    assert context and "Project " in context
+    view = read_project_projection(config)
+    assert view is not None
+    for projection in (built, view):
+        assert projection.manifest["scope"] == config.scope
+        assert label not in projection.payload
+        assert label not in json.dumps(projection.public_manifest)
+        assert projection.payload in context
+    # A public label is never an authorization alias.
+    assert runtime.resolve_projection_scope(replace(config, scope="project:other"), root) is None
+    assert read_project_projection(replace(config, scope="project:other")) is None
+
+
+@pytest.mark.parametrize("epoch", ["sk-" + "q" * 24, ".".join(map(str, (10, 2, 3, 4)))])
+def test_public_manifest_filters_activation_identity(project_config, epoch):
+    config = replace(project_config, epoch=epoch)
+    built = build_project_projection(config)
+    assert built.manifest["activation_epoch"] == epoch
+    assert epoch not in json.dumps(built.public_manifest)
+
+
 @pytest.mark.parametrize("identifiers", [
     ("alice@example.com", "bruce@example.com"),
     ("T-" + "x" * 50 + "a", "T-" + "x" * 50 + "b"),
