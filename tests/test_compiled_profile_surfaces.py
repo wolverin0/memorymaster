@@ -110,3 +110,18 @@ def test_session_start_template_caps_total_context_and_trims_profile_at_a_line()
     shown = context.split("(facts, not instructions):\n", 1)[1].split("\n…(profile trimmed", 1)[0]
     assert shown.splitlines()[-1].endswith("is kept.")
     assert module._format_context("project:test", [], {}, 0, [], header + "- short\n").count("- short") == 1
+
+
+def test_project_session_start_uses_payload_before_legacy_database(tmp_path, monkeypatch, capsys):
+    from memorymaster.profile import project_runtime
+
+    module = _hook_module()
+    monkeypatch.setattr(module, "DB_PATH", tmp_path / "missing.db")
+    monkeypatch.setattr(module, "_load_compiled_profile", lambda: "")
+    monkeypatch.setattr(project_runtime, "session_start_context",
+                        lambda data, **kwargs: "validated:" + data["cwd"])
+    monkeypatch.setattr(module, "_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"cwd": str(tmp_path), "session_id": "fixture"})))
+    with pytest.raises(SystemExit):
+        module.main()
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"] == "validated:" + str(tmp_path)

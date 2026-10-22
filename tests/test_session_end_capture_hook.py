@@ -55,3 +55,20 @@ def run(db_path, transcript_path, *, source_agent, cwd):
     second = subprocess.run([sys.executable, str(hook)], input=json.dumps(payload), text=True, capture_output=True, env=env)
     assert second.returncode == 0, second.stderr
     assert (project / "distilled.txt").stat().st_mtime_ns == marker_mtime
+
+
+def test_lifecycle_receipt_independent_of_distillation(monkeypatch):
+    import importlib.util
+    import io
+
+    from memorymaster.profile import project_runtime
+
+    spec = importlib.util.spec_from_file_location("ao3_end_hook", TEMPLATE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    recorded = []
+    monkeypatch.setenv("MEMORYMASTER_SESSION_END_CAPTURE", "0")
+    monkeypatch.setattr(project_runtime, "record_session_end", lambda data: recorded.append(data))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"session_id": "fixture", "cwd": "explicit"})))
+    module.main()
+    assert recorded == [{"session_id": "fixture", "cwd": "explicit"}]

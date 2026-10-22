@@ -19,12 +19,20 @@ def _enabled(name, default=True):
 
 
 def main():
-    if not _enabled("MEMORYMASTER_SESSION_END_CAPTURE", True):
-        return
     try:
         data = json.loads(sys.stdin.read() or "{}")
+        if not isinstance(data, dict):
+            data = {}
     except Exception:
         data = {}
+    try:
+        from memorymaster.profile.project_runtime import record_session_end
+
+        record_session_end(data)
+    except Exception:
+        pass  # Lifecycle failure must not suppress independently authorized capture.
+    if not _enabled("MEMORYMASTER_SESSION_END_CAPTURE", True):
+        return
     transcript_path = data.get("transcript_path", "")
     session_id = str(data.get("session_id") or "unknown")
     cwd = str(data.get("cwd") or PROJECT_ROOT)

@@ -365,6 +365,20 @@ def main():
     except Exception:
         pass
 
+    try:
+        from memorymaster.profile.project_runtime import session_start_context
+
+        context = session_start_context(data, profile_loader=_load_compiled_profile)
+        if context is not None:
+            sys.stdout.write(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "SessionStart", "additionalContext": context}}))
+            sys.stdout.flush()
+            sys.exit(0)
+    except Exception:
+        # An enabled project consumer must never fall through to less restrictive legacy SQL.
+        if os.environ.get("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "").lower() in ("1", "true", "yes", "on"):
+            sys.exit(0)
+
     if not DB_PATH.exists():
         _log("skip", reason="db-missing")
         sys.exit(0)

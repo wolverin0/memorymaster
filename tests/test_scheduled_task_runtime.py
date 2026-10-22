@@ -10,6 +10,21 @@ from memorymaster.surfaces import scheduled_task
 from memorymaster.surfaces.scheduled_task import _parser, _run_dream
 
 
+def test_projection_refresh_independent_of_skip_capture(monkeypatch, tmp_path):
+    from memorymaster.dreaming import latency_guard
+    from memorymaster.profile import project_runtime
+
+    monkeypatch.setenv("MEMORYMASTER_BEAT_ENABLED", "1")
+    monkeypatch.setattr(latency_guard, "evaluate", lambda: SimpleNamespace(action=latency_guard.SKIP, reasons=[]))
+    monkeypatch.setattr(scheduled_task, "_write_beat_artifact", lambda *args: None)
+    monkeypatch.setattr(scheduled_task, "log_event", lambda *args, **kwargs: None)
+    calls = []
+    monkeypatch.setattr(project_runtime, "refresh_project_projections", lambda **kwargs: calls.append(kwargs))
+    args = Namespace(db=str(tmp_path / "not-opened.db"), workspace=str(tmp_path), apply_candidates=False)
+    assert scheduled_task._run_beat(args) == 0
+    assert calls == [{"skip": True}]
+
+
 def test_scheduled_dream_queues_due_capture_work_before_processing(
     tmp_path: Path, monkeypatch,
 ) -> None:
