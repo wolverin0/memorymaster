@@ -8,7 +8,9 @@ import io
 import mimetypes
 import os
 import re
+from bisect import bisect_right
 from dataclasses import dataclass
+from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Protocol
@@ -86,19 +88,82 @@ class _VisibleTextParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.hidden_depth = 0
+        self.hidden_tags: list[str] = []
         self.parts: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag.lower() in {"script", "style", "noscript", "template"}:
-            self.hidden_depth += 1
+            self.hidden_tags.append(tag.lower())
+            self.hidden_depth = len(self.hidden_tags)
 
     def handle_endtag(self, tag: str) -> None:
-        if tag.lower() in {"script", "style", "noscript", "template"} and self.hidden_depth:
-            self.hidden_depth -= 1
+        if self.hidden_tags and tag.lower() == self.hidden_tags[-1]:
+            self.hidden_tags.pop()
+            self.hidden_depth = len(self.hidden_tags)
 
     def handle_data(self, data: str) -> None:
         if not self.hidden_depth and data.strip():
             self.parts.append(data.strip())
+
+
+class _RetainedHTMLParser(_VisibleTextParser):
+    """Parse the original document once; map visible data to retained ranges."""
+
+    def __init__(self, source: str, spans: tuple[SourceSpan, ...]) -> None:
+        super().__init__()
+        # Decode entities after mapping their original source ranges.
+        self.convert_charrefs = False
+        self.source = source
+        self.spans = spans
+        self.ends = [span.end for span in spans]
+        self.line_starts = [0, *(match.end() for match in re.finditer("\n", source))]
+        self.mapped: list[list[tuple[int, int, str]]] = [[] for _ in spans]
+
+    def _record(self, data: str, raw_length: int, *, entity: bool = False) -> None:
+        if self.hidden_depth:
+            return
+        line, column = self.getpos()
+        start = self.line_starts[line - 1] + column
+        end = start + raw_length
+        index = bisect_right(self.ends, start)
+        while index < len(self.spans) and self.spans[index].start < end:
+            span = self.spans[index]
+            left, right = max(start, span.start), min(end, span.end)
+            if entity and (left != start or right != end):
+                raise CaptureRejected("ambiguous_generated_provenance", "Split HTML entity cannot be attributed safely.")
+            value = data if entity else data[left - start:right - start]
+            self.mapped[index].append((left, right, value))
+            index += 1
+
+    def handle_data(self, data: str) -> None:
+        self._record(data, len(data))
+
+    def _entity(self, name: str, prefix: str) -> None:
+        line, column = self.getpos()
+        start = self.line_starts[line - 1] + column
+        raw = prefix + name
+        if self.source[start + len(raw):start + len(raw) + 1] == ";":
+            raw += ";"
+        self._record(unescape(raw), len(raw), entity=True)
+
+    def handle_entityref(self, name: str) -> None:
+        self._entity(name, "&")
+
+    def handle_charref(self, name: str) -> None:
+        self._entity(name, "&#")
+
+    def values(self) -> list[str]:
+        result = []
+        for parts in self.mapped:
+            chunks = []
+            previous_end = None
+            for start, end, value in parts:
+                if chunks and previous_end != start:
+                    chunks.append("\n")
+                chunks.append(value)
+                previous_end = end
+            result.append("".join(chunks).strip())
+        return result
 
 
 def _digest(payload: bytes) -> str:
@@ -124,10 +189,16 @@ def _retained_text(text: str, *, html: bool = False) -> tuple[str, tuple[str, ..
         raise CaptureRejected("generated_artifact", "Generated-only content cannot become capture evidence.")
     spans: list[SourceSpan] = []
     warning_codes: list[str] = ["generated_spans_excluded"] if clean.excluded_spans else []
-    for span in clean.spans:
+    html_values = []
+    if html:
+        parser = _RetainedHTMLParser(text, clean.spans)
+        parser.feed(text)
+        parser.close()
+        html_values = parser.values()
+    for index, span in enumerate(clean.spans):
         if span.start == 0 and span.text.startswith("\ufeff"):
             span = SourceSpan(1, span.end, span.text[1:])
-        value = _html_text(span.text.encode("utf-8")) if html else span.text
+        value = html_values[index].lstrip("\ufeff") if html else span.text
         if html and strip_generated_spans(value).excluded_spans:
             # HTML entity decoding changes offsets. Without a reversible source
             # map, splitting decoded text would fabricate original attribution.

@@ -51,6 +51,35 @@ def test_generated_only_inline_does_not_create_capture():
     assert exc.value.code == "generated_artifact"
 
 
+@pytest.mark.parametrize("tag", ["script", "style", "noscript", "template"])
+def test_hidden_html_context_survives_generated_span_removal(capture_root, tag):
+    from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+
+    raw = (f"<{tag}>hidden before " + GENERATED_OPENER + "generated" + GENERATED_CLOSER
+           + f"This script-only decision must never become evidence.</{tag}><p>Authored note.</p>")
+    path = capture_root / "hidden.html"
+    path.write_text(raw, encoding="utf-8")
+    envelope = LocalFileAdapter(path).capture()
+    assert envelope.text == "Authored note."
+    assert [span.text for span in envelope.retained_spans] == ["Authored note."]
+    span = envelope.retained_spans[0]
+    assert raw[span.start:span.end].endswith("<p>Authored note.</p>")
+
+
+def test_html_crossing_exclusions_preserves_entities_and_source_spans(capture_root):
+    from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+
+    raw = ("<p>Before &amp; &#233;.</p><template>hidden " + GENERATED_OPENER
+           + "generated" + GENERATED_CLOSER + " hidden</template><p>After &lt;note&gt;.</p>")
+    path = capture_root / "mapped.html"
+    path.write_text(raw, encoding="utf-8")
+    envelope = LocalFileAdapter(path).capture()
+    assert [span.text for span in envelope.retained_spans] == ["Before & é.", "After <note>."]
+    first, second = envelope.retained_spans
+    assert first.end <= raw.index(GENERATED_OPENER)
+    assert second.start >= raw.index(GENERATED_CLOSER) + len(GENERATED_CLOSER)
+
+
 def test_html_escaped_generated_markers_reject_ambiguous_evidence(capture_root):
     from html import escape
 
