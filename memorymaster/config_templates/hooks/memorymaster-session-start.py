@@ -17,10 +17,21 @@ Scope is resolved from CWD through the shared Git-aware scope helper.
 """
 import json
 import os
+import re
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+MM_ROOT = Path("__MEMORYMASTER_PROJECT_ROOT__")
+sys.path.insert(0, str(MM_ROOT))
+
+try:
+    from memorymaster.core.text_safety import sanitize_text
+except Exception:
+    # Installed hooks must still start when their project root is unavailable.
+    def sanitize_text(text: str) -> str:
+        return re.sub(r"[\ud800-\udfff]", "\ufffd", text)
 
 
 def _log(event, **kw):
@@ -34,12 +45,11 @@ def _log(event, **kw):
                 continue
             parts.append(f"{k}={v}")
         with open(os.path.join(log_dir, "hook.log"), "a", encoding="utf-8") as fh:
-            fh.write(" ".join(parts) + "\n")
+            fh.write(sanitize_text(" ".join(parts)) + "\n")
     except Exception:
         pass
 
 
-MM_ROOT = Path("__MEMORYMASTER_PROJECT_ROOT__")
 DB_PATH = MM_ROOT / "memorymaster.db"
 WIKI_ROOT = MM_ROOT / "obsidian-vault" / "wiki"
 PROFILE_PATH = Path.home() / ".memorymaster" / "projections" / "user.md"
@@ -388,7 +398,7 @@ def main():
     output = {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
-            "additionalContext": context,
+            "additionalContext": sanitize_text(context),
         }
     }
     sys.stdout.write(json.dumps(output))

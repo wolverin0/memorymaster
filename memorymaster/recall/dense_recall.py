@@ -38,6 +38,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from memorymaster.core.text_safety import sanitize_text
 from memorymaster.recall import hook_policy
 
 ENABLE_ENV = "MEMORYMASTER_RECALL_DENSE"
@@ -115,8 +116,8 @@ def search(query: str, scopes: Sequence[str] | None, *, k: int = FETCH_K, outsid
     """
     try:
         url = os.environ.get(URL_ENV, DEFAULT_URL).rstrip("/") + "/search"
-        body = json.dumps({"query": query, "scopes": list(scopes) if scopes else None, "k": k,
-                           "outside_k": outside_k}).encode("utf-8")
+        body = sanitize_text(json.dumps({"query": query, "scopes": list(scopes) if scopes else None, "k": k,
+                                         "outside_k": outside_k}, ensure_ascii=False)).encode("utf-8")
         request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
         with _OPENER.open(request, timeout=_float_env(TIMEOUT_ENV, DEFAULT_TIMEOUT_S)) as response:
             payload = json.loads(response.read())
@@ -142,7 +143,7 @@ def log_path() -> Path:
 
 
 def query_fingerprint(query: str) -> str:
-    return hashlib.sha256(query.encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha256(sanitize_text(query).encode("utf-8")).hexdigest()[:12]
 
 
 def record(event: dict[str, Any]) -> None:
@@ -154,7 +155,7 @@ def record(event: dict[str, Any]) -> None:
             os.replace(path, path.with_suffix(path.suffix + ".1"))
         line = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), **event}
         with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(line, ensure_ascii=False, separators=(",", ":")) + "\n")
+            handle.write(sanitize_text(json.dumps(line, ensure_ascii=False, separators=(",", ":"))) + "\n")
     except Exception:  # noqa: BLE001 — metrics must never break recall
         pass
 

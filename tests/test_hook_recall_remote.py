@@ -32,6 +32,15 @@ def _raises(exc):
     return opener
 
 
+def test_remote_recall_sanitizes_prompt_and_json_claim_boundaries():
+    def opener(request, **_):
+        assert json.loads(request.data) == {"query": "prompt \ufffd", "hook_data": {"cwd": "repo\ufffd"}}
+        return _Response(br'{"ctx":"claim \udc8f"}')
+
+    answer = remote.remote_recall("prompt \udc8f", {"cwd": "repo\ud800"}, environ=ENV, opener=opener)
+    assert answer == remote.RemoteRecall("claim \ufffd", True)
+
+
 def test_route_url_is_derived_from_the_relay_url():
     assert remote.hook_recall_url(ENV) == "http://127.0.0.1:8766/hook/recall"
 

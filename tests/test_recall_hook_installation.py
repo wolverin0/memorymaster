@@ -4,9 +4,104 @@ import json
 import runpy
 from pathlib import Path
 
+import pytest
+
 from memorymaster.surfaces import setup_hooks as setup
 from memorymaster.recall import context_hook
 from memorymaster.core import hook_log
+
+
+def test_recall_template_sanitizes_json_prompt_before_retrieval(tmp_path, monkeypatch):
+    from memorymaster.recall import remote
+
+    root = Path(__file__).resolve().parents[1]
+    template = root / "memorymaster/config_templates/hooks/memorymaster-recall.py"
+    source = template.read_text(encoding="utf-8").replace("__MEMORYMASTER_PROJECT_ROOT__", tmp_path.as_posix())
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MEMORYMASTER_RECALL_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(hook_log, "_STATE_DIR", tmp_path)
+    monkeypatch.setattr(hook_log, "_LOG_FILE", tmp_path / "hook.log")
+    seen = []
+    monkeypatch.setattr(remote, "hook_recall", lambda query, *a, **kw: seen.append(query) or ("claim\udc8f", "shared"))
+    monkeypatch.setattr("sys.stdin", io.StringIO(r'{"prompt":"explain \udc8f recall","session_id":"s"}'))
+    output = io.StringIO()
+    monkeypatch.setattr("sys.stdout", output)
+    exec(compile(source, str(template), "exec"), {"__name__": "__main__"})
+    assert seen == ["explain \ufffd recall"]
+    assert json.loads(output.getvalue())["hookSpecificOutput"]["additionalContext"] == "[MemoryMaster recall]\nclaim\ufffd"
+    assert "event=error" not in (tmp_path / "hook.log").read_text(encoding="utf-8")
+
+
+def test_session_start_template_sanitizes_log_and_context(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    root = Path(__file__).resolve().parents[1]
+    template = root / "memorymaster/config_templates/hooks/memorymaster-session-start.py"
+    ns = runpy.run_path(str(template))
+    ns["_log"]("error", message="prompt\udc8f")
+    log = tmp_path / ".memorymaster/hook_state/hook.log"
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    assert lines[0].endswith("event=error message=prompt\ufffd")
+    main_globals = ns["main"].__globals__
+    db = tmp_path / "disposable.db"
+    import sqlite3
+
+    sqlite3.connect(db).close()
+    main_globals.update(DB_PATH=db, _derive_scope=lambda: "project:test",
+                        _query_recent_claims=lambda *a: [{"text": "claim\udc8f"}],
+                        _jev_session_active=lambda: False, _query_last_cycle_summary=lambda *a: {},
+                        _query_candidate_claims=lambda *a: [], _load_recent_wiki_articles=lambda *a: [],
+                        _load_compiled_profile=lambda: "", _jev_session_claims=lambda *a: a[2],
+                        _format_context=lambda *a: a[1][0]["text"])
+    monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+    output = io.StringIO()
+    monkeypatch.setattr("sys.stdout", output)
+    import pytest
+
+    with pytest.raises(SystemExit) as exc:
+        ns["main"]()
+    assert exc.value.code == 0
+    assert json.loads(output.getvalue())["hookSpecificOutput"]["additionalContext"] == "claim\ufffd"
+
+
+@pytest.mark.parametrize("root_value", ["__MEMORYMASTER_PROJECT_ROOT__", "missing-root"])
+@pytest.mark.parametrize("import_error", [ModuleNotFoundError, RuntimeError])
+def test_session_start_degrades_without_importable_package(tmp_path, monkeypatch, capsys,
+                                                         root_value, import_error):
+    import builtins
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    # Keep the template's bootstrap path changes local to this test.
+    monkeypatch.syspath_prepend(str(tmp_path))
+    template = Path(__file__).resolve().parents[1] / "memorymaster/config_templates/hooks/memorymaster-session-start.py"
+    source = template.read_text(encoding="utf-8").replace("__MEMORYMASTER_PROJECT_ROOT__", root_value)
+    original_import = builtins.__import__
+    attempted = []
+
+    def without_memorymaster(name, *args, **kwargs):
+        if name == "memorymaster" or name.startswith("memorymaster."):
+            attempted.append(name)
+            raise import_error("simulated unavailable package")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_memorymaster)
+    ns = {"__name__": "session_start_fixture"}
+    exec(compile(source, str(template), "exec"), ns)
+    assert "memorymaster.core.text_safety" in attempted
+    text = "España 😀\ud800prompt\udc8f\udfff"
+    assert ns["sanitize_text"](text) == "España 😀\ufffdprompt\ufffd\ufffd"
+    ns["_log"]("error", message=text)
+    log = tmp_path / ".memorymaster/hook_state/hook.log"
+    assert log.read_text(encoding="utf-8").splitlines()[0].endswith("message=España 😀\ufffdprompt\ufffd\ufffd")
+    monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+    with pytest.raises(SystemExit) as exc:
+        ns["main"]()
+    assert exc.value.code == 0
+    assert capsys.readouterr().out == ""
+    assert log.read_text(encoding="utf-8").splitlines()[-1].endswith("event=skip reason=db-missing")
 
 
 def install(tmp_path, monkeypatch):

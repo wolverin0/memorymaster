@@ -19,6 +19,7 @@ os.environ["MEMORYMASTER_DEFAULT_DB"] = DB_PATH
 os.chdir(PROJECT_ROOT)
 
 from memorymaster.core.hook_log import log_hook  # noqa: E402 — import must follow sys.path bootstrap
+from memorymaster.core.text_safety import sanitize_text  # noqa: E402
 from memorymaster.recall.delivery import deliver, is_automated  # noqa: E402
 
 try:  # 4.9.0+: recall_block and recall(hook_data=...) ship together
@@ -68,7 +69,8 @@ _BOOT_MS = process_age_ms() if _PROBE else None
 try:
     data = json.loads(sys.stdin.read() or "{}")
     query = data.get("prompt", "")
-    query = query if isinstance(query, str) else ""
+    query = sanitize_text(query) if isinstance(query, str) else ""
+    data["prompt"] = query
     session_id = str(data.get("session_id", ""))[:16]
     full_session = data.get("session_id")
     automated = is_automated(query)
