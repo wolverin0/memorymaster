@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import sqlite3
 import time
+from itertools import islice
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -141,22 +143,21 @@ def session_start_context(data: dict, *, profile_loader=None) -> str | None:
         return None
     config = config_for_cwd(data.get("cwd") or os.getcwd())
     if config is None:
-        return None
+        return compose_session_context("Project context unavailable; project authorization unresolved.")
     from memorymaster.profile.project_projection import read_project_projection
 
     projection = read_project_projection(config)
-    if projection is None:
-        return compose_session_context("Project context unavailable; refresh pending.")
     delta = ""
     if active("MEMORYMASTER_PROJECT_SESSION_DELTA"):
         from memorymaster.profile.project_sessions import record_project_session_start
 
         result = record_project_session_start(config, str(data.get("session_id") or ""),
-                                              projection=projection.manifest)
+                                              projection=projection.manifest if projection else None)
         delta = (result["delta"].text if result.get("delta")
                  else "Prior-session continuity unavailable: " + result["status"])
     profile = profile_loader() if profile_loader is not None else ""
-    return compose_session_context(projection.payload, delta, profile)
+    return compose_session_context(projection.payload if projection else
+                                   "Project context unavailable; refresh pending.", delta, profile)
 
 
 def record_session_end(data: dict) -> bool:
@@ -189,25 +190,80 @@ def cheap_fingerprint(config) -> tuple:
         except FileNotFoundError:
             return None
     files = [stat(config.db_path), stat(Path(str(config.db_path) + "-wal"))]
-    if config.ledger_root:
+    if config.ledger_root and config.ledger_root.is_file():
+        files.append(stat(config.ledger_root))
+    elif config.ledger_root:
         # Only configured JSON records, bounded before materializing a directory list.
-        for index, path in enumerate(sorted(config.ledger_root.glob("*.json"))):
-            if index >= 1024:
-                raise ValueError("ledger_capacity")
+        paths = list(islice(config.ledger_root.glob("*.json"), 1025))
+        if len(paths) > 1024:
+            raise ValueError("ledger_capacity")
+        for path in sorted(paths):
             files.append((path.name, stat(path)))
     # An elapsed second can cross valid_from/valid_until even without a database writer.
     # Cache stores the next temporal boundary separately after each full source read.
-    return (data_version, *files)
+    return (data_version, repr(config), *files)
 
 
-def _refresh_one(config) -> dict:
-    from memorymaster.profile.project_projection import build_project_projection, publish_project_projection
+def _cheap_hash(config) -> str:
+    return hashlib.sha256(json.dumps(cheap_fingerprint(config), sort_keys=True).encode()).hexdigest()
 
+
+def _persisted_skip_hint(config, cheap: tuple) -> bool:
+    from memorymaster.profile.project_projection import read_manifest
+
+    manifest = read_manifest(config)
+    if not manifest:
+        return False
+    hint = manifest.get("refresh_hint")
+    now = datetime.now(timezone.utc)
+    if not hint or hint.get("sha256") != hashlib.sha256(json.dumps(cheap, sort_keys=True).encode()).hexdigest():
+        return False
+    checked = datetime.fromisoformat(manifest["checked_at"].replace("Z", "+00:00"))
+    boundary = manifest.get("next_temporal_boundary")
+    return (0 <= (now - checked).total_seconds() < 3600 and
+            (not boundary or now < datetime.fromisoformat(boundary.replace("Z", "+00:00"))))
+
+
+def _refresh_one(config, *, skip: bool = False) -> dict:
+    from memorymaster.profile.project_projection import (
+        atomic_json,
+        build_project_projection,
+        project_lock,
+        projection_paths,
+        publish_project_projection,
+        read_manifest,
+    )
+
+    previous = read_manifest(config)
+    before = _cheap_hash(config)
     projection = build_project_projection(config)
-    if not projection.manifest.get("complete", projection.manifest.get("source_complete", False)):
+    manifest = projection.manifest
+    if not manifest.get("source_complete", False):
         return {"status": "pending"}
+    after = _cheap_hash(config)
+    if before != after:
+        return {"status": "pending"}
+    manifest["refresh_hint"] = {"sha256": after}
+    boundary = manifest.get("next_temporal_boundary")
+    def item_keys(value):
+        return [(item["key"], item["text"], item["supports"]) for item in value["items"]]
+    if (previous and previous["source_coverage"] == manifest["source_coverage"]
+            and item_keys(previous) == item_keys(manifest)
+            and previous["diagnostics"] == manifest["diagnostics"]
+            and previous["budget_bytes"] == manifest["budget_bytes"]):
+        if not skip or previous.get("refresh_hint") != manifest["refresh_hint"]:
+            _, path = projection_paths(config)
+            with project_lock(path.with_suffix(".lock"), timeout=0) as acquired:
+                if not acquired or read_manifest(config) != previous:
+                    return {"status": "pending"}
+                if not skip:
+                    previous["checked_at"] = datetime.now(timezone.utc).isoformat()
+                previous["refresh_hint"] = manifest["refresh_hint"]
+                previous["next_temporal_boundary"] = boundary
+                atomic_json(path, previous)
+        return {"status": "ok", "next_temporal_boundary": boundary}
     published = publish_project_projection(config, projection)
-    return {"status": "ok" if published else "pending"}
+    return {"status": "ok" if published else "pending", "next_temporal_boundary": boundary}
 
 
 def refresh_project_projections(*, skip: bool = False) -> dict:
@@ -233,9 +289,16 @@ def refresh_project_projections(*, skip: bool = False) -> dict:
             if skip and cached and cached[0] == cheap and time.monotonic() < cached[1]:
                 results.append({"status": "unchanged"})
                 continue
-            result = _refresh_one(config)
+            if skip and not cached and hasattr(config, "db_path") and _persisted_skip_hint(config, cheap):
+                results.append({"status": "unchanged"})
+                continue
+            result = _refresh_one(config, skip=skip)
             if result["status"] == "ok":
-                _refresh_cache[key] = (cheap, time.monotonic() + 60)
+                seconds = 60.0
+                if result.get("next_temporal_boundary"):
+                    boundary = datetime.fromisoformat(result["next_temporal_boundary"].replace("Z", "+00:00"))
+                    seconds = min(seconds, max(0, (boundary - datetime.now(timezone.utc)).total_seconds()))
+                _refresh_cache[key] = (cheap, time.monotonic() + seconds)
             results.append(result)
         except (OSError, ValueError, sqlite3.Error):
             results.append({"status": "pending", "reason": "source_unavailable"})

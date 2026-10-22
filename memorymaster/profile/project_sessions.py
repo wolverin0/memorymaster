@@ -26,6 +26,8 @@ def _digest(value: object) -> str:
 
 
 def _time(value: str) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError("invalid timestamp")
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         raise ValueError("timezone required")
@@ -34,7 +36,7 @@ def _time(value: str) -> datetime:
 
 def session_state_path(config) -> Path:
     slug = config.scope.removeprefix("project:")
-    if not all(re.fullmatch(r"[A-Za-z0-9_-]{1,128}", part) for part in (slug, config.context_key)):
+    if not all(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,95}", part) for part in (slug, config.context_key)):
         raise ValueError("invalid project identity")
     return Path(config.state_root) / config.context_key / slug / "sessions.json"
 
@@ -57,19 +59,37 @@ def read_session_state(config) -> dict:
     if len(raw) > MAX_STATE_BYTES:
         raise ValueError("state_capacity")
     state = json.loads(raw)
+    if not isinstance(state, dict):
+        raise ValueError("invalid_state")
     if (state.get("schema") != SCHEMA or state.get("scope") != config.scope
             or state.get("context_key") != config.context_key):
         raise ValueError("state_identity")
     if state.get("activation_epoch") != config.epoch:
         return _empty(config)
+    if (type(state.get("seq")) is not int or state["seq"] < 0
+            or not isinstance(state.get("active"), dict)
+            or not isinstance(state.get("completed"), list)
+            or not isinstance(state.get("baselines"), dict)):
+        raise ValueError("invalid_state")
     if (len(state["active"]) > 16 or len(state["completed"]) > 4
             or len(state["baselines"]) > 36):
         raise ValueError("state_capacity")
     for key, baseline in state["baselines"].items():
-        if len(_encoded(baseline)) > MAX_BASELINE_BYTES or _digest(baseline) != key:
+        if not isinstance(baseline, dict) or len(_encoded(baseline)) > MAX_BASELINE_BYTES or _digest(baseline) != key:
             raise ValueError("baseline_integrity")
     for record in [*state["active"].values(), *state["completed"]]:
+        if (not isinstance(record, dict) or not isinstance(record.get("session"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", record["session"])
+                or type(record.get("seq")) is not int or record["seq"] > state["seq"]):
+            raise ValueError("invalid_record")
+        _time(record["start_at"])
+        _time(record["read_at"])
+        if record.get("end_at"):
+            if _time(record["end_at"]) < _time(record["start_at"]):
+                raise ValueError("invalid_end")
         if record["baseline"] not in state["baselines"]:
+            raise ValueError("baseline_unavailable")
+        if record.get("prior_baseline") and record["prior_baseline"] not in state["baselines"]:
             raise ValueError("baseline_unavailable")
     latest = state["latest_end"]
     if latest is not None and latest not in state["completed"]:
@@ -93,9 +113,11 @@ def _short(text: str, size: int) -> str:
 def build_session_delta(baseline: dict | None, projection_coverage: dict | None,
                         current: dict, *, diagnostic: str = "") -> SessionDelta:
     """Union start and projection differences, with current authorized supports only."""
-    coverage = current.get("coverage", {})
+    def factual(value):
+        return {key: support for key, support in value.items() if key.startswith(("claim:", "card:"))}
+    coverage = factual(current.get("coverage", {}))
     items = current.get("items", {})
-    comparisons = [value for value in (baseline, projection_coverage) if value is not None]
+    comparisons = [factual(value) for value in (baseline, projection_coverage) if value is not None]
     changed = {key for value in comparisons for key in coverage if value.get(key) != coverage[key]}
     removed = {key for value in comparisons for key in value if key not in coverage}
     # A currently authorized closed card may be carried in items outside open-card coverage.
@@ -172,7 +194,7 @@ def record_project_session_start(config, session_id: str, *, projection: dict | 
         return {"status": "baseline_unavailable"}
     from memorymaster.profile.project_projection import atomic_json, project_lock
 
-    now = now or datetime.now(timezone.utc)
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     sid = hashlib.sha256(session_id.encode()).hexdigest()
     path = session_state_path(config)
     lock = path.with_suffix(".lock")
@@ -194,11 +216,12 @@ def record_project_session_start(config, session_id: str, *, projection: dict | 
                     prior_id = prior["baseline"] if prior else None
                 baseline = copy.deepcopy(state["baselines"].get(prior_id))
             if snapshot_loader is None:
-                if projection is None:
+                if projection is None and baseline is None:
                     return {"status": "baseline_unavailable"}
                 from memorymaster.profile.project_repository import snapshot_since
 
-                current = snapshot_since(config, projection["source_coverage"], projection["read_at"])
+                current = snapshot_since(config, projection["source_coverage"] if projection else baseline,
+                                         projection["read_at"] if projection else prior["read_at"])
             else:
                 current = snapshot_loader()
             if not current.get("complete"):
@@ -243,10 +266,10 @@ def record_project_session_end(config, session_id: str, *, end_at: str | None = 
         return False
     from memorymaster.profile.project_projection import atomic_json, project_lock
 
-    now = now or datetime.now(timezone.utc)
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     try:
         end = _time(end_at) if end_at else now
-        if end > now + timedelta(minutes=1):
+        if end > now:
             return False
         path = session_state_path(config)
         sid = hashlib.sha256(session_id.encode()).hexdigest()

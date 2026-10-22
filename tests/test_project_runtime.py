@@ -54,11 +54,30 @@ def test_skip_refresh_prechecks_cheap_fingerprints_without_full_scan(tmp_path, m
     monkeypatch.setattr(runtime, "load_project_configs", lambda: [cfg])
     monkeypatch.setattr(runtime, "cheap_fingerprint", lambda config: ("unchanged",))
     calls = []
-    monkeypatch.setattr(runtime, "_refresh_one", lambda config: calls.append(config) or {"status": "ok"})
+    monkeypatch.setattr(runtime, "_refresh_one", lambda config, **kwargs: calls.append(config) or {"status": "ok"})
     runtime._refresh_cache.clear()
     runtime.refresh_project_projections(skip=True)
     runtime.refresh_project_projections(skip=True)
     assert calls == [cfg]
+
+
+def test_cheap_cache_respects_temporal_boundary(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    cfg = SimpleNamespace(scope="project:fixture", context_key="fixture", epoch="test")
+    monkeypatch.setattr(runtime, "active", lambda name: True)
+    monkeypatch.setattr(runtime, "load_project_configs", lambda: [cfg])
+    monkeypatch.setattr(runtime, "cheap_fingerprint", lambda config: ("unchanged",))
+    calls = []
+    def refresh(config, **kwargs):
+        calls.append(config)
+        return {"status": "ok", "next_temporal_boundary":
+                (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()}
+    monkeypatch.setattr(runtime, "_refresh_one", refresh)
+    runtime._refresh_cache.clear()
+    runtime.refresh_project_projections(skip=True)
+    runtime.refresh_project_projections(skip=True)
+    assert calls == [cfg, cfg]
 
 
 def test_scope_disagreement_and_wrong_repository_denied(tmp_path, monkeypatch):
@@ -69,3 +88,10 @@ def test_scope_disagreement_and_wrong_repository_denied(tmp_path, monkeypatch):
     monkeypatch.setattr(scope_utils, "scope_from_cwd_or_user", lambda cwd: "project:fixture")
     monkeypatch.setattr(scope_utils, "resolve_transcript_workspace_scope", lambda cwd: "project:wrong")
     assert runtime.resolve_projection_scope(cfg, tmp_path) is None
+
+
+def test_enabled_unresolved_scope_never_requests_legacy_sql(monkeypatch):
+    monkeypatch.setattr(runtime, "active", lambda name: True)
+    monkeypatch.setattr(runtime, "config_for_cwd", lambda cwd: None)
+    result = runtime.session_start_context({"cwd": "unresolved"})
+    assert result is not None and "unavailable" in result.lower()

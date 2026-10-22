@@ -118,3 +118,55 @@ def test_disabled_state_never_reads_or_writes(tmp_path):
     assert sessions.record_project_session_start(cfg, "S")["status"] == "inactive"
     assert not sessions.record_project_session_end(cfg, "S")
     assert not list(tmp_path.iterdir())
+
+
+def test_missing_projection_keeps_completed_baseline_comparison(tmp_path, monkeypatch):
+    from memorymaster.profile import project_repository
+
+    cfg = config(tmp_path)
+    original = snapshot(**{"claim:1": claim("original")})
+    projection = {"source_coverage": original["coverage"], "read_at": NOW.isoformat()}
+    sessions.record_project_session_start(cfg, "S", projection=projection,
+                                          snapshot_loader=lambda: original, now=NOW)
+    sessions.record_project_session_end(cfg, "S", now=NOW + timedelta(minutes=1))
+    monkeypatch.setattr(project_repository, "snapshot_since", lambda config, coverage, read_at:
+                        snapshot(**{"claim:1": claim("changed without projection", 2)}))
+    result = sessions.record_project_session_start(cfg, "T", now=NOW + timedelta(minutes=2))
+    assert "changed without projection" in result["delta"].text
+    assert result["delta"].status == "partial"
+
+
+def test_dotted_project_slug_has_bounded_state(tmp_path):
+    cfg = config(tmp_path)
+    cfg.scope = "project:my.repo"
+    assert sessions.session_state_path(cfg).parent.name == "my.repo"
+
+
+def test_malformed_state_and_end_time_fail_closed(tmp_path):
+    cfg = config(tmp_path)
+    path = sessions.session_state_path(cfg)
+    path.parent.mkdir(parents=True)
+    for invalid in ([], None, {"schema": sessions.SCHEMA, "scope": cfg.scope,
+                              "context_key": cfg.context_key, "activation_epoch": cfg.epoch,
+                              "active": [], "completed": [], "baselines": {}, "seq": 0}):
+        path.write_text(json.dumps(invalid))
+        assert sessions.record_project_session_start(cfg, "S")["status"] == "continuity_pending"
+        assert not sessions.record_project_session_end(cfg, "S", end_at=123)
+
+
+def test_future_end_is_rejected_and_start_remains(tmp_path):
+    cfg = config(tmp_path)
+    current = snapshot()
+    sessions.record_project_session_start(cfg, "S", projection={"source_coverage": {}, "read_at": NOW.isoformat()},
+                                          snapshot_loader=lambda: current, now=NOW)
+    assert not sessions.record_project_session_end(cfg, "S", end_at=(NOW + timedelta(seconds=30)).isoformat(), now=NOW)
+    assert sessions.last_project_session_end(cfg) is None
+
+
+def test_internal_scan_fence_never_becomes_delta_support_or_omission():
+    current = snapshot()
+    current["coverage"]["__scan_fence__"] = {"watched_ids": [42], "max_seen_id": 42}
+    delta = sessions.build_session_delta({}, {}, current)
+    assert delta.omitted == 0
+    assert not delta.supports
+    assert "No changes" in delta.text
