@@ -1,5 +1,5 @@
-<!-- doc-head: AO-3 project projection configuration, continuity and rollback -->
-<!-- Covers: default-off gates, explicit pilot inputs, limits and source-only acceptance. -->
+<!-- doc-head: AO-3 projection configuration, rollback and partial source acceptance -->
+<!-- Covers: default-off gates, pilot limits, resumed verification and incremental-read gap. -->
 <!-- Read when: reviewing or later authorizing the AO-3 pilot; no installation is implied. -->
 <!-- /doc-head -->
 # Project projections
@@ -169,3 +169,78 @@ ingest cases passed with explicit hash embeddings. The first non-ML attempt
 was interrupted before failures to give the ten-thousand-session stress test
 its explicit 180-second timeout; it had no test failures at interruption.
 Final suite counts and commands are recorded in the task close report.
+
+### Resumed source checks, 2026-10-22
+
+Source acceptance remains **partial** pending the round-two incremental-read
+criterion. `load_project_snapshot` unions every watched claim ID into the
+SessionStart lookup; `_read_claims` then reloads those rows and their citations.
+The query is bounded and uses primary-key lookups, but does not reuse unchanged
+coverage without materializing its sources. A disposable unchanged-source
+probe with three watched claims observed three rehydrated rows and three
+rehydrated citations. `test_session_start_baseline_never_full_source_scan`
+checks the query arguments only and does not establish incremental cost.
+
+Simply removing watched IDs would regress the passing citation-only,
+same-second, first-citation and old-timestamp late-commit tests. A bounded SQL
+fingerprint comparison could reduce Python materialization while still reading
+all watched source fingerprints. Strict change-only reads need a trustworthy
+mutation sequence or another approved design. The lane's Argon review must
+resolve that difference before claiming the incremental criterion or activating
+the pilot; no journal, migration or activation was added in this resume.
+
+The resume also found and fixed pinned decisions incorrectly sorting behind
+older unpinned decisions. The new
+`test_latest_decisions_ignore_pin_priority` first failed with observed IDs
+`[11, 10, 9]` instead of `[14, 13, 12]`; the complete projection file then passed
+all twelve tests. Pins still order constraints, while decisions use date and ID.
+
+Freshly executed checks, one test file per Python process:
+
+| Test file (`tests/`) | Passed | Skipped |
+|---|---:|---:|
+| `test_project_projection.py` | 12 | 0 |
+| `test_project_repository.py` | 22 | 0 |
+| `test_project_sessions.py` | 13 | 0 |
+| `test_project_runtime.py` | 8 | 0 |
+| `test_project_integration.py` | 5 | 0 |
+| `test_generated_artifacts.py` | 3 | 0 |
+| `test_compiled_profile_surfaces.py` | 6 | 0 |
+| `test_profile_config_defaults.py` | 2 | 0 |
+| `test_compiled_profile.py` | 9 | 0 |
+| `test_compiled_profile_claim_supports.py` | 50 | 0 |
+| `test_intake_policy.py` | 22 | 0 |
+| `test_service.py` | 6 | 0 |
+| `test_capture_adapters.py` | 24 | 1 |
+| `test_public_v1.py` | 14 | 0 |
+| `test_dreaming_self_observation.py` | 35 | 0 |
+| `test_session_end_capture_hook.py` | 2 | 0 |
+| `test_session_end_ingest.py` | 4 | 0 |
+| `test_scheduled_task_runtime.py` | 7 | 0 |
+| `test_operational_review.py` | 16 | 0 |
+| `test_public_demo.py` | 2 | 0 |
+| `test_scope_utils.py` | 17 | 0 |
+| **Total** | **279** | **1** |
+
+Runs used `WEZBRIDGE_OPERATOR_ALLOW_HEAVY=1`, disposable workspace basetemps
+and the local directory-mode wrapper described above. Service-backed suites
+used `MEMORYMASTER_EMBEDDING_PROVIDER=hash`; default temporary-directory roots
+were redirected into the workspace. The sole skip requires Windows symlink
+privilege. The ten-thousand-session case passed in the complete session file
+(125 seconds). No full-suite or installed/live acceptance is claimed.
+
+The first projection attempt had eleven fixture setup errors because its
+basetemp parent did not exist; the next exposed the sandbox's `0700` directory
+access failure. Creating the parent and using the disposable-only wrapper
+resolved those harness errors. The first standalone incremental probe imported
+the installed package because its script path omitted the checkout; explicitly
+prepending the checkout resolved that harness error before the observation
+above. These were retained as failed attempts, not product regressions.
+
+Ruff passed on all thirty-three changed Python files. Release truth was
+regenerated for the new regression and `--check` passed. Contract witness
+passed against `origin/main` (seventeen code files, sixteen test files, no
+orphan witnesses). GitNexus reported `INDEX_MISSING`; deferred tool discovery
+exposed neither GitNexus nor Serena. Scoped source references and the reviewed
+diff covered the builder's CLI/refresh callers before committing. Branch
+freshness passed with zero commits behind `origin/main`.
