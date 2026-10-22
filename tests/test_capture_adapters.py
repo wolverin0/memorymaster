@@ -66,6 +66,67 @@ def test_hidden_html_context_survives_generated_span_removal(capture_root, tag):
     assert raw[span.start:span.end].endswith("<p>Authored note.</p>")
 
 
+@pytest.mark.parametrize("tag", ["script", "style", "noscript", "template"])
+def test_excluded_generated_closing_tag_cannot_expose_hidden_authored_data(tag):
+    from memorymaster.capture.adapters import _retained_text
+    from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+
+    raw = (f"<{tag}>hidden before " + GENERATED_OPENER + f"</{tag}>"
+           + GENERATED_CLOSER + f"script-only sentence</{tag}><p>Authored</p>")
+    text, _, _, _ = _retained_text(raw, html=True)
+    assert text == "Authored", f"Excluded generated structure exposed hidden data: {text!r}"
+
+
+@pytest.mark.parametrize("tag", ["script", "style", "noscript", "template"])
+def test_excluded_generated_opening_tag_cannot_hide_authored_suffix(tag):
+    from memorymaster.capture.adapters import _retained_text
+    from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+
+    raw = ("<p>Authored before</p>" + GENERATED_OPENER + f"<{tag}>"
+           + GENERATED_CLOSER + "<p>Authored after</p>")
+    text, _, _, _ = _retained_text(raw, html=True)
+    assert text == "Authored before\nAuthored after", f"Excluded generated structure hid authored data: {text!r}"
+
+
+@pytest.mark.parametrize(("prefix", "suffix"), [
+    ("<scr", "ipt>hidden</script><p>After</p>"),
+    ("<script>hidden</scr", "ipt><p>After</p>"),
+    ("<", "script>hidden</script><p>After</p>"),
+    ("<p title='", "'>After</p>"),
+    ("<p title='>'", ">After</p>"),
+    ("<!-- pending >", " -->After"),
+    ("&am", "p;After"),
+    ("&#x2", "0;After"),
+])
+def test_html_token_crossing_generated_boundary_is_rejected(prefix, suffix):
+    from memorymaster.capture.adapters import _retained_text
+    from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+
+    raw = "<p>Before</p>" + prefix + GENERATED_OPENER + "generated" + GENERATED_CLOSER + suffix
+    with pytest.raises(CaptureRejected) as exc:
+        _retained_text(raw, html=True)
+    assert exc.value.code == "ambiguous_generated_provenance"
+
+
+def test_html_generated_mask_preserves_multiline_attribution(capture_root):
+    from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+
+    raw = ("<p>Before &amp; caf\u00e9</p>\r\n" + GENERATED_OPENER
+           + "\r\n</script><template>generated &amp; text\r\n" + GENERATED_CLOSER
+           + "\r\n<p>After &#233;</p>")
+    path = capture_root / "multiline.html"
+    path.write_bytes(raw.encode("utf-8"))
+    envelope = LocalFileAdapter(path).capture()
+    assert envelope.text == "Before & caf\u00e9\nAfter \u00e9"
+    first, second = envelope.retained_spans
+    assert first.start == 0
+    assert first.end == raw.index(GENERATED_OPENER)
+    assert second.start == raw.index(GENERATED_CLOSER) + len(GENERATED_CLOSER)
+    assert second.end == len(raw)
+    assert envelope.excluded_spans == ((first.end, second.start),)
+    assert envelope.warning_codes == ("generated_spans_excluded",)
+
+
 def test_html_crossing_exclusions_preserves_entities_and_source_spans(capture_root):
     from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
 
