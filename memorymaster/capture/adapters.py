@@ -15,6 +15,7 @@ from typing import Protocol
 from urllib.parse import urlsplit
 from zipfile import BadZipFile, ZipFile
 
+from memorymaster.core.generated_artifacts import SourceSpan, strip_generated_spans
 from memorymaster.core.security import (
     sanitize_persisted_text,
     validate_persisted_metadata,
@@ -72,6 +73,8 @@ class CaptureEnvelope:
     producer_session_hash: str | None = None
     producer_turn_id: str | None = None
     producer_metadata: tuple[tuple[str, str], ...] = ()
+    retained_spans: tuple[SourceSpan, ...] = ()
+    excluded_spans: tuple[tuple[int, int], ...] = ()
 
 
 class CaptureAdapter(Protocol):
@@ -106,9 +109,34 @@ def _bounded_text(text: str) -> tuple[str, tuple[str, ...]]:
     payload = text.encode("utf-8")
     if len(payload) > EXTRACTED_TEXT_LIMIT:
         raise CaptureRejected("extracted_text_too_large", "Extracted text exceeds 2 MiB.")
-    sanitized, findings = sanitize_persisted_text(text)
-    warnings = ("sensitive_content_redacted",) if findings else ()
+    retained = strip_generated_spans(text)
+    if retained.excluded_spans and not retained.spans:
+        raise CaptureRejected("generated_artifact", "Generated-only content cannot become capture evidence.")
+    sanitized, findings = sanitize_persisted_text(retained.text)
+    warnings = (("generated_spans_excluded",) if retained.excluded_spans else ()) + (("sensitive_content_redacted",) if findings else ())
     return sanitized, warnings
+
+
+def _retained_text(text: str, *, html: bool = False) -> tuple[str, tuple[str, ...], tuple[SourceSpan, ...], tuple[tuple[int, int], ...]]:
+    """Filter raw input before parsers erase the generated marker comments."""
+    clean = strip_generated_spans(text)
+    if clean.excluded_spans and not clean.spans:
+        raise CaptureRejected("generated_artifact", "Generated-only content cannot become capture evidence.")
+    spans: list[SourceSpan] = []
+    warning_codes: list[str] = ["generated_spans_excluded"] if clean.excluded_spans else []
+    for span in clean.spans:
+        if span.start == 0 and span.text.startswith("\ufeff"):
+            span = SourceSpan(1, span.end, span.text[1:])
+        value = _html_text(span.text.encode("utf-8")) if html else span.text
+        bounded, warnings = _bounded_text(value)
+        warning_codes.extend(warnings)
+        if bounded.strip():
+            spans.append(SourceSpan(span.start, span.end, bounded))
+    if clean.excluded_spans and not spans:
+        raise CaptureRejected("generated_artifact", "Generated-only content cannot become capture evidence.")
+    if sum(len(span.text.encode("utf-8")) for span in spans) + max(0, len(spans) - 1) > EXTRACTED_TEXT_LIMIT:
+        raise CaptureRejected("extracted_text_too_large", "Extracted text exceeds 2 MiB.")
+    return "\n".join(span.text for span in spans), tuple(dict.fromkeys(warning_codes)), tuple(spans), clean.excluded_spans
 
 
 def _validate_source_uri(source_uri: str | None) -> str | None:
@@ -199,7 +227,7 @@ def _decode_utf8(payload: bytes) -> str:
     if b"\x00" in payload:
         raise CaptureRejected("binary_masquerading", "Text document contains NUL bytes.")
     try:
-        return payload.decode("utf-8-sig")
+        return payload.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise CaptureRejected("invalid_utf8", "Text and Markdown must be UTF-8.") from exc
 
@@ -285,7 +313,7 @@ class InlineTextAdapter:
         raw = self.text.encode("utf-8")
         if len(raw) > INLINE_LIMIT:
             raise CaptureRejected("inline_text_too_large", "Inline text exceeds 2 MiB.")
-        text, warnings = _bounded_text(self.text)
+        text, warnings, spans, excluded = _retained_text(self.text)
         uri = _validate_source_uri(self.source_uri)
         return CaptureEnvelope(
             source_kind="inline",
@@ -297,6 +325,8 @@ class InlineTextAdapter:
             source_uri=uri,
             evidence_type="text",
             warning_codes=warnings,
+            retained_spans=spans,
+            excluded_spans=excluded,
         )
 
 
@@ -350,7 +380,7 @@ class LocalFileAdapter:
         evidence_type: str | None,
         provider: str | None = None,
     ) -> CaptureEnvelope:
-        bounded, warnings = _bounded_text(text) if text is not None else (None, ())
+        bounded, warnings, spans, excluded = _retained_text(text, html=mime == "text/html") if text is not None else (None, (), (), ())
         return CaptureEnvelope(
             source_kind="file",
             content_hash=_digest(payload),
@@ -363,6 +393,8 @@ class LocalFileAdapter:
             provider_kind=provider,
             warning_codes=warnings,
             resolved_path=str(resolved),
+            retained_spans=spans,
+            excluded_spans=excluded,
         )
 
     def capture(self) -> CaptureEnvelope:
@@ -374,7 +406,7 @@ class LocalFileAdapter:
         if extension in _TEXT_EXTENSIONS:
             return self._envelope(resolved, locator, payload, "text/plain", _decode_utf8(payload), "text")
         if extension in _HTML_EXTENSIONS:
-            return self._envelope(resolved, locator, payload, "text/html", _html_text(payload), "text")
+            return self._envelope(resolved, locator, payload, "text/html", _decode_utf8(payload), "text")
         if extension == ".pdf":
             return self._envelope(resolved, locator, payload, "application/pdf", _pdf_text(payload), "text")
         if extension == ".docx":

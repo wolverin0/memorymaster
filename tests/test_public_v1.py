@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
+import json
 
 import pytest
 
@@ -35,6 +37,34 @@ def _service(db: Path, workspace: Path) -> MemoryService:
     service = MemoryService(str(db), workspace_root=workspace)
     service.init_db()
     return service
+
+
+def test_mixed_generated_capture_preserves_separate_evidence_and_offsets(public_env):
+    from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+    db, workspace = public_env
+    raw = f"Authored prefix.\n{GENERATED_OPENER}\nExcluded claim.\n{GENERATED_CLOSER}\nAuthored suffix."
+    receipt = remember(text=raw, db=db, workspace=workspace)
+    service = _service(db, workspace)
+    evidence = service.list_evidence_items(source_item_id=receipt.source_item["id"])
+    assert len(evidence) == 2
+    assert len(receipt.job_ids) == 2
+    assert [item.text.strip() for item in evidence] == ["Authored prefix.", "Authored suffix."]
+    for item in evidence:
+        payload = json.loads(item.payload_json)
+        assert raw[payload["source_start"]:payload["source_end"]] == item.text
+        assert payload["original_content_hash"] == hashlib.sha256(raw.encode()).hexdigest()
+    replay = remember(text=raw, db=db, workspace=workspace)
+    assert replay.deduplicated
+    assert len(service.list_evidence_items(source_item_id=receipt.source_item["id"])) == 2
+
+
+def test_generated_only_remember_has_no_source_or_evidence(public_env):
+    from memorymaster.capture import CaptureRejected
+    from memorymaster.core.generated_artifacts import GENERATED_OPENER
+    db, workspace = public_env
+    with pytest.raises(CaptureRejected):
+        remember(text=GENERATED_OPENER + "Excluded claim.", db=db, workspace=workspace)
+    assert not db.exists()
 
 
 def test_lazy_public_exports_and_replay_safe_remember(public_env) -> None:

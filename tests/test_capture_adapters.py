@@ -29,6 +29,46 @@ def test_inline_text_is_redacted_and_hashed() -> None:
     assert len(envelope.content_hash) == 64
 
 
+@pytest.mark.parametrize("extension", [None, ".md", ".html"])
+def test_mixed_generated_spans_removed_before_html_parse(capture_root, extension):
+    from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+    raw = f"Authored prefix.\n{GENERATED_OPENER}\nExcluded claim.\n{GENERATED_CLOSER}\nAuthored suffix."
+    if extension:
+        path = capture_root / ("mixed" + extension)
+        path.write_bytes(raw.encode("utf-8"))
+        envelope = LocalFileAdapter(path).capture()
+    else:
+        envelope = InlineTextAdapter(raw).capture()
+    assert "Excluded claim" not in envelope.text
+    assert [span.text.strip() for span in envelope.retained_spans] == ["Authored prefix.", "Authored suffix."]
+    assert all(raw[span.start:span.end].strip() == span.text.strip() for span in envelope.retained_spans)
+
+
+def test_generated_only_inline_does_not_create_capture():
+    from memorymaster.core.generated_artifacts import GENERATED_OPENER
+    with pytest.raises(CaptureRejected) as exc:
+        InlineTextAdapter(GENERATED_OPENER + "excluded").capture()
+    assert exc.value.code == "generated_artifact"
+
+
+def test_generated_only_html_wrapper_does_not_create_capture(capture_root):
+    from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+    path = capture_root / "generated.html"
+    path.write_bytes(f"<html><body>{GENERATED_OPENER}excluded{GENERATED_CLOSER}</body></html>".encode())
+    with pytest.raises(CaptureRejected) as exc:
+        LocalFileAdapter(path).capture()
+    assert exc.value.code == "generated_artifact"
+
+
+def test_local_bom_provenance_offsets_refer_to_original_text(capture_root):
+    from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+    raw = f"\ufeffAuthored.\r\n{GENERATED_OPENER}excluded{GENERATED_CLOSER}\r\nSuffix."
+    path = capture_root / "bom.md"
+    path.write_bytes(raw.encode("utf-8"))
+    envelope = LocalFileAdapter(path).capture()
+    assert all(raw[span.start:span.end] == span.text for span in envelope.retained_spans)
+
+
 def test_url_only_is_visibly_awaiting_evidence() -> None:
     envelope = ReferenceUrlAdapter("https://example.com/article").capture()
     assert envelope.text is None

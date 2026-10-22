@@ -551,6 +551,23 @@ class MemoryService(IntegrationService):
         outcome_receipt: dict[str, Any] | None = None,
     ) -> Claim:
         prepare_outcome_receipt(outcome_receipt)
+        from memorymaster.core.generated_artifacts import contains_generated_marker, strip_generated_spans
+
+        retained = strip_generated_spans(text)
+        raw_fields = [subject, predicate, object_value]
+        raw_fields.extend(value for citation in citations for value in (citation.source, citation.locator, citation.excerpt))
+        if any(contains_generated_marker(value) for value in raw_fields if value):
+            raise ValueError("Claim has generated structured fields or citation evidence.")
+        if retained.excluded_spans:
+            # A claim is atomic. Document capture can preserve several authored
+            # spans, but joining them here would invent a single assertion.
+            if len(retained.spans) != 1 or idempotency_key:
+                raise ValueError("Claim has generated content without atomic retained attribution.")
+            text = retained.spans[0].text.strip()
+            if any(value and value not in text for value in (subject, predicate, object_value)):
+                raise ValueError("Claim has generated content without structured attribution.")
+            if any(citation.excerpt and citation.excerpt not in text for citation in citations):
+                raise ValueError("Claim has generated content without retained citation attribution.")
         if not text.strip():
             raise ValueError("Claim text cannot be empty.")
         if not citations:

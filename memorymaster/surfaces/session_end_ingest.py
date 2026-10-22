@@ -47,6 +47,15 @@ def _assistant_text(transcript_path: str) -> str:
         if not isinstance(entry, dict):
             continue
         provider = "codex" if entry.get("type") == "response_item" else "claude"
+        if provider == "claude":
+            payload = entry.get("message", entry.get("payload", entry))
+            if isinstance(payload, dict):
+                payload = dict(payload)
+                role = str(payload.get("role") or "")
+                if role == "model":
+                    payload["role"] = "assistant"
+                    role = "assistant"
+                entry = {**entry, "message": payload, "type": role or entry.get("type", "")}
         record = _conversation_record(entry, provider, state=state)
         if record is not None and record[0] == "assistant":
             eligible.append((index, record[1]))

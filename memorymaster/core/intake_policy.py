@@ -265,6 +265,13 @@ def evaluate_intake(
         the Nth+1 claim of that batch is rejected. ``intake_batch_max`` overrides
         the configured ``max_per_stop`` for that batch only.
     """
+    from memorymaster.core.generated_artifacts import contains_generated_marker
+
+    if not text.strip() or any(contains_generated_marker(value) for value in (text, subject or "")):
+        raise IntakeRejected(
+            "Empty or generated content is not an attributable knowledge claim.",
+            rule="generated_artifact", reason="unattributed_content",
+        )
     cfg = config or IntakePolicyConfig.from_env()
     moment = time.time() if now is None else now
     mutated: dict[str, object] = {}

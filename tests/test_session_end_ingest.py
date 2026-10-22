@@ -19,3 +19,9 @@ def test_chronological_tool_state_precedes_last_two_hundred_slice(tmp_path):
     path = tmp_path / "transcript.jsonl"
     path.write_text("\n".join(map(json.dumps, rows)), encoding="utf-8")
     assert _assistant_text(str(path)) == ""
+
+
+def test_generic_payload_model_turn_preserves_legacy_distillation(tmp_path):
+    path = tmp_path / "transcript.jsonl"
+    path.write_text(json.dumps({"payload": {"role": "model", "content": "A durable authored finding about SQLite transaction boundaries."}}), encoding="utf-8")
+    assert "durable authored" in _assistant_text(str(path))
