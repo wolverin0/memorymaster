@@ -24,6 +24,8 @@ NOW = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
 
 @pytest.fixture(autouse=True)
 def isolated_configuration(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("MEMORYMASTER_SCOPE_ALIASES", str(tmp_path / "fixture-aliases.json"))
     monkeypatch.setattr(MemoryService, "_init_qdrant", staticmethod(lambda: None))
     monkeypatch.setattr("memorymaster.core.webhook.fire_webhook", lambda *args, **kwargs: None)
@@ -440,6 +442,117 @@ def test_unenforceable_runtime_fails_before_creating_campaign_state(tmp_path, ca
                  "--extractor-model", "anthropic/claude-haiku-4-5"]) == 2
     assert "cannot enforce" in capsys.readouterr().out
     assert not state.exists()
+
+
+@pytest.mark.parametrize("stage", ["consolidate", "quality", "apply", "all"])
+def test_gemini_api_non_extract_cli_fails_before_binding_runtime(tmp_path, monkeypatch, capsys, stage):
+    from memorymaster.surfaces.cli import main
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("unsupported stage constructed a provider or service")
+
+    monkeypatch.setattr("memorymaster.dreaming.providers.GeminiBoundedClient", forbidden)
+    monkeypatch.setattr("memorymaster.core.service.MemoryService", forbidden)
+    state = tmp_path / "state"
+    database = tmp_path / "never-open.db"
+    assert main([
+        "dream-backfill", "run", "--state-dir", str(state), "--client", "gemini-api",
+        "--extractor-model", "gemini-api/gemini-3.5-flash-lite", "--stage", stage,
+        "--consolidator-model", "anthropic/claude-sonnet-4-6", "--memory-db", str(database),
+        "--probe-scope", "project:test", "--haiku-model", "anthropic/claude-haiku-4-5",
+        "--sonnet-model", "anthropic/claude-sonnet-4-6",
+    ]) == 2
+    assert "--client gemini-api supports only --stage extract" in capsys.readouterr().out
+    assert not state.exists()
+    assert not database.exists()
+
+
+def test_gemini_api_cli_preflight_binds_extractor_with_fake_factory(tmp_path, monkeypatch):
+    from memorymaster.surfaces.backfill_cli import configure_backfill_runtime
+    from memorymaster.surfaces.cli import build_parser
+
+    args = build_parser().parse_args([
+        "dream-backfill", "run", "--state-dir", str(tmp_path / "state"),
+        "--client", "gemini-api", "--extractor-model", "gemini-api/gemini-3.5-flash-lite",
+    ])
+    calls = []
+
+    def factory(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(complete_bounded=lambda *_args, **_kwargs: pytest.fail("preflight dispatched"))
+
+    monkeypatch.setattr("memorymaster.dreaming.providers.GeminiBoundedClient", factory)
+    runner = BackfillRunner(BackfillConfig(args.state_dir, {}, args.campaign))
+    configure_backfill_runtime(args, runner)
+    assert runner.extractor.model == args.extractor_model
+    assert callable(runner.extractor.client.complete_bounded)
+    assert calls == [{"model": args.extractor_model, "work_dir": args.state_dir / "provider-slot-ao7"}]
+    assert not args.state_dir.exists()
+
+
+@pytest.mark.parametrize("stage", ["extract", "consolidate", "quality", "apply", "all"])
+def test_gemini_api_cli_preflight_uses_real_client_and_stage_validation(tmp_path, monkeypatch, stage):
+    from memorymaster.dreaming.providers import GeminiBoundedClient
+    from memorymaster.surfaces.backfill_cli import configure_backfill_runtime
+    from memorymaster.surfaces.cli import build_parser
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("preflight dispatched a provider request or constructed a service")
+
+    monkeypatch.setattr("memorymaster.dreaming.providers._post_with_retry", forbidden)
+    monkeypatch.setattr("memorymaster.core.service.MemoryService", forbidden)
+    args = build_parser().parse_args([
+        "dream-backfill", "run", "--state-dir", str(tmp_path / "state"),
+        "--client", "gemini-api", "--extractor-model", "gemini-api/gemini-3.5-flash-lite",
+        "--stage", stage, "--consolidator-model", "anthropic/claude-sonnet-4-6",
+        "--memory-db", str(tmp_path / "never-open.db"), "--probe-scope", "project:test",
+        "--haiku-model", "anthropic/claude-haiku-4-5", "--sonnet-model", "anthropic/claude-sonnet-4-6",
+    ])
+
+    runner = BackfillRunner(BackfillConfig(args.state_dir, {}, args.campaign))
+    if stage == "extract":
+        configure_backfill_runtime(args, runner)
+        assert isinstance(runner.extractor.client, GeminiBoundedClient)
+        assert runner.extractor.client.model == args.extractor_model
+    else:
+        with pytest.raises(ValueError, match="--client gemini-api supports only --stage extract"):
+            configure_backfill_runtime(args, runner)
+    assert not args.state_dir.exists()
+    assert not args.memory_db.exists()
+
+
+def test_gemini_api_cli_preflight_rejects_non_gemini_extractor_with_real_client(tmp_path):
+    from memorymaster.dreaming.providers import ProviderConfigError
+    from memorymaster.surfaces.backfill_cli import configure_backfill_runtime
+    from memorymaster.surfaces.cli import build_parser
+
+    args = build_parser().parse_args([
+        "dream-backfill", "run", "--state-dir", str(tmp_path / "state"),
+        "--client", "gemini-api", "--extractor-model", "anthropic/claude-haiku-4-5",
+    ])
+    runner = BackfillRunner(BackfillConfig(args.state_dir, {}, args.campaign))
+    with pytest.raises(ProviderConfigError) as caught:
+        configure_backfill_runtime(args, runner)
+    assert caught.value.reason == "invalid_model"
+    assert not args.state_dir.exists()
+
+
+@pytest.mark.parametrize("client_args", [[], ["--client", "opencode"]])
+def test_opencode_cli_preflight_still_rejects_unbounded_client(tmp_path, client_args):
+    from memorymaster.surfaces.backfill_cli import configure_backfill_runtime
+    from memorymaster.surfaces.cli import build_parser
+
+    args = build_parser().parse_args([
+        "dream-backfill", "run", "--state-dir", str(tmp_path / "state"),
+        "--extractor-model", "anthropic/claude-haiku-4-5", *client_args,
+    ])
+    assert args.client == "opencode"
+    runner = BackfillRunner(BackfillConfig(args.state_dir, {}, args.campaign))
+    with pytest.raises(ValueError, match="configured route cannot enforce provider output limits"):
+        configure_backfill_runtime(args, runner)
+    assert not args.state_dir.exists()
 
 
 def test_child_quality_is_reported_separately_and_privacy_latches_campaign(tmp_path):

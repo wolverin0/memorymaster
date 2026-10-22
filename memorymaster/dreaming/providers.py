@@ -14,6 +14,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -585,6 +586,62 @@ class GeminiExtractor:
             return "".join(str(part.get("text", "")) for part in body["candidates"][0]["content"]["parts"] if isinstance(part, dict))
         except (KeyError, IndexError, TypeError) as exc:
             raise ProviderCallError("Gemini response has no text candidate") from exc
+
+
+@dataclass(frozen=True, slots=True)
+class GeminiBoundedResponse:
+    text: str
+    input_tokens: int
+    output_tokens: int
+    model: str
+    observed_model: str | None
+
+
+class GeminiBoundedClient:
+    """Bounded JSON completions through the existing key-based Gemini transport."""
+
+    def __init__(
+        self, *, model: str, api_key: str | None = None,
+        work_dir: str | Path | None = None, transport: Transport = _default_transport,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        provider, separator, api_model = model.partition("/")
+        if provider != "gemini-api" or not separator or not api_model or "/" in api_model:
+            raise ProviderConfigError("Gemini API requires a gemini-api-qualified model", reason="invalid_model")
+        self.model = model
+        self._gemini = GeminiExtractor(api_key=api_key, model=api_model, transport=transport, sleep=sleep)
+
+    def complete(self, prompt: str) -> GeminiBoundedResponse:
+        return self.complete_bounded(prompt, max_output_tokens=2000)
+
+    def complete_bounded(self, prompt: str, max_output_tokens: int) -> GeminiBoundedResponse:
+        if type(max_output_tokens) is not int or max_output_tokens <= 0:
+            raise ValueError("max_output_tokens must be a positive integer")
+        gemini = self._gemini
+        if not gemini.api_key:
+            raise ProviderConfigError("GEMINI_API_KEY is not configured", reason="missing_api_key")
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.1, "maxOutputTokens": max_output_tokens,
+                "thinkingConfig": {"thinkingLevel": "minimal"},
+                "responseMimeType": "application/json",
+            },
+        }
+        gemini._pace(_estimated_input_tokens(payload))
+        _, body = _post_with_retry(gemini.transport, gemini._url(), payload,
+                                   {"Content-Type": "application/json"}, 90, gemini.sleep)
+        text = gemini._response_text(body)
+        usage = body.get("usageMetadata")
+        if not isinstance(usage, dict):
+            raise ProviderOutputError("Gemini response has no token usage")
+        input_tokens, output_tokens = usage.get("promptTokenCount"), usage.get("candidatesTokenCount")
+        thinking_tokens = usage.get("thoughtsTokenCount", 0)
+        if any(type(value) is not int or value < 0 for value in (input_tokens, output_tokens, thinking_tokens)):
+            raise ProviderOutputError("Gemini response has invalid token usage")
+        version = body.get("modelVersion")
+        observed_model = f"gemini-api/{version}" if isinstance(version, str) and version else None
+        return GeminiBoundedResponse(text, input_tokens, output_tokens + thinking_tokens, self.model, observed_model)
 
 
 class OpenCodeExtractor:
