@@ -486,6 +486,17 @@ class MemoryService(IntegrationService):
             )
         self.store.init_db()
 
+    @staticmethod
+    def _validate_dedup_lineage(claim: Claim) -> None:
+        """Old rows and race winners must satisfy the same intake boundary."""
+        from memorymaster.core.generated_artifacts import contains_generated_marker
+
+        fields = [claim.text, claim.subject, claim.predicate, claim.object_value]
+        fields.extend(value for citation in claim.citations
+                      for value in (citation.source, citation.locator, citation.excerpt))
+        if any(contains_generated_marker(value) for value in fields if value):
+            raise ValueError("Stored dedup claim has generated content or citation evidence.")
+
     def _revive_archived_dedup_match(self, claim: Claim, source_agent: str | None) -> Claim:
         """Resurface an archived claim matched by ingest dedup.
 
@@ -498,6 +509,7 @@ class MemoryService(IntegrationService):
         review. Explicit forget/rollback intent blocks automatic revival.
         Non-archived matches pass through untouched (dedup unchanged).
         """
+        self._validate_dedup_lineage(claim)
         if claim.status != "archived":
             return claim
         if self.store.latest_archive_reason(claim.id) in {"friendly_forget_claim", "ao7_rollback"}:
@@ -517,6 +529,8 @@ class MemoryService(IntegrationService):
             # Another writer touched the row between dedup and revival —
             # the freshest state wins; never fail the whole ingest for it.
             reloaded = self.store.get_claim(claim.id)
+            if reloaded is not None:
+                self._validate_dedup_lineage(reloaded)
             return reloaded if reloaded is not None else claim
         # getattr-guard: some paths build MemoryService via __new__ and skip
         # __init__, so the qdrant attribute may not exist.
@@ -670,6 +684,7 @@ class MemoryService(IntegrationService):
             visibility=visibility, source_agent=source_agent,
         )
         if retired is not None:
+            self._validate_dedup_lineage(retired)
             fill_outcome_receipt(outcome_receipt, retired, created=False,
                                  persisted=self.store.ingest_creation_receipt(retired.id) if outcome_receipt is not None else None)
             observability.bump_claim_ingested(source_agent)

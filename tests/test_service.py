@@ -20,6 +20,34 @@ def test_generated_only_cannot_revive_archived_producer_key(service):
     assert service.store.get_claim(claim.id).status == "archived"
 
 
+@pytest.mark.parametrize("match_path", ["producer", "content_hash", "concurrent"])
+@pytest.mark.parametrize("field", ["text", "subject", "predicate", "object_value", "citation"])
+def test_legacy_generated_dedup_key_must_not_revive(service, monkeypatch, match_path, field):
+    import hashlib
+
+    clean = "A newly authored clean claim."
+    key = "producer-key"
+    if match_path == "content_hash":
+        key = "hash-" + hashlib.sha256(f"{clean.lower()}|project|".encode()).hexdigest()[:16]
+    generated = GENERATED_OPENER + "Recalled falsehood." + GENERATED_CLOSER
+    fields = {field: generated} if field not in {"text", "citation"} else {}
+    old = service.store.create_claim(
+        generated if field == "text" else "Previously authored claim.",
+        [CitationInput(source="fixture", excerpt=generated if field == "citation" else None)],
+        idempotency_key=key, **fields,
+    )
+    service.store.apply_status_transition(old, to_status="archived", reason="fixture", event_type="transition")
+    if match_path == "concurrent":
+        # Simulate a winner becoming visible only inside atomic create_claim.
+        monkeypatch.setattr(service.store, "get_claim_by_idempotency_key", lambda *args, **kwargs: None)
+    with pytest.raises(ValueError, match="generated"):
+        service.ingest(clean, [CitationInput(source="fixture")],
+                       idempotency_key=None if match_path == "content_hash" else key)
+    persisted = service.store.get_claim(old.id)
+    assert persisted.status == "archived"
+    assert persisted.text == old.text
+
+
 def test_mixed_atomic_claim_retains_one_authored_span_and_recomputes_dedup(service):
     text = f"A durable authored claim.\n{GENERATED_OPENER}Generated falsehood.{GENERATED_CLOSER}"
     claim = service.ingest(text, [CitationInput(source="fixture", excerpt="A durable authored claim.")])
