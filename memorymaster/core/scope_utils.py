@@ -32,6 +32,7 @@ __all__ = [
     "MAX_ANCESTOR_DEPTH",
     "resolve_transcript_workspace_scope",
     "resolve_Transcript_workspace_scope",
+    "resolve_workspace_scope",
 ]
 
 # A directory carrying agent instructions IS a project root. That is the whole
@@ -166,6 +167,11 @@ SCOPE_ALIASES_ENV = "MEMORYMASTER_SCOPE_ALIASES"
 _ALIAS_CACHE: dict[str, object] = {"key": None, "map": {}}
 
 
+def _alias_slug(name: str) -> str:
+    """Fold whitespace in operator alias keys, preserving literal punctuation."""
+    return re.sub(r"\s+", "-", name.strip().lower())
+
+
 def _scope_aliases() -> dict[str, str]:
     """Folder slug -> project scope, from ~/.memorymaster/scope-aliases.json (operator-owned).
 
@@ -190,100 +196,121 @@ def _scope_aliases() -> dict[str, str]:
     return _ALIAS_CACHE["map"]  # type: ignore[return-value]
 
 
-def _git_project_root(current: Path) -> tuple[Path, Path] | None:
-    """Read Git's gitdir/commondir pointers without launching a hook-time process.
+def _git_project_root(
+    current: Path, *, strict: bool = False, aliases: dict[str, str] | None = None,
+) -> tuple[Path, Path] | None:
+    """Walk once for checkout/owner roots, with mode-specific proof boundaries.
 
-    Gitfile paths are relative to the checkout; commondir paths are relative
-    to the per-worktree gitdir. An ordinary gitfile (e.g. a submodule) with no
-    commondir still belongs to its own checkout, not the metadata directory.
-    Return both checkout and common project roots so checkout aliases also
-    apply when a session starts in a subdirectory.
+    Strict capture accepts ancestor aliases, bounds discovery, and refuses
+    missing or ephemeral workspaces. Hook discovery honors Git ceilings and
+    keeps the checkout when metadata is broken. Both use the same reader.
     """
-    ceilings = {
+    aliases = aliases or {}
+    ceilings = set() if strict else {
         Path(raw).resolve() for raw in os.environ.get("GIT_CEILING_DIRECTORIES", "").split(os.pathsep) if raw
     }
     candidates = (current,) if current in ceilings else (current, *current.parents)
+    if strict:
+        candidates = candidates[:_REPOSITORY_WALK_LIMIT + 1]
+    unresolved_workspace = strict and not current.is_dir()
     for candidate in candidates:
         if candidate != current and candidate in ceilings:
             break
+        if strict and _alias_slug(candidate.name) in aliases:
+            return candidate, candidate
         dotgit = candidate / ".git"
         try:
-            if dotgit.is_dir():
-                gitdir = dotgit
-            elif dotgit.is_file():
-                pointer = dotgit.read_text(encoding="utf-8").strip()
-                if not pointer.startswith("gitdir:") or not pointer[7:].strip():
-                    return candidate, candidate
-                gitdir = (candidate / pointer[7:].strip()).resolve()
-                if not gitdir.is_dir():
-                    return candidate, candidate
-            else:
-                continue
-            commondir = gitdir / "commondir"
-            if not commondir.is_file():
-                return candidate, candidate
-            pointer = commondir.read_text(encoding="utf-8").strip()
-            if not pointer:
-                return candidate, candidate
-            common = (gitdir / pointer).resolve()
-            if not common.is_dir():
-                return candidate, candidate
-            # Linked worktrees share the main checkout's .git directory.
-            # Bare repositories conventionally use <project>.git instead.
-            if common.name.lower() == ".git":
-                return candidate, common.parent
-            project = common.with_suffix("") if common.suffix.lower() == ".git" else common
-            return candidate, project
+            has_marker = dotgit.exists() if strict else dotgit.is_dir() or dotgit.is_file()
+            if has_marker:
+                if unresolved_workspace:
+                    return None
+                owner = _repository_owner(candidate, strict=strict)
+                return (candidate, owner) if owner is not None else None
+            if strict and candidate == current and current.is_dir():
+                repositories = 0
+                for index, child in enumerate(current.iterdir()):
+                    if index >= 1024:
+                        return None
+                    repositories += int(child.is_dir() and (child / ".git").exists())
+                    if repositories > 1:
+                        return None
+            if strict and _EPHEMERAL_WORKSPACE.fullmatch(candidate.name):
+                unresolved_workspace = True
         except (OSError, ValueError, UnicodeError):
-            # Unreadable metadata: the folder that carries ``.git`` is still the checkout,
-            # so subdirectories and checkout aliases keep resolving to it.
-            return candidate, candidate
+            return None if strict else (candidate, candidate)
     return None
 
 
 def scope_from_cwd(cwd: str | os.PathLike[str] | None) -> str:
-    """Resolve the project once for capture, hooks, session bindings and MCP.
+    """Resolve hook/session/MCP scope, retaining checkout and basename fallbacks."""
+    return resolve_workspace_scope(cwd, strict=False) or "global"
 
-    Explicit folder aliases win. Otherwise the nearest Git checkout's common
-    directory identifies the project, including worktrees with arbitrary
-    names or locations. Non-Git folders keep basename scope derivation;
-    multi-repository collection roots and empty paths use global scope.
+
+def resolve_workspace_scope(
+    cwd: str | os.PathLike[str] | None, *, strict: bool = False,
+    allow_fallback_global: bool = False,
+) -> str | None:
+    """Resolve one project identity with an explicit metadata proof policy.
+
+    Strict capture/backfill requires a verified repository or operator alias;
+    unresolved paths return None for quarantine. Relaxed hooks retain checkout
+    scope on broken metadata and basename/global fallbacks outside Git.
     """
     raw = str(cwd or "").strip()
     current = Path(raw)
     if not raw:
-        return "global"
+        return "global" if not strict or allow_fallback_global else None
+    if current.anchor and not current.name:
+        return None if strict else "global"
     aliases = _scope_aliases()
     # Preserve exact folder aliases, including names canonicalize_slug folds
     # and symlink names that resolve to differently named project folders.
-    folder_slug = re.sub(r"\s+", "-", current.name.strip().lower())
-    if folder_slug in aliases:
+    folder_slug = _alias_slug(current.name)
+    if not strict and folder_slug in aliases:
         return aliases[folder_slug]
     try:
         current = current.resolve()
-    except (OSError, ValueError):
+    except (OSError, ValueError, RuntimeError) as error:
+        if strict:
+            return None
+        if isinstance(error, RuntimeError):
+            raise
         pass
     if not current.name:
-        return "global"
+        return None if strict else "global"
     try:
-        roots = _git_project_root(current)
-        if roots is None and current.is_dir() and sum(
+        if strict and current.is_file() and current.suffix == ".jsonl":
+            return resolve_workspace_scope(
+                cwd_from_transcript(current), strict=True, allow_fallback_global=allow_fallback_global,
+            )
+        roots = _git_project_root(current, strict=strict, aliases=aliases)
+        if not strict and roots is None and current.is_dir() and sum(
             1 for child in current.iterdir()
             if child.is_dir() and (child / ".git").exists()
         ) > 1:
             return "global"
-    except (OSError, ValueError):
+    except (OSError, ValueError, RuntimeError) as error:
+        if strict:
+            return None
+        if isinstance(error, RuntimeError):
+            raise
         roots = None
     if roots is not None:
         checkout, root = roots
-        checkout_slug = re.sub(r"\s+", "-", checkout.name.strip().lower())
+        checkout_slug = _alias_slug(checkout.name)
         if checkout_slug in aliases:
             return aliases[checkout_slug]
         name = root.name
     else:
+        if strict:
+            return None
         name = current.name
     slug = canonicalize_slug(name)
-    folder_slug = re.sub(r"\s+", "-", name.strip().lower())
+    folder_slug = _alias_slug(name)
+    if strict:
+        if _EPHEMERAL_WORKSPACE.fullmatch(name) and folder_slug not in aliases:
+            return None
+        return aliases.get(folder_slug, f"project:{slug}")
     return aliases.get(folder_slug, aliases.get(slug, f"project:{slug}"))
 
 
@@ -314,38 +341,55 @@ def scope_from_cwd_or_user(cwd: str | os.PathLike[str] | None) -> str:
     return "user" if scope == "global" else scope
 
 
-_SLUG_NORMALIZER_RE = re.compile(r"\s+")
 _EPHEMERAL_WORKSPACE = re.compile(r"^(?:_wt|worktrees?|scratch|tmp|temp|pr[-_]?\d+|t[-_]?\d+|card[-_]?\d+)$", re.I)
 _REPOSITORY_WALK_LIMIT = 32
 _GIT_METADATA_LIMIT = 4096
 
 
-def _small_git_text(path: Path) -> str:
+def _small_git_text(path: Path, *, strict: bool = True) -> str:
     with path.open("r", encoding="utf-8") as handle:
-        text = handle.read(_GIT_METADATA_LIMIT + 1)
-    if len(text) > _GIT_METADATA_LIMIT or "\x00" in text:
+        text = handle.read(_GIT_METADATA_LIMIT + 1) if strict else handle.read()
+    if strict and (len(text) > _GIT_METADATA_LIMIT or "\x00" in text):
         raise ValueError("invalid repository metadata")
     return text.strip()
 
 
-def _repository_owner(root: Path) -> Path | None:
-    """Validate worktree common-directory membership without invoking Git."""
+def _repository_owner(root: Path, *, strict: bool = False) -> Path | None:
+    """Read gitfile/commondir once; strict mode also proves membership/backlink.
+
+    Gitfile targets are checkout-relative; commondir is gitdir-relative.
+    Relaxed mode keeps submodule identity and tolerates bare common dirs.
+    """
     marker = root / ".git"
     if marker.is_dir():
+        if strict:
+            return root
+        gitdir = marker
+    elif marker.is_file():
+        pointer = _small_git_text(marker, strict=strict)
+        if not pointer.startswith("gitdir:") or (strict and "\n" in pointer):
+            return None if strict else root
+        target = pointer[len("gitdir:"):].strip()
+        if not target:
+            return None if strict else root
+        gitdir = (root / target).resolve()
+        if not strict and not gitdir.is_dir():
+            return root
+    else:
+        return None
+    commondir = gitdir / "commondir"
+    if not strict and not commondir.is_file():
         return root
-    if not marker.is_file():
-        return None
-    pointer = _small_git_text(marker)
-    if not pointer.startswith("gitdir:") or "\n" in pointer:
-        return None
-    target = pointer[len("gitdir:"):].strip()
-    if not target:
-        return None
-    gitdir = (root / target).resolve()
-    common_text = _small_git_text(gitdir / "commondir")
-    if not common_text or "\n" in common_text:
-        return None
+    common_text = _small_git_text(commondir, strict=strict)
+    if not common_text or (strict and "\n" in common_text):
+        return None if strict else root
     common = (gitdir / common_text).resolve()
+    if not strict:
+        if not common.is_dir():
+            return root
+        if common.name.lower() == ".git":
+            return common.parent
+        return common.with_suffix("") if common.suffix.lower() == ".git" else common
     # A valid linked worktree points into this exact common .git/worktrees dir.
     # Reject arbitrary commondir pointers that could attribute a scratch repo.
     if common.name != ".git" or not common.is_dir() or gitdir.parent != common / "worktrees":
@@ -367,45 +411,7 @@ def resolve_transcript_workspace_scope(
     parent repository does not prove ownership of a missing card/scratch path.
     Generic callers may retain their separate empty-cwd ``global`` convention.
     """
-    raw = str(path_or_cwd or "").strip()
-    if not raw:
-        return "global" if allow_fallback_global else None
-    try:
-        current = Path(raw).resolve()
-        if current.is_file() and current.suffix == ".jsonl":
-            transcript_cwd = cwd_from_transcript(current)
-            return resolve_transcript_workspace_scope(transcript_cwd, allow_fallback_global=allow_fallback_global)
-        aliases = _scope_aliases()
-        candidates = (current, *list(current.parents)[:_REPOSITORY_WALK_LIMIT])
-        unresolved_workspace = not current.is_dir()
-        for candidate in candidates:
-            slug = _SLUG_NORMALIZER_RE.sub("-", candidate.name.strip().lower())
-            if slug in aliases:
-                return aliases[slug]
-            marker = candidate / ".git"
-            if marker.exists():
-                if unresolved_workspace:
-                    return None
-                owner = _repository_owner(candidate)
-                if owner is None:
-                    return None
-                owner_slug = _SLUG_NORMALIZER_RE.sub("-", owner.name.strip().lower())
-                if _EPHEMERAL_WORKSPACE.fullmatch(owner.name) and owner_slug not in aliases:
-                    return None
-                return aliases.get(owner_slug, f"project:{canonicalize_slug(owner.name)}")
-            if candidate == current and current.is_dir():
-                repositories = 0
-                for index, child in enumerate(current.iterdir()):
-                    if index >= 1024:
-                        return None
-                    repositories += int(child.is_dir() and (child / ".git").exists())
-                    if repositories > 1:
-                        return None
-            if _EPHEMERAL_WORKSPACE.fullmatch(candidate.name):
-                unresolved_workspace = True
-        return None
-    except (OSError, ValueError, RuntimeError):
-        return None
+    return resolve_workspace_scope(path_or_cwd, strict=True, allow_fallback_global=allow_fallback_global)
 
 
 # Preserve the spelling supplied in the approved review's interface contract.
