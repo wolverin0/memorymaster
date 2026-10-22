@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
+from memorymaster.profile.project_repository import _display
+
 SCHEMA = "memorymaster.project-sessions.v1"
 MAX_STATE_BYTES = 8 * 1024 * 1024
 MAX_BASELINE_BYTES = 128 * 1024
@@ -157,7 +159,7 @@ def build_session_delta(baseline: dict | None, projection_coverage: dict | None,
         if not item or not item.get("support"):
             continue
         support = item["support"]
-        reference = f"#{support['id']}" if support.get("kind") == "claim" else str(support["id"])
+        reference = f"#{support['id']}" if support.get("kind") == "claim" else _display(support["id"], 48)
         chosen.append((f"- {_short(item.get('text', ''), 110)} [{reference}]", support))
         omitted -= 1
         if len(render().encode("utf-8")) > 500:

@@ -18,6 +18,24 @@ from memorymaster.profile.project_projection import (
 project_config = _project_config
 
 
+@pytest.mark.parametrize("card_id", ["alice@example.com", "10.2.3.4", "T-1\n## injected", "T-[ready]"])
+def test_card_reference_receives_egress_filter(project_config, card_id):
+    from memorymaster.profile.project_repository import _display, load_project_snapshot
+    from memorymaster.profile.project_sessions import build_session_delta
+
+    (project_config.ledger_root / "tasks.json").write_text(json.dumps({"complete": True, "tasks": [
+        {"id": card_id, "repo": "demo", "state": "ready", "title": "Visible work"}
+    ]}), encoding="utf-8")
+    result = build_project_projection(project_config)
+    snapshot = load_project_snapshot(project_config)
+    delta = build_session_delta({}, {}, snapshot)
+    for text in (result.payload, delta.text):
+        assert f"[{_display(card_id, 48)}]" in text
+        assert card_id not in text
+    # Exact identity remains private support metadata for authoritative rehydration.
+    assert snapshot["items"][f"card:{card_id}"]["support"]["id"] == card_id
+
+
 @pytest.mark.parametrize("target", ["claim", "card"])
 def test_self_consistent_cache_pair_cannot_supply_unsupported_text(project_config, target):
     from memorymaster.profile.project_projection import render_project_projection

@@ -171,7 +171,7 @@ class ProjectProjection:
 
 def _line(item: dict) -> str:
     support = item["support"]
-    reference = f"claim:{support['id']}" if support["kind"] == "claim" else str(support["id"])
+    reference = f"claim:{support['id']}" if support["kind"] == "claim" else _display(support["id"], 48)
     return f"- {item['text']} [{reference}]"
 
 
