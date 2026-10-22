@@ -1,5 +1,6 @@
 from dataclasses import replace
 import json
+import os
 import sqlite3
 
 import pytest
@@ -110,7 +111,7 @@ def test_ledger_actual_schema_visibility_and_completeness(project_config):
     )
     result = load_project_snapshot(config)
     assert set(result["items"]) == {"card:T-1", "card:T-4"}
-    assert set(result["coverage"]) == {"card:T-1"}
+    assert set(result["coverage"]) == {"card:T-1", "__scan_fence__"}
     path.write_text("{")
     result = load_project_snapshot(config)
     assert not result["complete"]
@@ -126,7 +127,7 @@ def test_incremental_baseline_rehydrates_coverage_and_changed_rows(project_confi
         conn.execute("UPDATE claims SET status='confirmed',updated_at=? WHERE id=2", (baseline["read_at"],))
         conn.execute("UPDATE citations SET excerpt='Edited evidence' WHERE claim_id=1")
     current = snapshot_since(config, baseline["coverage"], baseline["read_at"])
-    assert set(current["coverage"]) == {"claim:1", "claim:2"}
+    assert set(current["coverage"]) == {"claim:1", "claim:2", "__scan_fence__"}
     assert current["coverage"]["claim:1"] != baseline["coverage"]["claim:1"]
 
 
@@ -156,3 +157,138 @@ def test_incremental_includes_temporal_boundary_without_row_edit(project_config)
     snapshot = snapshot_since(project_config, {}, "2026-09-30T00:00:00+00:00")
     assert "claim:1" in snapshot["coverage"]
     assert "next_temporal_boundary" in snapshot
+
+
+def test_incremental_same_second_promotions_and_new_rows_use_inclusive_floor(project_config, monkeypatch):
+    from memorymaster.profile import project_repository as repository
+
+    claim(project_config, status="candidate")
+    monkeypatch.setattr(repository, "utc_now", lambda: "2026-10-22T15:00:00.750000+00:00")
+    baseline = load_project_snapshot(project_config)
+    assert not any(key.startswith("claim:") for key in baseline["coverage"])
+    # Store writes have whole-second UTC timestamps, while projection read_at
+    # retains microseconds. Both commits happen after the baseline read.
+    store_time = "2026-10-22T15:00:00+00:00"
+    with sqlite3.connect(project_config.db_path) as conn:
+        conn.execute("UPDATE claims SET status='confirmed',updated_at=? WHERE id=1", (store_time,))
+    claim(project_config, 2, created_at=store_time, updated_at=store_time)
+    current = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
+    assert set(current["coverage"]) == {"claim:1", "claim:2", "__scan_fence__"}
+
+
+@pytest.mark.parametrize("rewrite_count", [1, 2])
+def test_ledger_digest_detects_equal_stat_rewrites(project_config, monkeypatch, rewrite_count):
+    from memorymaster.profile import project_repository as repository
+
+    path = project_config.ledger_root / "tasks.json"
+
+    def encoded(title):
+        return json.dumps(
+            {"complete": True, "tasks": [{"id": "T-1", "repo": "demo", "state": "ready", "title": title}]}
+        ).encode()
+
+    path.write_bytes(encoded("Before"))
+    original_stat = path.stat()
+    original_loads = json.loads
+    calls = []
+
+    def racing_loads(raw, *args, **kwargs):
+        result = original_loads(raw, *args, **kwargs)
+        if isinstance(result, dict) and "tasks" in result:
+            calls.append(True)
+            if len(calls) <= rewrite_count:
+                path.write_bytes(encoded("After!" if len(calls) == 1 else "Before"))
+                os.utime(path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+        return result
+
+    monkeypatch.setattr(repository.json, "loads", racing_loads)
+    current = load_project_snapshot(project_config)
+    assert len(calls) == 2
+    if rewrite_count == 1:
+        assert current["complete"]
+        assert "After!" in current["items"]["card:T-1"]["text"]
+    else:
+        assert not current["complete"]
+        assert "card:T-1" not in current["items"]
+
+
+def test_incremental_fence_finds_late_old_timestamp_promotions_and_inserts(project_config):
+    claim(project_config, status="candidate")
+    baseline = load_project_snapshot(project_config)
+    assert baseline["coverage"]["__scan_fence__"]["watched_ids"] == [1]
+    # These timestamps can precede read_at in a long transaction, despite the
+    # commits becoming visible only after the projection snapshot.
+    with sqlite3.connect(project_config.db_path) as conn:
+        conn.execute("UPDATE claims SET status='confirmed' WHERE id=1")
+    claim(project_config, 2, updated_at="2001-01-01T00:00:00+00:00")
+    current = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
+    assert {"claim:1", "claim:2"} <= set(current["coverage"])
+    assert current["complete"]
+    assert current["coverage"]["__scan_fence__"]["watched_ids"] == [1, 2]
+
+
+def test_incremental_fence_finds_first_citation_without_claim_timestamp_edit(project_config):
+    claim(project_config)
+    with sqlite3.connect(project_config.db_path) as conn:
+        conn.execute("DELETE FROM citations")
+    baseline = load_project_snapshot(project_config)
+    assert "claim:1" not in baseline["coverage"]
+    with sqlite3.connect(project_config.db_path) as conn:
+        conn.execute(
+            "INSERT INTO citations(claim_id,source,locator,excerpt) VALUES (1,'session','authored','evidence')"
+        )
+    current = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
+    assert "claim:1" in current["coverage"]
+    assert current["complete"]
+
+
+def test_incomplete_scan_fence_never_claims_complete_incremental_coverage(project_config, monkeypatch):
+    from memorymaster.profile import project_repository as repository
+
+    monkeypatch.setattr(repository, "MAX_CLAIMS", 1)
+    claim(project_config, status="candidate")
+    claim(project_config, 2, status="candidate")
+    baseline = load_project_snapshot(project_config)
+    assert not baseline["complete"]
+    assert not baseline["coverage"]["__scan_fence__"]["complete"]
+    current = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
+    assert not current["complete"]
+
+
+def test_incremental_fence_survives_real_wal_late_commit_without_full_rescan(project_config, monkeypatch):
+    from memorymaster.profile import project_repository as repository
+
+    claim(project_config, status="candidate")
+    writer = sqlite3.connect(project_config.db_path)
+    try:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("UPDATE claims SET status='confirmed',updated_at='2001-01-01T00:00:00+00:00' WHERE id=1")
+        writer.execute(
+            "INSERT INTO claims(id,text,scope,status,visibility,source_agent,claim_type,created_at,updated_at) "
+            "VALUES (2,'Late insert','project:demo','confirmed','public','operator','decision',"
+            "'2001-01-01T00:00:00+00:00','2001-01-01T00:00:00+00:00')"
+        )
+        writer.execute(
+            "INSERT INTO citations(claim_id,source,locator,excerpt) VALUES (2,'session','authored','evidence')"
+        )
+        baseline = load_project_snapshot(project_config)
+        assert baseline["coverage"]["__scan_fence__"]["watched_ids"] == [1]
+        assert "claim:1" not in baseline["coverage"]
+        writer.commit()
+    finally:
+        writer.close()
+    statements = []
+    original_connect = sqlite3.connect
+
+    def traced_connect(*args, **kwargs):
+        conn = original_connect(*args, **kwargs)
+        conn.set_trace_callback(statements.append)
+        return conn
+
+    monkeypatch.setattr(repository.sqlite3, "connect", traced_connect)
+    current = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
+    assert {"claim:1", "claim:2"} <= set(current["coverage"])
+    assert current["complete"]
+    row_reads = [statement for statement in statements if "FROM claims WHERE" in statement]
+    assert len(row_reads) == 1
+    assert "id IN (1)" in row_reads[0] and "id > 1" in row_reads[0]

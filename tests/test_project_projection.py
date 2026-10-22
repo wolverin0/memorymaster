@@ -31,6 +31,7 @@ def test_exact_manifest_and_per_bullet_invalidation(project_config):
     assert before.manifest["view_id"] != after.manifest["view_id"]
     assert all(s["id"] != 2 for item in after.manifest["items"] for s in item["supports"])
     assert "source_coverage" not in after.public_manifest
+    assert "__scan_fence__" not in json.dumps(after.public_manifest)
 
 
 def test_modified_still_open_cards_are_rerendered_without_trim_warning(project_config):

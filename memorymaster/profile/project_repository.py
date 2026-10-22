@@ -91,6 +91,20 @@ def _ledger_paths(config: Any) -> list[Path]:
 def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES) -> tuple[dict, bool, list[str]]:
     if not config.ledger_root or not config.ledger_repo or not config.ledger_filtered:
         return {}, False, ["ledger_unavailable"]
+    consumed = 0
+
+    def read_bytes(path: Path) -> bytes:
+        nonlocal consumed
+        remaining = max_bytes - consumed
+        if remaining < 0:
+            raise ValueError("ledger_byte_limit")
+        with path.open("rb") as stream:
+            raw = stream.read(remaining + 1)
+        consumed += len(raw)
+        if consumed > max_bytes:
+            raise ValueError("ledger_byte_limit")
+        return raw
+
     for attempt in range(2):
         try:
             paths = _ledger_paths(config)
@@ -101,11 +115,10 @@ def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES) -> tuple[dict
                 raise ValueError("ledger_byte_limit")
             records = []
             complete = True
+            content_hashes = []
             for path in paths:
-                with path.open("rb") as stream:
-                    raw = stream.read(max_bytes + 1)
-                if len(raw) > max_bytes:
-                    raise ValueError("ledger_byte_limit")
+                raw = read_bytes(path)
+                content_hashes.append(hashlib.sha256(raw).digest())
                 data = json.loads(raw)
                 if isinstance(data, dict) and "tasks" in data:
                     complete = complete and data.get("complete") is True
@@ -152,8 +165,9 @@ def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES) -> tuple[dict
                 }
                 if len(cards) > 256:
                     raise ValueError("ledger_card_limit")
+            after_hashes = [hashlib.sha256(read_bytes(path)).digest() for path in paths]
             after = [(path.stat().st_mtime_ns, path.stat().st_size) for path in paths]
-            if before != after or paths != _ledger_paths(config):
+            if before != after or content_hashes != after_hashes or paths != _ledger_paths(config):
                 if attempt == 0:
                     continue
                 raise ValueError("ledger_changed_during_read")
@@ -244,7 +258,12 @@ def _claim_item(row: dict, citations: list[dict]) -> dict | None:
 
 
 def _read_claims(
-    config: Any, *, ids: list[int] | None = None, changed_since: str | None = None, validation: bool = False
+    config: Any,
+    *,
+    ids: list[int] | None = None,
+    changed_since: str | None = None,
+    validation: bool = False,
+    max_seen_id: int | None = None,
 ) -> tuple[dict, bool, dict]:
     limit = 64 if validation else MAX_CLAIMS
     citation_limit = 256 if validation else MAX_CITATIONS
@@ -268,7 +287,12 @@ def _read_claims(
                 clauses.append("id IN (" + ",".join("?" for _ in ids) + ")")
                 params.extend(ids)
             if changed_since:
-                # Inclusive changes catch old-candidate confirmation and equal timestamps.
+                # Store writes use whole UTC seconds; read_at retains microseconds.
+                # A bare second prefix includes every same-second timestamp suffix.
+                instant = datetime.fromisoformat(changed_since.replace("Z", "+00:00"))
+                if instant.tzinfo is None:
+                    raise ValueError("unqualified_baseline_time")
+                lower_bound = instant.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
                 clauses.extend(
                     [
                         "updated_at >= ?",
@@ -276,14 +300,16 @@ def _read_claims(
                         "EXISTS (SELECT 1 FROM citations c WHERE c.claim_id=claims.id AND c.created_at >= ?)",
                     ]
                 )
-                params.extend([changed_since] * 3)
+                params.extend([lower_bound] * 3)
+            if max_seen_id is not None:
+                clauses.append("id > ?")
+                params.append(max_seen_id)
             if not clauses:
                 return {}, True, {"data_version": conn.execute("PRAGMA data_version").fetchone()[0]}
             where += " AND (" + " OR ".join(clauses) + ")"
-        else:
-            where += (
-                " AND status='confirmed' AND COALESCE(visibility,'public')='public' AND replaced_by_claim_id IS NULL"
-            )
+        # Builder scans watch bounded all-status IDs. Ineligible rows can become
+        # eligible without a reliable post-commit timestamp; their IDs are only
+        # protected continuity metadata, never factual support or public output.
         fields = [row[1] for row in conn.execute("PRAGMA table_info(claims)")]
         names = [
             name
@@ -373,6 +399,15 @@ def _read_claims(
             "next_temporal_boundary": min(boundaries) if boundaries else None,
             "source_bytes": total,
         }
+        if not validation:
+            watched_ids = sorted(set(ids or ()) | {int(row["id"]) for row in rows})
+            fingerprint["scan_fence"] = {
+                "kind": "scan_fence",
+                "watched_ids": watched_ids[:MAX_CLAIMS],
+                "max_seen_id": max([max_seen_id or 0, *watched_ids]),
+                "complete": complete and len(watched_ids) <= MAX_CLAIMS,
+            }
+            complete = complete and len(watched_ids) <= MAX_CLAIMS
         return items, complete, fingerprint
 
 
@@ -402,11 +437,25 @@ def load_project_snapshot(
         return result
     try:
         ids = claim_ids
+        prior_fence = None
         if coverage is not None:
-            ids = [int(key.split(":", 1)[1]) for key in coverage if key.startswith("claim:")]
+            prior_fence = coverage.get("__scan_fence__")
+            ids = sorted(
+                set(int(key.split(":", 1)[1]) for key in coverage if key.startswith("claim:"))
+                | set(prior_fence.get("watched_ids", ()) if isinstance(prior_fence, dict) else ())
+            )
+            if any(type(id) is not int or id <= 0 for id in ids):
+                raise ValueError("invalid_scan_fence")
         items, complete, fingerprints = _read_claims(
-            config, ids=ids, changed_since=changed_since, validation=validation
+            config,
+            ids=ids,
+            changed_since=changed_since,
+            validation=validation,
+            max_seen_id=prior_fence.get("max_seen_id") if isinstance(prior_fence, dict) else None,
         )
+        if coverage is not None and (not prior_fence or not prior_fence.get("complete")):
+            complete = False
+            result["diagnostics"].append("incremental_scan_fence_incomplete")
     except (sqlite3.Error, OSError, ValueError, TypeError):
         items, complete, fingerprints = {}, False, {}
         result["diagnostics"].append("claims_unavailable")
@@ -418,6 +467,10 @@ def load_project_snapshot(
     result.update(items=items, complete=complete and ledger_complete, fingerprints=fingerprints)
     result["next_temporal_boundary"] = fingerprints.get("next_temporal_boundary")
     result["coverage"] = {key: item["support"] for key, item in items.items() if item.get("open", True)}
+    fence = fingerprints.pop("scan_fence", None)
+    if fence is not None:
+        fence["complete"] = fence["complete"] and complete
+        result["coverage"]["__scan_fence__"] = fence
     result["diagnostics"].extend(diagnostics)
     if len(json.dumps(result["coverage"]).encode()) > 128 * 1024:
         result.update(coverage={}, complete=False)
