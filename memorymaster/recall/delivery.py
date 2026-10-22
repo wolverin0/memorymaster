@@ -9,6 +9,7 @@ import tempfile
 import time
 from typing import Callable
 
+from memorymaster.core.text_safety import sanitize_text
 from memorymaster.recall import hook_policy
 
 AUTOMATED_PREFIXES = (
@@ -28,7 +29,7 @@ def _state_path(session_id: str, state_dir: Path | None = None) -> Path:
         "MEMORYMASTER_RECALL_STATE_DIR",
         str(Path.home() / ".memorymaster" / "hook_state" / "recall_delivery"),
     ))
-    name = hashlib.sha256(session_id.encode()).hexdigest()
+    name = hashlib.sha256(sanitize_text(session_id).encode("utf-8")).hexdigest()
     return directory / (name + ".json")
 
 
@@ -73,7 +74,7 @@ def _remember(path: Path, fingerprint: str, now: float) -> None:
 
 def recall_block(context: str) -> str:
     """The exact text the recall hook delivers for a rendered recall ``context``."""
-    return RECALL_PREFIX + context
+    return RECALL_PREFIX + sanitize_text(context)
 
 
 def _session_path(data: dict, state_dir: Path | None) -> Path | None:
@@ -82,9 +83,9 @@ def _session_path(data: dict, state_dir: Path | None) -> Path | None:
 
 
 def _fingerprint(data: dict, context: str) -> str:
-    return hashlib.sha256(json.dumps(
+    return hashlib.sha256(sanitize_text(json.dumps(
         [data.get("cwd", ""), context], ensure_ascii=False,
-    ).encode()).hexdigest()
+    )).encode("utf-8")).hexdigest()
 
 
 def would_deliver(data: dict, context: str, *, state_dir: Path | None = None,
@@ -100,6 +101,7 @@ def would_deliver(data: dict, context: str, *, state_dir: Path | None = None,
 def deliver(data: dict, context: str, write: Callable[[str], object], *,
             state_dir: Path | None = None, now: float | None = None) -> bool:
     """Record only after output succeeds; state failures never break recall."""
+    context = sanitize_text(context)
     if not context.strip():
         return False
     now = time.time() if now is None else now

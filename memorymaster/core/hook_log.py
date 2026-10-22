@@ -33,6 +33,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from memorymaster.core.text_safety import sanitize_text
+
 _STATE_DIR = Path(os.path.expanduser("~")) / ".memorymaster" / "hook_state"
 _LOG_FILE = _STATE_DIR / "hook.log"
 
@@ -59,7 +61,7 @@ def log_hook(hook: str, event: str, **fields: Any) -> None:
             if val is None:
                 continue
             parts.append(f"{key}={_fmt_value(val)}")
-        line = " ".join(parts) + "\n"
+        line = sanitize_text(" ".join(parts)) + "\n"
         with _LOG_FILE.open("a", encoding="utf-8") as fh:
             fh.write(line)
     except Exception:

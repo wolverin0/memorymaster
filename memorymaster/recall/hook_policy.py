@@ -37,6 +37,8 @@ import time
 import unicodedata
 from pathlib import Path
 
+from memorymaster.core.text_safety import sanitize_text
+
 ENABLED_ENV = "MEMORYMASTER_RECALL_HOOK"
 CONFIG_ENV = "MEMORYMASTER_RECALL_HOOK_CONFIG"
 MAX_CLAIMS_ENV = "MEMORYMASTER_RECALL_HOOK_MAX_CLAIMS"
@@ -175,7 +177,7 @@ def _seen_dir() -> Path:
 
 
 def _seen_path(session_id: str) -> Path:
-    return _seen_dir() / (hashlib.sha256(session_id.encode()).hexdigest() + ".json")
+    return _seen_dir() / (hashlib.sha256(sanitize_text(session_id).encode("utf-8")).hexdigest() + ".json")
 
 
 def _load(session_id: str, now: float) -> list[int]:

@@ -58,6 +58,28 @@ def _events(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+def test_query_fingerprint_replaces_lone_surrogates():
+    assert dense_recall.query_fingerprint("prompt \udc8f") == dense_recall.query_fingerprint("prompt \ufffd")
+
+
+def test_metrics_record_retains_sanitized_surrogates(tmp_path, monkeypatch):
+    path = tmp_path / "metrics.jsonl"
+    monkeypatch.setenv(dense_recall.LOG_ENV, str(path))
+    dense_recall.record({"outcome": "fallback:\udc8f"})
+    assert _events(path)[0]["outcome"] == "fallback:\ufffd"
+
+
+def test_dense_search_sanitizes_the_query_before_transport(monkeypatch):
+    import io
+
+    def open_request(request, **_):
+        assert json.loads(request.data)["query"] == "prompt \ufffd"
+        return io.BytesIO(b'{"results": []}')
+
+    monkeypatch.setattr(dense_recall._OPENER, "open", open_request)
+    assert dense_recall.search("prompt \udc8f", None).results == ()
+
+
 def test_dense_candidates_replace_the_lexical_pool_in_score_order(claims, monkeypatch) -> None:
     ids = claims["ids"]
     monkeypatch.setenv(dense_recall.ENABLE_ENV, "1")

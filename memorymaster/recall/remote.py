@@ -21,6 +21,7 @@ import urllib.request
 from typing import NamedTuple
 
 from memorymaster.core.shared_mcp import DEFAULT_URL, resolve_token
+from memorymaster.core.text_safety import sanitize_text
 from memorymaster.recall import hook_policy
 
 HOOK_RECALL_PATH = "/hook/recall"
@@ -52,7 +53,7 @@ def remote_recall(
     token = resolve_token(environ)
     if not token:
         return RemoteRecall(None, False)
-    body = json.dumps({"query": query, "hook_data": hook_data}, ensure_ascii=False).encode("utf-8")
+    body = sanitize_text(json.dumps({"query": query, "hook_data": hook_data}, ensure_ascii=False)).encode("utf-8")
     request = urllib.request.Request(
         hook_recall_url(environ),
         data=body,
@@ -62,7 +63,7 @@ def remote_recall(
     try:
         with opener(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8") or "{}")
-        return RemoteRecall(str(payload.get("ctx") or ""), True)
+        return RemoteRecall(sanitize_text(str(payload.get("ctx") or "")), True)
     except urllib.error.HTTPError as exc:
         # 404: an older server without the route; recalling locally is safe.
         return RemoteRecall(None, exc.code != 404)
