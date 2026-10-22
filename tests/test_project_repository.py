@@ -447,3 +447,55 @@ def test_oversized_multibyte_rows_are_not_materialized_before_field_rejection(pr
     assert snapshot["coverage"]["__scan_fence__"]["watched_ids"] == [1]
     query = next(query for query in observed if "FROM claims WHERE" in query)
     assert "CASE WHEN" in query and "ELSE NULL END AS text" in query
+
+@pytest.mark.parametrize("field", ["valid_from", "valid_until"])
+@pytest.mark.parametrize("boundary", [
+    "2026-10-22T06:01:00-03:00",
+    "2026-10-22T11:01:00+02:00",
+    "2026-10-22T09:01:00Z",
+    "2026-10-22T09:01:00.000001+00:00",
+    "2026-10-22T09:01:00.000001Z",
+])
+def test_incremental_iso_temporal_instants_match_full_snapshot(project_config, monkeypatch, field, boundary):
+    from memorymaster.profile import project_repository as repository
+
+    instant = datetime(2026, 10, 22, 9, tzinfo=timezone.utc)
+    original_current = repository.claim_is_temporally_current
+    monkeypatch.setattr(repository, "utc_now", lambda: instant.isoformat())
+    monkeypatch.setattr(repository, "claim_is_temporally_current", lambda row: original_current(row, now=instant))
+    claim(project_config, **{field: boundary})
+    baseline = load_project_snapshot(project_config)
+    # Keep exact original ISO strings in support identity, independent of comparison normalization.
+    with sqlite3.connect(project_config.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = dict(conn.execute("SELECT * FROM claims WHERE id=1").fetchone())
+        citations = [dict(value) for value in conn.execute(
+            "SELECT id,claim_id,source,locator,excerpt FROM citations WHERE claim_id=1")]
+    instant = datetime(2026, 10, 22, 9, 2, tzinfo=timezone.utc)
+    incremental = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
+    full = load_project_snapshot(project_config)
+    assert incremental["complete"] and full["complete"]
+    assert incremental["coverage"] == full["coverage"]
+    assert baseline["next_temporal_boundary"] == datetime.fromisoformat(boundary.replace("Z", "+00:00")).astimezone(timezone.utc).isoformat()
+    assert incremental["next_temporal_boundary"] is None
+    if field == "valid_from":
+        expected = repository._claim_item(row, citations)["support"]
+        assert incremental["coverage"]["claim:1"] == expected
+        row[field] = datetime.fromisoformat(boundary.replace("Z", "+00:00")).astimezone(timezone.utc).isoformat()
+        if row[field] != boundary:
+            assert repository._claim_item(row, citations)["support"]["hash"] != expected["hash"]
+
+
+def test_incremental_keeps_unchanged_future_temporal_boundary(project_config, monkeypatch):
+    from memorymaster.profile import project_repository as repository
+
+    instant = datetime(2026, 10, 22, 9, tzinfo=timezone.utc)
+    original_current = repository.claim_is_temporally_current
+    monkeypatch.setattr(repository, "utc_now", lambda: instant.isoformat())
+    monkeypatch.setattr(repository, "claim_is_temporally_current", lambda row: original_current(row, now=instant))
+    claim(project_config, valid_until="2026-10-22T06:10:00-03:00")
+    baseline = load_project_snapshot(project_config)
+    instant = datetime(2026, 10, 22, 9, 2, tzinfo=timezone.utc)
+    incremental = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
+    assert incremental["complete"]
+    assert incremental["next_temporal_boundary"] == "2026-10-22T09:10:00+00:00"

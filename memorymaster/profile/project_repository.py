@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from memorymaster.core.generated_artifacts import contains_generated_marker
+from memorymaster.core.models import _parse_iso_strict
 from memorymaster.core.security import scan_persisted_value
 from memorymaster.core.temporal_policy import claim_is_temporally_current
 from memorymaster.profile.egress import prepare_claim_egress
@@ -36,6 +37,20 @@ def digest(value: Any) -> str:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _validity_instants(rows) -> list[tuple[int, datetime]]:
+    """Compare accepted ISO forms as instants without rewriting support fields."""
+    result = []
+    for row in rows:
+        for name in ("valid_from", "valid_until"):
+            try:
+                instant = _parse_iso_strict(name, row[name])
+            except ValueError:
+                continue  # Malformed persisted bounds are ineligible at rehydration.
+            if instant is not None:
+                result.append((row["id"], instant.astimezone(timezone.utc)))
+    return result
 
 
 def _safe(value: Any) -> bool:
@@ -299,6 +314,8 @@ def _read_claims(
         params: list[Any] = [config.tenant_id, *scopes]
         where = "tenant_id IS ? AND scope IN (" + ",".join("?" for _ in scopes) + ")"
         changed_ids = []
+        temporal_instants = []
+        temporal_bytes = 0
         if changed_since:
             cursor = (prior_fence or {}).get("source_cursor")
             if (not source_cursor or not isinstance(cursor, dict)
@@ -306,22 +323,36 @@ def _read_claims(
                     or type(cursor.get("seq")) is not int
                     or not 0 <= cursor["seq"] <= source_cursor["seq"]):
                 raise ValueError("incremental_cursor_unavailable")
-            # Timestamp ranges cover ordinary writes and wall-clock eligibility.
-            # The transactional cursor also covers late commits, deletes, scope
-            # moves and citation edits without a claim timestamp change.
+            # The transactional cursor covers writes regardless of wall-clock
+            # spelling, late commits, deletes, scope moves and citation edits.
             instant = datetime.fromisoformat(changed_since.replace("Z", "+00:00"))
             if instant.tzinfo is None:
                 raise ValueError("unqualified_baseline_time")
-            # Whole-second and old-timestamp writes are covered by the cursor;
-            # flooring here would reload unchanged rows from the same second.
-            lower_bound = instant.astimezone(timezone.utc).isoformat()
             now = utc_now()
-            if instant > datetime.fromisoformat(now.replace("Z", "+00:00")):
+            now_instant = datetime.fromisoformat(now.replace("Z", "+00:00"))
+            if instant > now_instant:
                 raise ValueError("future_baseline_time")
             watched = (prior_fence or {}).get("watched_ids", [])
             if len(watched) > MAX_CLAIMS or any(type(id) is not int or id <= 0 for id in watched):
                 raise ValueError("invalid_scan_fence")
             watched_sql = ",".join("?" for _ in watched) or "NULL"
+            # A complete fence contains every previously scanned ID. Read only
+            # its bounded validity metadata by primary key, then normalize in
+            # Python: indexed TEXT ranges cannot compare offsets or fractions.
+            temporal_rows = list(conn.execute(
+                "SELECT id,"
+                "CASE WHEN length(valid_from)<=128 THEN valid_from END AS valid_from,"
+                "CASE WHEN length(valid_until)<=128 THEN valid_until END AS valid_until,"
+                "(length(COALESCE(valid_from,''))>128 OR length(COALESCE(valid_until,''))>128) AS oversized "
+                f"FROM claims NOT INDEXED WHERE {where} AND id IN ({watched_sql}) LIMIT ?",
+                [*params, *watched, MAX_CLAIMS + 1],
+            ))
+            temporal_bytes = sum(len(json.dumps(dict(row)).encode()) for row in temporal_rows)
+            if (len(temporal_rows) > MAX_CLAIMS or temporal_bytes > byte_limit
+                    or any(row["oversized"] for row in temporal_rows)):
+                return {}, False, {"source_bytes": byte_limit}
+            temporal_instants = _validity_instants(temporal_rows)
+            temporal_ids = sorted({id for id, boundary in temporal_instants if instant <= boundary <= now_instant})
             queries = [
                 "SELECT changes.claim_id AS id FROM project_source_changes changes "
                 "INDEXED BY idx_project_source_changes_seq "
@@ -330,14 +361,10 @@ def _read_claims(
                 f"OR changes.claim_id IN ({watched_sql}))",
             ]
             changes_params: list[Any] = [cursor["seq"], source_cursor["seq"], *params, *watched]
-            for column, index in (("updated_at", "updated"), ("valid_from", "valid_from"),
-                                  ("valid_until", "valid_until")):
-                temporal = column != "updated_at"
-                queries.append(
-                    f"SELECT id FROM claims INDEXED BY idx_project_claims_{index} "
-                    f"WHERE {where} AND {column} >= ?" + (f" AND {column} <= ?" if temporal else "")
-                )
-                changes_params.extend([*params, lower_bound, *([now] if temporal else [])])
+            if temporal_ids:
+                queries.append("SELECT id FROM claims NOT INDEXED WHERE id IN ("
+                               + ",".join("?" for _ in temporal_ids) + ")")
+                changes_params.extend(temporal_ids)
             queries.append(f"SELECT id FROM claims NOT INDEXED WHERE {where} AND id > ?")
             changes_params.extend([*params, max_seen_id or 0])
             changed_ids = [row[0] for row in conn.execute(
@@ -393,7 +420,7 @@ def _read_claims(
             [*params, limit + 1],
         )
         rows = []
-        total = 0
+        total = temporal_bytes
         for row in cursor:
             if len(rows) >= limit:
                 fingerprint = {"source_bytes": total}
@@ -453,16 +480,12 @@ def _read_claims(
             item = _claim_item(dict(row), citations.get(row["id"], []))
             if item:
                 items[item["key"]] = item
-        now = utc_now()
-        boundaries = [
-            str(row[name])
-            for row in rows
-            for name in ("valid_from", "valid_until")
-            if row[name] and str(row[name]) > now
-        ]
+        now = datetime.fromisoformat(utc_now().replace("Z", "+00:00"))
+        boundaries = [boundary for _, boundary in [*temporal_instants, *_validity_instants(rows)]
+                      if boundary > now]
         fingerprint = {
             "data_version": conn.execute("PRAGMA data_version").fetchone()[0],
-            "next_temporal_boundary": min(boundaries) if boundaries else None,
+            "next_temporal_boundary": min(boundaries).isoformat() if boundaries else None,
             "source_bytes": total,
             "changed_ids": changed_ids,
         }
