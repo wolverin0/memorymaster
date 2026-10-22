@@ -162,11 +162,30 @@ class ProjectProjection:
 
     @property
     def public_manifest(self) -> dict:
-        return {
-            key: value
-            for key, value in self.manifest.items()
-            if key not in ("source_coverage", "source_fingerprints", "tenant_id", "aliases", "context_key")
-        }
+        # Export an explicit schema. The private manifest retains the exact
+        # support identities/versions used for rehydration; ledger metadata is
+        # never recursively copied onto the CLI surface. The opaque key maps
+        # back to its private record by hashing that record's support identity.
+        public = {key: self.manifest[key] for key in (
+            "schema", "algorithm_version", "scope", "activation_epoch",
+            "generation_id", "view_id", "read_at", "checked_at", "output_sha256",
+            "payload_sha256", "output_bytes", "payload_bytes", "budget_bytes",
+            "omissions", "diagnostics", "status", "complete", "source_complete",
+            "next_temporal_boundary",
+        )}
+        public["items"] = []
+        for record in self.manifest["items"]:
+            supports = [{"kind": support["kind"],
+                         "id": digest([support["kind"], support["id"]]),
+                         "hash": support["hash"]} for support in record["supports"]]
+            public["items"].append({
+                **{key: record[key] for key in (
+                    "section", "text", "line", "span", "text_hash", "pinned",
+                )},
+                "key": supports[0]["kind"] + ":" + supports[0]["id"],
+                "supports": supports,
+            })
+        return public
 
 
 def _line(item: dict) -> str:

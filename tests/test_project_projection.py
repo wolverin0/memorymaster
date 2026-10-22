@@ -18,6 +18,49 @@ from memorymaster.profile.project_projection import (
 project_config = _project_config
 
 
+@pytest.mark.parametrize("version", [None, "version-owner@example.com", {"owner": "version-owner@example.com"}])
+def test_public_card_manifest_does_not_export_redacted_identity(project_config, monkeypatch, capsys, version):
+    from memorymaster.profile.__main__ import main
+    from memorymaster.profile.project_repository import load_project_snapshot
+    from memorymaster.profile.project_sessions import build_session_delta
+
+    card_id = "alice@example.com"
+    row = {"id": card_id, "repo": "demo", "state": "ready", "title": "Visible work"}
+    if version is not None:
+        row["version"] = version
+    (project_config.ledger_root / "tasks.json").write_text(
+        json.dumps({"complete": True, "tasks": [row]}), encoding="utf-8")
+    built = build_project_projection(project_config)
+    assert publish_project_projection(project_config, built)
+    view = read_project_projection(project_config)
+    snapshot = load_project_snapshot(project_config)
+    delta = build_session_delta({}, {}, snapshot)
+    assert snapshot["items"][f"card:{card_id}"]["support"]["id"] == card_id
+    assert built.manifest["items"][0]["supports"][0]["version"] == version
+    assert built.public_manifest["items"][0]["key"] == view.public_manifest["items"][0]["key"]
+    outputs = [built.markdown, view.markdown, delta.text,
+               json.dumps(built.public_manifest), json.dumps(view.public_manifest)]
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "1")
+    args = ["--db", str(project_config.db_path), "--scope", project_config.scope,
+            "--tenant", "legacy-null", "--context-key", project_config.context_key,
+            "--epoch", project_config.epoch, "--project-root", str(project_config.project_root),
+            "--output-dir", str(project_config.output_root), "--state-dir", str(project_config.state_root),
+            "--ledger-dir", str(project_config.ledger_root), "--ledger-repo", "demo", "--ledger-filtered"]
+    for command in ("project-build", "project-read"):
+        assert main([command, *args]) == 0
+        emitted = capsys.readouterr().out
+        assert json.loads(emitted)["manifest"]["items"]
+        outputs.append(emitted)
+    for output in outputs:
+        assert card_id not in output, output
+        assert "version-owner@example.com" not in output, output
+    # Private identity and exact version still control authoritative validation.
+    row["version"] = "changed"
+    (project_config.ledger_root / "tasks.json").write_text(
+        json.dumps({"complete": True, "tasks": [row]}), encoding="utf-8")
+    assert load_project_snapshot(project_config)["coverage"][f"card:{card_id}"] != snapshot["coverage"][f"card:{card_id}"]
+
+
 @pytest.mark.parametrize("card_id", ["alice@example.com", "10.2.3.4", "T-1\n## injected", "T-[ready]"])
 def test_card_reference_receives_egress_filter(project_config, card_id):
     from memorymaster.profile.project_repository import _display, load_project_snapshot
