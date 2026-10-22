@@ -82,6 +82,47 @@ def claim(config, id=1, text="Use bounded reads", **changes):
         )
 
 
+@pytest.mark.parametrize("field", ["valid_until", "valid_from"])
+def test_temporal_boundary_crossed_during_snapshot_is_not_lost(project_config, monkeypatch, field):
+    from memorymaster.profile import project_repository as repository
+    from memorymaster.profile.project_sessions import build_session_delta
+
+    start = datetime(2026, 10, 22, 9, 0, tzinfo=timezone.utc)
+    after = datetime(2026, 10, 22, 9, 0, 0, 100000, tzinfo=timezone.utc)
+    later = datetime(2026, 10, 22, 9, 1, tzinfo=timezone.utc)
+    boundary = "2026-10-22T09:00:00.050000+00:00"
+    claim(project_config, **{field: boundary})
+    clocks = iter([start.isoformat(), after.isoformat()])
+    observed = []
+
+    def clock():
+        value = next(clocks)
+        observed.append(value)
+        return value
+
+    original = repository.claim_is_temporally_current
+    monkeypatch.setattr(repository, "utc_now", clock)
+    monkeypatch.setattr(repository, "claim_is_temporally_current",
+                        lambda row, *, now=None: original(row, now=now or start))
+    baseline = load_project_snapshot(project_config)
+    assert baseline["complete"]
+    assert ("claim:1" in baseline["coverage"]) == (field == "valid_until")
+    monkeypatch.setattr(repository, "utc_now", lambda: later.isoformat())
+    monkeypatch.setattr(repository, "claim_is_temporally_current",
+                        lambda row, *, now=None: original(row, now=now or later))
+    current = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
+    full = load_project_snapshot(project_config)
+    delta = build_session_delta(baseline["coverage"], baseline["coverage"], current)
+    assert current["complete"] and full["complete"]
+    assert current["coverage"] == full["coverage"], delta.text
+    assert observed == [start.isoformat()]
+    assert baseline["read_at"] == start.isoformat()
+    if field == "valid_until":
+        assert "withdrawn" in delta.text.lower()
+    else:
+        assert "Use bounded reads" in delta.text
+
+
 @pytest.mark.parametrize("count", [40, 400])
 @pytest.mark.parametrize("changed_count", [0, 1, 3])
 def test_unchanged_baseline_does_not_reload_all_temporal_metadata(project_config, monkeypatch, count, changed_count):
@@ -195,10 +236,7 @@ def test_incremental_includes_temporal_boundary_without_row_edit(project_config,
     from memorymaster.profile import project_repository as repository
 
     now = "2026-10-22T09:00:00+00:00"
-    original_current = repository.claim_is_temporally_current
     monkeypatch.setattr(repository, "utc_now", lambda: now)
-    monkeypatch.setattr(repository, "claim_is_temporally_current", lambda row: original_current(
-        row, now=datetime.fromisoformat(now).astimezone(timezone.utc)))
     claim(project_config, valid_from="2026-10-22T09:01:00+00:00")
     claim(project_config, 2, valid_until="2026-10-22T09:01:00+00:00")
     baseline = load_project_snapshot(project_config)
@@ -485,9 +523,7 @@ def test_incremental_iso_temporal_instants_match_full_snapshot(project_config, m
     from memorymaster.profile import project_repository as repository
 
     instant = datetime(2026, 10, 22, 9, tzinfo=timezone.utc)
-    original_current = repository.claim_is_temporally_current
     monkeypatch.setattr(repository, "utc_now", lambda: instant.isoformat())
-    monkeypatch.setattr(repository, "claim_is_temporally_current", lambda row: original_current(row, now=instant))
     claim(project_config, **{field: boundary})
     baseline = load_project_snapshot(project_config)
     # Keep exact original ISO strings in support identity, independent of comparison normalization.
@@ -504,20 +540,18 @@ def test_incremental_iso_temporal_instants_match_full_snapshot(project_config, m
     assert baseline["next_temporal_boundary"] == datetime.fromisoformat(boundary.replace("Z", "+00:00")).astimezone(timezone.utc).isoformat()
     assert incremental["next_temporal_boundary"] is None
     if field == "valid_from":
-        expected = repository._claim_item(row, citations)["support"]
+        expected = repository._claim_item(row, citations, now=instant)["support"]
         assert incremental["coverage"]["claim:1"] == expected
         row[field] = datetime.fromisoformat(boundary.replace("Z", "+00:00")).astimezone(timezone.utc).isoformat()
         if row[field] != boundary:
-            assert repository._claim_item(row, citations)["support"]["hash"] != expected["hash"]
+            assert repository._claim_item(row, citations, now=instant)["support"]["hash"] != expected["hash"]
 
 
 def test_incremental_keeps_unchanged_future_temporal_boundary(project_config, monkeypatch):
     from memorymaster.profile import project_repository as repository
 
     instant = datetime(2026, 10, 22, 9, tzinfo=timezone.utc)
-    original_current = repository.claim_is_temporally_current
     monkeypatch.setattr(repository, "utc_now", lambda: instant.isoformat())
-    monkeypatch.setattr(repository, "claim_is_temporally_current", lambda row: original_current(row, now=instant))
     claim(project_config, valid_until="2026-10-22T06:10:00-03:00")
     baseline = load_project_snapshot(project_config)
     instant = datetime(2026, 10, 22, 9, 2, tzinfo=timezone.utc)
@@ -530,9 +564,7 @@ def test_incremental_temporal_fence_updates_only_changed_and_crossed_rows(projec
     from memorymaster.profile import project_repository as repository
 
     instant = datetime(2026, 10, 22, 9, tzinfo=timezone.utc)
-    original_current = repository.claim_is_temporally_current
     monkeypatch.setattr(repository, "utc_now", lambda: instant.isoformat())
-    monkeypatch.setattr(repository, "claim_is_temporally_current", lambda row: original_current(row, now=instant))
     for number in range(1, 41):
         claim(project_config, number, valid_until="2026-10-22T06:10:00-03:00",
               **({"valid_from": "2026-10-22T09:04:00Z"} if number == 2 else {}))

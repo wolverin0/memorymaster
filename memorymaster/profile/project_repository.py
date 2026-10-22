@@ -221,7 +221,7 @@ def _section(row: dict) -> str | None:
     return mapping.get(row.get("predicate")) or mapping.get(row.get("claim_type"))
 
 
-def _claim_item(row: dict, citations: list[dict]) -> dict | None:
+def _claim_item(row: dict, citations: list[dict], *, now: datetime | None = None) -> dict | None:
     if (
         row.get("status") != "confirmed"
         or (row.get("visibility") or "public") != "public"
@@ -255,7 +255,7 @@ def _claim_item(row: dict, citations: list[dict]) -> dict | None:
     if not _safe(relevant) or not all(_safe(citation) for citation in citations):
         return None
     if not claim_is_temporally_current(
-        SimpleNamespace(valid_from=row.get("valid_from"), valid_until=row.get("valid_until"))
+        SimpleNamespace(valid_from=row.get("valid_from"), valid_until=row.get("valid_until")), now=now
     ):
         return None
     if not str(row.get("text") or "").strip():
@@ -293,7 +293,11 @@ def _read_claims(
     validation: bool = False,
     max_seen_id: int | None = None,
     prior_fence: dict | None = None,
+    as_of: datetime | None = None,
 ) -> tuple[dict, bool, dict]:
+    # One instant governs eligibility and all temporal fence comparisons,
+    # including when a boundary is crossed while SQLite rows are collected.
+    as_of = as_of or datetime.fromisoformat(utc_now().replace("Z", "+00:00"))
     limit = 64 if validation else MAX_CLAIMS
     citation_limit = 256 if validation else MAX_CITATIONS
     byte_limit = 2 * 1024 * 1024 if validation else MAX_SOURCE_BYTES
@@ -329,9 +333,7 @@ def _read_claims(
             instant = datetime.fromisoformat(changed_since.replace("Z", "+00:00"))
             if instant.tzinfo is None:
                 raise ValueError("unqualified_baseline_time")
-            now = utc_now()
-            now_instant = datetime.fromisoformat(now.replace("Z", "+00:00"))
-            if instant > now_instant:
+            if instant > as_of:
                 raise ValueError("future_baseline_time")
             watched = (prior_fence or {}).get("watched_ids", [])
             if len(watched) > MAX_CLAIMS or any(type(id) is not int or id <= 0 for id in watched):
@@ -354,7 +356,7 @@ def _read_claims(
                 raise ValueError("incremental_temporal_fence_unavailable")
             lower = bisect_left(temporal_boundaries, instant.astimezone(timezone.utc).isoformat(timespec="microseconds"),
                                 key=lambda entry: entry[0])
-            upper = bisect_right(temporal_boundaries, now_instant.astimezone(timezone.utc).isoformat(timespec="microseconds"),
+            upper = bisect_right(temporal_boundaries, as_of.astimezone(timezone.utc).isoformat(timespec="microseconds"),
                                  key=lambda entry: entry[0])
             temporal_ids = sorted({id for _, id in temporal_boundaries[lower:upper]})
             temporal_boundaries = temporal_boundaries[upper:]
@@ -482,17 +484,16 @@ def _read_claims(
         for row in rows:
             if row["id"] in oversized:
                 continue
-            item = _claim_item(dict(row), citations.get(row["id"], []))
+            item = _claim_item(dict(row), citations.get(row["id"], []), now=as_of)
             if item:
                 items[item["key"]] = item
-        now = datetime.fromisoformat(utc_now().replace("Z", "+00:00"))
         # Refresh normalized metadata only for source rows materialized because
         # they changed, crossed a boundary or were explicitly requested.
         refreshed_ids = set(changed_ids) | set(ids_read)
         temporal_boundaries = sorted([
             *[entry for entry in temporal_boundaries if entry[1] not in refreshed_ids],
             *[[boundary.isoformat(timespec="microseconds"), id] for id, boundary in _validity_instants(rows)
-              if boundary > now],
+              if boundary > as_of],
         ])
         fingerprint = {
             "data_version": conn.execute("PRAGMA data_version").fetchone()[0],
@@ -558,6 +559,7 @@ def load_project_snapshot(
             validation=validation,
             max_seen_id=prior_fence.get("max_seen_id") if isinstance(prior_fence, dict) else None,
             prior_fence=prior_fence,
+            as_of=datetime.fromisoformat(result["read_at"].replace("Z", "+00:00")),
         )
         if coverage is not None and (not prior_fence or not prior_fence.get("complete")):
             complete = False
