@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from memorymaster.operations import operational_review as review
 
 
@@ -20,6 +22,34 @@ def test_operational_projection_off_stale_partial_and_m2(tmp_path, monkeypatch):
     monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_PROJECTS", "[]")
     assert review.check_project_projection(config).verdict == review.Verdict.WARN
     assert not (tmp_path / "never-opened.db").exists()
+
+
+@pytest.mark.parametrize("raw_receipt", [b"[1]", b'"receipt"', b"null", b"true", b"1", b"[]"])
+def test_non_object_m2_receipt_returns_review_result(tmp_path, monkeypatch, raw_receipt):
+    from memorymaster.operations import review_attempt
+    from memorymaster.profile import project_projection, project_runtime
+
+    receipt = tmp_path / "m2.json"
+    receipt.write_bytes(raw_receipt)
+    context = SimpleNamespace(scope="project:demo", epoch="pilot")
+    monkeypatch.setattr(project_runtime, "active", lambda name: True)
+    monkeypatch.setattr(project_projection, "read_manifest", lambda context: None)
+    monkeypatch.setattr(review_attempt, "phase_progress", lambda *args: None)
+    later = review.ReviewResult("later_check", review.Verdict.PASS, "completed")
+    monkeypatch.setattr(review, "REVIEW_CHECKS", (review.check_project_projection, lambda config: later))
+    config = review.ReviewConfig(
+        db=tmp_path / "unused.sqlite", project_projection_configs=(context,),
+        project_m2_receipt=receipt,
+    )
+
+    result, following = review.run_review(config)
+
+    assert isinstance(result, review.ReviewResult)
+    assert result.verdict == review.Verdict.FAIL  # The stubbed source pair is unavailable.
+    assert result.counts["m2_passed"] == 0
+    assert "real_m2_probe_pending" in result.detail
+    assert following is later
+    assert not config.db.exists()
 
 
 def test_default_retrieval_keeps_exact_rows_then_fills_without_accesses(tmp_path, monkeypatch):

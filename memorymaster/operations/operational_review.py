@@ -1063,7 +1063,7 @@ def check_project_projection(config: ReviewConfig) -> ReviewResult:
                 receipt = json.loads(raw)
         except (OSError, ValueError):
             pass
-    if (receipt and receipt.get("schema") == "memorymaster.project-m2-probe.v1"
+    if (isinstance(receipt, dict) and receipt.get("schema") == "memorymaster.project-m2-probe.v1"
             and receipt.get("independent") is True and receipt.get("installed") is True
             and receipt.get("passed") == 3 and len(views) == 3
             and receipt.get("views") == views and receipt.get("prohibited_tool_calls") == 0
