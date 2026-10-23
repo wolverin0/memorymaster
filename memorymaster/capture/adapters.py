@@ -8,13 +8,16 @@ import io
 import mimetypes
 import os
 import re
+from bisect import bisect_right
 from dataclasses import dataclass
+from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
 from zipfile import BadZipFile, ZipFile
 
+from memorymaster.core.generated_artifacts import SourceSpan, strip_generated_spans
 from memorymaster.core.security import (
     sanitize_persisted_text,
     validate_persisted_metadata,
@@ -72,6 +75,8 @@ class CaptureEnvelope:
     producer_session_hash: str | None = None
     producer_turn_id: str | None = None
     producer_metadata: tuple[tuple[str, str], ...] = ()
+    retained_spans: tuple[SourceSpan, ...] = ()
+    excluded_spans: tuple[tuple[int, int], ...] = ()
 
 
 class CaptureAdapter(Protocol):
@@ -83,19 +88,113 @@ class _VisibleTextParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.hidden_depth = 0
+        self.hidden_tags: list[str] = []
         self.parts: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag.lower() in {"script", "style", "noscript", "template"}:
-            self.hidden_depth += 1
+            self.hidden_tags.append(tag.lower())
+            self.hidden_depth = len(self.hidden_tags)
 
     def handle_endtag(self, tag: str) -> None:
-        if tag.lower() in {"script", "style", "noscript", "template"} and self.hidden_depth:
-            self.hidden_depth -= 1
+        if self.hidden_tags and tag.lower() == self.hidden_tags[-1]:
+            self.hidden_tags.pop()
+            self.hidden_depth = len(self.hidden_tags)
 
     def handle_data(self, data: str) -> None:
         if not self.hidden_depth and data.strip():
             self.parts.append(data.strip())
+
+
+class _RetainedHTMLParser(_VisibleTextParser):
+    """Parse masked HTML once; map visible data to original retained ranges."""
+
+    def __init__(self, source: str, spans: tuple[SourceSpan, ...], excluded: tuple[tuple[int, int], ...]) -> None:
+        super().__init__()
+        # Decode entities after mapping their original source ranges.
+        self.convert_charrefs = False
+        self.source = source
+        self.spans = spans
+        self.ends = [span.end for span in spans]
+        self.excluded = excluded
+        self.excluded_ends = [end for _, end in excluded]
+        self.line_starts = [0, *(match.end() for match in re.finditer("\n", source))]
+        self.mapped: list[list[tuple[int, int, str]]] = [[] for _ in spans]
+
+    def _check_token(self, length: int) -> None:
+        line, column = self.getpos()
+        start = self.line_starts[line - 1] + column
+        index = bisect_right(self.excluded_ends, start)
+        if index < len(self.excluded) and self.excluded[index][0] < start + length:
+            raise CaptureRejected("ambiguous_generated_provenance", "HTML token crosses excluded generated content.")
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self._check_token(len(self.get_starttag_text()))
+        super().handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag: str) -> None:
+        line, column = self.getpos()
+        start = self.line_starts[line - 1] + column
+        self._check_token(self.source.index(">", start) + 1 - start)
+        super().handle_endtag(tag)
+
+    def handle_comment(self, data: str) -> None:
+        self._check_token(len(data) + 7)
+
+    def handle_decl(self, decl: str) -> None:
+        self._check_token(len(decl) + 3)
+
+    def handle_pi(self, data: str) -> None:
+        self._check_token(len(data) + 2)
+
+    def unknown_decl(self, data: str) -> None:
+        self._check_token(len(data) + 5)
+
+    def _record(self, data: str, raw_length: int, *, entity: bool = False) -> None:
+        if self.hidden_depth:
+            return
+        line, column = self.getpos()
+        start = self.line_starts[line - 1] + column
+        end = start + raw_length
+        index = bisect_right(self.ends, start)
+        while index < len(self.spans) and self.spans[index].start < end:
+            span = self.spans[index]
+            left, right = max(start, span.start), min(end, span.end)
+            if entity and (left != start or right != end):
+                raise CaptureRejected("ambiguous_generated_provenance", "Split HTML entity cannot be attributed safely.")
+            value = data if entity else data[left - start:right - start]
+            self.mapped[index].append((left, right, value))
+            index += 1
+
+    def handle_data(self, data: str) -> None:
+        self._record(data, len(data))
+
+    def _entity(self, name: str, prefix: str) -> None:
+        line, column = self.getpos()
+        start = self.line_starts[line - 1] + column
+        raw = prefix + name
+        if self.source[start + len(raw):start + len(raw) + 1] == ";":
+            raw += ";"
+        self._record(unescape(raw), len(raw), entity=True)
+
+    def handle_entityref(self, name: str) -> None:
+        self._entity(name, "&")
+
+    def handle_charref(self, name: str) -> None:
+        self._entity(name, "&#")
+
+    def values(self) -> list[str]:
+        result = []
+        for parts in self.mapped:
+            chunks = []
+            previous_end = None
+            for start, end, value in parts:
+                if chunks and previous_end != start:
+                    chunks.append("\n")
+                chunks.append(value)
+                previous_end = end
+            result.append("".join(chunks).strip())
+        return result
 
 
 def _digest(payload: bytes) -> str:
@@ -106,9 +205,102 @@ def _bounded_text(text: str) -> tuple[str, tuple[str, ...]]:
     payload = text.encode("utf-8")
     if len(payload) > EXTRACTED_TEXT_LIMIT:
         raise CaptureRejected("extracted_text_too_large", "Extracted text exceeds 2 MiB.")
-    sanitized, findings = sanitize_persisted_text(text)
-    warnings = ("sensitive_content_redacted",) if findings else ()
+    retained = strip_generated_spans(text)
+    if retained.excluded_spans and not retained.spans:
+        raise CaptureRejected("generated_artifact", "Generated-only content cannot become capture evidence.")
+    sanitized, findings = sanitize_persisted_text(retained.text)
+    warnings = (("generated_spans_excluded",) if retained.excluded_spans else ()) + (("sensitive_content_redacted",) if findings else ())
     return sanitized, warnings
+
+
+def _masked_html_source(text: str, excluded: tuple[tuple[int, int], ...]) -> str:
+    """Make generated bytes inert without moving source offsets or line starts."""
+    retained_chunks = []
+    position = 0
+    for start, end in excluded:
+        retained_chunks.append(text[position:start])
+        position = end
+    retained_chunks.append(text[position:])
+    retained = "".join(retained_chunks)
+    retained_end = 0
+    chunks = []
+    position = 0
+    lexer = HTMLParser(convert_charrefs=False)
+    for start, end in excluded:
+        prefix = text[position:start]
+        retained_end += len(prefix)
+        lexer.feed(prefix)
+        pending = lexer.rawdata
+        # Whitespace must not complete an authored tag/entity or leave an
+        # incomplete token to absorb the next retained span. Refuse ambiguity
+        # rather than inventing a tag or joining independently authored bytes.
+        if lexer.cdata_elem:
+            # In script/style raw text only the matching closing tag is HTML
+            # syntax. Test both retained sides with the parser's current closing
+            # pattern: a possible prefix alone is harmless string data. This
+            # lookahead also catches tokens split across several exclusions;
+            # the compact text is never fed to the offset-preserving parser.
+            tail_start = retained.rfind("<", 0, retained_end)
+            closing = lexer.interesting.match(retained, tail_start) if tail_start >= 0 else None
+            # A match that ends exactly at the boundary is a closing-tag name whose terminator
+            # lies past the excluded bytes (hardened html.parser matches '</style' with a
+            # lookahead and does not consume the '>'), so it crosses as well.
+            ambiguous = bool(closing and closing.end() >= retained_end)
+        else:
+            ambiguous = bool(
+                re.search(r"<(?:/?[A-Za-z][^<>]*|/?|![^<>]*|\?[^<>]*)$", pending)
+                or pending.rfind("<!--") > pending.rfind("-->")
+                or re.search(r"&(?:\#(?:[xX][0-9a-fA-F]*|[0-9]*)|[A-Za-z][A-Za-z0-9]*)?$", pending)
+            )
+        if ambiguous:
+            raise CaptureRejected("ambiguous_generated_provenance", "Incomplete HTML token touches excluded generated content.")
+        chunks.append(prefix)
+        # Inside script/style raw text a run of spaces after a retained "</script" would
+        # complete a closing tag on hardened html.parser builds (3.12.11+/3.13.6+), so the
+        # mask there is a tag-name character that neither parser generation terminates on.
+        filler = "_" if lexer.cdata_elem else " "
+        masked = re.sub(r"[^\r\n]", filler, text[start:end])
+        chunks.append(masked)
+        # Excluded markup must never alter the next retained span's context.
+        lexer.feed(masked)
+        position = end
+    chunks.append(text[position:])
+    return "".join(chunks)
+
+
+def _retained_text(text: str, *, html: bool = False) -> tuple[str, tuple[str, ...], tuple[SourceSpan, ...], tuple[tuple[int, int], ...]]:
+    """Filter raw input before parsers erase the generated marker comments."""
+    clean = strip_generated_spans(text)
+    if clean.excluded_spans and not clean.spans:
+        raise CaptureRejected("generated_artifact", "Generated-only content cannot become capture evidence.")
+    spans: list[SourceSpan] = []
+    warning_codes: list[str] = ["generated_spans_excluded"] if clean.excluded_spans else []
+    html_values = []
+    if html:
+        masked = _masked_html_source(text, clean.excluded_spans)
+        parser = _RetainedHTMLParser(masked, clean.spans, clean.excluded_spans)
+        parser.feed(masked)
+        parser.close()
+        html_values = parser.values()
+    for index, span in enumerate(clean.spans):
+        if span.start == 0 and span.text.startswith("\ufeff"):
+            span = SourceSpan(1, span.end, span.text[1:])
+        value = html_values[index].lstrip("\ufeff") if html else span.text
+        if html and strip_generated_spans(value).excluded_spans:
+            # HTML entity decoding changes offsets. Without a reversible source
+            # map, splitting decoded text would fabricate original attribution.
+            raise CaptureRejected(
+                "ambiguous_generated_provenance", "Decoded HTML generated markers cannot be attributed safely."
+            )
+        bounded, warnings = _bounded_text(value)
+        warning_codes.extend(warnings)
+        if bounded.strip():
+            spans.append(SourceSpan(span.start, span.end, bounded))
+    if clean.excluded_spans and not spans:
+        raise CaptureRejected("generated_artifact", "Generated-only content cannot become capture evidence.")
+    if sum(len(span.text.encode("utf-8")) for span in spans) + max(0, len(spans) - 1) > EXTRACTED_TEXT_LIMIT:
+        raise CaptureRejected("extracted_text_too_large", "Extracted text exceeds 2 MiB.")
+    return "\n".join(span.text for span in spans), tuple(dict.fromkeys(warning_codes)), tuple(spans), clean.excluded_spans
 
 
 def _validate_source_uri(source_uri: str | None) -> str | None:
@@ -199,7 +391,7 @@ def _decode_utf8(payload: bytes) -> str:
     if b"\x00" in payload:
         raise CaptureRejected("binary_masquerading", "Text document contains NUL bytes.")
     try:
-        return payload.decode("utf-8-sig")
+        return payload.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise CaptureRejected("invalid_utf8", "Text and Markdown must be UTF-8.") from exc
 
@@ -285,7 +477,7 @@ class InlineTextAdapter:
         raw = self.text.encode("utf-8")
         if len(raw) > INLINE_LIMIT:
             raise CaptureRejected("inline_text_too_large", "Inline text exceeds 2 MiB.")
-        text, warnings = _bounded_text(self.text)
+        text, warnings, spans, excluded = _retained_text(self.text)
         uri = _validate_source_uri(self.source_uri)
         return CaptureEnvelope(
             source_kind="inline",
@@ -297,6 +489,8 @@ class InlineTextAdapter:
             source_uri=uri,
             evidence_type="text",
             warning_codes=warnings,
+            retained_spans=spans,
+            excluded_spans=excluded,
         )
 
 
@@ -350,7 +544,7 @@ class LocalFileAdapter:
         evidence_type: str | None,
         provider: str | None = None,
     ) -> CaptureEnvelope:
-        bounded, warnings = _bounded_text(text) if text is not None else (None, ())
+        bounded, warnings, spans, excluded = _retained_text(text, html=mime == "text/html") if text is not None else (None, (), (), ())
         return CaptureEnvelope(
             source_kind="file",
             content_hash=_digest(payload),
@@ -363,6 +557,8 @@ class LocalFileAdapter:
             provider_kind=provider,
             warning_codes=warnings,
             resolved_path=str(resolved),
+            retained_spans=spans,
+            excluded_spans=excluded,
         )
 
     def capture(self) -> CaptureEnvelope:
@@ -374,7 +570,7 @@ class LocalFileAdapter:
         if extension in _TEXT_EXTENSIONS:
             return self._envelope(resolved, locator, payload, "text/plain", _decode_utf8(payload), "text")
         if extension in _HTML_EXTENSIONS:
-            return self._envelope(resolved, locator, payload, "text/html", _html_text(payload), "text")
+            return self._envelope(resolved, locator, payload, "text/html", _decode_utf8(payload), "text")
         if extension == ".pdf":
             return self._envelope(resolved, locator, payload, "application/pdf", _pdf_text(payload), "text")
         if extension == ".docx":

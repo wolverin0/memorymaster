@@ -24,6 +24,20 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--output-dir", default="")
     run.add_argument("--force", action="store_true")
     run.add_argument("--max-map-calls", type=int)
+    for name in ("project-build", "project-read"):
+        project = commands.add_parser(name, help="Explicitly build/read a governed project projection")
+        project.add_argument("--db", required=True)
+        project.add_argument("--scope", required=True)
+        project.add_argument("--tenant", required=True, help="tenant key, or legacy-null for NULL only")
+        project.add_argument("--context-key", required=True)
+        project.add_argument("--epoch", required=True)
+        project.add_argument("--project-root", required=True)
+        project.add_argument("--output-dir", required=True)
+        project.add_argument("--state-dir", required=True)
+        project.add_argument("--ledger-dir")
+        project.add_argument("--ledger-repo")
+        project.add_argument("--ledger-filtered", action="store_true")
+        project.add_argument("--alias", action="append", default=[])
     return parser
 
 
@@ -42,7 +56,37 @@ def _status(db_path: Path) -> dict[str, object]:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if args.command == "status":
+    if args.command.startswith("project-"):
+        from memorymaster.profile.project_projection import (
+            ProjectProjectionConfig,
+            build_project_projection,
+            publish_project_projection,
+            read_project_projection,
+        )
+        from memorymaster.profile.project_runtime import PREFIX, active, resolve_projection_scope
+
+        if not active(PREFIX + "ENABLED"):
+            result = {"status": "inactive"}
+        else:
+            config = ProjectProjectionConfig(
+                db_path=Path(args.db), scope=args.scope,
+                tenant_id=None if args.tenant == "legacy-null" else args.tenant,
+                context_key=args.context_key, epoch=args.epoch, project_root=Path(args.project_root),
+                output_root=Path(args.output_dir), state_root=Path(args.state_dir),
+                ledger_root=Path(args.ledger_dir) if args.ledger_dir else None,
+                ledger_repo=args.ledger_repo, ledger_filtered=args.ledger_filtered,
+                aliases=tuple(args.alias), enabled=True)
+            if resolve_projection_scope(config, config.project_root) is None:
+                result = {"ok": False, "status": "unauthorized_project"}
+            elif args.command == "project-build":
+                projection = build_project_projection(config)
+                result = {"ok": publish_project_projection(config, projection),
+                          "status": projection.status, "manifest": projection.public_manifest}
+            else:
+                projection = read_project_projection(config)
+                result = ({"payload": projection.payload, "manifest": projection.public_manifest,
+                           "status": projection.status} if projection else {"ok": False, "status": "unavailable"})
+    elif args.command == "status":
         result = _status(Path(args.db))
     else:
         from memorymaster.core.service import MemoryService

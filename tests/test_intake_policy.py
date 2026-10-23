@@ -58,6 +58,16 @@ def _good_citation():
     return [CitationInput(source="test.py", locator="project:test")]
 
 
+def test_generated_and_empty_claims_are_rejected_before_quota_mutation():
+    from memorymaster.core.generated_artifacts import GENERATED_OPENER
+    config = IntakePolicyConfig(quota_per_agent_per_window=1)
+    for text in ("", GENERATED_OPENER + "generated"):
+        with pytest.raises(IntakeRejected) as exc:
+            evaluate_intake(text=text, claim_type="fact", subject=None, scope="project:test", source_agent="agent", config=config)
+        assert exc.value.rule == "generated_artifact"
+    assert evaluate_intake(text="An authored decision.", claim_type="fact", subject=None, scope="project:test", source_agent="agent", config=config).accept
+
+
 # ---------------------------------------------------------------------------
 # (a) NULL source_agent attribution per spec (Rule A)
 # ---------------------------------------------------------------------------

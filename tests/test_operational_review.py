@@ -7,7 +7,86 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
+from test_project_repository import project_config as _project_config
+
 from memorymaster.operations import operational_review as review
+
+project_config = _project_config
+
+
+@pytest.mark.parametrize("field,value", [
+    ("omissions", []),
+    ("checked_at", []),
+    ("checked_at", "not a timestamp"),
+    ("checked_at", "2026-10-22T09:00:00"),
+])
+def test_malformed_manifest_does_not_abort_operational_check(project_config, monkeypatch, field, value):
+    from memorymaster.operations import review_attempt
+    from memorymaster.profile import project_projection, project_runtime
+
+    assert project_projection.publish_project_projection(
+        project_config, project_projection.build_project_projection(project_config))
+    _, path = project_projection.projection_paths(project_config)
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest[field] = value
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert project_projection.read_project_projection(project_config) is None
+    monkeypatch.setenv(project_runtime.PREFIX + "ENABLED", "1")
+    monkeypatch.setattr(review_attempt, "phase_progress", lambda *args: None)
+    later = review.ReviewResult("later_check", review.Verdict.PASS, "completed")
+    monkeypatch.setattr(review, "REVIEW_CHECKS", (review.check_project_projection, lambda config: later))
+    config = review.ReviewConfig(db=project_config.db_path, project_projection_configs=(project_config,))
+
+    result, following = review.run_review(config)
+
+    assert result.verdict == review.Verdict.FAIL
+    assert result.counts["ready"] == 0
+    assert result.counts["m2_passed"] == 0
+    assert "invalid_or_missing_pair" in result.detail
+    assert following is later
+    assert project_projection.read_manifest(project_config) is None
+
+
+def test_operational_projection_off_stale_partial_and_m2(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "0")
+    config = review.ReviewConfig(db=tmp_path / "never-opened.db")
+    result = review.check_project_projection(config)
+    assert result.verdict == review.Verdict.PASS
+    assert "inactive" in result.detail
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "1")
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_PROJECTS", "[]")
+    assert review.check_project_projection(config).verdict == review.Verdict.WARN
+    assert not (tmp_path / "never-opened.db").exists()
+
+
+@pytest.mark.parametrize("raw_receipt", [b"[1]", b'"receipt"', b"null", b"true", b"1", b"[]"])
+def test_non_object_m2_receipt_returns_review_result(tmp_path, monkeypatch, raw_receipt):
+    from memorymaster.operations import review_attempt
+    from memorymaster.profile import project_projection, project_runtime
+
+    receipt = tmp_path / "m2.json"
+    receipt.write_bytes(raw_receipt)
+    context = SimpleNamespace(scope="project:demo", epoch="pilot")
+    monkeypatch.setattr(project_runtime, "active", lambda name: True)
+    monkeypatch.setattr(project_projection, "read_manifest", lambda context: None)
+    monkeypatch.setattr(review_attempt, "phase_progress", lambda *args: None)
+    later = review.ReviewResult("later_check", review.Verdict.PASS, "completed")
+    monkeypatch.setattr(review, "REVIEW_CHECKS", (review.check_project_projection, lambda config: later))
+    config = review.ReviewConfig(
+        db=tmp_path / "unused.sqlite", project_projection_configs=(context,),
+        project_m2_receipt=receipt,
+    )
+
+    result, following = review.run_review(config)
+
+    assert isinstance(result, review.ReviewResult)
+    assert result.verdict == review.Verdict.FAIL  # The stubbed source pair is unavailable.
+    assert result.counts["m2_passed"] == 0
+    assert "real_m2_probe_pending" in result.detail
+    assert following is later
+    assert not config.db.exists()
 
 
 def test_default_retrieval_keeps_exact_rows_then_fills_without_accesses(tmp_path, monkeypatch):

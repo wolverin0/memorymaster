@@ -6,12 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, MutableMapping
 
-
-@dataclass(frozen=True)
-class SourceSpan:
-    start: int
-    end: int
-    text: str
+from memorymaster.core.generated_artifacts import SourceSpan, strip_generated_spans
 
 
 @dataclass(frozen=True)
@@ -73,17 +68,18 @@ def strip_self_observation(
         return SanitizedTurn("", exclusion_reasons=("structural_context",), contaminated=True)
     if memory_tool:
         return SanitizedTurn("", exclusion_reasons=("memory_tool",), contaminated=True)
-    removed: list[tuple[int, int]] = []
+    generated = strip_generated_spans(text)
+    removed: list[tuple[int, int]] = list(generated.excluded_spans)
     for match in _WRAPPER.finditer(text):
         # Persisted outputs are never followed; even an unmarked pointer may be
         # recalled content whose provenance was erased by the export.
         removed.append(match.span())
     spans: list[SourceSpan] = []
     position = 0
-    for start, end in removed:
+    for start, end in sorted(removed):
         if position < start:
             spans.append(SourceSpan(position, start, text[position:start]))
-        position = end
+        position = max(position, end)
     if position < len(text):
         spans.append(SourceSpan(position, len(text), text[position:]))
     remaining = "\n".join(span.text for span in spans)
@@ -94,8 +90,9 @@ def strip_self_observation(
         state["tool_contaminated"] = True
         return SanitizedTurn("", exclusion_reasons=("generated_memory",), contaminated=True)
     authored = remaining.strip()
-    if removed and not authored:
+    if removed and not authored.strip("\ufeff"):
         state["tool_contaminated"] = True
+        return SanitizedTurn("", exclusion_reasons=("generated_memory",), contaminated=True)
     if role == "user" and authored:
         state["tool_contaminated"] = False
         state["memory_tool_ids"] = []

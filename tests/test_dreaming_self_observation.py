@@ -9,6 +9,15 @@ from memorymaster.dreaming.ledger import DreamLedger
 from memorymaster.dreaming.self_observation import strip_self_observation
 
 
+def test_balanced_generated_citation_does_not_poison_authored_spans():
+    from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+    text = f"Choose WAL.\n{GENERATED_OPENER}\nmm-12345678 old memory\n{GENERATED_CLOSER}\nUse transactions."
+    clean = strip_self_observation(text, role="assistant")
+    assert "Choose WAL." in clean.text and "Use transactions." in clean.text
+    assert "old memory" not in clean.text
+    assert all(text[span.start:span.end] == span.text for span in clean.spans)
+
+
 @pytest.mark.parametrize("text", [
     "[MemoryMaster recall]\nPrior claim",
     "# Memory Context\nPrior claim",
@@ -75,3 +84,23 @@ def test_live_capture_keeps_contamination_across_incremental_reads(tmp_path):
     with transcript.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps({"type": "assistant", "message": {"role": "assistant", "content": "Unmarked echo."}}) + "\n")
     assert capture_transcript(transcript, **args)["reason"] == "no_conversation"
+
+
+def test_separated_authored_spans_are_distinct_persisted_extractor_evidence(tmp_path):
+    from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+    from memorymaster.dreaming.worker import DreamConfig, DreamWorker
+
+    raw = "Use " + GENERATED_OPENER + "injected gap" + GENERATED_CLOSER + "SQLite for production."
+    row = {"role": "assistant", "uuid": "original-turn", "content": raw}
+    messages = parse_transcript_lines(json.dumps(row), "claude")
+    assert [message.text for message in messages] == ["Use", "SQLite for production."]
+    assert len({message.message_id for message in messages}) == 2
+    transcript = tmp_path / "span-session.jsonl"
+    transcript.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    ledger = DreamLedger(tmp_path / "spans.db")
+    result = capture_transcript(transcript, provider="claude", session_id="spans", cwd=str(tmp_path),
+                                ledger=ledger, live_workspace=True)
+    persisted = ledger.get_capture(result["capture_id"])["messages"]
+    worker = object.__new__(DreamWorker)
+    worker.config = DreamConfig()
+    assert [message["text"] for message in worker._bounded_messages(persisted)] == ["Use", "SQLite for production."]

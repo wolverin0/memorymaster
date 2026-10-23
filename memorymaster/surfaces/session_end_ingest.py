@@ -29,34 +29,46 @@ def _sensitive(claim: dict[str, Any]) -> bool:
     return bool(redact_text(joined)[1])
 
 
-def _assistant_text(transcript_path: str) -> str:
+def _assistant_text(transcript_path: str, *, start_offset: int = 0, end_offset: int | None = None) -> str:
+    from memorymaster.dreaming.capture import _conversation_record
+
     path = Path(transcript_path)
     if not path.is_file():
         return ""
     messages: list[str] = []
-    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    for line in reversed(lines[-200:]):
+    with path.open("rb") as handle:
+        lines = handle.read(end_offset if end_offset is not None else -1).splitlines(keepends=True)
+    state: dict[str, Any] = {}
+    eligible: list[tuple[int, str]] = []
+    offset = 0
+    for index, line in enumerate(lines):
+        in_increment = offset >= start_offset
+        offset += len(line)
         try:
-            entry = json.loads(line)
+            entry = json.loads(line.decode("utf-8", errors="replace"))
         except json.JSONDecodeError:
             continue
         if not isinstance(entry, dict):
             continue
-        record = entry
-        for key in ("message", "payload"):
-            if isinstance(entry.get(key), dict):
-                record = entry[key]
-                break
-        if str(record.get("role") or "") not in {"assistant", "model"}:
-            continue
-        content = record.get("content", "")
-        if isinstance(content, list):
-            content = " ".join(
-                str(part.get("text", ""))
-                for part in content
-                if isinstance(part, dict) and part.get("type") in (None, "text")
-            )
-        if isinstance(content, str) and len(content.strip()) > 30:
+        provider = "codex" if entry.get("type") == "response_item" else "claude"
+        if provider == "claude":
+            payload = entry.get("message", entry.get("payload", entry))
+            if isinstance(payload, dict):
+                payload = dict(payload)
+                role = str(payload.get("role") or "")
+                if role == "model":
+                    payload["role"] = "assistant"
+                    role = "assistant"
+                entry = {**entry, "message": payload, "type": role or entry.get("type", "")}
+        record = _conversation_record(entry, provider, state=state)
+        # Replay old records for provenance only. Extract solely from the new
+        # committed byte interval; do not re-distill earlier authored content.
+        if in_increment and record is not None and record[0] == "assistant":
+            eligible.extend((index, span.text) for span in record[1])
+    for index, content in reversed(eligible):
+        if index < len(lines) - 200:
+            break
+        if len(content.strip()) > 30:
             messages.append(content[:500])
             if sum(map(len, messages)) > 3000:
                 break
@@ -120,8 +132,10 @@ def run(
     *,
     source_agent: str,
     cwd: str | None,
+    start_offset: int = 0,
+    end_offset: int | None = None,
 ) -> int:
-    text = _assistant_text(transcript_path)
+    text = _assistant_text(transcript_path, start_offset=start_offset, end_offset=end_offset)
     return ingest_learnings(
         db_path, _distill(text), source_agent=source_agent, cwd=cwd
     ) if text else 0
@@ -133,7 +147,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--transcript", required=True)
     parser.add_argument("--source-agent", default="codex-session")
     parser.add_argument("--cwd", default=None)
+    parser.add_argument("--session-id", help="explicit project lifecycle identity; requires --end-at")
+    parser.add_argument("--end-at", help="observed UTC end time; requires --session-id")
     args = parser.parse_args(argv)
+    if bool(args.session_id) != bool(args.end_at):
+        parser.error("--session-id and --end-at must be supplied together")
+    if args.session_id:
+        from memorymaster.profile.project_runtime import record_session_end
+
+        record_session_end({"cwd": args.cwd, "session_id": args.session_id, "end_at": args.end_at})
     try:
         count = run(
             args.db,

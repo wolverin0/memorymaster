@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import json
+import hashlib
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -173,7 +174,7 @@ def _persist_capture(
     envelope: Any,
     scope: str,
     source_agent: str,
-) -> tuple[SourceItem, EvidenceItem | None, bool]:
+) -> tuple[SourceItem, tuple[EvidenceItem, ...], bool]:
     source = service.upsert_external_source(
         source_type="universal_capture",
         display_name="MemoryMaster Capture",
@@ -193,7 +194,9 @@ def _persist_capture(
         source_id=source.id,
         source_item_id=source_key,
         item_type=envelope.content_type,
-        text=envelope.text,
+        # Separated authored spans are individual evidence, never a fabricated
+        # source statement spanning a removed generated range.
+        text=None if getattr(envelope, "excluded_spans", ()) else envelope.text,
         payload_json={
             "locator": envelope.locator,
             "mime_type": envelope.mime_type,
@@ -206,21 +209,29 @@ def _persist_capture(
             "producer_session_hash": getattr(envelope, "producer_session_hash", None),
             "producer_turn_id": getattr(envelope, "producer_turn_id", None),
             "producer_metadata": dict(getattr(envelope, "producer_metadata", ())),
+            "excluded_spans": list(getattr(envelope, "excluded_spans", ())),
         },
         content_hash=envelope.content_hash,
     )
     repository = CaptureRepository(service.store)
-    evidence = repository.evidence_for_content(
-        source_item_id=item.id, content_hash=envelope.content_hash
+    spans = getattr(envelope, "retained_spans", ())
+    split = bool(getattr(envelope, "excluded_spans", ()))
+    segments = [(span.text, span.start, span.end) for span in spans] if split else (
+        [(envelope.text, 0, len(envelope.text))] if envelope.text is not None else []
     )
-    deduplicated = evidence is not None or (
-        existing_source is not None and envelope.text is None
-    )
-    if evidence is None and envelope.text is not None:
+    evidences: list[EvidenceItem] = []
+    deduplicated = existing_source is not None
+    for text, start, end in segments:
+        evidence_hash = hashlib.sha256(f"{envelope.content_hash}:{start}:{end}".encode()).hexdigest() if split else envelope.content_hash
+        evidence = repository.evidence_for_content(source_item_id=item.id, content_hash=evidence_hash)
+        deduplicated &= evidence is not None
+        if evidence is not None:
+            evidences.append(evidence)
+            continue
         evidence = service.add_evidence_item(
             source_item_id=item.id,
             evidence_type=envelope.evidence_type or "text",
-            text=envelope.text,
+            text=text,
             provider="memorymaster-capture",
             confidence=1.0,
             payload_json={
@@ -231,10 +242,14 @@ def _persist_capture(
                 "producer_session_hash": getattr(envelope, "producer_session_hash", None),
                 "producer_turn_id": getattr(envelope, "producer_turn_id", None),
                 "producer_metadata": dict(getattr(envelope, "producer_metadata", ())),
+                "original_content_hash": envelope.content_hash,
+                "source_start": start,
+                "source_end": end,
             },
-            content_hash=envelope.content_hash,
+            content_hash=evidence_hash,
         )
-    return item, evidence, deduplicated
+        evidences.append(evidence)
+    return item, tuple(evidences), deduplicated
 
 
 def _queue_capture_jobs(
@@ -310,19 +325,25 @@ def remember(
         source_agent=source_agent,
         platform=platform,
     )
-    item, evidence, evidence_duplicate = _persist_capture(
+    item, evidences, evidence_duplicate = _persist_capture(
         service,
         envelope=envelope,
         scope=resolved.scope,
         source_agent=source_agent,
     )
-    jobs, jobs_duplicate = _queue_capture_jobs(
-        CaptureRepository(service.store),
-        source_item_id=item.id,
-        content_hash=envelope.content_hash,
-        has_evidence=evidence is not None,
-        blocked_code=envelope.blocked_code,
-    )
+    jobs: tuple[int, ...] = ()
+    jobs_duplicate = True
+    for evidence in evidences or (None,):
+        queued, duplicate = _queue_capture_jobs(
+            CaptureRepository(service.store),
+            source_item_id=item.id,
+            content_hash=evidence.content_hash if evidence is not None else envelope.content_hash,
+            has_evidence=evidence is not None,
+            blocked_code=envelope.blocked_code,
+        )
+        jobs += queued
+        jobs_duplicate &= duplicate
+    evidence = evidences[0] if evidences else None
     warnings = tuple(
         dict.fromkeys(
             (*envelope.warning_codes, *((envelope.blocked_code,) if envelope.blocked_code else ()))

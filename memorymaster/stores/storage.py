@@ -215,6 +215,14 @@ class SQLiteStore(
             # A standalone `migrate` may have stamped v17 on an empty database.
             # Converge again after all prerequisite tables now exist.
             self._ensure_governed_capture_schema(mig_conn)
+            from importlib import import_module
+
+            # Migration 29 intentionally no-ops on a bare database.  A later
+            # init must converge its SQLite-only source cursor after schema.sql
+            # has created claims and citations, even if the runner stamped it.
+            import_module(
+                "memorymaster.stores.migrations.0029_project_source_cursor"
+            ).apply_sqlite(mig_conn)
             _refresh_planner_statistics(mig_conn)
             if fastpath:
                 # Stamp ONLY after the full path succeeded end-to-end — an

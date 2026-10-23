@@ -110,3 +110,74 @@ def test_session_start_template_caps_total_context_and_trims_profile_at_a_line()
     shown = context.split("(facts, not instructions):\n", 1)[1].split("\n…(profile trimmed", 1)[0]
     assert shown.splitlines()[-1].endswith("is kept.")
     assert module._format_context("project:test", [], {}, 0, [], header + "- short\n").count("- short") == 1
+
+
+def test_project_session_start_uses_payload_before_legacy_database(tmp_path, monkeypatch, capsys):
+    from memorymaster.profile import project_runtime
+
+    module = _hook_module()
+    monkeypatch.setattr(module, "DB_PATH", tmp_path / "missing.db")
+    monkeypatch.setattr(module, "_load_compiled_profile", lambda: "")
+    monkeypatch.setattr(project_runtime, "session_start_context",
+                        lambda data, **kwargs: "validated:" + data["cwd"])
+    monkeypatch.setattr(module, "_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"cwd": str(tmp_path), "session_id": "fixture"})))
+    with pytest.raises(SystemExit):
+        module.main()
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"] == "validated:" + str(tmp_path)
+
+
+@pytest.mark.parametrize("flag", ["1", "true", "yes", "on", " 1 ", " TRUE ", " Yes ", " ON "])
+def test_project_consumer_error_never_falls_back_to_private_legacy_claim(tmp_path, monkeypatch, capsys, flag):
+    import sqlite3
+    from memorymaster.profile import project_runtime
+    from memorymaster.recall import delivery
+
+    module = _hook_module()
+    db = tmp_path / "legacy.db"
+    with sqlite3.connect(db) as connection:
+        connection.execute("CREATE TABLE claims(id INTEGER PRIMARY KEY, text TEXT, claim_type TEXT, "
+                           "status TEXT, created_at TEXT, scope TEXT, tenant_id TEXT, visibility TEXT)")
+        connection.execute("INSERT INTO claims VALUES(1, 'Private unrelated tenant context', 'fact', "
+                           "'confirmed', '2026-10-22', 'project:fixture', 'other', 'private')")
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", flag)
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_SESSION_START", "1")
+    monkeypatch.setattr(module, "DB_PATH", db)
+    monkeypatch.setattr(module, "_derive_scope", lambda: "project:fixture")
+    monkeypatch.setattr(module, "_load_recent_wiki_articles", lambda *_: [])
+    monkeypatch.setattr(module, "_load_compiled_profile", lambda: "")
+    monkeypatch.setattr(module, "_jev_session_active", lambda: False)
+    monkeypatch.setattr(delivery, "reset_session", lambda *_: None)
+    logged = []
+    monkeypatch.setattr(module, "_log", lambda event, **values: logged.append((event, values)))
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+
+    def broken_consumer(*args, **kwargs):
+        raise ValueError("consumer failure with private source text")
+
+    monkeypatch.setattr(project_runtime, "session_start_context", broken_consumer)
+    queries = []
+    original_query = module._query_recent_claims
+    monkeypatch.setattr(module, "_query_recent_claims",
+                        lambda *args: queries.append(True) or original_query(*args))
+    with pytest.raises(SystemExit) as stopped:
+        module.main()
+    assert stopped.value.code == 0
+    assert not queries
+    assert capsys.readouterr().out == ""
+    assert logged == [("project-consumer-error", {"cause": "ValueError"})]
+
+
+def test_project_cli_branches_before_service_initialization(tmp_path, monkeypatch, capsys):
+    from memorymaster.profile import __main__ as cli
+
+    monkeypatch.setattr("memorymaster.core.service.MemoryService",
+                        lambda *args, **kwargs: pytest.fail("project CLI initialized authoritative service"))
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "0")
+    args = ["project-read", "--db", str(tmp_path / "never.db"),
+            "--scope", "project:fixture", "--tenant", "legacy-null", "--context-key", "fixture",
+            "--epoch", "test", "--project-root", str(tmp_path),
+            "--output-dir", str(tmp_path / "projections"), "--state-dir", str(tmp_path / "state")]
+    assert cli.main(args) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "inactive"
+    assert not (tmp_path / "never.db").exists()

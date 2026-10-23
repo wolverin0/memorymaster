@@ -153,6 +153,24 @@ def _write_beat_artifact(workspace: str, state_db: Path, guard_log: Path) -> Pat
 
 
 def _run_beat(args: argparse.Namespace) -> int:
+    """Run capture and the separately gated deterministic phase on every enabled tick."""
+    if not _beat_enabled():
+        return _run_capture_beat(args)
+    outcomes: list[str] = []
+    try:
+        return _run_capture_beat(args, outcomes)
+    finally:
+        from memorymaster.profile.project_runtime import refresh_project_projections
+
+        try:
+            result = refresh_project_projections(skip=bool(outcomes and outcomes[0] == "skip"))
+            if result.get("status") != "inactive":
+                log_event(_JOB_LOG, "project_projection_tick", surface="job", job="beat", result=result)
+        except Exception as exc:
+            log_event(_JOB_LOG, "project_projection_error", surface="job", job="beat", error=type(exc).__name__)
+
+
+def _run_capture_beat(args: argparse.Namespace, outcomes: list[str] | None = None) -> int:
     """One AO-2 beat tick: scan transcripts, ask the latency guard, then maybe run a bounded dream.
 
     Off unless MEMORYMASTER_BEAT_ENABLED is truthy. The guard is asked first; on ``skip`` nothing
@@ -177,6 +195,8 @@ def _run_beat(args: argparse.Namespace) -> int:
     # The guard comes first: a hard breach (skip) must not scan directories, probe files or write
     # the state db, only record the decision.
     decision = latency_guard.evaluate()
+    if outcomes is not None:
+        outcomes.append(decision.action)
     scan: dict | None = None
     dream: dict | None = None
     if decision.action != latency_guard.SKIP:

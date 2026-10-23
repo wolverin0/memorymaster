@@ -365,6 +365,24 @@ def main():
     except Exception:
         pass
 
+    # Read the switch without the package: when the consumer is enabled, even an import
+    # failure must withhold legacy delivery; when it is off, the hook degrades as before.
+    project_enabled = os.environ.get("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        from memorymaster.profile.project_runtime import session_start_context
+
+        context = session_start_context(data, profile_loader=_load_compiled_profile)
+        if context is not None:
+            sys.stdout.write(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "SessionStart", "additionalContext": context}}))
+            sys.stdout.flush()
+            sys.exit(0)
+    except Exception as exc:
+        # An enabled project consumer must never fall through to less restrictive legacy SQL.
+        if project_enabled:
+            _log("project-consumer-error", cause=type(exc).__name__)
+            sys.exit(0)
+
     if not DB_PATH.exists():
         _log("skip", reason="db-missing")
         sys.exit(0)
