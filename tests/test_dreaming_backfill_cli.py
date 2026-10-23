@@ -639,3 +639,35 @@ def test_malformed_provider_reply_fails_one_window_and_the_run_continues(tmp_pat
     windows = [w for row in runner._rows() for w in row["metadata"]["selection"]["windows"]]
     assert all(w.get("capture_id") for w in windows)
     assert all(row["status"] == "extracted" for row in runner._rows())
+
+
+def test_exhausted_window_does_not_block_cohort_completion(tmp_path):
+    """T-1723: a window that used its three attempts is unresolved_extraction and the cohort still
+    completes for consolidation, within the repair allowance; a window with attempts left does not."""
+    from memorymaster.dreaming.providers import ProviderOutputError
+
+    fixture = _campaign(tmp_path, sessions=20)
+    runner = fixture.runner
+    runner.inventory()
+    real_extract = fixture.extractor.extract
+    doomed = []
+
+    def flaky_extract(messages, *, scope, capture_hash):
+        if not doomed:
+            doomed.append(capture_hash)
+        if capture_hash == doomed[0]:
+            raise ProviderOutputError("provider JSON response must be an object")
+        return real_extract(messages, scope=scope, capture_hash=capture_hash)
+
+    fixture.extractor.extract = flaky_extract
+    runner.run(stage="extract")
+    rows = [r for r in runner._rows() if r["cohort_id"] == runner._rows()[0]["cohort_id"]]
+    assert not runner._cohort_complete(rows)  # one attempt left: still retryable
+    runner.run(stage="extract")
+    runner.run(stage="extract")
+    rows = [r for r in runner._rows() if r["cohort_id"] == rows[0]["cohort_id"]]
+    statuses = {r["status"] for r in rows}
+    assert "unresolved_extraction" in statuses and "selected" not in statuses
+    assert runner._cohort_complete(rows)
+    runner.run(stage="consolidate")
+    assert fixture.consolidator.calls
