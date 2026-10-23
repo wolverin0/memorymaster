@@ -731,6 +731,14 @@ SNAPSHOT_MAX_AGE_DAYS = 7
 
 def check_snapshot_dir(config: ReviewConfig, *, now: datetime | None = None) -> ReviewResult:
     directory = config.snapshot_dir or Path(os.environ.get("MEMORYMASTER_SNAPSHOT_DIR", "~/.memorymaster/snapshots")).expanduser()
+    if config.snapshot_dir is None:
+        # T-1743: the weekly VACUUM INTO copy lives in the per-database folder below the base,
+        # so probing the base alone reported "no snapshot files found" next to a fresh snapshot.
+        from memorymaster.stores.snapshot import vacuum_dir_for
+
+        per_db = vacuum_dir_for(config.db)
+        if per_db.is_dir():
+            directory = per_db
     try:
         if not directory.is_dir():
             return ReviewResult("snapshot_dir", Verdict.FAIL, "snapshot directory missing or unreachable")
