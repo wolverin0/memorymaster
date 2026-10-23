@@ -251,12 +251,16 @@ def _refresh_one(config, *, skip: bool = False) -> dict:
             and item_keys(previous) == item_keys(manifest)
             and previous["diagnostics"] == manifest["diagnostics"]
             and previous["budget_bytes"] == manifest["budget_bytes"]):
-        if not skip or previous.get("refresh_hint") != manifest["refresh_hint"]:
+        # A complete source validation just ran, so the read TTL may be renewed even on a SKIP
+        # tick; the write is still skipped while the stored check is fresh (half the 60-minute TTL).
+        checked = datetime.fromisoformat(previous["checked_at"])
+        renew = (datetime.now(timezone.utc) - checked).total_seconds() > 1800
+        if not skip or renew or previous.get("refresh_hint") != manifest["refresh_hint"]:
             _, path = projection_paths(config)
             with project_lock(path.with_suffix(".lock"), timeout=0) as acquired:
                 if not acquired or read_manifest(config) != previous:
                     return {"status": "pending"}
-                if not skip:
+                if not skip or renew:
                     previous["checked_at"] = datetime.now(timezone.utc).isoformat()
                 previous["refresh_hint"] = manifest["refresh_hint"]
                 previous["next_temporal_boundary"] = boundary

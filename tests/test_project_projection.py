@@ -562,3 +562,29 @@ def test_modified_multibyte_card_title_preserves_all_reserved_slots(project_conf
     assert len(result.markdown.encode("utf-8")) <= 2200
     assert all(record["text"] == original[record["key"]] for record in result.manifest["items"]
                if record["key"] != "card:T-0-aaaaa")
+
+
+@pytest.mark.parametrize("injected", ("sk-" + "q" * 24, "10.23.45.67"), ids=("credential", "private-address"))
+def test_tampered_temporal_boundary_never_reaches_public_manifest_or_cli(project_config, monkeypatch, capsys, injected):
+    """next_temporal_boundary is exported publicly and sits outside every digest: only an aware ISO
+    instant passes read_manifest; a tampered pair is unavailable and nothing of it is emitted."""
+    for number in range(1, 4):
+        claim(project_config, number, text=f"Authorized decision {number}")
+    assert publish_project_projection(project_config, build_project_projection(project_config))
+    _, manifest_path = projection_paths(project_config)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["next_temporal_boundary"] = injected
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert read_manifest(project_config) is None
+    assert read_project_projection(project_config) is None
+    from memorymaster.profile.__main__ import main
+
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "1")
+    args = ["project-read", "--db", str(project_config.db_path), "--scope", project_config.scope,
+            "--tenant", "legacy-null", "--context-key", project_config.context_key,
+            "--epoch", project_config.epoch, "--project-root", str(project_config.project_root),
+            "--output-dir", str(project_config.output_root), "--state-dir", str(project_config.state_root),
+            "--ledger-dir", str(project_config.ledger_root), "--ledger-repo", "demo", "--ledger-filtered"]
+    # An unavailable pair is a non-zero read; whatever is emitted carries nothing of the tampered field.
+    assert main(args) in (0, 1)
+    assert injected not in capsys.readouterr().out

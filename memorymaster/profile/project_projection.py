@@ -469,10 +469,15 @@ def read_manifest(config: ProjectProjectionConfig) -> dict | None:
             for key, expected in (
                 ("omissions", dict), ("source_coverage", dict), ("source_fingerprints", dict),
                 ("items", list), ("diagnostics", list), ("checked_at", str),
+                ("next_temporal_boundary", (str, type(None))),
             )
         ):
             return None
         if datetime.fromisoformat(manifest["checked_at"]).tzinfo is None:
+            return None
+        # Exported publicly but outside every digest: only an aware ISO instant may pass through.
+        boundary = manifest["next_temporal_boundary"]
+        if boundary is not None and datetime.fromisoformat(boundary).tzinfo is None:
             return None
         if (
             manifest["schema"] != SCHEMA

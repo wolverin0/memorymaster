@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+from datetime import datetime, timedelta, timezone
+
+from test_project_repository import claim, project_config  # noqa: F401
+
 from memorymaster.profile import project_runtime as runtime
+from memorymaster.profile.project_projection import projection_paths, read_manifest, read_project_projection
 
 
 def test_all_gates_off_before_any_paths(monkeypatch):
@@ -95,3 +100,22 @@ def test_enabled_unresolved_scope_never_requests_legacy_sql(monkeypatch):
     monkeypatch.setattr(runtime, "config_for_cwd", lambda cwd: None)
     result = runtime.session_start_context({"cwd": "unresolved"})
     assert result is not None and "unavailable" in result.lower()
+
+
+def test_skip_tick_after_complete_validation_renews_stale_read_ttl(project_config):  # noqa: F811
+    """A SKIP tick that still ran a complete source validation renews checked_at once the stored
+    check is older than half the 60-minute read TTL, so an unchanged projection never goes dark."""
+    for number in range(1, 4):
+        claim(project_config, number, text=f"Authorized decision {number}")
+    assert runtime._refresh_one(project_config)["status"] == "ok"
+    markdown_path, manifest_path = projection_paths(project_config)
+    before = markdown_path.read_bytes()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    stale = datetime.now(timezone.utc) - timedelta(hours=2)
+    manifest["checked_at"] = stale.isoformat()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert read_project_projection(project_config) is None
+    assert runtime._refresh_one(project_config, skip=True)["status"] == "ok"
+    assert markdown_path.read_bytes() == before
+    assert datetime.fromisoformat(read_manifest(project_config)["checked_at"]) > stale
+    assert read_project_projection(project_config) is not None
