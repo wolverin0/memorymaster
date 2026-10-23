@@ -330,6 +330,56 @@ def test_unchanged_baseline_does_not_reload_all_temporal_metadata(project_config
     assert loaded == list(range(1, changed_count + 1)), {"metadata_rows_reloaded": len(loaded)}
 
 
+def test_unchanged_other_projects_do_not_force_incremental_source_scan(project_config, monkeypatch):
+    from memorymaster.profile import project_repository as repository
+
+    claim(project_config)
+    original_connect = sqlite3.connect
+    callbacks = []
+
+    class CountingConnection(sqlite3.Connection):
+        def set_progress_handler(self, callback, interval):
+            # Keep the production cancellation callback and its VM cadence.
+            assert interval == 1000
+
+            def track():
+                callbacks.append(1)
+                return callback()
+
+            return super().set_progress_handler(track, interval)
+
+    def counting_connect(*args, **kwargs):
+        return original_connect(*args, **kwargs, factory=CountingConnection)
+
+    monkeypatch.setattr(repository.sqlite3, "connect", counting_connect)
+    measurements = []
+    for other_count in (100, 10000):
+        with original_connect(project_config.db_path) as conn:
+            conn.execute("DELETE FROM claims WHERE scope='project:other'")
+            conn.executemany(
+                "INSERT INTO claims(id,text,scope,status,visibility) "
+                "VALUES (?, 'Other project', 'project:other', 'confirmed', 'public')",
+                ((number,) for number in range(2, other_count + 2)),
+            )
+        # The baseline must follow all inserts: nothing changes between reads.
+        callbacks.clear()
+        baseline = load_project_snapshot(project_config)
+        assert baseline["complete"]
+        baseline_work = len(callbacks)
+        callbacks.clear()
+        current = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
+        assert current["complete"]
+        assert current["coverage"] == baseline["coverage"]
+        measurements.append({
+            "unchanged_other_project_rows": other_count,
+            "full_scan_progress_callbacks": baseline_work,
+            "unchanged_incremental_progress_callbacks": len(callbacks),
+        })
+    # Count SQLite work, including rejected rows, rather than Python payloads.
+    assert (measurements[0]["unchanged_incremental_progress_callbacks"]
+            == measurements[1]["unchanged_incremental_progress_callbacks"]), measurements
+
+
 def test_confirmed_authorized_current_selection(project_config):
     config = project_config
     claim(config)
@@ -617,7 +667,8 @@ def test_incremental_fence_survives_real_wal_late_commit_without_full_rescan(pro
     assert len(row_reads) == 1
     assert "id IN (1,2)" in row_reads[0]
     selection = next(statement for statement in statements if "FROM project_source_changes" in statement)
-    assert "changes.seq >" in selection and "id > 1" in selection
+    assert "changes.seq >" in selection and "changes.seq <=" in selection
+    assert "FROM claims NOT INDEXED" not in selection
 
 
 @pytest.mark.parametrize("source", ["claims", "citations"])

@@ -359,8 +359,10 @@ def _read_claims(
                     or type(cursor.get("seq")) is not int
                     or not 0 <= cursor["seq"] <= source_cursor["seq"]):
                 raise ValueError("incremental_cursor_unavailable")
-            # The transactional cursor covers writes regardless of wall-clock
-            # spelling, late commits, deletes, scope moves and citation edits.
+            # The transactional cursor covers every insert as well as late
+            # commits, deletes, scope moves and citation edits. Do not also scan
+            # IDs above the project's max_seen_id: unchanged unrelated projects
+            # can have higher IDs and would be traversed again on every start.
             instant = datetime.fromisoformat(changed_since.replace("Z", "+00:00"))
             if instant.tzinfo is None:
                 raise ValueError("unqualified_baseline_time")
@@ -403,8 +405,6 @@ def _read_claims(
                 queries.append("SELECT id FROM claims NOT INDEXED WHERE id IN ("
                                + ",".join("?" for _ in temporal_ids) + ")")
                 changes_params.extend(temporal_ids)
-            queries.append(f"SELECT id FROM claims NOT INDEXED WHERE {where} AND id > ?")
-            changes_params.extend([*params, max_seen_id or 0])
             changed_ids = [row[0] for row in conn.execute(
                 "SELECT id FROM (" + " UNION ".join(queries) + ") ORDER BY id LIMIT ?",
                 [*changes_params, limit + 1],
