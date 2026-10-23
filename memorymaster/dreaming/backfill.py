@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from memorymaster.dreaming.backfill_guard import PauseLatch, evaluate_backfill_guard
-from memorymaster.dreaming.providers import ProviderCallError
+from memorymaster.dreaming.providers import ProviderCallError, ProviderOutputError
 from memorymaster.dreaming.backfill_quality import evaluate_cohort_quality, fingerprint, receipt_is_current
 from memorymaster.dreaming.backfill_selection import (
     complete_records, frozen_identity, iter_source_turns, order_inventory,
@@ -607,15 +607,27 @@ class BackfillRunner:
             self._save(row)
             try:
                 result = self.extractor.extract(messages, scope=row["scope"], capture_hash=window["identity"])
-            except ProviderCallError as exc:
-                # T-1722: a malformed or failed provider reply costs this window one attempt (three
-                # strikes make it unresolved_extraction, repairs count toward the allowance); the
-                # run goes on to the next window instead of aborting the whole campaign.
+            except ProviderOutputError as exc:
+                # T-1722: a malformed provider reply costs this window one attempt (three strikes
+                # make it unresolved_extraction, repairs count toward the allowance); the run goes
+                # on to the next window instead of aborting the whole campaign.
                 window["last_error"] = type(exc).__name__
                 if window["attempts"] >= 3:
                     row["status"] = "unresolved_extraction"
                 self._save(row)
                 continue
+            except ProviderCallError:
+                # T-1742: a transport, quota or configuration failure is not the window's fault and
+                # consumed nothing. Give the attempt and the reservation back and stop the run; the
+                # scheduler retries later. Treating it like a malformed reply burned one reservation
+                # per window up to the daily cap during a 70-minute outage, and the extra attempts
+                # would have exhausted the cohort's repair allowance on the retry.
+                window["attempts"] -= 1
+                window.pop("last_error", None)
+                self._save(row)
+                with self.ledger._connect() as conn:
+                    conn.execute("UPDATE backfill_reservations SET status='released' WHERE reservation_id=?", (reservation,))
+                raise
             window.pop("last_error", None)
             self._usage(reservation, result, run_id)
             if len(result.candidates) > 5:
