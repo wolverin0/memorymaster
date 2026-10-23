@@ -85,12 +85,17 @@ SQL deadline. OS filesystem stalls are not hard real-time bounded.
 
 Session baselines contain fingerprints and an internal bounded scan fence,
 never source prose or raw session tokens. The fence watches existing source
-IDs, including ineligible rows, and the greatest observed ID. Incremental starts
-rehydrate those IDs plus inclusively changed rows and IDs above the fence.
-This catches same-second writes, a previously unsupported claim gaining a
-citation, and old-timestamp writes committed after the prior read. Store
-AUTOINCREMENT and SQLite's single writer underpin the new-ID fence. Incomplete
-or older fence-less metadata is partial, not a false no-change result.
+IDs, including ineligible rows, and the transactional change cursor of
+migration 0029 (an epoch plus a per-write sequence, stamped inside the same
+SQLite transaction as every claim and citation write). Incremental starts read
+only the sequence range above the baseline cursor plus the temporal boundaries
+crossed since the read, then deduplicate before loading payloads. This catches
+same-second writes, a previously unsupported claim gaining a citation, and
+old-timestamp writes committed after the prior read, with constant SQL work
+when nothing changed (regression: `test_unchanged_other_projects_do_not_force_incremental_source_scan`).
+Historical note: an earlier arm also scanned IDs above the greatest observed ID;
+it re-traversed unrelated projects' rows on every unchanged start and was removed.
+Incomplete or older fence-less metadata is partial, not a false no-change result.
 
 Delta selection unions differences from the selected prior start baseline and
 the active projection's coverage. End events keep the start snapshot; they do
@@ -261,8 +266,9 @@ The previous timestamp-only gap demonstrated the need for versioned migration
 including deletion tombstones. Transactional triggers track claim and citation
 inserts, updates, deletes and identity moves without storing source prose.
 This is bounded per claim identity rather than an append-only event history.
-Indexed sequence changes are unioned with indexed inclusive `updated_at` and
-temporal-boundary ranges and new IDs, then deduplicated before loading payloads.
+Indexed sequence changes are unioned with crossed temporal-boundary ranges,
+then deduplicated before loading payloads (the earlier `updated_at` and new-ID
+arms described in older notes were superseded by the transactional cursor).
 The same read-only SQLite transaction captures the clock, selected IDs, claims
 and citations. Coverage carries unchanged manifest support hashes and removes
 changed identities before adding currently eligible supports.
