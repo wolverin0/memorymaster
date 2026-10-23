@@ -242,7 +242,10 @@ def _masked_html_source(text: str, excluded: tuple[tuple[int, int], ...]) -> str
             # the compact text is never fed to the offset-preserving parser.
             tail_start = retained.rfind("<", 0, retained_end)
             closing = lexer.interesting.match(retained, tail_start) if tail_start >= 0 else None
-            ambiguous = bool(closing and closing.end() > retained_end)
+            # A match that ends exactly at the boundary is a closing-tag name whose terminator
+            # lies past the excluded bytes (hardened html.parser matches '</style' with a
+            # lookahead and does not consume the '>'), so it crosses as well.
+            ambiguous = bool(closing and closing.end() >= retained_end)
         else:
             ambiguous = bool(
                 re.search(r"<(?:/?[A-Za-z][^<>]*|/?|![^<>]*|\?[^<>]*)$", pending)
