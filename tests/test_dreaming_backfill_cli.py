@@ -671,3 +671,45 @@ def test_exhausted_window_does_not_block_cohort_completion(tmp_path):
     assert runner._cohort_complete(rows)
     runner.run(stage="consolidate")
     assert fixture.consolidator.calls
+
+
+def test_transport_failure_gives_back_attempt_and_reservation_and_stops_the_run(tmp_path):
+    """T-1742: a transport/quota failure (plain ProviderCallError) is not the window's fault: the
+    window keeps zero attempts and no last_error, its reservation is released so the daily budget
+    only counts real calls, and the run stops so the scheduler retries later. On 2026-10-23 a
+    70-minute outage burned 459 attempts and reservations up to the daily cap through the T-1722
+    continue path, and the extra attempts would have exhausted the repair allowance on the retry."""
+    from memorymaster.dreaming.providers import ProviderCallError
+
+    fixture = _campaign(tmp_path, sessions=2)
+    runner = fixture.runner
+    runner.inventory()
+    real_extract = fixture.extractor.extract
+    failures = []
+
+    def outage(messages, *, scope, capture_hash):
+        if not failures:
+            failures.append(capture_hash)
+            raise ProviderCallError("provider request failed with HTTP 429", http_status=429)
+        return real_extract(messages, scope=scope, capture_hash=capture_hash)
+
+    fixture.extractor.extract = outage
+    with pytest.raises(ProviderCallError):
+        runner.run(stage="extract")
+    windows = [w for row in runner._rows() for w in row["metadata"]["selection"]["windows"]]
+    failed = [w for w in windows if w["identity"] == failures[0]]
+    assert len(failed) == 1 and failed[0].get("attempts", 0) == 0 and "last_error" not in failed[0]
+    assert not any(w.get("capture_id") for w in windows)
+    with runner.ledger._connect() as conn:
+        charged = conn.execute("SELECT COUNT(*) FROM backfill_reservations WHERE stage='extract' AND status!='released'").fetchone()[0]
+        released = conn.execute("SELECT COUNT(*) FROM backfill_reservations WHERE stage='extract' AND status='released'").fetchone()[0]
+    assert (charged, released) == (0, 1)
+    # The next healthy run extracts every window with one call each and nothing counts as a repair.
+    report = runner.run(stage="extract")
+    assert report["state"] != "leased"
+    windows = [w for row in runner._rows() for w in row["metadata"]["selection"]["windows"]]
+    assert all(w.get("capture_id") and w["attempts"] == 1 for w in windows)
+    assert len(fixture.extractor.calls) == len(windows)
+    with runner.ledger._connect() as conn:
+        charged = conn.execute("SELECT COUNT(*) FROM backfill_reservations WHERE stage='extract' AND status!='released'").fetchone()[0]
+    assert charged == len(windows)

@@ -482,3 +482,31 @@ def test_backfill_burndown_is_the_last_registered_check_and_silent_when_inactive
     assert result.name == "backfill_burndown" and result.verdict is review.Verdict.PASS
     assert "inactive" in result.detail
     assert not (tmp_path / "state").exists()
+
+
+def test_snapshot_dir_probes_the_per_database_folder(tmp_path: Path, monkeypatch) -> None:
+    """T-1743: the weekly VACUUM INTO copy is written to ``<base>/<db-stem>-<hash>/``; without an
+    explicit snapshot_dir the check must look there, and fall back to the base when that folder
+    does not exist. The installed review reported 'no snapshot files found' next to a one-day-old
+    snapshot because it listed only the base."""
+    import os
+
+    from memorymaster.stores.snapshot import vacuum_dir_for
+
+    now = datetime(2026, 10, 23, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(review, "_utc", lambda value=None: now if value is None else value.astimezone(timezone.utc))
+    base = tmp_path / "snapshots"
+    base.mkdir()
+    monkeypatch.setenv("MEMORYMASTER_SNAPSHOT_DIR", str(base))
+    db = tmp_path / "memorymaster.db"
+    config = review.ReviewConfig(db=db)
+    assert review.check_snapshot_dir(config, now=now).verdict is review.Verdict.WARN  # base empty, no per-db folder
+    per_db = vacuum_dir_for(db)
+    per_db.mkdir()
+    snapshot = per_db / "mm-20261022.db"
+    snapshot.write_bytes(b"snapshot")
+    os.utime(snapshot, (now.timestamp() - 86400, now.timestamp() - 86400))
+    result = review.check_snapshot_dir(config, now=now)
+    assert result.verdict is review.Verdict.PASS and result.counts == {"snapshot_files": 1, "newest_age_hours": 24}
+    # An explicit snapshot_dir is probed as given (the base), never redirected.
+    assert review.check_snapshot_dir(review.ReviewConfig(db=db, snapshot_dir=base), now=now).verdict is review.Verdict.WARN

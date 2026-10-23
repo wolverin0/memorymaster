@@ -647,9 +647,13 @@ bounded transcript scanner. Depends on: none.
   by default with `MEMORYMASTER_BEAT_ENABLED`; read-only `check_beat_health`
   is included in operational review.
 - [x] AC4: candidates are never applied without `--apply-candidates`.
-- [ ] Activation: blocked by self-observation risk because the beat can
-  recapture `[MemoryMaster recall]` injections. Dreaming remains unchanged
-  while off.
+- [x] Activated 2026-10-22 by operator order (T-1695): `MEMORYMASTER_BEAT_ENABLED=1`
+  and the `MemoryMaster-Beat` task every 5 min. The self-observation risk is
+  now measured by `ao2-m3-lag-7d` / `ao2-m4-guard-7d` (due 2026-10-29). Daily
+  review 2026-10-23: the beat shares the Dreaming daily caps (80 extract / 24
+  consolidate) and both were exhausted by mid-day; beat-scanned captures sit
+  behind ~700 older hook captures in the FIFO, so M3 cannot be measured until
+  the caps decision above is taken.
 
 **AO-3 Per-project projection and SessionStart delta** (M, batch B;
 design T-1638; implementation not started)
