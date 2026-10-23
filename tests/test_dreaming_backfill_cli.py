@@ -605,3 +605,37 @@ def test_daily_attempt_reservation_defers_without_dispatch_and_cohort_budget_lat
     with pytest.raises(RuntimeError, match="cohort_budget_paused"):
         runner._reserve("codex-0", "consolidate", 1, 1)
     assert runner._latches()["fixture:codex-0"]["state"] == "budget_paused"
+
+
+def test_malformed_provider_reply_fails_one_window_and_the_run_continues(tmp_path):
+    """T-1722: one non-object Gemini reply must not abort the extract run; the window keeps its
+    attempt and error, the other windows extract, and the next run retries only that window."""
+    from memorymaster.dreaming.providers import ProviderOutputError
+
+    fixture = _campaign(tmp_path, sessions=2)
+    runner = fixture.runner
+    runner.inventory()
+    real_extract = fixture.extractor.extract
+    failures = []
+
+    def flaky_extract(messages, *, scope, capture_hash):
+        if not failures:
+            failures.append(capture_hash)
+            raise ProviderOutputError("provider JSON response must be an object")
+        return real_extract(messages, scope=scope, capture_hash=capture_hash)
+
+    fixture.extractor.extract = flaky_extract
+    report = runner.run(stage="extract")
+    assert report["state"] != "leased"
+    windows = [w for row in runner._rows() for w in row["metadata"]["selection"]["windows"]]
+    failed = [w for w in windows if w["identity"] == failures[0]]
+    assert len(failed) == 1 and failed[0]["attempts"] == 1 and not failed[0].get("capture_id")
+    assert failed[0]["last_error"] == "ProviderOutputError"
+    assert all(w.get("capture_id") for w in windows if w["identity"] != failures[0])
+    # The retry costs only the failed window.
+    calls_before = len(fixture.extractor.calls)
+    runner.run(stage="extract")
+    assert len(fixture.extractor.calls) == calls_before + 1
+    windows = [w for row in runner._rows() for w in row["metadata"]["selection"]["windows"]]
+    assert all(w.get("capture_id") for w in windows)
+    assert all(row["status"] == "extracted" for row in runner._rows())

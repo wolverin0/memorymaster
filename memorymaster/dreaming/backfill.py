@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from memorymaster.dreaming.backfill_guard import PauseLatch, evaluate_backfill_guard
+from memorymaster.dreaming.providers import ProviderCallError
 from memorymaster.dreaming.backfill_quality import evaluate_cohort_quality, fingerprint, receipt_is_current
 from memorymaster.dreaming.backfill_selection import (
     complete_records, frozen_identity, iter_source_turns, order_inventory,
@@ -599,7 +600,16 @@ class BackfillRunner:
             reservation = self._reserve(row["cohort_id"], "extract", 10_000, 1500)
             window["attempts"] = window.get("attempts", 0) + 1
             self._save(row)
-            result = self.extractor.extract(messages, scope=row["scope"], capture_hash=window["identity"])
+            try:
+                result = self.extractor.extract(messages, scope=row["scope"], capture_hash=window["identity"])
+            except ProviderCallError as exc:
+                # T-1722: a malformed or failed provider reply costs this window one attempt (three
+                # strikes make it unresolved_extraction, repairs count toward the allowance); the
+                # run goes on to the next window instead of aborting the whole campaign.
+                window["last_error"] = type(exc).__name__
+                self._save(row)
+                continue
+            window.pop("last_error", None)
             self._usage(reservation, result, run_id)
             if len(result.candidates) > 5:
                 raise ValueError("extractor exceeded candidate cap")
