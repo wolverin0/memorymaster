@@ -76,7 +76,10 @@ def test_session_end_state_is_atomic_bounded_idempotent(tmp_path):
     cfg = config(tmp_path)
     current = snapshot(**{"claim:1": claim("decision")})
     projection = {"source_coverage": current["coverage"], "read_at": NOW.isoformat()}
-    for index in range(10_000):
+    # Each start/end pair is two fsynced atomic writes; 600 pairs already exceed every
+    # retention bound many times over, and 10,000 pairs blew the timeout on Windows runners.
+    last = 599
+    for index in range(last + 1):
         now = NOW + timedelta(minutes=index)
         sessions.record_project_session_start(cfg, str(index), projection=projection,
                                               snapshot_loader=lambda: current, now=now)
@@ -89,7 +92,7 @@ def test_session_end_state_is_atomic_bounded_idempotent(tmp_path):
     previous = path.read_bytes()
     assert not sessions.record_project_session_end(cfg, "0", now=NOW + timedelta(days=2))
     assert path.read_bytes() == previous
-    assert state["latest_end"]["session"] != "9999"
+    assert state["latest_end"]["session"] != str(last)
 
 
 def test_duplicate_start_does_not_reset_baseline(tmp_path):
