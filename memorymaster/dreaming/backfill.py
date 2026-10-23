@@ -511,6 +511,11 @@ class BackfillRunner:
             return False
         for owner in owners.values():
             for window in owner["metadata"]["selection"]["windows"]:
+                if not window.get("capture_id") and window.get("attempts", 0) >= 3:
+                    # T-1723: an exhausted window is settled as lost (the owner row is
+                    # unresolved_extraction and the repair allowance bounded how many); it must
+                    # not keep the cohort from consolidating its extracted windows.
+                    continue
                 capture = self.ledger.get_capture(window["capture_id"]) if window.get("capture_id") else None
                 if capture is None or capture.get("extraction") is None:
                     return False
@@ -607,6 +612,8 @@ class BackfillRunner:
                 # strikes make it unresolved_extraction, repairs count toward the allowance); the
                 # run goes on to the next window instead of aborting the whole campaign.
                 window["last_error"] = type(exc).__name__
+                if window["attempts"] >= 3:
+                    row["status"] = "unresolved_extraction"
                 self._save(row)
                 continue
             window.pop("last_error", None)
