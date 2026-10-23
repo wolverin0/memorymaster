@@ -365,11 +365,12 @@ def main():
     except Exception:
         pass
 
-    project_enabled = True  # Import failure must also withhold legacy delivery.
+    # Read the switch without the package: when the consumer is enabled, even an import
+    # failure must withhold legacy delivery; when it is off, the hook degrades as before.
+    project_enabled = os.environ.get("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
     try:
-        from memorymaster.profile.project_runtime import active, session_start_context
+        from memorymaster.profile.project_runtime import session_start_context
 
-        project_enabled = active("MEMORYMASTER_PROJECT_PROJECTION_ENABLED")
         context = session_start_context(data, profile_loader=_load_compiled_profile)
         if context is not None:
             sys.stdout.write(json.dumps({"hookSpecificOutput": {

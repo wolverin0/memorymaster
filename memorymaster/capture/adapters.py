@@ -252,7 +252,11 @@ def _masked_html_source(text: str, excluded: tuple[tuple[int, int], ...]) -> str
         if ambiguous:
             raise CaptureRejected("ambiguous_generated_provenance", "Incomplete HTML token touches excluded generated content.")
         chunks.append(prefix)
-        masked = re.sub(r"[^\r\n]", " ", text[start:end])
+        # Inside script/style raw text a run of spaces after a retained "</script" would
+        # complete a closing tag on hardened html.parser builds (3.12.11+/3.13.6+), so the
+        # mask there is a tag-name character that neither parser generation terminates on.
+        filler = "_" if lexer.cdata_elem else " "
+        masked = re.sub(r"[^\r\n]", filler, text[start:end])
         chunks.append(masked)
         # Excluded markup must never alter the next retained span's context.
         lexer.feed(masked)
