@@ -510,3 +510,28 @@ def test_snapshot_dir_probes_the_per_database_folder(tmp_path: Path, monkeypatch
     assert result.verdict is review.Verdict.PASS and result.counts == {"snapshot_files": 1, "newest_age_hours": 24}
     # An explicit snapshot_dir is probed as given (the base), never redirected.
     assert review.check_snapshot_dir(review.ReviewConfig(db=db, snapshot_dir=base), now=now).verdict is review.Verdict.WARN
+
+
+def test_backfill_burndown_reads_the_newest_campaign_ledger_and_skips_dryruns(tmp_path: Path, monkeypatch) -> None:
+    # T-1764: the campaign ledger lives under backfill/<campaign>/, not in the beat state dir.
+    state_dir = tmp_path
+    old = state_dir / "backfill" / "ao7-old" / "dream_backfill_ledger.db"
+    new = state_dir / "backfill" / "ao7-new" / "dream_backfill_ledger.db"
+    dry = state_dir / "backfill" / "dryrun-x" / "dream_backfill_ledger.db"
+    for ledger in (old, new, dry):
+        ledger.parent.mkdir(parents=True)
+        ledger.write_text("", encoding="utf-8")
+    import os
+    os.utime(old, (1, 1))
+    seen: list[tuple[Path, str | None]] = []
+    from memorymaster.dreaming import backfill
+
+    def fake_status(state_dir_arg, *, campaign_id=None, dry_run=False):
+        seen.append((Path(state_dir_arg), campaign_id))
+        return {"state": "not_inventoried"}
+
+    monkeypatch.setattr(backfill, "read_backfill_status", fake_status)
+    config = review.ReviewConfig(db=tmp_path / "never-open-authority.db",
+                                 capture_state_db=state_dir / "capture-state.db")
+    review.check_backfill_burndown(config)
+    assert seen == [(new.parent, "ao7-new")]
