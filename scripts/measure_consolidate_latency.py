@@ -16,7 +16,7 @@ def measure(database: Path, *, now: datetime | None = None) -> dict:
     cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=14)
     # mode=ro refuses missing files and prevents database writes; do not use the
     # DreamLedger constructor, which initializes/migrates its database.
-    with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro")) as conn:
+    with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
         conn.execute("PRAGMA query_only=ON")
         conn.row_factory = sqlite3.Row
         calls = conn.execute(
