@@ -992,6 +992,94 @@ class OpenCodeConsolidator:
                                       provider=self.provider, model=self.model)
 
 
+class _ExtractConsolidator:
+    """Use the configured extractor's transport and limits for consolidation."""
+
+    def __init__(self, extractor: GeminiExtractor | OpenCodeExtractor) -> None:
+        self.extractor = extractor
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.extractor, name)
+
+    def rendered_input_tokens(self, prompt: str) -> int:
+        if isinstance(self.extractor, OpenCodeExtractor):
+            return self.extractor.token_counter(prompt) + self.extractor.framing_tokens
+        return rendered_token_bound(prompt)
+
+    def consolidate(self, candidates: list[DreamCandidate], current_claims: list[dict[str, Any]], *, scope: str) -> ConsolidationResult:
+        prompt = consolidation_prompt(candidates, current_claims, scope)
+        extractor = self.extractor
+        started = time.monotonic()
+        if isinstance(extractor, GeminiExtractor):
+            payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {
+                "temperature": 0.1, "maxOutputTokens": 2000,
+                "thinkingConfig": {"thinkingLevel": "minimal"}, "responseMimeType": "application/json",
+            }}
+            extractor._pace(_estimated_input_tokens(payload))
+            _, body = _post_with_retry(extractor.transport, extractor._url(), payload,
+                                       {"Content-Type": "application/json"}, 90, extractor.sleep)
+            usage = body.get("usageMetadata", {})
+            return consolidation_from_raw(extractor._response_text(body), candidates, started=started,
+                                          input_tokens=int(usage.get("promptTokenCount", 0)),
+                                          output_tokens=int(usage.get("candidatesTokenCount", 0)),
+                                          provider=self.provider, model=self.model)
+        with _provider_slot(extractor.work_dir):
+            if extractor._bounds_failed:
+                raise ProviderConfigError("provider bounds require route revalidation", reason="token_bound_exceeded")
+            if extractor.max_input_tokens is not None:
+                bound = _bounded_input(prompt, extractor.max_input_tokens, extractor.framing_tokens, extractor.token_counter)
+            if extractor.max_output_tokens is not None:
+                complete = getattr(extractor.client, "complete_bounded", None)
+                if not callable(complete) or extractor.max_input_tokens is None:
+                    raise ProviderConfigError("OpenCode route has no enforceable output limit", reason="output_limit_unsupported")
+                response = complete(prompt, max_output_tokens=extractor.max_output_tokens)
+                extractor.last_observed_model = getattr(response, "observed_model", None)
+                try:
+                    _bounded_response(response, self.model, bound, extractor.max_output_tokens)
+                except ProviderConfigError:
+                    extractor._bounds_failed = True
+                    raise
+                return consolidation_from_raw(response.text, candidates, started=started,
+                                              input_tokens=response.input_tokens, output_tokens=response.output_tokens,
+                                              provider=self.provider, model=self.model)
+            command = extractor._command()
+            extractor.work_dir.mkdir(parents=True, exist_ok=True)
+            env = _opencode_environment(self.provider)
+            try:
+                completed = extractor.runner(command, prompt, 180, extractor.work_dir, env)
+            except FileNotFoundError as exc:
+                raise ProviderConfigError("OpenCode CLI is not installed or not on PATH", reason="cli_missing") from exc
+            except subprocess.TimeoutExpired as exc:
+                raise ProviderCallError("OpenCode consolidation timed out") from exc
+            session_id = _opencode_session_id(completed.stdout)
+            try:
+                if completed.returncode != 0:
+                    raise ProviderCallError(f"OpenCode consolidation failed with exit {completed.returncode}")
+                raw, input_tokens, output_tokens, _ = opencode_response_text(completed.stdout)
+                return consolidation_from_raw(raw, candidates, started=started, input_tokens=input_tokens,
+                                              output_tokens=output_tokens, provider=self.provider, model=self.model)
+            finally:
+                if session_id:
+                    extractor._delete_session(command[0], session_id, env)
+
+
+def consolidation_fallback(extractor: Any) -> _ExtractConsolidator | None:
+    """Return an adapter only for an available, already configured extractor."""
+    if isinstance(extractor, GeminiExtractor):
+        return _ExtractConsolidator(extractor) if extractor.api_key else None
+    if isinstance(extractor, OpenCodeExtractor):
+        if extractor.max_output_tokens is not None:
+            if extractor.max_input_tokens is None or not callable(getattr(extractor.client, "complete_bounded", None)):
+                return None
+        else:
+            try:
+                extractor._command()
+            except ProviderConfigError:
+                return None
+        return _ExtractConsolidator(extractor)
+    return None
+
+
 class AntigravityConsolidator:
     """Consolidacion sobre Gemini via el CLI `agy`, con OAuth y sin clave paga.
 
@@ -1014,6 +1102,7 @@ class AntigravityConsolidator:
     ) -> None:
         from memorymaster.core.antigravity_client import (
             DEFAULT_MODEL,
+            DEFAULT_TIMEOUT_SECONDS,
             AntigravityClient,
         )
 
@@ -1031,6 +1120,14 @@ class AntigravityConsolidator:
             )
             configured = DEFAULT_MODEL
         self.model = configured
+        if timeout is None:
+            configured_timeout = os.environ.get("MEMORYMASTER_DREAM_CONSOLIDATE_TIMEOUT_SECONDS")
+            if configured_timeout is not None:
+                try:
+                    timeout = int(configured_timeout)
+                except ValueError:
+                    timeout = DEFAULT_TIMEOUT_SECONDS
+                timeout = min(1800, max(60, timeout))
         self.client = client or AntigravityClient(model=self.model, timeout=timeout)
 
     @property

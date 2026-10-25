@@ -34,6 +34,7 @@ from memorymaster.dreaming.providers import (
     ProviderCallError,
     ProviderConfigError,
     config_failure_reason,
+    consolidation_fallback,
     create_dream_extractor,
 )
 
@@ -322,6 +323,7 @@ class DreamWorker:
             "deferred_consolidate_budget": 0,
             "deferred_consolidate_provider": 0,
             "consolidate_breaker": None,
+            "consolidate_fallback": None,
             "consolidate_breaker_detail": None,
             "consolidate_isolated": 0,
             "consolidate_poison_charged": 0,
@@ -719,6 +721,7 @@ class DreamWorker:
                 summary["deferred_consolidate_budget"] = len(deferred_captures)
         answered = 0  # consolidation calls the provider answered in this run
         hung = 0  # calls the provider left unanswered after answering others (T-1687)
+        consolidator = self.consolidator  # fallback is scoped to this run, never the worker
         batches = deque(
             (effective_scope, batch)
             for effective_scope in sorted(groups)
@@ -743,11 +746,11 @@ class DreamWorker:
                 summary["deferred_consolidate_provider"] = len(provider_deferred)
                 continue
             if self.ledger.provider_calls_today(
-                self.consolidator.provider,
-                model=self.consolidator.model,
+                consolidator.provider,
+                model=consolidator.model,
                 now=self.now(),
             ) >= self.config.max_consolidate_calls_daily or self._over_token_budget(
-                self.consolidator.provider, self.consolidator.model,
+                consolidator.provider, consolidator.model,
             ):
                 self._hold_lease()
                 for capture_id in capture_ids:
@@ -764,13 +767,13 @@ class DreamWorker:
                                 if item["_capture_id"] not in unavailable]
                 references = [*({k: v for k, v in item.items() if k != "_capture_id"} for item in pending_refs),
                               *self._current_claims(effective_scope, candidates)]
-                fitted = self._fit_prompt(candidates, references, effective_scope)
+                fitted = self._fit_prompt(candidates, references, effective_scope, consolidator=consolidator)
                 # Smaller source batches may retain relevant governed context.
                 # Trim references only when splitting cannot preserve more of it.
                 split_at = None
                 if len(candidates) > 1 and len(fitted) < len(references):
                     for count in range(len(candidates) - 1, 0, -1):
-                        if len(self._fit_prompt(candidates[:count], references, effective_scope)) > len(fitted):
+                        if len(self._fit_prompt(candidates[:count], references, effective_scope, consolidator=consolidator)) > len(fitted):
                             split_at = count
                             break
                 if split_at is not None:
@@ -780,7 +783,7 @@ class DreamWorker:
                 references = fitted
                 self._hold_lease()
                 called = True
-                result = self.consolidator.consolidate(candidates, references, scope=effective_scope)
+                result = consolidator.consolidate(candidates, references, scope=effective_scope)
                 called = False
                 answered += 1
                 completed.update(capture_ids)
@@ -803,36 +806,43 @@ class DreamWorker:
                 if _config_reason(exc) is not None:
                     # Ruling R1: leave the batch untouched, issue no more calls and
                     # stop the run once the batches already decided are saved.
-                    self._record_config_failure(run_id, self.consolidator.provider, self.consolidator.model, exc)
-                    stopped = DreamProviderStopped("consolidate", self.consolidator.provider, exc)
+                    self._record_config_failure(run_id, consolidator.provider, consolidator.model, exc)
+                    stopped = DreamProviderStopped("consolidate", consolidator.provider, exc)
                     provider_deferred.update(capture_ids)
                     summary["deferred_consolidate_provider"] = len(provider_deferred)
                     continue
                 if called:
                     self._record_failure(
-                        run_id, self.consolidator.provider, self.consolidator.model, exc,
+                        run_id, consolidator.provider, consolidator.model, exc,
                         input_tokens=self._consolidation_tokens(candidates, references, effective_scope),
                     )
                 provider_wide = _is_provider_wide(exc)
                 charge = False
                 if called and not provider_wide:
                     completed.update(capture_ids)  # the call completed: not an outage
-                if provider_wide and called and answered > 0 and hung == 0 and _failure_reason(exc) == "TimeoutExpired":
-                    # T-1687: `agy` answered earlier batches of this run (7-47 s
-                    # each) and then left one call unanswered for the whole
-                    # timeout. That is one hung call, not an outage: the batch
-                    # stays untouched for a later run and the run keeps
-                    # consolidating. Opening the breaker here deferred 6-13
-                    # batches per run for five runs in a row. A second hung call
-                    # in the same run opens the breaker below, as before; the
-                    # R2 trip streak still counts the hung batch.
+                timed_out = provider_wide and called and _failure_reason(exc) == "TimeoutExpired"
+                fallback = None
+                if timed_out and consolidator is self.consolidator:
+                    fallback = consolidation_fallback(self.extractor)
+                    if fallback is not None and (fallback.provider, fallback.model) == (consolidator.provider, consolidator.model):
+                        fallback = None
+                if fallback is not None or (
+                    timed_out and consolidator is self.consolidator and answered > 0 and hung == 0
+                ):
+                    # T-1793: switch the remaining calls to the configured
+                    # extractor on the first timeout. Leave this batch for a
+                    # later run. With no fallback, retain T-1687's tolerance of
+                    # one hung call after an answer; fallback failures break.
                     hung += 1
+                    if fallback is not None:
+                        consolidator = fallback
+                        summary["consolidate_fallback"] = fallback.provider
                     summary["consolidate_hung_calls"] = hung
                     summary["errors"] += 1
                     LOGGER.warning("Dreaming consolidation call hung, continuing the run: %s", str(exc)[:300])
                     self._hold_lease()
                     tripped.update(capture_ids)
-                    self.ledger.record_consolidation_trip(capture_ids, alone=len(capture_ids) == 1, now=self.now())
+                    self.ledger.record_consolidation_trip(capture_ids, alone=len(capture_ids) == 1 and answered > 0, now=self.now())
                     provider_deferred.update(capture_ids)
                     summary["deferred_consolidate_provider"] = len(provider_deferred)
                     continue
@@ -910,6 +920,7 @@ class DreamWorker:
 
     def _fit_prompt(
         self, candidates: list[DreamCandidate], references: list[dict[str, Any]], scope: str,
+        *, consolidator: Consolidator | None = None,
     ) -> list[dict[str, Any]]:
         """Keep the longest reference prefix whose prompt fits the consolidator's cap.
 
@@ -921,10 +932,11 @@ class DreamWorker:
         """
         from memorymaster.dreaming.providers import consolidation_prompt
 
-        cap = getattr(self.consolidator, "max_prompt_chars", None)
-        token_cap = getattr(self.consolidator, "max_input_tokens", None)
-        token_counter = getattr(self.consolidator, "rendered_input_tokens", _estimated_tokens)
-        reference_cap = min(self.config.max_context_chars, getattr(self.consolidator, "max_reference_chars", self.config.max_context_chars))
+        consolidator = consolidator if consolidator is not None else self.consolidator
+        cap = getattr(consolidator, "max_prompt_chars", None)
+        token_cap = getattr(consolidator, "max_input_tokens", None)
+        token_counter = getattr(consolidator, "rendered_input_tokens", _estimated_tokens)
+        reference_cap = min(self.config.max_context_chars, getattr(consolidator, "max_reference_chars", self.config.max_context_chars))
         bounded_references: list[dict[str, Any]] = []
         for item in references:
             if len(json.dumps([*bounded_references, item], ensure_ascii=False)) > reference_cap:
