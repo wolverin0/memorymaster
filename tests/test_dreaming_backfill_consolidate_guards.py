@@ -1,6 +1,7 @@
 """Default-off AO-7 guards, exercised only against disposable campaigns."""
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -51,13 +52,28 @@ def test_content_scope_uses_project_alias(tmp_path, monkeypatch, signal):
         (gitdir / "commondir").write_text("../..")
         (gitdir / "gitdir").write_text(str(worktree / ".git"))
         changes = {"evidence_quote": f'Use the relay checkout "{worktree.as_posix()}".'}
+        original = fixture.consolidator.consolidate
+
+        def privacy_review(*args, **kwargs):
+            result = original(*args, **kwargs)
+            decisions = tuple(replace(d, source_review={
+                **d.source_review, "verdict": "reject",
+                "checks": {**d.source_review["checks"], "privacy": False},
+            }) for d in result.decisions)
+            return replace(result, decisions=decisions)
+
+        fixture.consolidator.consolidate = privacy_review
     _candidate(fixture, capture, **changes)
     result = fixture.runner.run(stage="consolidate")
     assert fixture.consolidator.calls[0][2] == "project:wezbridge"
-    assert fixture.runner._population(fixture.runner._rows())[0]["decision"]["action"] == "add"
+    decision = fixture.runner._captures(fixture.runner._rows())[0]["decisions"][0]
+    assert decision["action"] == ("ignore" if signal == "worktree" else "add")
     assert result["consolidate_guards"]["rescoped"] == 1
     population = fixture.runner._population(fixture.runner._rows())
-    assert population[0]["source_context"]["capture_scope"] == "project:wezbridge"
+    if signal == "worktree":
+        assert not population  # Existing source-review privacy policy still rejects absolute paths.
+    else:
+        assert population[0]["source_context"]["capture_scope"] == "project:wezbridge"
     # Re-running keeps counts stable and reuses the reviewed decisions.
     fixture.runner.run(stage="consolidate")
     assert len(fixture.consolidator.calls) == 1
@@ -82,6 +98,17 @@ def test_no_repo_signal_retains_inventory_scope(tmp_path, monkeypatch):
     fixture, _ = _extracted(tmp_path)
     fixture.runner.run(stage="consolidate")
     assert fixture.consolidator.calls[0][2] == "project:repo"
+
+
+def test_bare_name_of_known_repo_resolves_without_folder_alias(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMORYMASTER_BACKFILL_CONSOLIDATE_GUARDS", "1")
+    fixture, capture = _extracted(tmp_path)
+    fixture.service.ingest(text="Relay deliveries retain recipient identity.",
+                           scope="project:wezbridge", source_agent="fixture")
+    _candidate(fixture, capture, subject="wezbridge")
+    result = fixture.runner.run(stage="consolidate")
+    assert fixture.consolidator.calls[0][2] == "project:wezbridge"
+    assert result["consolidate_guards"]["rescoped"] == 1
 
 
 def test_generic_rule_is_classified_and_counted(tmp_path, monkeypatch):
