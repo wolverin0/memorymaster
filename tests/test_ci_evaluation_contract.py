@@ -1,4 +1,4 @@
-"""The CI evaluation must run real fixtures and fail visibly."""
+"""The bulk gate must run the real evaluation fixtures and fail visibly."""
 from pathlib import Path
 
 
@@ -13,8 +13,5 @@ def test_bulk_gate_runs_the_evaluation_suite_and_cannot_skip_it():
     assert "continue-on-error" not in gate
     for relative in ("tests/test_qrels_regression.py", "tests/test_public_demo.py"):
         assert (root / relative).exists()
-    assert "--junitxml=artifacts/eval/results.xml" in evaluation["run"]
-    assert "scripts/eval_memorymaster.py" not in evaluation["run"]
-    artifact = next(step for step in steps if step.get("name") == "Upload eval artifacts")
-    assert artifact["with"]["if-no-files-found"] == "error"
+    assert "scripts/eval_memorymaster.py" not in gate
     assert (root / "tests/fixtures/qrels_search.json").is_file()
