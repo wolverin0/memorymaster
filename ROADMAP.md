@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; installed recall integrity and AO-7 PR build with lane semaphore test evidence -->
+<!-- doc-head: sole roadmap; AO-2 timeout recovery verification and AO-7 lane semaphore evidence -->
 # MemoryMaster roadmap
 # Covers: live Jev decision ledger (4.9.0 checklist), useful-memory delivery/evaluation, workflow analytics, governed observations, always-on context layer program and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, code navigation.
@@ -654,6 +654,28 @@ bounded transcript scanner. Depends on: none.
   consolidate) and both were exhausted by mid-day; beat-scanned captures sit
   behind ~700 older hook captures in the FIFO, so M3 cannot be measured until
   the caps decision above is taken.
+- [x] T-1793 source timeout recovery (2026-10-25): the read-only
+  `scripts/measure_consolidate_latency.py` reports fourteen-day Antigravity
+  consolidation latency percentiles, unknown durations and timeout breakers;
+  synthetic fixture verification passed after fixing SQLite URI mode.
+  Configurable timeout and extraction-provider fallback tests preceded
+  implementation: 13 provider cases and 4 worker cases failed as expected.
+  Source verification passed: provider suite 72, worker suite 70, public demo
+  2; Ruff, release-truth generation/check and contract-witness passed.
+  The budget remains 300 seconds by default (legacy override preserved),
+  with a new bounded 60..1800-second override. The first subprocess timeout
+  switches remaining batches to the configured extractor for that run;
+  the timed-out batch is deferred. Fallback usage respects call/token caps,
+  output validation and session cleanup; unavailable fallback preserves the
+  existing breaker policy. No model selection or activation flag changed.
+  Earlier host runs were terminated before tests; this resume initially hit
+  WinError 5 in pytest temporary directories. Tests then ran in disposable
+  worktree directories using normal inherited mkdir permissions instead of
+  pytest's owner-only mode (process-local os.mkdir wrapper, no source change).
+  GitNexus/Serena tools and this checkout's index were unavailable; scoped
+  source/caller searches and diff review supplied navigation evidence.
+  Sandbox policy rejected scratch cleanup; `.t1793-checks/` remains untracked.
+  Live measurement, installation and runtime acceptance remain pending.
 
 **AO-3 Per-project projection and SessionStart delta** (M, batch B;
 design T-1638; implementation not started)
