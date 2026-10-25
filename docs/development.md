@@ -23,8 +23,10 @@ inventory; `pyproject.toml` is the dependency contract.
 | Changed ML/vector behavior | Relevant `ml` tests in addition to normal tests |
 | Changed Python | `python -m ruff check <changed-files>` |
 
-CI in `.github/workflows/ci.yml` retains the full non-ML platform matrix and
-separate ML, retrieval, packaging and performance gates. No gates were removed.
+There is no hosted CI (removed 2026-10-25). `python scripts/bulk_check.py` runs the
+fast gates (release truth, contract witness, probes frozen, branch freshness, MCP
+stdio smoke) and the full non-ML suite in parallel on this host; `--ml` adds the
+isolated ML suite. Exit 0 on the branch is the merge gate; `--fast` is for iteration.
 After adding tests or console commands, regenerate existing release metadata with
 `python scripts/generate_release_truth.py`, then run it with `--check`.
 

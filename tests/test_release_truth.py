@@ -114,18 +114,11 @@ def test_only_root_roadmap_is_authoritative() -> None:
         assert len(text.splitlines()) <= 12
 
 
-def test_publish_requires_the_verified_downloaded_artifact() -> None:
-    workflow = (ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
-    assert "verify-artifact:" in workflow
-    assert "needs: verify-artifact" in workflow
-    assert workflow.count("name: verified-dist") == 2
-    assert "tests/test_qrels_regression.py" in workflow
-    assert "tests/test_release_truth.py" in workflow
-    assert "scripts/eval_memorymaster.py" not in workflow
-    assert "/tmp/memorymaster-minimal" in workflow
-    assert "/tmp/memorymaster-mcp" in workflow
-    assert '"${WHEEL}[mcp,security]"' in workflow
-    assert 'pip install -e ".[dev,mcp,security,postgres]"' in workflow
+def test_no_hosted_workflows_remain() -> None:
+    # 2026-10-25: the hosted CI and the PyPI publish workflow were removed on operator
+    # order; releases are built from a clean worktree and installed by the lane
+    # (docs/e2e-candidate-deployment.md). A workflow file coming back is a regression.
+    assert not (ROOT / ".github/workflows").exists()
 
 
 def test_minimal_cli_import_does_not_require_optional_qdrant_client() -> None:
@@ -147,12 +140,12 @@ build_parser()
     assert result.returncode == 0
 
 
-def test_ci_blocks_on_generated_release_truth_drift() -> None:
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "generate_release_truth.py --check" in workflow
-    assert 'pip install -e ".[dev,mcp,security,postgres]"' in workflow
-    assert 'pip install -e ".[dev,mcp,postgres]"' in workflow
-    assert 'pytest tests/ -m "not ml" -q --tb=short' in workflow
+def test_bulk_gate_blocks_on_generated_release_truth_drift() -> None:
+    gate = (ROOT / "scripts/bulk_check.py").read_text(encoding="utf-8")
+    assert '"scripts/generate_release_truth.py", "--check"' in gate
+    assert '"scripts/check_contract_witness.py"' in gate
+    assert '"not ml"' in gate
+    assert "FAST_GATES" in gate and "SUITE" in gate
 
 
 def test_mcp_extra_excludes_the_breaking_v2_sdk() -> None:

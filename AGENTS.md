@@ -53,7 +53,8 @@ are derived views.
 - Exercise the affected user outcome and relevant regression tests. Start with
   `python -m pytest tests/test_public_demo.py -q` for the disposable lifecycle.
 - Run Ruff on changed Python files. Use the full non-ML suite for broad changes;
-  CI owns the platform matrix. Preserve useful regression coverage.
+  `python scripts/bulk_check.py` is the only merge gate (no hosted CI since
+  2026-10-25). Preserve useful regression coverage.
 - Report source-tested, installed and live-verified separately. Restart only
   affected long-lived services when deployment requires it.
 - Keep GitNexus impact analysis before symbol edits and change detection before

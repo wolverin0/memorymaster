@@ -128,7 +128,7 @@ def _check_required_files() -> tuple[bool, str]:
         Path("USER_GUIDE.md"),
         Path("ROADMAP.md"),
         Path("memorymaster/mcp_server.py"),
-        Path(".github/workflows/ci.yml"),
+        Path("scripts/bulk_check.py"),
     ]
     missing = [str(p) for p in required if not p.exists()]
     if missing:
