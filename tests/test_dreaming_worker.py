@@ -1658,3 +1658,61 @@ def test_a_hung_first_call_is_still_an_outage(tmp_path):
     assert len(calls) == 1
     assert summary["consolidate_breaker"] == "TimeoutExpired"
     assert summary["consolidate_hung_calls"] == 0
+
+
+@pytest.mark.parametrize("hung_call", [1, 2])
+def test_first_consolidate_timeout_falls_back_for_remaining_calls_only(tmp_path, hung_call):
+    import json
+
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    ids = [_extracted_capture(ledger, session_hash=f"s{i}", candidate_id=f"c{i}") for i in range(4)]
+    fallback_calls = []
+
+    def transport(url, payload, headers, timeout):
+        if ":countTokens" in url:
+            return 200, {"totalTokens": 0}, {}
+        fallback_calls.append(payload)
+        prompt = payload["contents"][0]["parts"][0]["text"]
+        decisions = [{"candidate_id": f"c{i}", "action": "ignore", "rationale": "fixture", "confidence": .9}
+                     for i in range(4) if f'"candidate_id": "c{i}"' in prompt]
+        raw = json.dumps({"decisions": decisions})
+        return 200, {"candidates": [{"content": {"parts": [{"text": raw}]}}]}, {}
+
+    extractor = _gemini_extractor(transport, [])
+    primary_calls = []
+    primary = _agy_consolidator(tmp_path, _agy_hangs_on_calls({hung_call}), primary_calls)
+    worker = DreamWorker(ledger, service, extractor, primary,
+                         config=DreamConfig(max_consolidate_candidates=1, jev_triage_enabled=False), now=lambda: NOW)
+    summary = worker.run(apply_candidates=False)
+    assert summary["consolidate_breaker"] is None
+    assert summary["consolidate_fallback"] == extractor.provider
+    assert len(primary_calls) == hung_call
+    assert len(fallback_calls) == 4 - hung_call
+    assert summary["consolidated"] == 3
+    assert summary["deferred_consolidate_provider"] == 1
+    assert summary["errors"] == 1
+    assert worker.consolidator is primary  # fallback must not leak into another run
+    assert sorted(ledger.get_capture(i)["state"] for i in ids) == ["consolidated"] * 3 + ["extracted"]
+    with ledger._connect() as conn:
+        usage = conn.execute("SELECT provider, outcome FROM dream_provider_usage ORDER BY id").fetchall()
+        persisted = json.loads(conn.execute("SELECT summary_json FROM dream_runs").fetchone()[0])
+    assert sum(row[0] == extractor.provider and row[1] == "ok" for row in usage) == 4 - hung_call
+    assert sum(row[0] == "antigravity" and row[1] != "ok" for row in usage) == 1
+    assert persisted["consolidate_fallback"] == extractor.provider
+
+
+@pytest.mark.parametrize("hung_call", [1, 2])
+def test_fallback_timeout_still_opens_breaker(tmp_path, hung_call):
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    for i in range(3):
+        _extracted_capture(ledger, session_hash=f"s{i}", candidate_id=f"c{i}")
+    calls = []
+    extractor = _gemini_extractor(_transport_raises(TimeoutError("fixture")), [])
+    summary = DreamWorker(ledger, service, extractor, _agy_consolidator(tmp_path, _agy_hangs_on_calls({hung_call}), calls),
+                          config=DreamConfig(max_consolidate_candidates=1, jev_triage_enabled=False),
+                          now=lambda: NOW).run(apply_candidates=False)
+    assert summary["consolidate_fallback"] == extractor.provider
+    assert summary["consolidate_breaker"] == "TimeoutError"
+    assert len(calls) == hung_call

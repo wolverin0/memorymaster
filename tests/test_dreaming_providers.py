@@ -8,6 +8,7 @@ import pytest
 
 from memorymaster.dreaming.models import DreamCandidate, candidate_from_payload
 from memorymaster.dreaming.providers import (
+    AntigravityConsolidator,
     consolidation_prompt,
     consolidation_from_raw,
     opencode_response_text,
@@ -19,6 +20,118 @@ from memorymaster.dreaming.providers import (
     _default_command_runner,
     create_dream_extractor,
 )
+
+
+@pytest.mark.parametrize(("configured", "expected"), [
+    (None, 300), ("60", 60), ("720", 720), ("1800", 1800),
+    ("1", 60), ("1801", 1800), ("invalid", 300),
+])
+def test_consolidate_timeout_env_is_bounded(monkeypatch, configured, expected):
+    monkeypatch.delenv("MEMORYMASTER_AGY_TIMEOUT", raising=False)
+    if configured is None:
+        monkeypatch.delenv("MEMORYMASTER_DREAM_CONSOLIDATE_TIMEOUT_SECONDS", raising=False)
+    else:
+        monkeypatch.setenv("MEMORYMASTER_DREAM_CONSOLIDATE_TIMEOUT_SECONDS", configured)
+    provider = AntigravityConsolidator(model="operator-chosen-alias")
+    assert provider.client.timeout == expected
+    assert provider.model == provider.client.model == "operator-chosen-alias"
+
+
+def test_consolidate_timeout_preserves_legacy_and_explicit_budget(monkeypatch):
+    monkeypatch.delenv("MEMORYMASTER_DREAM_CONSOLIDATE_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setenv("MEMORYMASTER_AGY_TIMEOUT", "420")
+    assert AntigravityConsolidator().client.timeout == 420
+    monkeypatch.setenv("MEMORYMASTER_DREAM_CONSOLIDATE_TIMEOUT_SECONDS", "600")
+    assert AntigravityConsolidator().client.timeout == 600
+    assert AntigravityConsolidator(timeout=240).client.timeout == 240
+
+
+@pytest.mark.parametrize("provider_name", ["gemini", "openai"])
+@pytest.mark.parametrize("valid", [True, False])
+def test_extract_provider_consolidation_reuses_configured_transport(tmp_path, provider_name, valid):
+    from memorymaster.dreaming.providers import consolidation_fallback
+
+    seen = []
+    deleted_sessions = []
+    candidate = DreamCandidate("c1", "Prefer readable code", "preference", "user", "prefers",
+                               "readable code", "personal", "m1", "Prefer readable code", .9)
+    raw = json.dumps({"decisions": [{"candidate_id": "c1" if valid else "unknown", "action": "ignore",
+                                   "rationale": "fixture", "confidence": .9}]})
+    if provider_name == "gemini":
+        def transport(url, payload, headers, timeout):
+            seen.append(payload)
+            return 200, {"candidates": [{"content": {"parts": [{"text": raw}]}}]}, {}
+
+        provider = GeminiExtractor(api_key="fixture", model="operator-extract", transport=transport)
+    else:
+        def runner(command, prompt, timeout, cwd, env):
+            if command[1:3] == ["session", "delete"]:
+                deleted_sessions.append(command[-1])
+                return subprocess.CompletedProcess(command, 0, "", "")
+            seen.append(prompt)
+            event = {"type": "text", "sessionID": "fixture-session", "part": {"text": raw}}
+            return subprocess.CompletedProcess(command, 0, json.dumps(event), "")
+
+        provider = OpenCodeExtractor(model="openai/operator-extract", command="fixture",
+                                     runner=runner, work_dir=tmp_path)
+    fallback = consolidation_fallback(provider)
+    if not valid:
+        with pytest.raises(ValueError, match="unknown candidate"):
+            fallback.consolidate([candidate], [], scope="personal")
+        assert deleted_sessions == (["fixture-session"] if provider_name == "openai" else [])
+        return
+    result = fallback.consolidate([candidate], [], scope="personal")
+    assert result.decisions[0].candidate_id == "c1"
+    assert result.usage.provider == provider.provider
+    assert result.usage.model == provider.model
+    assert len(seen) == 1
+    assert "decisions" in str(seen[0])
+    if provider_name == "gemini":
+        assert seen[0]["generationConfig"]["maxOutputTokens"] == 2000
+        assert seen[0]["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "minimal"}
+        assert "responseSchema" not in seen[0]["generationConfig"]
+    assert deleted_sessions == (["fixture-session"] if provider_name == "openai" else [])
+
+
+def test_extract_provider_consolidation_preserves_bounded_opencode(tmp_path):
+    from memorymaster.dreaming.providers import consolidation_fallback, ProviderOutputError
+
+    client, calls = _bounded_client(model="openai/operator-extract")
+    provider = OpenCodeExtractor(model="openai/operator-extract", client=client, work_dir=tmp_path,
+                                 max_input_tokens=10_000, max_output_tokens=1500)
+    fallback = consolidation_fallback(provider)
+    prompt = consolidation_prompt([], [], "project:test")
+    assert fallback.rendered_input_tokens(prompt) == provider.token_counter(prompt)
+    result = fallback.consolidate([], [], scope="project:test")
+    assert result.usage.model == "openai/operator-extract"
+    assert calls == [(prompt, 1500)]
+    provider.max_input_tokens = 1
+    with pytest.raises(ProviderOutputError):
+        fallback.consolidate([], [], scope="project:test")
+    assert len(calls) == 1
+
+
+def test_extract_provider_consolidation_latches_output_violation(tmp_path):
+    from memorymaster.dreaming.providers import consolidation_fallback
+
+    client, calls = _bounded_client(model="openai/operator-extract", output_tokens=1501)
+    provider = OpenCodeExtractor(model="openai/operator-extract", client=client, work_dir=tmp_path,
+                                 max_input_tokens=10_000, max_output_tokens=1500)
+    fallback = consolidation_fallback(provider)
+    for _ in range(2):
+        with pytest.raises(ProviderConfigError):
+            fallback.consolidate([], [], scope="project:test")
+    assert len(calls) == 1
+
+
+def test_extract_provider_consolidation_unavailable_returns_none(tmp_path, monkeypatch):
+    from memorymaster.dreaming.providers import consolidation_fallback
+
+    assert consolidation_fallback(SimpleNamespace(provider="fixture", model="fixture")) is None
+    monkeypatch.setattr("memorymaster.dreaming.providers.shutil.which", lambda _: None)
+    provider = OpenCodeExtractor(model="openai/operator-extract", work_dir=tmp_path)
+    provider.command = None
+    assert consolidation_fallback(provider) is None
 
 
 def _bounded_client(*, model="anthropic/claude-sonnet-4-6", raw='{"decisions":[]}', input_tokens=100, output_tokens=10):
