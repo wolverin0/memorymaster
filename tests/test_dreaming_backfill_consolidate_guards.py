@@ -6,6 +6,7 @@ from dataclasses import replace
 import pytest
 
 from memorymaster.dreaming.backfill import read_backfill_status
+from memorymaster.core.security import redact_text
 from test_dreaming_backfill_cli import _campaign, isolated_configuration as isolated_configuration
 
 
@@ -104,7 +105,7 @@ def test_bare_name_of_known_repo_resolves_without_folder_alias(tmp_path, monkeyp
     monkeypatch.setenv("MEMORYMASTER_BACKFILL_CONSOLIDATE_GUARDS", "1")
     fixture, capture = _extracted(tmp_path)
     fixture.service.ingest(text="Relay deliveries retain recipient identity.",
-                           scope="project:wezbridge", source_agent="fixture")
+                           citations=[], scope="project:wezbridge", source_agent="fixture")
     _candidate(fixture, capture, subject="wezbridge")
     result = fixture.runner.run(stage="consolidate")
     assert fixture.consolidator.calls[0][2] == "project:wezbridge"
@@ -130,7 +131,7 @@ def test_normalized_duplicate_is_skipped_and_counted(tmp_path, monkeypatch):
     fixture, capture = _extracted(tmp_path)
     text = capture["extraction"][0]["text"]
     fixture.service.ingest(text="  " + text.upper().replace(" ", "  ") + "  ",
-                           scope="project:repo", source_agent="fixture")
+                           citations=[], scope="project:repo", source_agent="fixture")
     result = fixture.runner.run(stage="consolidate")
     assert not fixture.consolidator.calls
     assert result["consolidate_guards"]["duplicate"] == 1
@@ -141,7 +142,8 @@ def test_normalized_duplicate_is_skipped_and_counted(tmp_path, monkeypatch):
 def test_sensitive_candidate_is_rejected_without_persisting_text(tmp_path, monkeypatch, field):
     monkeypatch.setenv("MEMORYMASTER_BACKFILL_CONSOLIDATE_GUARDS", "1")
     fixture, _ = _extracted(tmp_path)
-    secret = "Contact alice@example.com for the incident."
+    secret = "Incident password=" + "SyntheticOnly_unsafe_fixture"
+    assert redact_text(secret)[1], "The fixture must trigger the existing ingest filter."
     # Inject an old, unsafe extraction at the read boundary; never seed it on disk.
     original = fixture.runner._captures
 
@@ -190,11 +192,11 @@ def test_duplicate_filter_preserves_other_scopes_and_tenants(tmp_path, monkeypat
     monkeypatch.setenv("MEMORYMASTER_BACKFILL_CONSOLIDATE_GUARDS", "1")
     fixture, capture = _extracted(tmp_path)
     text = capture["extraction"][0]["text"]
-    fixture.service.ingest(text=text, scope="project:elsewhere", source_agent="fixture")
+    fixture.service.ingest(text=text, citations=[], scope="project:elsewhere", source_agent="fixture")
     from memorymaster.core.service import MemoryService
 
     other = MemoryService(fixture.db, workspace_root=fixture.repo, tenant_id="other")
-    other.ingest(text=text, scope="project:repo", source_agent="fixture")
+    other.ingest(text=text, citations=[], scope="project:repo", source_agent="fixture")
     result = fixture.runner.run(stage="consolidate")
     assert len(fixture.consolidator.calls) == 1
     assert result["consolidate_guards"]["duplicate"] == 0
@@ -250,7 +252,7 @@ def test_duplicate_lookup_continues_after_empty_authorized_page(tmp_path, monkey
 
     monkeypatch.setenv("MEMORYMASTER_BACKFILL_CONSOLIDATE_GUARDS", "1")
     fixture, capture = _extracted(tmp_path)
-    fixture.service.ingest(text=capture["extraction"][0]["text"], scope="project:repo", source_agent="fixture")
+    fixture.service.ingest(text=capture["extraction"][0]["text"], citations=[], scope="project:repo", source_agent="fixture")
     original = MemoryService.list_claims_page
     cursors = []
 
