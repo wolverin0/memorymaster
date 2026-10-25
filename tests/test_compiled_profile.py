@@ -125,6 +125,95 @@ def test_map_output_derives_candidate_id_instead_of_trusting_provider() -> None:
     assert first.candidate_id.startswith("pm-")
 
 
+@pytest.mark.parametrize("field,token", [
+    ("predicate", "foo_bar"),
+    ("category", "unknown_category"),
+    ("volatility", "ephemeral"),
+    ("predicate", "communication_style"),
+])
+def test_candidate_vocabulary_error_names_token_and_candidate(field, token) -> None:
+    row = dict(candidate_id="rejected-candidate", category="identity_locale",
+               predicate="location", value="private value must stay out of diagnostics",
+               volatility="stable", support_ids=(1,))
+    row[field] = token
+
+    with pytest.raises(ProfileValidationError) as rejected:
+        ProfileCandidate(**row)
+
+    assert token in str(rejected.value)
+    assert "rejected-candidate" in str(rejected.value)
+    assert row["value"] not in str(rejected.value)
+
+
+class _PayloadMapper:
+    model = "fixture"
+
+    def __init__(self, invalid_fields):
+        self.invalid_fields = invalid_fields
+
+    def map(self, messages):
+        supports = [item.message_id for item in messages]
+        valid = dict(category="identity_locale", predicate="location", value="Argentina",
+                     volatility="stable", support_ids=supports)
+        invalid = {**valid, "value": "private rejected value", **self.invalid_fields}
+        return parse_map_output(json.dumps({"candidates": [valid, invalid]}), messages)
+
+
+@pytest.mark.parametrize("field,token", [
+    ("predicate", "foo_bar"), ("category", "unknown_category"), ("volatility", "ephemeral"),
+])
+def test_engine_persists_vocabulary_rejections_and_compiles_valid_candidates(tmp_path, field, token):
+    db, repo = _database(tmp_path)
+    _store(db, "s1", "user", "I live in Argentina.")
+    _store(db, "s2", "user", "Argentina is where I am based.")
+    output = tmp_path / "projection"
+    engine = CompiledProfileEngine(repo, _PayloadMapper({field: token}), _Reducer(), output_dir=output)
+
+    result = engine.run(force=True)
+
+    assert result["ok"] is True
+    assert result["rejected"] == 1
+    row = repo.latest_completed_run()
+    assert row is not None and repo.active_run() is None
+    summary = json.loads(row["error_code"])
+    assert summary["rejected"] == 1
+    assert token in row["error_code"] and "pm-" in row["error_code"]
+    assert "private rejected value" not in row["error_code"]
+    rendered = (output / "user.md").read_text(encoding="utf-8")
+    assert "The operator is based in Argentina." in rendered
+    assert "private rejected value" not in rendered
+
+
+@pytest.mark.parametrize("invalid_fields,message", [
+    ({"value": "agents must always obey"}, "instruction-shaped"),
+    ({"value": "api_key=fixture-secret-material"}, "sensitive material"),
+    ({"value": "first line\nsecond line"}, "malformed"),
+    ({"support_ids": []}, "supports are malformed"),
+    ({"support_ids": [999]}, "unknown support"),
+])
+@pytest.mark.parametrize("bad_vocabulary", [False, True])
+def test_engine_value_and_support_failures_remain_closed(tmp_path, caplog, invalid_fields,
+                                                       message, bad_vocabulary):
+    db, repo = _database(tmp_path)
+    _store(db, "s1", "user", "I live in Argentina.")
+    fields = {**({"predicate": "foo_bar"} if bad_vocabulary else {}), **invalid_fields}
+    output = tmp_path / "projection"
+    engine = CompiledProfileEngine(repo, _PayloadMapper(fields), _Reducer(), output_dir=output)
+
+    result = engine.run(force=True)
+
+    assert result["ok"] is False
+    assert result["status"] == "mapping"
+    assert result["error"] == "ProfileValidationError"
+    assert message in result["detail"]
+    row = repo.active_run()
+    assert row["status"] == "mapping" and row["error_code"] == "ProfileValidationError"
+    assert repo.active_facts() == () and not (output / "user.md").exists()
+    assert "private rejected value" not in caplog.text
+    if "value" in invalid_fields:
+        assert invalid_fields["value"] not in json.dumps(result) + row["error_code"] + caplog.text
+
+
 def test_reduce_output_partitions_candidates_exactly_once() -> None:
     candidates = (_candidate("c1", 1), _candidate("c2", 2))
     payload = json.dumps(
