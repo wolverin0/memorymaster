@@ -17,6 +17,8 @@ from memorymaster.profile.models import (
     ProfileFact,
     ProfileMessage,
     ProfileValidationError,
+    ProfileVocabularyError,
+    ProfileVocabularyRejections,
 )
 
 
@@ -75,17 +77,33 @@ def parse_map_output(
         raise ProfileValidationError("profile candidates must be a bounded array")
     known_supports = {message.message_id for message in messages}
     candidates: list[ProfileCandidate] = []
+    rejections: list[ProfileVocabularyError] = []
     seen_ids: set[str] = set()
     for row in rows:
         if not isinstance(row, dict):
             raise ProfileValidationError("profile candidate must be an object")
-        candidate = _candidate_from_row(row)
+        # Check supports even for candidates whose vocabulary will be rejected.
+        supports = row.get("support_ids")
+        if isinstance(supports, list) and all(isinstance(item, int) for item in supports):
+            if not set(supports).issubset(known_supports):
+                raise ProfileValidationError("profile candidate has unknown support")
+        try:
+            candidate = _candidate_from_row(row)
+        except ProfileVocabularyError as exc:
+            rejected_id = exc.candidate_ids[0]
+            if rejected_id in seen_ids:
+                raise ProfileValidationError("profile candidate id is duplicated") from None
+            seen_ids.add(rejected_id)
+            rejections.append(exc)
+            continue
         if not set(candidate.support_ids).issubset(known_supports):
             raise ProfileValidationError("profile candidate has unknown support")
         if candidate.candidate_id in seen_ids:
             raise ProfileValidationError("profile candidate id is duplicated")
         seen_ids.add(candidate.candidate_id)
         candidates.append(candidate)
+    if rejections:
+        raise ProfileVocabularyRejections(tuple(candidates), tuple(rejections))
     return tuple(candidates)
 
 
@@ -129,11 +147,22 @@ def parse_reduce_output(
         raise ProfileValidationError("profile decisions must be a bounded array")
     known_candidates = {candidate.candidate_id for candidate in candidates}
     known_facts = {fact.fact_id for fact in facts}
-    decisions = tuple(_decision_from_row(row, known_facts) for row in rows)
+    decisions: list[ProfileDecision] = []
+    rejections: list[ProfileVocabularyError] = []
+    for row in rows:
+        try:
+            decisions.append(_decision_from_row(row, known_facts))
+        except ProfileVocabularyError as exc:
+            rejections.append(exc)
+            # Preserve exact partition validation; the engine consumes these
+            # candidates without applying the invalid proposed fact.
+            decisions.append(ProfileDecision(candidate_ids=exc.candidate_ids, action="ignore"))
     consumed = [item for decision in decisions for item in decision.candidate_ids]
     if len(consumed) != len(set(consumed)) or set(consumed) != known_candidates:
         raise ProfileValidationError("profile candidates must appear exactly once")
-    return decisions
+    if rejections:
+        raise ProfileVocabularyRejections(tuple(decisions), tuple(rejections))
+    return tuple(decisions)
 
 
 def _decision_from_row(row: Any, known_facts: set[int]) -> ProfileDecision:
@@ -145,13 +174,27 @@ def _decision_from_row(row: Any, known_facts: set[int]) -> ProfileDecision:
     target = row.get("target_fact_id")
     if target is not None and (not isinstance(target, int) or target not in known_facts):
         raise ProfileValidationError("profile decision has unknown target fact")
+    action = _string(row, "action", max_length=20)
+    vocabulary = {
+        "category": row.get("category", ""),
+        "predicate": row.get("predicate", ""),
+        "volatility": row.get("volatility", "stable"),
+    }
+    value = row.get("value")
+    if action in {"add", "replace"}:
+        if not isinstance(value, str):
+            raise ProfileValidationError("profile value is malformed or oversized")
+        # Malformed types/oversized fields must not become skippable unknown
+        # tokens through str(...), even when another vocabulary field is bad.
+        for field, limit in (("category", 40), ("predicate", 80), ("volatility", 20)):
+            vocabulary[field] = _string(vocabulary, field, max_length=limit)
     return ProfileDecision(
         candidate_ids=tuple(candidate_ids),
-        action=_string(row, "action", max_length=20),
-        category=str(row.get("category") or ""),
-        predicate=str(row.get("predicate") or ""),
-        value=str(row.get("value") or ""),
-        volatility=str(row.get("volatility") or "stable"),
+        action=action,
+        category=vocabulary["category"],
+        predicate=vocabulary["predicate"],
+        value=str(value or ""),
+        volatility=vocabulary["volatility"],
         target_fact_id=target,
         confidence=float(row.get("confidence", 0.0)),
         rationale=_string(row, "rationale", max_length=500),
