@@ -67,9 +67,9 @@ pytest "tests/test_[j-q]*.py" -m "not ml"
 pytest "tests/test_[r-z]*.py" -m "not ml"
 ```
 
-All tests must pass before submitting a PR. CI runs `pytest tests/ -m "not ml"`
-across a matrix of ubuntu-latest and windows-latest on Python 3.10, 3.11, and
-3.12 (`.github/workflows/ci.yml`).
+All tests must pass before submitting a PR. There is no hosted CI: run
+`python scripts/bulk_check.py` (fast gates plus `pytest tests/ -m "not ml"` in
+parallel) on the branch; it must exit 0.
 
 ## Code Style
 
@@ -86,9 +86,9 @@ ruff check memorymaster/ --fix
 ruff format memorymaster/
 ```
 
-Ruff and mypy are both configured in `pyproject.toml` but **neither runs in CI** —
-the CI pipeline is pytest-only. Run them locally before opening a PR; nothing
-else will catch a lint regression.
+Ruff and mypy are both configured in `pyproject.toml` but **neither is part of
+`bulk_check.py`**. Run them locally before opening a PR; nothing else will catch
+a lint regression.
 
 Key style rules:
 - **Line length**: 120 characters (E501 ignored, handled by formatter)
@@ -114,7 +114,7 @@ extracted application modules, and a 50-line-per-function cap in those modules.
    ```
 3. **Make your changes** following the code style above
 4. **Write tests** for new functionality (target 80%+ coverage; no threshold is
-   enforced in CI)
+   enforced by the bulk gate)
 5. **Run the full test suite**:
    ```bash
    pytest tests/ -m "not ml"

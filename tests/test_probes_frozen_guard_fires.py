@@ -6,7 +6,7 @@ Cuarta aparicion del mismo patron el 2026-08-19, y esta la escribi yo:
   2. El marcador corria contra site-packages, asi que no podia ver la rama.
   3. El arnes de LongMemEval midio bien una vez y nunca llego a main.
   4. check_probes_frozen.py se documenta a si mismo diciendo "ESTE CHECK EN CI
-     frena el MERGE / no esquivable por un agente" — y no tenia job en ci.yml
+     frena el MERGE / no esquivable por un agente" — y no tenia caller en el gate
      ni test. El PR que lo introdujo AFIRMABA que hacia fallar CI.
 
 Un guarda sin caller es peor que ninguno: el texto del PR promete una barrera
@@ -24,14 +24,14 @@ import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 GUARD = REPO / "scripts" / "check_probes_frozen.py"
-CI = REPO / ".github" / "workflows" / "ci.yml"
+GATE = REPO / "scripts" / "bulk_check.py"  # the local bulk gate replaced ci.yml on 2026-10-25
 
 
-def test_ci_actually_calls_the_guard():
+def test_bulk_gate_actually_calls_the_guard():
     """El caso que fallaba. Sin esto, todo lo de abajo pasa con el guarda desconectado."""
-    ci = CI.read_text(encoding="utf-8")
+    ci = GATE.read_text(encoding="utf-8")
     assert "check_probes_frozen.py" in ci, (
-        "scripts/check_probes_frozen.py no aparece en ci.yml.\n"
+        "scripts/check_probes_frozen.py no aparece en scripts/bulk_check.py.\n"
         "El script se documenta como la unica capa que frena el MERGE; sin un job "
         "que lo invoque no frena nada, y el PR que lo agrega dice lo contrario."
     )

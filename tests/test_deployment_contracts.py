@@ -125,17 +125,12 @@ def test_helm_selects_an_explicit_authenticated_http_profile():
     assert "MEMORYMASTER_DASHBOARD_TOKEN_VIEWER" in deployment
 
 
-def test_ci_builds_and_smokes_http_profiles_and_mcp_handshakes():
-    workflow = _read(".github/workflows/ci.yml")
-
-    assert "deployment-smoke:" in workflow
-    assert "docker build" in workflow
-    assert "memorymaster-dashboard" in workflow
-    assert "memorymaster-mcp-http" in workflow
-    assert "smoke_mcp_transport.py --transport stdio" in workflow
-    assert "smoke_mcp_transport.py --transport http" in workflow
-    assert "helm lint" in workflow
-    assert workflow.count("helm template") >= 2
+def test_bulk_gate_smokes_the_mcp_stdio_handshake():
+    # The hosted docker/helm smoke jobs went with the CI pipeline (2026-10-25); the
+    # local gate keeps the MCP stdio handshake smoke, which is what the installed
+    # clients use. Container and chart smokes are run by hand before a container release.
+    gate = _read("scripts/bulk_check.py")
+    assert '"scripts/smoke_mcp_transport.py", "--transport", "stdio"' in gate
 
 
 def test_deployment_images_reject_latest_tags():

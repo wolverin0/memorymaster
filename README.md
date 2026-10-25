@@ -7,7 +7,6 @@
 
 # MemoryMaster
 
-[![CI](https://github.com/wolverin0/memorymaster/actions/workflows/ci.yml/badge.svg)](https://github.com/wolverin0/memorymaster/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/memorymaster.svg)](https://pypi.org/project/memorymaster/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
