@@ -46,19 +46,35 @@ class ProfileValidationError(ValueError):
     """Profile provider output failed a deterministic boundary."""
 
 
-def validate_fact_fields(category: str, predicate: str, value: str, volatility: str) -> None:
-    if category not in PROFILE_CATEGORIES:
-        raise ProfileValidationError("unknown profile category")
-    if PREDICATE_CATEGORY.get(predicate) != category:
-        raise ProfileValidationError("unknown or mismatched profile predicate")
-    if volatility not in PROFILE_VOLATILITIES:
-        raise ProfileValidationError("unknown profile volatility")
+class ProfileVocabularyError(ProfileValidationError):
+    """A vocabulary mismatch, safe to reject independently of other candidates."""
+
+    def __init__(self, reason: str, token: str, candidate_ids: tuple[str, ...]) -> None:
+        self.candidate_ids = candidate_ids
+        super().__init__(f"{reason}: {token!r}; candidate_ids={candidate_ids!r}")
+
+
+def validate_fact_fields(
+    category: str, predicate: str, value: str, volatility: str,
+    *, candidate_ids: tuple[str, ...] = (),
+) -> None:
+    # Unsafe values must still abort even when their vocabulary is also invalid.
     if not value.strip() or len(value.strip()) > 240 or "\n" in value:
         raise ProfileValidationError("profile value is malformed or oversized")
     if _INSTRUCTION.search(value):
         raise ProfileValidationError("profile value is instruction-shaped")
     if scan_persisted_value(value):
         raise ProfileValidationError("profile value contains sensitive material")
+    # These fields now enter diagnostics. Never echo a provider-supplied secret
+    # disguised as a vocabulary token or candidate identifier.
+    if scan_persisted_value((category, predicate, volatility, candidate_ids)):
+        raise ProfileValidationError("profile vocabulary contains sensitive material")
+    if category not in PROFILE_CATEGORIES:
+        raise ProfileVocabularyError("unknown profile category", category, candidate_ids)
+    if PREDICATE_CATEGORY.get(predicate) != category:
+        raise ProfileVocabularyError("unknown or mismatched profile predicate", predicate, candidate_ids)
+    if volatility not in PROFILE_VOLATILITIES:
+        raise ProfileVocabularyError("unknown profile volatility", volatility, candidate_ids)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,13 +96,16 @@ class ProfileCandidate:
     support_ids: tuple[int, ...]
 
     def __post_init__(self) -> None:
-        validate_fact_fields(self.category, self.predicate, self.value, self.volatility)
         if not self.candidate_id or len(self.candidate_id) > 120:
             raise ProfileValidationError("candidate id is malformed")
         if not self.support_ids or len(self.support_ids) > 20:
             raise ProfileValidationError("candidate supports are malformed")
         if len(set(self.support_ids)) != len(self.support_ids):
             raise ProfileValidationError("candidate supports contain duplicates")
+        validate_fact_fields(
+            self.category, self.predicate, self.value, self.volatility,
+            candidate_ids=(self.candidate_id,),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,12 +123,28 @@ class ProfileDecision:
     def __post_init__(self) -> None:
         if self.action not in PROFILE_ACTIONS or not self.candidate_ids:
             raise ProfileValidationError("profile decision action or candidates are invalid")
-        if self.action in {"add", "replace"}:
-            validate_fact_fields(self.category, self.predicate, self.value, self.volatility)
         if self.action in {"reinforce", "replace"} and not self.target_fact_id:
             raise ProfileValidationError("profile decision target is required")
         if not 0.0 <= float(self.confidence) <= 1.0 or len(self.rationale) > 500:
             raise ProfileValidationError("profile decision metadata is invalid")
+        if self.action in {"add", "replace"}:
+            validate_fact_fields(
+                self.category, self.predicate, self.value, self.volatility,
+                candidate_ids=self.candidate_ids,
+            )
+
+
+class ProfileVocabularyRejections(ProfileValidationError):
+    """An otherwise validated batch with recoverable vocabulary rejections only."""
+
+    def __init__(
+        self,
+        accepted: tuple[ProfileCandidate, ...] | tuple[ProfileDecision, ...],
+        rejections: tuple[ProfileVocabularyError, ...],
+    ) -> None:
+        self.accepted = accepted
+        self.rejections = rejections
+        super().__init__("; ".join(str(item) for item in rejections))
 
 
 @dataclass(frozen=True, slots=True)
