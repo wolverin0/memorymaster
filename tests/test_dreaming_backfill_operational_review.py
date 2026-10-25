@@ -14,8 +14,10 @@ def _config(tmp_path: Path) -> review.ReviewConfig:
                                capture_state_db=tmp_path / "capture-state.db")
 
 
-def _inventory(tmp_path: Path) -> Path:
-    path = tmp_path / "dream_backfill_ledger.db"
+def _inventory(state_dir: Path, campaign_id: str = "ao7-x") -> Path:
+    campaign_dir = state_dir / "backfill" / campaign_id
+    campaign_dir.mkdir(parents=True)
+    path = campaign_dir / "dream_backfill_ledger.db"
     with sqlite3.connect(path) as conn:
         conn.executescript("""
             CREATE TABLE backfill_inventory (
@@ -28,16 +30,16 @@ def _inventory(tmp_path: Path) -> Path:
             );
         """)
         conn.executemany("INSERT INTO backfill_inventory VALUES (?,?,?,?,?,?,?,?,?,?,'fixture-0')", [
-            ("ao7", "main", "claude", "one", "project:test", "applied", 100, 100,
+            (campaign_id, "main", "claude", "one", "project:test", "applied", 100, 100,
              "PRIVATE_SOURCE_PATH", '{"text":"PRIVATE_TRANSCRIPT"}'),
-            ("ao7", "child", "claude", "one", "project:test", "complete_sampled", 50, 50,
+            (campaign_id, "child", "claude", "one", "project:test", "complete_sampled", 50, 50,
              "PRIVATE_SOURCE_PATH", "{}"),
-            ("ao7", "next", "codex", "two", "project:other", "selected", 200, 100,
+            (campaign_id, "next", "codex", "two", "project:other", "selected", 200, 100,
              "PRIVATE_SOURCE_PATH", "{}"),
-            ("ao7", "unknown", "agy", "three", None, "unresolved_scope", 40, 0,
+            (campaign_id, "unknown", "agy", "three", None, "unresolved_scope", 40, 0,
              "PRIVATE_SOURCE_PATH", "{}"),
         ])
-        conn.execute("INSERT INTO backfill_reservations VALUES ('ao7','extract',10000,1500)")
+        conn.execute("INSERT INTO backfill_reservations VALUES (?,'extract',10000,1500)", (campaign_id,))
     return path
 
 
@@ -47,6 +49,24 @@ def test_absent_backfill_is_inactive_without_creating_state(tmp_path):
     assert result.verdict is review.Verdict.PASS
     assert "inactive" in result.detail
     assert set(tmp_path.iterdir()) == before
+
+
+def test_nested_campaign_ledger_is_reported_and_dryrun_only_is_inactive(tmp_path):
+    campaign_root = tmp_path / "campaign-state"
+    ledger = _inventory(campaign_root)
+    result = review.check_backfill_burndown(_config(campaign_root))
+    assert result.verdict is review.Verdict.PASS
+    assert result.counts["sessions"] == 2
+    assert result.counts["files"] == 4
+    assert "sessions=1/2" in result.detail
+    assert "inactive" not in result.detail
+
+    dryrun_root = tmp_path / "dryrun-state"
+    (dryrun_root / "backfill" / "dryrun-x").mkdir(parents=True)
+    dryrun_result = review.check_backfill_burndown(_config(dryrun_root))
+    assert dryrun_result.verdict is review.Verdict.PASS
+    assert "inactive" in dryrun_result.detail
+    assert ledger.exists()
 
 
 def test_backfill_counts_independent_sessions_and_reports_safe_dimensions(tmp_path, monkeypatch):
@@ -88,7 +108,9 @@ def test_backfill_counts_independent_sessions_and_reports_safe_dimensions(tmp_pa
 
 
 def test_unreadable_backfill_warns_without_disclosing_content_or_paths(tmp_path):
-    (tmp_path / "dream_backfill_ledger.db").write_text("PRIVATE_TRANSCRIPT", encoding="utf-8")
+    ledger = tmp_path / "backfill" / "ao7-x" / "dream_backfill_ledger.db"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text("PRIVATE_TRANSCRIPT", encoding="utf-8")
     result = review.check_backfill_burndown(_config(tmp_path))
     assert result.verdict is review.Verdict.WARN
     assert result.detail == "probe_error=DatabaseError"
@@ -115,7 +137,7 @@ def test_backfill_has_a_separate_registered_check():
 def test_unknown_labels_cannot_disclose_source_locators(tmp_path, monkeypatch):
     from memorymaster.dreaming import backfill
 
-    monkeypatch.setattr(backfill, "read_backfill_status", lambda state_dir: {
+    monkeypatch.setattr(backfill, "read_backfill_status", lambda state_dir, **kwargs: {
         "state": "inventoried", "files": 1, "sessions": 1, "completed_sessions": 0,
         "sources": {"PRIVATE_SOURCE_PATH": {"files": 1}},
         "projects": {"project:C:/PRIVATE_SOURCE_PATH": {"files": 1}},

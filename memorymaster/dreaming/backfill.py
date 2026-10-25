@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from memorymaster.dreaming.backfill_guard import PauseLatch, evaluate_backfill_guard
+from memorymaster.dreaming import backfill_consolidate_guards as consolidate_guards
 from memorymaster.dreaming.providers import ProviderCallError, ProviderOutputError
 from memorymaster.dreaming.backfill_quality import evaluate_cohort_quality, fingerprint, receipt_is_current
 from memorymaster.dreaming.backfill_selection import (
@@ -138,7 +139,8 @@ def read_backfill_status(state_dir: Path, *, campaign_id: str | None = None, dry
             "COALESCE(json_extract(metadata_json,'$.selection.eligible_chars'),0) AS eligible_chars,"
             "COALESCE(json_extract(metadata_json,'$.selection.selected_chars'),0) AS selected_chars,"
             "COALESCE(json_extract(metadata_json,'$.selection.sampled_out_chars'),0) AS sampled_out_chars,"
-            "COALESCE(json_extract(metadata_json,'$.selection.gap_count'),0) AS coverage_gaps "
+            "COALESCE(json_extract(metadata_json,'$.selection.gap_count'),0) AS coverage_gaps,"
+            "json_extract(metadata_json,'$.consolidate_guards') AS consolidate_guards "
             "FROM backfill_inventory" + where, params).fetchall()
         reservations = conn.execute("SELECT stage,COUNT(*) AS calls,SUM(input_tokens) AS input_tokens,SUM(output_tokens) AS output_tokens FROM backfill_reservations" + where + " GROUP BY stage", params).fetchall()
     dispositions: dict[str, int] = {}
@@ -174,7 +176,7 @@ def read_backfill_status(state_dir: Path, *, campaign_id: str | None = None, dry
     guards = json.loads(guard_path.read_text(encoding="utf-8")) if guard_path.exists() else {}
     pauses = {key: value["state"] for key, value in guards.items()
               if (campaign_id is None or key.startswith(campaign_id + ":")) and value.get("state") != "running"}
-    return {"state": "inventoried", "files": len(rows), "sessions": len(sessions),
+    return {**consolidate_guards.status_counts(rows), "state": "inventoried", "files": len(rows), "sessions": len(sessions),
             "completed_sessions": len(completed), "progress": len(completed) / len(sessions) if sessions else 0,
             "dispositions": dispositions, "projects": projects, "sources": sources,
             "eligible_chars": sum(r["eligible_chars"] for r in rows),
@@ -671,19 +673,24 @@ class BackfillRunner:
         captures = self._captures(rows)
         groups: dict[str, list] = {}
         decisions: dict[int, list[dict[str, Any]]] = {}
-        for capture in captures:
-            for raw in capture.get("extraction") or []:
-                candidate = DreamCandidate(**raw)
-                scope = "personal" if candidate.scope_class == "personal" else capture["scope"]
-                groups.setdefault(scope, []).append((capture, bind_source(candidate, capture)))
-            decisions[capture["id"]] = []
         own_ids = self._owned_ids(rows)
+        guards_changed = False
+        if consolidate_guards.enabled():
+            groups, decisions, guards_changed = consolidate_guards.prepare(rows, captures, service, own_ids)
+        else:
+            guards_changed = rows[0]["metadata"].pop("consolidate_guards", None) is not None
+            for capture in captures:
+                for raw in capture.get("extraction") or []:
+                    candidate = DreamCandidate(**raw)
+                    scope = "personal" if candidate.scope_class == "personal" else capture["scope"]
+                    groups.setdefault(scope, []).append((capture, bind_source(candidate, capture)))
+                decisions[capture["id"]] = []
         snapshots = {scope: [item for item in worker._current_claims(scope, [c for _, c in pairs]) if item["id"] not in own_ids]
                      for scope, pairs in groups.items()}
         hashes = {scope: fingerprint(claims) for scope, claims in snapshots.items()}
         prior = rows[0]["metadata"].get("reference_hashes")
-        if prior is not None and prior != hashes:
-            # References changed: retain extraction but renew decisions and M5.
+        if guards_changed or (prior is not None and prior != hashes):
+            # References or guard verdicts changed: renew decisions and M5.
             with self.ledger._connect() as conn:
                 for capture in captures:
                     conn.execute("UPDATE dream_captures SET decisions_json=NULL,state='extracted' WHERE id=?", (capture["id"],))
@@ -761,7 +768,10 @@ class BackfillRunner:
                             index = next((i for i, m in enumerate(window["messages"]) if m["message_id"] == candidate["evidence_message_id"]), 0)
                             origin = window["ranges"][index]["stream"]
                             family = next(r["metadata"]["source_family"] for r in rows if r["stream_id"] == origin)
-                    bound = bind_source(DreamCandidate(**candidate), capture)
+                    effective, item = consolidate_guards.candidate_context(rows, capture, DreamCandidate(**candidate))
+                    if effective is None:
+                        continue
+                    bound = bind_source(item, effective)
                     population.append({**bound.to_dict(), "decision": accepted[candidate["candidate_id"]],
                                        "capture_hash": capture["content_hash"], "source_family": family})
         return population
@@ -936,8 +946,10 @@ class BackfillRunner:
         grouped: dict[str, list[DreamCandidate]] = {}
         for capture in self._captures(rows):
             for raw in capture["extraction"]:
-                candidate = DreamCandidate(**raw)
-                scope = "personal" if candidate.scope_class == "personal" else capture["scope"]
+                effective, candidate = consolidate_guards.candidate_context(rows, capture, DreamCandidate(**raw))
+                if effective is None:
+                    continue
+                scope = "personal" if candidate.scope_class == "personal" else effective["scope"]
                 grouped.setdefault(scope, []).append(candidate)
         def verify_references():
             own_ids = self._owned_ids(rows)
@@ -976,7 +988,9 @@ class BackfillRunner:
                     if not self._source_valid(row):
                         raise ValueError("source changed before application")
                     self._reserve(row["cohort_id"], "apply", 0, 0)
-                    candidate = candidates[decision.candidate_id]
+                    effective, candidate = consolidate_guards.candidate_context(rows, capture, candidates[decision.candidate_id])
+                    if effective is None:
+                        raise ValueError("guard-rejected candidate cannot apply")
                     batch = f"ao7-{self.config.campaign_id}-{row['cohort_id']}-{self._application_ordinal(rows, key) // 200}"
                     operation_id = f"ao7-{self.config.campaign_id}-{row['cohort_id']}-{key}"
                     outcome: dict[str, Any] = {"operation_id": operation_id}
@@ -984,10 +998,10 @@ class BackfillRunner:
                                                        "source_hash": window["identity"], "intake_batch_id": batch,
                                                        "operation_id": operation_id,
                                                        "tenant_id": service.tenant_id,
-                                                       "scope": "personal" if candidate.scope_class == "personal" else row["scope"],
+                                                       "scope": "personal" if candidate.scope_class == "personal" else effective["scope"],
                                                        "created_claim_ids": [], "reused_claim_ids": [], "proposal_ids": []})
                     self._save(row)  # intent precedes cross-database writes
-                    application_row = {**capture, "intake_batch_id": batch, "outcome_receipt": outcome}
+                    application_row = {**effective, "intake_batch_id": batch, "outcome_receipt": outcome}
                     # Child ranges retain the parent's independent evidence identity.
                     ranges = window["ranges"]
                     message_index = next((i for i, m in enumerate(window["messages"]) if m["message_id"] == candidate.evidence_message_id), 0)

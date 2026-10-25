@@ -20,6 +20,7 @@ from memorymaster.profile.models import (
     ProfileDecision,
     ProfileFact,
     ProfileMessage,
+    ProfileVocabularyError,
 )
 from memorymaster.stores._storage_shared import open_conn
 
@@ -344,11 +345,13 @@ class ProfileRepository:
         now: datetime,
         provider_called: bool,
         seen_claim_ids: Iterable[int] = (),
+        vocabulary_rejections: tuple[ProfileVocabularyError, ...] = (),
     ) -> None:
         timestamp = now.isoformat()
         with closing(self.connect()) as conn:
             for candidate in candidates:
                 self._insert_candidate(conn, run_id, candidate, timestamp)
+            self._record_vocabulary_rejections(conn, run_id, vocabulary_rejections)
             # Same transaction as the candidates and the watermark: a claim is
             # recorded as mapped only together with what its mapping produced.
             conn.executemany(
@@ -488,17 +491,20 @@ class ProfileRepository:
         *,
         now: datetime,
         min_sessions: int,
+        vocabulary_rejections: tuple[ProfileVocabularyError, ...] = (),
     ) -> dict[str, int]:
         candidates = {item.candidate_id: item for item in self.candidates(run_id)}
         stats = {"applied": 0, "rejected": 0, "consumed": 0}
         stamp = now.isoformat()
         with closing(self.connect()) as conn:
+            rejected_ids = {item for rejection in vocabulary_rejections for item in rejection.candidate_ids}
             for decision in decisions:
-                support_ids = self._decision_supports(decision, candidates)
-                applied = self._apply_decision(
-                    conn, decision, support_ids, now=now, min_sessions=min_sessions
-                )
-                stats["applied" if applied else "rejected"] += 1
+                if not rejected_ids.intersection(decision.candidate_ids):
+                    support_ids = self._decision_supports(decision, candidates)
+                    applied = self._apply_decision(
+                        conn, decision, support_ids, now=now, min_sessions=min_sessions
+                    )
+                    stats["applied" if applied else "rejected"] += 1
                 # Se marca DENTRO de la misma transaccion que aplico la decision.
                 # Separarlo reabre la doble aplicacion: un commit del hecho sin el
                 # marcado deja el candidato listo para volver a aplicarse.
@@ -509,8 +515,30 @@ class ProfileRepository:
                         (stamp, run_id, candidate_id),
                     )
                     stats["consumed"] += 1
+            self._record_vocabulary_rejections(conn, run_id, vocabulary_rejections)
             conn.commit()
         return stats
+
+    @staticmethod
+    def _record_vocabulary_rejections(
+        conn: sqlite3.Connection, run_id: int, rejections: tuple[ProfileVocabularyError, ...],
+    ) -> None:
+        if not rejections:
+            return
+        previous = conn.execute(
+            "SELECT error_code FROM compiled_profile_runs WHERE id=?", (run_id,),
+        ).fetchone()[0]
+        summary = json.loads(previous) if previous and previous.startswith("{") else {
+            "rejected": 0, "rejections": [],
+        }
+        summary["rejected"] += sum(len(item.candidate_ids) for item in rejections)
+        summary["rejections"].extend(str(item) for item in rejections)
+        # error_code is the existing diagnostic TEXT column. Do not truncate a
+        # structured summary or include provider value/rationale/support text.
+        conn.execute(
+            "UPDATE compiled_profile_runs SET error_code=? WHERE id=?",
+            (json.dumps(summary), run_id),
+        )
 
     @staticmethod
     def _decision_supports(
@@ -782,6 +810,8 @@ class ProfileRepository:
             return int(cur.rowcount)
 
     def complete_run(self, run_id: int, output_hash: str, *, now: datetime) -> None:
+        # Keep the schema's existing terminal status and retain the rejection
+        # summary in error_code; cadence/watermark readers recognize completed.
         with closing(self.connect()) as conn:
             conn.execute(
                 """UPDATE compiled_profile_runs
@@ -793,9 +823,20 @@ class ProfileRepository:
 
     def record_error(self, run_id: int, code: str, *, now: datetime) -> None:
         with closing(self.connect()) as conn:
+            previous = conn.execute(
+                "SELECT error_code FROM compiled_profile_runs WHERE id=?", (run_id,),
+            ).fetchone()[0]
+            # A later hard failure must not erase rejections from committed
+            # mapping/reduce batches when this resumable run is retried.
+            if previous and previous.startswith("{"):
+                summary = json.loads(previous)
+                summary["error"] = code[:120]
+                code = json.dumps(summary)
+            else:
+                code = code[:120]
             conn.execute(
                 "UPDATE compiled_profile_runs SET error_code=?, updated_at=? WHERE id=?",
-                (code[:120], now.isoformat(), run_id),
+                (code, now.isoformat(), run_id),
             )
             conn.commit()
 

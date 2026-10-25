@@ -17,6 +17,7 @@ from memorymaster.profile.models import (
     ProfileFact,
     ProfileMessage,
     ProfileValidationError,
+    ProfileVocabularyRejections,
 )
 from memorymaster.profile.renderer import render_profile
 from memorymaster.profile.repository import ProfileRepository
@@ -222,11 +223,16 @@ class CompiledProfileEngine:
             provider_called = bool(batch.messages)
             if provider_called and calls >= max(1, limit):
                 break
-            candidates = self.mapper.map(batch.messages) if provider_called else ()
+            rejections = ()
+            try:
+                candidates = self.mapper.map(batch.messages) if provider_called else ()
+            except ProfileVocabularyRejections as exc:
+                candidates, rejections = exc.accepted, exc.rejections
             calls += int(provider_called)
             self.repo.save_mapping(
                 int(run["id"]), candidates, batch.scanned_through_id,
                 now=now, provider_called=provider_called,
+                vocabulary_rejections=rejections,
                 # Claim supports carry the claim id negated.
                 seen_claim_ids=tuple(
                     -item.message_id for item in batch.messages if item.message_id < 0
@@ -264,12 +270,17 @@ class CompiledProfileEngine:
                 break
             batch = pending[: self.config.reduce_batch_size]
             facts = self.repo.active_facts()   # releido: el lote previo creo hechos
-            decisions = self.reducer.reduce(batch, facts)
+            rejections = ()
+            try:
+                decisions = self.reducer.reduce(batch, facts)
+            except ProfileVocabularyRejections as exc:
+                decisions, rejections = exc.accepted, exc.rejections
             applied = self.repo.apply_decisions(
                 run_id,
                 decisions,
                 now=now,
                 min_sessions=self.config.min_independent_sessions,
+                vocabulary_rejections=rejections,
             )
             for key, value in applied.items():
                 stats[key] = stats.get(key, 0) + value
@@ -287,13 +298,15 @@ class CompiledProfileEngine:
         rendered = self._write_projection(now)
         output_hash = hashlib.sha256(rendered.markdown.encode("utf-8")).hexdigest()
         self.repo.complete_run(run_id, output_hash, now=now)
+        detail = self.repo.run(run_id).get("error_code")
+        vocabulary_rejected = json.loads(detail)["rejected"] if detail and detail.startswith("{") else 0
         return {
             "ok": True,
-            "status": "completed",
+            "status": "completed_with_rejections" if vocabulary_rejected else "completed",
             "run_id": run_id,
             "facts": len(rendered.fact_ids),
             "applied": stats["applied"],
-            "rejected": stats["rejected"],
+            "rejected": stats["rejected"] + vocabulary_rejected,
             "expired": expired,
         }
 

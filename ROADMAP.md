@@ -1,4 +1,5 @@
 <!-- doc-head: sole roadmap; AO-2 timeout recovery verification and AO-7 lane semaphore evidence -->
+<!-- doc-head: sole roadmap; installed recall integrity and default-off AO-7 consolidation guards -->
 # MemoryMaster roadmap
 # Covers: live Jev decision ledger (4.9.0 checklist), useful-memory delivery/evaluation, workflow analytics, governed observations, always-on context layer program and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, code navigation.
@@ -775,6 +776,16 @@ Models: build Sonnet (T3, runner only), runtime Haiku for all transcript
 reading and Sonnet only for consolidating kept candidates, judge Haiku batch
 M5 per 1,000 sessions. Depends on: AO-2; starts as soon as AO-2 ships
 (operator decision).
+
+T-1794 source follow-up (2026-10-25): `MEMORYMASTER_BACKFILL_CONSOLIDATE_GUARDS=1`
+adds content scope resolution, counted generic/duplicate/sensitive rejection,
+and reviewed scope propagation through application. Default is off. The prior
+run recorded a passed independent source review. Fresh disposable verification
+passed: guards 22, CLI 40, quality 13 and public demo 2; Ruff, release-truth and
+contract-witness also passed. Permission failures and corrected test fixtures
+are retained in [the verification record](artifacts/T-1794-verification.md).
+GitNexus/Serena tools and a local index were unavailable; scoped source inspection
+covered the changed callers. No live campaign or authoritative database was opened.
 
 - [ ] Routed.
 - [ ] Red test: not applicable.
