@@ -970,7 +970,14 @@ def check_backfill_burndown(config: ReviewConfig) -> ReviewResult:
 
     try:
         state_db, _ = _beat_paths(config)
-        status = read_backfill_status(state_db.parent)
+        state_dir = state_db.parent
+        ledgers = [path for path in (state_dir / "backfill").glob("*/dream_backfill_ledger.db")
+                   if not path.parent.name.startswith("dryrun-")]
+        if ledgers:
+            ledger = max(ledgers, key=lambda path: path.stat().st_mtime)
+            status = read_backfill_status(ledger.parent, campaign_id=ledger.parent.name)
+        else:
+            status = read_backfill_status(state_dir)
         if status["state"] == "not_inventoried":
             return ReviewResult("backfill_burndown", Verdict.PASS, "backfill inactive (not inventoried)")
 
