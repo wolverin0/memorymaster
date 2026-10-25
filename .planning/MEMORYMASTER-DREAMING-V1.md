@@ -1,10 +1,10 @@
-<!-- doc-head: native Dreaming contract; shadow mode and configured Gemini providers -->
+<!-- doc-head: native Dreaming contract; configured providers and run-scoped timeout fallback -->
 # MemoryMaster Native Dreaming V1
 # Covers: quiet capture, asynchronous consolidation, governed writes, rollout, measurement, and rollback.
 # Key terms: Gemini, Antigravity, exact evidence spans, capture ledger, shadow mode.
 # Read when: enabling Dreaming, scheduling the worker, changing provider models, or activating writes.
 # Authority: claims remain authoritative; the auxiliary capture ledger is replay state, not a memory database.
-# Status: September 5 source uses Antigravity consolidation; August GLM instructions below are historical.
+# Status: Antigravity consolidation uses a configurable budget and extraction-provider timeout fallback; August GLM instructions below are historical.
 <!-- /doc-head -->
 
 ## Intent
@@ -38,7 +38,7 @@ Project knowledge stays in its exact `project:<name>` scope. Stable user prefere
 - Capture cursor advances only after the envelope is durably queued.
 - Replay state is explicit: `captured`, `extracted`, `consolidated`, `applied`, `retryable`, or `quarantined`.
 - A transactional expiring lease permits one worker at a time.
-- Provider calls have finite timeouts, bounded execution, JSON validation, and no model fallback.
+- Provider calls have finite timeouts, bounded execution, and JSON validation. Antigravity consolidation uses `MEMORYMASTER_DREAM_CONSOLIDATE_TIMEOUT_SECONDS` (60..1800 seconds, default 300; existing `MEMORYMASTER_AGY_TIMEOUT` remains the default override). The first subprocess timeout switches remaining consolidation calls to the configured extraction provider for that run, recording `consolidate_fallback`; the timed-out batch waits for a later run. Provider model selections remain unchanged. Without a consolidation-capable extractor, the existing breaker policy applies.
 - Extraction and consolidation quotas are counted by provider/model so two stages using one OAuth provider do not consume each other's stage budget.
 - Budget exhaustion defers captured or extracted work without incrementing attempts, creating retry errors, or failing the scheduled task.
 - Consolidation batches contain at most five candidate IDs and keep one capture together when possible, reducing identifier transcription failures.
