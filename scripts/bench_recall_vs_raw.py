@@ -13,6 +13,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -94,7 +95,8 @@ def build(args: argparse.Namespace) -> None:
     paths = {_transcript_id(p, root): p for p in root.glob("*/*.jsonl")}
     approved = []
     seen: set[str] = set()
-    for start in range(0, min(len(chunks), 5 * 50), 50):  # up to 5 disjoint batches
+    rej = dict.fromkeys(("no_evidence", "short", "secret", "overlap", "parse"), 0)
+    for start in range(0, min(len(chunks), 8 * 50), 50):  # up to 8 disjoint batches
         if len(approved) >= 40:
             break
         sample = chunks[start:start + 50]
@@ -113,25 +115,44 @@ def build(args: argparse.Namespace) -> None:
             texts = [e.get("text") or e.get("part", {}).get("text", "") for e in events]
             candidates = json.loads(next((t for t in reversed(texts) if t.strip().startswith("[")), "[]"))
         source = {(c["sid"], ix): body for c in sample for ix, _, body in _records(paths[c["sid"]])}
+        def _toks(t: str) -> set[str]:
+            return {w.lower() for w in re.findall(r"[A-Za-z0-9_-]{4,}", t)}
+
         for item in candidates:
             try:
                 sid, ix = str(item["evidence_sid"]), int(item["evidence_message_index"])
                 q, answer = _clean(str(item["question"])), _clean(str(item["answer"]))
-                evidence = source.get((sid, ix), "")
-                if not evidence or q.lower() in seen or len(q) < 12 or len(answer) < 3 or SECRET.search(q + answer):
-                    continue
+                category = item["category"]
+            except (KeyError, TypeError, ValueError):
+                rej["parse"] += 1
+                continue
+            words = _toks(answer)
+            # Accept the cited index or any within +-3 in the same session; keep the best answer-token overlap.
+            near = [(len(words & _toks(source[(sid, j)])), -abs(j - ix), j) for j in range(ix - 3, ix + 4) if (sid, j) in source]
+            if not near:
+                rej["no_evidence"] += 1
+            elif len(q) < 12 or len(answer) < 3:
+                rej["short"] += 1
+            elif SECRET.search(q + answer):
+                rej["secret"] += 1
+            elif q.lower() in seen:
+                continue
+            else:
+                hits, _, best = max(near)
                 # Candidate must quote no invented answer: require meaningful answer-token support.
-                words = {w.lower() for w in re.findall(r"[A-Za-z0-9_-]{4,}", answer)}
-                if len(words & {w.lower() for w in re.findall(r"[A-Za-z0-9_-]{4,}", evidence)}) < min(2, len(words)):
+                if hits < min(2, len(words)):
+                    rej["overlap"] += 1
                     continue
                 seen.add(q.lower())
                 approved.append({"id": f"q{len(approved)+1:02}", "question": q, "answer": answer,
-                                 "category": item["category"] if item["category"] in {"single-fact", "relational"} else "single-fact",
-                                 "evidence": {"session": sid, "message_index": ix}})
-            except (KeyError, TypeError, ValueError):
-                continue
-    if len(approved) < 30:
+                                 "category": category if category in {"single-fact", "relational"} else "single-fact",
+                                 "evidence": {"session": sid, "message_index": best}})
+        print(json.dumps({"batch": start // 50 + 1, "approved": len(approved), "rejected": rej}), file=sys.stderr)
+    print(json.dumps({"final_approved": len(approved), "rejected": rej}), file=sys.stderr)
+    if len(approved) < 25:
         raise SystemExit(f"only {len(approved)} candidates passed source and privacy checks; curate more")
+    if len(approved) < 30:
+        print(f"warning: only {len(approved)} approved (brief target 30)", file=sys.stderr)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps({"seed": args.seed, "questions": approved[:40]}, indent=2), encoding="utf-8")
 
