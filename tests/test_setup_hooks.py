@@ -709,3 +709,32 @@ class TestFromZeroRegressions:
         db = hermetic_home["project"] / "vo2.db"
         rc = sh.main(["--verify-only", "--db", str(db), "--json"])
         assert rc == 0
+
+
+def _scheduled_command(monkeypatch, capsys, provider: str) -> str:
+    monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", provider)
+    for name in ("MEMORYMASTER_DREAM_EXTRACT_MODEL", "MEMORYMASTER_DREAM_EXTRACT_VARIANT"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(sh, "IS_WINDOWS", False)  # prints the cron line instead of touching schtasks
+    assert sh.setup_dream_schedule("claims.db", apply_candidates=False) == "manual"
+    return capsys.readouterr().out
+
+
+def test_dream_schedule_defaults_claude_provider_to_haiku(monkeypatch, capsys) -> None:
+    out = _scheduled_command(monkeypatch, capsys, "claude")
+    assert "--extract-provider claude --extract-model haiku " in out
+    assert "openai/" not in out
+
+
+def test_dream_schedule_keeps_other_provider_defaults(monkeypatch, capsys) -> None:
+    assert "--extract-model gemini-3.5-flash " in _scheduled_command(monkeypatch, capsys, "gemini")
+    assert "--extract-model openai/gpt-5.4-mini " in _scheduled_command(monkeypatch, capsys, "opencode")
+
+
+def test_provider_readiness_for_claude_extract_requires_the_cli(monkeypatch) -> None:
+    monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "claude")
+    monkeypatch.setenv("GEMINI_API_KEY", "fixture-key")  # must not make the claude route look ready
+    monkeypatch.setattr(sh.shutil, "which", lambda command: None)
+    assert sh._provider_readiness()["dream_extractor"] is False
+    monkeypatch.setattr(sh.shutil, "which", lambda command: "claude.cmd" if command == "claude" else None)
+    assert sh._provider_readiness()["dream_extractor"] is True
