@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; AO-2 timeout recovery verification and AO-7 lane semaphore evidence -->
+<!-- doc-head: sole roadmap; T-1802 agy hooks source verification and pending lane installation -->
 <!-- doc-head: sole roadmap; installed recall integrity and default-off AO-7 consolidation guards -->
 # MemoryMaster roadmap
 # Covers: live Jev decision ledger (4.9.0 checklist), useful-memory delivery/evaluation, workflow analytics, governed observations, always-on context layer program and deferrals.
@@ -36,6 +36,43 @@ its governed-claims authority:
 | Memory Hub, loadouts, team ACLs, proxy replacement, cloud database | Deferred: no personal SQLite requirement justifies multi-user/cloud infrastructure or a second agent gateway. |
 
 ## Now
+
+### T-1802: deterministic agy recall and capture (2026-10-26)
+
+Source implementation: SessionStart normalizes agy camelCase input and calls
+Claude's shared `hook_recall` core. Its only output is
+`{"injectSteps":[{"ephemeralMessage":"..."}]}`. Stop queues sanitized transcript
+evidence through the existing bounded agy reader. Internal batch profiles,
+challenger sessions and MemoryMaster headless providers are guarded against
+recursion. Injection and successful enqueue append the shared hook event receipt.
+No per-prompt handler is installed.
+
+The explicit-target installer preserves peer handlers and writes
+`<gemini-root>/config/hooks.json`; it never edits Gemini `settings.json`.
+The lane installs with its chosen targets:
+
+```powershell
+python -m memorymaster.surfaces.setup_agy_hooks --gemini-config-dir "<target .gemini root>" --project-root "<installed MemoryMaster root>" --db "<recall database>"
+$env:MEMORYMASTER_HOOK_EVENTS_LOG = Join-Path $env:TEMP "memorymaster-agy-hook-events.jsonl"
+agy --mode plan --output-format json -p "Quote the MemoryMaster recall block injected at session start, including its citations."
+Get-Content $env:MEMORYMASTER_HOOK_EVENTS_LOG -Tail 5
+```
+
+Local evidence uses disposable fixtures: adapter strict output/errors/guards,
+capture revisions/filtering/replay, installer idempotence/peer preservation,
+telemetry, shared provider guards, existing capture/source regressions and the
+public lifecycle demo. Initial pytest launches failed before assertions because
+Windows sandbox directories created with mode `0700` were unreadable. A scoped
+test launcher retained inherited directory permissions for those temporary
+directories; no assertions or product permission policies were changed.
+An intermediate retry under `.tmp_cases` was pruned by the existing per-test
+cleanup fixture; final runs used separate worktree-local temporary roots.
+Independent review found single-message eligibility and overly broad installer
+ownership matching; both received regression coverage and bounded corrections.
+GitNexus had no index/tools in this checkout; scoped source searches supplied
+dependency checks. Real CLI installation/observation, bulk gate and PR remain
+lane work. Rollback removes only the two managed command handlers and their
+adapter, retaining peer entries and all memory data.
 
 ### Engineering-owner plan (operator grant 2026-10-03)
 
