@@ -62,7 +62,8 @@ def plugin(tmp_path, monkeypatch):
     (config / "package.json").write_text('{"type":"module"}', encoding="utf-8")
 
     def run(version, script, *, python_exe=None):
-        install_opencode_hooks(config, version=version, project_root=root, python_exe=python_exe or sys.executable)
+        options = {} if version is None else {"version": version}
+        install_opencode_hooks(config, **options, project_root=root, python_exe=python_exe or sys.executable)
         harness = config / "harness.mjs"
         harness.write_text(PROCESS_DOUBLE + script, encoding="utf-8")
         result = subprocess.run(["node", str(harness)], capture_output=True, text=True, timeout=12,
@@ -108,6 +109,37 @@ const cleanup = await module.default.setup({
 const prompt = async (id,text) => hooks.prompt({sessionID:"ses_1",messageID:id,prompt:{text}});
 const context = async (system,id="ses_1") => hooks.context({sessionID:id,system,messages:[]});
 '''
+
+
+@pytest.mark.parametrize("version", [None, 2])
+def test_installed_entrypoint_loads_with_opencode_211_setup_contract(plugin, version):
+    # Installed 2.1.1 PluginModule.load validates module.default as {id, setup}
+    # or {id, effect}; named exports and a server callback alone are insufficient.
+    output, rows = plugin(version, V2_INIT + '''
+await prompt("msg_1", "Which Windows exit code did we store?");
+const system=[];
+await context(system);
+release(); await cleanup();
+console.log(JSON.stringify({id:module.default.id, system}));
+''')
+    assert output == {"id": "memorymaster", "system": [{
+        "type": "text", "text": "[MemoryMaster recall]\n- [mm-42] Which Windows exit code did we store?",
+    }]}
+    assert any(row["argv"][0].endswith("hook_events.py") for row in rows)
+
+
+def test_explicit_v1_keeps_legacy_export_enumeration_contract(plugin):
+    # The v1 loader calls every unique module export as a function. Adding a
+    # native {id, setup} default here breaks legacy autoload even if named-export
+    # tests still pass. Native OpenCode 2 uses the default v2 installation.
+    output, _ = plugin(1, '''
+const loaded=[];
+for (const fn of new Set(Object.values(module))) {
+  loaded.push(await fn({directory:"/fixture/project"}));
+}
+console.log(JSON.stringify(loaded.map(hooks=>typeof hooks["experimental.chat.system.transform"])));
+''')
+    assert output == ["function"]
 
 
 @pytest.mark.parametrize("version", [1, 2])

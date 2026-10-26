@@ -1,6 +1,6 @@
-<!-- doc-head: scoped verification, Windows Codex command forms and positional hook trust -->
+<!-- doc-head: scoped verification, Windows hook commands, positional trust and native OpenCode loading -->
 # Development guidance
-Covers: local setup, disposable checks, Codex code/data roots and trust, runtime evidence and code navigation.
+Covers: disposable checks, Codex roots and trust, OpenCode plugin loading, runtime evidence and code navigation.
 Key terms: source versus installed runtime, risk-based tests, SQLite, agent instructions.
 Read when: implementing changes or choosing the smallest sufficient verification.
 <!-- /doc-head -->
@@ -142,6 +142,59 @@ Fresh disposable checks passed all 64 cases across the four hook/installer
 test files, plus both public-demo cases, Ruff, release-truth verification and
 contract witness. SessionStart also injected from a fixture database under a
 separate data root. No real home installation or live database was used.
+
+## OpenCode Windows repair (T-1806, 2026-10-26)
+
+The installer and `--opencode-config-dir` now default to the native v2 plugin.
+The installed npm `@opencode/cli` 2.1.1 binary's `PluginModule.load` validates
+`module.default` as `{id, setup}` or `{id, effect}`; it calls the `setup` adapter,
+not a `server` callback. This agrees with the
+[native plugin contract](https://opencode.ai/v2/docs/build/plugins).
+The shared adapter registers `ctx.session.hook("prompt", ...)` to remember the
+latest user input and `ctx.session.hook("context", ...)` to append recalled text
+to the model's structured `system` array. The existing v2 terminal-event capture
+and cleanup behavior is preserved.
+
+Use `--opencode-version 1` only for the legacy API. Its named function export
+stays intact: the old loader invokes every exported value as a function, so
+adding a native default object there would break legacy autoload. Regression
+tests exercise both the native default installation and legacy export enumeration.
+
+For a fresh CLI test, isolate `OPENCODE_CONFIG_DIR`, `XDG_CONFIG_HOME`,
+`XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` and the temporary directory.
+Use `opencode run --standalone -m opencode-go/deepseek-v4.1-flash`, or start an
+isolated temporary server and pass its URL with `--server`. A plain `run` can
+reuse the background service. Align `PWD` with the subprocess working directory:
+2.1.1's run command prefers inherited `PWD` over `process.cwd()`.
+
+Fresh temporary-profile evidence in this sandbox confirmed native `setup`,
+`prompt` and `context` callbacks. The Python recall subprocess then failed with
+`EPERM` (`uv_spawn`), with zero recalled bytes and no injection receipt. A
+separate real model run ended with `provider.transport / ConnectionRefused`.
+Running from the checkout also hit `EPERM` spawning Git during project discovery.
+Thus no real CLI answer containing the requested value and citation was observed;
+real delivery acceptance remains open. Capture was explicitly disabled and only
+the existing OpenCode Go credential was copied into disposable CLI state; no real
+CLI configuration or authoritative memory database was modified.
+
+The first focused test run failed on mode-0700 Windows fixture ACLs. A later
+native-default regression failed before switching the installer default to v2.
+Fresh checks used the process-local mode-0777 fixture launcher described above.
+Codex's native command-shell tests verified stdin and spaced/metacharacter paths;
+the real temporary-home Codex probe stalled before its hook marker. Persistent
+hook trust and real-config delivery still require the integrating lane's check.
+The integrated touched-test/public-demo run passed 103 cases (one existing
+Pydantic deprecation warning), and Ruff passed all seven changed Python files.
+Release truth first reported stale test counts; regenerating its inventories
+made `--check` pass. Independent read-only review found no remaining code
+blockers after the legacy-loader and Windows metacharacter fixes. These source
+checks do not establish real CLI delivery.
+Sanitized diagnostic evidence was retained outside the checkout. Recursive
+scratch deletion was rejected by the tool policy, and moving the remaining
+`.tmp` fixtures failed on Windows ACLs; the integrating lane must remove those
+leftovers outside this sandbox. Temporary Codex probe termination could not be
+confirmed because process command-line inspection was denied; no process with
+unproven ownership was stopped.
 
 ## Optional wiki
 
