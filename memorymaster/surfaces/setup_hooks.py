@@ -309,10 +309,11 @@ def _write_hook_template(dest, content):
     print(f"  Installed: {dest}")
 
 
-def install_hooks(llm_config, include_pretooluse: bool = False):
+def install_hooks(llm_config, include_pretooluse: bool = False, *, config_dir: Path | None = None):
     banner("Claude Code Hooks")
 
-    hooks_dir = CLAUDE_DIR / "hooks"
+    target_dir = Path(config_dir) if config_dir is not None else CLAUDE_DIR
+    hooks_dir = target_dir / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
 
     # Copy hook templates with placeholder replacement
@@ -324,7 +325,7 @@ def install_hooks(llm_config, include_pretooluse: bool = False):
 
     # Update settings.json with hooks config. A malformed pre-existing file is
     # backed up (never silently wiped) by _load_json_preserving.
-    settings_path = CLAUDE_DIR / "settings.json"
+    settings_path = target_dir / "settings.json"
     settings = _load_json_preserving(settings_path)
 
     # Add env vars
@@ -476,9 +477,49 @@ def _without_dream_hooks(
     ]
 
 
-def install_dream_hooks(*, install_claude: bool, install_codex: bool) -> dict[str, str]:
+def install_opencode_hooks(
+    config_dir: str | Path, *, version: int = 1,
+    project_root: str | Path | None = None, python_exe: str | None = None,
+) -> dict[str, str]:
+    """Install one OpenCode generation into an explicit target, preserving peer config.
+
+    The helper lives outside plugins/ so OpenCode never loads it as a plugin.
+    No home discovery, database access, model call or feature activation occurs.
+    """
+    if version not in (1, 2):
+        raise ValueError("OpenCode plugin version must be 1 or 2")
+    target = Path(config_dir)
+    root = Path(project_root or PROJECT_ROOT).resolve()
+    plugin = target / "plugins" / "memorymaster.js"
+    runtime = target / "memorymaster" / "runtime.mjs"
+    sources = TEMPLATES_DIR / "opencode"
+    rendered = (sources / "runtime.mjs").read_text(encoding="utf-8")
+    rendered = rendered.replace("__MEMORYMASTER_PYTHON_JSON__", json.dumps(python_exe or PYTHON_EXE))
+    rendered = rendered.replace("__MEMORYMASTER_ROOT_JSON__", json.dumps(str(root)))
+    outputs = {runtime: rendered, plugin: (sources / f"plugin-v{version}.mjs").read_text(encoding="utf-8")}
+    # Refuse an unmanaged collision before writing either file.
+    for destination in outputs:
+        if destination.exists() and "MEMORYMASTER_MANAGED_OPENCODE_V1" not in destination.read_text(encoding="utf-8"):
+            raise ValueError("OpenCode target already contains an unmanaged MemoryMaster file")
+    for destination, content in outputs.items():
+        if destination.exists() and destination.read_text(encoding="utf-8") == content:
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(content, encoding="utf-8")
+    return {"opencode": "installed", "version": str(version), "plugin": str(plugin)}
+
+
+def install_dream_hooks(*, install_claude: bool, install_codex: bool,
+                        claude_dir: Path | None = None, codex_dir: Path | None = None,
+                        hook_dir: Path | None = None) -> dict[str, str]:
     """Install quiet native Dreaming capture hooks without disturbing peers."""
-    hook_dir = HOME / ".memorymaster" / "hooks"
+    if hook_dir is not None:
+        hook_dir = Path(hook_dir)
+    elif codex_dir is not None or claude_dir is not None:
+        # An explicit config target must not silently write scripts to HOME.
+        hook_dir = Path(codex_dir if codex_dir is not None else claude_dir) / "hooks"
+    else:
+        hook_dir = HOME / ".memorymaster" / "hooks"
     hook_dir.mkdir(parents=True, exist_ok=True)
     destination = hook_dir / "memorymaster-dream-capture.py"
     template = (TEMPLATES_DIR / "hooks" / destination.name).read_text(encoding="utf-8")
@@ -491,7 +532,7 @@ def install_dream_hooks(*, install_claude: bool, install_codex: bool) -> dict[st
     )
     result: dict[str, str] = {"hook": str(destination)}
     if install_claude:
-        settings_path = CLAUDE_DIR / "settings.json"
+        settings_path = (Path(claude_dir) if claude_dir is not None else CLAUDE_DIR) / "settings.json"
         settings = _load_json_preserving(settings_path)
         hooks = settings.setdefault("hooks", {})
         command = f'"{PYTHON_EXE}" "{destination}" --provider claude'
@@ -507,14 +548,13 @@ def install_dream_hooks(*, install_claude: bool, install_codex: bool) -> dict[st
         settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
         result["claude"] = "installed"
     if install_codex:
-        hooks_path = CODEX_DIR / "hooks.json"
+        hooks_path = (Path(codex_dir) if codex_dir is not None else CODEX_DIR) / "hooks.json"
         config = _load_json_preserving(hooks_path)
         hooks = config.setdefault("hooks", {})
         command = f'"{PYTHON_EXE}" "{destination}" --provider codex'
         entry = {"hooks": [{
             "type": "command",
             "command": command,
-            "commandWindows": command,
             "timeout": 2,
         }]}
         hooks["Stop"] = _without_dream_hooks(hooks.setdefault("Stop", []))
@@ -523,6 +563,69 @@ def install_dream_hooks(*, install_claude: bool, install_codex: bool) -> dict[st
         hooks_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
         result["codex"] = "installed"
     return result
+
+
+def install_codex_recall_hooks(
+    *, codex_dir: Path, project_root: Path | None = None, data_root: Path | None = None
+) -> dict[str, str]:
+    """Install deterministic Codex recall hooks into an explicit directory.
+
+    The target is deliberately passed by the caller so setup and tests cannot
+    silently write to the operator's real ``~/.codex``. Existing hooks remain
+    in place; only prior MemoryMaster Codex recall entries are replaced.
+    ``project_root`` supplies the code/import root; ``data_root`` supplies
+    SessionStart's database/wiki root and defaults to ``project_root``.
+    """
+    codex_dir = Path(codex_dir)
+    root = Path(project_root) if project_root is not None else PROJECT_ROOT
+    session_root = Path(data_root) if data_root is not None else root
+    hooks_dir = codex_dir / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    template_names = (
+        "memorymaster-codex-recall.py",
+        "memorymaster-session-start.py",
+        "memorymaster-recall.py",
+    )
+    destination = hooks_dir / template_names[0]
+    for name in template_names:
+        template_path = TEMPLATES_DIR / "hooks" / name
+        template_root = session_root if name == "memorymaster-session-start.py" else root
+        rendered = replace_placeholder(template_path.read_text(encoding="utf-8"), template_root)
+        (hooks_dir / name).write_text(rendered, encoding="utf-8")
+
+    hooks_path = codex_dir / "hooks.json"
+    config = _load_json_preserving(hooks_path)
+    hooks = config.setdefault("hooks", {})
+    for event in ("SessionStart", "UserPromptSubmit"):
+        entries = hooks.setdefault(event, [])
+        kept = []
+        for entry in entries:
+            handlers = entry.get("hooks", [])
+            peers = [handler for handler in handlers
+                     if "memorymaster-codex-recall.py" not in str(handler.get("command", ""))
+                     and "memorymaster-codex-recall.py" not in str(handler.get("commandWindows", ""))]
+            if len(peers) == len(handlers):
+                kept.append(entry)
+            elif peers:
+                kept.append({**entry, "hooks": peers})
+        entries[:] = kept
+        command = f'"{PYTHON_EXE}" "{destination}" --event {event}'
+        entries.append(
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": command,
+                        "timeout": 8,
+                    }
+                ]
+            }
+        )
+
+    hooks_path.parent.mkdir(parents=True, exist_ok=True)
+    hooks_path.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {"hook": str(destination), "hooks": str(hooks_path)}
 
 
 def configure_workflow_receipts(
@@ -1347,6 +1450,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="Detect-first, idempotent MemoryMaster onboarding.",
     )
     p.add_argument("-y", "--yes", action="store_true", help="non-interactive; accept all defaults")
+    p.add_argument("--opencode-config-dir", type=Path, help="install only OpenCode hooks into this explicit directory")
+    p.add_argument("--opencode-version", type=int, choices=(1, 2), default=1, help="OpenCode plugin API generation")
     p.add_argument(
         "--profile",
         choices=tuple(SETUP_PROFILES),
@@ -1469,6 +1574,21 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
     global PROJECT_ROOT
+
+    if args.opencode_config_dir is not None:
+        if args.verify_only:
+            result = {"error": "--opencode-config-dir cannot be combined with --verify-only"}
+            if not args.json:
+                print(result["error"], file=sys.stderr)
+            return 2, result
+        if args.dry_run:
+            return 0, {"dry_run": True, "opencode_version": args.opencode_version}
+        result = install_opencode_hooks(
+            args.opencode_config_dir, version=args.opencode_version, project_root=args.project_root,
+        )
+        if not args.json:
+            print("OpenCode memory hooks installed; restart OpenCode to load the plugin.")
+        return 0, result
 
     # Never prompt when stdout may be parsed (--json), when explicitly
     # non-interactive (--yes), or for a quick --verify-only check — stdin may

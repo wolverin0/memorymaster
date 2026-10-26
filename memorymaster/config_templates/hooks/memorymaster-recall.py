@@ -22,6 +22,12 @@ from memorymaster.core.hook_log import log_hook  # noqa: E402 — import must fo
 from memorymaster.core.text_safety import sanitize_text  # noqa: E402
 from memorymaster.recall.delivery import deliver, is_automated  # noqa: E402
 
+try:
+    from memorymaster.surfaces.hook_events import append_hook_event  # noqa: E402
+except ImportError:  # template installed ahead of its package
+    def append_hook_event(cli, event, count):
+        pass
+
 try:  # 4.9.0+: recall_block and recall(hook_data=...) ship together
     from memorymaster.recall.delivery import recall_block  # noqa: E402
     JEV_OPT_IN = True
@@ -118,6 +124,8 @@ try:
             sys.stdout.write(output)
             sys.stdout.flush()
         sent = deliver(data, "\n\n".join(parts), emit)
+        if sent and not globals().get("MEMORYMASTER_DEFER_HOOK_EVENT", False):
+            append_hook_event("claude-code", "recall_injected", 1)
         if sent and residual:
             residual_state.consume(full_session)  # one block, once
         log_hook("recall", "done", session=session_id, hit=bool(ctx), residual=bool(residual), delivered=sent, via=via)

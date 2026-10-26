@@ -28,8 +28,9 @@ _ACTIVE_WINDOW_SECONDS = 3600  # sessions idle >1 h are considered inactive
 class SessionTracker:
     """Track agent sessions in a SQLite database."""
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, create: bool = True) -> None:
         self.db_path = str(db_path)
+        self.create = create
         self._ensure_table()
 
     # ------------------------------------------------------------------
@@ -37,7 +38,7 @@ class SessionTracker:
     # ------------------------------------------------------------------
 
     def _connect(self) -> sqlite3.Connection:
-        return open_conn(self.db_path)
+        return open_conn(self.db_path, create=self.create)
 
     def _ensure_table(self) -> None:
         with self._connect() as conn:
@@ -127,3 +128,14 @@ class SessionTracker:
             "total_claims": row["total_claims"],
             "total_queries": row["total_queries"],
         }
+
+    def get_usage_totals(self) -> list[dict]:
+        """Return durable usage by client, including sessions older than one hour."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT agent_id, COUNT(*) AS total_sessions,
+                          COALESCE(SUM(claims_ingested), 0) AS total_claims,
+                          COALESCE(SUM(queries_made), 0) AS total_queries
+                   FROM agent_sessions GROUP BY agent_id ORDER BY agent_id"""
+            ).fetchall()
+        return [dict(row) for row in rows]

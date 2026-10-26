@@ -1,12 +1,194 @@
-<!-- doc-head: sole roadmap; AO-2 timeout recovery verification and AO-7 lane semaphore evidence -->
-<!-- doc-head: sole roadmap; installed recall integrity and default-off AO-7 consolidation guards -->
+<!-- doc-head: sole roadmap; cross-CLI hooks, deferred telemetry binding and measured startup; installation and live CLI acceptance pending -->
 # MemoryMaster roadmap
-# Covers: live Jev decision ledger (4.9.0 checklist), useful-memory delivery/evaluation, workflow analytics, governed observations, always-on context layer program and deferrals.
+# Covers: live Jev decision ledger, memory delivery/evaluation, OpenCode hooks, context layer program and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, code navigation.
 # Read when: choosing release scope, accepting a feature, or checking deferrals.
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
 # Safety: SQLite remains authority; generated user.md is disposable and feature-off by default.
 <!-- /doc-head -->
+
+## T-1803 — per-CLI telemetry, hooks doctor and production alarms (2026-10-26)
+
+- Source implemented: bounded hook delivery receipts, persisted MCP client
+  attribution and rollups, parameterized installer targets, disposable hook
+  contracts, 24-hour per-CLI silence WARN and seven-day capture yield FAIL.
+  Commands, thresholds and limits: [hook telemetry](docs/hooks-telemetry.md).
+- Narrow verification used fixture homes/databases only. Initial pytest runs
+  failed on Windows private temporary-directory ACLs before assertions; the
+  worktree-only harness used inherited directory ACLs and local tempfile roots.
+  Original failures remain in task tool evidence. Doctor regression failures
+  exposed unsupported stdout assumptions, package SQL fixture access and parent
+  repository discovery; each was corrected with retained regression coverage.
+  Independent review also caught agy quoting, external reads, installer script
+  destinations and second-precision creation timestamps; fixes were verified.
+- Final narrow results: hook events 4, installed recall 12, MCP rollup 9,
+  session tracker 22, operational review 29 plus new alarms 14, doctor 20,
+  setup 39, Dreaming surfaces 9, public demo 2; runtime authority also passed
+  18 checks. Ruff passed on all changed Python files. An optional unchanged
+  CLI-subcommands run stopped after 17 completed cases without a suite result
+  because deduplication did not finish promptly; it is not claimed as passed.
+- Installation, real CLI hook trust/delivery, bulk merge gate and PR remain
+  lane work. No push, merge, live home changes or live database access occurred.
+
+### Cross-CLI integration checkpoint (2026-10-26)
+
+- Merged `lane/t1803`, `lane/t1800`, `lane/t1802`, then `lane/t1801` into
+  `lane/memory-hooks`, preserving merge commits and all installers/providers.
+  One shared event module retains T-1803's validation, lock and bounded rotation;
+  OpenCode's module entrypoint forwards to that same append API.
+- Codex records one delivery after capped output, including successful shared
+  SessionStart exits and profile-only context. Shared Claude templates defer
+  their own receipts inside Codex to avoid duplicate/misattributed entries.
+  Regression: `test_session_start_logs_event_after_shared_hook_exit`.
+  All recall adapters count emissions, and review accepts their native event
+  names while excluding Stop/capture counters. Codex recall installation uses
+  the same supported handler keys as capture, retaining legacy-entry cleanup.
+- Fresh focused verification: **372 passed across 24 test files**, in small
+  invocations. The two source-binding files were included because they differ
+  on the input branches even though origin's versions survived the merges.
+
+| Test files under `tests/` | Passed |
+|---|---:|
+| `test_codex_recall_hook.py`, `test_hook_events.py` | 29 |
+| `test_codex_recall_installation.py`, `test_setup_hooks.py`, `test_setup_agy_hooks.py` | 57 |
+| `test_agy_hooks.py`, `test_antigravity_client.py`, `test_dreaming_agy_capture.py` | 73 |
+| `test_hook_capture.py`, `test_hook_recall.py`, `test_opencode_capture.py` | 32 |
+| `test_opencode_hooks.py`, `test_opencode_packaging.py` | 13 |
+| `test_hooks_doctor.py`, `test_recall_hook_installation.py` | 32 |
+| `test_operational_review.py`, `test_operational_review_hook_telemetry.py` | 46 |
+| `test_dreaming_surfaces.py`, `test_dreaming_capture.py`, `test_public_demo.py` | 18 |
+| `test_rollup_telemetry.py`, `test_session_tracker.py` | 31 |
+| `test_dreaming_source_review.py`, `test_replay_source_binding.py` | 41 |
+
+- Ruff passed on all 39 changed Python files; generated release truth was
+  regenerated and checked, and contract witness passed against `origin/main`.
+  Bounded independent integration review found no remaining integration blocker.
+  GitNexus was unavailable/unindexed; scoped source references and Git diffs
+  supplied impact/change checks without using a sibling index.
+- Failure evidence was retained: the first run failed before assertions on
+  Windows temporary-directory ACLs; a worktree-only harness inherited ACLs for
+  newly created disposable directories. Regression runs then reproduced duplicate
+  receipts, missing native-event recognition, citation-based miscounts and the
+  unsupported Codex handler key before their fixes. Homes, app state, temporary
+  paths and databases were disposable; no real home/database or deployment was
+  used. Bulk gate, PR, deployment and real CLI E2E remain lane work. No push.
+
+### T-1803 bulk-gate follow-up (2026-10-26)
+
+- Reproduced both real-process Codex receipt failures and missing-database
+  readiness returning 200. The adapter now retains its launch import root
+  before shared hooks change cwd, while preferring the rendered code root.
+  The real-process receipt assertions remain intact.
+- MCP attribution, usage rollups and bound recall activity use an existing-only
+  SQLite writer; the canonical connection helper retains its prior defaults.
+  SQLite `mode=rw` prevents creation even after deletion between operations.
+  Readiness returns 503 and leaves a missing database absent. Independent review
+  exposed the additional bound-recall recreation path; its regression failed
+  before the one-line service correction and passed afterward.
+- Hook doctor dispatch is lazy, with three import-blocking help regressions.
+  Matched three-run medians for `python -X importtime -m memorymaster --help`:
+  CLI cumulative import before 196.392 ms, after 181.606 ms, origin/main
+  (`569b2db`) 200.194 ms; wall times 0.3147/0.2865/0.3085 seconds. The removed
+  doctor import itself cost only 0.624 ms; the larger difference includes noise.
+- The steward timeout also reproduced on isolated origin/main with identical
+  defaults. Faulthandler traced transformer model-download retries and its load
+  lock, not CLI imports. No steward assertions or provider defaults changed.
+  With `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`, the unchanged full steward
+  file passed 7 tests, and the final checkout batch passed all four reported
+  cases plus tracker, startup and doctor checks (50 tests, 24.11 seconds).
+- Additional fresh batches passed 137 connection/storage/installer/hook checks
+  and 82 service/telemetry checks. After placing the service regression in its
+  matching witness file, service and rollup passed 32 checks. Ruff, release-truth
+  generation/check and contract witness passed; final independent review found
+  no remaining scoped blocker. GitNexus remains unavailable/unindexed; source
+  references and diffs supplied impact and change checks.
+- Initial Windows temporary-directory ACL failures, a fixture connection cleanup
+  failure, and concurrent `.tmp_cases` cleanup interference remain in task
+  evidence. Verification used the documented process-local mkdir workaround
+  and isolated runs after the concurrency failure. Default-environment steward
+  timing and the full bulk gate remain integrating-lane checks; no push,
+  installation, live database access or deployment occurred.
+
+### T-1803 telemetry-binding regression follow-up (2026-10-26)
+
+- Reproduced both reported fresh-eyes failures after the existing-only writer
+  change. Existing-database fixtures now explicitly initialize storage before
+  requiring an integer session; reuse asserts a real ID rather than None equality.
+- MCP services bind immediately for existing databases and rebind after a
+  successful explicit `init_db()`. The factory retains the originating client,
+  transport token, principal and tenant for delayed binding. Reinitialization
+  retains the session; served queries increment its exact client-attributed row.
+  Missing-database construction and readiness still create nothing; readiness
+  returns 503. The existence guard and SQLite `mode=rw` remain intact.
+- Fresh required checks: fresh-eyes 12, HTTP entrypoint 4, session tracker 23,
+  rollup telemetry 10 and Codex recall hook 22: **71 passed**. Additional MCP
+  authorization, tenant, read-only, helper/usage and public-demo checks:
+  **59 passed, 1 skipped** (dashboard port already bound). Changed Python passed
+  Ruff; release-truth `--check` and contract witness passed.
+- An initial pytest attempt failed on temporary-directory ACLs before assertions;
+  subsequent disposable runs used the documented process-local inherited-ACL
+  launcher. The strengthened delayed-binding regression failed before the fix.
+  Independent read-only review (`gpt-5.6-sol/high`) found no scoped blocker and
+  requested the retained repeat-initialization session assertion. GitNexus has
+  no index for this worktree; scoped source references and diffs supplied impact
+  and change review. Full bulk gate remains with the integrating lane. No push,
+  installation, live database access or deployment occurred.
+
+## T-1801 - OpenCode deterministic recall and capture (2026-10-26)
+
+Source implementation: thin recall adapter reuses Claude's governed hook core;
+separate OpenCode 1/2 plugins append memory to outgoing system context and bound
+recall to three seconds. Idle/terminal events hand native session storage to
+the existing Dreaming queue. Capture activation remains a separate decision.
+The explicit-directory installer preserves peer configuration and supports
+idempotent upgrades between plugin API generations. Hook receipts use
+`MEMORYMASTER_HOOK_EVENTS_LOG` with only timestamp, CLI, event and count.
+
+Source contracts: [v1 plugins](https://opencode.ai/docs/plugins/),
+[v2 hooks and migration](https://opencode.ai/v2/docs/build/plugins/migrate-v1/),
+and the native storage schema URLs beside the capture readers.
+Local acceptance uses disposable fixtures for v1/v2 SQLite and legacy JSON;
+installed/live CLI acceptance, bulk gate and PR remain with the lane.
+The focused files passed 126 tests in total (including the disposable demo,
+public facade and existing shared recall transport), and changed Python passed
+Ruff. Release truth was regenerated and checked. Capture implementation and
+the separate plugin review used one bounded `gpt-6.1-sol/high` worker.
+
+Lane installation (explicit target supplied by the operator; never run by
+the source worker):
+
+```powershell
+python -m memorymaster.surfaces.setup_hooks --opencode-config-dir "$env:OPENCODE_CONFIG_DIR" --opencode-version 2 --project-root "$PWD" --json
+```
+
+Use `--opencode-version 1` for OpenCode 1. The target is the CLI's config root,
+whose `plugins/` folder loads the selected entrypoint. The worker did not
+install to any real CLI config, enable Dreaming or call a live database.
+After restart, run a real turn from the intended project with configured
+MemoryMaster access and a query known to match a confirmed, authorized claim:
+
+```powershell
+$env:MEMORYMASTER_HOOK_EVENTS_LOG = "$PWD/.tmp/opencode-live-hook-events.jsonl"
+opencode run --format json "What MemoryMaster rules govern SQLite authority and capture? Cite the supplied memory."
+Get-Content "$env:MEMORYMASTER_HOOK_EVENTS_LOG" | Select-String '"cli": "opencode".*"event": "injection"'
+```
+
+An `injection` receipt with positive `count` proves the plugin appended the
+block; the reply alone does not establish delivery. A `capture` receipt with a
+positive count proves queue handoff, not extracted or promoted memory. A zero
+count on repeated idle is expected. Configure Dreaming activation separately.
+
+Verification notes: Windows sandbox Python creates owner-only temporary ACLs
+that exclude its token. Focused checks used a temporary bootstrap inheriting
+the worktree ACL only inside fresh disposable test roots, with standard-library
+temporary files redirected there. Initial failures from default temp paths are
+retained in task evidence. Node's piped subprocess spawn is denied by this
+sandbox (`EPERM`), so plugin tests execute installed JS callbacks/timers with
+process stream doubles; Python entrypoints and capture are tested separately.
+Real OpenCode process delivery is still a lane check.
+This checkout has no GitNexus index; discovery exposed no usable navigation
+tools. Scoped live-source caller searches and diff checks supplied the change
+scope evidence without consulting a sibling checkout's graph.
 
 ## Shipped in v4.6.0
 
@@ -36,6 +218,43 @@ its governed-claims authority:
 | Memory Hub, loadouts, team ACLs, proxy replacement, cloud database | Deferred: no personal SQLite requirement justifies multi-user/cloud infrastructure or a second agent gateway. |
 
 ## Now
+
+### T-1802: deterministic agy recall and capture (2026-10-26)
+
+Source implementation: SessionStart normalizes agy camelCase input and calls
+Claude's shared `hook_recall` core. Its only output is
+`{"injectSteps":[{"ephemeralMessage":"..."}]}`. Stop queues sanitized transcript
+evidence through the existing bounded agy reader. Internal batch profiles,
+challenger sessions and MemoryMaster headless providers are guarded against
+recursion. Injection and successful enqueue append the shared hook event receipt.
+No per-prompt handler is installed.
+
+The explicit-target installer preserves peer handlers and writes
+`<gemini-root>/config/hooks.json`; it never edits Gemini `settings.json`.
+The lane installs with its chosen targets:
+
+```powershell
+python -m memorymaster.surfaces.setup_agy_hooks --gemini-config-dir "<target .gemini root>" --project-root "<installed MemoryMaster root>" --db "<recall database>"
+$env:MEMORYMASTER_HOOK_EVENTS_LOG = Join-Path $env:TEMP "memorymaster-agy-hook-events.jsonl"
+agy --mode plan --output-format json -p "Quote the MemoryMaster recall block injected at session start, including its citations."
+Get-Content $env:MEMORYMASTER_HOOK_EVENTS_LOG -Tail 5
+```
+
+Local evidence uses disposable fixtures: adapter strict output/errors/guards,
+capture revisions/filtering/replay, installer idempotence/peer preservation,
+telemetry, shared provider guards, existing capture/source regressions and the
+public lifecycle demo. Initial pytest launches failed before assertions because
+Windows sandbox directories created with mode `0700` were unreadable. A scoped
+test launcher retained inherited directory permissions for those temporary
+directories; no assertions or product permission policies were changed.
+An intermediate retry under `.tmp_cases` was pruned by the existing per-test
+cleanup fixture; final runs used separate worktree-local temporary roots.
+Independent review found single-message eligibility and overly broad installer
+ownership matching; both received regression coverage and bounded corrections.
+GitNexus had no index/tools in this checkout; scoped source searches supplied
+dependency checks. Real CLI installation/observation, bulk gate and PR remain
+lane work. Rollback removes only the two managed command handlers and their
+adapter, retaining peer entries and all memory data.
 
 ### Engineering-owner plan (operator grant 2026-10-03)
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import time
+import sqlite3
+import gc
 
 import pytest
 
@@ -35,6 +37,23 @@ class TestSessionTrackerInit:
             assert cursor.fetchone() is not None
         finally:
             conn.close()
+
+    def test_attribution_cannot_create_or_recreate_database(self, db_path, monkeypatch):
+        monkeypatch.setenv("MEMORYMASTER_DB_RETRIES", "0")
+        with pytest.raises(sqlite3.OperationalError):
+            SessionTracker(db_path, create=False)
+        assert not db_path.exists()
+
+        SessionTracker(db_path)
+        tracker = SessionTracker(db_path, create=False)
+        tracker.start_session("codex")
+        # sqlite3's transaction context does not close its connection; release
+        # unreachable fixture connections before unlinking on Windows.
+        gc.collect()
+        db_path.unlink()
+        with pytest.raises(sqlite3.OperationalError):
+            tracker.start_session("codex")
+        assert not db_path.exists()
 
 
 class TestStartSession:
@@ -228,10 +247,10 @@ class TestGetActiveSessions:
 
     def test_get_active_sessions_excludes_old(self, tracker):
         """Sessions older than 1 hour are excluded."""
-        # This is harder to test without mocking time, so we test the API works
         session_id = tracker.start_session("agent")
-        result = tracker.get_active_sessions()
-        assert len(result) >= 1
+        with tracker._connect() as conn:
+            conn.execute("UPDATE agent_sessions SET last_activity=0 WHERE id=?", (session_id,))
+        assert tracker.get_active_sessions() == []
 
 
 class TestGetSessionStats:
@@ -335,3 +354,20 @@ class TestSessionTrackerIntegration:
         assert stats1["total_queries"] == 0
         assert stats2["total_claims"] == 0
         assert stats2["total_queries"] == 3
+
+    def test_usage_totals_survive_restart_and_include_inactive_sessions(self, db_path):
+        tracker = SessionTracker(db_path)
+        first = tracker.start_session("codex")
+        second = tracker.start_session("claude-code")
+        tracker.record_activity(first, "query")
+        tracker.record_activity(first, "ingest")
+        tracker.record_activity(second, "query")
+        with tracker._connect() as conn:
+            conn.execute("UPDATE agent_sessions SET last_activity=0 WHERE id=?", (first,))
+        restarted = SessionTracker(db_path)
+        totals = {row["agent_id"]: row for row in restarted.get_usage_totals()}
+        assert totals["codex"] == {
+            "agent_id": "codex", "total_sessions": 1, "total_claims": 1, "total_queries": 1,
+        }
+        assert totals["claude-code"]["total_queries"] == 1
+        assert [row["agent_id"] for row in restarted.get_active_sessions()] == ["claude-code"]

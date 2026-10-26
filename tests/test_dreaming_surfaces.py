@@ -178,7 +178,9 @@ def test_installer_preserves_existing_hooks_and_is_idempotent(tmp_path: Path, mo
     claude_text = (claude / "settings.json").read_text(encoding="utf-8")
     codex_text = (codex / "hooks.json").read_text(encoding="utf-8")
     assert claude_text.count("memorymaster-dream-capture.py") == 3
-    assert codex_text.count("memorymaster-dream-capture.py") == 2  # command + commandWindows
+    assert codex_text.count("memorymaster-dream-capture.py") == 1
+    handlers = json.loads(codex_text)["hooks"]["Stop"][-1]["hooks"]
+    assert "commandWindows" not in handlers[0]  # Current Codex denies unknown handler fields.
     assert "keep-me" in claude_text
     assert "keep-codex" in codex_text
 

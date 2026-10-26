@@ -66,6 +66,26 @@ def test_open_conn_honors_custom_busy_ms(tmp_path: Path) -> None:
         conn.close()
 
 
+def test_existing_only_connection_never_creates_database(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMORYMASTER_DB_RETRIES", "0")
+    db = tmp_path / "missing.db"
+    with pytest.raises(sqlite3.OperationalError):
+        open_conn(db, create=False)
+    assert not db.exists()
+
+
+def test_existing_only_connection_preserves_writer_envelope(tmp_path):
+    db = _make_db(tmp_path)
+    with open_conn(db, create=False) as conn:
+        assert conn.row_factory is sqlite3.Row
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 15000
+        conn.execute("INSERT INTO t (val) VALUES ('telemetry')")
+    with connect_ro(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM t").fetchone()[0] == 2
+
+
 def test_open_conn_retries_transient_open_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A transient open failure must be retried, not surfaced to the caller.
 

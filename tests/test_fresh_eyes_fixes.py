@@ -76,27 +76,42 @@ def _clear_telemetry_session_cache():
     m._TELEMETRY_SESSION_IDS.clear()
 
 
-def test_mcp_service_factory_binds_a_telemetry_session(tmp_path):
+def test_mcp_service_factory_binds_a_telemetry_session(tmp_path, monkeypatch):
     """THE dead feature: nothing ever called start_session, so
     get_usage_rollup's session half was always []. The MCP _service() factory
     must now bind a real session so per-session telemetry is alive."""
-    from memorymaster.surfaces.mcp_server import _service
+    from memorymaster.surfaces import mcp_server
 
     db = str(tmp_path / "mcp.db")
-    svc = _service(db, str(tmp_path))
+    MemoryService(db, workspace_root=tmp_path).init_db()
+    monkeypatch.setattr(mcp_server, "_mcp_client_identity", lambda: ("codex", "factory-session"))
+    svc = mcp_server._service(db, str(tmp_path))
     assert isinstance(svc.session_id, int) and svc.session_id > 0
-    assert svc.source_agent  # counters get a real label, not "unknown"
+    assert svc.source_agent == "codex"
 
 
-def test_query_activity_reaches_the_session_rollup(tmp_path):
+@pytest.mark.parametrize("existing_database", [True, False])
+def test_query_activity_reaches_the_session_rollup(tmp_path, monkeypatch, existing_database):
     """End-to-end proof the rollup half is no longer decorative: a real query
     through a factory-built service increments queries_made in agent_sessions."""
-    from memorymaster.surfaces.mcp_server import _service
+    from memorymaster.surfaces import mcp_server
     from memorymaster.surfaces.session_tracker import SessionTracker
 
     db = str(tmp_path / "mcp2.db")
-    svc = _service(db, str(tmp_path))
+    if existing_database:
+        MemoryService(db, workspace_root=tmp_path).init_db()
+    monkeypatch.setattr(mcp_server, "_mcp_client_identity", lambda: ("codex", "query-session"))
+    svc = mcp_server._service(db, str(tmp_path))
+    initial_session_id = svc.session_id
+    if not existing_database:
+        assert svc.session_id is None
+        assert not (tmp_path / "mcp2.db").exists()
+    # Initialization may happen after the originating request context ends.
+    monkeypatch.setattr(mcp_server, "_mcp_client_identity", lambda: ("other-client", "other-session"))
     svc.init_db()
+    assert isinstance(svc.session_id, int) and svc.session_id > 0
+    if existing_database:
+        assert svc.session_id == initial_session_id
     svc.ingest("a durable fact", [CitationInput(source="t")], scope="project:x")
     # include_candidates so the fresh (candidate) claim is actually SERVED —
     # _record_accesses only records activity for served rows.
@@ -104,7 +119,9 @@ def test_query_activity_reaches_the_session_rollup(tmp_path):
     assert rows, "query served nothing — activity would legitimately not record"
     sessions = SessionTracker(db).get_active_sessions()
     assert sessions, "session rollup still empty — SessionTracker dead again"
-    assert any(s.get("queries_made", 0) >= 1 for s in sessions)
+    session = next(s for s in sessions if s["id"] == svc.session_id)
+    assert session["agent_id"] == "codex"
+    assert session["queries_made"] == 1
 
 
 def test_session_is_reused_within_a_process(tmp_path):
@@ -112,8 +129,10 @@ def test_session_is_reused_within_a_process(tmp_path):
     from memorymaster.surfaces.mcp_server import _service
 
     db = str(tmp_path / "mcp3.db")
+    MemoryService(db, workspace_root=tmp_path).init_db()
     a = _service(db, str(tmp_path))
     b = _service(db, str(tmp_path))
+    assert isinstance(a.session_id, int) and a.session_id > 0
     assert a.session_id == b.session_id
 
 

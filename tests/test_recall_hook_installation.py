@@ -19,6 +19,7 @@ def test_recall_template_sanitizes_json_prompt_before_retrieval(tmp_path, monkey
     source = template.read_text(encoding="utf-8").replace("__MEMORYMASTER_PROJECT_ROOT__", tmp_path.as_posix())
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MEMORYMASTER_RECALL_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MEMORYMASTER_HOOK_EVENTS_LOG", str(tmp_path / "events.jsonl"))
     monkeypatch.setattr(hook_log, "_STATE_DIR", tmp_path)
     monkeypatch.setattr(hook_log, "_LOG_FILE", tmp_path / "hook.log")
     seen = []
@@ -30,9 +31,11 @@ def test_recall_template_sanitizes_json_prompt_before_retrieval(tmp_path, monkey
     assert seen == ["explain \ufffd recall"]
     assert json.loads(output.getvalue())["hookSpecificOutput"]["additionalContext"] == "[MemoryMaster recall]\nclaim\ufffd"
     assert "event=error" not in (tmp_path / "hook.log").read_text(encoding="utf-8")
+    assert json.loads((tmp_path / "events.jsonl").read_text())["cli"] == "claude-code"
 
 
 def test_session_start_template_sanitizes_log_and_context(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMORYMASTER_HOOK_EVENTS_LOG", str(tmp_path / "events.jsonl"))
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     root = Path(__file__).resolve().parents[1]
@@ -63,6 +66,7 @@ def test_session_start_template_sanitizes_log_and_context(tmp_path, monkeypatch)
         ns["main"]()
     assert exc.value.code == 0
     assert json.loads(output.getvalue())["hookSpecificOutput"]["additionalContext"] == "claim\ufffd"
+    assert json.loads((tmp_path / "events.jsonl").read_text())["event"] == "recall_injected"
 
 
 @pytest.mark.parametrize("root_value", ["__MEMORYMASTER_PROJECT_ROOT__", "missing-root"])
@@ -116,6 +120,8 @@ def install(tmp_path, monkeypatch):
 
 
 def test_installed_hook_round_trip(tmp_path, monkeypatch, capsys):
+    events_path = tmp_path / "events.jsonl"
+    monkeypatch.setenv("MEMORYMASTER_HOOK_EVENTS_LOG", str(events_path))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
@@ -138,6 +144,7 @@ def test_installed_hook_round_trip(tmp_path, monkeypatch, capsys):
     assert "cited context" in run(data)
     assert run(data) == ""
     assert run({**data, "prompt": "<task-notification> background done"}) == ""
+    assert len(events_path.read_text().splitlines()) == 1  # suppressed and automated output never counts
     assert len(calls) == 2
     assert "cited context" in run({**data, "session_id": "other",
                                  "prompt": "Explain <task-notification> from that log"})

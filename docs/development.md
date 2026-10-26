@@ -1,6 +1,6 @@
 <!-- doc-head: scoped development and verification for MemoryMaster -->
 # Development guidance
-Covers: local setup, disposable lifecycle checks, CI, runtime evidence, GitNexus and Serena.
+Covers: local setup, disposable checks, Codex code/data roots and trust, runtime evidence and code navigation.
 Key terms: source versus installed runtime, risk-based tests, SQLite, agent instructions.
 Read when: implementing changes or choosing the smallest sufficient verification.
 <!-- /doc-head -->
@@ -43,6 +43,78 @@ Never use `run-cycle` against the live database as a routine code test.
 Use read-only operational review for live inspection. A successful review with
 disabled subsystems establishes their configuration, not synthesis quality.
 Distinguish requested, configured and actually observed provider models.
+
+## Codex deterministic recall (T-1800)
+
+Install into an explicitly selected Codex config directory; the callable has no
+implicit home target. Run from the checkout, replacing the target argument:
+
+```powershell
+python -c "from pathlib import Path; from memorymaster.surfaces.setup_hooks import install_codex_recall_hooks; install_codex_recall_hooks(codex_dir=Path(r'<codex-config-dir>'), project_root=Path.cwd())"
+```
+
+For a code-only worktree, also pass `data_root=Path(r'<memory-data-dir>')`,
+the checkout holding `memorymaster.db` and the wiki. SessionStart renders
+`MM_ROOT` from `data_root`; the recall script and Codex adapter render
+`PROJECT_ROOT` from `project_root`. Omitting `data_root` keeps the original
+single-root behavior. Both paths use the Claude installer's placeholder helper.
+
+This merges SessionStart and UserPromptSubmit beside the existing Stop capture
+hook. The thin adapter runs the same rendered Claude hook templates, preserving
+their retrieval, filtering, scope, projection and delivery policy. Codex output
+adds a conservative 1,800 UTF-8 byte ceiling (including non-Latin text); empty
+results and errors produce no stdout/stderr and exit zero. Internal Codex
+extractors/workers must inherit `MEMORYMASTER_INTERNAL_CODEX=1` or
+`MEMORYMASTER_INTERNAL_RUN=1`; both events then skip before reading stdin.
+
+Successful injections append `{ts, cli, event, count}` JSONL through
+`append_hook_event('codex', event, count)`. `count` measures claim citation
+bullets in the delivered text, after capping. A profile/activity-only injection
+has count zero. Set `MEMORYMASTER_HOOK_EVENTS_LOG` to choose the log; the default
+is `.memorymaster/hook-events.jsonl` under the user's home.
+
+[Official OpenAI hook documentation](https://learn.chatgpt.com/docs/hooks)
+requires reviewing new/changed non-managed hooks through `/hooks`, trusting the
+current definition hash. Installation does not grant persistent trust. For a
+lane that has vetted every enabled hook, the documented non-interactive route
+is `--dangerously-bypass-hook-trust`, effective only for that invocation. It
+does not disable the command sandbox or grant persistent hook trust.
+
+After the lane installs into its real CLI config, run this exact command from
+the checkout (with the internal-run markers absent):
+
+```powershell
+$env:MEMORYMASTER_HOOK_EVENTS_LOG = Join-Path (Get-Location) 'codex-hook-events.jsonl'
+codex --no-daemon exec --dangerously-bypass-hook-trust --sandbox read-only --ephemeral --json --cd . -m gpt-6.1-sol -c model_reasoning_effort=high "Explain MemoryMaster SQLite authority, scope isolation and citations using any automatically injected memory. Include its memory citations. Do not call tools."
+Get-Content $env:MEMORYMASTER_HOOK_EVENTS_LOG
+```
+
+Require fresh `codex` SessionStart/UserPromptSubmit injection records and inspect
+the response for supplied citations; an empty result correctly emits no record.
+This lane tested source and disposable installation only. Real-config install,
+real CLI injection, the bulk merge gate and PR remain the integrating lane's work.
+The installed CLI help was checked at version 0.163.0 and exposes the trust flag.
+
+Local regression evidence: the adapter and telemetry tests first failed because
+the implementations were missing; a mixed-entry preservation regression then
+failed before the installer fix. The first ordinary pytest runs failed during
+temporary-directory setup: Windows sandbox ACLs made Python's mode-0700
+directories inaccessible. Successful narrow runs used a process-local test
+launcher mapping mkdir mode 0700 to inherited workspace permissions (0777),
+with `--basetemp=.tmp/<run>`; product code and sandbox policy were unchanged.
+The five single-file runs passed 65 cases in total: Codex adapter (20), installer
+(3), shared telemetry (2), setup hooks (38) and public demo (2). Ruff passed on
+all changed Python files; release-truth generation/check and contract witness
+against origin/main passed. A separate read-only review found no remaining
+blockers after the peer-handler fix. The bounded installer worker used
+gpt-5.6-luna/medium; the reviewer used gpt-5.6-sol/high.
+
+The 2026-10-26 follow-up reproduced count zero for hex citations (including
+`~2` suffixes) and rejection of a separate `data_root` before fixing them.
+Fresh disposable checks passed all 64 cases across the four hook/installer
+test files, plus both public-demo cases, Ruff, release-truth verification and
+contract witness. SessionStart also injected from a fixture database under a
+separate data root. No real home installation or live database was used.
 
 ## Optional wiki
 

@@ -1790,7 +1790,7 @@ class MemoryService(IntegrationService):
                 with contextlib.suppress(Exception):
                     from memorymaster.core.session_tracker import SessionTracker
 
-                    SessionTracker(db_path).record_activity(sid, "query")
+                    SessionTracker(db_path, create=False).record_activity(sid, "query")
 
     def _spool_accesses(self, claim_ids: list[int], query_text: str) -> None:
         """RO-store branch of _record_accesses: spool, don't write.

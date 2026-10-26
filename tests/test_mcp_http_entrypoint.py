@@ -96,6 +96,7 @@ def test_http_readiness_reports_missing_database(tmp_path: Path) -> None:
     status, _, payload = asyncio.run(_asgi_request(app, "/readyz"))
     assert status == 503
     assert json.loads(payload)["checks"]["db"]["status"] == "fail"
+    assert not (tmp_path / "missing.db").exists()
 
 
 def test_http_mcp_initialize_handshake_accepts_valid_bearer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

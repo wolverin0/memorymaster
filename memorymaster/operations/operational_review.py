@@ -11,6 +11,7 @@ import argparse
 import contextlib
 import importlib.metadata
 import json
+import math
 import os
 import re
 import sqlite3
@@ -88,6 +89,7 @@ class ReviewConfig:
     # AO-3 uses explicit approved contexts; no database/home/root discovery.
     project_projection_configs: tuple[Any, ...] = ()
     project_m2_receipt: Path | None = None
+    hook_events_log: Path | None = None
 
 
 def _configured_canaries(config: ReviewConfig) -> list[tuple[str, str]]:
@@ -964,6 +966,153 @@ def check_model_preflight(config: ReviewConfig, *, now: datetime | None = None) 
     return ReviewResult("model_preflight", Verdict.FAIL, detail, {"failures": 1})
 
 
+CAPTURE_YIELD_THRESHOLD_ENV = "MEMORYMASTER_CAPTURE_MIN_MEMORIES_PER_SESSION"
+CAPTURE_YIELD_DEFAULT = 0.05
+
+
+def _hook_cli(value: str) -> str:
+    name = value.strip().lower()
+    aliases = {"claude-code": "claude", "claude_subagent": "claude",
+               "codex-cli": "codex", "antigravity": "agy"}
+    name = aliases.get(name, name)
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,49}", name):
+        raise ValueError("invalid CLI attribution")
+    return name
+
+
+def _captured_sessions(config: ReviewConfig, since: datetime, end: datetime) -> dict[str, int]:
+    state_db, _ = _beat_paths(config)
+    sessions: dict[str, set[str]] = {}
+    with contextlib.closing(_connect_ro(state_db)) as connection:
+        rows = connection.execute(
+            "SELECT provider, session_hash FROM dream_captures "
+            "WHERE julianday(captured_at)>=julianday(?) AND julianday(captured_at)<=julianday(?)",
+            (since.isoformat(), end.isoformat()),
+        )
+        for row in rows:
+            cli = _hook_cli(str(row["provider"]))
+            session = row["session_hash"]
+            if not isinstance(session, str) or not session:
+                raise ValueError("missing session attribution")
+            sessions.setdefault(cli, set()).add(session)
+    return {cli: len(values) for cli, values in sessions.items()}
+
+
+def check_hook_recall(config: ReviewConfig, *, now: datetime | None = None) -> ReviewResult:
+    """A captured CLI must have delivered memory, not merely launched its hook."""
+    from memorymaster.surfaces.hook_events import hook_events_path
+
+    end = _utc(now)
+    since = end - timedelta(hours=24)
+    try:
+        sessions = _captured_sessions(config, since, end)
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        return ReviewResult("hook_recall", Verdict.WARN, f"capture_telemetry_unavailable={type(exc).__name__}")
+    path = config.hook_events_log if config.hook_events_log is not None else hook_events_path()
+    injections: dict[str, int] = {}
+    native_delivery_events = {
+        "codex": {"SessionStart", "UserPromptSubmit"},
+        "agy": {"SessionStart"},
+        "opencode": {"injection"},
+    }
+    invalid, readable = 0, 0
+    for candidate in (path, *(path.with_name(path.name + f".{n}") for n in range(1, 6))):
+        try:
+            with candidate.open(encoding="utf-8") as handle:
+                readable += 1
+                for raw in handle:
+                    try:
+                        event = json.loads(raw)
+                        stamp = _parse_utc(event["ts"])
+                        cli = _hook_cli(event["cli"])
+                        count = event["count"]
+                        if (stamp is None or not isinstance(event["event"], str)
+                                or type(count) is not int or count < 0):
+                            raise ValueError("invalid hook event")
+                        delivered = (event["event"] == "recall_injected"
+                                     or event["event"] in native_delivery_events.get(cli, ()))
+                        if since <= stamp <= end and delivered:
+                            injections[cli] = injections.get(cli, 0) + count
+                    except (ValueError, KeyError, TypeError, AttributeError):
+                        invalid += 1
+        except FileNotFoundError:
+            continue
+        except (OSError, UnicodeError):
+            invalid += 1
+    missing = sorted(cli for cli, count in sessions.items() if count and not injections.get(cli))
+    counts = {"invalid_events": invalid, "readable_logs": readable}
+    for cli in sorted(sessions.keys() | injections.keys()):
+        counts[f"{cli}_captured_sessions_24h"] = sessions.get(cli, 0)
+        counts[f"{cli}_recall_injections_24h"] = injections.get(cli, 0)
+    detail = "24h per-CLI recall injections; " + (
+        "zero_injections=" + ",".join(missing) if missing else "all captured CLIs have injections"
+    )
+    if not readable:
+        detail += "; hook_telemetry_unavailable"
+    if invalid:
+        detail += "; invalid_hook_telemetry"
+    return ReviewResult("hook_recall", Verdict.WARN if missing or invalid or not readable else Verdict.PASS,
+                        detail, counts)
+
+
+def check_capture_yield(config: ReviewConfig, *, now: datetime | None = None) -> ReviewResult:
+    """Compare actual new memory applications to distinct captured sessions over 7d.
+
+    The capture-control application ledger proposes IDs. The authoritative claim
+    creation time must be in the same window and after its capture; reinforcement,
+    retries and reused older claims cannot inflate the numerator.
+    """
+    try:
+        threshold = float(os.environ.get(CAPTURE_YIELD_THRESHOLD_ENV, str(CAPTURE_YIELD_DEFAULT)))
+        if not math.isfinite(threshold) or threshold < 0:
+            raise ValueError("invalid threshold")
+    except ValueError:
+        return ReviewResult("capture_yield", Verdict.FAIL, f"invalid {CAPTURE_YIELD_THRESHOLD_ENV}")
+    end = _utc(now)
+    since = end - timedelta(days=7)
+    try:
+        sessions = _captured_sessions(config, since, end)
+        state_db, _ = _beat_paths(config)
+        with contextlib.closing(_connect_ro(state_db)) as connection:
+            applications = connection.execute(
+                "SELECT a.created_claim_id, a.applied_at, c.captured_at "
+                "FROM dream_applications a JOIN dream_captures c ON c.id=a.capture_id "
+                "WHERE a.action='add' AND a.created_claim_id IS NOT NULL "
+                "AND julianday(a.applied_at)>=julianday(?) AND julianday(a.applied_at)<=julianday(?) "
+                "AND julianday(c.captured_at)>=julianday(?) AND julianday(c.captured_at)<=julianday(?)",
+                (since.isoformat(), end.isoformat(), since.isoformat(), end.isoformat()),
+            ).fetchall()
+        created: set[int] = set()
+        if applications:
+            with contextlib.closing(_connect_ro(config.db)) as connection:
+                for application in applications:
+                    row = connection.execute("SELECT created_at FROM claims WHERE id=?",
+                                             (application["created_claim_id"],)).fetchone()
+                    if row is None:
+                        raise ValueError("application claim unavailable")
+                    stamp = _parse_utc(str(row["created_at"]))
+                    captured = _parse_utc(str(application["captured_at"]))
+                    applied = _parse_utc(str(application["applied_at"]))
+                    if stamp is None or captured is None or applied is None:
+                        raise ValueError("invalid creation telemetry")
+                    # Authoritative claim timestamps are stored at whole-second
+                    # precision; capture/application timestamps retain fractions.
+                    # Compare the lower bound at the claim's precision so an
+                    # insert later in the capture's second remains observable.
+                    captured_second = captured.replace(microsecond=0)
+                    if since <= captured <= end and captured_second <= stamp <= applied <= end:
+                        created.add(int(application["created_claim_id"]))
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        return ReviewResult("capture_yield", Verdict.WARN, f"capture_telemetry_unavailable={type(exc).__name__}")
+    total = sum(sessions.values())
+    counts = {"captured_sessions_7d": total, "memories_created_7d": len(created)}
+    ratio = len(created) / total if total else 0.0
+    detail = (f"7d memories_created/captured_sessions={len(created)}/{total} ratio={ratio:.4f} "
+              f"minimum={threshold:g} ({CAPTURE_YIELD_THRESHOLD_ENV}); add outcomes with verified creation time")
+    verdict = Verdict.PASS if total and ratio >= threshold else Verdict.FAIL if total else Verdict.WARN
+    return ReviewResult("capture_yield", verdict, detail, counts)
+
+
 def check_backfill_burndown(config: ReviewConfig) -> ReviewResult:
     """Report historical sampling separately from the live beat's M3 latency."""
     from memorymaster.dreaming.backfill import read_backfill_status
@@ -1097,7 +1246,8 @@ REVIEW_CHECKS = (check_runtime, check_database, check_feature_activation, check_
                  check_compiled_profile, check_recent_private_context, check_retrieval,
                  check_jev_decisions, check_checkpoint_delivery, check_beat_health,
                  check_model_preflight, check_snapshot_dir, check_scheduled_slots,
-                 check_project_projection, check_backfill_burndown)
+                 check_project_projection, check_hook_recall, check_capture_yield,
+                 check_backfill_burndown)
 
 
 def exit_code(results: Iterable[ReviewResult]) -> int:

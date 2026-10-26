@@ -31,12 +31,101 @@ from memorymaster.surfaces.setup_detect import Detected
 # ---------------------------------------------------------------------------
 
 
+def test_explicit_hook_targets_are_idempotent(tmp_path, monkeypatch):
+    claude, codex, scripts = (tmp_path / name for name in ("claude-target", "codex-target", "scripts"))
+    monkeypatch.setattr(sh, "PROJECT_ROOT", tmp_path / "project")
+    llm = {"provider": "none", "model": "", "api_key": ""}
+    for _ in range(2):
+        sh.install_hooks(llm, config_dir=claude)
+        sh.install_dream_hooks(install_claude=True, install_codex=True,
+                              claude_dir=claude, codex_dir=codex, hook_dir=scripts)
+        sh.install_codex_recall_hooks(codex_dir=codex)
+    settings = json.loads((claude / "settings.json").read_text())
+    hooks = json.loads((codex / "hooks.json").read_text())
+    assert len(settings["hooks"]["SessionStart"]) == 1
+    assert len(hooks["hooks"]["Stop"]) == 1
+    # Current Codex HooksFile denies unknown fields such as commandWindows.
+    for event in ("Stop", "SessionStart", "UserPromptSubmit"):
+        assert len(hooks["hooks"][event]) == 1
+        assert set(hooks["hooks"][event][0]["hooks"][0]) == {"type", "command", "timeout"}
+
+
+def test_explicit_dream_target_keeps_scripts_under_target(tmp_path, monkeypatch):
+    monkeypatch.setattr(sh, "HOME", tmp_path / "untouched-home")
+    target = tmp_path / "codex-target"
+    result = sh.install_dream_hooks(install_claude=False, install_codex=True, codex_dir=target)
+    assert Path(result["hook"]).parent == target / "hooks"
+    assert not sh.HOME.exists()
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_opencode_install_is_explicit_idempotent_and_preserves_peers(tmp_path, version):
+    target = tmp_path / "opencode"
+    target.mkdir()
+    config = target / "opencode.jsonc"
+    config.write_text('{/* preserve comments */ "plugins": ["peer"]}', encoding="utf-8")
+    first = sh.install_opencode_hooks(target, version=version, project_root=tmp_path, python_exe="python")
+    plugin = target / "plugins" / "memorymaster.js"
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in target.rglob("*") if path.is_file()}
+    assert sh.install_opencode_hooks(target, version=version, project_root=tmp_path, python_exe="python") == first
+    assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}
+    assert ("experimental.chat.system.transform" if version == 1 else 'hook("context"') in plugin.read_text()
+    assert len(list((target / "plugins").iterdir())) == 1
+    assert config.read_text() == '{/* preserve comments */ "plugins": ["peer"]}'
+
+
+def test_opencode_standalone_setup_never_runs_home_detection(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sh, "detect_environment", lambda **kw: pytest.fail("must not inspect home"))
+    assert sh.main(["--opencode-config-dir", str(tmp_path / "config"), "--opencode-version", "2", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["opencode"] == "installed"
+
+
+def test_opencode_unmanaged_collision_is_preserved(tmp_path):
+    plugin = tmp_path / "plugins" / "memorymaster.js"
+    plugin.parent.mkdir()
+    plugin.write_text("// hand authored peer", encoding="utf-8")
+    with pytest.raises(ValueError, match="unmanaged"):
+        sh.install_opencode_hooks(tmp_path)
+    assert plugin.read_text() == "// hand authored peer"
+    assert not (tmp_path / "memorymaster").exists()
+
+
+def test_opencode_verify_only_never_installs(tmp_path, capsys):
+    target = tmp_path / "config"
+    assert sh.main(["--opencode-config-dir", str(target), "--verify-only", "--json"]) == 2
+    assert "--verify-only" in json.loads(capsys.readouterr().out)["error"]
+    assert not target.exists()
+
+
+def test_opencode_dry_run_never_installs(tmp_path, capsys):
+    target = tmp_path / "config"
+    assert sh.main(["--opencode-config-dir", str(target), "--dry-run", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["dry_run"] is True
+    assert not target.exists()
+
+
 def test_windows_placeholder_produces_valid_python_literal():
     import ast
     template = 'PROJECT_ROOT = "__MEMORYMASTER_PROJECT_ROOT__"'
     rendered = sh.replace_placeholder(template, r"C:\Users\Example\Py Apps\MemoryMaster")
     assignment = ast.parse(rendered).body[0]
     assert ast.literal_eval(assignment.value) == "C:/Users/Example/Py Apps/MemoryMaster"
+
+
+def test_explicit_codex_recall_install_preserves_native_capture(hermetic_home):
+    sh.install_dream_hooks(install_claude=False, install_codex=True)
+    target = hermetic_home["codex_dir"]
+    path = target / "hooks.json"
+    stop = json.loads(path.read_text(encoding="utf-8"))["hooks"]["Stop"]
+    for _ in range(2):
+        sh.install_codex_recall_hooks(codex_dir=target)
+    config = json.loads(path.read_text(encoding="utf-8"))
+    assert config["hooks"]["Stop"] == stop
+    for event in ("SessionStart", "UserPromptSubmit"):
+        assert len(config["hooks"][event]) == 1
+        command = config["hooks"][event][0]["hooks"][0]
+        assert set(command) == {"type", "command", "timeout"}
+        assert f"--event {event}" in command["command"]
 
 
 def _detected(**overrides) -> Detected:
