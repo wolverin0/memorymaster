@@ -29,7 +29,7 @@ function command(module, payload, extra = [], timeout = 2800) {
         result += chunk;
         if (result.length > 65536) { child.kill(); finish(); }
       });
-      child.on("close", (code) => finish(code === 0 ? result : ""));
+      child.on("close", (code) => finish(code === 0 ? result.replace(/\r\n/g, "\n") : ""));
       child.stdin.end(JSON.stringify(payload));
     } catch { finish(); }
   });
