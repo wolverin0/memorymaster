@@ -9,6 +9,7 @@
 
 | File | Verdict | Last change | Reason |
 |---|---|---|---|
+| docs/hooks-telemetry.md | CURRENT | 2026-10-26 | T-1803 persisted CLI attribution, hook receipts, isolated doctor and production alarms; real CLI delivery remains separate. |
 | docs/code-navigation.md | CURRENT | 2026-09-28 | Shared CLI navigation, bounded Serena, GitNexus freshness, Graphify limits and measured evidence. |
 | .planning/audits/2026-09-07-e2e-review/LIVE-DEPLOYMENT.md | CURRENT | 2026-09-20 | Two-environment candidate-fix deployment, additive migration and rollback; earlier selection-v2 Dreaming/MCP evidence remains dated. |
 | .planning/audits/2026-09-07-e2e-review/IMPLEMENTATION.md | CURRENT | 2026-09-08 | Single completed source-candidate checklist; useful-selection correction supersedes UI-first technical acceptance, with separate source/provider/live evidence. |

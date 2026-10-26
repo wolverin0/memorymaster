@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; AO-2 timeout recovery verification and AO-7 lane semaphore evidence -->
+<!-- doc-head: sole roadmap; T-1803 source telemetry and doctor verification; live CLI acceptance pending -->
 <!-- doc-head: sole roadmap; installed recall integrity and default-off AO-7 consolidation guards -->
 # MemoryMaster roadmap
 # Covers: live Jev decision ledger (4.9.0 checklist), useful-memory delivery/evaluation, workflow analytics, governed observations, always-on context layer program and deferrals.
@@ -7,6 +7,29 @@
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
 # Safety: SQLite remains authority; generated user.md is disposable and feature-off by default.
 <!-- /doc-head -->
+
+## T-1803 — per-CLI telemetry, hooks doctor and production alarms (2026-10-26)
+
+- Source implemented: bounded hook delivery receipts, persisted MCP client
+  attribution and rollups, parameterized installer targets, disposable hook
+  contracts, 24-hour per-CLI silence WARN and seven-day capture yield FAIL.
+  Commands, thresholds and limits: [hook telemetry](docs/hooks-telemetry.md).
+- Narrow verification used fixture homes/databases only. Initial pytest runs
+  failed on Windows private temporary-directory ACLs before assertions; the
+  worktree-only harness used inherited directory ACLs and local tempfile roots.
+  Original failures remain in task tool evidence. Doctor regression failures
+  exposed unsupported stdout assumptions, package SQL fixture access and parent
+  repository discovery; each was corrected with retained regression coverage.
+  Independent review also caught agy quoting, external reads, installer script
+  destinations and second-precision creation timestamps; fixes were verified.
+- Final narrow results: hook events 4, installed recall 12, MCP rollup 9,
+  session tracker 22, operational review 29 plus new alarms 14, doctor 20,
+  setup 39, Dreaming surfaces 9, public demo 2; runtime authority also passed
+  18 checks. Ruff passed on all changed Python files. An optional unchanged
+  CLI-subcommands run stopped after 17 completed cases without a suite result
+  because deduplication did not finish promptly; it is not claimed as passed.
+- Installation, real CLI hook trust/delivery, bulk merge gate and PR remain
+  lane work. No push, merge, live home changes or live database access occurred.
 
 ## Shipped in v4.6.0
 

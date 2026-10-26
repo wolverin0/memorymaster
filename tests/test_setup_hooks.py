@@ -31,6 +31,30 @@ from memorymaster.surfaces.setup_detect import Detected
 # ---------------------------------------------------------------------------
 
 
+def test_explicit_hook_targets_are_idempotent(tmp_path, monkeypatch):
+    claude, codex, scripts = (tmp_path / name for name in ("claude-target", "codex-target", "scripts"))
+    monkeypatch.setattr(sh, "PROJECT_ROOT", tmp_path / "project")
+    llm = {"provider": "none", "model": "", "api_key": ""}
+    for _ in range(2):
+        sh.install_hooks(llm, config_dir=claude)
+        sh.install_dream_hooks(install_claude=True, install_codex=True,
+                              claude_dir=claude, codex_dir=codex, hook_dir=scripts)
+    settings = json.loads((claude / "settings.json").read_text())
+    hooks = json.loads((codex / "hooks.json").read_text())
+    assert len(settings["hooks"]["SessionStart"]) == 1
+    assert len(hooks["hooks"]["Stop"]) == 1
+    # Current Codex HooksFile denies unknown fields such as commandWindows.
+    assert set(hooks["hooks"]["Stop"][0]["hooks"][0]) == {"type", "command", "timeout"}
+
+
+def test_explicit_dream_target_keeps_scripts_under_target(tmp_path, monkeypatch):
+    monkeypatch.setattr(sh, "HOME", tmp_path / "untouched-home")
+    target = tmp_path / "codex-target"
+    result = sh.install_dream_hooks(install_claude=False, install_codex=True, codex_dir=target)
+    assert Path(result["hook"]).parent == target / "hooks"
+    assert not sh.HOME.exists()
+
+
 def test_windows_placeholder_produces_valid_python_literal():
     import ast
     template = 'PROJECT_ROOT = "__MEMORYMASTER_PROJECT_ROOT__"'

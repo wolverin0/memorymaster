@@ -309,10 +309,11 @@ def _write_hook_template(dest, content):
     print(f"  Installed: {dest}")
 
 
-def install_hooks(llm_config, include_pretooluse: bool = False):
+def install_hooks(llm_config, include_pretooluse: bool = False, *, config_dir: Path | None = None):
     banner("Claude Code Hooks")
 
-    hooks_dir = CLAUDE_DIR / "hooks"
+    target_dir = Path(config_dir) if config_dir is not None else CLAUDE_DIR
+    hooks_dir = target_dir / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
 
     # Copy hook templates with placeholder replacement
@@ -324,7 +325,7 @@ def install_hooks(llm_config, include_pretooluse: bool = False):
 
     # Update settings.json with hooks config. A malformed pre-existing file is
     # backed up (never silently wiped) by _load_json_preserving.
-    settings_path = CLAUDE_DIR / "settings.json"
+    settings_path = target_dir / "settings.json"
     settings = _load_json_preserving(settings_path)
 
     # Add env vars
@@ -476,9 +477,17 @@ def _without_dream_hooks(
     ]
 
 
-def install_dream_hooks(*, install_claude: bool, install_codex: bool) -> dict[str, str]:
+def install_dream_hooks(*, install_claude: bool, install_codex: bool,
+                        claude_dir: Path | None = None, codex_dir: Path | None = None,
+                        hook_dir: Path | None = None) -> dict[str, str]:
     """Install quiet native Dreaming capture hooks without disturbing peers."""
-    hook_dir = HOME / ".memorymaster" / "hooks"
+    if hook_dir is not None:
+        hook_dir = Path(hook_dir)
+    elif codex_dir is not None or claude_dir is not None:
+        # An explicit config target must not silently write scripts to HOME.
+        hook_dir = Path(codex_dir if codex_dir is not None else claude_dir) / "hooks"
+    else:
+        hook_dir = HOME / ".memorymaster" / "hooks"
     hook_dir.mkdir(parents=True, exist_ok=True)
     destination = hook_dir / "memorymaster-dream-capture.py"
     template = (TEMPLATES_DIR / "hooks" / destination.name).read_text(encoding="utf-8")
@@ -491,7 +500,7 @@ def install_dream_hooks(*, install_claude: bool, install_codex: bool) -> dict[st
     )
     result: dict[str, str] = {"hook": str(destination)}
     if install_claude:
-        settings_path = CLAUDE_DIR / "settings.json"
+        settings_path = (Path(claude_dir) if claude_dir is not None else CLAUDE_DIR) / "settings.json"
         settings = _load_json_preserving(settings_path)
         hooks = settings.setdefault("hooks", {})
         command = f'"{PYTHON_EXE}" "{destination}" --provider claude'
@@ -507,14 +516,13 @@ def install_dream_hooks(*, install_claude: bool, install_codex: bool) -> dict[st
         settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
         result["claude"] = "installed"
     if install_codex:
-        hooks_path = CODEX_DIR / "hooks.json"
+        hooks_path = (Path(codex_dir) if codex_dir is not None else CODEX_DIR) / "hooks.json"
         config = _load_json_preserving(hooks_path)
         hooks = config.setdefault("hooks", {})
         command = f'"{PYTHON_EXE}" "{destination}" --provider codex'
         entry = {"hooks": [{
             "type": "command",
             "command": command,
-            "commandWindows": command,
             "timeout": 2,
         }]}
         hooks["Stop"] = _without_dream_hooks(hooks.setdefault("Stop", []))
