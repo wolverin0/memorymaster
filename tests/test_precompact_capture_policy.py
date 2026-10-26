@@ -20,6 +20,9 @@ def _run_hook(tmp_path: Path, *, maximum: bool) -> subprocess.CompletedProcess[s
         env["MEMORYMASTER_PRECOMPACT_BLOCKING"] = "1"
     else:
         env.pop("MEMORYMASTER_PRECOMPACT_BLOCKING", None)
+    # "default" means neither flag: the live host exports MEMORYMASTER_PRECOMPACT_RESIDUAL=1
+    # and it leaked into this test on 2026-10-25 (bulk gate), making it write the residual.
+    env.pop("MEMORYMASTER_PRECOMPACT_RESIDUAL", None)
     return subprocess.run(
         [sys.executable, str(hook)],
         input=json.dumps({"session_id": "precompact-policy"}),
