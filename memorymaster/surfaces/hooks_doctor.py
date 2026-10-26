@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import tempfile
@@ -86,8 +87,6 @@ def _commands(config: dict, cli: str):
                 for handler in entry.get("hooks", [entry]):
                     if not isinstance(handler, dict):
                         continue
-                    if cli == "codex" and "commandWindows" in handler:
-                        raise ValueError("Codex denies the commandWindows field")
                     command = handler.get("commandWindows") if os.name == "nt" else None
                     command = command or handler.get("command", "")
                     if isinstance(command, str) and "memorymaster" in command.lower():
@@ -101,7 +100,19 @@ def _probe(cli: str, event: str, command: str, timeout) -> dict:
         if cli == "agy" and any(char in command for char in ('"', "'")):
             result["detail"] = "agy command splitting does not remove quotes; use a space-free command/module adapter"
             return result
-        parts = shlex.split(command, posix=os.name != "nt")
+        prefixes = ("cmd.exe /d /v:off /s /c ", "cmd.exe /d /s /c ")
+        prefix = next((item for item in prefixes if command.lower().startswith(item)), None)
+        if cli == "codex" and os.name == "nt" and prefix is not None:
+            wrapped = command[len(prefix):]
+            if not (wrapped.startswith('"') and wrapped.endswith('"')):
+                result["detail"] = "unsupported Windows Codex command wrapper"
+                return result
+            # Codex passes this whole string to cmd.exe /C. Parse only the
+            # installer's known wrapper, then keep the Python allowlist below.
+            wrapped = re.sub(r"\^([&|<>^()])", r"\1", wrapped[1:-1])
+            parts = shlex.split(wrapped, posix=True)
+        else:
+            parts = shlex.split(command, posix=os.name != "nt")
         parts = [part[1:-1] if part.startswith('"') and part.endswith('"') else part for part in parts]
         if (len(parts) < 2 or not Path(parts[0]).stem.lower().startswith("python")
                 or any(part in {"&&", "||", ";", "|", ">", "&"} for part in parts)
