@@ -1,4 +1,4 @@
-"""Fast transcript adapters used by Codex and Claude lifecycle hooks."""
+"""Fast transcript adapters used by agent lifecycle hooks."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Mapping
 
 from memorymaster.core.capture_control import CaptureLedger
@@ -123,17 +123,87 @@ def _scope(cwd: str | None) -> str | None:
     return resolve_transcript_workspace_scope(cwd)
 
 
+def _capture_agy_transcript(
+    transcript_path: str | Path, *, session_id: str, cwd: str | None,
+    ledger: DreamLedger, record_source_mtime: bool, live_workspace: bool,
+) -> dict[str, Any]:
+    # agy_source shares our sanitizer; keep this import lazy to avoid a cycle.
+    from memorymaster.dreaming.agy_source import AgySourceError, iter_agy_records
+
+    scope = scope_from_cwd(cwd) if live_workspace and cwd else _scope(cwd)
+    if scope is None or scope == "global":
+        return {"queued": 0, "reason": "unresolved_scope"}
+    session_hash = hashlib.sha256((session_id or "unknown").encode("utf-8", errors="replace")).hexdigest()
+    path = Path(transcript_path)
+    try:
+        stat = path.stat()
+        full = path.with_name("transcript_full.jsonl")
+        full_end = full.stat().st_size if full.is_file() else 0
+        # Replay the bounded latest-step view, including its filtering state.
+        # A byte-only cursor would miss edits to old steps or full replacements.
+        records = list(iter_agy_records(path, frozen_end=stat.st_size, full_frozen_end=full_end))
+    except (AgySourceError, OSError, ValueError, UnicodeError):
+        return {"queued": 0, "reason": "invalid_transcript"}
+    if not records:
+        return {"queued": 0, "reason": "no_conversation"}
+    if len(records) < 2:
+        # The worker requires two turns. Leave fingerprints untouched so a
+        # later Stop can capture the first turn together with its response.
+        return {"queued": 0, "reason": "insufficient_turns"}
+
+    state_key = f"agy-revisions:{session_hash}:{scope}"
+    state = ledger.scan_state(state_key)
+    previous = state[1] if state else frozenset()
+    # At most one digest per eligible step, bounded by agy_source.MAX_STEPS.
+    # Never persist raw source text or workspace paths in scan bookkeeping.
+    fingerprints = [
+        f"{record.step_index}:" + hashlib.sha256(
+            json.dumps(record.message.to_dict(), sort_keys=True).encode("utf-8"),
+        ).hexdigest()
+        for record in records
+    ]
+    changed = [record for record, fingerprint in zip(records, fingerprints) if fingerprint not in previous]
+    if not changed:
+        return {"queued": 0, "reason": "no_increment"}
+    selected = changed
+    if len(changed) == 1:
+        # One revision alone cannot pass the worker's two-turn gate. Put its
+        # nearest authored context first so tail packing retains the revision.
+        index = records.index(changed[0])
+        context = records[index - 1] if index else records[1]
+        selected = [context, changed[0]]
+    messages = tuple(record.message for record in selected)
+    content_hash = hashlib.sha256(json.dumps([m.to_dict() for m in messages], sort_keys=True).encode("utf-8")).hexdigest()
+    envelope = CaptureEnvelope(
+        provider="antigravity", session_hash=session_hash, scope=scope, captured_at=_now(),
+        last_activity_at=messages[-1].timestamp or _now(), messages=messages,
+        cursor_start=min(record.start_offset for record in selected),
+        cursor_end=max(record.end_offset for record in selected), content_hash=content_hash,
+    )
+    # Coalescing deduplicates by message ID and would discard revised steps.
+    # Enqueue before the watermark: interrupted replay has the same capture key.
+    capture_id = ledger.enqueue(envelope, coalesce=False)
+    ledger.set_scan_watermark(state_key, stat.st_mtime, fingerprints)
+    ledger.record_source_mtime(capture_id, stat.st_mtime, only_if_set=not record_source_mtime)
+    return {"queued": 1, "capture_id": capture_id, "messages": len(messages)}
+
+
 def capture_transcript(
     transcript_path: str | Path, *, provider: str, session_id: str, cwd: str | None, ledger: DreamLedger,
     record_source_mtime: bool = False,
     live_workspace: bool = False,
 ) -> dict[str, Any]:
-    """Queue the new bytes of a transcript.
+    """Queue new transcript evidence (one envelope per changed batch).
 
     ``record_source_mtime`` is the beat scan's: it sets the capture's source mtime. Lifecycle hooks
     leave it off, so they never create beat data (an inactive beat stays invisible to the review);
     they only refresh a source mtime the beat already set when they coalesce into that capture.
     """
+    if provider.lower() == "antigravity":
+        return _capture_agy_transcript(
+            transcript_path, session_id=session_id, cwd=cwd, ledger=ledger,
+            record_source_mtime=record_source_mtime, live_workspace=live_workspace,
+        )
     session_hash = hashlib.sha256((session_id or "unknown").encode("utf-8", errors="replace")).hexdigest()
     try:
         source_mtime: float | None = Path(transcript_path).stat().st_mtime  # before the read: never newer than the bytes
@@ -179,6 +249,25 @@ def capture_transcript(
 
 
 def capture_hook_payload(payload: dict[str, Any], *, provider: str, ledger: DreamLedger) -> dict[str, Any]:
+    if provider.lower() == "antigravity":
+        workspaces = payload.get("workspacePaths")
+        if not isinstance(workspaces, list) or len(workspaces) != 1:
+            return {"queued": 0, "reason": "unresolved_scope"}
+        cwd = workspaces[0]
+        if not isinstance(cwd, str) or not cwd.strip() or not (
+            PureWindowsPath(cwd).is_absolute() or PurePosixPath(cwd).is_absolute()
+        ):
+            return {"queued": 0, "reason": "unresolved_scope"}
+        transcript_path = payload.get("transcriptPath")
+        if not isinstance(transcript_path, str) or not transcript_path.strip():
+            return {"queued": 0, "reason": "no_transcript"}
+        session_id = payload.get("conversationId")
+        if not isinstance(session_id, str) or not session_id.strip():
+            return {"queued": 0, "reason": "no_session"}
+        return capture_transcript(
+            transcript_path, provider="antigravity", session_id=session_id,
+            cwd=cwd, ledger=ledger, live_workspace=True,
+        )
     transcript_path = str(payload.get("transcript_path") or "")
     if not transcript_path:
         return {"queued": 0, "reason": "no_transcript"}
