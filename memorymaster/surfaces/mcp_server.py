@@ -405,12 +405,15 @@ def _mcp_client_identity() -> tuple[str, str]:
 
 
 def _mcp_source_agent(explicit: str = "") -> str:
-    """Keep trusted team attribution; otherwise prefer the initialized client."""
+    """Preserve the claim author; use transport identity only when omitted."""
+    author = _empty_to_none(explicit)
+    if author is not None:
+        return author
     context = current_request_context()
     if context is not None and context.mode is AuthMode.TEAM:
         return context.principal
     client, _ = _mcp_client_identity()
-    return client if client != "mcp-session" else (explicit or "mcp-session")
+    return client
 
 
 def _bind_telemetry_session(
@@ -432,7 +435,9 @@ def _bind_telemetry_session(
         if not Path(db_path).is_file():
             return
         client, token = client_identity if client_identity is not None else _mcp_client_identity()
-        source = client if client != "mcp-session" else principal
+        known_source = getattr(svc, "source_agent", None)
+        fallback = known_source if known_source not in {None, "", "unknown", "mcp-session"} else principal
+        source = client if client not in {"", "unknown", "mcp-session"} else fallback
         session_key = (db_path, principal, tenant_id or "", token)
         with _TELEMETRY_SESSION_LOCK:
             sid = _TELEMETRY_SESSION_IDS.get(session_key)
@@ -442,7 +447,7 @@ def _bind_telemetry_session(
                 sid = SessionTracker(db_path, create=False).start_session(source)
                 _TELEMETRY_SESSION_IDS[session_key] = sid
         svc.session_id = sid
-        if not getattr(svc, "source_agent", None):
+        if getattr(svc, "source_agent", None) in {None, "", "unknown", "mcp-session"}:
             svc.source_agent = source
     except Exception:
         pass
@@ -478,8 +483,9 @@ def _service(db: str, workspace: str, *, read_only: bool = False) -> MemoryServi
     )
     identity = _mcp_client_identity()
     svc._telemetry_binding = (db_path, principal, tenant_id, identity)
+    # Service counters follow the transport, independently of claim authors.
+    svc.source_agent = identity[0] if identity[0] not in {"", "unknown", "mcp-session"} else principal
     _bind_telemetry_session(svc, db_path, principal, tenant_id, client_identity=identity)
-    svc.source_agent = _mcp_source_agent(principal)
     return svc
 
 
@@ -1457,6 +1463,8 @@ if FastMCP is not None:
 
         `sources_json` is a JSON array of `source|locator|excerpt` strings.
         `source_agent` identifies who created this claim (e.g. "claude-session", "codex-session").
+        An explicit author is preserved. If omitted or blank, use initialize
+        clientInfo.name; calls outside an MCP session use "mcp-session".
         `holder` (takes_vs_facts): who holds this belief (e.g. a person/team/agent).
         Omit for holder-agnostic facts. The belief TYPE (take/fact/bet/hunch)
         rides on `claim_type`.
@@ -1491,7 +1499,8 @@ if FastMCP is not None:
         if isinstance(request, dict):
             return request
 
-        rate_limit_error = _check_ingest_rate_limit(request.source_agent)
+        effective_source = _mcp_source_agent(request.source_agent)
+        rate_limit_error = _check_ingest_rate_limit(effective_source)
         if rate_limit_error is not None:
             return rate_limit_error
 
@@ -1505,8 +1514,6 @@ if FastMCP is not None:
             return _structured_error(str(exc), "VALIDATION_ERROR", "sources_json")
         if not citations:
             citations = [CitationInput(source="mcp-session", locator=request.scope or "project")]
-        # Auto-detect source_agent if not provided
-        effective_source = _mcp_source_agent(request.source_agent)
         svc = _service(request.db, request.workspace)
         try:
             claim = svc.ingest(

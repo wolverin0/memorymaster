@@ -80,6 +80,21 @@ def test_per_agent_isolation(mcp_db, fake_clock: FakeClock) -> None:
     assert agent_b_result["ok"] is True
 
 
+@pytest.mark.parametrize("source_agent", ["claude-session", "", "   "])
+def test_rate_limit_uses_stored_author_with_bound_client(mcp_db, fake_clock, monkeypatch, source_agent):
+    db_path, workspace = mcp_db
+    monkeypatch.setenv("MM_INGEST_RATE_LIMIT_PER_MIN", "1")
+    monkeypatch.setattr(mcp_server, "_mcp_client_identity", lambda: ("codex", "rate-author"))
+    expected_author = source_agent.strip() or "codex"
+
+    first = _ingest(0, db_path, workspace, source_agent)
+    second = _ingest(1, db_path, workspace, expected_author)
+
+    assert first["ok"] is True
+    assert first["claim"]["source_agent"] == expected_author
+    assert second["code"] == "RATE_LIMITED"
+
+
 def test_refill(mcp_db, fake_clock: FakeClock) -> None:
     db_path, workspace = mcp_db
     for i in range(60):
