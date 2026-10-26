@@ -37,7 +37,7 @@ childProcess.spawn=(python,args,options)=>{
     const argv=[args[1].replaceAll(".","/")+".py",...args.slice(2)];
     appendFileSync(process.env.TEST_HOOK_TRACE,JSON.stringify({argv,payload,options,python})+"\\n");
     timer=setTimeout(()=>{
-      if (args[1].endsWith("hook_recall")) child.stdout.emit("data","[MemoryMaster recall]\\n- [mm-42] "+payload.prompt);
+      if (args[1].endsWith("hook_recall")) child.stdout.emit("data",("[MemoryMaster recall]\\n- [mm-42] "+payload.prompt).replaceAll("\\n",process.env.TEST_RECALL_EOL??"\\n"));
       child.emit("close",0);
     },args[1].endsWith("hook_recall") ? Number(process.env.TEST_RECALL_SLEEP??0)*1000 : 0);
   };
@@ -177,6 +177,21 @@ await context(foreign,"foreign");
     assert [row["payload"] for row in captures] == [{"session_id": "ses_1", "cwd": "/fixture/project"}]
     assert len(receipts) == 2
     assert all(row["argv"][1:] == ["--cli", "opencode", "--event", "injection", "--count", "1"] for row in receipts)
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_plugin_normalizes_windows_crlf_recall_output(plugin, monkeypatch, version):
+    # Windows Python text stdout emits CRLF; the prefix check must still match (T-1808).
+    monkeypatch.setenv("TEST_RECALL_EOL", "\r\n")
+    init = V1_INIT if version == 1 else V2_INIT
+    ending = "" if version == 1 else "release(); await cleanup();"
+    output, _ = plugin(version, init + '''
+await prompt("msg_1", "Why did we choose SQLite?");
+const system = [];
+await context(system);
+''' + ending + 'console.log(JSON.stringify({system}));')
+    text = output["system"][0] if version == 1 else output["system"][0]["text"]
+    assert text == "[MemoryMaster recall]\n- [mm-42] Why did we choose SQLite?"
 
 
 @pytest.mark.parametrize("version", [1, 2])
