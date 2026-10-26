@@ -79,9 +79,22 @@ def bind_source(candidate: DreamCandidate, row: dict, *, max_chars: int = MAX_SO
     safe = safe_context(context)
     complete = bool(messages)
     if len(json.dumps(safe, ensure_ascii=False)) > max_chars:
-        # Never silently drop later corrections and then allow acceptance.
+        evidence_index = next((i for i, m in enumerate(messages)
+                               if m["message_id"] == candidate.evidence_message_id), None)
+        full_messages = safe["messages"]
         safe["messages"] = []
         complete = False
+        if evidence_index is not None:
+            window = {**safe, "messages": full_messages[evidence_index:], "omitted_before": evidence_index}
+            # The evidence and every later correction must fit together.
+            if len(json.dumps(window, ensure_ascii=False)) <= max_chars:
+                safe = window
+                complete = True
+                for start in range(evidence_index - 1, -1, -1):
+                    window = {**safe, "messages": full_messages[start:], "omitted_before": start}
+                    if len(json.dumps(window, ensure_ascii=False)) > max_chars:
+                        break
+                    safe = window
     evidence = next((m for m in messages if m["message_id"] == candidate.evidence_message_id), None)
     exact = bool(evidence and candidate.evidence_quote and candidate.evidence_quote in evidence["text"])
     return SourceCandidate(**candidate.to_dict(), source_context={
