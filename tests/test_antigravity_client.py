@@ -155,6 +155,8 @@ def test_batch_call_uses_isolated_profile_and_preserves_environment(
 
     assert captured["env"]["USERPROFILE"] == str(batch_home)
     assert captured["env"]["HOME"] == str(batch_home)
+    assert captured["env"]["MEMORYMASTER_AGY_HOOK_INTERNAL"] == "1"
+    assert captured["env"]["AGY_BATCH_PROFILE"] == "memorymaster"
     assert batch_home.is_dir()
     assert captured["env"]["PATH"] == "sentinel-path"
     assert captured["env"]["T1291_SENTINEL"] == "kept"

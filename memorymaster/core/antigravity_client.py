@@ -155,6 +155,10 @@ class AntigravityClient:
         env = dict(os.environ)
         env["USERPROFILE"] = str(batch_home)
         env["HOME"] = str(batch_home)
+        # Dream extraction and compiled profiles must never recall/capture
+        # themselves if hooks are installed in an isolated batch profile.
+        env["MEMORYMASTER_AGY_HOOK_INTERNAL"] = "1"
+        env["AGY_BATCH_PROFILE"] = "memorymaster"
         try:
             completed = self.runner(command, payload, self.timeout, self.work_dir, env)
         except subprocess.TimeoutExpired as exc:
