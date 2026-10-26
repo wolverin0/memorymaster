@@ -478,7 +478,7 @@ def _without_dream_hooks(
 
 
 def install_opencode_hooks(
-    config_dir: str | Path, *, version: int = 1,
+    config_dir: str | Path, *, version: int = 2,
     project_root: str | Path | None = None, python_exe: str | None = None,
 ) -> dict[str, str]:
     """Install one OpenCode generation into an explicit target, preserving peer config.
@@ -565,6 +565,28 @@ def install_dream_hooks(*, install_claude: bool, install_codex: bool,
     return result
 
 
+def _codex_recall_command(python_exe: str, destination: Path, event: str) -> str:
+    """Avoid a leading quoted executable in Codex's Windows command shell."""
+    if not IS_WINDOWS:
+        return f'"{python_exe}" "{destination}" --event {event}'
+    python_path = str(python_exe).replace("\\", "/")
+    script_path = str(destination).replace("\\", "/")
+    if "%" in python_path + script_path:
+        raise ValueError("Codex Windows hook paths cannot contain percent signs")
+    shell_meta = "&|<>^()!"
+    if any(char.isspace() or char in shell_meta for char in python_path + script_path):
+        # cmd /s strips the outer pair of quotes, leaving each path quoted.
+        # The explicit shell also keeps Codex's first executable unquoted and
+        # protects shell metacharacters in paths without whitespace. Caret
+        # escapes survive the outer Codex cmd /C and are consumed by the inner
+        # shell; /v:off keeps exclamation marks literal.
+        escape = str.maketrans({char: f"^{char}" for char in "&|<>^()"})
+        python_path = python_path.translate(escape)
+        script_path = script_path.translate(escape)
+        return f'cmd.exe /d /v:off /s /c ""{python_path}" "{script_path}" --event {event}"'
+    return f"{python_path} {script_path} --event {event}"
+
+
 def install_codex_recall_hooks(
     *, codex_dir: Path, project_root: Path | None = None, data_root: Path | None = None
 ) -> dict[str, str]:
@@ -610,13 +632,14 @@ def install_codex_recall_hooks(
             elif peers:
                 kept.append({**entry, "hooks": peers})
         entries[:] = kept
-        command = f'"{PYTHON_EXE}" "{destination}" --event {event}'
+        command = _codex_recall_command(PYTHON_EXE, destination, event)
         entries.append(
             {
                 "hooks": [
                     {
                         "type": "command",
                         "command": command,
+                        "commandWindows": command,
                         "timeout": 8,
                     }
                 ]
@@ -1451,7 +1474,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("-y", "--yes", action="store_true", help="non-interactive; accept all defaults")
     p.add_argument("--opencode-config-dir", type=Path, help="install only OpenCode hooks into this explicit directory")
-    p.add_argument("--opencode-version", type=int, choices=(1, 2), default=1, help="OpenCode plugin API generation")
+    p.add_argument(
+        "--opencode-version", type=int, choices=(1, 2), default=2,
+        help="OpenCode plugin API generation (default: native v2; use 1 for legacy)",
+    )
     p.add_argument(
         "--profile",
         choices=tuple(SETUP_PROFILES),

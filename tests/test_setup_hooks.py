@@ -44,10 +44,14 @@ def test_explicit_hook_targets_are_idempotent(tmp_path, monkeypatch):
     hooks = json.loads((codex / "hooks.json").read_text())
     assert len(settings["hooks"]["SessionStart"]) == 1
     assert len(hooks["hooks"]["Stop"]) == 1
-    # Current Codex HooksFile denies unknown fields such as commandWindows.
     for event in ("Stop", "SessionStart", "UserPromptSubmit"):
         assert len(hooks["hooks"][event]) == 1
-        assert set(hooks["hooks"][event][0]["hooks"][0]) == {"type", "command", "timeout"}
+        handler = hooks["hooks"][event][0]["hooks"][0]
+        expected = {"type", "command", "timeout"}
+        if event != "Stop":
+            expected.add("commandWindows")
+            assert handler["commandWindows"] == handler["command"]
+        assert set(handler) == expected
 
 
 def test_explicit_dream_target_keeps_scripts_under_target(tmp_path, monkeypatch):
@@ -69,7 +73,11 @@ def test_opencode_install_is_explicit_idempotent_and_preserves_peers(tmp_path, v
     before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in target.rglob("*") if path.is_file()}
     assert sh.install_opencode_hooks(target, version=version, project_root=tmp_path, python_exe="python") == first
     assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}
-    assert ("experimental.chat.system.transform" if version == 1 else 'hook("context"') in plugin.read_text()
+    if version == 1:
+        assert "experimental.chat.system.transform" in plugin.read_text()
+    else:
+        assert 'setup: setupV2' in plugin.read_text()
+        assert 'hook("context"' in (target / "memorymaster" / "runtime.mjs").read_text()
     assert len(list((target / "plugins").iterdir())) == 1
     assert config.read_text() == '{/* preserve comments */ "plugins": ["peer"]}'
 
@@ -124,7 +132,8 @@ def test_explicit_codex_recall_install_preserves_native_capture(hermetic_home):
     for event in ("SessionStart", "UserPromptSubmit"):
         assert len(config["hooks"][event]) == 1
         command = config["hooks"][event][0]["hooks"][0]
-        assert set(command) == {"type", "command", "timeout"}
+        assert set(command) == {"type", "command", "commandWindows", "timeout"}
+        assert command["commandWindows"] == command["command"]
         assert f"--event {event}" in command["command"]
 
 

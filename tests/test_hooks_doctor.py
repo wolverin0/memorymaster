@@ -98,13 +98,35 @@ def test_agy_probe_uses_camelcase_payload_and_injectsteps(tmp_path, monkeypatch)
     assert report["status"] == "PASS" and report["injected"]
 
 
-def test_invalid_codex_handler_cannot_get_a_false_pass(tmp_path):
-    folder = _install_command(tmp_path, "codex", "SessionStart", "print('memory')")
-    path = folder / "hooks.json"
-    config = json.loads(path.read_text())
-    config["hooks"]["SessionStart"][0]["hooks"][0]["commandWindows"] = "python memorymaster.py"
-    path.write_text(json.dumps(config))
-    assert hd.doctor({"codex": folder})["status"] == "FAIL"
+def test_codex_windows_override_is_probed(tmp_path, monkeypatch):
+    folder = tmp_path / "codex config with spaces"
+    setup_hooks.install_codex_recall_hooks(
+        codex_dir=folder, project_root=tmp_path, data_root=tmp_path,
+    )
+    config = json.loads((folder / "hooks.json").read_text())
+    windows_command = config["hooks"]["SessionStart"][0]["hooks"][0]["commandWindows"]
+    assert windows_command == config["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+
+    def run_probe(command, **kwargs):
+        invocation = json.loads(command[3])
+        event = json.loads(kwargs["input"])["hook_event_name"]
+        assert command[0].replace("\\", "/") == sys.executable.replace("\\", "/")
+        assert command[1:3] == ["-m", "memorymaster.surfaces.hook_probe"]
+        assert invocation["args"] == [
+            str((folder / "hooks" / "memorymaster-codex-recall.py").resolve()),
+            "--event", event,
+        ]
+        output = json.dumps({"hookSpecificOutput": {
+            "hookEventName": event, "additionalContext": "fixture memory",
+        }})
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr(hd.subprocess, "run", run_probe)
+    monkeypatch.setattr(hd.os, "name", "nt")
+    report = hd.doctor({"codex": folder})
+    assert report["status"] == "PASS", report
+    assert report["checks"][0]["command"] == windows_command
+    assert report["checks"][0]["injected"]
 
 
 def test_codex_inline_hooks_are_probed(tmp_path):

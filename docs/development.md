@@ -1,4 +1,4 @@
-<!-- doc-head: scoped development and verification for MemoryMaster -->
+<!-- doc-head: scoped verification, Windows Codex command forms and positional hook trust -->
 # Development guidance
 Covers: local setup, disposable checks, Codex code/data roots and trust, runtime evidence and code navigation.
 Key terms: source versus installed runtime, risk-based tests, SQLite, agent instructions.
@@ -67,6 +67,20 @@ results and errors produce no stdout/stderr and exit zero. Internal Codex
 extractors/workers must inherit `MEMORYMASTER_INTERNAL_CODEX=1` or
 `MEMORYMASTER_INTERNAL_RUN=1`; both events then skip before reading stdin.
 
+On Windows the recall installer writes the same `command` and `commandWindows`.
+Paths use forward slashes. When neither path contains whitespace or Windows
+shell metacharacters, the command is
+`<python.exe> <memorymaster-codex-recall.py> --event <event>` with no quotes.
+For paths that need shell quoting it uses
+`cmd.exe /d /v:off /s /c ""<python.exe>" "<memorymaster-codex-recall.py>" --event <event>"`.
+The leading executable remains unquoted and the nested shell preserves the
+quoted paths and stdin. Paths containing a literal percent sign are rejected
+because `cmd.exe` expands `%NAME%` even inside quotes. This follows the Windows `cmd /C` execution in
+[Codex 0.164.0's command runner](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/hooks/src/engine/command_runner.rs).
+A command starting directly with a quoted Python executable failed to launch
+in the operator's real CLI test (T-1806). The [hook reference](https://learn.chatgpt.com/docs/hooks)
+documents `commandWindows` as the Windows-only override.
+
 Successful injections append `{ts, cli, event, count}` JSONL through
 `append_hook_event('codex', event, count)`. `count` measures claim citation
 bullets in the delivered text, after capping. A profile/activity-only injection
@@ -79,6 +93,19 @@ current definition hash. Installation does not grant persistent trust. For a
 lane that has vetted every enabled hook, the documented non-interactive route
 is `--dangerously-bypass-hook-trust`, effective only for that invocation. It
 does not disable the command sandbox or grant persistent hook trust.
+
+A persistent session without that bypass needs each installed hook trusted once
+through `/hooks`. Codex stores `trusted_hash` in `config.toml` under
+`[hooks.state.'<hooks.json path>:<event>:<group>:<hook>']`; events in these keys
+use snake case, for example `session_start` and `user_prompt_submit`. Group and
+hook positions are zero based. Moving a handler or changing its definition can
+require another review. The installer preserves peer handlers but never writes
+trust state or synthesizes hashes. The official hook and CLI references and
+installed `codex exec --help` expose no supported non-interactive command for
+granting persistent trust; the supported automation flag only bypasses review
+for that invocation. The state-key construction is explicit in
+[Codex's hook_key](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/hooks/src/lib.rs); the trust hash is persisted by the
+[interactive hook review](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/tui/src/hooks_rpc.rs).
 
 After the lane installs into its real CLI config, run this exact command from
 the checkout (with the internal-run markers absent):
