@@ -31,6 +31,52 @@ from memorymaster.surfaces.setup_detect import Detected
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("version", [1, 2])
+def test_opencode_install_is_explicit_idempotent_and_preserves_peers(tmp_path, version):
+    target = tmp_path / "opencode"
+    target.mkdir()
+    config = target / "opencode.jsonc"
+    config.write_text('{/* preserve comments */ "plugins": ["peer"]}', encoding="utf-8")
+    first = sh.install_opencode_hooks(target, version=version, project_root=tmp_path, python_exe="python")
+    plugin = target / "plugins" / "memorymaster.js"
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in target.rglob("*") if path.is_file()}
+    assert sh.install_opencode_hooks(target, version=version, project_root=tmp_path, python_exe="python") == first
+    assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}
+    assert ("experimental.chat.system.transform" if version == 1 else 'hook("context"') in plugin.read_text()
+    assert len(list((target / "plugins").iterdir())) == 1
+    assert config.read_text() == '{/* preserve comments */ "plugins": ["peer"]}'
+
+
+def test_opencode_standalone_setup_never_runs_home_detection(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sh, "detect_environment", lambda **kw: pytest.fail("must not inspect home"))
+    assert sh.main(["--opencode-config-dir", str(tmp_path / "config"), "--opencode-version", "2", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["opencode"] == "installed"
+
+
+def test_opencode_unmanaged_collision_is_preserved(tmp_path):
+    plugin = tmp_path / "plugins" / "memorymaster.js"
+    plugin.parent.mkdir()
+    plugin.write_text("// hand authored peer", encoding="utf-8")
+    with pytest.raises(ValueError, match="unmanaged"):
+        sh.install_opencode_hooks(tmp_path)
+    assert plugin.read_text() == "// hand authored peer"
+    assert not (tmp_path / "memorymaster").exists()
+
+
+def test_opencode_verify_only_never_installs(tmp_path, capsys):
+    target = tmp_path / "config"
+    assert sh.main(["--opencode-config-dir", str(target), "--verify-only", "--json"]) == 2
+    assert "--verify-only" in json.loads(capsys.readouterr().out)["error"]
+    assert not target.exists()
+
+
+def test_opencode_dry_run_never_installs(tmp_path, capsys):
+    target = tmp_path / "config"
+    assert sh.main(["--opencode-config-dir", str(target), "--dry-run", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["dry_run"] is True
+    assert not target.exists()
+
+
 def test_windows_placeholder_produces_valid_python_literal():
     import ast
     template = 'PROJECT_ROOT = "__MEMORYMASTER_PROJECT_ROOT__"'
