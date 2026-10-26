@@ -91,40 +91,45 @@ def build(args: argparse.Namespace) -> None:
     if len(chunks) < 100:
         raise SystemExit("fewer than 100 usable recent transcript chunks")
     random.Random(args.seed).shuffle(chunks)
-    sample = chunks[:min(50, len(chunks))]
-    payload = [{"sid": c["sid"], "first": c["first"], "last": c["last"], "text": c["text"][:5000]} for c in sample]
-    prompt = ("Create 40 useful future-agent questions from this JSON. Return only a JSON array. "
-              "Every object must have question, answer, evidence_sid, evidence_message_index, category. "
-              "Evidence index must be one of the supplied JSONL line indexes and directly support answer. "
-              "Use category single-fact or relational. Exclude secrets, credentials, IPs, personal names/paths, "
-              "and anything not safe for a public repository. Prefer durable decisions, causes and gotchas.\n" + json.dumps(payload))
-    output = _call([args.opencode, "run", "--standalone", "--format", "json", "-m", args.candidate_model], prompt, timeout=1200)
-    # OpenCode JSON mode may emit JSON event lines; accept a direct array or the final text payload.
-    try:
-        candidates = json.loads(output)
-    except json.JSONDecodeError:
-        events = [json.loads(line) for line in output.splitlines() if line.lstrip().startswith("{")]
-        texts = [e.get("text") or e.get("part", {}).get("text", "") for e in events]
-        candidates = json.loads(next((t for t in reversed(texts) if t.strip().startswith("[")), "[]"))
     paths = {_transcript_id(p, root): p for p in root.glob("*/*.jsonl")}
-    source = {(c["sid"], ix): body for c in sample for ix, _, body in _records(paths[c["sid"]])}
     approved = []
-    for item in candidates:
+    seen: set[str] = set()
+    for start in range(0, min(len(chunks), 5 * 50), 50):  # up to 5 disjoint batches
+        if len(approved) >= 40:
+            break
+        sample = chunks[start:start + 50]
+        payload = [{"sid": c["sid"], "first": c["first"], "last": c["last"], "text": c["text"][:5000]} for c in sample]
+        prompt = ("Create 40 useful future-agent questions from this JSON. Return only a JSON array. "
+                  "Every object must have question, answer, evidence_sid, evidence_message_index, category. "
+                  "Evidence index must be one of the supplied JSONL line indexes and directly support answer. "
+                  "Use category single-fact or relational. Exclude secrets, credentials, IPs, personal names/paths, "
+                  "and anything not safe for a public repository. Prefer durable decisions, causes and gotchas.\n" + json.dumps(payload))
+        output = _call([args.opencode, "run", "--standalone", "--format", "json", "-m", args.candidate_model], prompt, timeout=1200)
+        # OpenCode JSON mode may emit JSON event lines; accept a direct array or the final text payload.
         try:
-            sid, ix = str(item["evidence_sid"]), int(item["evidence_message_index"])
-            q, answer = _clean(str(item["question"])), _clean(str(item["answer"]))
-            evidence = source.get((sid, ix), "")
-            if not evidence or len(q) < 12 or len(answer) < 3 or SECRET.search(q + answer):
+            candidates = json.loads(output)
+        except json.JSONDecodeError:
+            events = [json.loads(line) for line in output.splitlines() if line.lstrip().startswith("{")]
+            texts = [e.get("text") or e.get("part", {}).get("text", "") for e in events]
+            candidates = json.loads(next((t for t in reversed(texts) if t.strip().startswith("[")), "[]"))
+        source = {(c["sid"], ix): body for c in sample for ix, _, body in _records(paths[c["sid"]])}
+        for item in candidates:
+            try:
+                sid, ix = str(item["evidence_sid"]), int(item["evidence_message_index"])
+                q, answer = _clean(str(item["question"])), _clean(str(item["answer"]))
+                evidence = source.get((sid, ix), "")
+                if not evidence or q.lower() in seen or len(q) < 12 or len(answer) < 3 or SECRET.search(q + answer):
+                    continue
+                # Candidate must quote no invented answer: require meaningful answer-token support.
+                words = {w.lower() for w in re.findall(r"[A-Za-z0-9_-]{4,}", answer)}
+                if len(words & {w.lower() for w in re.findall(r"[A-Za-z0-9_-]{4,}", evidence)}) < min(2, len(words)):
+                    continue
+                seen.add(q.lower())
+                approved.append({"id": f"q{len(approved)+1:02}", "question": q, "answer": answer,
+                                 "category": item["category"] if item["category"] in {"single-fact", "relational"} else "single-fact",
+                                 "evidence": {"session": sid, "message_index": ix}})
+            except (KeyError, TypeError, ValueError):
                 continue
-            # Candidate must quote no invented answer: require meaningful answer-token support.
-            words = {w.lower() for w in re.findall(r"[A-Za-z0-9_-]{4,}", answer)}
-            if len(words & {w.lower() for w in re.findall(r"[A-Za-z0-9_-]{4,}", evidence)}) < min(2, len(words)):
-                continue
-            approved.append({"id": f"q{len(approved)+1:02}", "question": q, "answer": answer,
-                             "category": item["category"] if item["category"] in {"single-fact", "relational"} else "single-fact",
-                             "evidence": {"session": sid, "message_index": ix}})
-        except (KeyError, TypeError, ValueError):
-            continue
     if len(approved) < 30:
         raise SystemExit(f"only {len(approved)} candidates passed source and privacy checks; curate more")
     args.out.parent.mkdir(parents=True, exist_ok=True)
