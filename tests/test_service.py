@@ -1,8 +1,23 @@
 import pytest
+from types import SimpleNamespace
 
+from memorymaster.core import observability
 from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
+
+
+def test_bound_recall_activity_cannot_recreate_database(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMORYMASTER_DB_RETRIES", "0")
+    db = tmp_path / "removed-after-session-binding.db"
+    service = MemoryService.__new__(MemoryService)
+    service.store = SimpleNamespace(db_path=db)
+    service.session_id = 1
+    service.source_agent = "missing-db-client"
+    before = observability.metric_value("recalls_queried_total", source_agent=service.source_agent)
+    service._emit_recall_telemetry()
+    assert observability.metric_value("recalls_queried_total", source_agent=service.source_agent) == before + 1
+    assert not db.exists()
 
 
 @pytest.fixture

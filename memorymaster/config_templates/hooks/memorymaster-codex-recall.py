@@ -36,6 +36,12 @@ def main(event: str) -> int:
             return 0
         if any(key in data and not isinstance(data[key], str) for key in ("cwd", "prompt", "session_id")):
             return 0
+        # Script execution only puts the hooks directory on sys.path. Retain
+        # the launch root before the shared hooks change cwd, so source-tree
+        # launches can still import the shared receipt API. Prefer the rendered
+        # code root for installed hooks, including separate data-root installs.
+        sys.path.insert(0, str(Path.cwd()))
+        sys.path.insert(0, PROJECT_ROOT)
         # SessionStart's shared scope resolver uses process cwd; prompt recall
         # uses hook_data.cwd. Normalize both to the actual Codex workspace.
         if data.get("cwd"):
@@ -67,7 +73,6 @@ def main(event: str) -> int:
         }}))
         sys.stdout.flush()
         try:
-            sys.path.insert(0, PROJECT_ROOT)
             from memorymaster.surfaces.hook_events import append_hook_event
 
             append_hook_event("codex", event, 1)

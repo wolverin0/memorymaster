@@ -425,6 +425,10 @@ def _bind_telemetry_session(
     the service simply stays unbound (counters still work via source_agent).
     """
     try:
+        # Attribution must not initialize storage or make readiness pass on a
+        # missing DB. The tracker also opens mode=rw to close the deletion race.
+        if not Path(db_path).is_file():
+            return
         client, token = _mcp_client_identity()
         source = client if client != "mcp-session" else principal
         session_key = (db_path, principal, tenant_id or "", token)
@@ -433,7 +437,7 @@ def _bind_telemetry_session(
             if sid is None:
                 from memorymaster.surfaces.session_tracker import SessionTracker
 
-                sid = SessionTracker(db_path).start_session(source)
+                sid = SessionTracker(db_path, create=False).start_session(source)
                 _TELEMETRY_SESSION_IDS[session_key] = sid
         svc.session_id = sid
         if not getattr(svc, "source_agent", None):
@@ -479,9 +483,11 @@ def _usage_rollup(db: str) -> dict[str, Any]:
     sessions: list[dict[str, Any]] = []
     totals: list[dict[str, Any]] = []
     try:
-        tracker = SessionTracker(_resolve_db(db))
-        sessions = tracker.get_active_sessions()
-        totals = tracker.get_usage_totals()
+        db_path = _resolve_db(db)
+        if Path(db_path).is_file():
+            tracker = SessionTracker(db_path, create=False)
+            sessions = tracker.get_active_sessions()
+            totals = tracker.get_usage_totals()
     except Exception:  # pragma: no cover - defensive, tracker is itself guarded
         sessions = []
     durable_names = {"recalls_queried_total": "total_queries", "claims_ingested_total": "total_claims"}
@@ -535,7 +541,7 @@ def _record_tool_activity(tool: str, result: Any, db: str) -> None:
         db_path = _resolve_db(db)
         _bind_telemetry_session(binding, db_path, principal, tenant_id)
         if binding.session_id:
-            tracker = SessionTracker(db_path)
+            tracker = SessionTracker(db_path, create=False)
             for _ in range(count):
                 tracker.record_activity(binding.session_id, activity)
     except Exception:

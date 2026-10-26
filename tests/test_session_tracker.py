@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import time
+import sqlite3
+import gc
 
 import pytest
 
@@ -35,6 +37,23 @@ class TestSessionTrackerInit:
             assert cursor.fetchone() is not None
         finally:
             conn.close()
+
+    def test_attribution_cannot_create_or_recreate_database(self, db_path, monkeypatch):
+        monkeypatch.setenv("MEMORYMASTER_DB_RETRIES", "0")
+        with pytest.raises(sqlite3.OperationalError):
+            SessionTracker(db_path, create=False)
+        assert not db_path.exists()
+
+        SessionTracker(db_path)
+        tracker = SessionTracker(db_path, create=False)
+        tracker.start_session("codex")
+        # sqlite3's transaction context does not close its connection; release
+        # unreachable fixture connections before unlinking on Windows.
+        gc.collect()
+        db_path.unlink()
+        with pytest.raises(sqlite3.OperationalError):
+            tracker.start_session("codex")
+        assert not db_path.exists()
 
 
 class TestStartSession:

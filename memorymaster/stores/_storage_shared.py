@@ -141,6 +141,7 @@ def open_conn(
     *,
     busy_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     check_same_thread: bool = True,
+    create: bool = True,
 ) -> sqlite3.Connection:
     """Open a read-write SQLite connection with the uniform pragma envelope.
 
@@ -158,11 +159,18 @@ def open_conn(
     ``check_same_thread=False`` is for callers that share one connection
     across threads behind their own locking (operator_queue) — default True
     matches sqlite3.connect.
+
+    ``create=False`` uses SQLite's ``mode=rw`` URI: telemetry can update an
+    existing database but cannot create one, even if it disappears before open.
     """
 
     def _open() -> sqlite3.Connection:
         try:
-            conn = sqlite3.connect(str(db_path), check_same_thread=check_same_thread)
+            if create:
+                conn = sqlite3.connect(str(db_path), check_same_thread=check_same_thread)
+            else:
+                uri = Path(db_path).resolve().as_uri() + "?mode=rw"
+                conn = sqlite3.connect(uri, uri=True, check_same_thread=check_same_thread)
         except sqlite3.OperationalError as exc:
             if _is_busy_error(exc):
                 record_busy_error()

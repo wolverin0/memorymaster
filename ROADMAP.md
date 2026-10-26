@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; cross-CLI hook source verification, installed recall and AO guards; installation and live CLI acceptance pending -->
+<!-- doc-head: sole roadmap; cross-CLI hook regression fixes and measured startup; installation and live CLI acceptance pending -->
 # MemoryMaster roadmap
 # Covers: live Jev decision ledger, memory delivery/evaluation, OpenCode hooks, context layer program and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, code navigation.
@@ -72,6 +72,42 @@
   unsupported Codex handler key before their fixes. Homes, app state, temporary
   paths and databases were disposable; no real home/database or deployment was
   used. Bulk gate, PR, deployment and real CLI E2E remain lane work. No push.
+
+### T-1803 bulk-gate follow-up (2026-10-26)
+
+- Reproduced both real-process Codex receipt failures and missing-database
+  readiness returning 200. The adapter now retains its launch import root
+  before shared hooks change cwd, while preferring the rendered code root.
+  The real-process receipt assertions remain intact.
+- MCP attribution, usage rollups and bound recall activity use an existing-only
+  SQLite writer; the canonical connection helper retains its prior defaults.
+  SQLite `mode=rw` prevents creation even after deletion between operations.
+  Readiness returns 503 and leaves a missing database absent. Independent review
+  exposed the additional bound-recall recreation path; its regression failed
+  before the one-line service correction and passed afterward.
+- Hook doctor dispatch is lazy, with three import-blocking help regressions.
+  Matched three-run medians for `python -X importtime -m memorymaster --help`:
+  CLI cumulative import before 196.392 ms, after 181.606 ms, origin/main
+  (`569b2db`) 200.194 ms; wall times 0.3147/0.2865/0.3085 seconds. The removed
+  doctor import itself cost only 0.624 ms; the larger difference includes noise.
+- The steward timeout also reproduced on isolated origin/main with identical
+  defaults. Faulthandler traced transformer model-download retries and its load
+  lock, not CLI imports. No steward assertions or provider defaults changed.
+  With `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`, the unchanged full steward
+  file passed 7 tests, and the final checkout batch passed all four reported
+  cases plus tracker, startup and doctor checks (50 tests, 24.11 seconds).
+- Additional fresh batches passed 137 connection/storage/installer/hook checks
+  and 82 service/telemetry checks. After placing the service regression in its
+  matching witness file, service and rollup passed 32 checks. Ruff, release-truth
+  generation/check and contract witness passed; final independent review found
+  no remaining scoped blocker. GitNexus remains unavailable/unindexed; source
+  references and diffs supplied impact and change checks.
+- Initial Windows temporary-directory ACL failures, a fixture connection cleanup
+  failure, and concurrent `.tmp_cases` cleanup interference remain in task
+  evidence. Verification used the documented process-local mkdir workaround
+  and isolated runs after the concurrency failure. Default-environment steward
+  timing and the full bulk gate remain integrating-lane checks; no push,
+  installation, live database access or deployment occurred.
 
 ## T-1801 - OpenCode deterministic recall and capture (2026-10-26)
 

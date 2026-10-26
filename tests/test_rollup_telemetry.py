@@ -147,6 +147,17 @@ def test_get_usage_rollup_mcp_tool(tmp_path):
         )
 
 
+def test_attribution_and_rollup_leave_missing_database_absent(tmp_path):
+    db = tmp_path / "missing.db"
+    service = SimpleNamespace(session_id=None, source_agent=None)
+    mcp_server._bind_telemetry_session(service, str(db))
+    assert service.session_id is None
+    rollup = mcp_server._usage_rollup(str(db))
+    assert rollup["usage_by_client"] == []
+    assert rollup["active_sessions"] == []
+    assert not db.exists()
+
+
 def test_metrics_text_includes_recalls():
     """metrics_text must render the recall series as a valid Prometheus counter
     family (HELP + TYPE + a labelled sample) so an external scraper can ingest

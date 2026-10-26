@@ -34,7 +34,6 @@ from memorymaster.surfaces.cli_handlers_integrity import _handle_drain_spool, _h
 from memorymaster.surfaces.dreaming_cli import handle_dream_run, handle_dream_status
 from memorymaster.surfaces.backfill_cli import handle_backfill, register_backfill_parser
 from memorymaster.surfaces.session_scope import handle_session_scope
-from memorymaster.surfaces.hooks_doctor import handle_hooks, register_hooks_parser
 from memorymaster.surfaces.cli_handlers_skills import SKILL_COMMAND_HANDLERS, register_skill_parsers
 from memorymaster.surfaces.cli_handlers_jev import JEV_COMMAND_HANDLERS, LEDGER_COMMANDS, register_jev_parsers
 from memorymaster.surfaces.cli_handlers_workflow import (
@@ -48,6 +47,12 @@ from memorymaster.surfaces.cli_handlers_public import (
     handle_recall,
     handle_remember,
 )
+
+
+def _handle_hooks(args, service, parser, effective_db):
+    from memorymaster.surfaces.hooks_doctor import handle_hooks
+
+    return handle_hooks(args, service, parser, effective_db)
 
 
 COMMAND_HANDLERS["integrity"] = _handle_integrity
@@ -73,7 +78,7 @@ COMMAND_HANDLERS["forget"] = handle_forget
 COMMAND_HANDLERS["improve"] = handle_improve
 COMMAND_HANDLERS["demo"] = handle_demo
 COMMAND_HANDLERS["session-scope"] = handle_session_scope
-COMMAND_HANDLERS["hooks"] = handle_hooks
+COMMAND_HANDLERS["hooks"] = _handle_hooks
 COMMAND_HANDLERS.update(SKILL_COMMAND_HANDLERS)
 COMMAND_HANDLERS.update(WORKFLOW_COMMAND_HANDLERS)
 COMMAND_HANDLERS.update(JEV_COMMAND_HANDLERS)
@@ -93,7 +98,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tenant", default=None, help="Tenant ID for multi-tenant isolation (only claims with this tenant_id are visible)")
     sub = parser.add_subparsers(dest="command", required=True)
     register_backfill_parser(sub)
-    register_hooks_parser(sub)
+    hooks = sub.add_parser("hooks", help="Inspect installed CLI hooks")
+    hook_commands = hooks.add_subparsers(dest="hooks_command", required=True)
+    doctor = hook_commands.add_parser("doctor", help="Probe hooks with disposable synthetic payloads")
+    for cli in ("claude", "codex", "agy", "opencode"):
+        doctor.add_argument(f"--{cli}-dir", type=Path, help="Explicit CLI config directory")
 
     sub.add_parser("init-db", help="Create schema in SQLite database")
 

@@ -28,8 +28,9 @@ _ACTIVE_WINDOW_SECONDS = 3600  # sessions idle >1 h are considered inactive
 class SessionTracker:
     """Track agent sessions in a SQLite database."""
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, create: bool = True) -> None:
         self.db_path = str(db_path)
+        self.create = create
         self._ensure_table()
 
     # ------------------------------------------------------------------
@@ -37,7 +38,7 @@ class SessionTracker:
     # ------------------------------------------------------------------
 
     def _connect(self) -> sqlite3.Connection:
-        return open_conn(self.db_path)
+        return open_conn(self.db_path, create=self.create)
 
     def _ensure_table(self) -> None:
         with self._connect() as conn:
