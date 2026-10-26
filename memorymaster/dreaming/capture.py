@@ -1,10 +1,12 @@
-"""Fast transcript adapters used by Codex and Claude lifecycle hooks."""
+"""Fast transcript adapters used by native agent lifecycle hooks."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -178,7 +180,228 @@ def capture_transcript(
     return {"queued": 1, "capture_id": capture_id, "messages": len(messages)}
 
 
+_OPENCODE_ID = re.compile(r"[A-Za-z0-9_-]{1,200}\Z")
+_OPENCODE_MAX_RECORDS = 10_000
+_OPENCODE_MAX_JSON_BYTES = 2_097_152
+
+
+def _opencode_json(raw: str) -> dict[str, Any]:
+    if len(raw.encode("utf-8")) > _OPENCODE_MAX_JSON_BYTES:
+        raise ValueError("oversized OpenCode record")
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError("invalid OpenCode record")
+    return value
+
+
+def _opencode_rows(cursor: sqlite3.Cursor) -> list[sqlite3.Row]:
+    rows: list[sqlite3.Row] = []
+    size = 0
+    for row in cursor:
+        size += sum(len(value) for value in row if isinstance(value, str))
+        if len(rows) >= _OPENCODE_MAX_RECORDS or size > 32 * 1_048_576:
+            raise ValueError("oversized OpenCode session")
+        rows.append(row)
+    return rows
+
+
+def _opencode_sqlite(path: Path, session_id: str) -> tuple[str, list[dict[str, Any]]] | None:
+    # Primary storage contracts (v1 and current v2):
+    # https://github.com/anomalyco/opencode/blob/v1.2.0/packages/opencode/src/session/session.sql.ts
+    # https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/sql.ts
+    # mode=ro never creates/migrates the producer DB; BEGIN gives one WAL snapshot.
+    with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.25) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA query_only=ON")
+        conn.execute("BEGIN")
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        for table in ("session_v2", "session"):
+            if table not in tables:
+                continue
+            session = conn.execute(f"SELECT directory FROM {table} WHERE id=?", (session_id,)).fetchone()
+            if session is None:
+                continue
+            records: list[dict[str, Any]] = []
+            if "session_message" in tables:
+                rows = _opencode_rows(conn.execute(
+                    "SELECT id,type,time_created,data FROM session_message WHERE session_id=? ORDER BY seq,id",
+                    (session_id,),
+                ))
+                for row in rows:
+                    data = _opencode_json(row["data"])
+                    records.append({"id": row["id"], "role": row["type"], "created": row["time_created"], **{
+                        "parts": data.get("content", []) if row["type"] == "assistant" else [
+                            {"type": "text", "text": data.get("text", "")},
+                        ],
+                        "generated": row["type"] not in {"user", "assistant"} or data.get("summary") is True,
+                    }})
+                # A session awaiting v1 migration may still have only old rows.
+                if rows or table == "session_v2":
+                    return str(session["directory"]), records
+            if not {"message", "part"} <= tables:
+                return str(session["directory"]), []
+            messages = _opencode_rows(conn.execute(
+                "SELECT id,time_created,data FROM message WHERE session_id=? ORDER BY time_created,id", (session_id,),
+            ))
+            parts: dict[str, list[dict[str, Any]]] = {}
+            for row in _opencode_rows(conn.execute(
+                "SELECT message_id,data FROM part WHERE session_id=? ORDER BY id", (session_id,),
+            )):
+                parts.setdefault(row["message_id"], []).append(_opencode_json(row["data"]))
+            for row in messages:
+                info = _opencode_json(row["data"])
+                records.append({"id": row["id"], "role": info.get("role"), "created": row["time_created"],
+                                "parts": parts.get(row["id"], []), "generated": info.get("summary") is True})
+            return str(session["directory"]), records
+    return None
+
+
+def _opencode_file(path: Path, root: Path) -> dict[str, Any]:
+    # Reject symlink escapes as well as traversal in producer-owned identifiers.
+    path.resolve().relative_to(root.resolve())
+    with path.open("r", encoding="utf-8") as handle:
+        return _opencode_json(handle.read(_OPENCODE_MAX_JSON_BYTES + 1))
+
+
+def _opencode_legacy(root: Path, session_id: str) -> tuple[str, list[dict[str, Any]]] | None:
+    # Legacy layout and field names are defined by OpenCode's own migration:
+    # https://github.com/anomalyco/opencode/blob/v1.2.0/packages/opencode/src/storage/json-migration.ts
+    storage = root / "storage"
+    sessions = list(storage.glob(f"session/*/{session_id}.json"))
+    if not sessions:
+        return None
+    if len(sessions) != 1:
+        raise ValueError("ambiguous OpenCode session")
+    session = _opencode_file(sessions[0], storage)
+    if session.get("id") != session_id:
+        raise ValueError("OpenCode session identity mismatch")
+    records: list[dict[str, Any]] = []
+    for path in (storage / "message" / session_id).glob("*.json"):
+        if len(records) >= _OPENCODE_MAX_RECORDS:
+            raise ValueError("oversized OpenCode session")
+        info = _opencode_file(path, storage)
+        message_id = info.get("id")
+        if not isinstance(message_id, str) or not _OPENCODE_ID.fullmatch(message_id):
+            raise ValueError("invalid OpenCode message id")
+        if info.get("sessionID", session_id) != session_id:
+            raise ValueError("OpenCode message session mismatch")
+        parts = []
+        for part_path in sorted((storage / "part" / message_id).glob("*.json")):
+            if len(parts) >= _OPENCODE_MAX_RECORDS:
+                raise ValueError("oversized OpenCode message")
+            part = _opencode_file(part_path, storage)
+            if part.get("sessionID", session_id) != session_id or part.get("messageID", message_id) != message_id:
+                raise ValueError("OpenCode part identity mismatch")
+            parts.append(part)
+        clock = info.get("time")
+        records.append({"id": message_id, "role": info.get("role"), "parts": parts,
+                        "created": clock.get("created", 0) if isinstance(clock, dict) else 0,
+                        "generated": info.get("summary") is True})
+    records.sort(key=lambda row: (row["created"], row["id"]))
+    return str(session.get("directory") or ""), records
+
+
+def _opencode_messages(records: list[dict[str, Any]]) -> list[DreamMessage]:
+    # v2 authored user.text and assistant.content are defined here:
+    # https://github.com/anomalyco/opencode/blob/dev/packages/schema/src/session-message.ts
+    # Replay structural state from the beginning, so an idle boundary cannot
+    # erase the linkage from a memory tool to its later assistant echo.
+    state: dict[str, Any] = {}
+    messages: list[DreamMessage] = []
+    for record in records:
+        role = record.get("role")
+        parts = record.get("parts")
+        if not isinstance(parts, list):
+            raise ValueError("invalid OpenCode content")
+        injected = bool(record.get("generated"))
+        memory_call = False
+        for part in parts:
+            if not isinstance(part, dict):
+                raise ValueError("invalid OpenCode part")
+            injected |= bool(part.get("synthetic") or part.get("ignored"))
+            name = str(part.get("tool") or part.get("name") or "")
+            # OpenCode names MCP tools <server>_<tool>; the built-in filter
+            # also accepts Claude/Codex's mcp__memorymaster__ namespace.
+            if part.get("type") == "tool" and (is_memory_tool(name) or name.lower().startswith("memorymaster_")):
+                memory_call = True
+                strip_self_observation("", role="tool", tool_name="mcp__memorymaster__recall", metadata={
+                    "state": state, "tool_call_id": str(part.get("callID") or part.get("id") or ""),
+                })
+        if memory_call:
+            continue
+        text = "\n".join(part["text"] for part in parts if part.get("type") == "text" and isinstance(part.get("text"), str))
+        clean = strip_self_observation(text, role=str(role), metadata={"state": state, "injected": injected})
+        if role not in {"user", "assistant"}:
+            continue
+        timestamp = datetime.fromtimestamp(float(record.get("created") or 0) / 1000, timezone.utc).isoformat()
+        for span in clean.spans:
+            sanitized = _sanitize(span.text)
+            if sanitized:
+                # Include the revision: a producer can update a text part in place.
+                identity = f"{record['id']}:{span.start}:{span.end}:{sanitized}"
+                message_id = "dm-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
+                messages.append(DreamMessage(message_id, str(role), sanitized, timestamp))
+    return messages
+
+
+def _capture_opencode_session(
+    session_id: str, *, cwd: str | None, ledger: DreamLedger, data_dir: str | Path | None,
+) -> dict[str, Any]:
+    if not isinstance(session_id, str) or not _OPENCODE_ID.fullmatch(session_id):
+        return {"queued": 0, "reason": "invalid_session"}
+    if not cwd or scope_from_cwd(cwd) == "global":
+        return {"queued": 0, "reason": "unresolved_scope"}
+    try:
+        root = Path(data_dir) if data_dir is not None else Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "opencode"
+        override = os.environ.get("OPENCODE_DB") if data_dir is None else None
+        database = (root / override) if override else root / "opencode.db"
+        source = _opencode_sqlite(database, session_id) if database.is_file() else _opencode_legacy(root, session_id)
+        if source is None:
+            return {"queued": 0, "reason": "session_not_found"}
+        directory, records = source
+        if not directory or Path(directory).resolve() != Path(cwd).resolve():
+            return {"queued": 0, "reason": "workspace_mismatch"}
+        messages = _opencode_messages(records)
+    except (OSError, ValueError, TypeError, OverflowError, sqlite3.Error):
+        return {"queued": 0, "reason": "storage_unavailable"}
+    session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+    scope = scope_from_cwd(cwd)
+    state_key = f"opencode:messages:{session_hash}:{scope}"
+    state = ledger.scan_state(state_key)
+    start, seen = (int(state[0]), state[1]) if state else (0, frozenset())
+    fresh = [message for message in messages if message.message_id not in seen]
+    if not fresh:
+        return {"queued": 0, "reason": "no_increment"}
+    end = start + len(fresh)
+    content_hash = hashlib.sha256(json.dumps([m.to_dict() for m in fresh], sort_keys=True).encode("utf-8")).hexdigest()
+    envelope = CaptureEnvelope(
+        provider="opencode", session_hash=session_hash, scope=scope, captured_at=_now(),
+        last_activity_at=fresh[-1].timestamp, messages=tuple(fresh), cursor_start=start, cursor_end=end,
+        content_hash=content_hash,
+    )
+    capture_id = ledger.enqueue(envelope)
+    # Advance only after enqueue; interruption replays the exact same envelope.
+    ledger.set_scan_watermark(state_key, end, seen | {message.message_id for message in fresh})
+    return {"queued": 1, "capture_id": capture_id, "messages": len(fresh)}
+
+
+def capture_opencode_session(
+    session_id: str, *, cwd: str | None, ledger: DreamLedger, data_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Read one native OpenCode session without scanning other providers or writing its store."""
+    from memorymaster.surfaces.hook_events import append_hook_event
+
+    result = _capture_opencode_session(session_id, cwd=cwd, ledger=ledger, data_dir=data_dir)
+    append_hook_event("opencode", "capture", int(result.get("messages", 0)))
+    return result
+
+
 def capture_hook_payload(payload: dict[str, Any], *, provider: str, ledger: DreamLedger) -> dict[str, Any]:
+    if provider.lower() == "opencode":
+        return capture_opencode_session(
+            str(payload.get("session_id") or ""), cwd=str(payload.get("cwd") or "") or None,
+            ledger=ledger, data_dir=payload.get("data_dir"),
+        )
     transcript_path = str(payload.get("transcript_path") or "")
     if not transcript_path:
         return {"queued": 0, "reason": "no_transcript"}

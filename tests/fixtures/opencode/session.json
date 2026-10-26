@@ -1,0 +1,7 @@
+{
+  "info": {"id": "ses_fixture", "directory": "WORKSPACE", "projectID": "fixture-project"},
+  "messages": [
+    {"info": {"id": "msg_001", "sessionID": "ses_fixture", "role": "user", "time": {"created": 1793000000000}}, "parts": [{"id": "prt_001", "type": "text", "text": "Prefer deterministic fixtures for capture."}]},
+    {"info": {"id": "msg_002", "sessionID": "ses_fixture", "role": "assistant", "time": {"created": 1793000001000}}, "parts": [{"id": "prt_002", "type": "reasoning", "text": "private reasoning must stay out"}, {"id": "prt_003", "type": "text", "text": "I will use disposable fixtures."}]}
+  ]
+}

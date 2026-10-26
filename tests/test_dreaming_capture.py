@@ -7,6 +7,24 @@ from memorymaster.dreaming.capture import _scope, capture_transcript, parse_tran
 from memorymaster.dreaming.ledger import DreamLedger
 
 
+def test_opencode_hook_payload_routes_native_session_metadata(monkeypatch) -> None:
+    from memorymaster.dreaming import capture
+
+    received = {}
+    ledger = object()
+
+    def native(session_id, **kwargs):
+        received.update(session_id=session_id, **kwargs)
+        return {"queued": 0, "reason": "no_increment"}
+
+    monkeypatch.setattr(capture, "capture_opencode_session", native)
+    assert capture.capture_hook_payload(
+        {"session_id": "ses_native", "cwd": "workspace", "data_dir": "fixture-store"},
+        provider="opencode", ledger=ledger,
+    ) == {"queued": 0, "reason": "no_increment"}
+    assert received == {"session_id": "ses_native", "cwd": "workspace", "data_dir": "fixture-store", "ledger": ledger}
+
+
 def test_codex_parser_keeps_conversation_and_drops_reasoning_and_tools() -> None:
     rows = [
         {"type": "response_item", "timestamp": "2026-07-21T10:00:00Z", "payload": {
