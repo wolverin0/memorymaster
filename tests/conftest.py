@@ -355,5 +355,9 @@ def _cleanup_case_artifacts() -> None:
     # Don't prune before the test - files might be locked from previous tests
     # which causes database corruption when mkstemp reuses the path
     yield
-    # Only prune after the test to clean up this test's artifacts
-    _prune_case_root(_CASE_ROOT)
+    # Only prune after the test to clean up this test's artifacts. Under pytest-xdist
+    # the root is shared by every worker, so one worker's prune deleted another's live
+    # database mid-test (bulk_check 2026-10-25: "no such table: events"); workers leave
+    # the files and scripts/bulk_check.py empties the root before the suite starts.
+    if not os.environ.get("PYTEST_XDIST_WORKER"):
+        _prune_case_root(_CASE_ROOT)
