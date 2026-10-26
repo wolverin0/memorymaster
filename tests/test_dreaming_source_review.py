@@ -13,7 +13,7 @@ from memorymaster.core.service import MemoryService
 from memorymaster.dreaming.models import DreamCandidate
 from memorymaster.dreaming.providers import consolidation_from_raw, consolidation_prompt
 from memorymaster.dreaming.source_review import (
-    CHECKS, REVIEW_EVENT, bind_source, parse_review, record_review, review_allows_confirmation,
+    CHECKS, MAX_SOURCE_CHARS, REVIEW_EVENT, bind_source, parse_review, record_review, review_allows_confirmation,
 )
 from memorymaster.govern.jobs import validator
 from memorymaster.govern.llm_steward import _confirm_candidate_cas
@@ -64,6 +64,73 @@ def test_source_includes_later_corrections_and_original_scope():
     changed = capture()
     changed["messages"][1]["text"] = "The limit remains 30 days."
     assert bind_source(candidate(), changed).source_context["source_hash"] != context["source_hash"]
+
+
+def test_over_budget_source_keeps_evidence_all_later_and_nearest_earlier():
+    row = capture()
+    row["messages"][:0] = [
+        {"message_id": "old", "role": "user", "text": "x" * MAX_SOURCE_CHARS, "timestamp": ""},
+        {"message_id": "near", "role": "user", "text": "Earlier context.", "timestamp": ""},
+    ]
+    row["messages"].append({"message_id": "m3", "role": "tool", "text": "Limit updated.", "timestamp": ""})
+    original = json.dumps(row, ensure_ascii=False)
+    context = bind_source(candidate(), row).source_context
+    assert context["complete"] is True
+    assert context["messages"] == row["messages"][1:]
+    assert context["omitted_before"] == 1
+    assert context["exact_quote"] is True
+    assert len(json.dumps({key: context[key] for key in ("capture_scope", "messages", "omitted_before")},
+                          ensure_ascii=False)) <= MAX_SOURCE_CHARS
+    # Receipt identity still covers even the omitted source, without mutating it.
+    assert json.dumps(row, ensure_ascii=False) == original
+    assert context["source_hash"] == bind_source(candidate(), row, max_chars=MAX_SOURCE_CHARS * 2).source_context["source_hash"]
+    row["messages"][0]["text"] += " changed"
+    assert bind_source(candidate(), row).source_context["source_hash"] != context["source_hash"]
+
+
+@pytest.mark.parametrize("oversized_index", [0, 1])
+def test_over_budget_evidence_or_later_corrections_cannot_be_accepted(oversized_index):
+    row = capture()
+    row["messages"][oversized_index]["text"] += "x" * MAX_SOURCE_CHARS
+    bound = bind_source(candidate(), row)
+    assert bound.source_context["complete"] is False
+    assert bound.source_context["messages"] == []
+    with pytest.raises(ValueError, match="review"):
+        parse_review(accepted(bound), bound)
+
+
+@pytest.mark.parametrize("max_chars", [10, MAX_SOURCE_CHARS])
+@pytest.mark.parametrize("evidence_id", ["", "absent"])
+def test_missing_evidence_message_id_preserves_source_binding(max_chars, evidence_id):
+    bound = bind_source(replace(candidate(), evidence_message_id=evidence_id), capture(), max_chars=max_chars)
+    context = bound.source_context
+    assert context["complete"] is (max_chars == MAX_SOURCE_CHARS)
+    assert context["messages"] == (capture()["messages"] if context["complete"] else [])
+    assert context["exact_quote"] is False
+    assert context["source_kind"] == "missing"
+    assert "omitted_before" not in context
+    with pytest.raises(ValueError, match="review"):
+        parse_review(accepted(bound), bound)
+
+
+def test_under_budget_source_binding_is_byte_identical():
+    context = bind_source(candidate(), capture()).source_context
+    expected = {"capture_scope": "project:test", "messages": capture()["messages"],
+                "source_hash": "0539d4f0e220234b81d8b54572bf34c083ecc87aa0bc3ab4f25ccff2efd17c80", "complete": True,
+                "exact_quote": True, "candidate_safe": True, "source_kind": "assistant"}
+    assert json.dumps(context, ensure_ascii=False) == json.dumps(expected, ensure_ascii=False)
+
+
+def test_source_window_budget_includes_omission_metadata():
+    row = capture()
+    row["messages"].insert(0, {"message_id": "old", "role": "user", "text": "x" * MAX_SOURCE_CHARS})
+    suffix = {"capture_scope": row["scope"], "messages": capture()["messages"], "omitted_before": 1}
+    budget = len(json.dumps(suffix, ensure_ascii=False))
+    context = bind_source(candidate(), row, max_chars=budget).source_context
+    assert context["complete"] is True
+    assert context["messages"] == capture()["messages"]
+    assert context["omitted_before"] == 1
+    assert bind_source(candidate(), row, max_chars=budget - 1).source_context["complete"] is False
 
 
 @pytest.mark.parametrize("check", CHECKS)
