@@ -39,6 +39,20 @@ def test_windows_placeholder_produces_valid_python_literal():
     assert ast.literal_eval(assignment.value) == "C:/Users/Example/Py Apps/MemoryMaster"
 
 
+def test_explicit_codex_recall_install_preserves_native_capture(hermetic_home):
+    sh.install_dream_hooks(install_claude=False, install_codex=True)
+    target = hermetic_home["codex_dir"]
+    path = target / "hooks.json"
+    stop = json.loads(path.read_text(encoding="utf-8"))["hooks"]["Stop"]
+    for _ in range(2):
+        sh.install_codex_recall_hooks(codex_dir=target)
+    config = json.loads(path.read_text(encoding="utf-8"))
+    assert config["hooks"]["Stop"] == stop
+    for event in ("SessionStart", "UserPromptSubmit"):
+        assert len(config["hooks"][event]) == 1
+        assert f"--event {event}" in config["hooks"][event][0]["hooks"][0]["commandWindows"]
+
+
 def _detected(**overrides) -> Detected:
     defaults = dict(
         python_version="3.12.0",
