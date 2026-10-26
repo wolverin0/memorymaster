@@ -121,10 +121,10 @@ def test_mcp_service_propagates_bound_principal_and_scopes(
         captured.update({"db_target": db_target, **kwargs})
         return SimpleNamespace(source_agent=None)
 
-    monkeypatch.setattr(mcp_server, "MemoryService", fake_service)
+    monkeypatch.setattr(mcp_server, "_MCPService", fake_service)
     monkeypatch.setattr(mcp_server, "_resolve_db", lambda value: value)
     monkeypatch.setattr(mcp_server, "_resolve_workspace", lambda value: value)
-    monkeypatch.setattr(mcp_server, "_bind_telemetry_session", lambda *_args: None)
+    monkeypatch.setattr(mcp_server, "_bind_telemetry_session", lambda *_args, client_identity=None: None)
 
     context = _team_context()
     with access_control.bind_request_context(context):
