@@ -77,7 +77,8 @@ def _call(cmd: list[str], prompt: str, timeout: int = 180) -> str:
     executable = shutil.which(cmd[0]) or shutil.which(cmd[0] + ".cmd")
     if executable and executable.lower().endswith((".cmd", ".bat")):
         cmd = ["cmd.exe", "/d", "/s", "/c", subprocess.list2cmdline([executable, *cmd[1:]])]
-    p = subprocess.run(cmd, input=prompt, text=True, capture_output=True, timeout=timeout)
+    p = subprocess.run(cmd, input=prompt, text=True, capture_output=True, timeout=timeout,
+                       encoding="utf-8", errors="replace")
     if p.returncode:
         raise RuntimeError(f"{Path(cmd[0]).name} exited {p.returncode}")
     return p.stdout.strip()
@@ -208,8 +209,16 @@ def run(args: argparse.Namespace) -> None:
     # Cache raw chunk embeddings once; rerank only the dense shortlist per query.
     vectors = models[0].encode([c["text"] for c in chunks], normalize_embeddings=True, show_progress_bar=True)
     records: list[dict[str, Any]] = []
+    # Checkpoint each finished question so a crash does not lose completed LLM calls.
+    partial = args.out.with_name(args.out.name + ".partial.jsonl")
+    if partial.exists():
+        records = [json.loads(line) for line in partial.read_text(encoding="utf-8").splitlines() if line.strip()]
+    done = {r["id"] for r in records}
     for item in data:
+        if item["id"] in done:
+            continue
         q = item["question"]
+        first_new = len(records)
         raw_start = time.perf_counter()
         raw = _raw_retrieve(q, chunks, models, vectors)
         raw_ms = (time.perf_counter() - raw_start) * 1000
@@ -240,6 +249,9 @@ def run(args: argparse.Namespace) -> None:
             records.append({"id": item["id"], "category": item["category"], "arm": arm, "hit": hit,
                             "correct": judge.strip().upper().startswith("CORRECT"), "retrieval_ms": claim_ms if arm == "a" else raw_ms,
                             "llm_ms": llm_ms + judge_ms, "context_tokens": sum(max(1, len(x.get("text", "")) // 4) for x in rows)})
+        partial.parent.mkdir(parents=True, exist_ok=True)
+        with partial.open("a", encoding="utf-8") as fh:
+            fh.writelines(json.dumps(r) + "\n" for r in records[first_new:])
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "details.json").write_text(json.dumps(records, indent=2), encoding="utf-8")
     print(json.dumps(_summary(records), indent=2))
