@@ -160,7 +160,7 @@ def build(args: argparse.Namespace) -> None:
 def _load_models():
     from sentence_transformers import SentenceTransformer, CrossEncoder
     return (SentenceTransformer("all-MiniLM-L6-v2", local_files_only=True),
-            CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2", model_kwargs={"local_files_only": True}))
+            CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2", local_files_only=True))
 
 
 def _raw_retrieve(question: str, chunks: list[dict[str, Any]], models: tuple[Any, Any], vectors: Any) -> list[dict[str, Any]]:
