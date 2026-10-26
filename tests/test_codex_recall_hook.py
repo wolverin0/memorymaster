@@ -50,27 +50,31 @@ def test_prompt_reuses_claude_core_payload_and_telemetry(installed, tmp_path, mo
 
     def recall(query, data, *, db_path):
         seen.append((query, data, db_path))
-        return "\n- [mm-42] governed cited memory", "shared"
+        return "\n- [mm-2bff] governed cited memory\n- [mm-29c2~2] another cited memory", "shared"
 
     monkeypatch.setattr(remote, "hook_recall", recall)
     data = {"prompt": "explain recall isolation", "cwd": str(tmp_path), "session_id": "codex-session"}
     output = json.loads(invoke(installed, "UserPromptSubmit", data, monkeypatch))
     assert output == {"hookSpecificOutput": {
         "hookEventName": "UserPromptSubmit",
-        "additionalContext": "[MemoryMaster recall]\n\n- [mm-42] governed cited memory",
+        "additionalContext": "[MemoryMaster recall]\n\n- [mm-2bff] governed cited memory\n- [mm-29c2~2] another cited memory",
     }}
     assert [(query, payload) for query, payload, _ in seen] == [(data["prompt"], data)]
     assert Path(seen[0][2]) == tmp_path / "memorymaster.db"
     record = json.loads((tmp_path / "events.jsonl").read_text())
-    assert (record["cli"], record["event"], record["count"]) == ("codex", "UserPromptSubmit", 1)
+    assert (record["cli"], record["event"], record["count"]) == ("codex", "UserPromptSubmit", 2)
     assert set(record) == {"ts", "cli", "event", "count"}
 
 
 def test_session_start_uses_payload_cwd_and_shared_session_core(installed, tmp_path, monkeypatch):
     from memorymaster.core import scope_utils
+    from memorymaster.surfaces.setup_hooks import install_codex_recall_hooks
 
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    install_codex_recall_hooks(codex_dir=installed.parent, project_root=tmp_path, data_root=data_root)
     monkeypatch.setattr(scope_utils, "scope_from_cwd_or_user", lambda cwd: "project:fixture" if cwd == str(tmp_path) else "wrong")
-    with sqlite3.connect(tmp_path / "memorymaster.db") as db:
+    with sqlite3.connect(data_root / "memorymaster.db") as db:
         db.execute("CREATE TABLE claims (id INTEGER, text TEXT, claim_type TEXT, status TEXT, created_at TEXT, scope TEXT)")
         db.execute("INSERT INTO claims VALUES (42, 'session memory', 'fact', 'confirmed', '2026-10-26', 'project:fixture')")
     output = json.loads(invoke(installed, "SessionStart", {"cwd": str(tmp_path), "session_id": "s"}, monkeypatch))

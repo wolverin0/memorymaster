@@ -63,7 +63,7 @@ def main(event: str) -> int:
         }}))
         sys.stdout.flush()
         # Count citations in the delivered text, after the Codex-specific cap.
-        count = len(re.findall(r"(?m)^\s*- (?:\[mm-\d+\]|#\d+\s+\[)", context))
+        count = len(re.findall(r"(?m)^\s*- (?:\[mm-[0-9a-fA-F]+(?:~\d+)?\]|#\d+\s+\[)", context))
         try:
             sys.path.insert(0, PROJECT_ROOT)
             from memorymaster.surfaces.hook_events import append_hook_event

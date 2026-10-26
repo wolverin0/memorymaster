@@ -1,11 +1,39 @@
 """Hermetic tests for the parameterized Codex recall hook installer."""
 
+import ast
 import json
 from pathlib import Path
 
 import pytest
 
 from memorymaster.surfaces import setup_hooks
+
+
+def test_install_codex_recall_hooks_separates_code_and_data_roots(tmp_path):
+    codex_dir = tmp_path / "codex"
+    code_root = tmp_path / "hooks worktree"
+    data_root = tmp_path / "main checkout"
+
+    setup_hooks.install_codex_recall_hooks(
+        codex_dir=codex_dir, project_root=code_root, data_root=data_root,
+    )
+
+    for name, variable, expected_root in (
+        ("memorymaster-session-start.py", "MM_ROOT", data_root),
+        ("memorymaster-recall.py", "PROJECT_ROOT", code_root),
+        ("memorymaster-codex-recall.py", "PROJECT_ROOT", code_root),
+    ):
+        source = (codex_dir / "hooks" / name).read_text(encoding="utf-8")
+        assignment = next(
+            node for node in ast.parse(source).body
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == variable for target in node.targets)
+        )
+        value = assignment.value
+        if isinstance(value, ast.Call):  # MM_ROOT wraps its string in Path().
+            value = value.args[0]
+        assert ast.literal_eval(value) == expected_root.as_posix()
+        assert "__MEMORYMASTER_PROJECT_ROOT__" not in source
 
 
 def _template_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:

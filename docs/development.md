@@ -1,6 +1,6 @@
 <!-- doc-head: scoped development and verification for MemoryMaster -->
 # Development guidance
-Covers: local setup, disposable checks, Codex recall/trust, runtime evidence and code navigation.
+Covers: local setup, disposable checks, Codex code/data roots and trust, runtime evidence and code navigation.
 Key terms: source versus installed runtime, risk-based tests, SQLite, agent instructions.
 Read when: implementing changes or choosing the smallest sufficient verification.
 <!-- /doc-head -->
@@ -53,6 +53,12 @@ implicit home target. Run from the checkout, replacing the target argument:
 python -c "from pathlib import Path; from memorymaster.surfaces.setup_hooks import install_codex_recall_hooks; install_codex_recall_hooks(codex_dir=Path(r'<codex-config-dir>'), project_root=Path.cwd())"
 ```
 
+For a code-only worktree, also pass `data_root=Path(r'<memory-data-dir>')`,
+the checkout holding `memorymaster.db` and the wiki. SessionStart renders
+`MM_ROOT` from `data_root`; the recall script and Codex adapter render
+`PROJECT_ROOT` from `project_root`. Omitting `data_root` keeps the original
+single-root behavior. Both paths use the Claude installer's placeholder helper.
+
 This merges SessionStart and UserPromptSubmit beside the existing Stop capture
 hook. The thin adapter runs the same rendered Claude hook templates, preserving
 their retrieval, filtering, scope, projection and delivery policy. Codex output
@@ -102,6 +108,13 @@ all changed Python files; release-truth generation/check and contract witness
 against origin/main passed. A separate read-only review found no remaining
 blockers after the peer-handler fix. The bounded installer worker used
 gpt-5.6-luna/medium; the reviewer used gpt-5.6-sol/high.
+
+The 2026-10-26 follow-up reproduced count zero for hex citations (including
+`~2` suffixes) and rejection of a separate `data_root` before fixing them.
+Fresh disposable checks passed all 64 cases across the four hook/installer
+test files, plus both public-demo cases, Ruff, release-truth verification and
+contract witness. SessionStart also injected from a fixture database under a
+separate data root. No real home installation or live database was used.
 
 ## Optional wiki
 
