@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; cross-CLI hooks, deferred telemetry binding and measured startup; installation and live CLI acceptance pending -->
+<!-- doc-head: sole roadmap; explicit MCP authors restored, client telemetry separated; deployment and live acceptance pending -->
 # MemoryMaster roadmap
 # Covers: live Jev decision ledger, memory delivery/evaluation, OpenCode hooks, context layer program and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, code navigation.
@@ -6,6 +6,36 @@
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
 # Safety: SQLite remains authority; generated user.md is disposable and feature-off by default.
 <!-- /doc-head -->
+
+## T-1807 — preserve explicit MCP claim authors (2026-10-26)
+
+- Reproduced before fixing: initialized client identity replaced an explicit
+  `claude-session` author; `unknown` replaced an explicit known author; a blank
+  author could fall through to `unknown`; and an explicit `llm-stop-hook` claim
+  could auto-promote. Additional red cases exposed different quota keys for
+  omitted versus fallback authors and unknown persisted session attribution.
+  A new telemetry fixture initially called the wrong tracker method; after
+  correcting that fixture, its persisted-unknown assertion failed as intended.
+- Explicit non-blank authors now win; omitted/blank authors use the initialized
+  client, or `mcp-session` outside MCP. One effective author drives persistence,
+  quota keys and per-author ingest counters. Service/session telemetry follows
+  the client independently, without replacing known attribution with `unknown`.
+  Team principal, tenant and scope enforcement remain intact.
+- Fresh required verification: all 16 `test_mcp_*.py` files, fresh-eyes fixes,
+  session tracker, rollup telemetry, service runtime authority, promotion policy
+  and public demo: **257 passed, 1 skipped** (dashboard port already bound).
+  Ruff on the four changed Python files, release-truth generation/check and the
+  working-tree contract witness passed. Generated source test count is 6089.
+- Additional public/shared MCP checks: **85 passed, 1 failed**. The unchanged
+  supervisor process-termination test timed out after `taskkill`; a separate
+  probe executing the exact `origin/main` supervisor reproduced the same timeout
+  on its own disposable child. No supervisor fix was included.
+- Independent read-only security review (`gpt-5.6-sol/high`) found no scoped
+  blocker. GitNexus tools/index were unavailable; live references and Git diffs
+  supplied impact/change review. Checks used disposable worktree state, inherited
+  temporary-directory ACLs and offline model settings. No live database, real
+  home, installation, push or deployment was used. Lane bulk gate, PR, deployment
+  and a live ingest acceptance check remain with the integrating lane.
 
 ## T-1803 — per-CLI telemetry, hooks doctor and production alarms (2026-10-26)
 

@@ -174,7 +174,8 @@ def test_metrics_text_includes_recalls():
     )
 
 
-def test_mcp_initialize_attribution_is_persistent_and_session_isolated(tmp_path, monkeypatch):
+@pytest.mark.parametrize("source_agent", ["claude-session", ""])
+def test_mcp_initialize_attribution_is_persistent_and_session_isolated(tmp_path, monkeypatch, source_agent):
     """Use the real initialize handshake; reconnects and clients never share rows."""
     import anyio
     from mcp.shared.memory import create_connected_server_and_client_session
@@ -196,12 +197,12 @@ def test_mcp_initialize_attribution_is_persistent_and_session_isolated(tmp_path,
                 assert not initialized.isError
                 ingested = await client.call_tool("ingest_claim", {
                     **base, "text": f"Telemetry fixture durable preference {index}",
-                    "scope": "project:fixture", "source_agent": "spoofed-client",
+                    "scope": "project:fixture", "source_agent": source_agent,
                 })
                 assert not ingested.isError
                 body = json.loads(ingested.content[0].text)
                 assert body["ok"] is True
-                assert body["claim"]["source_agent"] == name
+                assert body["claim"]["source_agent"] == (source_agent or name)
                 queried = await client.call_tool("query_memory", {
                     **base, "query": "Telemetry fixture durable preference",
                     "scope_allowlist": "project:fixture", "include_candidates": True,
@@ -217,6 +218,11 @@ def test_mcp_initialize_attribution_is_persistent_and_session_isolated(tmp_path,
                 assert json.loads(recalled.content[0].text)["claims"]
 
     anyio.run(journey)
+    if source_agent:
+        assert observability.metric_value("claims_ingested_total", source_agent=source_agent) == 5
+        assert observability.metric_value("claims_ingested_total", source_agent="codex") == 0
+    else:
+        assert observability.metric_value("claims_ingested_total", source_agent="codex") == 2
     # Simulate process restart: no in-memory counter/cache may supply the totals.
     observability.reset_metrics()
     mcp_server._TELEMETRY_SESSION_IDS.clear()
@@ -242,3 +248,17 @@ def test_mcp_client_name_cannot_change_authorization_principal(tmp_path, monkeyp
     assert service.source_agent == "admin"
     assert service.principal == "operator-principal"
     assert context.principal == "operator-principal"
+
+
+def test_unknown_client_does_not_replace_known_telemetry_source(tmp_path, monkeypatch):
+    db = str(tmp_path / "known-client.db")
+    svc = MemoryService(db, workspace_root=tmp_path)
+    svc.init_db()
+    svc.source_agent = "codex"
+    monkeypatch.setattr(mcp_server, "_mcp_client_identity", lambda: ("unknown", "missing-name"))
+
+    mcp_server._bind_telemetry_session(svc, db)
+
+    assert svc.source_agent == "codex"
+    sessions = SessionTracker(db).get_active_sessions()
+    assert [session["agent_id"] for session in sessions] == ["codex"]

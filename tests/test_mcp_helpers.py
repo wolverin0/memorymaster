@@ -303,6 +303,73 @@ class TestMcpToolsIntegration:
         assert query_result["ok"] is True
         assert query_result["rows"] >= 1
 
+    def test_ingest_keeps_explicit_author_with_bound_mcp_client(self, monkeypatch):
+        from memorymaster.surfaces import mcp_server
+
+        monkeypatch.setattr(mcp_server, "_mcp_client_identity", lambda: ("codex", "author-test"))
+        svc = self._init_service()
+        result = mcp_server.ingest_claim(
+            text="The explicit session authored this claim",
+            db=self.db_path, workspace=self.workspace, source_agent="claude-session",
+        )
+
+        assert result["ok"] is True
+        stored = svc.store.get_claim(result["claim"]["id"])
+        assert stored.source_agent == "claude-session"
+
+    @pytest.mark.parametrize("client_name", ["codex", "unknown"])
+    def test_ingest_unknown_client_keeps_explicit_author(self, monkeypatch, client_name):
+        from memorymaster.surfaces import mcp_server
+
+        monkeypatch.setattr(mcp_server, "_mcp_client_identity", lambda: (client_name, "known-author"))
+        svc = self._init_service()
+        result = mcp_server.ingest_claim(
+            text="A known client explicitly authored this claim",
+            db=self.db_path, workspace=self.workspace, source_agent="codex",
+        )
+
+        assert result["ok"] is True
+        assert svc.store.get_claim(result["claim"]["id"]).source_agent == "codex"
+
+    @pytest.mark.parametrize("client_name", ["codex", "mcp-session"])
+    @pytest.mark.parametrize("source_agent", ["", "   "])
+    def test_ingest_without_author_uses_mcp_fallback(self, monkeypatch, client_name, source_agent):
+        from memorymaster.surfaces import mcp_server
+
+        monkeypatch.setattr(mcp_server, "_mcp_client_identity", lambda: (client_name, "fallback-test"))
+        svc = self._init_service()
+        result = mcp_server.ingest_claim(
+            text="An anonymous claim uses the transport fallback",
+            db=self.db_path, workspace=self.workspace, source_agent=source_agent,
+        )
+
+        assert result["ok"] is True
+        assert svc.store.get_claim(result["claim"]["id"]).source_agent == client_name
+
+    def test_ingest_explicit_stop_hook_stays_blocked_from_auto_promotion(self, monkeypatch):
+        from memorymaster.core.lifecycle import transition_claim
+        from memorymaster.core.promotion_policy import (
+            ENV_NON_AUTO_PROMOTABLE_SOURCES,
+            PromotionPolicyBlocked,
+        )
+        from memorymaster.surfaces import mcp_server
+
+        monkeypatch.delenv(ENV_NON_AUTO_PROMOTABLE_SOURCES, raising=False)
+        monkeypatch.setattr(mcp_server, "_mcp_client_identity", lambda: ("codex", "hook-test"))
+        svc = self._init_service()
+        result = mcp_server.ingest_claim(
+            text="A stop hook lead requires review before promotion",
+            db=self.db_path, workspace=self.workspace, source_agent="llm-stop-hook",
+        )
+
+        assert result["ok"] is True
+        claim_id = result["claim"]["id"]
+        with pytest.raises(PromotionPolicyBlocked):
+            transition_claim(svc.store, claim_id, "confirmed", reason="auto", event_type="validator")
+        stored = svc.store.get_claim(claim_id)
+        assert stored.source_agent == "llm-stop-hook"
+        assert stored.status == "candidate"
+
     def test_ingest_surfaces_mutable_state_and_supersession_warnings(self):
         from memorymaster.core.models import CitationInput
         from memorymaster.core.service import MemoryService

@@ -1,4 +1,4 @@
-<!-- doc-head: shared cross-CLI hook telemetry, native event aliases and disposable diagnosis -->
+<!-- doc-head: cross-CLI telemetry, independent claim authorship and disposable diagnosis -->
 <!-- Covers: log schema, MCP attribution, doctor limits and operational alarms. -->
 <!-- Read when: checking whether a CLI automatically received memory. -->
 <!-- /doc-head -->
@@ -24,6 +24,12 @@ of authorization principals. `agent_sessions` persists the client and served
 recall/ingest counters. `get_usage_rollup` reads those counters after restart;
 other process metrics remain process-local. Existing unattributed history is
 not reconstructed, and empty recalls retain their historical zero-count rule.
+Claim `source_agent` is separate: an explicit, non-blank author is preserved.
+When omitted or blank, ingest uses the initialized client name; in-process
+calls outside an MCP session use `mcp-session`. Ingest quotas and per-author
+claim counters use that effective author; persisted session counters still use
+the MCP client. Unknown telemetry names do not replace a known source.
+Team mode retains its authenticated-principal, tenant and scope restrictions.
 
 Run fixture diagnostics against explicit directories:
 
