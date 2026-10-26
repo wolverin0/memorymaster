@@ -21,6 +21,7 @@ Usage: python scripts/bulk_check.py [--base origin/main] [--workers 2] [--fast] 
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 import sys
 import time
@@ -59,6 +60,9 @@ def main(argv: list[str] | None = None) -> int:
         (name, [part.format(base=args.base) for part in argv_]) for name, argv_ in FAST_GATES
     ]
     if not args.fast:
+        # Workers share tests/.tmp_cases and never prune it (tests/conftest.py); start clean.
+        for shared in (".tmp_cases", ".tmp_pytest"):
+            shutil.rmtree(ROOT / shared, ignore_errors=True)
         steps.append(("suite-not-ml", [part.format(workers=args.workers) for part in SUITE]))
         if args.ml:
             steps.append(("suite-ml", list(ML_SUITE)))
