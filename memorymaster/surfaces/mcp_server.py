@@ -12,8 +12,11 @@ import re
 from pathlib import Path
 import threading
 import time
+import uuid
+import weakref
 from collections.abc import Mapping
 from typing import Any, TypeVar
+from types import SimpleNamespace
 from urllib.parse import urlparse
 
 from memorymaster.core import observability
@@ -364,12 +367,50 @@ def _resolve_workspace(workspace: str) -> str:
     return resolved
 
 
-# Per-process usage-telemetry sessions, one per DB path (fresh-eyes audit
-# 2026-07-01): SessionTracker was runtime-dead — nothing ever called
-# start_session or bound MemoryService.session_id, so get_usage_rollup's
-# session half always returned []. The MCP server is long-lived per client,
-# so one session per DB per process is the honest granularity.
-_TELEMETRY_SESSION_IDS: dict[tuple[str, str, str], int] = {}
+# MCP identity is telemetry only: initialize.clientInfo must never grant authority.
+# Weak keys release disconnected sessions; UUIDs prevent object-id reuse merging
+# independent clients. Calls outside MCP retain one fallback session per process.
+_TELEMETRY_SESSION_IDS: dict[tuple[str, str, str, str], int] = {}
+_MCP_SESSION_TOKENS: weakref.WeakKeyDictionary[Any, str] = weakref.WeakKeyDictionary()
+_TELEMETRY_SESSION_LOCK = threading.Lock()
+
+
+def _release_telemetry_session(token: str) -> None:
+    """Release disconnected transport bookkeeping; SQLite retains the totals."""
+    with _TELEMETRY_SESSION_LOCK:
+        for key in list(_TELEMETRY_SESSION_IDS):
+            if key[-1] == token:
+                _TELEMETRY_SESSION_IDS.pop(key, None)
+
+
+def _mcp_client_identity() -> tuple[str, str]:
+    """Read initialize clientInfo from the SDK's request-local session."""
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+
+        session = request_ctx.get().session
+        params = session.client_params
+        name = params.clientInfo.name.strip() if params is not None else ""
+        # Restrict free-form labels to a bounded, printable telemetry identifier.
+        name = re.sub(r"[^a-z0-9._-]+", "-", name.lower()).strip("-")[:100]
+        with _TELEMETRY_SESSION_LOCK:
+            token = _MCP_SESSION_TOKENS.get(session)
+            if token is None:
+                token = uuid.uuid4().hex
+                _MCP_SESSION_TOKENS[session] = token
+                weakref.finalize(session, _release_telemetry_session, token)
+        return name or "unknown", token
+    except (ImportError, LookupError, AttributeError):
+        return "mcp-session", "in-process"
+
+
+def _mcp_source_agent(explicit: str = "") -> str:
+    """Keep trusted team attribution; otherwise prefer the initialized client."""
+    context = current_request_context()
+    if context is not None and context.mode is AuthMode.TEAM:
+        return context.principal
+    client, _ = _mcp_client_identity()
+    return client if client != "mcp-session" else (explicit or "mcp-session")
 
 
 def _bind_telemetry_session(
@@ -384,16 +425,19 @@ def _bind_telemetry_session(
     the service simply stays unbound (counters still work via source_agent).
     """
     try:
-        session_key = (db_path, principal, tenant_id or "")
-        sid = _TELEMETRY_SESSION_IDS.get(session_key)
-        if sid is None:
-            from memorymaster.surfaces.session_tracker import SessionTracker
+        client, token = _mcp_client_identity()
+        source = client if client != "mcp-session" else principal
+        session_key = (db_path, principal, tenant_id or "", token)
+        with _TELEMETRY_SESSION_LOCK:
+            sid = _TELEMETRY_SESSION_IDS.get(session_key)
+            if sid is None:
+                from memorymaster.surfaces.session_tracker import SessionTracker
 
-            sid = SessionTracker(db_path).start_session(principal)
-            _TELEMETRY_SESSION_IDS[session_key] = sid
+                sid = SessionTracker(db_path).start_session(source)
+                _TELEMETRY_SESSION_IDS[session_key] = sid
         svc.session_id = sid
         if not getattr(svc, "source_agent", None):
-            svc.source_agent = principal
+            svc.source_agent = source
     except Exception:
         pass
 
@@ -413,9 +457,8 @@ def _service(db: str, workspace: str, *, read_only: bool = False) -> MemoryServi
         allowed_scopes=context.allowed_scopes if context is not None else frozenset(),
         read_only=read_only,
     )
-    if not read_only:
-        _bind_telemetry_session(svc, db_path, principal, tenant_id)
-    svc.source_agent = principal
+    _bind_telemetry_session(svc, db_path, principal, tenant_id)
+    svc.source_agent = _mcp_source_agent(principal)
     return svc
 
 
@@ -426,8 +469,7 @@ def _read_service(db: str, workspace: str) -> MemoryService:
 def _usage_rollup(db: str) -> dict[str, Any]:
     """Build the usage-telemetry rollup payload.
 
-    Returns the Prometheus-style metrics text (including the
-    ``recalls_queried_total`` family) plus the active agent sessions. Session
+    Returns durable per-client counters, process metrics, and active sessions. Session
     lookup is best-effort: a missing/empty DB yields an empty list rather than
     an error. Only aggregate counters and session metadata are exposed — never
     claim text — so this stays safe to surface over MCP.
@@ -435,16 +477,69 @@ def _usage_rollup(db: str) -> dict[str, Any]:
     from memorymaster.surfaces.session_tracker import SessionTracker
 
     sessions: list[dict[str, Any]] = []
+    totals: list[dict[str, Any]] = []
     try:
-        sessions = SessionTracker(_resolve_db(db)).get_active_sessions()
+        tracker = SessionTracker(_resolve_db(db))
+        sessions = tracker.get_active_sessions()
+        totals = tracker.get_usage_totals()
     except Exception:  # pragma: no cover - defensive, tracker is itself guarded
         sessions = []
+    durable_names = {"recalls_queried_total": "total_queries", "claims_ingested_total": "total_claims"}
+    metric_lines = [
+        line for line in observability.metrics_text().splitlines()
+        if not any(
+            line.startswith((f"# HELP {name} ", f"# TYPE {name} ", f"{name}{{", f"{name} "))
+            for name in durable_names
+        )
+    ]
+    for name, column in durable_names.items():
+        metric_lines.extend([f"# HELP {name} Durable MCP activity grouped by initialized client.",
+                             f"# TYPE {name} counter"])
+        metric_lines.extend(
+            f'{name}{{source_agent={json.dumps(row["agent_id"])}}} {row[column]}'
+            for row in totals
+        )
     return {
         "ok": True,
-        "recalls_queried_total": observability.metric_family_total("recalls_queried_total"),
-        "metrics_text": observability.metrics_text(),
+        "recalls_queried_total": sum(row["total_queries"] for row in totals),
+        "claims_ingested_total": sum(row["total_claims"] for row in totals),
+        "usage_by_client": totals,
+        "metrics_text": "\n".join(metric_lines) + "\n",
         "active_sessions": sessions,
     }
+
+
+def _record_tool_activity(tool: str, result: Any, db: str) -> None:
+    """Persist public-facade recall and successful claim ingests, best effort.
+
+    Service-backed queries already record their own activity. The public recall
+    facade constructs a separate service, so it needs one surface-level record.
+    """
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        return
+    activity = "query" if tool == "recall" and result.get("claims") else ""
+    count = 1 if activity else 0
+    if tool == "ingest_claim" and result.get("claim"):
+        activity, count = "ingest", 1
+    elif tool == "checkpoint":
+        activity, count = "ingest", int(result.get("ingested", 0))
+    if not activity or not count:
+        return
+    try:
+        from memorymaster.core.session_tracker import SessionTracker
+
+        context = current_request_context()
+        principal = context.principal if context is not None else "mcp-session"
+        tenant_id = context.tenant_id if context is not None else None
+        binding = SimpleNamespace(session_id=None, source_agent=None)
+        db_path = _resolve_db(db)
+        _bind_telemetry_session(binding, db_path, principal, tenant_id)
+        if binding.session_id:
+            tracker = SessionTracker(db_path)
+            for _ in range(count):
+                tracker.record_activity(binding.session_id, activity)
+    except Exception:
+        logger.debug("MCP telemetry persistence failed", exc_info=True)
 
 
 def _record_mcp_usage(
@@ -958,7 +1053,9 @@ def _authorized_tool_callable(func: Any, policy: McpToolPolicy) -> Any:
             fields["mode"] = context.mode.value
             fields["scope"] = _scope_for_log(bound.arguments)
         with bind_request_context(context):
-            return func(*bound.args, **bound.kwargs)
+            result = func(*bound.args, **bound.kwargs)
+            _record_tool_activity(func.__name__, result, str(bound.arguments.get("db", "")))
+            return result
 
     setattr(guarded, "__mcp_action__", policy.action)
     setattr(guarded, "__mcp_team_enabled__", policy.team_enabled)
@@ -1094,7 +1191,7 @@ if FastMCP is not None:
             path=path or None,
             source_uri=source_uri or None,
             scope=scope or None,
-            source_agent=source_agent or "memorymaster-mcp",
+            source_agent=_mcp_source_agent(source_agent),
             session_id=session_id or None,
             platform=platform,
             producer=producer or None,
@@ -1141,7 +1238,7 @@ if FastMCP is not None:
             include_observations=include_observations,
             observation_limit=_bounded_limit(observation_limit, maximum=5),
             session_id=session_id or None,
-            source_agent=source_agent or "memorymaster-mcp",
+            source_agent=_mcp_source_agent(source_agent),
             platform=platform,
             db=_resolve_db(db),
             workspace=_resolve_workspace(workspace),
@@ -1207,7 +1304,7 @@ if FastMCP is not None:
             scope=scope or None,
             max_items=max_items,
             session_id=session_id or None,
-            source_agent=source_agent or "memorymaster-mcp",
+            source_agent=_mcp_source_agent(source_agent),
             platform=platform,
             db=_resolve_db(db),
             workspace=_resolve_workspace(workspace),
@@ -1282,7 +1379,7 @@ if FastMCP is not None:
         binding = SessionScopeRepository(service.store.db_path).bind(
             session_id,
             scope=validate_scope(scope, allow_global=False),
-            source_agent=source_agent or "memorymaster-mcp",
+            source_agent=_mcp_source_agent(source_agent),
             platform=platform,
             binding_source="explicit",
             workspace_slug=workspace_path.name if workspace_path.is_dir() else None,
@@ -1386,7 +1483,7 @@ if FastMCP is not None:
         if not citations:
             citations = [CitationInput(source="mcp-session", locator=request.scope or "project")]
         # Auto-detect source_agent if not provided
-        effective_source = _empty_to_none(request.source_agent) or "mcp-session"
+        effective_source = _mcp_source_agent(request.source_agent)
         svc = _service(request.db, request.workspace)
         try:
             claim = svc.ingest(
@@ -1485,7 +1582,7 @@ if FastMCP is not None:
             return _structured_error("checkpoint batch too large (max 200 items)", "VALIDATION_ERROR", "claims_json")
         if not items:
             return {"ok": True, "ingested": 0, "skipped_sensitive": 0, "errors": [], "claim_ids": []}
-        effective_source = _empty_to_none(source_agent) or "mcp-session"
+        effective_source = _mcp_source_agent(source_agent)
         # Charge the rate bucket per-item: a batch of N claims costs N tokens,
         # not 1 (audit: checkpoint-rate-cost — a 200-item batch previously
         # bypassed the per-agent ingest limit ~200x).

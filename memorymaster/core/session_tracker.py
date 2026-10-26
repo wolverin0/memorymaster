@@ -127,3 +127,14 @@ class SessionTracker:
             "total_claims": row["total_claims"],
             "total_queries": row["total_queries"],
         }
+
+    def get_usage_totals(self) -> list[dict]:
+        """Return durable usage by client, including sessions older than one hour."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT agent_id, COUNT(*) AS total_sessions,
+                          COALESCE(SUM(claims_ingested), 0) AS total_claims,
+                          COALESCE(SUM(queries_made), 0) AS total_queries
+                   FROM agent_sessions GROUP BY agent_id ORDER BY agent_id"""
+            ).fetchall()
+        return [dict(row) for row in rows]

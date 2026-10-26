@@ -125,7 +125,8 @@ def test_get_usage_rollup_mcp_tool(tmp_path):
     an operator/observability surface, not a memory read path."""
     db_path = str(tmp_path / "rollup.db")
     tracker = SessionTracker(db_path)
-    tracker.start_session("dash-agent")
+    sid = tracker.start_session("dash-agent")
+    tracker.record_activity(sid, "query")
     observability.bump_recalls_queried("dash-agent")
 
     payload = mcp_server._usage_rollup(db_path)
@@ -160,3 +161,73 @@ def test_metrics_text_includes_recalls():
         text,
         flags=re.MULTILINE,
     )
+
+
+def test_mcp_initialize_attribution_is_persistent_and_session_isolated(tmp_path, monkeypatch):
+    """Use the real initialize handshake; reconnects and clients never share rows."""
+    import anyio
+    from mcp.shared.memory import create_connected_server_and_client_session
+    from mcp.types import Implementation
+
+    db = str(tmp_path / "attribution.db")
+    monkeypatch.setenv("MEMORYMASTER_MCP_PRINCIPAL", "operator-principal")
+    # No model/vector/network work is needed for the lexical fixture journey.
+    monkeypatch.setenv("MEMORYMASTER_QDRANT_ENABLED", "0")
+    mcp_server._TELEMETRY_SESSION_IDS.clear()
+
+    async def journey():
+        for index, name in enumerate(("codex", "claude-code", "codex", "opencode", "antigravity")):
+            async with create_connected_server_and_client_session(
+                mcp_server.mcp, client_info=Implementation(name=name, version="test"),
+            ) as client:
+                base = {"db": db, "workspace": str(tmp_path)}
+                initialized = await client.call_tool("init_db", base)
+                assert not initialized.isError
+                ingested = await client.call_tool("ingest_claim", {
+                    **base, "text": f"Telemetry fixture durable preference {index}",
+                    "scope": "project:fixture", "source_agent": "spoofed-client",
+                })
+                assert not ingested.isError
+                body = json.loads(ingested.content[0].text)
+                assert body["ok"] is True
+                assert body["claim"]["source_agent"] == name
+                queried = await client.call_tool("query_memory", {
+                    **base, "query": "Telemetry fixture durable preference",
+                    "scope_allowlist": "project:fixture", "include_candidates": True,
+                    "trust_mode": "exploratory",
+                })
+                assert not queried.isError
+                assert json.loads(queried.content[0].text)["claims"]
+                recalled = await client.call_tool("recall", {
+                    **base, "query": "Telemetry fixture durable preference",
+                    "scope_allowlist": "project:fixture", "trust_mode": "exploratory",
+                })
+                assert not recalled.isError
+                assert json.loads(recalled.content[0].text)["claims"]
+
+    anyio.run(journey)
+    # Simulate process restart: no in-memory counter/cache may supply the totals.
+    observability.reset_metrics()
+    mcp_server._TELEMETRY_SESSION_IDS.clear()
+    rollup = mcp_server._usage_rollup(db)
+    totals = {row["agent_id"]: row for row in rollup["usage_by_client"]}
+    assert totals["codex"] == {
+        "agent_id": "codex", "total_sessions": 2, "total_claims": 2, "total_queries": 4,
+    }
+    assert set(totals) == {"codex", "claude-code", "opencode", "antigravity"}
+    assert rollup["recalls_queried_total"] == 10
+    assert rollup["claims_ingested_total"] == 5
+    assert 'recalls_queried_total{source_agent="codex"} 4' in rollup["metrics_text"]
+
+
+def test_mcp_client_name_cannot_change_authorization_principal(tmp_path, monkeypatch):
+    from memorymaster.core.access_control import bind_request_context, resolve_request_context
+
+    monkeypatch.setenv("MEMORYMASTER_MCP_PRINCIPAL", "operator-principal")
+    monkeypatch.setattr(mcp_server, "_mcp_client_identity", lambda: ("admin", "untrusted-session"))
+    context = resolve_request_context(db_target=str(tmp_path / "authority.db"), workspace=str(tmp_path))
+    with bind_request_context(context):
+        service = mcp_server._service(context.db_target, context.workspace)
+    assert service.source_agent == "admin"
+    assert service.principal == "operator-principal"
+    assert context.principal == "operator-principal"

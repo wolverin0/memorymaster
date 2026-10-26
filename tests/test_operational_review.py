@@ -16,6 +16,23 @@ from memorymaster.operations import operational_review as review
 project_config = _project_config
 
 
+def test_capture_and_recall_alarms_are_registered_and_fail_closed(tmp_path, monkeypatch):
+    from memorymaster.operations import review_attempt
+
+    assert {review.check_hook_recall, review.check_capture_yield} <= set(review.REVIEW_CHECKS)
+    monkeypatch.setattr(review_attempt, "phase_progress", lambda *args: None)
+    monkeypatch.setattr(review, "REVIEW_CHECKS", (review.check_hook_recall, review.check_capture_yield))
+    config = review.ReviewConfig(db=tmp_path / "absent-claims.db",
+                               capture_state_db=tmp_path / "absent-capture.db")
+
+    results = review.run_review(config)
+
+    assert len(results) == 2
+    assert all(result.verdict is review.Verdict.WARN for result in results)
+    assert review.exit_code(results) == 3
+    assert not config.db.exists() and not config.capture_state_db.exists()
+
+
 @pytest.mark.parametrize("field,value", [
     ("omissions", []),
     ("checked_at", []),

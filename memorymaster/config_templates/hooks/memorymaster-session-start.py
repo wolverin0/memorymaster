@@ -62,6 +62,16 @@ MAX_RECENT_ARTICLES = 3
 CANDIDATE_REVIEW_HOURS = 24
 
 
+def _record_injection(context):
+    if context and context.strip():
+        try:
+            from memorymaster.surfaces.hook_events import append_hook_event
+
+            append_hook_event("claude-code", "recall_injected", 1)
+        except ImportError:
+            pass
+
+
 def _derive_scope() -> str:
     """Derive scope from current working directory."""
     try:
@@ -376,6 +386,7 @@ def main():
             sys.stdout.write(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "SessionStart", "additionalContext": context}}))
             sys.stdout.flush()
+            _record_injection(context)
             sys.exit(0)
     except Exception as exc:
         # An enabled project consumer must never fall through to less restrictive legacy SQL.
@@ -421,6 +432,7 @@ def main():
     }
     sys.stdout.write(json.dumps(output))
     sys.stdout.flush()
+    _record_injection(context)
     sys.exit(0)
 
 
