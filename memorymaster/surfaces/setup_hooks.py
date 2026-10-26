@@ -533,6 +533,70 @@ def install_dream_hooks(*, install_claude: bool, install_codex: bool,
     return result
 
 
+def install_codex_recall_hooks(
+    *, codex_dir: Path, project_root: Path | None = None, data_root: Path | None = None
+) -> dict[str, str]:
+    """Install deterministic Codex recall hooks into an explicit directory.
+
+    The target is deliberately passed by the caller so setup and tests cannot
+    silently write to the operator's real ``~/.codex``. Existing hooks remain
+    in place; only prior MemoryMaster Codex recall entries are replaced.
+    ``project_root`` supplies the code/import root; ``data_root`` supplies
+    SessionStart's database/wiki root and defaults to ``project_root``.
+    """
+    codex_dir = Path(codex_dir)
+    root = Path(project_root) if project_root is not None else PROJECT_ROOT
+    session_root = Path(data_root) if data_root is not None else root
+    hooks_dir = codex_dir / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    template_names = (
+        "memorymaster-codex-recall.py",
+        "memorymaster-session-start.py",
+        "memorymaster-recall.py",
+    )
+    destination = hooks_dir / template_names[0]
+    for name in template_names:
+        template_path = TEMPLATES_DIR / "hooks" / name
+        template_root = session_root if name == "memorymaster-session-start.py" else root
+        rendered = replace_placeholder(template_path.read_text(encoding="utf-8"), template_root)
+        (hooks_dir / name).write_text(rendered, encoding="utf-8")
+
+    hooks_path = codex_dir / "hooks.json"
+    config = _load_json_preserving(hooks_path)
+    hooks = config.setdefault("hooks", {})
+    for event in ("SessionStart", "UserPromptSubmit"):
+        entries = hooks.setdefault(event, [])
+        kept = []
+        for entry in entries:
+            handlers = entry.get("hooks", [])
+            peers = [handler for handler in handlers
+                     if "memorymaster-codex-recall.py" not in str(handler.get("command", ""))
+                     and "memorymaster-codex-recall.py" not in str(handler.get("commandWindows", ""))]
+            if len(peers) == len(handlers):
+                kept.append(entry)
+            elif peers:
+                kept.append({**entry, "hooks": peers})
+        entries[:] = kept
+        command = f'"{PYTHON_EXE}" "{destination}" --event {event}'
+        entries.append(
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": command,
+                        "commandWindows": command,
+                        "timeout": 8,
+                    }
+                ]
+            }
+        )
+
+    hooks_path.parent.mkdir(parents=True, exist_ok=True)
+    hooks_path.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {"hook": str(destination), "hooks": str(hooks_path)}
+
+
 def configure_workflow_receipts(
     *,
     mode: str,

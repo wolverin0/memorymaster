@@ -5,6 +5,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 from memorymaster.surfaces import hook_events
 
 
@@ -18,6 +20,27 @@ def test_default_and_override_paths(tmp_path, monkeypatch):
     assert set(row) == {"ts", "cli", "event", "count"}
     assert row["cli"] == "codex" and row["count"] == 1
     assert row["ts"].endswith("+00:00")
+
+
+@pytest.mark.parametrize("cli,events", [
+    ("codex", ("SessionStart", "UserPromptSubmit")),
+    ("agy", ("SessionStart", "Stop")),
+    ("opencode", ("injection", "capture")),
+])
+def test_events_append_exact_contract(tmp_path, monkeypatch, cli, events):
+    from datetime import datetime
+
+    path = tmp_path / "nested" / "events.jsonl"
+    monkeypatch.setenv("MEMORYMASTER_HOOK_EVENTS_LOG", str(path))
+    for event, count in zip(events, (2, 1)):
+        hook_events.append_hook_event(cli, event, count)
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [(row["cli"], row["event"], row["count"]) for row in rows] == [
+        (cli, events[0], 2), (cli, events[1], 1),
+    ]
+    for row in rows:
+        assert set(row) == {"ts", "cli", "event", "count"}
+        assert datetime.fromisoformat(row["ts"]).utcoffset().total_seconds() == 0
 
 
 def test_processes_append_without_lost_lines(tmp_path, monkeypatch):
@@ -45,10 +68,11 @@ def test_size_rotation_retains_bounded_backups(tmp_path, monkeypatch):
     assert not Path(f"{path}.6").exists()
 
 
-def test_bad_input_and_io_failures_never_break_hooks(tmp_path, monkeypatch):
+def test_bad_input_and_io_failures_never_break_hooks(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("MEMORYMASTER_HOOK_EVENTS_LOG", str(tmp_path / "events"))
     for count in (-1, True, "1", None):
         hook_events.append_hook_event("codex", "recall_injected", count)
     assert not (tmp_path / "events").exists()
     monkeypatch.setenv("MEMORYMASTER_HOOK_EVENTS_LOG", str(tmp_path))
     hook_events.append_hook_event("codex", "recall_injected", 1)
+    assert capsys.readouterr() == ("", "")
