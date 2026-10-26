@@ -73,6 +73,8 @@ def test_valid_json_yields_candidates_and_usage(tmp_path):
     assert '"evidence_span_id": "e0"' in prompt
     assert 10 <= timeout <= 600
     assert env["MEMORYMASTER_INTERNAL_RUN"] == "1"
+    assert env["MEMORYMASTER_DREAM_ENABLED"] == "0"  # the child's own capture hooks stay off
+    assert "--no-session-persistence" in command
 
 
 def test_bad_evidence_row_is_counted_invalid_but_valid_rows_survive(tmp_path):
@@ -156,6 +158,26 @@ def test_dream_extract_claude_does_not_route_capture_llm_to_paid_api(monkeypatch
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "claude")
     assert capture_llm_overrides()["MEMORYMASTER_LLM_PROVIDER"] == "claude_cli"
+
+
+def test_capture_never_queues_the_claude_cli_scratch_sessions(tmp_path, monkeypatch):
+    """Recursion guard: an extraction session must not be captured and extracted again."""
+    from memorymaster.dreaming.capture import capture_transcript
+    from memorymaster.dreaming.ledger import DreamLedger
+
+    scratch = tmp_path / "scratch"
+    monkeypatch.setenv("MEMORYMASTER_CLAUDE_CLI_CWD", str(scratch))
+    ledger = DreamLedger(tmp_path / "capture.db")
+    for cwd in (scratch, scratch / "sub"):
+        result = capture_transcript(
+            tmp_path / "missing.jsonl", provider="claude", session_id="s", cwd=str(cwd), ledger=ledger,
+        )
+        assert result == {"queued": 0, "reason": "internal_scratch"}
+    # A sibling folder sharing the prefix is a real project, not the scratch dir.
+    other = capture_transcript(
+        tmp_path / "missing.jsonl", provider="claude", session_id="s", cwd=str(tmp_path / "scratch2"), ledger=ledger,
+    )
+    assert other.get("reason") != "internal_scratch"
 
 
 def test_opencode_prompt_is_unchanged_by_the_shared_rules(tmp_path):

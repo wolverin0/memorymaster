@@ -909,6 +909,8 @@ class ClaudeCliExtractor:
         timeout: int | None = None,
         token_counter: Callable[[str], int] = rendered_token_bound,
     ) -> None:
+        # shortcut: MEMORYMASTER_DREAM_EXTRACT_MODEL is not read (it names Gemini/OpenCode
+        # models); upgrade when a second Claude model is needed in the scheduled Beat.
         self.model = model.strip() or "haiku"
         self.command = command
         self.runner = runner
@@ -937,7 +939,8 @@ class ClaudeCliExtractor:
         command = self._command()
         self.work_dir.mkdir(parents=True, exist_ok=True)
         # Headless child: hooks installed for interactive sessions must not recapture it.
-        env = {**os.environ, "MEMORYMASTER_INTERNAL_RUN": "1", "NO_COLOR": "1"}
+        # Defence in depth with --no-session-persistence and the capture scratch-cwd guard.
+        env = {**os.environ, "MEMORYMASTER_INTERNAL_RUN": "1", "MEMORYMASTER_DREAM_ENABLED": "0", "NO_COLOR": "1"}
         started = time.monotonic()
         try:
             completed = self.runner(command, prompt, self.timeout, self.work_dir, env)

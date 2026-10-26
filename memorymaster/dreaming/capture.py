@@ -190,6 +190,20 @@ def _capture_agy_transcript(
     return {"queued": 1, "capture_id": capture_id, "messages": len(messages)}
 
 
+def _in_claude_cli_scratch(cwd: str | None) -> bool:
+    """True for sessions run by MemoryMaster's own `claude -p` calls (extraction, steward).
+
+    They must never be captured: extracting a capture of an extraction would feed itself.
+    """
+    if not cwd:
+        return False
+    scratch = os.environ.get("MEMORYMASTER_CLAUDE_CLI_CWD", "").strip() or str(
+        Path.home() / ".memorymaster" / "claude_cli_scratch"
+    )
+    root, session = (os.path.normcase(os.path.abspath(p)) for p in (scratch, cwd))
+    return session == root or session.startswith(root + os.sep)
+
+
 def capture_transcript(
     transcript_path: str | Path, *, provider: str, session_id: str, cwd: str | None, ledger: DreamLedger,
     record_source_mtime: bool = False,
@@ -201,6 +215,8 @@ def capture_transcript(
     leave it off, so they never create beat data (an inactive beat stays invisible to the review);
     they only refresh a source mtime the beat already set when they coalesce into that capture.
     """
+    if _in_claude_cli_scratch(cwd):
+        return {"queued": 0, "reason": "internal_scratch"}
     if provider.lower() == "antigravity":
         return _capture_agy_transcript(
             transcript_path, session_id=session_id, cwd=cwd, ledger=ledger,
