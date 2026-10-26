@@ -735,7 +735,7 @@ def test_dream_extractor_factory_selects_configured_provider(monkeypatch) -> Non
     assert isinstance(create_dream_extractor(), GeminiExtractor)
 
     monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "unknown")
-    with pytest.raises(ProviderCallError, match="must be gemini or opencode"):
+    with pytest.raises(ProviderCallError, match="must be gemini, opencode or claude"):
         create_dream_extractor()
 
 

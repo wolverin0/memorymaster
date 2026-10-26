@@ -34,10 +34,13 @@ class CaptureJobCompletion:
 
 def capture_llm_overrides() -> dict[str, str]:
     """Resolve capture LLM settings without mutating the process environment."""
+    dream_provider = os.environ.get("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "").strip()
+    if dream_provider.lower() == "claude":
+        dream_provider = "claude_cli"  # Dreaming's "claude" is the CLI, not the paid API route
     provider = (
         os.environ.get("MEMORYMASTER_CAPTURE_LLM_PROVIDER", "").strip()
         or os.environ.get("MEMORYMASTER_LLM_PROVIDER", "").strip()
-        or os.environ.get("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "").strip()
+        or dream_provider
     )
     model = (
         os.environ.get("MEMORYMASTER_CAPTURE_LLM_MODEL", "").strip()

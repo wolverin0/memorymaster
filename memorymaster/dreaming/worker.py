@@ -477,12 +477,15 @@ class DreamWorker:
             if row.get("extraction") is not None:
                 extracted.append(row)
                 continue
-            if self.ledger.provider_calls_today(
-                self.extractor.provider,
-                model=self.extractor.model,
-                now=self.now(),
-            ) >= self.config.max_extract_calls_daily or self._over_token_budget(
-                self.extractor.provider, self.extractor.model,
+            # Subscription-backed extractors (Claude CLI) opt out of the paid-API daily caps.
+            if not getattr(type(self.extractor), "uncapped_daily", False) and (
+                self.ledger.provider_calls_today(
+                    self.extractor.provider,
+                    model=self.extractor.model,
+                    now=self.now(),
+                ) >= self.config.max_extract_calls_daily or self._over_token_budget(
+                    self.extractor.provider, self.extractor.model,
+                )
             ):
                 summary["deferred_extract_budget"] += 1
                 continue

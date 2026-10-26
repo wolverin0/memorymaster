@@ -1745,3 +1745,24 @@ def test_consolidate_fallback_respects_extract_provider_budget(tmp_path, budget)
     assert summary["consolidate_breaker"] is None
     assert summary["deferred_consolidate_budget"] == 2
     assert summary["errors"] == 1
+
+
+def test_claude_extractor_is_not_blocked_by_the_daily_extract_caps(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    capture_id = _capture(ledger)
+
+    class ClaudeExtractor(_Extractor):
+        provider = "claude"
+        model = "haiku"
+        uncapped_daily = True
+
+    # Both the call cap (0) and the input-token budget (1) would defer a paid provider.
+    config = DreamConfig(max_extract_calls_daily=0, max_input_tokens_daily=1)
+    result = DreamWorker(
+        ledger, service, ClaudeExtractor(), _Consolidator(), config=config, now=lambda: NOW,
+    ).run(apply_candidates=False)
+
+    assert result["deferred_extract_budget"] == 0
+    assert result["extracted"] == 1
+    assert ledger.get_capture(capture_id)["state"] != "captured"

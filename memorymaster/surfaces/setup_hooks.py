@@ -725,7 +725,9 @@ def _configure_receipt_client(
 def setup_dream_schedule(db_path: str | Path, *, apply_candidates: bool) -> str:
     """Create the hourly Windows task; other platforms get a manual command."""
     provider = os.environ.get("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "gemini").strip()
-    default_model = "gemini-3.5-flash" if provider in {"gemini", "google"} else "openai/gpt-5.4-mini"
+    default_model = {"gemini": "gemini-3.5-flash", "google": "gemini-3.5-flash", "claude": "haiku"}.get(
+        provider, "openai/gpt-5.4-mini",
+    )
     parts = [
         _hidden_python_exe(), "-I", "-m", "memorymaster.surfaces.scheduled_task", "dream",
         "--db", str(db_path), "--workspace", str(PROJECT_ROOT),
@@ -909,11 +911,12 @@ def _provider_readiness() -> dict[str, bool]:
     dream_provider = os.environ.get(
         "MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "gemini",
     ).strip().lower()
-    dream_extractor_ready = (
-        shutil.which("opencode") is not None
-        if dream_provider in {"opencode", "openai"}
-        else bool(os.environ.get("GEMINI_API_KEY", "").strip())
-    )
+    if dream_provider in {"claude", "claude_cli", "claude-cli"}:
+        dream_extractor_ready = shutil.which("claude") is not None
+    elif dream_provider in {"opencode", "openai"}:
+        dream_extractor_ready = shutil.which("opencode") is not None
+    else:
+        dream_extractor_ready = bool(os.environ.get("GEMINI_API_KEY", "").strip())
     from memorymaster.capture.worker import capture_llm_overrides
 
     capture_env = capture_llm_overrides()
