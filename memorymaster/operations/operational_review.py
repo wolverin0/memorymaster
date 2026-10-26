@@ -1010,6 +1010,11 @@ def check_hook_recall(config: ReviewConfig, *, now: datetime | None = None) -> R
         return ReviewResult("hook_recall", Verdict.WARN, f"capture_telemetry_unavailable={type(exc).__name__}")
     path = config.hook_events_log if config.hook_events_log is not None else hook_events_path()
     injections: dict[str, int] = {}
+    native_delivery_events = {
+        "codex": {"SessionStart", "UserPromptSubmit"},
+        "agy": {"SessionStart"},
+        "opencode": {"injection"},
+    }
     invalid, readable = 0, 0
     for candidate in (path, *(path.with_name(path.name + f".{n}") for n in range(1, 6))):
         try:
@@ -1024,7 +1029,9 @@ def check_hook_recall(config: ReviewConfig, *, now: datetime | None = None) -> R
                         if (stamp is None or not isinstance(event["event"], str)
                                 or type(count) is not int or count < 0):
                             raise ValueError("invalid hook event")
-                        if since <= stamp <= end and event["event"] == "recall_injected":
+                        delivered = (event["event"] == "recall_injected"
+                                     or event["event"] in native_delivery_events.get(cli, ()))
+                        if since <= stamp <= end and delivered:
                             injections[cli] = injections.get(cli, 0) + count
                     except (ValueError, KeyError, TypeError, AttributeError):
                         invalid += 1

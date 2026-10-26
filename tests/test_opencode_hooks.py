@@ -148,6 +148,22 @@ await context(foreign,"foreign");
 
 
 @pytest.mark.parametrize("version", [1, 2])
+def test_plugin_counts_one_delivery_for_multiple_memories(plugin, version):
+    init = V1_INIT if version == 1 else V2_INIT
+    ending = "" if version == 1 else "release(); await cleanup();"
+    output, rows = plugin(version, init + '''
+await prompt("msg_1", "First memory\\n- [mm-43] second memory");
+const system = [];
+await context(system);
+''' + ending + 'console.log(JSON.stringify({system}));')
+    text = output["system"][0] if version == 1 else output["system"][0]["text"]
+    assert "[mm-42]" in text and "[mm-43]" in text
+    receipts = [row for row in rows if row["argv"][0].endswith("hook_events.py")]
+    assert len(receipts) == 1
+    assert receipts[0]["argv"][-2:] == ["--count", "1"]
+
+
+@pytest.mark.parametrize("version", [1, 2])
 def test_plugin_slow_recall_is_killed_silently(plugin, monkeypatch, version):
     monkeypatch.setenv("TEST_RECALL_SLEEP", "6")
     init = V1_INIT if version == 1 else V2_INIT

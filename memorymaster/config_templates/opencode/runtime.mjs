@@ -75,9 +75,8 @@ export function createAdapter(cwd) {
       if (typeof text === "string" && text.startsWith(prefix)) system.splice(i, 1);
     }
     system.push(structured ? { type: "text", text: block } : block);
-    const count = Math.max(1, (block.match(/\[mm-\d+\]/g) ?? []).length);
     // Receipt only after the actual prompt append; never include recalled content.
-    void command("memorymaster.surfaces.hook_events", {}, ["--event", "injection", "--count", String(count)]);
+    void command("memorymaster.surfaces.hook_events", {}, ["--event", "injection", "--count", "1"]);
   }
   function capture(sessionID) {
     if (!cwd || !sessions.has(sessionID)) return;

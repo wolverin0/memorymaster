@@ -1,4 +1,4 @@
-<!-- doc-head: per-CLI hook telemetry and disposable contract diagnosis -->
+<!-- doc-head: shared cross-CLI hook telemetry, native event aliases and disposable diagnosis -->
 <!-- Covers: log schema, MCP attribution, doctor limits and operational alarms. -->
 <!-- Read when: checking whether a CLI automatically received memory. -->
 <!-- /doc-head -->
@@ -8,9 +8,16 @@ Hooks append content-free delivery receipts with
 `append_hook_event(cli, event, count)`. `MEMORYMASTER_HOOK_EVENTS_LOG` overrides
 the default `MEMORYMASTER_HOME/hook-events.jsonl`; the default home is
 `~/.memorymaster`. Records contain only `ts` (UTC), `cli`, `event`, and integer
-`count`. A successful context emission logs `recall_injected` with count one.
+`count`. A successful context emission logs count one, regardless of how many
+claims or profile facts it contains. Claude logs `recall_injected`, Codex logs
+`SessionStart` or `UserPromptSubmit`, agy logs `SessionStart`, and OpenCode logs
+`injection`. Operational review accepts these delivery events and legacy
+`recall_injected` receipts. Codex defers the shared Claude template's receipt
+until its adapter actually emits the capped output, avoiding double attribution.
 Suppressed, empty and failed deliveries do not count. Rotation keeps five
 5 MiB segments plus the current file, with a shared process lock.
+Capture uses separate `Stop`/`capture` events (queued batches for agy, authored
+messages for OpenCode); these never increase recall delivery counts.
 
 MCP usage attributes sessions to initialize `clientInfo.name`, independently
 of authorization principals. `agent_sessions` persists the client and served
@@ -68,7 +75,7 @@ and trust the installed hooks using `/hooks`, then run:
 codex exec --json "Describe the MemoryMaster storage authority and cite the injected memory."
 ```
 
-Check new `cli=codex`, `event=recall_injected` receipts in the configured log
+Check new `cli=codex`, `event=SessionStart` or `event=UserPromptSubmit` receipts in the configured log
 and the session's injected context/citations. Hook trust and real CLI delivery
-remain separate from fixture PASS. This telemetry card does not install new
-Codex, agy or OpenCode recall adapters; their integration cards own those.
+remain separate from fixture PASS. The integration includes Codex, agy and
+OpenCode adapters; installation and real CLI acceptance remain with the lane.

@@ -85,6 +85,23 @@ def test_rotation_and_utc_window_include_only_actual_recent_injections(telemetry
     assert telemetry.capture_state_db.read_bytes() == before
 
 
+@pytest.mark.parametrize("cli,delivery_events", [
+    ("codex", ("SessionStart", "UserPromptSubmit")),
+    ("antigravity", ("SessionStart",)),
+    ("opencode", ("injection",)),
+])
+def test_native_adapter_events_count_only_memory_deliveries(telemetry, cli, delivery_events):
+    capture(telemetry, 1, cli)
+    log(telemetry.hook_events_log, *(event(cli, event=name) for name in delivery_events),
+        event(cli, event="Stop", count=10), event(cli, event="capture", count=20))
+
+    result = review.check_hook_recall(telemetry, now=NOW)
+
+    assert result.verdict is review.Verdict.PASS
+    label = "agy" if cli == "antigravity" else cli
+    assert result.counts[f"{label}_recall_injections_24h"] == len(delivery_events)
+
+
 @pytest.mark.parametrize("bad", [None, [], event(count=True), event(count=-1),
                                   event(ts="invalid"), event(cli="/private/path")])
 def test_invalid_telemetry_never_reports_green(telemetry, bad):

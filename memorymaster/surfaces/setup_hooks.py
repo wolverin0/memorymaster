@@ -617,7 +617,6 @@ def install_codex_recall_hooks(
                     {
                         "type": "command",
                         "command": command,
-                        "commandWindows": command,
                         "timeout": 8,
                     }
                 ]

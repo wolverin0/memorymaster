@@ -63,7 +63,7 @@ CANDIDATE_REVIEW_HOURS = 24
 
 
 def _record_injection(context):
-    if context and context.strip():
+    if context and context.strip() and not globals().get("MEMORYMASTER_DEFER_HOOK_EVENT", False):
         try:
             from memorymaster.surfaces.hook_events import append_hook_event
 

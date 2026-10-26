@@ -30,6 +30,49 @@
 - Installation, real CLI hook trust/delivery, bulk merge gate and PR remain
   lane work. No push, merge, live home changes or live database access occurred.
 
+### Cross-CLI integration checkpoint (2026-10-26)
+
+- Merged `lane/t1803`, `lane/t1800`, `lane/t1802`, then `lane/t1801` into
+  `lane/memory-hooks`, preserving merge commits and all installers/providers.
+  One shared event module retains T-1803's validation, lock and bounded rotation;
+  OpenCode's module entrypoint forwards to that same append API.
+- Codex records one delivery after capped output, including successful shared
+  SessionStart exits and profile-only context. Shared Claude templates defer
+  their own receipts inside Codex to avoid duplicate/misattributed entries.
+  Regression: `test_session_start_logs_event_after_shared_hook_exit`.
+  All recall adapters count emissions, and review accepts their native event
+  names while excluding Stop/capture counters. Codex recall installation uses
+  the same supported handler keys as capture, retaining legacy-entry cleanup.
+- Fresh focused verification: **372 passed across 24 test files**, in small
+  invocations. The two source-binding files were included because they differ
+  on the input branches even though origin's versions survived the merges.
+
+| Test files under `tests/` | Passed |
+|---|---:|
+| `test_codex_recall_hook.py`, `test_hook_events.py` | 29 |
+| `test_codex_recall_installation.py`, `test_setup_hooks.py`, `test_setup_agy_hooks.py` | 57 |
+| `test_agy_hooks.py`, `test_antigravity_client.py`, `test_dreaming_agy_capture.py` | 73 |
+| `test_hook_capture.py`, `test_hook_recall.py`, `test_opencode_capture.py` | 32 |
+| `test_opencode_hooks.py`, `test_opencode_packaging.py` | 13 |
+| `test_hooks_doctor.py`, `test_recall_hook_installation.py` | 32 |
+| `test_operational_review.py`, `test_operational_review_hook_telemetry.py` | 46 |
+| `test_dreaming_surfaces.py`, `test_dreaming_capture.py`, `test_public_demo.py` | 18 |
+| `test_rollup_telemetry.py`, `test_session_tracker.py` | 31 |
+| `test_dreaming_source_review.py`, `test_replay_source_binding.py` | 41 |
+
+- Ruff passed on all 39 changed Python files; generated release truth was
+  regenerated and checked, and contract witness passed against `origin/main`.
+  Bounded independent integration review found no remaining integration blocker.
+  GitNexus was unavailable/unindexed; scoped source references and Git diffs
+  supplied impact/change checks without using a sibling index.
+- Failure evidence was retained: the first run failed before assertions on
+  Windows temporary-directory ACLs; a worktree-only harness inherited ACLs for
+  newly created disposable directories. Regression runs then reproduced duplicate
+  receipts, missing native-event recognition, citation-based miscounts and the
+  unsupported Codex handler key before their fixes. Homes, app state, temporary
+  paths and databases were disposable; no real home/database or deployment was
+  used. Bulk gate, PR, deployment and real CLI E2E remain lane work. No push.
+
 ## T-1801 - OpenCode deterministic recall and capture (2026-10-26)
 
 Source implementation: thin recall adapter reuses Claude's governed hook core;

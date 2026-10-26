@@ -66,7 +66,7 @@ def run_hook(event: str, payload: dict, *, db_path: str) -> str:
                 if not context or not context.strip():
                     return ""
                 output = json.dumps({"injectSteps": [{"ephemeralMessage": recall_block(context)}]})
-                count = context.count("\n- [mm-") or 1
+                count = 1
             else:
                 value = os.environ.get("MEMORYMASTER_DREAM_ENABLED")
                 if value is not None and value.strip().lower() in {"0", "false", "no", "off", ""}:

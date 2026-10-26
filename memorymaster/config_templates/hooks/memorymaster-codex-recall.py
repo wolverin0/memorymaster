@@ -11,7 +11,6 @@ import io
 import json
 import os
 from pathlib import Path
-import re
 import runpy
 import sys
 from contextlib import redirect_stderr, redirect_stdout
@@ -47,7 +46,12 @@ def main(event: str) -> int:
             sys.stdin = io.StringIO(json.dumps(data))
             with redirect_stdout(captured), redirect_stderr(io.StringIO()):
                 try:
-                    runpy.run_path(str(Path(__file__).with_name(HOOKS[event])), run_name="__main__")
+                    # The shared hook's stdout is captured here, not delivered.
+                    # Only this adapter records the final, capped Codex output.
+                    runpy.run_path(
+                        str(Path(__file__).with_name(HOOKS[event])), run_name="__main__",
+                        init_globals={"MEMORYMASTER_DEFER_HOOK_EVENT": True},
+                    )
                 except SystemExit as exc:
                     if exc.code not in (None, 0):
                         return 0
@@ -62,13 +66,11 @@ def main(event: str) -> int:
             "hookEventName": event, "additionalContext": context,
         }}))
         sys.stdout.flush()
-        # Count citations in the delivered text, after the Codex-specific cap.
-        count = len(re.findall(r"(?m)^\s*- (?:\[mm-[0-9a-fA-F]+(?:~\d+)?\]|#\d+\s+\[)", context))
         try:
             sys.path.insert(0, PROJECT_ROOT)
             from memorymaster.surfaces.hook_events import append_hook_event
 
-            append_hook_event("codex", event, count)
+            append_hook_event("codex", event, 1)
         except Exception:
             pass
     except (Exception, SystemExit):

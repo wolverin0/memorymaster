@@ -28,7 +28,8 @@ def payload(tmp_path):
             "lastUserInput": "Explain how governed citations work"}
 
 
-def test_session_start_uses_shared_core_and_emits_only_inject_steps(payload, tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("context", ["\n- [mm-7] governed fact", "\n- [mm-7] first fact\n- [mm-8] second fact"])
+def test_session_start_uses_shared_core_and_emits_only_inject_steps(payload, tmp_path, monkeypatch, capsys, context):
     from memorymaster.recall import remote
 
     calls = []
@@ -37,14 +38,14 @@ def test_session_start_uses_shared_core_and_emits_only_inject_steps(payload, tmp
         calls.append((query, data, db_path))
         assert hooks._internal()
         print("dependency diagnostic must not reach agy")
-        return "\n- [mm-7] governed fact", "shared"
+        return context, "shared"
 
     monkeypatch.setattr(remote, "hook_recall", recall)
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
     assert hooks.main("SessionStart", db_path="fixture-only.db") == 0
     out = capsys.readouterr()
     assert out.err == ""
-    assert json.loads(out.out) == {"injectSteps": [{"ephemeralMessage": "[MemoryMaster recall]\n\n- [mm-7] governed fact"}]}
+    assert json.loads(out.out) == {"injectSteps": [{"ephemeralMessage": "[MemoryMaster recall]\n" + context}]}
     query, data, db = calls[0]
     assert query == payload["lastUserInput"]
     assert data == {"cwd": payload["workspacePaths"][0], "session_id": "fixture-session",

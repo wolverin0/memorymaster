@@ -79,7 +79,7 @@ def test_install_codex_recall_hooks_merges_events_and_is_idempotent(tmp_path, mo
         installed = [entry for entry in entries if "memorymaster-codex-recall.py" in json.dumps(entry)]
         assert len(installed) == 1
         command = installed[0]["hooks"][0]
-        assert command["command"] == command["commandWindows"]
+        assert set(command) == {"type", "command", "timeout"}
         assert f'--event {event}' in command["command"]
 
     expected = f"ROOT = '{str(tmp_path / 'project').replace(chr(92), '/')}'\n"

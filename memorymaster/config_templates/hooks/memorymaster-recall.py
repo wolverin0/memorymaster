@@ -124,7 +124,7 @@ try:
             sys.stdout.write(output)
             sys.stdout.flush()
         sent = deliver(data, "\n\n".join(parts), emit)
-        if sent:
+        if sent and not globals().get("MEMORYMASTER_DEFER_HOOK_EVENT", False):
             append_hook_event("claude-code", "recall_injected", 1)
         if sent and residual:
             residual_state.consume(full_session)  # one block, once

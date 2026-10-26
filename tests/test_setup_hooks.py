@@ -39,12 +39,15 @@ def test_explicit_hook_targets_are_idempotent(tmp_path, monkeypatch):
         sh.install_hooks(llm, config_dir=claude)
         sh.install_dream_hooks(install_claude=True, install_codex=True,
                               claude_dir=claude, codex_dir=codex, hook_dir=scripts)
+        sh.install_codex_recall_hooks(codex_dir=codex)
     settings = json.loads((claude / "settings.json").read_text())
     hooks = json.loads((codex / "hooks.json").read_text())
     assert len(settings["hooks"]["SessionStart"]) == 1
     assert len(hooks["hooks"]["Stop"]) == 1
     # Current Codex HooksFile denies unknown fields such as commandWindows.
-    assert set(hooks["hooks"]["Stop"][0]["hooks"][0]) == {"type", "command", "timeout"}
+    for event in ("Stop", "SessionStart", "UserPromptSubmit"):
+        assert len(hooks["hooks"][event]) == 1
+        assert set(hooks["hooks"][event][0]["hooks"][0]) == {"type", "command", "timeout"}
 
 
 def test_explicit_dream_target_keeps_scripts_under_target(tmp_path, monkeypatch):
@@ -120,7 +123,9 @@ def test_explicit_codex_recall_install_preserves_native_capture(hermetic_home):
     assert config["hooks"]["Stop"] == stop
     for event in ("SessionStart", "UserPromptSubmit"):
         assert len(config["hooks"][event]) == 1
-        assert f"--event {event}" in config["hooks"][event][0]["hooks"][0]["commandWindows"]
+        command = config["hooks"][event][0]["hooks"][0]
+        assert set(command) == {"type", "command", "timeout"}
+        assert f"--event {event}" in command["command"]
 
 
 def _detected(**overrides) -> Detected:

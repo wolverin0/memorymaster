@@ -62,7 +62,7 @@ def test_prompt_reuses_claude_core_payload_and_telemetry(installed, tmp_path, mo
     assert [(query, payload) for query, payload, _ in seen] == [(data["prompt"], data)]
     assert Path(seen[0][2]) == tmp_path / "memorymaster.db"
     record = json.loads((tmp_path / "events.jsonl").read_text())
-    assert (record["cli"], record["event"], record["count"]) == ("codex", "UserPromptSubmit", 2)
+    assert (record["cli"], record["event"], record["count"]) == ("codex", "UserPromptSubmit", 1)
     assert set(record) == {"ts", "cli", "event", "count"}
 
 
@@ -81,7 +81,23 @@ def test_session_start_uses_payload_cwd_and_shared_session_core(installed, tmp_p
     assert output["hookSpecificOutput"]["hookEventName"] == "SessionStart"
     assert "#42 [fact/confirmed] session memory" in output["hookSpecificOutput"]["additionalContext"]
     record = json.loads((tmp_path / "events.jsonl").read_text())
-    assert (record["event"], record["count"]) == ("SessionStart", 1)
+    assert (record["cli"], record["event"], record["count"]) == ("codex", "SessionStart", 1)
+
+
+@pytest.mark.parametrize("context", ["- #42 [fact/confirmed] session memory", "Compiled profile context"])
+def test_session_start_logs_event_after_shared_hook_exit(installed, tmp_path, monkeypatch, context):
+    """A successful shared SessionStart exits before returning to the adapter."""
+    payload = {"hookSpecificOutput": {
+        "hookEventName": "SessionStart", "additionalContext": context,
+    }}
+    (installed / "memorymaster-session-start.py").write_text(
+        "import sys\nprint(" + repr(json.dumps(payload)) + ")\nsys.exit(0)\n",
+        encoding="utf-8",
+    )
+    assert json.loads(invoke(installed, "SessionStart", {"cwd": str(tmp_path)}, monkeypatch)) == payload
+    rows = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
+    assert len(rows) == 1
+    assert (rows[0]["cli"], rows[0]["event"], rows[0]["count"]) == ("codex", "SessionStart", 1)
 
 
 @pytest.mark.parametrize("event", ["SessionStart", "UserPromptSubmit"])
@@ -132,3 +148,6 @@ def test_real_process_emits_only_codex_json(installed, tmp_path, event):
                             capture_output=True, text=True, timeout=15)
     assert (result.returncode, result.stderr) == (0, "")
     assert json.loads(result.stdout) == payload
+    rows = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
+    assert len(rows) == 1
+    assert (rows[0]["cli"], rows[0]["event"], rows[0]["count"]) == ("codex", event, 1)
