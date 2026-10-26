@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; cross-CLI hook regression fixes and measured startup; installation and live CLI acceptance pending -->
+<!-- doc-head: sole roadmap; cross-CLI hooks, deferred telemetry binding and measured startup; installation and live CLI acceptance pending -->
 # MemoryMaster roadmap
 # Covers: live Jev decision ledger, memory delivery/evaluation, OpenCode hooks, context layer program and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, code navigation.
@@ -107,6 +107,31 @@
   evidence. Verification used the documented process-local mkdir workaround
   and isolated runs after the concurrency failure. Default-environment steward
   timing and the full bulk gate remain integrating-lane checks; no push,
+  installation, live database access or deployment occurred.
+
+### T-1803 telemetry-binding regression follow-up (2026-10-26)
+
+- Reproduced both reported fresh-eyes failures after the existing-only writer
+  change. Existing-database fixtures now explicitly initialize storage before
+  requiring an integer session; reuse asserts a real ID rather than None equality.
+- MCP services bind immediately for existing databases and rebind after a
+  successful explicit `init_db()`. The factory retains the originating client,
+  transport token, principal and tenant for delayed binding. Reinitialization
+  retains the session; served queries increment its exact client-attributed row.
+  Missing-database construction and readiness still create nothing; readiness
+  returns 503. The existence guard and SQLite `mode=rw` remain intact.
+- Fresh required checks: fresh-eyes 12, HTTP entrypoint 4, session tracker 23,
+  rollup telemetry 10 and Codex recall hook 22: **71 passed**. Additional MCP
+  authorization, tenant, read-only, helper/usage and public-demo checks:
+  **59 passed, 1 skipped** (dashboard port already bound). Changed Python passed
+  Ruff; release-truth `--check` and contract witness passed.
+- An initial pytest attempt failed on temporary-directory ACLs before assertions;
+  subsequent disposable runs used the documented process-local inherited-ACL
+  launcher. The strengthened delayed-binding regression failed before the fix.
+  Independent read-only review (`gpt-5.6-sol/high`) found no scoped blocker and
+  requested the retained repeat-initialization session assertion. GitNexus has
+  no index for this worktree; scoped source references and diffs supplied impact
+  and change review. Full bulk gate remains with the integrating lane. No push,
   installation, live database access or deployment occurred.
 
 ## T-1801 - OpenCode deterministic recall and capture (2026-10-26)

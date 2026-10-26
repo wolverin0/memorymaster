@@ -418,6 +418,8 @@ def _bind_telemetry_session(
     db_path: str,
     principal: str = "mcp-session",
     tenant_id: str | None = None,
+    *,
+    client_identity: tuple[str, str] | None = None,
 ) -> None:
     """Best-effort: bind a usage-telemetry session to *svc*.
 
@@ -429,7 +431,7 @@ def _bind_telemetry_session(
         # missing DB. The tracker also opens mode=rw to close the deletion race.
         if not Path(db_path).is_file():
             return
-        client, token = _mcp_client_identity()
+        client, token = client_identity if client_identity is not None else _mcp_client_identity()
         source = client if client != "mcp-session" else principal
         session_key = (db_path, principal, tenant_id or "", token)
         with _TELEMETRY_SESSION_LOCK:
@@ -446,13 +448,26 @@ def _bind_telemetry_session(
         pass
 
 
+class _MCPService(MemoryService):
+    """Bind telemetry after explicit initialization, never by creating storage."""
+
+    _telemetry_binding: tuple[str, str, str | None, tuple[str, str]]
+
+    def init_db(self) -> None:
+        super().init_db()
+        db_path, principal, tenant_id, identity = self._telemetry_binding
+        _bind_telemetry_session(
+            self, db_path, principal, tenant_id, client_identity=identity,
+        )
+
+
 def _service(db: str, workspace: str, *, read_only: bool = False) -> MemoryService:
     db_path = _resolve_db(db)
     workspace_path = _resolve_workspace(workspace)
     context = current_request_context()
     principal = context.principal if context is not None else "mcp-session"
     tenant_id = context.tenant_id if context is not None else None
-    svc = MemoryService(
+    svc = _MCPService(
         db_target=db_path,
         workspace_root=Path(workspace_path),
         tenant_id=tenant_id,
@@ -461,7 +476,9 @@ def _service(db: str, workspace: str, *, read_only: bool = False) -> MemoryServi
         allowed_scopes=context.allowed_scopes if context is not None else frozenset(),
         read_only=read_only,
     )
-    _bind_telemetry_session(svc, db_path, principal, tenant_id)
+    identity = _mcp_client_identity()
+    svc._telemetry_binding = (db_path, principal, tenant_id, identity)
+    _bind_telemetry_session(svc, db_path, principal, tenant_id, client_identity=identity)
     svc.source_agent = _mcp_source_agent(principal)
     return svc
 
