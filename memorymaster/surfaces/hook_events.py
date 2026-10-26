@@ -1,6 +1,7 @@
 """Content-free, durable hook delivery counters shared by CLI adapters."""
 from __future__ import annotations
 
+import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
@@ -69,3 +70,18 @@ def append_hook_event(cli, event, count):
                 handle.write(record)
     except (OSError, ValueError, TypeError):
         pass
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Transport OpenCode's receipt arguments to the shared append API."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--cli", required=True)
+    parser.add_argument("--event", required=True)
+    parser.add_argument("--count", type=int, required=True)
+    args = parser.parse_args(argv)
+    append_hook_event(args.cli, args.event, args.count)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

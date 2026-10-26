@@ -477,6 +477,38 @@ def _without_dream_hooks(
     ]
 
 
+def install_opencode_hooks(
+    config_dir: str | Path, *, version: int = 1,
+    project_root: str | Path | None = None, python_exe: str | None = None,
+) -> dict[str, str]:
+    """Install one OpenCode generation into an explicit target, preserving peer config.
+
+    The helper lives outside plugins/ so OpenCode never loads it as a plugin.
+    No home discovery, database access, model call or feature activation occurs.
+    """
+    if version not in (1, 2):
+        raise ValueError("OpenCode plugin version must be 1 or 2")
+    target = Path(config_dir)
+    root = Path(project_root or PROJECT_ROOT).resolve()
+    plugin = target / "plugins" / "memorymaster.js"
+    runtime = target / "memorymaster" / "runtime.mjs"
+    sources = TEMPLATES_DIR / "opencode"
+    rendered = (sources / "runtime.mjs").read_text(encoding="utf-8")
+    rendered = rendered.replace("__MEMORYMASTER_PYTHON_JSON__", json.dumps(python_exe or PYTHON_EXE))
+    rendered = rendered.replace("__MEMORYMASTER_ROOT_JSON__", json.dumps(str(root)))
+    outputs = {runtime: rendered, plugin: (sources / f"plugin-v{version}.mjs").read_text(encoding="utf-8")}
+    # Refuse an unmanaged collision before writing either file.
+    for destination in outputs:
+        if destination.exists() and "MEMORYMASTER_MANAGED_OPENCODE_V1" not in destination.read_text(encoding="utf-8"):
+            raise ValueError("OpenCode target already contains an unmanaged MemoryMaster file")
+    for destination, content in outputs.items():
+        if destination.exists() and destination.read_text(encoding="utf-8") == content:
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(content, encoding="utf-8")
+    return {"opencode": "installed", "version": str(version), "plugin": str(plugin)}
+
+
 def install_dream_hooks(*, install_claude: bool, install_codex: bool,
                         claude_dir: Path | None = None, codex_dir: Path | None = None,
                         hook_dir: Path | None = None) -> dict[str, str]:
@@ -1419,6 +1451,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="Detect-first, idempotent MemoryMaster onboarding.",
     )
     p.add_argument("-y", "--yes", action="store_true", help="non-interactive; accept all defaults")
+    p.add_argument("--opencode-config-dir", type=Path, help="install only OpenCode hooks into this explicit directory")
+    p.add_argument("--opencode-version", type=int, choices=(1, 2), default=1, help="OpenCode plugin API generation")
     p.add_argument(
         "--profile",
         choices=tuple(SETUP_PROFILES),
@@ -1541,6 +1575,21 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
     global PROJECT_ROOT
+
+    if args.opencode_config_dir is not None:
+        if args.verify_only:
+            result = {"error": "--opencode-config-dir cannot be combined with --verify-only"}
+            if not args.json:
+                print(result["error"], file=sys.stderr)
+            return 2, result
+        if args.dry_run:
+            return 0, {"dry_run": True, "opencode_version": args.opencode_version}
+        result = install_opencode_hooks(
+            args.opencode_config_dir, version=args.opencode_version, project_root=args.project_root,
+        )
+        if not args.json:
+            print("OpenCode memory hooks installed; restart OpenCode to load the plugin.")
+        return 0, result
 
     # Never prompt when stdout may be parsed (--json), when explicitly
     # non-interactive (--yes), or for a quick --verify-only check — stdin may

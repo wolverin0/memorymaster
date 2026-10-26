@@ -1,7 +1,6 @@
-<!-- doc-head: sole roadmap; T-1803 telemetry/doctor and T-1802 agy hooks source verification; installation and live CLI acceptance pending -->
-<!-- doc-head: sole roadmap; installed recall integrity and default-off AO-7 consolidation guards -->
+<!-- doc-head: sole roadmap; cross-CLI hook source verification, installed recall and AO guards; installation and live CLI acceptance pending -->
 # MemoryMaster roadmap
-# Covers: live Jev decision ledger (4.9.0 checklist), useful-memory delivery/evaluation, workflow analytics, governed observations, always-on context layer program and deferrals.
+# Covers: live Jev decision ledger, memory delivery/evaluation, OpenCode hooks, context layer program and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, code navigation.
 # Read when: choosing release scope, accepting a feature, or checking deferrals.
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
@@ -30,6 +29,62 @@
   because deduplication did not finish promptly; it is not claimed as passed.
 - Installation, real CLI hook trust/delivery, bulk merge gate and PR remain
   lane work. No push, merge, live home changes or live database access occurred.
+
+## T-1801 - OpenCode deterministic recall and capture (2026-10-26)
+
+Source implementation: thin recall adapter reuses Claude's governed hook core;
+separate OpenCode 1/2 plugins append memory to outgoing system context and bound
+recall to three seconds. Idle/terminal events hand native session storage to
+the existing Dreaming queue. Capture activation remains a separate decision.
+The explicit-directory installer preserves peer configuration and supports
+idempotent upgrades between plugin API generations. Hook receipts use
+`MEMORYMASTER_HOOK_EVENTS_LOG` with only timestamp, CLI, event and count.
+
+Source contracts: [v1 plugins](https://opencode.ai/docs/plugins/),
+[v2 hooks and migration](https://opencode.ai/v2/docs/build/plugins/migrate-v1/),
+and the native storage schema URLs beside the capture readers.
+Local acceptance uses disposable fixtures for v1/v2 SQLite and legacy JSON;
+installed/live CLI acceptance, bulk gate and PR remain with the lane.
+The focused files passed 126 tests in total (including the disposable demo,
+public facade and existing shared recall transport), and changed Python passed
+Ruff. Release truth was regenerated and checked. Capture implementation and
+the separate plugin review used one bounded `gpt-6.1-sol/high` worker.
+
+Lane installation (explicit target supplied by the operator; never run by
+the source worker):
+
+```powershell
+python -m memorymaster.surfaces.setup_hooks --opencode-config-dir "$env:OPENCODE_CONFIG_DIR" --opencode-version 2 --project-root "$PWD" --json
+```
+
+Use `--opencode-version 1` for OpenCode 1. The target is the CLI's config root,
+whose `plugins/` folder loads the selected entrypoint. The worker did not
+install to any real CLI config, enable Dreaming or call a live database.
+After restart, run a real turn from the intended project with configured
+MemoryMaster access and a query known to match a confirmed, authorized claim:
+
+```powershell
+$env:MEMORYMASTER_HOOK_EVENTS_LOG = "$PWD/.tmp/opencode-live-hook-events.jsonl"
+opencode run --format json "What MemoryMaster rules govern SQLite authority and capture? Cite the supplied memory."
+Get-Content "$env:MEMORYMASTER_HOOK_EVENTS_LOG" | Select-String '"cli": "opencode".*"event": "injection"'
+```
+
+An `injection` receipt with positive `count` proves the plugin appended the
+block; the reply alone does not establish delivery. A `capture` receipt with a
+positive count proves queue handoff, not extracted or promoted memory. A zero
+count on repeated idle is expected. Configure Dreaming activation separately.
+
+Verification notes: Windows sandbox Python creates owner-only temporary ACLs
+that exclude its token. Focused checks used a temporary bootstrap inheriting
+the worktree ACL only inside fresh disposable test roots, with standard-library
+temporary files redirected there. Initial failures from default temp paths are
+retained in task evidence. Node's piped subprocess spawn is denied by this
+sandbox (`EPERM`), so plugin tests execute installed JS callbacks/timers with
+process stream doubles; Python entrypoints and capture are tested separately.
+Real OpenCode process delivery is still a lane check.
+This checkout has no GitNexus index; discovery exposed no usable navigation
+tools. Scoped live-source caller searches and diff checks supplied the change
+scope evidence without consulting a sibling checkout's graph.
 
 ## Shipped in v4.6.0
 

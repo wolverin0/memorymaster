@@ -33,7 +33,10 @@ def test_events_append_exact_contract(tmp_path, monkeypatch, cli, events):
     path = tmp_path / "nested" / "events.jsonl"
     monkeypatch.setenv("MEMORYMASTER_HOOK_EVENTS_LOG", str(path))
     for event, count in zip(events, (2, 1)):
-        hook_events.append_hook_event(cli, event, count)
+        if cli == "opencode" and event == "capture":
+            assert hook_events.main(["--cli", cli, "--event", event, "--count", str(count)]) == 0
+        else:
+            hook_events.append_hook_event(cli, event, count)
     rows = [json.loads(line) for line in path.read_text().splitlines()]
     assert [(row["cli"], row["event"], row["count"]) for row in rows] == [
         (cli, events[0], 2), (cli, events[1], 1),
