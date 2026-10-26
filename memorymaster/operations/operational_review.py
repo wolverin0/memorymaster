@@ -1088,7 +1088,12 @@ def check_capture_yield(config: ReviewConfig, *, now: datetime | None = None) ->
                     applied = _parse_utc(str(application["applied_at"]))
                     if stamp is None or captured is None or applied is None:
                         raise ValueError("invalid creation telemetry")
-                    if since <= captured <= stamp <= applied <= end:
+                    # Authoritative claim timestamps are stored at whole-second
+                    # precision; capture/application timestamps retain fractions.
+                    # Compare the lower bound at the claim's precision so an
+                    # insert later in the capture's second remains observable.
+                    captured_second = captured.replace(microsecond=0)
+                    if since <= captured <= end and captured_second <= stamp <= applied <= end:
                         created.add(int(application["created_claim_id"]))
     except (OSError, sqlite3.Error, ValueError) as exc:
         return ReviewResult("capture_yield", Verdict.WARN, f"capture_telemetry_unavailable={type(exc).__name__}")

@@ -138,6 +138,26 @@ def test_yield_fails_measured_twenty_memories_per_eleven_hundred_sessions(teleme
     assert review.CAPTURE_YIELD_THRESHOLD_ENV in result.detail
 
 
+def test_yield_accepts_same_second_creation_at_authoritative_timestamp_precision(telemetry):
+    captured = NOW - timedelta(seconds=1, microseconds=500_000)
+    with sqlite3.connect(telemetry.capture_state_db) as connection:
+        connection.execute("INSERT INTO dream_captures VALUES (1,'codex','session',?)",
+                           (captured.isoformat(),))
+        connection.executemany("INSERT INTO dream_applications VALUES (1,?,'add',?)",
+                               [(11, NOW.isoformat()), (12, NOW.isoformat())])
+    with sqlite3.connect(telemetry.db) as connection:
+        # The store floors an insertion at captured + .2s to this whole second.
+        connection.executemany("INSERT INTO claims VALUES (?,?)", [
+            (11, captured.replace(microsecond=0).isoformat()),
+            (12, (captured.replace(microsecond=0) - timedelta(seconds=1)).isoformat()),
+        ])
+
+    result = review.check_capture_yield(telemetry, now=NOW)
+
+    assert result.verdict is review.Verdict.PASS
+    assert result.counts == {"captured_sessions_7d": 1, "memories_created_7d": 1}
+
+
 def test_yield_threshold_is_explicit_and_invalid_override_fails(telemetry, monkeypatch):
     capture(telemetry, 1)
     assert review.check_capture_yield(telemetry, now=NOW).verdict is review.Verdict.FAIL
