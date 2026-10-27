@@ -45,7 +45,10 @@ _MIN = 3
 _WORD = re.compile(r"[A-Za-z\u00c0-\u024f][A-Za-z0-9\u00c0-\u024f_-]{2,}")
 _URL = re.compile(r"https?://\S+")
 _PATH = re.compile(r"[A-Za-z]:\\\\\S+|/[\w./-]{4,}")
-_CODE = re.compile(r"`[^`]+`|```[\s\S]*?```")
+_CODE_FENCE = re.compile(r"```[\s\S]*?```")
+_CODE_SPAN = re.compile(r"`([^`\n]+)`")
+# A word shaped like an identifier (digit, underscore, hyphen, camelCase): one exact match is evidence enough.
+_IDENT_SHAPE = re.compile(r"\d|_|-|[a-z][A-Z]")
 
 # Magnitude of the df=0 penalty. With typical IDF in [3, 10], a penalty
 # of 8.0 pushes any df=0 token below every df>0 token *unless* it is in
@@ -143,8 +146,27 @@ _STOP = frozenset((
 ).split())
 
 
+def _path_identifiers(match: re.Match) -> str:
+    """A path keeps its last two segments (directory + file stem): those are the identifiers."""
+    parts = [p for p in re.split(r"[/\\]", match.group(0)) if p]
+    if parts:
+        parts[-1] = re.sub(r"\.\w{1,5}$", "", parts[-1])
+    return " " + " ".join(parts[-2:]) + " "
+
+
 def _strip(text: str) -> str:
-    return _PATH.sub(" ", _CODE.sub(" ", _URL.sub(" ", text)))
+    """Drop URLs and fenced code; keep inline-code contents and path identifiers (`fstrim`, a/b/context_hook.py)."""
+    text = _CODE_FENCE.sub(" ", _URL.sub(" ", text))
+    return _PATH.sub(_path_identifiers, _CODE_SPAN.sub(r" \1 ", text))
+
+
+def identifier_tokens(raw: str) -> frozenset[str]:
+    """Lower-cased tokens of ``raw`` that are exact identifiers: inline code, path segments, identifier-shaped words."""
+    base = _CODE_FENCE.sub(" ", _URL.sub(" ", raw))
+    quoted = " ".join(_CODE_SPAN.findall(base)) + " " + " ".join(m.group(0) for m in _PATH.finditer(base))
+    found = {m.group(0).lower() for m in _WORD.finditer(_strip(quoted))}
+    found.update(m.group(0).lower() for m in _WORD.finditer(_strip(base)) if _IDENT_SHAPE.search(m.group(0)))
+    return frozenset(t for t in found if len(t) >= _MIN and t not in _STOP and not t.isdigit())
 
 
 def _candidate_tokens(raw: str) -> list[str]:
@@ -307,13 +329,15 @@ def _best_form(tok: str, df: dict[str, int]) -> str:
     return best
 
 
-def extract_query_tokens(raw_prompt: str, db_path: str, max_tokens: int = 6) -> str:
-    """Extract up to ``max_tokens`` salient tokens, space-joined."""
-    if not raw_prompt or not raw_prompt.strip() or max_tokens <= 0:
-        return ""
+def _resolve_tokens(raw_prompt: str, db_path: str):
+    """Candidate tokens resolved to their best corpus form, with the corpus statistics used to score them.
+
+    Returns ``(resolved, total_docs, df, aliases)`` where ``resolved`` maps best form -> (source token,
+    first index) in first-seen order; empty when the prompt has no candidate token.
+    """
     tokens = _candidate_tokens(raw_prompt)
     if not tokens:
-        return ""
+        return {}, 0, {}, frozenset()
 
     generation = read_text_generation(db_path)
     total_docs, df = _corpus_stats(db_path, generation)
@@ -331,17 +355,14 @@ def extract_query_tokens(raw_prompt: str, db_path: str, max_tokens: int = 6) -> 
         # Keep the earliest index if the same best-form appears twice.
         if best not in resolved or first_idx < resolved[best][1]:
             resolved[best] = (tok, first_idx)
+    return resolved, total_docs, df, aliases
 
-    # Short prompt: keep all unique resolved tokens in first-seen order.
-    if len(resolved) <= max_tokens:
-        by_idx = sorted(resolved.items(), key=lambda kv: kv[1][1])
-        return " ".join(k for k, _ in by_idx[:max_tokens])
 
-    # Score by smoothed IDF, plus boosts for alias / technical term /
-    # length, penalty for df==0 unless whitelisted, stable tiebreak on
-    # first-seen index.
+def _score_tokens(resolved, total_docs, df, aliases, idents: frozenset[str]) -> list[tuple[str, float]]:
+    """Score by smoothed IDF, plus boosts for alias / technical term / identifier / length, penalty for
+    df==0 unless whitelisted, stable tiebreak on first-seen index. Best first."""
     scored: list[tuple[str, float]] = []
-    for best_form, (_source, first_idx) in resolved.items():
+    for best_form, (source, first_idx) in resolved.items():
         freq = df.get(best_form, 0) if total_docs > 0 else 1
         if total_docs > 0:
             idf = math.log((total_docs + 1) / (freq + 1)) + 1
@@ -350,6 +371,8 @@ def extract_query_tokens(raw_prompt: str, db_path: str, max_tokens: int = 6) -> 
         score = idf
         if best_form in aliases:
             score += 2.0
+        if best_form in idents or source in idents:
+            score += 1.5  # an identifier the author quoted or shaped (`fstrim`, a_b, v2): never crowded out
         if best_form in _TECH_TERMS:
             # Technical abbreviations always escape the df=0 penalty
             # and get a small boost on top of IDF so short but real
@@ -363,4 +386,68 @@ def extract_query_tokens(raw_prompt: str, db_path: str, max_tokens: int = 6) -> 
         score -= 0.001 * first_idx
         scored.append((best_form, score))
     scored.sort(key=lambda p: p[1], reverse=True)
+    return scored
+
+
+def extract_query_tokens(raw_prompt: str, db_path: str, max_tokens: int = 6) -> str:
+    """Extract up to ``max_tokens`` salient tokens, space-joined."""
+    if not raw_prompt or not raw_prompt.strip() or max_tokens <= 0:
+        return ""
+    resolved, total_docs, df, aliases = _resolve_tokens(raw_prompt, db_path)
+    if not resolved:
+        return ""
+
+    # Short prompt: keep all unique resolved tokens in first-seen order.
+    if len(resolved) <= max_tokens:
+        by_idx = sorted(resolved.items(), key=lambda kv: kv[1][1])
+        return " ".join(k for k, _ in by_idx[:max_tokens])
+
+    scored = _score_tokens(resolved, total_docs, df, aliases, identifier_tokens(raw_prompt))
     return " ".join(tok for tok, _ in scored[:max_tokens])
+
+
+def salient_terms(raw_prompt: str, db_path: str, max_terms: int = 12) -> list[str]:
+    """Up to ``max_terms`` salient terms of the WHOLE prompt, most salient first (identifiers included)."""
+    if not raw_prompt or not raw_prompt.strip() or max_terms <= 0:
+        return []
+    resolved, total_docs, df, aliases = _resolve_tokens(raw_prompt, db_path)
+    if not resolved:
+        return []
+    scored = _score_tokens(resolved, total_docs, df, aliases, identifier_tokens(raw_prompt))
+    return [tok for tok, _ in scored[:max_terms]]
+
+
+def centered_excerpt(text: str, query: str, width: int = 400) -> str:
+    """The ``width``-character window of ``text`` that holds the most distinct query terms.
+
+    Matching is by a stem-tolerant prefix (first 5 letters of a long term), so a porter-stemmed index hit
+    ("replicated" for "replication") still centres the window. Cut points move to word boundaries and a cut
+    side gets an ellipsis. No query term found -> the start of ``text``.
+    """
+    text = text.strip()
+    if len(text) <= width:
+        return text
+    needles = {t[:5] if len(t) >= 6 else t for t in _candidate_tokens(query)}
+    low = text.lower()
+    hits: list[tuple[int, str]] = []
+    for needle in needles:
+        pos = low.find(needle)
+        for _ in range(40):  # bounded: a ubiquitous term must not make this quadratic
+            if pos < 0:
+                break
+            hits.append((pos, needle))
+            pos = low.find(needle, pos + 1)
+    if not hits:
+        return text[:width].rstrip() + "…"
+    best_start, best_count = 0, -1
+    for pos, _needle in sorted(hits):
+        start = max(0, pos - width // 6)
+        count = len({n for p, n in hits if start <= p < start + width})
+        if count > best_count:
+            best_start, best_count = start, count
+    start, end = best_start, min(len(text), best_start + width)
+    if start > 0 and (space := text.find(" ", start, start + 20)) != -1:
+        start = space + 1
+    if end < len(text) and (space := text.rfind(" ", end - 20, end)) != -1:
+        end = space
+    return ("…" if start > 0 else "") + text[start:end].strip() + ("…" if end < len(text) else "")

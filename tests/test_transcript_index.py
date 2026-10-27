@@ -177,3 +177,22 @@ def test_cli_search_survives_a_cp1252_console(tmp_path):
     assert proc.returncode == 0, proc.stdout.decode("cp1252", "replace") + proc.stderr.decode("cp1252", "replace")
     out = proc.stdout.decode("cp1252")
     assert "2026-06-06" in out and "Estado del servicio" in out
+
+
+def test_excerpt_is_centered_on_the_match_after_redaction(tmp_path):
+    root = tmp_path / "projects"
+    secret = "sk-" + "a1B2c3D4e5F6g7H8i9J0k1L2"
+    body = f"key {secret} " + " ".join(f"filler{i}" for i in range(150)) + " the zebrafish gateway latency spike " + "tail " * 30
+    _write(root / "p" / "s.jsonl", [_rec("assistant", body, "2026-04-04T00:00:00Z")])
+    idx = tmp_path / "t.db"
+    ti.index_transcripts(root, idx)
+    out = ti.search("zebrafish gateway latency", idx, excerpt_chars=200)[0].excerpt
+    assert "zebrafish gateway latency" in out and secret not in out and "filler0 " not in out
+    assert len(out) <= 210
+
+
+def test_search_honours_a_deadline_without_raising(tmp_path):
+    root, idx = _setup(tmp_path)
+    ti.index_transcripts(root, idx)
+    assert ti.search("quokka", idx, deadline_ms=5000)
+    assert isinstance(ti.search("quokka", idx, deadline_ms=0.0001), list)  # an expired budget never raises

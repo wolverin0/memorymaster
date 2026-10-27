@@ -28,7 +28,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from memorymaster.core.hook_log import log_hook
-from memorymaster.recall import hook_policy
+from memorymaster.recall import hook_lexical, hook_policy
 
 logger = logging.getLogger(__name__)
 
@@ -948,6 +948,14 @@ def _apply_query_expansion(svc, query: str, token_list: list[str]) -> list[str]:
 _ENTITY_CAP_PER_ENTITY = 3
 _ENTITY_CAP_TOTAL = 8
 
+# Prompt-hook lexical retrieval (T-1862): salient terms of the whole question, how many of them go into the
+# full-question search, how many get their own bounded search, and how many rows each of those may add.
+_QUERY_TERMS = 12
+_WHOLE_QUERY_TERMS = 6
+_WHOLE_QUERY_ROWS = 5
+_PER_TERM_SEARCHES = 3
+_PER_TERM_ROWS = 3
+
 
 def _entity_fanout_claim_ids(
     store,
@@ -1200,9 +1208,11 @@ def recall(
             skip_qdrant=skip_qdrant,
             phase_ms=phase_ms,
             _memory_service_cls=MemoryService,
-            _rendered_ids=rendered_ids if return_ids else None,
+            _rendered_ids=rendered_ids if (return_ids or hook_data is not None) else None,
             _hook_data=hook_data,
         )
+        if hook_data is not None:
+            rendered = _with_transcript_fallback(query, rendered, len(rendered_ids), phase_ms)
         if return_ids:
             return rendered, rendered_ids
         return rendered
@@ -1211,6 +1221,35 @@ def recall(
             _REQUEST_SCOPE.reset(scope_token)
             _REQUEST_SHARED_SCOPES.reset(shared_token)
         _emit_recall_latency(phase_ms, total_start)
+
+
+def _transcript_fallback_active() -> bool:
+    try:
+        from memorymaster.recall import transcript_fallback
+
+        return transcript_fallback.enabled()
+    except Exception:  # noqa: BLE001 - an unavailable fallback means the verbatim stream keeps working
+        return False
+
+
+def _with_transcript_fallback(query: str, rendered: str, claims: int, phase_ms: dict[str, float]) -> str:
+    """Append raw past conversation (dated, labelled, this project only) when the hook has free slots.
+
+    ``claims`` is how many claims the hook injected; the cap minus that is the number of free slots (two at
+    most). Fragments are not claims: they are never recorded as accesses nor as session-seen ids. Fails open.
+    """
+    slots = hook_policy.max_claims() - claims
+    if slots <= 0:
+        return rendered
+    try:
+        from memorymaster.recall import transcript_fallback
+
+        with _phase_timer(phase_ms, "transcript_fallback"):
+            block = transcript_fallback.block(query, _current_scope(), slots)
+    except Exception as exc:  # noqa: BLE001 - optional evidence never breaks the hook
+        logger.debug("transcript fallback unavailable: %s", type(exc).__name__)
+        return rendered
+    return f"{rendered}\n\n{block}" if rendered and block else (rendered or block)
 
 
 def _prompt_recall_plan(query_text: str, *, limit: int):
@@ -1477,15 +1516,15 @@ def _recall_impl(
                 event["probe"] = probe.finish(**stages)
             dense_recall.record(event)
 
-    # Pre-extract salient tokens before hitting FTS5. Passing the full
-    # prompt verbatim AND-joins every token in FTS5 and rejects nearly all
-    # real conversational prompts (see artifacts/retrieval-eval-2026-04-22).
-    # FTS5 _escape_fts5_query() quotes-and-AND-joins tokens, so we instead
-    # run one query per top token and union the results — effectively OR.
-    from memorymaster.recall.recall_tokenizer import extract_query_tokens
+    # The prompt is searched as a WHOLE question first (T-1862, review F1): the salient terms, identifiers
+    # included (`fstrim`, a/b/c.py), go to the store together -- strict AND, then OR over the terms the corpus
+    # knows -- and only then does a bounded per-term search add the rows a rare term pulls in. The combined
+    # pool is scored against the full question below and capped AFTER that scoring, so an early generic token
+    # can no longer crowd out a discriminating later one.
+    from memorymaster.recall.recall_tokenizer import identifier_tokens, salient_terms
 
-    fts_query = extract_query_tokens(query, db, max_tokens=6)
-    token_list = fts_query.split() if fts_query else []
+    query_terms = salient_terms(query, db, max_terms=_QUERY_TERMS)
+    token_list = query_terms[:_PER_TERM_SEARCHES]
 
     # Query expansion via entity-matched synonyms (roadmap 1.5). Opt-in via
     # MEMORYMASTER_RECALL_QUERY_EXPANSION=1. When enabled, we augment
@@ -1498,7 +1537,7 @@ def _recall_impl(
 
     # Local cross-encoder rerank gate (MEMORYMASTER_RECALL_RERANK_LOCAL=1,
     # default OFF — see memorymaster/recall/local_rerank.py). When on, the
-    # FTS caps below are multiplied by the over-fetch factor (default 3x)
+    # pool cap below is multiplied by the over-fetch factor (default 3x)
     # so the reranker sees a deeper pool; after ranking + rerank the pool
     # is trimmed back by the over-fetched surplus so the rendered count
     # stays the usual size. When off, _lr_overfetch == 1 and every cap is
@@ -1515,36 +1554,25 @@ def _recall_impl(
 
     rows: list = []
     seen_ids: set[int] = set()
+
+    def _add_rows(batch: list[dict]) -> None:
+        for row in batch:
+            cid = getattr(row.get("claim"), "id", None)
+            if cid is not None and cid not in seen_ids:
+                seen_ids.add(cid)
+                rows.append(row)
+
     with _phase_timer(phase_ms, "fts5"):
-        if token_list:
-            # Fan out: top token first (highest IDF), then widen by OR.
-            per_token_limit = max(3, 8 // max(1, len(token_list))) * _lr_overfetch
+        if query_terms:
+            _add_rows(_governed_prompt_rows(
+                svc, " ".join(query_terms[:_WHOLE_QUERY_TERMS]), limit=_WHOLE_QUERY_ROWS * _lr_overfetch))
             for tok in token_list:
-                batch = _governed_prompt_rows(svc, tok, limit=per_token_limit)
-                for row in batch:
-                    claim = row.get("claim")
-                    cid = getattr(claim, "id", None)
-                    if cid is None or cid in seen_ids:
-                        continue
-                    seen_ids.add(cid)
-                    rows.append(row)
-                if len(rows) >= _fts_cap:
-                    break
+                _add_rows(_governed_prompt_rows(svc, tok, limit=_PER_TERM_ROWS * _lr_overfetch))
 
         if not rows:
             # Fallback to raw prompt — preserves the old behaviour.
-            rows = _governed_prompt_rows(svc, query, limit=_fts_cap)
-            for row in rows:
-                claim = row.get("claim")
-                cid = getattr(claim, "id", None)
-                if cid is not None:
-                    seen_ids.add(cid)
-
-    # Over-fetch surplus from the local-rerank gate: how many FTS rows we
-    # pulled beyond the legacy cap of 8. Zero when the gate is off (cap is
-    # 8, so the max is 0). Used after reranking to trim the pool back to
-    # the usual size.
-    _lr_fts_surplus = max(0, len(rows) - 8) if _lr_on else 0
+            _add_rows(_governed_prompt_rows(svc, query, limit=_fts_cap))
+    lexical_ids = frozenset(seen_ids)
 
     # Entity-link fanout — mine entities from the prompt, resolve via
     # entity_aliases, and union in claims we haven't already seen.
@@ -1613,36 +1641,26 @@ def _recall_impl(
         hit_to_synthetic_row = None  # type: ignore[assignment]
 
     # Verbatim stream is opt-in — time + emit only when enabled so the
-    # disabled case produces zero latency lines (roadmap 5.1).
-    if _verbatim_enabled():
+    # disabled case produces zero latency lines (roadmap 5.1). The prompt hook
+    # already appends raw past conversation through ``transcript_fallback``
+    # (T-1862): while that is active this older stream is bypassed there, so
+    # the hook carries ONE raw-evidence mechanism, not two.
+    if _verbatim_enabled() and not (_hook_data is not None and _transcript_fallback_active()):
         with _phase_timer(phase_ms, "verbatim"):
             try:
-                verbatim_hits = recall_verbatim(query, scope=None, db_path=db, limit=5)
+                verbatim_hits = recall_verbatim(query, scope=_current_scope(), db_path=db, limit=5)
             except Exception as exc:
                 logger.debug("verbatim stream skipped: %s", exc)
                 verbatim_hits = []
 
             if verbatim_hits and hit_to_synthetic_row is not None:
-                scope_to_rows: dict[str, list[dict]] = {}
-                for row in rows:
-                    claim = row.get("claim")
-                    s = getattr(claim, "scope", "") or ""
-                    if not s:
-                        continue
-                    scope_to_rows.setdefault(s, []).append(row)
-
+                # A hit stays a candidate of its own unless it is proven to repeat a claim already in the
+                # pool (review F2: sharing a scope with some claim is not a proof, and used to drop the hit).
+                known = [" ".join(str(getattr(r.get("claim"), "text", "")).lower().split()) for r in rows]
                 added_excerpts: set[str] = set()
                 for hit in verbatim_hits:
-                    existing = scope_to_rows.get(hit.scope) or []
-                    if existing:
-                        target = existing[0]
-                        prev = float(target.get("verbatim_score") or 0.0)
-                        if hit.score > prev:
-                            target["verbatim_score"] = hit.score
-                            target["_verbatim_id"] = hit.verbatim_id
-                        continue
-                    key = hit.excerpt[:100]
-                    if key in added_excerpts:
+                    key = " ".join(hit.excerpt.lower().split())[:100]
+                    if key in added_excerpts or any(key and (key in text or text in key) for text in known if len(text) >= 20):
                         continue
                     added_excerpts.add(key)
                     rows.append(hit_to_synthetic_row(hit))
@@ -1831,7 +1849,21 @@ def _recall_impl(
     # Re-rank by lexical relevance — claims with more query words score higher.
     # Use the tokenized query (same terms we actually sent to FTS5) so the
     # post-ranker agrees with retrieval.
-    query_words = set(fts_query.lower().split()) or set(query.lower().split())
+    query_words = set(query_terms) or set(re.findall(r"\w{3,}", query.lower()))
+    term_keys = hook_lexical.term_keys(query_words)
+    identifier_keys = hook_lexical.term_keys(identifier_tokens(query)) & term_keys
+    matched_by_id: dict[int, frozenset[str]] = {}
+
+    def _matched(row) -> frozenset[str]:
+        """Query terms found in the row as WHOLE tokens (review F8: "port" is not in "report")."""
+        claim = row.get("claim")
+        cid = getattr(claim, "id", None)
+        if cid not in matched_by_id:
+            matched_by_id[cid] = hook_lexical.matched_terms(
+                term_keys, getattr(claim, "text", ""), getattr(claim, "subject", ""),
+                getattr(claim, "object_value", ""),
+            )
+        return matched_by_id[cid]
 
     # Resolve weights once per call — env overrides shipped defaults.
     w_matches = _recall_weight("W_MATCHES")
@@ -2019,17 +2051,17 @@ def _recall_impl(
     # latency line — the metric is useful as a baseline against the other
     # streams. Starts AFTER BM25 closes so the two don't double-count.
     _rank_start = time.perf_counter()
+    _evidence_by_id: dict[int | None, tuple[float, bool]] = {}
 
     def _relevance(row):
         claim = row.get("claim")
         text = (claim.text if hasattr(claim, "text") else "").lower()
-        # Count how many query words (length > 2) appear in the claim text.
-        tokens_gt2 = [w for w in query_words if len(w) > 2]
-        matches = sum(1 for w in tokens_gt2 if w in text)
+        # Count how many query terms appear in the claim as whole tokens.
+        matches = len(_matched(row))
         # Bonus: full query phrase appears in text.
         phrase_bonus = 1.0 if query.lower() in text else 0.0
-        # Bonus: ALL query tokens present (not just some).
-        all_present = 1.0 if tokens_gt2 and matches == len(tokens_gt2) else 0.0
+        # Bonus: ALL query terms present (not just some).
+        all_present = 1.0 if term_keys and matches == len(term_keys) else 0.0
         if bm25_on:
             cid = getattr(claim, "id", None)
             lexical = bm25_scores.get(cid, 0.0) if cid is not None else 0.0
@@ -2060,20 +2092,25 @@ def _recall_impl(
         # the v3.10 W1 closets stream. W_CLOSETS=0.0 (default) makes this
         # contribute nothing even when MEMORYMASTER_RECALL_CLOSETS=1.
         closets = float(row.get("closet_score") or 0.0)
-        base = (
-            matches * w_matches
-            + phrase_bonus * w_phrase
-            + all_present * w_all
-            + lexical * w_lexical
-            + conf * w_confidence
-            + freshness * w_freshness
-            + vector * w_vector
+        # Evidence = what the row says about the question; confidence and freshness only order rows that
+        # already have it, so the hook's gate reads ``evidence`` and never lets a trusted claim in on them.
+        stream_evidence = (
+            vector * w_vector
             + entity * w_entity
             + verbatim * w_verbatim
             + graph * w_graph
             + two_pass * w_two_pass
             + closets * w_closets
         )
+        evidence = (
+            matches * w_matches
+            + phrase_bonus * w_phrase
+            + all_present * w_all
+            + lexical * w_lexical
+            + stream_evidence
+        )
+        _evidence_by_id[getattr(claim, "id", None)] = (evidence, stream_evidence > 0.0)
+        base = evidence + conf * w_confidence + freshness * w_freshness
         # claim_type-aware boost (v3.9.0 F1). When w_claim_type > 0 AND the
         # query was classified into a type AND this claim's claim_type matches,
         # multiply by (1.0 + w_claim_type). Default w_claim_type=0.0 makes
@@ -2169,6 +2206,31 @@ def _recall_impl(
     else:
         ranked = sorted(rows, key=_relevance, reverse=True)
 
+    # The prompt hook's row gate (T-1351, reworked T-1862): a row needs evidence about the QUESTION -- enough
+    # distinct whole-token terms, one exact identifier, or an explicit non-lexical stream -- and an
+    # evidence score (confidence and freshness excluded) over the lexical threshold. 0 keeps every row.
+    if _hook_data is not None and (floor := hook_policy.lexical_min_relevance()) > 0:
+        def _passes_gate(row) -> bool:
+            _relevance(row)  # fills _evidence_by_id
+            evidence, has_stream = _evidence_by_id[getattr(row.get("claim"), "id", None)]
+            matched = _matched(row)
+            if matched & identifier_keys:  # an exact identifier is evidence by itself
+                return True
+            return (has_stream or hook_lexical.covers(matched, len(term_keys), identifier_keys)) and evidence >= floor
+
+        ranked = [row for row in ranked if _passes_gate(row)]
+
+    # The pool was scored against the full question: only now is the lexical stage cut to its cap
+    # (rows other streams added are not counted against it).
+    lexical_kept, capped = 0, []
+    for row in ranked:
+        if getattr(row.get("claim"), "id", None) in lexical_ids:
+            if lexical_kept >= _fts_cap:
+                continue
+            lexical_kept += 1
+        capped.append(row)
+    ranked = capped
+
     # Local cross-encoder rerank pass (gate checked above, default OFF).
     # Reorders the fused pool by cross-encoder relevance, then trims the
     # over-fetched FTS surplus so the rendered count matches the usual
@@ -2179,11 +2241,8 @@ def _recall_impl(
 
         with _phase_timer(phase_ms, "local_rerank"):
             ranked = rerank_ranked_rows(query, ranked)
-        if _lr_fts_surplus:
-            ranked = ranked[: max(0, len(ranked) - _lr_fts_surplus)]
-
-    if _hook_data is not None and (floor := hook_policy.lexical_min_relevance()) > 0:
-        ranked = [row for row in ranked if _relevance(row) >= floor]  # the prompt hook's lexical threshold (T-1351)
+        if lexical_kept > 8:  # drop the over-fetched surplus (the lowest-ranked rows)
+            ranked = ranked[: max(0, len(ranked) - (lexical_kept - 8))]
 
     text, _rendered = _finish_recall(
         query, ranked, budget=budget, svc=svc, phase_ms=phase_ms, rank_start=_rank_start,
@@ -2210,6 +2269,9 @@ def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_dat
     claims and never one the session already received (T-1351); other callers get the
     full block.
     """
+    # Truth eligibility holds after EVERY ranking stage (T-1862, review F4): lexical, dense and Jev all
+    # render from this order, so a claim with a pending/explicit correction never precedes the correction.
+    ranked = hook_lexical.apply_truth_eligibility(ranked, svc)
     limit = None
     if hook_data is not None:
         stage_start = time.perf_counter()
