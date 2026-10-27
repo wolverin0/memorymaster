@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 
 from memorymaster.recall import transcript_index as ti
@@ -132,3 +135,45 @@ def test_cli_roundtrip_never_needs_claims_db(tmp_path, capsys, monkeypatch):
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] and payload["rows"] == 1 and payload["hits"][0]["date"].endswith("Z")
     assert not list(tmp_path.glob("*.db"))  # no memorymaster.db was created in cwd
+
+
+def test_headless_sdk_sessions_are_skipped_unless_requested(tmp_path):
+    root = tmp_path / "projects"
+    _write(root / "p" / "auto.jsonl", [
+        _rec("user", "Answer only from the supplied context about the lemur gateway.", "2026-05-01T00:00:00Z",
+             entrypoint="sdk-cli"),
+        _rec("assistant", "The lemur gateway answer lives in the supplied context only.", "2026-05-01T00:00:01Z",
+             entrypoint="sdk-cli"),
+    ])
+    _write(root / "p" / "human.jsonl", [
+        _rec("user", "Interactive question about the lemur gateway timeout.", "2026-05-02T00:00:00Z",
+             entrypoint="cli"),
+    ])
+    idx = tmp_path / "t.db"
+    stats = ti.index_transcripts(root, idx)
+    assert stats["files_automated"] == 1 and stats["files_indexed"] == 1
+    assert [h.date[:10] for h in ti.search("lemur gateway", idx)] == ["2026-05-02"]
+    assert ti.index_transcripts(root, idx)["files_skipped"] == 2  # automated file is remembered, not re-parsed
+
+    full = tmp_path / "full.db"
+    assert ti.index_transcripts(root, full, include_automated=True)["files_indexed"] == 2
+    assert len(ti.search("lemur gateway", full)) == 2
+
+
+def test_cli_search_survives_a_cp1252_console(tmp_path):
+    root = tmp_path / "projects"
+    _write(root / "p" / "s.jsonl", [_rec(
+        "assistant", "Estado del servicio \u25cf apagado, config-batch-apply pendiente en el tablero.",
+        "2026-06-06T00:00:00Z")])
+    idx = tmp_path / "t.db"
+    ti.index_transcripts(root, idx)
+    repo = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}
+    proc = subprocess.run(
+        [sys.executable, "-m", "memorymaster.surfaces.cli", "transcript-search", "servicio apagado config-batch-apply",
+         "--index", str(idx)],
+        cwd=repo, env=env, capture_output=True, timeout=120,
+    )
+    assert proc.returncode == 0, proc.stdout.decode("cp1252", "replace") + proc.stderr.decode("cp1252", "replace")
+    out = proc.stdout.decode("cp1252")
+    assert "2026-06-06" in out and "Estado del servicio" in out

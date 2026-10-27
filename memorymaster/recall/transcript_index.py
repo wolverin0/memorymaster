@@ -56,6 +56,9 @@ MIN_MESSAGE_CHARS = 20
 RELEVANCE_BAND = 0.05  # relevance fraction within which recency breaks ties
 EXCERPT_CHARS = 600
 MAX_QUERY_TOKENS = 12
+# Headless `claude -p` / SDK runs (extraction, steward, benchmark harnesses) tag every
+# record with this entrypoint; their transcripts quote prompts and answer keys.
+AUTOMATED_ENTRYPOINT = "sdk-cli"
 
 _NOISE = re.compile(r"^(<local-command|<command-name>|<system-reminder>|\[MemoryMaster|Caveat:)", re.I)
 
@@ -162,8 +165,11 @@ def _pieces(text: str) -> list[str]:
     return [text[i:i + CHUNK_CHARS] for i in range(0, len(text), CHUNK_CHARS)]
 
 
-def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str):
-    """Parse complete lines from ``offset``; return ``(fragments, scope_cwd, new_offset, new_lines)``.
+def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str, skip_automated: bool = True):
+    """Parse complete lines from ``offset``; return ``(fragments, scope_cwd, new_offset, new_lines, automated)``.
+
+    ``automated`` is True (and fragments empty) when ``skip_automated`` and a record
+    carries the headless-session entrypoint; the caller records the file as seen.
 
     Fragments are ``(date, first_line, last_line, text)``.  An unterminated
     trailing line that is not valid JSON is left for the next run.
@@ -196,6 +202,8 @@ def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str):
             line_no += 1
             if not isinstance(record, dict):
                 continue
+            if skip_automated and record.get("entrypoint") == AUTOMATED_ENTRYPOINT:
+                return [], cwd, offset, line_no, True
             if not cwd and isinstance(record.get("cwd"), str):
                 cwd = record["cwd"]
             role, text = _message_text(record)
@@ -212,7 +220,7 @@ def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str):
                 last = this_line
                 size += len(entry)
     flush()
-    return fragments, cwd, offset, line_no
+    return fragments, cwd, offset, line_no, False
 
 
 def _scope_for_cwd(cwd: str) -> str:
@@ -237,6 +245,7 @@ def index_transcripts(
     *,
     since_days: float | None = None,
     max_files: int | None = None,
+    include_automated: bool = False,
 ) -> dict[str, int]:
     """Index new/changed transcripts under ``root`` (read-only scan) into the sidecar.
 
@@ -245,7 +254,7 @@ def index_transcripts(
     """
     root = (root or default_root()).expanduser()
     index_path = index_path or default_index_path()
-    stats = {"files_seen": 0, "files_indexed": 0, "files_skipped": 0, "fragments_added": 0, "errors": 0}
+    stats = {"files_seen": 0, "files_indexed": 0, "files_skipped": 0, "fragments_added": 0, "files_automated": 0, "errors": 0}
     if not root.is_dir():
         return stats
     cutoff = time.time() - since_days * 86400 if since_days else None
@@ -272,8 +281,8 @@ def index_transcripts(
             if row and st.st_size >= row["offset"]:
                 offset, line_no, scope = row["offset"], row["lines"], row["scope"]
             try:
-                frags, cwd, new_offset, new_lines = _parse_increment(
-                    path, offset, line_no, _mtime_iso(st.st_mtime_ns)
+                frags, cwd, new_offset, new_lines, automated = _parse_increment(
+                    path, offset, line_no, _mtime_iso(st.st_mtime_ns), not include_automated
                 )
             except OSError as exc:
                 logger.warning("transcript_index: cannot read %s: %s", rel, exc)
@@ -296,6 +305,9 @@ def index_transcripts(
                     "VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (rel, sid, scope, st.st_size, st.st_mtime_ns, new_offset, new_lines),
                 )
+            if automated:
+                stats["files_automated"] += 1
+                continue
             stats["files_indexed"] += 1
             stats["fragments_added"] += len(frags)
     return stats

@@ -8,6 +8,7 @@ Neither command opens the claims DB or creates claims, so both run without a
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,8 @@ def register_transcript_parsers(sub: Any) -> None:
                        help="Sidecar index file (default: ~/.memorymaster/transcripts.db)")
     index.add_argument("--since-days", type=float, default=None,
                        help="Only scan files modified in the last N days (cap for a first run)")
+    index.add_argument("--include-automated", action="store_true",
+                       help="Also index headless `claude -p` / SDK sessions (skipped by default: they quote prompts and pollute results)")
     index.add_argument("--max-files", type=int, default=None, help="Stop after indexing N files")
 
     search = sub.add_parser(
@@ -45,6 +48,7 @@ def _index(args: Any, service: Any, parser: Any, effective_db: str) -> int:
         Path(args.index_path) if args.index_path else None,
         since_days=args.since_days,
         max_files=args.max_files,
+        include_automated=args.include_automated,
     )
     if args.json_output:
         print(json.dumps({"ok": True, **stats}))
@@ -69,6 +73,8 @@ def _search(args: Any, service: Any, parser: Any, effective_db: str) -> int:
     if not hits:
         print("transcript-search: no fragments (index missing or no match; run transcript-index first)")
         return 0
+    # Fragments are arbitrary UTF-8; a cp1252 Windows console must degrade, not crash.
+    sys.stdout.reconfigure(errors="replace")  # type: ignore[attr-defined]
     for h in hits:
         print(f"[{h.date}] session={h.session_id} {h.scope} lines {h.first_line}-{h.last_line} score={h.score}")
         print("  " + " ".join(h.excerpt.split()))
