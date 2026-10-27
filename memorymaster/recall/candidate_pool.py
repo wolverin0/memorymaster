@@ -46,10 +46,26 @@ def page_authorized_lexical(
         window = min(ceiling, window * _LEXICAL_WINDOW_GROWTH)
 
 
-def hybrid_candidates(service, query_text, *, limit, statuses, normalized_scopes,
+def authorizer(statuses, include_sensitive, visibility_filter,
+               requesting_agent) -> Callable[[list[Claim]], list[Claim]]:
+    """Status/temporal/sensitivity/visibility filter shared by every candidate stream."""
+
+    def _authorized_candidates(claims: list[Claim]) -> list[Claim]:
+        eligible = [claim for claim in claims if claim.status in statuses and claim_is_temporally_current(claim)]
+        if not include_sensitive:
+            eligible = [claim for claim in eligible if not is_sensitive_claim(claim)]
+        # Visibility: filter out private claims from other agents (parity
+        # with the legacy path; without this the hybrid path leaks
+        # cross-agent data).
+        return visibility_filter(eligible, requesting_agent)
+
+    return _authorized_candidates
+
+
+def candidate_streams(service, query_text, *, limit, statuses, normalized_scopes,
                       requesting_agent, include_sensitive, use_llm_rerank,
-                      visibility_filter) -> list[Claim]:
-    """Bound resident/embedded rows; page past unauthorized corpus entries."""
+                      visibility_filter) -> tuple[list[Claim], list[Claim]]:
+    """Return ``(lexical, broad)`` authorized pools; lexical keeps the store's bm25 order."""
     candidate_pool_limit = min(
         _HYBRID_CANDIDATE_POOL_CAP,
         max(limit * 20, _HYBRID_CANDIDATE_POOL_MIN, 50 if use_llm_rerank else 0),
@@ -69,14 +85,7 @@ def hybrid_candidates(service, query_text, *, limit, statuses, normalized_scopes
     # SQLite-authorized tenant/scope/status corpus, then deduplicate after
     # applying temporal, sensitivity and per-agent visibility filters.  No
     # claim reaches the embedding provider until all of those filters hold.
-    def _authorized_candidates(claims: list[Claim]) -> list[Claim]:
-        eligible = [claim for claim in claims if claim.status in statuses and claim_is_temporally_current(claim)]
-        if not include_sensitive:
-            eligible = [claim for claim in eligible if not is_sensitive_claim(claim)]
-        # Visibility: filter out private claims from other agents (parity
-        # with the legacy path; without this the hybrid path leaks
-        # cross-agent data).
-        return visibility_filter(eligible, requesting_agent)
+    _authorized_candidates = authorizer(statuses, include_sensitive, visibility_filter, requesting_agent)
 
     lexical_candidates = (
         service._legacy_candidates(
@@ -109,10 +118,22 @@ def hybrid_candidates(service, query_text, *, limit, statuses, normalized_scopes
         if not next_cursor or next_cursor == cursor:
             break
         cursor = next_cursor
+    return lexical_candidates, candidates
+
+
+def hybrid_candidates(service, query_text, *, limit, statuses, normalized_scopes,
+                      requesting_agent, include_sensitive, use_llm_rerank,
+                      visibility_filter) -> list[Claim]:
+    """Bound resident/embedded rows; page past unauthorized corpus entries."""
+    lexical_candidates, candidates = candidate_streams(
+        service, query_text, limit=limit, statuses=statuses,
+        normalized_scopes=normalized_scopes, requesting_agent=requesting_agent,
+        include_sensitive=include_sensitive, use_llm_rerank=use_llm_rerank,
+        visibility_filter=visibility_filter,
+    )
     candidates_by_id = {claim.id: claim for claim in candidates}
     for claim in lexical_candidates:  # already authorized while paging
         if len(candidates_by_id) >= _HYBRID_CANDIDATE_POOL_CAP:
             break
         candidates_by_id.setdefault(claim.id, claim)
-    candidates = list(candidates_by_id.values())
-    return candidates
+    return list(candidates_by_id.values())

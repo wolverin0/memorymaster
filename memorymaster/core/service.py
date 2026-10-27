@@ -12,7 +12,7 @@ from memorymaster.core import access_recording, observability
 from memorymaster.core import llm_budget
 from memorymaster.govern import candidate_dedupe
 from memorymaster.knowledge import entity_ingest
-from memorymaster.recall import graph_expansion, query_cache
+from memorymaster.recall import graph_expansion, query_cache, rrf_recall
 from memorymaster.recall.candidate_pool import hybrid_candidates, page_authorized_lexical
 from memorymaster.recall.embeddings import EmbeddingProvider, create_best_provider
 from memorymaster.govern.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, integrity, qdrant_reconcile, spool_drain, validator
@@ -21,7 +21,7 @@ from memorymaster.core.policy import select_revalidation_candidates
 from memorymaster.recall.context_optimizer import ContextResult, pack_context
 from memorymaster.core.config import get_config
 from memorymaster.recall.retrieval_stats import observed
-from memorymaster.recall.retrieval import VectorSearchHook, _tier_bonus, pending_supersession_ids, rank_claim_rows
+from memorymaster.recall.retrieval import VectorSearchHook, _freshness_score, _tier_bonus, pending_supersession_ids, rank_claim_rows
 from memorymaster.recall.planner import (
     RetrievalPlan,
     RetrievalRequest,
@@ -1511,6 +1511,14 @@ class MemoryService(IntegrationService):
             resolved_type = query_type or classify_query(query_text)
             retrieval_profile = profile_for_query_type(resolved_type)
         profile_weights = _retrieval_profile_weights(retrieval_profile)
+        # Opt-in (MEMORYMASTER_RECALL_MODE=rrf); a no-op unless the env is set.
+        retrieval_mode = rrf_recall.resolve_mode(retrieval_mode)
+        if retrieval_mode == rrf_recall.RRF_MODE:
+            return self._query_rrf_mode(
+                query_text, limit, statuses, normalized_scopes, include_sensitive,
+                requesting_agent, record_accesses, vector_hook, query_type,
+                effective_graph_mode, enrich_with_entities,
+            )
         if profile_weights is not None and retrieval_mode == "legacy":
             retrieval_mode = "hybrid"
 
@@ -1656,6 +1664,59 @@ class MemoryService(IntegrationService):
                 for r in results if r.get("claim") is not None
             ], cache_generation)
         return results
+
+    def _query_rrf_mode(
+        self,
+        query_text: str,
+        limit: int,
+        statuses: list[str],
+        normalized_scopes: list[str] | None,
+        include_sensitive: bool,
+        requesting_agent: str | None,
+        record_accesses: bool,
+        vector_hook: VectorSearchHook | None,
+        query_type: str | None,
+        graph_mode: str,
+        enrich_with_entities: bool,
+    ) -> list[dict[str, Any]]:
+        """Lexical + dense + entity + time streams -> RRF -> cross-encoder -> trim.
+
+        Bypasses the result cache: output depends on rerank/budget env that the
+        cache key does not carry. Authorization is applied per stream.
+        """
+        streams, vector_scores = rrf_recall.collect_streams(
+            self, query_text, limit=limit, statuses=statuses,
+            normalized_scopes=normalized_scopes, requesting_agent=requesting_agent,
+            include_sensitive=include_sensitive, visibility_filter=_filter_agent_visibility,
+            vector_hook=vector_hook,
+        )
+        hits = rrf_recall.rrf_rank(
+            query_text, streams, vector_scores, limit=limit,
+            pending_supersession_ids=pending_supersession_ids(self),
+            diversity_cap=get_config().session_diversity_cap,
+        )
+        results = [
+            {
+                "claim": hit.claim,
+                "status": hit.claim.status,
+                "annotation": self._annotation_for_claim(hit.claim),
+                "score": hit.rrf_score,
+                "lexical_score": 1.0 if "lexical" in hit.ranks else 0.0,
+                "freshness_score": _freshness_score(hit.claim),
+                "confidence_score": max(0.0, min(1.0, hit.claim.confidence)),
+                "vector_score": hit.vector_score,
+                "breakdown": rrf_recall.hit_breakdown(hit),
+            }
+            for hit in hits
+        ]
+        if record_accesses:
+            self._record_accesses(results, query_text=query_text)
+        return graph_expansion.recall_with_graph(
+            self, results, query_text, limit, mode=graph_mode, statuses=statuses,
+            scope_allowlist=normalized_scopes, requesting_agent=requesting_agent,
+            visibility_filter=_filter_agent_visibility,
+            enrich_with_entities=enrich_with_entities, allow_sensitive=include_sensitive,
+        )
 
     def recall_analysis(
         self,

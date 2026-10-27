@@ -73,7 +73,9 @@ def _get_model() -> Any | None:
     try:
         from sentence_transformers import CrossEncoder
 
-        _model = CrossEncoder(_MODEL_NAME)
+        # Never download on the recall path: a missing cache latches the
+        # reranker off instead of blocking a hook/query on the network.
+        _model = CrossEncoder(_MODEL_NAME, local_files_only=True)
     except Exception as exc:
         _model_failed = True
         logger.warning(

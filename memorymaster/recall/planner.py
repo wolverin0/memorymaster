@@ -12,7 +12,7 @@ import re
 
 
 _TRUST_MODES = frozenset({"trusted", "exploratory"})
-_RETRIEVAL_MODES = frozenset({"legacy", "hybrid", "qdrant"})
+_RETRIEVAL_MODES = frozenset({"legacy", "hybrid", "qdrant", "rrf"})
 _STOPWORDS = frozenset(
     {
         "a", "an", "and", "are", "as", "at", "be", "by", "does", "for",

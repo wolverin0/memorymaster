@@ -1985,6 +1985,7 @@ if FastMCP is not None:
           - "legacy" (default, fastest ~0.1s): SQL text search
           - "qdrant": temporarily quarantined; falls back to authoritative lexical search
           - "hybrid" (slow ~8s): local sentence-transformers vector + lexical ranking
+          - "rrf" (opt-in): lexical + dense + entity + time streams fused by RRF, then local cross-encoder rerank
 
         auto_classify: when True and retrieval_mode is "legacy", classify the query
           automatically and upgrade to the recommended retrieval mode.

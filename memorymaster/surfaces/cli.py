@@ -719,7 +719,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="trusted",
         help="Trusted excludes candidate/stale/conflicted claims",
     )
-    recall_cmd.add_argument("--retrieval-mode", choices=["legacy", "hybrid"], default="legacy", help="Retrieval mode (default: legacy; hybrid is slower)")
+    recall_cmd.add_argument("--retrieval-mode", choices=["legacy", "hybrid", "rrf"], default="legacy", help="Retrieval mode (default: legacy; hybrid is slower; rrf = lexical+dense+entity+time fused by RRF, then cross-encoder rerank)")
     recall_cmd.add_argument("--session-id", default=None, help="Optional producer session ID")
     recall_cmd.add_argument("--source-agent", default="memorymaster-cli")
     recall_cmd.add_argument("--platform", default="cli")
